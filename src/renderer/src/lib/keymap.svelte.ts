@@ -77,6 +77,10 @@ class Keymap {
   // Published by EditorPane so the leader never hijacks Vim insert-mode typing.
   editorVimMode = $state<string>('normal')
 
+  // Set by the keybind-capture widget so global dispatch stands down while it
+  // records a sequence.
+  captureMode = $state(false)
+
   // Pane elements are plain (geometry is read on demand, not reactive).
   private panes = new Map<PaneId, HTMLElement>()
   private paneTypes = new Map<PaneId, string>()

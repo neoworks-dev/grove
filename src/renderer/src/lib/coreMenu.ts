@@ -44,6 +44,24 @@ export function registerCoreMenu(): void {
       commandId: 'theme.switch'
     },
     {
+      id: 'view.preferences',
+      menuId: 'view',
+      label: 'Preferences',
+      group: '5-general',
+      order: 3,
+      commandId: 'preferences.open',
+      accelerator: '␣ ,'
+    },
+    {
+      id: 'view.keybindings',
+      menuId: 'view',
+      label: 'Keyboard Shortcuts',
+      group: '5-general',
+      order: 4,
+      commandId: 'keybindings.open',
+      accelerator: '␣ k'
+    },
+    {
       id: 'view.toggleLogs',
       menuId: 'view',
       label: 'Toggle Logs Panel',

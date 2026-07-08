@@ -23,6 +23,8 @@ import type {
   PermissionDecision
 } from '../shared/types'
 import { getRepoState, updateRepoState, setLastRepo, loadState } from './state'
+import { SettingsService } from './settings'
+import type { SettingScope } from '../shared/settings'
 
 interface Context {
   repoPath: string | null
@@ -65,6 +67,10 @@ function persistChats(worktreeId: string, name: string): void {
 }
 
 const watcher = new WorktreeWatcher((change) => send('event:fs-change', change))
+
+const settings = new SettingsService({
+  onChange: (snapshot) => send('event:settings-changed', snapshot)
+})
 
 // Active ripgrep search (at most one; a new query cancels it).
 let currentSearch: { cancel: () => void } | null = null
@@ -111,6 +117,7 @@ async function openRepo(repoPath: string): Promise<{
   context.repoPath = root
   context.config = await config.loadConfig(root)
   await setLastRepo(root)
+  await settings.attachRepo(root)
   // Restore named chats (and migrate legacy tokens) so prior chats resume.
   const repoState = await getRepoState(root)
   agents.loadChats(repoState.agentChats || {})
@@ -489,6 +496,24 @@ export function registerIpc(): void {
     watcher.setWatched(paths)
   })
 
+  // ── Settings ──────────────────────────────────────────────────
+  void settings.loadUser()
+  ipcMain.handle('settings:read', () => settings.snapshot())
+  ipcMain.handle(
+    'settings:set',
+    async (_e: IpcMainInvokeEvent, key: string, value: unknown, scope: SettingScope) => {
+      const snapshot = await settings.set(key, value, scope)
+      // Broadcast so every window (and future ones) stays coherent.
+      send('event:settings-changed', snapshot)
+      return snapshot
+    }
+  )
+  ipcMain.handle('settings:openFile', (_e: IpcMainInvokeEvent, scope: SettingScope) => {
+    const path = settings.openPath(scope)
+    if (!path) return
+    return shell.openPath(path)
+  })
+
   // ── Misc ──────────────────────────────────────────────────────
   ipcMain.handle('shell:openExternal', (_e: IpcMainInvokeEvent, url: string) =>
     shell.openExternal(url)
@@ -501,4 +526,5 @@ export async function shutdown(): Promise<void> {
   await agents.stopAll()
   await watcher.closeAll()
   lsp.stopAll()
+  settings.close()
 }

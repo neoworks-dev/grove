@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { settings } from '../lib/settings.svelte'
   import { onDestroy } from 'svelte'
   import Icon from '@iconify/svelte'
   import { store } from '../lib/store.svelte'
@@ -20,7 +21,7 @@
 
   let editorHost = $state<HTMLDivElement>()
   let view: EditorView | null = null
-  let vimEnabled = $state(localStorage.getItem('editor.vim') !== 'off')
+  let vimEnabled = $state(settings.get<boolean>('workbench.vimMode') ?? true)
   let dirtyPaths = $state<Record<string, boolean>>({})
 
   // Compartments let us swap language, theme, Vim, and LSP without recreating.
@@ -80,7 +81,7 @@
 
   function toggleVim(): void {
     vimEnabled = !vimEnabled
-    localStorage.setItem('editor.vim', vimEnabled ? 'on' : 'off')
+    void settings.set('workbench.vimMode', vimEnabled, 'user')
     view?.dispatch({ effects: vimComp.reconfigure(vimEnabled ? vim() : []) })
     if (vimEnabled) attachVimMode()
     else keymap.editorVimMode = 'insert'

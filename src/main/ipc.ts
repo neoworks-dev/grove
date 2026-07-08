@@ -11,7 +11,7 @@ import * as worktrees from './worktrees'
 import { ServiceSupervisor } from './services'
 import { AgentManager, detectAgents, mergeAgents } from './agents'
 import { WorktreeWatcher } from './watcher'
-import type { AgentConfig } from '../shared/types'
+import type { AgentConfig, AgentLaunchOptions, PermissionDecision } from '../shared/types'
 import { getRepoState, updateRepoState, setLastRepo, loadState } from './state'
 
 interface Context {
@@ -36,7 +36,8 @@ const supervisor = new ServiceSupervisor({
 
 const agents = new AgentManager({
   onStatus: (runtime) => send('event:agent-status', runtime),
-  onLog: (worktreeId, name, line) => send('event:log', { worktreeId, source: 'agent', name, line })
+  onLog: (worktreeId, name, line) => send('event:log', { worktreeId, source: 'agent', name, line }),
+  onPermission: (request) => send('event:agent-permission', request)
 })
 
 const watcher = new WorktreeWatcher((change) => send('event:fs-change', change))
@@ -54,9 +55,9 @@ function requireRepo(): { repoPath: string; config: WorkbenchConfig } {
   return { repoPath: context.repoPath, config: context.config }
 }
 
-// Auto-detected CLIs merged with config-defined agents (config overrides).
-async function effectiveAgents(): Promise<Record<string, AgentConfig>> {
-  const detected = await detectAgents()
+// Adapter defaults merged with config-defined agents (config overrides).
+function effectiveAgents(): Record<string, AgentConfig> {
+  const detected = detectAgents()
   const configured = context.config?.agents || {}
   return mergeAgents(detected, configured)
 }
@@ -213,8 +214,8 @@ export function registerIpc(): void {
   })
 
   // ── Agents ────────────────────────────────────────────────────
-  ipcMain.handle('agents:list', async (_e, worktreeId: string) => {
-    const all = await effectiveAgents()
+  ipcMain.handle('agents:list', (_e, worktreeId: string) => {
+    const all = effectiveAgents()
     return Object.entries(all).map(([name, agent]) => {
       const live = agents.getRuntime(worktreeId, name)
       if (live) return live
@@ -232,14 +233,13 @@ export function registerIpc(): void {
 
   ipcMain.handle(
     'agents:start',
-    async (_e, worktreeId: string, name: string, prompt?: string, extraArgs?: string) => {
+    (_e, worktreeId: string, name: string, options: AgentLaunchOptions) => {
       const { config: cfg } = requireRepo()
       const worktree = findWorktree(worktreeId)
-      const all = await effectiveAgents()
-      const agent = all[name]
+      const agent = effectiveAgents()[name]
       if (!agent) throw new Error(`unknown agent: ${name}`)
       const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
-      return agents.start(worktree, name, agent, ports, prompt, extraArgs || '')
+      return agents.start(worktree, name, agent, ports, options || {})
     }
   )
 
@@ -247,10 +247,15 @@ export function registerIpc(): void {
     agents.stop(worktreeId, name)
   )
 
+  // Answer an interactive tool-permission request.
+  ipcMain.handle('agents:respondPermission', (_e, id: string, decision: PermissionDecision) =>
+    agents.respondPermission(id, decision)
+  )
+
   ipcMain.handle('agents:active', () => agents.activeWorktreeIds())
 
-  // Effective agent configs (detected + config), including discovered models and
-  // modes/efforts, for building the launch UI.
+  // Effective agent configs (adapter defaults + config) with modes/efforts,
+  // for building the launch UI.
   ipcMain.handle('agents:configs', () => effectiveAgents())
 
   // ── Files ─────────────────────────────────────────────────────

@@ -9,7 +9,9 @@ import type {
   AgentRuntime,
   AgentConfig,
   RepoInfo,
-  BranchList
+  BranchList,
+  PermissionRequestEvent,
+  PermissionDecision
 } from '../../../shared/types'
 
 export interface LogLine {
@@ -52,6 +54,9 @@ class WorkbenchStore {
 
   // Set by the fs watcher when a running agent edits a file → DiffPane focuses it.
   requestedDiffFile = $state<string | null>(null)
+
+  // Pending interactive tool-permission requests (agent → user).
+  pendingPermissions = $state<PermissionRequestEvent[]>([])
 
   // Streamed logs keyed by worktreeId.
   logs = $state<Record<string, LogLine[]>>({})
@@ -146,6 +151,15 @@ export function openFileInEditor(worktreeId: string, path: string): void {
   store.openTab({ worktreeId, path, name })
 }
 
+// Answer a pending permission request and drop it from the queue.
+export async function respondPermission(
+  id: string,
+  decision: PermissionDecision
+): Promise<void> {
+  store.pendingPermissions = store.pendingPermissions.filter((request) => request.id !== id)
+  await window.workbench.agents.respondPermission(id, decision)
+}
+
 // ── Actions ───────────────────────────────────────────────────
 
 export async function openRepoResult(result: {
@@ -211,10 +225,19 @@ export function subscribeEvents(): void {
   window.workbench.on('event:agent-status', (payload) => {
     const runtime = payload as AgentRuntime
     store.updateAgentRuntime(runtime)
+    // Drop any stale permission prompts once an agent is no longer running.
+    if (runtime.status !== 'running') {
+      store.pendingPermissions = store.pendingPermissions.filter(
+        (request) => !(request.worktreeId === runtime.worktreeId && request.agent === runtime.name)
+      )
+    }
     void window.workbench.agents.active().then((ids) => {
       store.activeAgentWorktrees = ids
       syncWatched()
     })
+  })
+  window.workbench.on('event:agent-permission', (payload) => {
+    store.pendingPermissions = [...store.pendingPermissions, payload as PermissionRequestEvent]
   })
 
   window.workbench.on('event:fs-change', (payload) => {

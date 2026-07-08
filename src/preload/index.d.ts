@@ -22,8 +22,13 @@ interface OpenRepoResult {
 interface RepoStateShape {
   portSlots: Record<string, number>
   openTabs: string[]
+  activeTabPath: string | null
   selectedWorktreeId: string | null
   setupOnceDone: boolean
+  agentSessions: Record<string, string>
+  paneSizes: Record<string, number>
+  panelsOpen: Record<string, boolean>
+  centerView: string | null
 }
 
 export interface WorkbenchApi {

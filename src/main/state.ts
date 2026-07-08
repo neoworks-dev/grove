@@ -9,9 +9,14 @@ import { join, dirname } from 'path'
 export interface RepoState {
   portSlots: Record<string, number> // worktreeId -> slot
   openTabs: string[] // absolute file paths
+  activeTabPath: string | null
   selectedWorktreeId: string | null
   setupOnceDone: boolean
   agentSessions: Record<string, string> // "worktreeId::agent" -> continuation token
+  // UI layout (restored on repo open).
+  paneSizes: Record<string, number> // pane key -> px
+  panelsOpen: Record<string, boolean> // panel key -> open
+  centerView: string | null
 }
 
 export interface AppState {
@@ -54,9 +59,13 @@ export function emptyRepoState(): RepoState {
   return {
     portSlots: {},
     openTabs: [],
+    activeTabPath: null,
     selectedWorktreeId: null,
     setupOnceDone: false,
-    agentSessions: {}
+    agentSessions: {},
+    paneSizes: {},
+    panelsOpen: {},
+    centerView: null
   }
 }
 

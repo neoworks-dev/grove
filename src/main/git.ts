@@ -27,8 +27,19 @@ export async function repoRoot(dirPath: string): Promise<string> {
 }
 
 export async function currentBranch(repoPath: string): Promise<string> {
-  const out = await gitFor(repoPath).revparse(['--abbrev-ref', 'HEAD'])
-  return out.trim()
+  try {
+    const out = await gitFor(repoPath).revparse(['--abbrev-ref', 'HEAD'])
+    return out.trim()
+  } catch {
+    // Unborn branch (repo has no commits yet) — rev-parse fails, but the
+    // symbolic ref still names the checked-out branch.
+    try {
+      const ref = await gitFor(repoPath).raw(['symbolic-ref', '--short', 'HEAD'])
+      return ref.trim()
+    } catch {
+      return '(no commits)'
+    }
+  }
 }
 
 // Parse `git worktree list --porcelain` into structured blocks.

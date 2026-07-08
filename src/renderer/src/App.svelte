@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { store, subscribeEvents, openRepoResult } from './lib/store.svelte'
   import WorktreeSidebar from './components/WorktreeSidebar.svelte'
   import EditorPane from './components/EditorPane.svelte'
   import DiffPane from './components/DiffPane.svelte'
@@ -8,21 +7,111 @@
   import Dashboard from './components/Dashboard.svelte'
   import LogsPane from './components/LogsPane.svelte'
   import AgentPane from './components/AgentPane.svelte'
+  import UIPane from './components/UIPane.svelte'
+  import CommandPalette from './components/CommandPalette.svelte'
+  import { store, subscribeEvents, openRepoResult, applyIconPack, applyColorTheme } from './lib/store.svelte'
+  import { commands } from './lib/commands.svelte'
+  import { initIcons, availablePacks } from './lib/icons'
+  import { initThemes, availableThemes } from './lib/themes'
   import type { CenterView } from './lib/store.svelte'
 
   let bottomOpen = $state(true)
 
-  onMount(async () => {
-    subscribeEvents()
-    const last = await window.workbench.repo.last()
-    if (last) {
-      try {
-        const result = await window.workbench.repo.open(last)
-        await openRepoResult(result)
-      } catch {
-        // stale path — ignore, user can re-pick
-      }
+  // Persisted pane sizes (px).
+  function persisted(key: string, fallback: number): number {
+    const stored = Number(localStorage.getItem(key))
+    return Number.isFinite(stored) && stored > 0 ? stored : fallback
+  }
+  let sidebarWidth = $state(persisted('pane.sidebar', 256))
+  let agentWidth = $state(persisted('pane.agent', 320))
+  let logsHeight = $state(persisted('pane.logs', 224))
+
+  $effect(() => localStorage.setItem('pane.sidebar', String(sidebarWidth)))
+  $effect(() => localStorage.setItem('pane.agent', String(agentWidth)))
+  $effect(() => localStorage.setItem('pane.logs', String(logsHeight)))
+
+  const views: { id: CenterView; label: string }[] = [
+    { id: 'editor', label: 'Editor' },
+    { id: 'diff', label: 'Diff' },
+    { id: 'preview', label: 'Preview' },
+    { id: 'dashboard', label: 'Dashboard' }
+  ]
+
+  // Core commands. Other components contribute their own via commands.register.
+  function registerCoreCommands(): void {
+    commands.register({
+      id: 'repo.open',
+      title: 'Open Repository…',
+      group: 'Repository',
+      run: pickRepo
+    })
+    for (const view of views) {
+      commands.register({
+        id: `view.${view.id}`,
+        title: `View: ${view.label}`,
+        group: 'View',
+        run: () => {
+          store.centerView = view.id
+        }
+      })
     }
+    commands.register({
+      id: 'view.toggleLogs',
+      title: 'Toggle Logs Panel',
+      group: 'View',
+      run: () => {
+        bottomOpen = !bottomOpen
+      }
+    })
+    // Icon theme selection — dynamically one command per available pack.
+    for (const pack of availablePacks()) {
+      commands.register({
+        id: `icons.${pack.name}`,
+        title: `Icon Theme: ${pack.label}`,
+        group: 'Appearance',
+        keywords: 'icon theme style',
+        run: () => applyIconPack(pack.name)
+      })
+    }
+    // Color theme selection — dynamically one command per registered theme.
+    for (const theme of availableThemes()) {
+      commands.register({
+        id: `theme.${theme.name}`,
+        title: `Color Theme: ${theme.label}`,
+        group: 'Appearance',
+        keywords: 'color theme palette scheme dark light',
+        run: () => applyColorTheme(theme.name)
+      })
+    }
+  }
+
+  function onGlobalKey(event: KeyboardEvent): void {
+    if (event.key === 'F1') {
+      event.preventDefault()
+      commands.toggle()
+    }
+  }
+
+  onMount(() => {
+    initThemes()
+    initIcons()
+    subscribeEvents()
+    registerCoreCommands()
+    window.addEventListener('keydown', onGlobalKey)
+
+    void (async () => {
+      const last = await window.workbench.repo.last()
+      if (last) {
+        try {
+          const result = await window.workbench.repo.open(last)
+          await openRepoResult(result)
+        } catch {
+          // stale path — ignore, user can re-pick
+        }
+      }
+    })()
+
+    return () => window.removeEventListener('keydown', onGlobalKey)
   })
 
   async function pickRepo(): Promise<void> {
@@ -34,13 +123,6 @@
       store.setError((err as Error).message)
     }
   }
-
-  const views: { id: CenterView; label: string }[] = [
-    { id: 'editor', label: 'Editor' },
-    { id: 'diff', label: 'Diff' },
-    { id: 'preview', label: 'Preview' },
-    { id: 'dashboard', label: 'Dashboard' }
-  ]
 </script>
 
 <div class="flex h-screen w-screen flex-col overflow-hidden bg-canvas text-default">
@@ -80,6 +162,13 @@
       >
         Logs
       </button>
+      <button
+        class="ml-2 rounded-md border border-line px-2 py-1 text-2xs text-dim hover:text-default"
+        title="Command palette (F1)"
+        onclick={() => commands.open()}
+      >
+        ⌘ F1
+      </button>
     </div>
   </header>
 
@@ -96,9 +185,15 @@
 
   <!-- Main body -->
   <div class="flex min-h-0 flex-1">
-    <aside class="w-64 shrink-0 overflow-y-auto border-r border-line bg-elevated">
+    <UIPane
+      side="right"
+      bind:size={sidebarWidth}
+      min={180}
+      max={480}
+      class="border-r border-line bg-elevated"
+    >
       <WorktreeSidebar />
-    </aside>
+    </UIPane>
 
     <main class="flex min-w-0 flex-1 flex-col">
       <div class="flex min-h-0 flex-1">
@@ -118,16 +213,30 @@
           {/if}
         </section>
 
-        <aside class="w-80 shrink-0 overflow-hidden border-l border-line bg-elevated">
+        <UIPane
+          side="left"
+          bind:size={agentWidth}
+          min={240}
+          max={560}
+          class="border-l border-line bg-elevated"
+        >
           <AgentPane />
-        </aside>
+        </UIPane>
       </div>
 
       {#if bottomOpen}
-        <div class="h-56 shrink-0 border-t border-line bg-elevated">
+        <UIPane
+          side="top"
+          bind:size={logsHeight}
+          min={120}
+          max={600}
+          class="border-t border-line bg-elevated"
+        >
           <LogsPane />
-        </div>
+        </UIPane>
       {/if}
     </main>
   </div>
 </div>
+
+<CommandPalette />

@@ -41,11 +41,15 @@ const workbench = {
   },
   agents: {
     list: (worktreeId: string) => ipcRenderer.invoke('agents:list', worktreeId),
-    start: (worktreeId: string, name: string, prompt?: string) =>
-      ipcRenderer.invoke('agents:start', worktreeId, name, prompt),
+    configs: () => ipcRenderer.invoke('agents:configs'),
+    start: (worktreeId: string, name: string, prompt?: string, extraArgs?: string) =>
+      ipcRenderer.invoke('agents:start', worktreeId, name, prompt, extraArgs),
     stop: (worktreeId: string, name: string) =>
       ipcRenderer.invoke('agents:stop', worktreeId, name),
     active: () => ipcRenderer.invoke('agents:active')
+  },
+  fs: {
+    watch: (worktreeIds: string[]) => ipcRenderer.invoke('fs:watch', worktreeIds)
   },
   files: {
     listDir: (worktreeId: string, relPath: string) =>

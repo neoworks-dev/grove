@@ -92,13 +92,9 @@ services:
     health: http://localhost:\${PORT_0}
     log: web.log
 
-agents:
-  claude:
-    command: claude -p
-  codex:
-    command: codex exec
-  opencode:
-    command: opencode -?
+# Agents are auto-detected from PATH (claude, codex, opencode, gemini, aider,
+# cursor-agent). List entries here only to override a command or add an unknown CLI.
+agents: {}
 `
 
 // Write a starter config only if none exists. Returns true when written.

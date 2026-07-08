@@ -7,6 +7,7 @@ import type {
   WorkbenchConfig,
   ServiceRuntime,
   AgentRuntime,
+  AgentConfig,
   RepoInfo,
   BranchList
 } from '../../../shared/types'
@@ -16,6 +17,9 @@ export interface LogLine {
   name: string
   line: string
 }
+
+import { currentPackName, setIconPack } from './icons'
+import { currentThemeName, applyThemeVars, monacoThemeFor } from './themes'
 
 export interface EditorTab {
   worktreeId: string
@@ -40,14 +44,34 @@ class WorkbenchStore {
   agents = $state<Record<string, AgentRuntime[]>>({})
   activeAgentWorktrees = $state<string[]>([])
 
+  // Effective agent configs (detected + config) keyed by agent name.
+  agentConfigs = $state<Record<string, AgentConfig>>({})
+
+  // Bumped per worktree on any file change, so trees/diffs re-read reactively.
+  fsVersion = $state<Record<string, number>>({})
+
+  // Set by the fs watcher when a running agent edits a file → DiffPane focuses it.
+  requestedDiffFile = $state<string | null>(null)
+
   // Streamed logs keyed by worktreeId.
   logs = $state<Record<string, LogLine[]>>({})
 
   tabs = $state<EditorTab[]>([])
   activeTabPath = $state<string | null>(null)
 
+  // Active icon pack name; reading this in a component makes icons re-render
+  // reactively when the pack changes.
+  iconPack = $state<string>(currentPackName())
+
+  // Active color theme name; reading it makes theme-dependent UI (Monaco) react.
+  colorTheme = $state<string>(currentThemeName())
+
   loading = $state(false)
   error = $state<string | null>(null)
+
+  get monacoTheme(): string {
+    return monacoThemeFor(this.colorTheme)
+  }
 
   get selectedWorktree(): Worktree | null {
     return this.worktrees.find((worktree) => worktree.id === this.selectedWorktreeId) || null
@@ -104,6 +128,24 @@ class WorkbenchStore {
 
 export const store = new WorkbenchStore()
 
+export function applyIconPack(name: string): void {
+  setIconPack(name)
+  store.iconPack = name
+}
+
+export function applyColorTheme(name: string): void {
+  applyThemeVars(name)
+  store.colorTheme = name
+}
+
+// Open an absolute file path in the editor (used by the file tree and by agent
+// tool cards). Basename becomes the tab label.
+export function openFileInEditor(worktreeId: string, path: string): void {
+  const name = path.split('/').pop() || path
+  store.selectedWorktreeId = worktreeId
+  store.openTab({ worktreeId, path, name })
+}
+
 // ── Actions ───────────────────────────────────────────────────
 
 export async function openRepoResult(result: {
@@ -114,6 +156,7 @@ export async function openRepoResult(result: {
   store.worktrees = result.worktrees
   store.config = await window.workbench.config.load()
   store.branches = await window.workbench.git.branches().catch(() => null)
+  store.agentConfigs = await window.workbench.agents.configs().catch(() => ({}))
   const repoState = await window.workbench.state.getRepo()
   const restored = repoState.selectedWorktreeId
   store.selectedWorktreeId =
@@ -123,6 +166,16 @@ export async function openRepoResult(result: {
   if (store.selectedWorktreeId) {
     await refreshRuntimes(store.selectedWorktreeId)
   }
+  syncWatched()
+}
+
+// Watch the selected worktree plus any worktree with a running agent, so file
+// changes (including agent edits) stream in even when not selected.
+export function syncWatched(): void {
+  const ids = new Set<string>()
+  if (store.selectedWorktreeId) ids.add(store.selectedWorktreeId)
+  for (const id of store.activeAgentWorktrees) ids.add(id)
+  void window.workbench.fs.watch([...ids])
 }
 
 export async function refreshWorktrees(): Promise<void> {
@@ -133,6 +186,7 @@ export async function selectWorktree(worktreeId: string): Promise<void> {
   store.selectedWorktreeId = worktreeId
   await window.workbench.state.update({ selectedWorktreeId: worktreeId })
   await refreshRuntimes(worktreeId)
+  syncWatched()
 }
 
 export async function refreshRuntimes(worktreeId: string): Promise<void> {
@@ -157,6 +211,30 @@ export function subscribeEvents(): void {
   window.workbench.on('event:agent-status', (payload) => {
     const runtime = payload as AgentRuntime
     store.updateAgentRuntime(runtime)
-    void window.workbench.agents.active().then((ids) => (store.activeAgentWorktrees = ids))
+    void window.workbench.agents.active().then((ids) => {
+      store.activeAgentWorktrees = ids
+      syncWatched()
+    })
+  })
+
+  window.workbench.on('event:fs-change', (payload) => {
+    const event = payload as {
+      worktreeId: string
+      path: string
+      relPath: string
+      type: 'add' | 'change' | 'unlink' | 'addDir' | 'unlinkDir'
+    }
+    // Bump the version so file trees / diff lists re-read.
+    store.fsVersion = {
+      ...store.fsVersion,
+      [event.worktreeId]: (store.fsVersion[event.worktreeId] || 0) + 1
+    }
+    // If a running agent touched a file, auto-open its diff.
+    const isFile = event.type === 'add' || event.type === 'change' || event.type === 'unlink'
+    if (isFile && store.activeAgentWorktrees.includes(event.worktreeId)) {
+      store.selectedWorktreeId = event.worktreeId
+      store.requestedDiffFile = event.relPath
+      store.centerView = 'diff'
+    }
   })
 }

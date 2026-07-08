@@ -3,12 +3,136 @@
 // stream to the Agent pane + a log file. Replaceable backends, no Claude-specific
 // coupling. Multiple worktrees may run agents concurrently.
 
-import { spawn, type ChildProcess } from 'child_process'
+import { spawn, execFile, type ChildProcess } from 'child_process'
 import { createWriteStream, type WriteStream } from 'fs'
 import { mkdir, writeFile } from 'fs/promises'
 import { join } from 'path'
-import type { AgentConfig, AgentRuntime, Worktree } from '../shared/types'
+import type { AgentConfig, AgentOption, AgentRuntime, Worktree } from '../shared/types'
 import { buildWorktreeEnv, substitute, spawnEnv } from './env'
+
+// Adapter for a known agent CLI. `command` is the non-interactive invocation.
+// `modelsCommand` (when the CLI can list models) is run to discover models
+// dynamically; `modelFlag` builds the CLI arg for a chosen model. `modes` and
+// `efforts` are the adapter's fixed capabilities. Everything is overridable via
+// workbench.yaml (config wins on name collision).
+interface KnownAgent {
+  name: string
+  bin: string
+  command: string
+  modelsCommand?: string[]
+  modelFlag?: string // default '--model {value}'
+  modes?: AgentOption[]
+  efforts?: AgentOption[]
+}
+
+const KNOWN_AGENTS: KnownAgent[] = [
+  {
+    name: 'claude',
+    bin: 'claude',
+    // stream-json emits one complete JSON event per line (no partial-message
+    // duplication) and exposes tool calls so the UI can render command cards.
+    command: 'claude -p --output-format stream-json --verbose',
+    modes: [
+      { label: 'manual review', flag: '--permission-mode default' },
+      { label: 'plan', flag: '--permission-mode plan' },
+      { label: 'accept edits', flag: '--permission-mode acceptEdits' },
+      { label: 'auto', flag: '--permission-mode bypassPermissions' }
+    ],
+    efforts: [
+      { label: 'default', flag: '' },
+      { label: 'low', flag: '--effort low' },
+      { label: 'medium', flag: '--effort medium' },
+      { label: 'high', flag: '--effort high' },
+      { label: 'xhigh', flag: '--effort xhigh' },
+      { label: 'max', flag: '--effort max' }
+    ]
+  },
+  {
+    name: 'codex',
+    bin: 'codex',
+    command: 'codex exec',
+    modes: [
+      { label: 'manual review', flag: '--ask-for-approval on-request' },
+      { label: 'auto', flag: '--full-auto' }
+    ],
+    efforts: [
+      { label: 'default', flag: '' },
+      { label: 'low', flag: '-c model_reasoning_effort=low' },
+      { label: 'medium', flag: '-c model_reasoning_effort=medium' },
+      { label: 'high', flag: '-c model_reasoning_effort=high' }
+    ]
+  },
+  {
+    name: 'opencode',
+    bin: 'opencode',
+    command: 'opencode run',
+    modelsCommand: ['models'] // `opencode models` lists available models
+  },
+  { name: 'gemini', bin: 'gemini', command: 'gemini -p' },
+  { name: 'aider', bin: 'aider', command: 'aider --message' },
+  { name: 'cursor-agent', bin: 'cursor-agent', command: 'cursor-agent' }
+]
+
+// True if a binary is resolvable on PATH.
+function onPath(bin: string): Promise<boolean> {
+  const locator = process.platform === 'win32' ? 'where' : 'which'
+  return new Promise((resolve) => {
+    execFile(locator, [bin], (error) => resolve(!error))
+  })
+}
+
+// Run an agent's model-list command and return one AgentOption per model.
+function discoverModels(agent: KnownAgent): Promise<AgentOption[]> {
+  if (!agent.modelsCommand) return Promise.resolve([])
+  const template = agent.modelFlag || '--model {value}'
+  return new Promise((resolve) => {
+    execFile(
+      agent.bin,
+      agent.modelsCommand!,
+      { timeout: 15000, maxBuffer: 8 * 1024 * 1024 },
+      (error, stdout) => {
+        if (error || !stdout) return resolve([])
+        const models = stdout
+          .split('\n')
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0 && !line.includes(' '))
+        resolve(models.map((value) => ({ label: value, flag: template.replace('{value}', value) })))
+      }
+    )
+  })
+}
+
+let detectionCache: Record<string, AgentConfig> | null = null
+
+// Detect installed CLIs and describe each: command, dynamically discovered
+// models, and adapter modes/efforts. Cached — PATH and model lists are stable
+// within a session.
+export async function detectAgents(force = false): Promise<Record<string, AgentConfig>> {
+  if (detectionCache && !force) return detectionCache
+  const found: Record<string, AgentConfig> = {}
+  await Promise.all(
+    KNOWN_AGENTS.map(async (agent) => {
+      if (!(await onPath(agent.bin))) return
+      const models = await discoverModels(agent)
+      const config: AgentConfig = { command: agent.command }
+      if (models.length) config.models = models
+      if (agent.modes) config.modes = agent.modes
+      if (agent.efforts) config.efforts = agent.efforts
+      found[agent.name] = config
+    })
+  )
+  detectionCache = found
+  return found
+}
+
+// Effective agents = auto-detected CLIs overlaid with config entries.
+// Config wins so a user can override the command/options or add unknown agents.
+export function mergeAgents(
+  detected: Record<string, AgentConfig>,
+  configured: Record<string, AgentConfig>
+): Record<string, AgentConfig> {
+  return { ...detected, ...configured }
+}
 
 export interface AgentEvents {
   onStatus: (runtime: AgentRuntime) => void
@@ -48,12 +172,16 @@ export class AgentManager {
     name: string,
     agent: AgentConfig,
     ports: number[],
-    prompt?: string
+    prompt?: string,
+    extraArgs = ''
   ): Promise<AgentRuntime> {
     await this.stop(worktree.id, name)
 
     const vars = buildWorktreeEnv(worktree, ports)
     let command = substitute(agent.command, vars)
+    if (extraArgs.trim().length > 0) {
+      command = `${command} ${extraArgs.trim()}`
+    }
     if (prompt && prompt.trim().length > 0) {
       command = `${command} ${shellQuote(prompt)}`
     }
@@ -64,10 +192,13 @@ export class AgentManager {
     await writeFile(logPath, '', 'utf8').catch(() => {})
     const logStream = createWriteStream(logPath, { flags: 'a' })
 
+    // stdin is ignored so CLIs that probe it (e.g. `claude -p`) don't stall
+    // waiting for piped input — the prompt is passed as an argument instead.
     const child = spawn(command, {
       cwd: worktree.path,
       env: spawnEnv(vars),
-      shell: true
+      shell: true,
+      stdio: ['ignore', 'pipe', 'pipe']
     })
 
     const runtime: AgentRuntime = {

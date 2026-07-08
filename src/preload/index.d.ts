@@ -7,6 +7,7 @@ import type {
   WorkbenchConfig,
   ServiceRuntime,
   AgentRuntime,
+  AgentConfig,
   FileNode,
   RepoInfo
 } from '../shared/types'
@@ -58,9 +59,18 @@ export interface WorkbenchApi {
   }
   agents: {
     list: (worktreeId: string) => Promise<AgentRuntime[]>
-    start: (worktreeId: string, name: string, prompt?: string) => Promise<AgentRuntime>
+    configs: () => Promise<Record<string, AgentConfig>>
+    start: (
+      worktreeId: string,
+      name: string,
+      prompt?: string,
+      extraArgs?: string
+    ) => Promise<AgentRuntime>
     stop: (worktreeId: string, name: string) => Promise<void>
     active: () => Promise<string[]>
+  }
+  fs: {
+    watch: (worktreeIds: string[]) => Promise<void>
   }
   files: {
     listDir: (worktreeId: string, relPath: string) => Promise<FileNode[]>

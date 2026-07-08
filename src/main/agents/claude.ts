@@ -19,8 +19,18 @@ const config: AgentConfig = {
     { label: 'plan', value: 'plan' },
     { label: 'accept edits', value: 'acceptEdits' },
     { label: 'auto', value: 'bypassPermissions' }
+  ],
+  // Reasoning effort levels (SDK `effort` option). Empty value = SDK default.
+  // `xhigh`/`max` only apply on models that support them; others silently downgrade.
+  efforts: [
+    { label: 'default', value: '' },
+    { label: 'low', value: 'low' },
+    { label: 'medium', value: 'medium' },
+    { label: 'high', value: 'high' },
+    { label: 'xhigh', value: 'xhigh' },
+    { label: 'max', value: 'max' }
   ]
-  // Models are free-text (no runtime model-list API); efforts unsupported by the SDK.
+  // Models are free-text (no runtime model-list API).
 }
 
 function filePathOf(input: Record<string, unknown>): string | null {
@@ -60,6 +70,7 @@ function start(context: AdapterContext): RunHandle {
           resume: context.resume || undefined,
           permissionMode: permissionMode as 'default' | 'plan' | 'acceptEdits' | 'bypassPermissions',
           model: context.options.model || undefined,
+          effort: (context.options.effort as 'low' | 'medium' | 'high' | 'xhigh' | 'max') || undefined,
           includePartialMessages: false,
           stderr: (data: string) => context.emit(textLine('stderr', data)),
           // MUST declare the dialog kinds we render, or the CLI emits none at

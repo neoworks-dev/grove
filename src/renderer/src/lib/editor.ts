@@ -92,7 +92,8 @@ export function editorTheme(palette: ThemePalette, scheme: 'dark' | 'light'): Ex
       '&': {
         color: palette.text,
         backgroundColor: palette.bg,
-        fontSize: '13px',
+        // Match the surrounding UI text (--text-xs) rather than running larger.
+        fontSize: 'var(--text-xs)',
         height: '100%'
       },
       '.cm-content': {

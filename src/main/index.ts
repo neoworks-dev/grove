@@ -8,6 +8,16 @@ import { registerPluginScheme } from './plugins/protocol'
 // Custom scheme privileges must be declared before app ready.
 registerPluginScheme()
 
+// LSP servers speak over stdio; when a server process dies mid-exchange,
+// vscode-jsonrpc can still try to flush an internal reply to the destroyed
+// stdin, rejecting with ERR_STREAM_DESTROYED from a write we do not own. That
+// race is benign — swallow just that code and surface everything else.
+process.on('unhandledRejection', (reason) => {
+  const error = reason as NodeJS.ErrnoException | undefined
+  if (error && error.code === 'ERR_STREAM_DESTROYED') return
+  console.error('Unhandled promise rejection:', reason)
+})
+
 // Scale the whole UI with Ctrl/Cmd +, Ctrl/Cmd -, and Ctrl/Cmd 0 to reset.
 // Electron performs no zoom on its own (no zoom-role menu), so drive it here.
 function registerZoomShortcuts(window: BrowserWindow): void {

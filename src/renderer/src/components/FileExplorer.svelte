@@ -289,6 +289,10 @@
     bind:viewport={treeViewport}
     oncontextmenu={(event) => openMenu(event, null)}
   >
+    <!-- Single content wrapper: keeps the scrollbar's ResizeObserver watching
+         one child instead of one per row (hundreds), so mounting the tree on a
+         view switch stays cheap and directory expansions re-measure correctly. -->
+    <div>
     <!-- Inline create row -->
     {#if editing && editing.mode !== 'rename'}
       <div class="flex items-center gap-1 px-2 py-0.5" style="padding-left: 8px">
@@ -348,6 +352,7 @@
           {/if}
         </div>
       {/each}
+    </div>
   </FloatingScrollbar>
 </div>
 

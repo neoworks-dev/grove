@@ -186,6 +186,37 @@ export interface GrammarPayload {
   highlights: string
 }
 
+// ── LSP (language servers) ──────────────────────────────────────
+
+export interface LspPosition {
+  line: number // 0-based
+  character: number // 0-based
+}
+
+export interface LspRange {
+  start: LspPosition
+  end: LspPosition
+}
+
+export interface LspCompletion {
+  label: string
+  detail?: string
+  kind?: number
+  insertText?: string
+}
+
+export interface LspDiagnostic {
+  range: LspRange
+  message: string
+  severity?: number // 1 error, 2 warning, 3 info, 4 hint
+  source?: string
+}
+
+export interface LspDiagnosticsEvent {
+  uri: string
+  diagnostics: LspDiagnostic[]
+}
+
 // ── IPC event payloads (main → renderer) ────────────────────────
 
 export interface LogLineEvent {

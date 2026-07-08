@@ -3,8 +3,17 @@
   import { store } from '../lib/store.svelte'
   import { languageExtension, editorTheme, baseExtensions } from '../lib/editor'
   import { onHighlightersChanged } from '../lib/highlighters'
+  import {
+    lspExtensions,
+    lspLanguageFor,
+    fileUri,
+    toCmDiagnostics,
+    type LspContext
+  } from '../lib/lspClient'
+  import type { LspDiagnosticsEvent } from '../../../shared/types'
   import { EditorView } from '@codemirror/view'
   import { EditorState, Compartment } from '@codemirror/state'
+  import { setDiagnostics } from '@codemirror/lint'
   import { vim, Vim, getCM } from '@replit/codemirror-vim'
   import { keymap } from '../lib/keymap.svelte'
 
@@ -13,10 +22,16 @@
   let vimEnabled = $state(localStorage.getItem('editor.vim') !== 'off')
   let dirtyPaths = $state<Record<string, boolean>>({})
 
-  // Compartments let us swap language, theme, and Vim without recreating the view.
+  // Compartments let us swap language, theme, Vim, and LSP without recreating.
   const languageComp = new Compartment()
   const themeComp = new Compartment()
   const vimComp = new Compartment()
+  const lspComp = new Compartment()
+
+  // LSP context for the open file (null when the language has no server).
+  let lspCtx: LspContext | null = null
+  let docVersion = 1
+  let lspChangeTimer: ReturnType<typeof setTimeout> | null = null
 
   // Guards the dirty flag while we replace the document programmatically.
   let suppressDirty = false
@@ -36,11 +51,14 @@
         vimComp.of(vimEnabled ? vim() : []),
         baseExtensions(() => void save()),
         languageComp.of([]),
+        lspComp.of([]),
         themeComp.of(editorTheme(theme.palette, theme.scheme)),
         EditorView.updateListener.of((update) => {
-          if (update.docChanged && !suppressDirty && store.activeTabPath) {
+          if (!update.docChanged) return
+          if (!suppressDirty && store.activeTabPath) {
             dirtyPaths = { ...dirtyPaths, [store.activeTabPath]: true }
           }
+          if (lspCtx && !suppressDirty) scheduleLspChange()
         })
       ]
     })
@@ -89,11 +107,57 @@
     }
     setDocument(content, path)
     store.activeTabPath = path
+    void applyLsp(path, content)
     // If we were asked to reveal a line in this file, do it now that it's loaded.
     if (store.revealTarget?.path === path) {
       revealLine(store.revealTarget.line)
       store.revealTarget = null
     }
+  }
+
+  // Wire (or clear) the LSP for the open file: reconfigure the compartment and
+  // open the document on the server. No-op when the language has no server.
+  async function applyLsp(path: string, content: string): Promise<void> {
+    if (!view || !store.selectedWorktreeId) return
+    const language = lspLanguageFor(path)
+    if (!language) {
+      lspCtx = null
+      view.dispatch({ effects: lspComp.reconfigure([]) })
+      return
+    }
+    const ctx: LspContext = {
+      worktreeId: store.selectedWorktreeId,
+      path,
+      uri: fileUri(path),
+      language
+    }
+    const started = await window.workbench.lsp
+      .ensure(ctx.worktreeId, ctx.language, ctx.uri, content)
+      .catch(() => false)
+    if (!started || store.activeTabPath !== path || !view) {
+      lspCtx = null
+      view?.dispatch({ effects: lspComp.reconfigure([]) })
+      return
+    }
+    lspCtx = ctx
+    docVersion = 1
+    view.dispatch({ effects: lspComp.reconfigure(lspExtensions(ctx)) })
+  }
+
+  // Debounced full-document sync to the language server.
+  function scheduleLspChange(): void {
+    if (lspChangeTimer) clearTimeout(lspChangeTimer)
+    lspChangeTimer = setTimeout(() => {
+      if (!view || !lspCtx) return
+      docVersion += 1
+      void window.workbench.lsp.didChange(
+        lspCtx.worktreeId,
+        lspCtx.language,
+        lspCtx.uri,
+        docVersion,
+        view.state.doc.toString()
+      )
+    }, 300)
   }
 
   // Move the cursor to a 1-based line and scroll it into view.
@@ -194,12 +258,21 @@
 
   const stopHighlighterWatch = onHighlightersChanged(reapplyLanguage)
 
+  // Apply diagnostics pushed by the language server for the open file.
+  const stopLspDiagnostics = window.workbench.on('event:lsp-diagnostics', (payload) => {
+    const event = payload as LspDiagnosticsEvent
+    if (!view || !lspCtx || event.uri !== lspCtx.uri) return
+    view.dispatch(setDiagnostics(view.state, toCmDiagnostics(view.state.doc, event.diagnostics)))
+  })
+
   const activeTabs = $derived(
     store.tabs.filter((tab) => tab.worktreeId === store.selectedWorktreeId)
   )
 
   onDestroy(() => {
     stopHighlighterWatch()
+    stopLspDiagnostics()
+    if (lspChangeTimer) clearTimeout(lspChangeTimer)
     view?.destroy()
   })
 </script>

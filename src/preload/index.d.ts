@@ -15,7 +15,9 @@ import type {
   RepoInfo,
   CatalogEntry,
   InstalledExtension,
-  GrammarPayload
+  GrammarPayload,
+  LspPosition,
+  LspCompletion
 } from '../shared/types'
 
 interface OpenRepoResult {
@@ -108,6 +110,28 @@ export interface WorkbenchApi {
     uninstall: (id: string) => Promise<void>
     setEnabled: (id: string, enabled: boolean) => Promise<void>
     grammar: (id: string) => Promise<GrammarPayload | null>
+  }
+  lsp: {
+    ensure: (worktreeId: string, language: string, uri: string, text: string) => Promise<boolean>
+    didChange: (
+      worktreeId: string,
+      language: string,
+      uri: string,
+      version: number,
+      text: string
+    ) => Promise<void>
+    completion: (
+      worktreeId: string,
+      language: string,
+      uri: string,
+      position: LspPosition
+    ) => Promise<LspCompletion[]>
+    hover: (
+      worktreeId: string,
+      language: string,
+      uri: string,
+      position: LspPosition
+    ) => Promise<string | null>
   }
   state: {
     getRepo: () => Promise<RepoStateShape>

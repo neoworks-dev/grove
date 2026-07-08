@@ -13,11 +13,25 @@ export interface HighlighterProvider {
 }
 
 const providers = new Map<string, HighlighterProvider>()
+const listeners = new Set<() => void>()
+
+// Grammars load asynchronously, so listeners (the editor) can re-apply the
+// language once a provider appears.
+export function onHighlightersChanged(callback: () => void): () => void {
+  listeners.add(callback)
+  return () => listeners.delete(callback)
+}
+
+function notify(): void {
+  for (const callback of listeners) callback()
+}
 
 export function registerHighlighter(provider: HighlighterProvider): () => void {
   providers.set(provider.id, provider)
+  notify()
   return () => {
     providers.delete(provider.id)
+    notify()
   }
 }
 

@@ -2,6 +2,7 @@
   import { onDestroy } from 'svelte'
   import { store } from '../lib/store.svelte'
   import { languageExtension, editorTheme, baseExtensions } from '../lib/editor'
+  import { onHighlightersChanged } from '../lib/highlighters'
   import { EditorView } from '@codemirror/view'
   import { EditorState, Compartment } from '@codemirror/state'
   import { vim, Vim, getCM } from '@replit/codemirror-vim'
@@ -175,17 +176,32 @@
     void reloadIfExternal()
   })
 
+  // Re-apply the language grammar for the open file (tree-sitter colors are
+  // baked from the palette, so also rebuild on theme change; and when a grammar
+  // finishes loading asynchronously).
+  function reapplyLanguage(): void {
+    if (view && loadedPath) view.dispatch({ effects: languageComp.reconfigure(languageExtension(loadedPath)) })
+  }
+
   // Follow the active color theme (per-instance CM theme, reconfigured live).
   $effect(() => {
     const theme = store.activeTheme
-    if (view) view.dispatch({ effects: themeComp.reconfigure(editorTheme(theme.palette, theme.scheme)) })
+    if (view) {
+      view.dispatch({ effects: themeComp.reconfigure(editorTheme(theme.palette, theme.scheme)) })
+      reapplyLanguage()
+    }
   })
+
+  const stopHighlighterWatch = onHighlightersChanged(reapplyLanguage)
 
   const activeTabs = $derived(
     store.tabs.filter((tab) => tab.worktreeId === store.selectedWorktreeId)
   )
 
-  onDestroy(() => view?.destroy())
+  onDestroy(() => {
+    stopHighlighterWatch()
+    view?.destroy()
+  })
 </script>
 
 <div class="flex h-full min-h-0 flex-col">

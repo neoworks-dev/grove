@@ -526,6 +526,76 @@
     }
   }
 
+  // Arrow-key-navigable choices for the permission prompt. "Show in diff editor"
+  // only appears when the request carries a file path.
+  interface PermissionChoice {
+    label: string
+    class: string
+    run: () => void
+  }
+  const permissionChoices = $derived.by<PermissionChoice[]>(() => {
+    if (!pendingPermission) return []
+    const choices: PermissionChoice[] = [
+      { label: 'Yes', class: 'bg-green text-action-fg', run: () => approve(false) },
+      {
+        label: "Yes, don't ask again for this",
+        class: 'bg-violet text-action-fg',
+        run: () => approve(true)
+      }
+    ]
+    if (pendingPermission.path) {
+      choices.push({
+        label: 'Show in diff editor',
+        class: 'border border-line hover:bg-hover',
+        run: showChange
+      })
+    }
+    choices.push({ label: 'No', class: 'border border-line text-red hover:bg-hover', run: () => deny('') })
+    choices.push({
+      label: 'No, with reason…',
+      class: 'border border-line text-dim hover:bg-hover',
+      run: () => (denyReasonMode = true)
+    })
+    return choices
+  })
+
+  let permissionIndex = $state(0)
+  let permissionEl = $state<HTMLDivElement>()
+
+  // Reset the highlight for each new request.
+  $effect(() => {
+    pendingPermission?.id
+    permissionIndex = 0
+  })
+
+  // Focus the prompt so arrow keys and Enter reach it (nothing else is focused
+  // while the prompt replaces the input).
+  $effect(() => {
+    if (pendingPermission && !denyReasonMode) {
+      queueMicrotask(() => permissionEl?.focus())
+    }
+  })
+
+  function onPermissionKey(event: KeyboardEvent): void {
+    if (denyReasonMode) return
+    const count = permissionChoices.length
+    if (count === 0) return
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      permissionIndex = (permissionIndex + 1) % count
+      return
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      permissionIndex = (permissionIndex - 1 + count) % count
+      return
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      permissionChoices[permissionIndex].run()
+    }
+  }
+
   // ── Agent question dialog ──────────────────────────────────────
   const pendingDialog = $derived(
     store.pendingDialogs.find(
@@ -808,7 +878,12 @@
         </div>
       {:else if pendingPermission}
         <!-- Permission prompt replaces the input until answered -->
-        <div class="rounded-md border border-amber/40 bg-amber-soft p-2">
+        <div
+          bind:this={permissionEl}
+          class="rounded-md border border-amber/40 bg-amber-soft p-2 outline-none"
+          tabindex="-1"
+          onkeydown={onPermissionKey}
+        >
           <div class="mb-2 text-xs text-default">{pendingPermission.title}</div>
           {#if pendingPermission.path}
             <div class="mb-2 truncate font-mono text-2xs text-muted">{pendingPermission.path}</div>
@@ -835,38 +910,17 @@
             </div>
           {:else}
             <div class="flex flex-col gap-1.5">
-              <button
-                class="rounded-md bg-green px-3 py-1.5 text-left text-xs text-action-fg"
-                onclick={() => approve(false)}
-              >
-                Yes
-              </button>
-              <button
-                class="rounded-md bg-violet px-3 py-1.5 text-left text-xs text-action-fg"
-                onclick={() => approve(true)}
-              >
-                Yes, don't ask again for this
-              </button>
-              {#if pendingPermission.path}
+              {#each permissionChoices as choice, index (choice.label)}
                 <button
-                  class="rounded-md border border-line px-3 py-1.5 text-left text-xs hover:bg-hover"
-                  onclick={showChange}
+                  class="rounded-md px-3 py-1.5 text-left text-xs outline-none {choice.class} {index ===
+                  permissionIndex
+                    ? 'ring-2 ring-default'
+                    : ''}"
+                  onclick={choice.run}
                 >
-                  Show in diff editor
+                  {choice.label}
                 </button>
-              {/if}
-              <button
-                class="rounded-md border border-line px-3 py-1.5 text-left text-xs text-red hover:bg-hover"
-                onclick={() => deny('')}
-              >
-                No
-              </button>
-              <button
-                class="rounded-md border border-line px-3 py-1.5 text-left text-xs text-dim hover:bg-hover"
-                onclick={() => (denyReasonMode = true)}
-              >
-                No, with reason…
-              </button>
+              {/each}
             </div>
           {/if}
         </div>

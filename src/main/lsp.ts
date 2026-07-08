@@ -5,7 +5,8 @@
 // a missing binary fails softly (no crash).
 
 import { spawn, type ChildProcess } from 'child_process'
-import { pathToFileURL } from 'url'
+import { promises as fs } from 'fs'
+import { pathToFileURL, fileURLToPath } from 'url'
 import {
   createMessageConnection,
   StreamMessageReader,
@@ -17,6 +18,7 @@ import {
   InitializedNotification,
   DidOpenTextDocumentNotification,
   DidChangeTextDocumentNotification,
+  DidChangeConfigurationNotification,
   PublishDiagnosticsNotification,
   CompletionRequest,
   HoverRequest,
@@ -31,7 +33,14 @@ import {
   CodeActionResolveRequest,
   ExecuteCommandRequest,
   InlayHintRequest,
+  ConfigurationRequest,
+  WorkspaceFoldersRequest,
+  RegistrationRequest,
+  UnregistrationRequest,
+  WorkDoneProgressCreateRequest,
+  ApplyWorkspaceEditRequest,
   type InitializeParams,
+  type Position,
   type Diagnostic,
   type Hover,
   type CompletionItem,
@@ -199,15 +208,37 @@ export class LspManager {
     connection.onNotification(PublishDiagnosticsNotification.type, (params) => {
       this.events.onDiagnostics(params.uri, params.diagnostics.map(toLspDiagnostic))
     })
+
+    // Answer the server→client requests that put it into full project mode.
+    // Without these a server may stay single-file, breaking cross-file
+    // resolution, or block waiting on a reply.
+    const rootUri = pathToFileURL(worktreePath).toString()
+    const workspaceFolders = [{ uri: rootUri, name: 'root' }]
+    connection.onRequest(WorkspaceFoldersRequest.type, () => workspaceFolders)
+    connection.onRequest(ConfigurationRequest.type, (params) => params.items.map(() => ({})))
+    connection.onRequest(RegistrationRequest.type, () => undefined)
+    connection.onRequest(UnregistrationRequest.type, () => undefined)
+    connection.onRequest(WorkDoneProgressCreateRequest.type, () => undefined)
+    connection.onRequest(ApplyWorkspaceEditRequest.type, async (params) => {
+      await this.applyWorkspaceEditToDisk(params.edit)
+      return { applied: true }
+    })
     connection.listen()
 
-    const rootUri = pathToFileURL(worktreePath).toString()
     const ready = (async () => {
       const params: InitializeParams = {
         processId: process.pid,
         rootUri,
-        workspaceFolders: [{ uri: rootUri, name: 'root' }],
+        rootPath: worktreePath,
+        workspaceFolders,
         capabilities: {
+          workspace: {
+            workspaceFolders: true,
+            configuration: true,
+            applyEdit: true,
+            didChangeConfiguration: { dynamicRegistration: true },
+            didChangeWatchedFiles: { dynamicRegistration: true }
+          },
           textDocument: {
             synchronization: { dynamicRegistration: false },
             completion: { completionItem: { snippetSupport: false } },
@@ -230,6 +261,10 @@ export class LspManager {
       }
       await connection.sendRequest(InitializeRequest.type, params)
       void connection.sendNotification(InitializedNotification.type, {}).catch(() => {})
+      // Nudge servers that gate project loading on receiving configuration.
+      void connection
+        .sendNotification(DidChangeConfigurationNotification.type, { settings: {} })
+        .catch(() => {})
     })()
 
     const server: Server = { connection, child, ready, open: new Set(), alive: true }
@@ -439,6 +474,46 @@ export class LspManager {
       .sendRequest(CodeActionResolveRequest.type, action)
       .catch(() => null)
     return resolved ?? action
+  }
+
+  // ── Server-driven edits (workspace/applyEdit) ───────────────────
+  // A server may apply edits across the project (organize imports, rename via
+  // executeCommand). Write them to disk; the file watcher reloads open buffers.
+  private applyTextEditsToString(text: string, edits: TextEdit[]): string {
+    const lineStarts = [0]
+    for (let index = 0; index < text.length; index++) {
+      if (text[index] === '\n') lineStarts.push(index + 1)
+    }
+    const offsetOf = (position: Position): number => {
+      const base = lineStarts[Math.min(position.line, lineStarts.length - 1)] ?? 0
+      return base + position.character
+    }
+    const ordered = [...edits].sort((a, b) => offsetOf(b.range.start) - offsetOf(a.range.start))
+    let result = text
+    for (const edit of ordered) {
+      result = result.slice(0, offsetOf(edit.range.start)) + edit.newText + result.slice(offsetOf(edit.range.end))
+    }
+    return result
+  }
+
+  private async applyWorkspaceEditToDisk(edit: WorkspaceEdit): Promise<void> {
+    const files: { uri: string; edits: TextEdit[] }[] = []
+    if (edit.changes) {
+      for (const [uri, edits] of Object.entries(edit.changes)) files.push({ uri, edits })
+    }
+    if (edit.documentChanges) {
+      for (const change of edit.documentChanges) {
+        if ('textDocument' in change && 'edits' in change) {
+          files.push({ uri: change.textDocument.uri, edits: change.edits as TextEdit[] })
+        }
+      }
+    }
+    for (const file of files) {
+      const path = fileURLToPath(file.uri)
+      const content = await fs.readFile(path, 'utf8').catch(() => null)
+      if (content === null) continue
+      await fs.writeFile(path, this.applyTextEditsToString(content, file.edits)).catch(() => {})
+    }
   }
 
   // ── Inlay hints (inline type/parameter annotations) ─────────────

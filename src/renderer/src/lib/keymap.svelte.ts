@@ -65,8 +65,21 @@ class Keymap {
   focusPane(id: PaneId): void {
     const el = this.panes.get(id)
     if (!el) return
-    el.focus({ preventScroll: true })
-    this.activePane = id
+    // Focus the innermost nested pane (e.g. the file tree inside the sidebar
+    // wrapper) so its key handler receives hjkl, not the non-handling wrapper.
+    const target = this.innermostPane(id, el)
+    target.el.focus({ preventScroll: true })
+    this.activePane = target.id
+  }
+
+  private innermostPane(id: PaneId, el: HTMLElement): { id: PaneId; el: HTMLElement } {
+    let best = { id, el }
+    for (const [candidateId, candidateEl] of this.panes) {
+      if (candidateEl !== best.el && best.el.contains(candidateEl)) {
+        best = { id: candidateId, el: candidateEl }
+      }
+    }
+    return best
   }
 
   // Move focus to the nearest pane whose center lies in the given direction.

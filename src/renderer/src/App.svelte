@@ -260,10 +260,14 @@
   <!-- Main body: launcher rail + the split trees. Every visited view stays
        mounted; only the active one is shown (others display:none), so switching
        views flips visibility instead of remounting panes. -->
-  <div class="flex min-h-0 flex-1">
+  <div class="flex min-h-0 min-w-0 flex-1 overflow-hidden">
     <ActivityBar />
     {#each layout.mountedViewIds as viewId (viewId)}
-      <div class="flex min-h-0 flex-1 {viewId === layout.activeViewId ? '' : 'hidden'}">
+      <div
+        class="flex min-h-0 min-w-0 flex-1 overflow-hidden {viewId === layout.activeViewId
+          ? ''
+          : 'hidden'}"
+      >
         <SplitTree node={layout.trees[viewId]} />
       </div>
     {/each}

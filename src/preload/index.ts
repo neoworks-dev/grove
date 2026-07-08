@@ -81,6 +81,15 @@ const workbench = {
       ipcRenderer.invoke('search:ripgrep', worktreeId, query, reqId),
     cancel: () => ipcRenderer.invoke('search:cancel')
   },
+  extensions: {
+    catalog: () => ipcRenderer.invoke('extensions:catalog'),
+    installed: () => ipcRenderer.invoke('extensions:installed'),
+    install: (id: string) => ipcRenderer.invoke('extensions:install', id),
+    uninstall: (id: string) => ipcRenderer.invoke('extensions:uninstall', id),
+    setEnabled: (id: string, enabled: boolean) =>
+      ipcRenderer.invoke('extensions:setEnabled', id, enabled),
+    grammar: (id: string) => ipcRenderer.invoke('extensions:grammar', id)
+  },
   state: {
     getRepo: () => ipcRenderer.invoke('state:getRepo'),
     update: (patch: Record<string, unknown>) => ipcRenderer.invoke('state:update', patch)

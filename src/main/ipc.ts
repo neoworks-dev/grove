@@ -9,6 +9,7 @@ import * as config from './config'
 import * as files from './files'
 import * as search from './search'
 import type { SearchMatch } from './search'
+import * as extensions from './extensions'
 import * as worktrees from './worktrees'
 import { ServiceSupervisor } from './services'
 import { AgentManager, detectAgents, mergeAgents } from './agents'
@@ -384,6 +385,16 @@ export function registerIpc(): void {
     currentSearch?.cancel()
     currentSearch = null
   })
+
+  // ── Extensions (grammars / themes / LSP) ──────────────────────
+  ipcMain.handle('extensions:catalog', () => extensions.listCatalog())
+  ipcMain.handle('extensions:installed', () => extensions.listInstalled())
+  ipcMain.handle('extensions:install', (_e, id: string) => extensions.install(id))
+  ipcMain.handle('extensions:uninstall', (_e, id: string) => extensions.uninstall(id))
+  ipcMain.handle('extensions:setEnabled', (_e, id: string, enabled: boolean) =>
+    extensions.setEnabled(id, enabled)
+  )
+  ipcMain.handle('extensions:grammar', (_e, id: string) => extensions.readGrammar(id))
 
   // ── State ─────────────────────────────────────────────────────
   ipcMain.handle('state:getRepo', () => {

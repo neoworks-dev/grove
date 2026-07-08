@@ -25,6 +25,7 @@
   import { activity } from './lib/activity.svelte'
   import { registerCoreBindings } from './lib/bindings'
   import { initBundledGrammars } from './lib/bundledGrammars'
+  import { loadInstalledExtensions } from './lib/extensions'
   import { initIcons, availablePacks } from './lib/icons'
   import { initThemes, availableThemes } from './lib/themes'
   import type { CenterView } from './lib/store.svelte'
@@ -146,6 +147,7 @@
     registerCoreCommands()
     registerCoreBindings()
     void initBundledGrammars()
+    void loadInstalledExtensions()
     window.addEventListener('keydown', onGlobalKey, true)
 
     void (async () => {

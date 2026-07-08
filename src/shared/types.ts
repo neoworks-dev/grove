@@ -159,6 +159,33 @@ export interface SearchMatch {
   text: string
 }
 
+// ── Editor extensions (grammars / themes / LSP servers) ─────────
+
+export interface CatalogEntry {
+  id: string
+  kind: 'grammar' | 'theme' | 'lsp'
+  name: string
+  description?: string
+  license?: string
+  extensions?: string[] // grammar file extensions
+  wasmUrl?: string
+  highlightsUrl?: string
+  scheme?: 'dark' | 'light' // theme
+  palette?: Record<string, string> // theme partial palette overrides
+  lsp?: { command: string; args?: string[]; languages: string[]; install?: string }
+}
+
+export interface InstalledExtension {
+  id: string
+  kind: string
+  enabled: boolean
+}
+
+export interface GrammarPayload {
+  wasm: Uint8Array
+  highlights: string
+}
+
 // ── IPC event payloads (main → renderer) ────────────────────────
 
 export interface LogLineEvent {

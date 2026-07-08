@@ -238,6 +238,12 @@ export function paletteFor(name: string): ThemePalette {
   return themeFor(name).palette
 }
 
+// The design-system base palette for a scheme — catalog themes provide partial
+// overrides merged over this so they don't have to specify all 30 fields.
+export function basePalette(scheme: 'dark' | 'light'): ThemePalette {
+  return scheme === 'light' ? neoworksLight : neoworksDark
+}
+
 // Write a theme's palette as inline CSS variables on <html> and set data-theme
 // (drives color-scheme and the [data-theme='light'] soft-accent overrides).
 export function applyThemeVars(name: string): void {

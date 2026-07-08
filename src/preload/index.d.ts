@@ -12,7 +12,10 @@ import type {
   AgentDialogDecision,
   PermissionDecision,
   FileNode,
-  RepoInfo
+  RepoInfo,
+  CatalogEntry,
+  InstalledExtension,
+  GrammarPayload
 } from '../shared/types'
 
 interface OpenRepoResult {
@@ -97,6 +100,14 @@ export interface WorkbenchApi {
   search: {
     ripgrep: (worktreeId: string, query: string, reqId: string) => Promise<void>
     cancel: () => Promise<void>
+  }
+  extensions: {
+    catalog: () => Promise<CatalogEntry[]>
+    installed: () => Promise<InstalledExtension[]>
+    install: (id: string) => Promise<InstalledExtension>
+    uninstall: (id: string) => Promise<void>
+    setEnabled: (id: string, enabled: boolean) => Promise<void>
+    grammar: (id: string) => Promise<GrammarPayload | null>
   }
   state: {
     getRepo: () => Promise<RepoStateShape>

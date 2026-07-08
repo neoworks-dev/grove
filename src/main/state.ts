@@ -5,6 +5,9 @@
 import { app } from 'electron'
 import { readFile, writeFile, mkdir } from 'fs/promises'
 import { join, dirname } from 'path'
+import type { InstalledExtension } from '../shared/types'
+
+export type { InstalledExtension }
 
 export interface RepoState {
   portSlots: Record<string, number> // worktreeId -> slot
@@ -23,11 +26,13 @@ export interface RepoState {
 export interface AppState {
   lastRepoPath: string | null
   repos: Record<string, RepoState> // repoPath -> state
+  extensions: InstalledExtension[]
 }
 
 const EMPTY_STATE: AppState = {
   lastRepoPath: null,
-  repos: {}
+  repos: {},
+  extensions: []
 }
 
 function statePath(): string {

@@ -42,6 +42,7 @@ interface Server {
   child: ChildProcess
   ready: Promise<void>
   open: Set<string> // open document uris
+  alive: boolean // false once the process/stream dies — never write again
 }
 
 async function lspEntryFor(language: string): Promise<CatalogEntry | null> {
@@ -98,6 +99,18 @@ export class LspManager {
     return this.servers.get(this.key(worktreeId, entry.id)) || null
   }
 
+  // Run a write only if the server is still alive, swallowing both a synchronous
+  // throw and an async rejection from a destroyed stdio stream. Writing to a dead
+  // server is the source of the ERR_STREAM_DESTROYED unhandled rejection.
+  private safeSend(server: Server, send: () => Promise<unknown>): void {
+    if (!server.alive || server.child.exitCode !== null || server.child.killed) return
+    try {
+      void send().catch(() => {})
+    } catch {
+      // stream already destroyed — nothing to do
+    }
+  }
+
   // Start (if needed) and open the document. Returns false if no server applies.
   async ensure(
     worktreeId: string,
@@ -121,9 +134,11 @@ export class LspManager {
     }
     if (!server.open.has(uri)) {
       server.open.add(uri)
-      void server.connection.sendNotification(DidOpenTextDocumentNotification.type, {
-        textDocument: { uri, languageId: language, version: 1, text }
-      })
+      this.safeSend(server, () =>
+        server!.connection.sendNotification(DidOpenTextDocumentNotification.type, {
+          textDocument: { uri, languageId: language, version: 1, text }
+        })
+      )
     }
     return true
   }
@@ -139,13 +154,23 @@ export class LspManager {
     } catch {
       return null
     }
-    child.on('error', () => this.servers.delete(key))
-    child.on('exit', () => this.servers.delete(key))
-
     const connection = createMessageConnection(
       new StreamMessageReader(child.stdout!),
       new StreamMessageWriter(child.stdin!)
     )
+
+    // Mark dead + drop from the map on any end-of-life signal, so no later write
+    // hits a destroyed stream. `server` is captured below once created.
+    const drop = (): void => {
+      const server = this.servers.get(key)
+      if (server) server.alive = false
+      this.servers.delete(key)
+    }
+    child.on('error', drop)
+    child.on('exit', drop)
+    connection.onClose(drop)
+    connection.onError(drop)
+
     connection.onNotification(PublishDiagnosticsNotification.type, (params) => {
       this.events.onDiagnostics(params.uri, params.diagnostics.map(toLspDiagnostic))
     })
@@ -167,12 +192,12 @@ export class LspManager {
         }
       }
       await connection.sendRequest(InitializeRequest.type, params)
-      void connection.sendNotification(InitializedNotification.type, {})
+      void connection.sendNotification(InitializedNotification.type, {}).catch(() => {})
     })()
 
-    const server: Server = { connection, child, ready, open: new Set() }
+    const server: Server = { connection, child, ready, open: new Set(), alive: true }
     this.servers.set(key, server)
-    ready.catch(() => this.servers.delete(key))
+    ready.catch(() => drop())
     return server
   }
 
@@ -185,10 +210,12 @@ export class LspManager {
   ): Promise<void> {
     const server = await this.serverFor(worktreeId, language)
     if (!server || !server.open.has(uri)) return
-    void server.connection.sendNotification(DidChangeTextDocumentNotification.type, {
-      textDocument: { uri, version },
-      contentChanges: [{ text }] // full-document sync
-    })
+    this.safeSend(server, () =>
+      server.connection.sendNotification(DidChangeTextDocumentNotification.type, {
+        textDocument: { uri, version },
+        contentChanges: [{ text }] // full-document sync
+      })
+    )
   }
 
   async completion(
@@ -198,7 +225,7 @@ export class LspManager {
     position: LspPosition
   ): Promise<LspCompletion[]> {
     const server = await this.serverFor(worktreeId, language)
-    if (!server) return []
+    if (!server || !server.alive) return []
     const result = await server.connection
       .sendRequest(CompletionRequest.type, { textDocument: { uri }, position })
       .catch(() => null)
@@ -218,7 +245,7 @@ export class LspManager {
     position: LspPosition
   ): Promise<string | null> {
     const server = await this.serverFor(worktreeId, language)
-    if (!server) return null
+    if (!server || !server.alive) return null
     const hover = await server.connection
       .sendRequest(HoverRequest.type, { textDocument: { uri }, position })
       .catch(() => null)
@@ -227,6 +254,7 @@ export class LspManager {
 
   stopAll(): void {
     for (const server of this.servers.values()) {
+      server.alive = false
       try {
         server.connection.dispose()
       } catch {

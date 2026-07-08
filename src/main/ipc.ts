@@ -25,6 +25,10 @@ import type {
 import { getRepoState, updateRepoState, setLastRepo, loadState } from './state'
 import { SettingsService } from './settings'
 import { ActionRunner } from './actions'
+import { PermissionBroker, type PermissionDecision as PluginPermissionDecision } from './plugins/broker'
+import { PluginRegistry } from './plugins/loader'
+import { PluginRouter } from './plugins/router'
+import { registerPluginProtocol } from './plugins/protocol'
 import type { SettingScope } from '../shared/settings'
 
 interface Context {
@@ -78,6 +82,17 @@ const actionRunner = new ActionRunner({
     send('event:log', { worktreeId, source: 'service', name: 'keybind', line })
 })
 
+const pluginBroker = new PermissionBroker({
+  onPermissionRequest: (request) => send('event:plugin-permission', request)
+})
+const pluginRegistry = new PluginRegistry(pluginBroker)
+const pluginRouter = new PluginRouter({
+  broker: pluginBroker,
+  registry: pluginRegistry,
+  findWorktree: (worktreeId) => findWorktree(worktreeId),
+  send
+})
+
 // Active ripgrep search (at most one; a new query cancels it).
 let currentSearch: { cancel: () => void } | null = null
 
@@ -105,6 +120,17 @@ function effectiveAgents(): Record<string, AgentConfig> {
   return mergeAgents(detected, configured)
 }
 
+// Serializable plugin list for the renderer host.
+function pluginList(): unknown[] {
+  return pluginRegistry.list().map((record) => ({
+    id: record.id,
+    manifest: record.manifest,
+    source: record.source,
+    status: record.status,
+    errors: record.errors
+  }))
+}
+
 async function refreshWorktrees(): Promise<Worktree[]> {
   const { repoPath, config: cfg } = requireRepo()
   context.worktrees = await worktrees.listWithPorts(repoPath, cfg)
@@ -124,6 +150,8 @@ async function openRepo(repoPath: string): Promise<{
   context.config = await config.loadConfig(root)
   await setLastRepo(root)
   await settings.attachRepo(root)
+  await pluginRegistry.loadAll(root)
+  send('event:plugins-changed', pluginList())
   // Restore named chats (and migrate legacy tokens) so prior chats resume.
   const repoState = await getRepoState(root)
   agents.loadChats(repoState.agentChats || {})
@@ -501,6 +529,46 @@ export function registerIpc(): void {
       .filter((path): path is string => Boolean(path))
     watcher.setWatched(paths)
   })
+
+  // ── Plugins ───────────────────────────────────────────────────
+  registerPluginProtocol(pluginRegistry)
+  void pluginRegistry.loadAll(null)
+  ipcMain.handle('plugins:list', () => pluginList())
+  ipcMain.handle('plugins:trust', async (_e: IpcMainInvokeEvent, pluginId: string) => {
+    const record = pluginRegistry.get(pluginId)
+    if (!record || !context.repoPath) return pluginList()
+    await pluginBroker.trustProjectPlugin(context.repoPath, record.manifest)
+    await pluginRegistry.refresh(pluginId)
+    send('event:plugins-changed', pluginList())
+    return pluginList()
+  })
+  ipcMain.handle(
+    'plugins:setEnabled',
+    async (_e: IpcMainInvokeEvent, pluginId: string, enabled: boolean) => {
+      await pluginBroker.setEnabled(pluginId, enabled)
+      await pluginRegistry.refresh(pluginId)
+      if (!enabled) pluginRouter.cancelAllForPlugin(pluginId)
+      send('event:plugins-changed', pluginList())
+      return pluginList()
+    }
+  )
+  ipcMain.handle(
+    'plugins:invoke',
+    (_e: IpcMainInvokeEvent, pluginId: string, callId: string, method: string, params: unknown) =>
+      pluginRouter.invoke(pluginId, callId, method, params)
+  )
+  ipcMain.handle('plugins:cancel', (_e: IpcMainInvokeEvent, pluginId: string, callId: string) =>
+    pluginRouter.cancel(pluginId, callId)
+  )
+  ipcMain.handle(
+    'plugins:cancelAll',
+    (_e: IpcMainInvokeEvent, pluginId: string) => pluginRouter.cancelAllForPlugin(pluginId)
+  )
+  ipcMain.handle(
+    'plugins:respondPermission',
+    (_e: IpcMainInvokeEvent, id: string, decision: PluginPermissionDecision) =>
+      pluginBroker.respondPermission(id, decision)
+  )
 
   // ── Keybind actions ───────────────────────────────────────────
   ipcMain.handle(

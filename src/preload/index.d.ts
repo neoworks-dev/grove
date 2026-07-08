@@ -48,6 +48,14 @@ interface SettingsSnapshotShape {
   project: Record<string, unknown>
 }
 
+interface PluginRecordShape {
+  id: string
+  manifest: import('../shared/plugins').PluginManifest
+  source: 'builtin' | 'user' | 'project'
+  status: 'ready' | 'disabled' | 'blocked' | 'invalid'
+  errors: string[]
+}
+
 export interface WorkbenchApi {
   repo: {
     pick: () => Promise<OpenRepoResult | null>
@@ -150,6 +158,15 @@ export interface WorkbenchApi {
   }
   actions: {
     runShell: (worktreeId: string, commandLine: string) => Promise<void>
+  }
+  plugins: {
+    list: () => Promise<PluginRecordShape[]>
+    trust: (pluginId: string) => Promise<PluginRecordShape[]>
+    setEnabled: (pluginId: string, enabled: boolean) => Promise<PluginRecordShape[]>
+    invoke: (pluginId: string, callId: string, method: string, params: unknown) => Promise<unknown>
+    cancel: (pluginId: string, callId: string) => Promise<void>
+    cancelAll: (pluginId: string) => Promise<void>
+    respondPermission: (id: string, decision: string) => Promise<void>
   }
   settings: {
     read: () => Promise<SettingsSnapshotShape>

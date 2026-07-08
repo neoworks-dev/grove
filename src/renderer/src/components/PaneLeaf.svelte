@@ -32,7 +32,12 @@
   {:else}
     {#key leaf.paneTypeId}
       {@const Content = type.component}
-      <Content leafId={leaf.id} state={leaf.paneState ?? {}} {updateState} />
+      <Content
+        leafId={leaf.id}
+        paneTypeId={leaf.paneTypeId}
+        state={leaf.paneState ?? {}}
+        {updateState}
+      />
     {/key}
   {/if}
 </div>

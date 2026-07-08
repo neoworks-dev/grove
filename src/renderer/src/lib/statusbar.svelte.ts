@@ -12,6 +12,8 @@ export interface StatusItem {
   align: StatusAlign
   order: number
   component: Component
+  // Passed to the component (declarative plugin items carry their id here).
+  props?: Record<string, unknown>
 }
 
 class StatusBarRegistry {

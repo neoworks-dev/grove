@@ -13,6 +13,10 @@ files:
   # musl-libc variant of the bundled claude binary. Desktop AppImage targets
   # glibc, so drop it to save ~240MB. Breaks only on musl systems (Alpine).
   - '!**/node_modules/@anthropic-ai/claude-agent-sdk-linux-*-musl/**'
+extraResources:
+  # Built-in plugins (identical format to user/project plugins).
+  - from: resources/plugins
+    to: plugins
 asarUnpack:
   - resources/**
   # Ripgrep ships a native binary that must run from disk, not inside the asar.

@@ -57,7 +57,7 @@
     "tree-sitter-wasms": "^0.1.13",
     "vscode-jsonrpc": "^9.0.1",
     "vscode-languageserver-protocol": "^3.18.2",
-    "web-tree-sitter": "^0.26.10"
+    "web-tree-sitter": "0.24.7"
   },
   "devDependencies": {
     "@electron-toolkit/eslint-config-prettier": "^3.0.0",

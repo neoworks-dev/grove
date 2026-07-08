@@ -44,8 +44,9 @@ const workbench = {
     configs: () => ipcRenderer.invoke('agents:configs'),
     start: (worktreeId: string, name: string, options: unknown) =>
       ipcRenderer.invoke('agents:start', worktreeId, name, options),
-    stop: (worktreeId: string, name: string) =>
-      ipcRenderer.invoke('agents:stop', worktreeId, name),
+    stop: (worktreeId: string, name: string) => ipcRenderer.invoke('agents:stop', worktreeId, name),
+    compact: (worktreeId: string, name: string, instructions?: string) =>
+      ipcRenderer.invoke('agents:compact', worktreeId, name, instructions),
     reset: (worktreeId: string, name: string) =>
       ipcRenderer.invoke('agents:reset', worktreeId, name),
     transcript: (worktreeId: string, name: string) =>
@@ -99,13 +100,8 @@ const workbench = {
   lsp: {
     ensure: (worktreeId: string, language: string, uri: string, text: string) =>
       ipcRenderer.invoke('lsp:ensure', worktreeId, language, uri, text),
-    didChange: (
-      worktreeId: string,
-      language: string,
-      uri: string,
-      version: number,
-      text: string
-    ) => ipcRenderer.invoke('lsp:didChange', worktreeId, language, uri, version, text),
+    didChange: (worktreeId: string, language: string, uri: string, version: number, text: string) =>
+      ipcRenderer.invoke('lsp:didChange', worktreeId, language, uri, version, text),
     completion: (worktreeId: string, language: string, uri: string, position: unknown) =>
       ipcRenderer.invoke('lsp:completion', worktreeId, language, uri, position),
     hover: (worktreeId: string, language: string, uri: string, position: unknown) =>

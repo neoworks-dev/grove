@@ -176,7 +176,10 @@ export class AgentManager {
     name: string,
     _agent: AgentConfig,
     ports: number[],
-    options: AgentLaunchOptions
+    options: AgentLaunchOptions,
+    // Internal turns (e.g. /compact) suppress the prompt echo so the command
+    // doesn't show up as a chat message in the transcript.
+    echoPrompt = true
   ): Promise<AgentRuntime> {
     await this.stop(worktree.id, name)
     const adapter = registry.get(name)
@@ -217,7 +220,9 @@ export class AgentManager {
       this.events.onLog(worktree.id, name, line)
     }
     // Echo the user's prompt first so it opens the transcript as a chat message.
-    if (options.prompt && options.prompt.trim()) emit(userPromptLine(options.prompt.trim()))
+    if (echoPrompt && options.prompt && options.prompt.trim()) {
+      emit(userPromptLine(options.prompt.trim()))
+    }
 
     entry.handle = adapter.start({
       worktree,
@@ -225,7 +230,8 @@ export class AgentManager {
       options,
       resume,
       emit,
-      setStatus: (status, exitCode) => this.handleStatus(worktree.id, name, status, exitCode ?? null),
+      setStatus: (status, exitCode) =>
+        this.handleStatus(worktree.id, name, status, exitCode ?? null),
       setSession: (token) => this.rememberSession(worktree.id, name, token),
       requestPermission: (request) => this.requestPermission(worktree.id, name, request),
       requestDialog: (request) => this.requestDialog(worktree.id, name, request)
@@ -242,6 +248,23 @@ export class AgentManager {
     chat.session = token
     chat.updatedAt = Date.now()
     this.events.onSession?.(worktreeId, name, token)
+  }
+
+  // "/compact": summarize the active chat and continue from a compacted
+  // context, like Claude Code's compact command. Runs a `/compact` turn on the
+  // resumed session; the CLI emits a compact_boundary and a new session id that
+  // rememberSession captures for the next real prompt. Optional `instructions`
+  // steer what the summary should focus on.
+  async compact(
+    worktree: Worktree,
+    name: string,
+    agent: AgentConfig,
+    ports: number[],
+    instructions?: string
+  ): Promise<AgentRuntime> {
+    const focus = (instructions || '').trim()
+    const prompt = focus ? `/compact ${focus}` : '/compact'
+    return this.start(worktree, name, agent, ports, { prompt }, false)
   }
 
   // "New chat": start a fresh active chat, leaving prior chats resumable.

@@ -9,6 +9,9 @@ export type OutputItem =
   | { kind: 'text'; text: string; key: string }
   | { kind: 'tool'; tool: string; input: Record<string, unknown>; key: string }
   | { kind: 'tool-result'; text: string; isError: boolean; key: string }
+  // Conversation compaction boundary (Claude's /compact). Everything before it
+  // was summarized; `freedTokens` is how much context it reclaimed.
+  | { kind: 'compact'; trigger: string; freedTokens: number; key: string }
   | { kind: 'raw'; text: string; key: string }
 
 // Internal plumbing tools the agent uses to run itself — not work the user
@@ -85,6 +88,23 @@ function parseUser(
   }
 }
 
+function parseCompactBoundary(
+  event: Record<string, unknown>,
+  items: OutputItem[],
+  index: number
+): void {
+  const metadata = event.compact_metadata as
+    { trigger?: string; pre_tokens?: number; post_tokens?: number } | undefined
+  const pre = typeof metadata?.pre_tokens === 'number' ? metadata.pre_tokens : 0
+  const post = typeof metadata?.post_tokens === 'number' ? metadata.post_tokens : 0
+  items.push({
+    kind: 'compact',
+    trigger: String(metadata?.trigger || 'manual'),
+    freedTokens: Math.max(0, pre - post),
+    key: `compact:${index}`
+  })
+}
+
 export function parseAgentLines(lines: string[]): OutputItem[] {
   const items: OutputItem[] = []
   // tool_use ids of hidden plumbing tools, so their tool_results are skipped
@@ -101,8 +121,11 @@ export function parseAgentLines(lines: string[]): OutputItem[] {
           items.push({ kind: 'user', text: String(event.text ?? ''), key: `prompt:${index}` })
         } else if (event.type === 'assistant') parseAssistant(event, items, hiddenToolIds)
         else if (event.type === 'user') parseUser(event, items, hiddenToolIds)
-        // 'system' and 'result' events are control/summary noise — the result
-        // text merely repeats the last assistant message, so we drop them.
+        else if (event.type === 'system' && event.subtype === 'compact_boundary') {
+          parseCompactBoundary(event, items, index)
+        }
+        // Other 'system' and 'result' events are control/summary noise — the
+        // result text merely repeats the last assistant message, so we drop them.
         return
       } catch {
         // fall through to raw rendering

@@ -262,6 +262,18 @@ export async function resetAgentChat(worktreeId: string, agent: string): Promise
   store.proposedDiff = null
 }
 
+// "/compact": summarize the conversation and continue with a compacted
+// context. The agent runs a compact turn; its output streams into the
+// transcript like any other turn (ending in a compact boundary marker).
+export async function compactChat(
+  worktreeId: string,
+  agent: string,
+  instructions?: string
+): Promise<void> {
+  await window.workbench.agents.compact(worktreeId, agent, instructions)
+  await refreshRuntimes(worktreeId)
+}
+
 // Replace the visible agent transcript with a given set of lines (used when
 // switching to another chat). Non-agent log lines for the worktree are kept.
 function setAgentTranscript(worktreeId: string, name: string, lines: string[]): void {
@@ -297,29 +309,36 @@ export async function resumeChat(worktreeId: string, agent: string, chatId: stri
 }
 
 // Answer a pending permission request and drop it from the queue.
-export async function respondPermission(
-  id: string,
-  decision: PermissionDecision
-): Promise<void> {
+export async function respondPermission(id: string, decision: PermissionDecision): Promise<void> {
   store.pendingPermissions = store.pendingPermissions.filter((request) => request.id !== id)
   store.proposedDiff = null
   await window.workbench.agents.respondPermission(id, decision)
 }
 
 // Answer a pending agent dialog (e.g. a question) and drop it from the queue.
-export async function respondDialog(
-  id: string,
-  decision: AgentDialogDecision
-): Promise<void> {
+export async function respondDialog(id: string, decision: AgentDialogDecision): Promise<void> {
   store.pendingDialogs = store.pendingDialogs.filter((request) => request.id !== id)
   await window.workbench.agents.respondDialog(id, decision)
 }
 
 const LANGUAGE_BY_EXT: Record<string, string> = {
-  ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript',
-  json: 'json', md: 'markdown', css: 'css', scss: 'scss', html: 'html',
-  svelte: 'html', yml: 'yaml', yaml: 'yaml', py: 'python', rs: 'rust',
-  go: 'go', sh: 'shell', toml: 'ini'
+  ts: 'typescript',
+  tsx: 'typescript',
+  js: 'javascript',
+  jsx: 'javascript',
+  json: 'json',
+  md: 'markdown',
+  css: 'css',
+  scss: 'scss',
+  html: 'html',
+  svelte: 'html',
+  yml: 'yaml',
+  yaml: 'yaml',
+  py: 'python',
+  rs: 'rust',
+  go: 'go',
+  sh: 'shell',
+  toml: 'ini'
 }
 
 function languageForPath(path: string): string {
@@ -451,7 +470,12 @@ export async function refreshRuntimes(worktreeId: string): Promise<void> {
 // Subscribe to streamed main-process events. Call once at app start.
 export function subscribeEvents(): void {
   window.workbench.on('event:log', (payload) => {
-    const event = payload as { worktreeId: string; source: 'service' | 'agent'; name: string; line: string }
+    const event = payload as {
+      worktreeId: string
+      source: 'service' | 'agent'
+      name: string
+      line: string
+    }
     store.appendLog(event.worktreeId, { source: event.source, name: event.name, line: event.line })
   })
   window.workbench.on('event:service-status', (payload) => {

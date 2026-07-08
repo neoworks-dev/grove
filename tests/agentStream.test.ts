@@ -49,7 +49,9 @@ describe('parseAgentLines', () => {
         type: 'user',
         message: {
           role: 'user',
-          content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'boom', is_error: true }]
+          content: [
+            { type: 'tool_result', tool_use_id: 'toolu_1', content: 'boom', is_error: true }
+          ]
         }
       })
     ])
@@ -68,7 +70,11 @@ describe('parseAgentLines', () => {
         message: {
           role: 'user',
           content: [
-            { type: 'tool_result', tool_use_id: 't', content: [{ type: 'text', text: 'blocktext' }] }
+            {
+              type: 'tool_result',
+              tool_use_id: 't',
+              content: [{ type: 'text', text: 'blocktext' }]
+            }
           ]
         }
       })
@@ -79,6 +85,30 @@ describe('parseAgentLines', () => {
   it('surfaces the user prompt as a user message', () => {
     const items = parseAgentLines([JSON.stringify({ type: 'user_prompt', text: 'fix the bug' })])
     expect(items[0]).toMatchObject({ kind: 'user', text: 'fix the bug' })
+  })
+
+  it('renders a compact boundary with the freed token count', () => {
+    const items = parseAgentLines([
+      assistant([{ type: 'text', text: 'old turn' }]),
+      JSON.stringify({
+        type: 'system',
+        subtype: 'compact_boundary',
+        compact_metadata: { trigger: 'manual', pre_tokens: 5000, post_tokens: 1200 }
+      })
+    ])
+    expect(items).toHaveLength(2)
+    expect(items[1]).toMatchObject({ kind: 'compact', trigger: 'manual', freedTokens: 3800 })
+  })
+
+  it('defaults freed tokens to zero when post_tokens is absent', () => {
+    const items = parseAgentLines([
+      JSON.stringify({
+        type: 'system',
+        subtype: 'compact_boundary',
+        compact_metadata: { trigger: 'auto', pre_tokens: 5000 }
+      })
+    ])
+    expect(items[0]).toMatchObject({ kind: 'compact', trigger: 'auto', freedTokens: 5000 })
   })
 })
 

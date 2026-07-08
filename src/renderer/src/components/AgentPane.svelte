@@ -122,6 +122,8 @@
     name: string
     description: string
     args: SlashArg[]
+    // Action commands run immediately on selection instead of offering args.
+    run?: () => void
   }
   interface SlashEntry {
     label: string
@@ -177,8 +179,19 @@
         }))
       ]
     })
+    commands.push({
+      name: 'clear',
+      description: 'Clear this chat (wipes conversation memory)',
+      args: [],
+      run: clearChat
+    })
     return commands
   })
+
+  function clearChat(): void {
+    if (!store.selectedWorktreeId) return
+    resetAgentChat(store.selectedWorktreeId, selectedAgent)
+  }
 
   function finishSlash(action: () => void): void {
     if (!slash) return
@@ -200,9 +213,13 @@
         .map((command) => ({
           label: `/${command.name}`,
           description: command.description,
-          // Completing a command keeps the menu open on its arguments.
+          // Action commands run at once; others open their argument list.
           apply: () => {
             if (!slash) return
+            if (command.run) {
+              finishSlash(command.run)
+              return
+            }
             prompt = prompt.slice(0, slash.start) + `/${command.name} `
             slashIndex = 0
             promptEl?.focus()

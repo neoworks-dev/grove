@@ -32,8 +32,11 @@ export function parseRgMatch(line: string): SearchMatch | null {
     return null
   }
   if (event.type !== 'match' || !event.data) return null
-  const file = event.data.path?.text
-  if (!file) return null
+  const rawFile = event.data.path?.text
+  if (!rawFile) return null
+  // The explicit "." search path makes rg prefix hits with "./" — strip it so
+  // paths stay relative-clean and match the rest of the app.
+  const file = rawFile.replace(/^\.\//, '')
   return {
     file,
     line: event.data.line_number || 0,
@@ -60,9 +63,12 @@ export function ripgrepSearch(
       '--glob',
       '!.git',
       '--',
-      query
+      query,
+      // Explicit search path: without it ripgrep reads stdin (which under a
+      // non-TTY spawn is empty), so it would find nothing.
+      '.'
     ],
-    { cwd: root }
+    { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] }
   )
 
   let buffer = ''

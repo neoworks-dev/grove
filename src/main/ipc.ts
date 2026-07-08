@@ -26,6 +26,7 @@ import { ActionRunner } from './actions'
 import { PermissionBroker, type PermissionDecision as PluginPermissionDecision } from './plugins/broker'
 import { PluginRegistry } from './plugins/loader'
 import { PluginRouter } from './plugins/router'
+import { AiBridge } from './plugins/aiBridge'
 import { registerPluginProtocol } from './plugins/protocol'
 import type { SettingScope } from '../shared/settings'
 
@@ -50,6 +51,12 @@ const supervisor = new ServiceSupervisor({
 })
 
 const agents = new AgentManager({
+  // Deferred lookups: aiBridge is constructed further down (it needs the
+  // plugin registry) but only runs when an agent starts.
+  pluginAi: {
+    mcpServers: () => aiBridge.buildMcpServers(),
+    systemAppend: () => aiBridge.systemAppend()
+  },
   onStatus: (runtime) => send('event:agent-status', runtime),
   onLog: (worktreeId, name, line) => send('event:log', { worktreeId, source: 'agent', name, line }),
   onPermission: (request) => send('event:agent-permission', request),
@@ -84,9 +91,15 @@ const pluginBroker = new PermissionBroker({
   onPermissionRequest: (request) => send('event:plugin-permission', request)
 })
 const pluginRegistry = new PluginRegistry(pluginBroker)
+const aiBridge = new AiBridge({
+  broker: pluginBroker,
+  registry: pluginRegistry,
+  send
+})
 const pluginRouter = new PluginRouter({
   broker: pluginBroker,
   registry: pluginRegistry,
+  aiBridge,
   findWorktree: (worktreeId) => findWorktree(worktreeId),
   send
 })
@@ -518,6 +531,11 @@ export function registerIpc(): void {
     'plugins:respondPermission',
     (_e: IpcMainInvokeEvent, id: string, decision: PluginPermissionDecision) =>
       pluginBroker.respondPermission(id, decision)
+  )
+  ipcMain.handle(
+    'plugins:respondToolCall',
+    (_e: IpcMainInvokeEvent, id: string, result: unknown, errorMessage?: string) =>
+      aiBridge.respondToolCall(id, result, errorMessage)
   )
 
   // ── Keybind actions ───────────────────────────────────────────

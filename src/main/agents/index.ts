@@ -52,6 +52,11 @@ export interface AgentEvents {
   // Continuation token changed (empty string = conversation reset). Lets ipc
   // mirror it into persisted repo state so chats survive restarts.
   onSession?: (worktreeId: string, name: string, token: string) => void
+  // Plugin AI contributions passed through to adapters (MCP servers + skills).
+  pluginAi?: {
+    mcpServers: () => Promise<Record<string, unknown>>
+    systemAppend: () => string
+  }
 }
 
 // Cap transcript replay so a very long conversation can't flood the renderer.
@@ -234,7 +239,8 @@ export class AgentManager {
         this.handleStatus(worktree.id, name, status, exitCode ?? null),
       setSession: (token) => this.rememberSession(worktree.id, name, token),
       requestPermission: (request) => this.requestPermission(worktree.id, name, request),
-      requestDialog: (request) => this.requestDialog(worktree.id, name, request)
+      requestDialog: (request) => this.requestDialog(worktree.id, name, request),
+      pluginAi: this.events.pluginAi
     })
 
     this.events.onStatus({ ...runtime })

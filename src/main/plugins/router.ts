@@ -11,10 +11,12 @@ import * as files from '../files'
 import * as search from '../search'
 import { PermissionBroker, PermissionError } from './broker'
 import type { PluginRegistry, PluginRecord } from './loader'
+import type { AiBridge, McpServerDeclaration, SkillDeclaration } from './aiBridge'
 
 interface RouterDeps {
   broker: PermissionBroker
   registry: PluginRegistry
+  aiBridge: AiBridge
   findWorktree: (worktreeId: string) => Worktree
   send: (channel: string, payload: unknown) => void
 }
@@ -61,6 +63,21 @@ export class PluginRouter {
         return this.writeFile(record, args)
       case 'workspace.searchText':
         return this.searchText(record, callId, args)
+      case 'ai.registerMcpServer':
+        return this.deps.aiBridge.registerMcpServer(record, params as McpServerDeclaration)
+      case 'ai.disposeMcpServer':
+        return this.deps.aiBridge.disposeMcpServer(record.id, String(args.name ?? args.id ?? ''))
+      case 'ai.registerSkill':
+        return this.deps.aiBridge.registerSkill(record, params as SkillDeclaration)
+      case 'ai.disposeSkill':
+        return this.deps.aiBridge.disposeSkill(record.id, String(args.name ?? args.id ?? ''))
+      case 'ai.prompt':
+        return this.deps.aiBridge.runPrompt(
+          record,
+          callId,
+          args as { prompt: string; model?: string; systemAppend?: string },
+          this.worktreeFor(args)
+        )
       case 'storage.get':
         return this.storageGet(record, args)
       case 'storage.set':
@@ -73,6 +90,7 @@ export class PluginRouter {
   }
 
   cancel(pluginId: string, callId: string): void {
+    this.deps.aiBridge.cancelPrompt(callId)
     const handle = this.streams.get(callId)
     if (!handle || handle.pluginId !== pluginId) return
     handle.cancel()
@@ -80,6 +98,7 @@ export class PluginRouter {
   }
 
   cancelAllForPlugin(pluginId: string): void {
+    this.deps.aiBridge.clearPlugin(pluginId)
     for (const [callId, handle] of this.streams) {
       if (handle.pluginId !== pluginId) continue
       handle.cancel()

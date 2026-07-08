@@ -4,11 +4,9 @@
   import ActivityBar from './components/ActivityBar.svelte'
   import SplitTree from './components/SplitTree.svelte'
   import MenuBar from './components/MenuBar.svelte'
-  import CommandPalette from './components/CommandPalette.svelte'
+  import Overlay from './components/Overlay.svelte'
   import RipgrepSearch from './components/RipgrepSearch.svelte'
   import FileFinder from './components/FileFinder.svelte'
-  import BufferMenu from './components/BufferMenu.svelte'
-  import ThemePicker from './components/ThemePicker.svelte'
   import WhichKey from './components/WhichKey.svelte'
   import StatusBar from './components/StatusBar.svelte'
   import DialogHost from './components/DialogHost.svelte'
@@ -33,6 +31,7 @@
   import { initIcons, availablePacks } from './lib/icons'
   import { initThemes } from './lib/themes'
   import { themePicker } from './lib/themepicker.svelte'
+  import { overlays } from './lib/overlays.svelte'
 
   // Core pane types, views, and menu structure. Plugins register theirs
   // through the same registries.
@@ -124,6 +123,9 @@
       commands.toggle()
       return
     }
+    // While an overlay is open it owns the keyboard (its own ctrl+j/k etc.);
+    // the global capture-phase handlers must stand down.
+    if (overlays.active) return
     // Delegate to the keymap core (pane nav, leader). Capture phase so Ctrl+hjkl
     // and the leader beat CodeMirror/Vim's own handlers.
     if (keymap.handleKey(event)) {
@@ -258,10 +260,8 @@
   <WhichKey />
 </div>
 
-<CommandPalette />
+<Overlay />
 <RipgrepSearch />
 <FileFinder />
-<BufferMenu />
-<ThemePicker />
 <DialogHost />
 <NotificationHost />

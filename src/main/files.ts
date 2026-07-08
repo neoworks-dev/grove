@@ -1,8 +1,8 @@
 // File tree + read/write for the editor, scoped to a worktree root.
 // Paths are validated to stay inside the worktree (no traversal escapes).
 
-import { readdir, readFile, writeFile, stat } from 'fs/promises'
-import { join, relative, resolve, sep } from 'path'
+import { readdir, readFile, writeFile, stat, mkdir, rename as fsRename, rm } from 'fs/promises'
+import { join, relative, resolve, sep, dirname } from 'path'
 import type { FileNode } from '../shared/types'
 
 const IGNORED = new Set(['.git', 'node_modules', '.workbench', '.worktrees', 'out', 'dist'])
@@ -83,4 +83,49 @@ export async function writeFileContent(
     throw new Error('path outside worktree')
   }
   await writeFile(absPath, content, 'utf8')
+}
+
+// ── Mutations (context-menu / keyboard CRUD) ────────────────────
+// All take worktree-relative paths and validate they stay inside the root.
+
+function resolveInside(worktreeRoot: string, relPath: string): string {
+  const abs = join(worktreeRoot, relPath)
+  if (!isInside(worktreeRoot, abs)) {
+    throw new Error('path outside worktree')
+  }
+  return abs
+}
+
+export async function createFile(worktreeRoot: string, relPath: string): Promise<string> {
+  const abs = resolveInside(worktreeRoot, relPath)
+  await mkdir(dirname(abs), { recursive: true })
+  // 'wx' fails if the file already exists — never clobber.
+  await writeFile(abs, '', { flag: 'wx' })
+  return abs
+}
+
+export async function createDir(worktreeRoot: string, relPath: string): Promise<string> {
+  const abs = resolveInside(worktreeRoot, relPath)
+  await mkdir(abs, { recursive: true })
+  return abs
+}
+
+export async function renamePath(
+  worktreeRoot: string,
+  fromRel: string,
+  toRel: string
+): Promise<string> {
+  const from = resolveInside(worktreeRoot, fromRel)
+  const to = resolveInside(worktreeRoot, toRel)
+  await mkdir(dirname(to), { recursive: true })
+  await fsRename(from, to)
+  return to
+}
+
+export async function removePath(worktreeRoot: string, relPath: string): Promise<void> {
+  const abs = resolveInside(worktreeRoot, relPath)
+  if (resolve(abs) === resolve(worktreeRoot)) {
+    throw new Error('refusing to remove the worktree root')
+  }
+  await rm(abs, { recursive: true, force: true })
 }

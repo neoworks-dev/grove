@@ -5,7 +5,8 @@
     "src/renderer/src/**/*",
     "src/renderer/src/**/*.svelte",
     "src/preload/*.d.ts",
-    "src/shared/**/*"
+    "src/shared/**/*",
+    "sdk/src/**/*"
   ],
   "compilerOptions": {
     "verbatimModuleSyntax": true,
@@ -13,6 +14,18 @@
     "strict": false,
     "allowJs": true,
     "checkJs": true,
-    "lib": ["ESNext", "DOM", "DOM.Iterable"]
+    "lib": [
+      "ESNext",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "paths": {
+      "@grove/plugin-sdk": [
+        "./sdk/src/index.ts"
+      ],
+      "@grove/plugin-sdk/protocol": [
+        "./sdk/src/protocol.ts"
+      ]
+    }
   }
 }

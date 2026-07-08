@@ -40,6 +40,7 @@ import { go } from '@codemirror/legacy-modes/mode/go'
 import { toml } from '@codemirror/legacy-modes/mode/toml'
 
 import type { ThemePalette } from './themes'
+import { resolveHighlighter } from './highlighters'
 
 // ── Language resolution ─────────────────────────────────────────
 // Registry of file-extension → language-extension loader. New languages are a
@@ -72,6 +73,10 @@ const LANGUAGES: Record<string, () => Extension> = {
 }
 
 export function languageExtension(path: string): Extension {
+  // Installed highlighter plugins (tree-sitter grammars) take priority; Lezer is
+  // the built-in fallback.
+  const override = resolveHighlighter(path)
+  if (override) return override
   const ext = path.split('.').pop()?.toLowerCase() || ''
   const loader = LANGUAGES[ext]
   return loader ? loader() : []
@@ -138,6 +143,14 @@ export function editorTheme(palette: ThemePalette, scheme: 'dark' | 'light'): Ex
     { tag: [tags.definition(tags.variableName), tags.variableName], color: palette.text },
     { tag: [tags.heading], color: palette.text, fontWeight: 'bold' },
     { tag: [tags.link, tags.url], color: palette.ctxBlue, textDecoration: 'underline' },
+    // Markdown inline styles.
+    { tag: tags.strong, color: palette.text, fontWeight: 'bold' },
+    { tag: tags.emphasis, fontStyle: 'italic' },
+    { tag: tags.strikethrough, textDecoration: 'line-through' },
+    { tag: tags.monospace, color: palette.ctxGreen },
+    { tag: tags.quote, color: palette.textMuted, fontStyle: 'italic' },
+    { tag: [tags.processingInstruction, tags.list], color: palette.ctxViolet },
+    { tag: tags.contentSeparator, color: palette.textDim },
     { tag: [tags.invalid], color: palette.ctxRed }
   ])
 

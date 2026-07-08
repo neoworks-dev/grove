@@ -14,6 +14,12 @@
   let containerPx = 1
   let rootEl: HTMLElement
 
+  // Pointer moves fire far faster than the display refreshes; accumulate the
+  // drag delta and apply it once per animation frame so the tree rebuilds at
+  // most once per painted frame instead of on every move event.
+  let pendingDelta = 0
+  let frame: number | null = null
+
   // Smallest fraction either neighbor may shrink to, from the pane types'
   // pixel minimums inside each subtree (default 120px).
   function minFraction(): number {
@@ -49,13 +55,26 @@
   function onPointerMove(event: PointerEvent): void {
     if (!dragging) return
     const pos = horizontal ? event.clientX : event.clientY
-    const deltaPx = pos - lastPos
+    pendingDelta += pos - lastPos
     lastPos = pos
-    layout.resize(split.id, gutterIndex, deltaPx / containerPx, minFraction())
+    if (frame === null) frame = requestAnimationFrame(flushResize)
+  }
+
+  function flushResize(): void {
+    frame = null
+    if (pendingDelta === 0) return
+    const delta = pendingDelta
+    pendingDelta = 0
+    layout.resize(split.id, gutterIndex, delta / containerPx, minFraction())
   }
 
   function onPointerUp(): void {
     dragging = false
+    if (frame !== null) {
+      cancelAnimationFrame(frame)
+      frame = null
+    }
+    flushResize()
     window.removeEventListener('pointermove', onPointerMove)
     window.removeEventListener('pointerup', onPointerUp)
   }

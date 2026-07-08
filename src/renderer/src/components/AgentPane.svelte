@@ -554,6 +554,32 @@
     return items.filter((item) => item.key === focusedSubagentKey || item.key === resultKey)
   })
 
+  // ── Transcript auto-scroll ─────────────────────────────────────
+  // Follow new output as it streams in, but yield to the user the moment they
+  // scroll up to read back — re-engage once they return to the bottom.
+  let transcriptViewport = $state<HTMLDivElement>()
+  let stuckToBottom = $state(true)
+  const AUTO_SCROLL_THRESHOLD = 40 // px from the bottom that still counts as "pinned"
+
+  function onTranscriptScroll(): void {
+    if (!transcriptViewport) return
+    const distanceFromBottom =
+      transcriptViewport.scrollHeight -
+      transcriptViewport.scrollTop -
+      transcriptViewport.clientHeight
+    stuckToBottom = distanceFromBottom < AUTO_SCROLL_THRESHOLD
+  }
+
+  $effect(() => {
+    // Re-run whenever the transcript changes (new items or streamed text).
+    void visibleItems
+    if (!stuckToBottom || !transcriptViewport) return
+    const viewport = transcriptViewport
+    requestAnimationFrame(() => {
+      viewport.scrollTop = viewport.scrollHeight
+    })
+  })
+
   function focusSubagent(key: string): void {
     focusedSubagentKey = key
     agentNavActive = false
@@ -597,6 +623,8 @@
     if (!store.selectedWorktreeId || !selectedAgent) return
     try {
       await window.workbench.agents.start(store.selectedWorktreeId, selectedAgent, launchOptions())
+      // Sending a new prompt re-pins the view to the newest output.
+      stuckToBottom = true
       pushHistory(prompt)
       prompt = ''
       await refreshRuntimes(store.selectedWorktreeId)
@@ -868,7 +896,7 @@
     <p class="px-3 py-3 text-xs text-dim">Select a worktree.</p>
   {:else}
     <!-- Chat transcript -->
-    <FloatingScrollbar class="min-h-0 flex-1">
+    <FloatingScrollbar class="min-h-0 flex-1" bind:viewport={transcriptViewport} onscroll={onTranscriptScroll}>
       <div class="px-3 py-3 text-xs leading-relaxed">
       {#if focusedSubagentKey}
         <button

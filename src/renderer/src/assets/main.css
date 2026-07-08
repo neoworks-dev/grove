@@ -1,0 +1,709 @@
+/*
+ * ═══════════════════════════════════════════════════════════════
+ * NEOWORKS DESIGN SYSTEM — Tailwind v4 Spec
+ * ═══════════════════════════════════════════════════════════════
+ *
+ * Tailwind v4 is CSS-first. All tokens live in @theme.
+ * No tailwind.config.js needed.
+ *
+ * Usage:
+ *   @import "tailwindcss";
+ *   @import "./neoworks.css";
+ *
+ * Grid rule: base unit --spacing-g = 28px.
+ * Every spacing, size, and radius value is a multiple of 7px (g/4).
+ * ═══════════════════════════════════════════════════════════════
+ */
+
+@import 'tailwindcss';
+@plugin "@tailwindcss/typography";
+@plugin "daisyui" {
+  themes: neoworks --default;
+}
+
+/* ── NeoWorks DaisyUI Theme ────────────────────────────────────── */
+@plugin "daisyui/theme" {
+  name: 'neoworks';
+  default: true;
+  color-scheme: dark;
+
+  --color-base-100: #000000; /* canvas                  */
+  --color-base-200: #0b0b0d; /* elevated (sidebar, nav) */
+  --color-base-300: #141416; /* surface (cards)         */
+  --color-base-content: #fafafa;
+
+  --color-primary: #fafafa; /* white CTA               */
+  --color-primary-content: #0b0b0d;
+
+  --color-secondary: #1c1c1f;
+  --color-secondary-content: #a1a1aa;
+
+  --color-accent: #a78bfa; /* ctx-violet              */
+  --color-accent-content: #000000;
+
+  --color-neutral: #1c1c1f;
+  --color-neutral-content: #71717a;
+
+  --color-info: #60a5fa; /* ctx-blue                */
+  --color-info-content: #000000;
+  --color-success: #4ade80; /* ctx-green               */
+  --color-success-content: #000000;
+  --color-warning: #fbbf24; /* ctx-amber               */
+  --color-warning-content: #000000;
+  --color-error: #f87171; /* ctx-red                 */
+  --color-error-content: #000000;
+
+  --radius-selector: 0.375rem;
+  --radius-field: 0.375rem;
+  --radius-box: 0.5rem;
+  --size-selector: 0.875rem;
+  --size-field: 0.875rem;
+  --border: 1px;
+  --depth: 1;
+  --noise: 0;
+}
+
+@theme {
+  /* ─────────────────────────────────────────────────────────
+   * FONTS — Geist everywhere; Geist Mono for code & numerics
+   * ───────────────────────────────────────────────────────── */
+
+  --font-family-sans: var(--font-sans);
+  --font-family-mono: var(--font-mono);
+
+  /* ─────────────────────────────────────────────────────────
+   * MOTION — maps design tokens onto Tailwind duration scale
+   * ───────────────────────────────────────────────────────── */
+
+  --duration-fast: var(--dur-fast);
+  --duration-base: var(--dur-base);
+  --duration-slow: var(--dur-slow);
+
+  /* ─────────────────────────────────────────────────────────
+   * LETTER SPACING — adds caps to Tailwind tracking scale
+   * ───────────────────────────────────────────────────────── */
+
+  --tracking-caps: var(--tracking-caps);
+
+  /* ─────────────────────────────────────────────────────────
+   * SPACING — 4px base, maps onto Tailwind scale
+   * ───────────────────────────────────────────────────────── */
+
+  --spacing-1: var(--space-1); /*  4px */
+  --spacing-2: var(--space-2); /*  8px */
+  --spacing-3: var(--space-3); /* 12px */
+  --spacing-4: var(--space-4); /* 16px */
+  --spacing-5: var(--space-5); /* 20px */
+  --spacing-6: var(--space-6); /* 24px */
+  --spacing-7: var(--space-7); /* 28px */
+  --spacing-8: var(--space-8); /* 32px */
+  --spacing-10: var(--space-10); /* 40px */
+  --spacing-12: var(--space-12); /* 48px */
+  --spacing-16: var(--space-16); /* 64px */
+  --spacing-20: var(--space-20); /* 80px */
+  --spacing-24: var(--space-24); /* 96px */
+  --spacing-32: var(--space-32); /* 128px */
+
+  /* ─────────────────────────────────────────────────────────
+   * BORDER RADIUS
+   * ───────────────────────────────────────────────────────── */
+
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+  --radius-2xl: var(--radius-2xl);
+  --radius-full: var(--radius-full);
+
+  /* ─────────────────────────────────────────────────────────
+   * TYPE SCALE
+   * ───────────────────────────────────────────────────────── */
+
+  --text-2xs: var(--text-2xs);
+  --text-xs: var(--text-xs);
+  --text-sm: var(--text-sm);
+  --text-base: var(--text-base);
+  --text-md: var(--text-md);
+  --text-lg: var(--text-lg);
+  --text-xl: var(--text-xl);
+  --text-2xl: var(--text-2xl);
+  --text-3xl: var(--text-3xl);
+  --text-4xl: var(--text-4xl);
+  --text-display: var(--text-display);
+
+  /* ─────────────────────────────────────────────────────────
+   * SHADOWS
+   * ───────────────────────────────────────────────────────── */
+
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --shadow-overlay: var(--shadow-overlay);
+
+  /* ─────────────────────────────────────────────────────────
+   * LAYOUT
+   * ───────────────────────────────────────────────────────── */
+
+  --width-sidebar: 224px;
+  --width-content: 672px;
+  --width-wide: 1120px;
+
+  --z-base: 0;
+  --z-raised: 10;
+  --z-overlay: 50;
+  --z-modal: 100;
+  --z-toast: 200;
+  --z-nav: 300;
+
+  /* Grid background */
+  --grid-dot-color: var(--grid-dot);
+  --grid-size: var(--grid-unit);
+
+  /* ─────────────────────────────────────────────────────────
+   * BREAKPOINTS
+   * ───────────────────────────────────────────────────────── */
+
+  --breakpoint-xs: 240px;
+  --breakpoint-sm: 480px;
+  --breakpoint-md: 720px;
+  --breakpoint-lg: 960px;
+  --breakpoint-xl: 1200px;
+  --breakpoint-2xl: 1440px;
+  --breakpoint-3xl: 1680px;
+  --breakpoint-4xl: 1920px;
+}
+
+/* ── Tailwind color utilities — theme-aware via CSS vars ── */
+@theme inline {
+  /* Surfaces */
+  --color-canvas: var(--bg);
+  --color-elevated: var(--bg-elevated);
+  --color-surface: var(--surface);
+  --color-raised: var(--surface-raised);
+  --color-hover: var(--surface-hover);
+  --color-input: var(--surface-input);
+
+  /* Borders */
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+  --color-line-faint: var(--border-faint);
+
+  /* Text */
+  --color-default: var(--text);
+  --color-muted: var(--text-muted);
+  --color-dim: var(--text-dim);
+  --color-faint: var(--text-faint);
+  --color-inverse: var(--text-inverse);
+
+  /* Actions */
+  --color-action: var(--primary);
+  --color-action-hover: var(--primary-hover);
+  --color-action-fg: var(--primary-fg);
+
+  /* Context — status only, never decoration */
+  --color-green: var(--ctx-green);
+  --color-red: var(--ctx-red);
+  --color-amber: var(--ctx-amber);
+  --color-blue: var(--ctx-blue);
+  --color-violet: var(--ctx-violet);
+  --color-green-soft: var(--ctx-green-soft);
+  --color-red-soft: var(--ctx-red-soft);
+  --color-amber-soft: var(--ctx-amber-soft);
+  --color-blue-soft: var(--ctx-blue-soft);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+ * DESIGN SYSTEM TOKENS (CSS custom properties)
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* ── Neutral ramp & context colors ─────────────────────────── */
+:root {
+  --neutral-0: #ffffff;
+  --neutral-50: #fafafa;
+  --neutral-100: #f4f4f5;
+  --neutral-200: #e4e4e7;
+  --neutral-300: #d4d4d8;
+  --neutral-400: #a1a1aa;
+  --neutral-500: #71717a;
+  --neutral-600: #52525b;
+  --neutral-700: #3f3f46;
+  --neutral-800: #262626;
+  --neutral-850: #1c1c1f;
+  --neutral-900: #161618;
+  --neutral-950: #0b0b0d;
+  --neutral-1000: #000000;
+
+  --ctx-green: #4ade80;
+  --ctx-red: #f87171;
+  --ctx-amber: #fbbf24;
+  --ctx-blue: #60a5fa;
+  --ctx-pink: #f472b6;
+  --ctx-violet: #a78bfa;
+
+  --ctx-green-soft: rgba(74, 222, 128, 0.14);
+  --ctx-red-soft: rgba(248, 113, 113, 0.14);
+  --ctx-amber-soft: rgba(251, 191, 36, 0.14);
+  --ctx-blue-soft: rgba(96, 165, 250, 0.14);
+  --ctx-pink-soft: rgba(244, 114, 182, 0.14);
+  /* Light theme overrides — more opaque on light backgrounds */
+}
+[data-theme='light'] {
+  --ctx-green-soft: rgba(22, 163, 74, 0.12);
+  --ctx-red-soft: rgba(220, 38, 38, 0.1);
+  --ctx-amber-soft: rgba(217, 119, 6, 0.12);
+  --ctx-blue-soft: rgba(37, 99, 235, 0.1);
+  --ctx-pink-soft: rgba(219, 39, 119, 0.1);
+}
+
+/* ── Typography ─────────────────────────────────────────────── */
+:root {
+  --font-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, 'SF Mono', 'Roboto Mono', monospace;
+
+  --text-2xs: 11px;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-md: 16px;
+  --text-lg: 18px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+  --text-3xl: 30px;
+  --text-4xl: 36px;
+  --text-display: 48px;
+
+  --leading-tight: 1.1;
+  --leading-snug: 1.3;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.65;
+
+  --weight-light: 300;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  --tracking-tighter: -0.03em;
+  --tracking-tight: -0.015em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.04em;
+  --tracking-caps: 0.08em;
+}
+
+/* ── Spacing ────────────────────────────────────────────────── */
+:root {
+  --grid-step: 4px;
+  --grid-unit: 16px;
+  --grid-gutter: 32px;
+
+  --space-0: 0;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 28px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+  --space-24: 96px;
+  --space-32: 128px;
+
+  /* 60-column fluid page grid — always viewport / 60 */
+  --col: calc(100vw / 60);
+  --row: calc(100vh / 60);
+}
+
+@media (max-width: 1280px) {
+  :root {
+    --grid-unit: 28px;
+  }
+}
+@media (max-width: 1024px) {
+  :root {
+    --grid-unit: 24px;
+  }
+}
+@media (max-width: 768px) {
+  :root {
+    --grid-unit: 20px;
+  }
+}
+@media (max-width: 480px) {
+  :root {
+    --grid-unit: 16px;
+  }
+}
+
+/* ── Radius, borders, shadows, motion ──────────────────────── */
+:root {
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+  --radius-full: 9999px;
+
+  --border-width: 1px;
+  --border-width-thick: 1.5px;
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.55);
+  --shadow-overlay: 0 16px 48px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--border);
+
+  --ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--focus-ring);
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 280ms;
+}
+
+/* ── Dark theme (default) ───────────────────────────────────── */
+:root,
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg: #000000;
+  --bg-elevated: #0b0b0d;
+  --surface: #141416;
+  --surface-raised: #1c1c1f;
+  --surface-hover: #1f1f23;
+  --surface-input: #0e0e10;
+
+  --border: #262626;
+  --border-strong: #3f3f46;
+  --border-faint: rgba(255, 255, 255, 0.06);
+
+  --text: #fafafa;
+  --text-muted: #a1a1aa;
+  --text-dim: #71717a;
+  --text-faint: #52525b;
+  --text-inverse: #0b0b0d;
+
+  --primary: #fafafa;
+  --primary-hover: #e4e4e7;
+  --primary-fg: #0b0b0d;
+
+  --secondary: transparent;
+  --secondary-hover: #1f1f23;
+  --secondary-fg: #fafafa;
+
+  --focus-ring: rgba(250, 250, 250, 0.55);
+  --grid-dot: rgba(255, 255, 255, 0.045);
+  --grid-dot-bold: rgba(255, 255, 255, 0.16);
+  --overlay-scrim: rgba(0, 0, 0, 0.66);
+}
+
+/* ── Light theme ────────────────────────────────────────────── */
+[data-theme='light'] {
+  color-scheme: light;
+
+  --bg: #f4f4f5; /* canvas — gray so surfaces pop  */
+  --bg-elevated: #ffffff; /* sidebar, nav                   */
+  --surface: #ffffff; /* cards                          */
+  --surface-raised: #f9f9fa; /* raised within cards            */
+  --surface-hover: #e4e4e7;
+  --surface-input: #ffffff;
+
+  --border: #d4d4d8; /* stronger than before           */
+  --border-strong: #a1a1aa;
+  --border-faint: rgba(0, 0, 0, 0.08);
+
+  --text: #09090b;
+  --text-muted: #3f3f46; /* was #52525b — 8.6:1 on white   */
+  --text-dim: #52525b; /* was #71717a — 7.0:1 on white   */
+  --text-faint: #71717a; /* was #a1a1aa (WCAG fail) — 4.5:1 */
+  --text-inverse: #fafafa;
+
+  --primary: #09090b;
+  --primary-hover: #3f3f46;
+  --primary-fg: #ffffff;
+
+  --secondary: transparent;
+  --secondary-hover: #e4e4e7;
+  --secondary-fg: #09090b;
+
+  --focus-ring: rgba(9, 9, 11, 0.5);
+  --grid-dot: rgba(0, 0, 0, 0.18);
+  --grid-dot-bold: rgba(0, 0, 0, 0.3);
+  --overlay-scrim: rgba(9, 9, 11, 0.45);
+
+  /* Shadows need less opacity on light backgrounds */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.08);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.12);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.15);
+  --shadow-overlay: 0 16px 48px rgba(0, 0, 0, 0.18), 0 0 0 1px var(--border);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+ * BASE STYLES
+ * ═══════════════════════════════════════════════════════════════ */
+
+@layer base {
+  html {
+    font-size: 14px;
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    /* NB: do not set scrollbar-width/scrollbar-color here — in Chromium they switch the
+       browser to the standard scrollbar renderer and disable the ::-webkit-scrollbar styling
+       below (and scrollbar-color inherits, so it would affect every scroll container). */
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: var(--bg);
+    color: var(--text);
+  }
+
+  .pegboard {
+    background-image: radial-gradient(circle, var(--grid-dot) 1.2px, transparent 1.2px);
+    background-size: var(--grid-unit) var(--grid-unit);
+  }
+
+  /* Scrollbar — themed, thin, floating thumb that reveals on hover. App-wide default. */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: var(--radius-full);
+    border: 3px solid transparent;
+    background-clip: padding-box;
+    transition: background-color var(--dur-base) var(--ease-out);
+  }
+  /* `:hover` matches the hovered scroll container (and its ancestors), revealing the thumb. */
+  :hover::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--text-dim);
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  /* Overlay scrollbar (use:overlayScroll) — native bar hidden so it takes no space; a themed
+     thumb floats over the content and reveals on hover/scroll. Host must be position:relative. */
+  .ov-scroll {
+    scrollbar-width: none;
+  }
+  .ov-scroll::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;
+  }
+  .ov-scroll__thumb {
+    position: absolute;
+    top: 0;
+    right: 3px;
+    width: 6px;
+    border-radius: var(--radius-full);
+    background: var(--border-strong);
+    opacity: 0;
+    pointer-events: none;
+    z-index: 60;
+    will-change: transform;
+    transition:
+      opacity 90ms var(--ease-out),
+      background-color 90ms var(--ease-out),
+      width 90ms var(--ease-out);
+  }
+  .ov-scroll__thumb:hover {
+    background: var(--text-dim);
+    width: 8px;
+  }
+
+  /* Focus ring */
+  :focus-visible {
+    outline: none;
+    box-shadow: var(--ring);
+    border-radius: var(--radius-sm);
+  }
+
+  /* Text inputs live inside their own styled containers, where the global ring
+     renders as a stray rectangular border. They manage their own focus state.
+     CodeMirror's contenteditable is the same case. */
+  input:focus,
+  input:focus-visible,
+  textarea:focus,
+  textarea:focus-visible,
+  select:focus,
+  select:focus-visible,
+  [contenteditable]:focus,
+  [contenteditable]:focus-visible {
+    outline: none;
+    box-shadow: none;
+  }
+
+  /* Input / button resets */
+  button,
+  input,
+  textarea,
+  select {
+    font-family: inherit;
+  }
+
+  /* Monospace inline */
+  code,
+  kbd,
+  samp,
+  pre {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+  }
+
+  /* Docs prose colour/size mapping lives unlayered at the end of this file — it must
+     beat daisyUI's `.prose` rules (declared in a layer after utilities), which pin
+     --tw-prose-* to --color-base-content and don't follow our [data-theme] tokens. */
+
+  .doc-article :is(h1, h2, h3, h4) {
+    scroll-margin-top: 7rem;
+    letter-spacing: -0.015em;
+    font-weight: 600;
+  }
+
+  .doc-article a {
+    font-weight: 500;
+    text-underline-offset: 2px;
+  }
+
+  .doc-article pre {
+    border-radius: var(--radius-xl);
+    border: 1px solid var(--border);
+  }
+  /* Inline-code chip styling is unlayered at the end of this file (must beat daisyUI). */
+
+  /* Header block above the rendered markdown. */
+  .doc-article__header {
+    margin-bottom: 2rem;
+    border-bottom: 1px solid var(--border-faint);
+    padding-bottom: 1.5rem;
+  }
+  .doc-article__header h1 {
+    margin-bottom: 0.5rem;
+  }
+  .doc-article__desc {
+    margin: 0;
+    font-size: var(--text-lg);
+    color: var(--text-dim);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+ * UTILITIES LAYER — custom additions to Tailwind's utility set
+ * ═══════════════════════════════════════════════════════════════ */
+
+@layer utilities {
+  /* Geist Mono family — overrides Tailwind's default mono stack. */
+  .font-mono {
+    font-family: var(--font-mono);
+  }
+
+  /* Shadows */
+  .shadow-xs {
+    box-shadow: var(--shadow-xs);
+  }
+  .shadow-sm {
+    box-shadow: var(--shadow-sm);
+  }
+  .shadow-md {
+    box-shadow: var(--shadow-md);
+  }
+  .shadow-lg {
+    box-shadow: var(--shadow-lg);
+  }
+
+  /* Named z-index layers — Tailwind's numeric scale doesn't generate these. */
+  .z-raised {
+    z-index: var(--z-raised);
+  }
+  .z-overlay {
+    z-index: var(--z-overlay);
+  }
+  .z-modal {
+    z-index: var(--z-modal);
+  }
+  .z-toast {
+    z-index: var(--z-toast);
+  }
+  .z-nav {
+    z-index: var(--z-nav);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+ * GRID UTILITIES — cols-N and rows-N map to fluid grid units
+ * ═══════════════════════════════════════════════════════════════ */
+
+@utility cols-* {
+  grid-column: span --value(integer) / span --value(integer);
+  width: calc(--value(integer) * var(--col));
+}
+
+@utility rows-* {
+  grid-row: span --value(integer) / span --value(integer);
+  height: calc(--value(integer) * var(--row));
+}
+
+/* ═══════════════════════════════════════════════════════════════
+ * DOCS PROSE — must beat daisyUI
+ * ═══════════════════════════════════════════════════════════════
+ * daisyUI's `.prose` rules live in a cascade layer declared after `utilities`
+ * and pin --tw-prose-* to --color-base-content (which has only the dark theme, so
+ * it never flips → white text in light mode). These rules are UNLAYERED, so they
+ * outrank every @layer and bind prose to our [data-theme] tokens, which do flip.
+ * Larger base size too; prose spacing/headings are em-based so the article scales. */
+.doc-article.prose {
+  font-size: 1.1875rem;
+  --tw-prose-body: var(--text-muted);
+  --tw-prose-headings: var(--text);
+  --tw-prose-lead: var(--text-muted);
+  --tw-prose-links: var(--text);
+  --tw-prose-bold: var(--text);
+  --tw-prose-code: var(--text);
+  --tw-prose-pre-code: var(--text);
+  --tw-prose-pre-bg: var(--surface);
+  --tw-prose-quotes: var(--text-muted);
+  --tw-prose-quote-borders: var(--border);
+  --tw-prose-hr: var(--border);
+  --tw-prose-bullets: var(--border-strong);
+  --tw-prose-counters: var(--text-dim);
+  --tw-prose-th-borders: var(--border);
+  --tw-prose-td-borders: var(--border-faint);
+  --tw-prose-captions: var(--text-dim);
+  color: var(--text-muted);
+}
+
+/* Inline code chip — also unlayered so daisyUI's dark-only code background can't
+   override it (that's what made the chip black in light mode). --surface contrasts
+   against the page's --bg in both themes. */
+.doc-article.prose :not(pre) > code {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border-faint);
+  border-radius: var(--radius-sm);
+  padding: 0.125rem 0.375rem;
+  font-size: var(--text-sm);
+  font-weight: 400;
+}
+.doc-article.prose :not(pre) > code::before,
+.doc-article.prose :not(pre) > code::after {
+  content: '';
+}

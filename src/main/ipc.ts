@@ -264,6 +264,11 @@ export function registerIpc(): void {
     return files.listDir(worktree.path, relPath)
   })
 
+  ipcMain.handle('files:listAll', (_e, worktreeId: string) => {
+    const worktree = findWorktree(worktreeId)
+    return files.listAll(worktree.path)
+  })
+
   ipcMain.handle('files:read', (_e, worktreeId: string, absPath: string) => {
     const worktree = findWorktree(worktreeId)
     return files.readFileContent(worktree.path, absPath)

@@ -76,6 +76,7 @@ export interface WorkbenchApi {
   }
   files: {
     listDir: (worktreeId: string, relPath: string) => Promise<FileNode[]>
+    listAll: (worktreeId: string) => Promise<string[]>
     read: (worktreeId: string, absPath: string) => Promise<string>
     write: (worktreeId: string, absPath: string, content: string) => Promise<void>
   }

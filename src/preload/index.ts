@@ -56,6 +56,7 @@ const workbench = {
   files: {
     listDir: (worktreeId: string, relPath: string) =>
       ipcRenderer.invoke('files:listDir', worktreeId, relPath),
+    listAll: (worktreeId: string) => ipcRenderer.invoke('files:listAll', worktreeId),
     read: (worktreeId: string, absPath: string) =>
       ipcRenderer.invoke('files:read', worktreeId, absPath),
     write: (worktreeId: string, absPath: string, content: string) =>

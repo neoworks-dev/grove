@@ -217,6 +217,54 @@
     slashIndex = 0
   })
 
+  // ── "@" file-mention menu ──────────────────────────────────────
+  // Flat file list for the selected worktree, loaded once per worktree.
+  let worktreeFiles = $state<string[]>([])
+  $effect(() => {
+    const id = store.selectedWorktreeId
+    if (!id) {
+      worktreeFiles = []
+      return
+    }
+    void window.workbench.files
+      .listAll(id)
+      .then((files) => (worktreeFiles = files))
+      .catch(() => (worktreeFiles = []))
+  })
+
+  let mentionDismissed = $state(false)
+  let mentionIndex = $state(0)
+
+  // The "@token" being typed at the end of the prompt, if any.
+  const mention = $derived.by(() => {
+    const match = prompt.match(/(?:^|\s)@([^\s]*)$/)
+    if (!match) return null
+    const token = `@${match[1]}`
+    return { start: prompt.length - token.length, query: match[1].toLowerCase() }
+  })
+
+  const mentionItems = $derived.by<string[]>(() => {
+    if (!mention || mentionDismissed) return []
+    return worktreeFiles.filter((file) => file.toLowerCase().includes(mention.query)).slice(0, 50)
+  })
+  const mentionOpen = $derived(mentionItems.length > 0)
+
+  $effect(() => {
+    mention?.query
+    mentionDismissed = false
+    mentionIndex = 0
+  })
+
+  function applyMention(path: string): void {
+    if (!mention) return
+    prompt = `${prompt.slice(0, mention.start)}@${path} `
+    promptEl?.focus()
+  }
+
+  function baseName(path: string): string {
+    return path.split('/').pop() || path
+  }
+
   function onPromptKey(event: KeyboardEvent): void {
     // Shift+Tab cycles the mode regardless of menu state.
     if (event.key === 'Tab' && event.shiftKey) {
@@ -243,6 +291,28 @@
       if (event.key === 'Escape') {
         event.preventDefault()
         slashDismissed = true
+        return
+      }
+    }
+    if (mentionOpen) {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        mentionIndex = (mentionIndex + 1) % mentionItems.length
+        return
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        mentionIndex = (mentionIndex - 1 + mentionItems.length) % mentionItems.length
+        return
+      }
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        event.preventDefault()
+        applyMention(mentionItems[mentionIndex])
+        return
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        mentionDismissed = true
         return
       }
     }
@@ -501,10 +571,37 @@
         </div>
       {/if}
 
+      {#if mentionOpen}
+        <!-- File-mention menu floats above the input -->
+        <div
+          class="absolute bottom-full left-3 right-3 mb-1 max-h-56 overflow-auto rounded-md border border-line bg-elevated shadow-lg"
+        >
+          {#each mentionItems as file, index (file)}
+            <button
+              class="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs {index ===
+              mentionIndex
+                ? 'bg-action text-action-fg'
+                : 'text-muted hover:bg-hover'}"
+              onmousedown={(event) => {
+                event.preventDefault()
+                applyMention(file)
+              }}
+            >
+              <span class="font-mono font-medium">{baseName(file)}</span>
+              <span
+                class="ml-auto truncate font-mono text-2xs {index === mentionIndex
+                  ? 'text-action-fg/70'
+                  : 'text-dim'}">{file}</span
+              >
+            </button>
+          {/each}
+        </div>
+      {/if}
+
       <textarea
         bind:this={promptEl}
         class="mb-2 h-20 w-full resize-none rounded-md border border-line bg-input px-2 py-1.5 text-xs"
-        placeholder="Prompt…  ( / for options · Shift+Tab mode · Enter run )"
+        placeholder="Prompt…  ( / options · @ files · Shift+Tab mode · Enter run )"
         bind:value={prompt}
         onkeydown={onPromptKey}
       ></textarea>

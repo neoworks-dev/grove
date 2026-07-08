@@ -84,6 +84,11 @@ function start(context: AdapterContext): RunHandle {
         options: {
           cwd: context.worktree.path,
           abortController: abort,
+          // Use Claude Code's default system prompt so its dynamic auto-memory
+          // section loads CLAUDE.md, and load project settings so that memory
+          // (and .claude settings) is actually read from disk.
+          systemPrompt: { type: 'preset', preset: 'claude_code' },
+          settingSources: ['user', 'project', 'local'],
           // Resume the prior conversation when we have its session id.
           resume: context.resume || undefined,
           permissionMode: permissionMode as 'default' | 'plan' | 'acceptEdits' | 'bypassPermissions',

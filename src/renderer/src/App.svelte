@@ -19,6 +19,9 @@
   import BufferMenu from './components/BufferMenu.svelte'
   import ThemePicker from './components/ThemePicker.svelte'
   import WhichKey from './components/WhichKey.svelte'
+  import StatusBar from './components/StatusBar.svelte'
+  import StatusBranch from './components/StatusBranch.svelte'
+  import StatusClock from './components/StatusClock.svelte'
   import Folder from 'phosphor-svelte/lib/Folder'
   import GitBranch from 'phosphor-svelte/lib/GitBranch'
   import PuzzlePiece from 'phosphor-svelte/lib/PuzzlePiece'
@@ -27,6 +30,7 @@
   import { keymap, pane } from './lib/keymap.svelte'
   import { layout } from './lib/layout.svelte'
   import { activity } from './lib/activity.svelte'
+  import { statusBar } from './lib/statusbar.svelte'
   import { registerCoreBindings } from './lib/bindings'
   import { initBundledGrammars } from './lib/bundledGrammars'
   import { loadInstalledExtensions } from './lib/extensions'
@@ -39,6 +43,10 @@
   activity.register({ id: 'files', label: 'Explorer', icon: Folder, view: FilesView, order: 1 })
   activity.register({ id: 'worktrees', label: 'Worktrees', icon: GitBranch, view: WorktreeSidebar, order: 2 })
   activity.register({ id: 'extensions', label: 'Extensions', icon: PuzzlePiece, view: ExtensionsView, order: 3 })
+
+  // Core status bar items (plugins can register more, left or right aligned).
+  statusBar.register({ id: 'git.branch', align: 'left', order: 1, component: StatusBranch })
+  statusBar.register({ id: 'clock', align: 'right', order: 100, component: StatusClock })
 
   // Persist layout (pane sizes, panels, center view, open tabs) whenever any of
   // these change; layout.schedule() debounces the write to per-repo state.
@@ -314,6 +322,8 @@
       {/if}
     </main>
   </div>
+
+  <StatusBar />
 </div>
 
 <CommandPalette />

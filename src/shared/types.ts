@@ -99,6 +99,24 @@ export type PermissionDecision =
   | { behavior: 'allow'; remember: boolean }
   | { behavior: 'deny'; message: string }
 
+// ── Interactive dialogs (agent → user → agent) ──────────────────
+// The claude SDK surfaces questions (and other blocking dialogs) via its
+// `onUserDialog` callback, separate from tool permissions. `dialogKind` selects
+// the renderer; `payload`/`result` shapes are defined by the SDK per kind (the
+// question kind carries a `questions` array). Kept opaque so new kinds work.
+
+export interface AgentDialogRequest {
+  id: string
+  worktreeId: string
+  agent: string
+  dialogKind: string
+  payload: Record<string, unknown>
+}
+
+export type AgentDialogDecision =
+  | { behavior: 'completed'; result: unknown }
+  | { behavior: 'cancelled' }
+
 // ── Runtime state ───────────────────────────────────────────────
 
 export type ServiceStatus = 'stopped' | 'starting' | 'running' | 'unhealthy'

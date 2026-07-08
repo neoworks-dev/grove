@@ -52,6 +52,8 @@ const workbench = {
       ipcRenderer.invoke('agents:transcript', worktreeId, name),
     respondPermission: (id: string, decision: unknown) =>
       ipcRenderer.invoke('agents:respondPermission', id, decision),
+    respondDialog: (id: string, decision: unknown) =>
+      ipcRenderer.invoke('agents:respondDialog', id, decision),
     active: () => ipcRenderer.invoke('agents:active')
   },
   fs: {

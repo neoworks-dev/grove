@@ -7,6 +7,8 @@ import { mkdir, writeFile, readFile } from 'fs/promises'
 import { join } from 'path'
 import type {
   AgentConfig,
+  AgentDialogDecision,
+  AgentDialogRequest,
   AgentLaunchOptions,
   AgentRuntime,
   AgentStatus,
@@ -42,6 +44,8 @@ export interface AgentEvents {
   onStatus: (runtime: AgentRuntime) => void
   onLog: (worktreeId: string, name: string, line: string) => void
   onPermission: (request: PermissionRequestEvent) => void
+  // A blocking dialog (e.g. an agent question) awaiting the user's answer.
+  onDialog?: (request: AgentDialogRequest) => void
   // Continuation token changed (empty string = conversation reset). Lets ipc
   // mirror it into persisted repo state so chats survive restarts.
   onSession?: (worktreeId: string, name: string, token: string) => void
@@ -55,6 +59,7 @@ interface RunningAgent {
   logStream: WriteStream
   runtime: AgentRuntime
   pendingPermissions: Set<string>
+  pendingDialogs: Set<string>
 }
 
 function logsDir(worktreePath: string): string {
@@ -65,6 +70,8 @@ export class AgentManager {
   private running = new Map<string, RunningAgent>()
   private permissionResolvers = new Map<string, (decision: PermissionDecision) => void>()
   private permissionSeq = 0
+  private dialogResolvers = new Map<string, (decision: AgentDialogDecision) => void>()
+  private dialogSeq = 0
   // Continuation tokens per (worktree, agent) — the key to multi-turn memory.
   private sessions = new Map<string, string>()
 
@@ -122,7 +129,8 @@ export class AgentManager {
       handle: { stop: async () => {} },
       logStream,
       runtime,
-      pendingPermissions: new Set()
+      pendingPermissions: new Set(),
+      pendingDialogs: new Set()
     }
     this.running.set(key, entry)
 
@@ -141,7 +149,8 @@ export class AgentManager {
       emit,
       setStatus: (status, exitCode) => this.handleStatus(worktree.id, name, status, exitCode ?? null),
       setSession: (token) => this.rememberSession(worktree.id, name, token),
-      requestPermission: (request) => this.requestPermission(worktree.id, name, request)
+      requestPermission: (request) => this.requestPermission(worktree.id, name, request),
+      requestDialog: (request) => this.requestDialog(worktree.id, name, request)
     })
 
     this.events.onStatus({ ...runtime })
@@ -200,6 +209,28 @@ export class AgentManager {
     resolve(decision)
   }
 
+  private requestDialog(
+    worktreeId: string,
+    name: string,
+    request: Omit<AgentDialogRequest, 'id'>
+  ): Promise<AgentDialogDecision> {
+    const id = `${this.key(worktreeId, name)}::dlg${++this.dialogSeq}`
+    const entry = this.running.get(this.key(worktreeId, name))
+    entry?.pendingDialogs.add(id)
+    this.events.onDialog?.({ id, ...request })
+    return new Promise((resolve) => {
+      this.dialogResolvers.set(id, resolve)
+    })
+  }
+
+  respondDialog(id: string, decision: AgentDialogDecision): void {
+    const resolve = this.dialogResolvers.get(id)
+    if (!resolve) return
+    this.dialogResolvers.delete(id)
+    for (const entry of this.running.values()) entry.pendingDialogs.delete(id)
+    resolve(decision)
+  }
+
   private handleStatus(
     worktreeId: string,
     name: string,
@@ -232,6 +263,14 @@ export class AgentManager {
       }
     }
     entry.pendingPermissions.clear()
+    for (const id of entry.pendingDialogs) {
+      const resolve = this.dialogResolvers.get(id)
+      if (resolve) {
+        this.dialogResolvers.delete(id)
+        resolve({ behavior: 'cancelled' })
+      }
+    }
+    entry.pendingDialogs.clear()
   }
 
   async stop(worktreeId: string, name: string): Promise<void> {

@@ -9,6 +9,7 @@ import type {
   AgentRuntime,
   AgentConfig,
   AgentLaunchOptions,
+  AgentDialogDecision,
   PermissionDecision,
   FileNode,
   RepoInfo
@@ -76,6 +77,7 @@ export interface WorkbenchApi {
     reset: (worktreeId: string, name: string) => Promise<void>
     transcript: (worktreeId: string, name: string) => Promise<string[]>
     respondPermission: (id: string, decision: PermissionDecision) => Promise<void>
+    respondDialog: (id: string, decision: AgentDialogDecision) => Promise<void>
     active: () => Promise<string[]>
   }
   fs: {

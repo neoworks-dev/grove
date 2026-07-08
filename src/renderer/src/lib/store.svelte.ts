@@ -11,7 +11,9 @@ import type {
   RepoInfo,
   BranchList,
   PermissionRequestEvent,
-  PermissionDecision
+  PermissionDecision,
+  AgentDialogRequest,
+  AgentDialogDecision
 } from '../../../shared/types'
 
 export interface LogLine {
@@ -63,6 +65,9 @@ class WorkbenchStore {
 
   // Pending interactive tool-permission requests (agent → user).
   pendingPermissions = $state<PermissionRequestEvent[]>([])
+
+  // Pending blocking dialogs (e.g. agent questions) awaiting an answer.
+  pendingDialogs = $state<AgentDialogRequest[]>([])
 
   // A proposed (not-yet-applied) file change from a pending Write/Edit, shown in
   // the diff editor so the user reviews before approving.
@@ -219,6 +224,15 @@ export async function respondPermission(
   await window.workbench.agents.respondPermission(id, decision)
 }
 
+// Answer a pending agent dialog (e.g. a question) and drop it from the queue.
+export async function respondDialog(
+  id: string,
+  decision: AgentDialogDecision
+): Promise<void> {
+  store.pendingDialogs = store.pendingDialogs.filter((request) => request.id !== id)
+  await window.workbench.agents.respondDialog(id, decision)
+}
+
 const LANGUAGE_BY_EXT: Record<string, string> = {
   ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript',
   json: 'json', md: 'markdown', css: 'css', scss: 'scss', html: 'html',
@@ -368,6 +382,9 @@ export function subscribeEvents(): void {
       store.pendingPermissions = store.pendingPermissions.filter(
         (request) => !(request.worktreeId === runtime.worktreeId && request.agent === runtime.name)
       )
+      store.pendingDialogs = store.pendingDialogs.filter(
+        (request) => !(request.worktreeId === runtime.worktreeId && request.agent === runtime.name)
+      )
       if (store.pendingPermissions.length === 0) store.proposedDiff = null
     }
     void window.workbench.agents.active().then((ids) => {
@@ -380,6 +397,9 @@ export function subscribeEvents(): void {
     store.pendingPermissions = [...store.pendingPermissions, request]
     // Show a proposed-change diff for file-editing tools so review isn't blind.
     void openProposedDiff(request)
+  })
+  window.workbench.on('event:agent-dialog', (payload) => {
+    store.pendingDialogs = [...store.pendingDialogs, payload as AgentDialogRequest]
   })
 
   window.workbench.on('event:fs-change', (payload) => {

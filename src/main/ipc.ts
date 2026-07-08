@@ -304,6 +304,26 @@ export function registerIpc(): void {
     return files.writeFileContent(worktree.path, absPath, content)
   })
 
+  ipcMain.handle('files:create', (_e, worktreeId: string, relPath: string) => {
+    const worktree = findWorktree(worktreeId)
+    return files.createFile(worktree.path, relPath)
+  })
+
+  ipcMain.handle('files:createDir', (_e, worktreeId: string, relPath: string) => {
+    const worktree = findWorktree(worktreeId)
+    return files.createDir(worktree.path, relPath)
+  })
+
+  ipcMain.handle('files:rename', (_e, worktreeId: string, fromRel: string, toRel: string) => {
+    const worktree = findWorktree(worktreeId)
+    return files.renamePath(worktree.path, fromRel, toRel)
+  })
+
+  ipcMain.handle('files:delete', (_e, worktreeId: string, relPath: string) => {
+    const worktree = findWorktree(worktreeId)
+    return files.removePath(worktree.path, relPath)
+  })
+
   // ── State ─────────────────────────────────────────────────────
   ipcMain.handle('state:getRepo', () => {
     const { repoPath } = requireRepo()

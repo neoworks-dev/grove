@@ -1,12 +1,12 @@
 <script lang="ts">
   import { onDestroy } from 'svelte'
   import { store } from '../lib/store.svelte'
-  import FileTree from './FileTree.svelte'
+  import FileExplorer from './FileExplorer.svelte'
   import { languageExtension, editorTheme, baseExtensions } from '../lib/editor'
   import { EditorView } from '@codemirror/view'
   import { EditorState, Compartment } from '@codemirror/state'
   import { vim, Vim, getCM } from '@replit/codemirror-vim'
-  import { keymap, pane } from '../lib/keymap.svelte'
+  import { keymap } from '../lib/keymap.svelte'
   import { layout } from '../lib/layout.svelte'
   import UIPane from './UIPane.svelte'
   import type { FileNode } from '../../../shared/types'
@@ -176,19 +176,13 @@
 <div class="flex h-full min-h-0">
   <!-- File tree -->
   <UIPane side="right" bind:size={layout.paneSizes.tree} min={140} max={420} class="border-r border-line">
-    <div
-      use:pane={'tree'}
-      class="flex h-full flex-col outline-none {keymap.activePane === 'tree' ? 'pane-active' : ''}"
-    >
-      <div class="px-3 py-2 text-2xs font-semibold uppercase tracking-caps text-dim">Files</div>
-      <div class="min-h-0 flex-1 overflow-auto pb-2">
-        {#if store.selectedWorktreeId}
-          {#key store.selectedWorktreeId}
-            <FileTree worktreeId={store.selectedWorktreeId} onOpen={openFile} />
-          {/key}
-        {/if}
-      </div>
-    </div>
+    {#if store.selectedWorktreeId}
+      {#key store.selectedWorktreeId}
+        <FileExplorer worktreeId={store.selectedWorktreeId} onOpen={openFile} />
+      {/key}
+    {:else}
+      <div class="px-3 py-2 text-2xs text-dim">No worktree.</div>
+    {/if}
   </UIPane>
 
   <!-- Editor -->

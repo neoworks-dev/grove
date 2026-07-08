@@ -64,7 +64,15 @@ const workbench = {
     read: (worktreeId: string, absPath: string) =>
       ipcRenderer.invoke('files:read', worktreeId, absPath),
     write: (worktreeId: string, absPath: string, content: string) =>
-      ipcRenderer.invoke('files:write', worktreeId, absPath, content)
+      ipcRenderer.invoke('files:write', worktreeId, absPath, content),
+    create: (worktreeId: string, relPath: string) =>
+      ipcRenderer.invoke('files:create', worktreeId, relPath),
+    createDir: (worktreeId: string, relPath: string) =>
+      ipcRenderer.invoke('files:createDir', worktreeId, relPath),
+    rename: (worktreeId: string, fromRel: string, toRel: string) =>
+      ipcRenderer.invoke('files:rename', worktreeId, fromRel, toRel),
+    delete: (worktreeId: string, relPath: string) =>
+      ipcRenderer.invoke('files:delete', worktreeId, relPath)
   },
   state: {
     getRepo: () => ipcRenderer.invoke('state:getRepo'),

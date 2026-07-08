@@ -86,6 +86,10 @@ export interface WorkbenchApi {
     listAll: (worktreeId: string) => Promise<string[]>
     read: (worktreeId: string, absPath: string) => Promise<string>
     write: (worktreeId: string, absPath: string, content: string) => Promise<void>
+    create: (worktreeId: string, relPath: string) => Promise<string>
+    createDir: (worktreeId: string, relPath: string) => Promise<string>
+    rename: (worktreeId: string, fromRel: string, toRel: string) => Promise<string>
+    delete: (worktreeId: string, relPath: string) => Promise<void>
   }
   state: {
     getRepo: () => Promise<RepoStateShape>

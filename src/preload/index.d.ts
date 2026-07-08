@@ -8,6 +8,8 @@ import type {
   ServiceRuntime,
   AgentRuntime,
   AgentConfig,
+  AgentLaunchOptions,
+  PermissionDecision,
   FileNode,
   RepoInfo
 } from '../shared/types'
@@ -63,10 +65,10 @@ export interface WorkbenchApi {
     start: (
       worktreeId: string,
       name: string,
-      prompt?: string,
-      extraArgs?: string
+      options: AgentLaunchOptions
     ) => Promise<AgentRuntime>
     stop: (worktreeId: string, name: string) => Promise<void>
+    respondPermission: (id: string, decision: PermissionDecision) => Promise<void>
     active: () => Promise<string[]>
   }
   fs: {

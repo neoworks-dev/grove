@@ -42,10 +42,12 @@ const workbench = {
   agents: {
     list: (worktreeId: string) => ipcRenderer.invoke('agents:list', worktreeId),
     configs: () => ipcRenderer.invoke('agents:configs'),
-    start: (worktreeId: string, name: string, prompt?: string, extraArgs?: string) =>
-      ipcRenderer.invoke('agents:start', worktreeId, name, prompt, extraArgs),
+    start: (worktreeId: string, name: string, options: unknown) =>
+      ipcRenderer.invoke('agents:start', worktreeId, name, options),
     stop: (worktreeId: string, name: string) =>
       ipcRenderer.invoke('agents:stop', worktreeId, name),
+    respondPermission: (id: string, decision: unknown) =>
+      ipcRenderer.invoke('agents:respondPermission', id, decision),
     active: () => ipcRenderer.invoke('agents:active')
   },
   fs: {

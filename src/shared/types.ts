@@ -60,19 +60,44 @@ export interface ServiceConfig {
   log?: string
 }
 
-// A selectable agent option (mode / model / effort). `flag` is appended to the
-// command verbatim when chosen; an empty flag means "no extra argument".
+// A selectable agent option (mode / model / effort). `value` is the concrete
+// value passed to the SDK when chosen (e.g. a permission mode or effort level).
 export interface AgentOption {
   label: string
-  flag: string
+  value: string
 }
 
 export interface AgentConfig {
-  command: string
+  command: string // adapter id / display name
+  interactive?: boolean // supports live permission prompts (claude)
   modes?: AgentOption[]
   models?: AgentOption[]
   efforts?: AgentOption[]
 }
+
+// Structured launch options sent from the renderer (replaces CLI flag strings).
+export interface AgentLaunchOptions {
+  prompt?: string
+  mode?: string
+  model?: string
+  effort?: string
+}
+
+// ── Interactive permissions (agent → user → agent) ──────────────
+
+export interface PermissionRequestEvent {
+  id: string // resolve target
+  worktreeId: string
+  agent: string
+  toolName: string
+  title: string
+  path: string | null
+  input: Record<string, unknown>
+}
+
+export type PermissionDecision =
+  | { behavior: 'allow'; remember: boolean }
+  | { behavior: 'deny'; message: string }
 
 // ── Runtime state ───────────────────────────────────────────────
 

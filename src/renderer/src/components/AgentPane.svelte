@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { store, refreshRuntimes, openFileInEditor } from '../lib/store.svelte'
+  import { store, refreshRuntimes, openFileInEditor, respondPermission } from '../lib/store.svelte'
   import type { LogLine } from '../lib/store.svelte'
   import type { AgentRuntime, AgentConfig } from '../../../shared/types'
   import { parseAgentLines, toolSummary } from '../lib/agentStream'
@@ -36,20 +36,19 @@
     }
   })
 
-  // ── Config values → CLI flags ──────────────────────────────────
-  function modeFlag(): string {
-    return modes[modeIndex]?.flag || ''
-  }
-  function effortFlag(): string {
-    return efforts[effortIndex]?.flag || ''
-  }
-  function modelFlag(): string {
-    if (!selectedModel.trim()) return ''
-    const option = config?.models?.find((entry) => entry.label === selectedModel)
-    return option ? option.flag : `--model ${selectedModel.trim()}`
-  }
-  function extraArgs(): string {
-    return [modeFlag(), modelFlag(), effortFlag()].filter((flag) => flag).join(' ')
+  // ── Selected config values passed to the adapter ───────────────
+  function launchOptions(): {
+    prompt?: string
+    mode?: string
+    model?: string
+    effort?: string
+  } {
+    return {
+      prompt: prompt.trim() || undefined,
+      mode: modes[modeIndex]?.value || undefined,
+      model: selectedModel.trim() || undefined,
+      effort: efforts[effortIndex]?.value || undefined
+    }
   }
 
   // Mode chip color by intent. Falls back to dim for unknown adapters.
@@ -79,7 +78,7 @@
     effortIndex = (effortIndex + 1) % efforts.length
   }
   function cycleModel(): void {
-    const options = ['', ...(config?.models?.map((model) => model.label) || [])]
+    const options = ['', ...(config?.models?.map((model) => model.value) || [])]
     if (options.length < 2) return
     const next = (options.indexOf(selectedModel) + 1) % options.length
     selectedModel = options[next]
@@ -125,7 +124,7 @@
         description: 'Permission mode',
         args: modes.map((mode, index) => ({
           value: mode.label,
-          description: mode.flag,
+          description: mode.value,
           apply: () => (modeIndex = index)
         }))
       })
@@ -136,7 +135,7 @@
         description: 'Reasoning effort',
         args: efforts.map((effort, index) => ({
           value: effort.label,
-          description: effort.flag || 'no flag',
+          description: effort.value || 'default',
           apply: () => (effortIndex = index)
         }))
       })
@@ -145,11 +144,11 @@
       name: 'model',
       description: 'Model to use (free text allowed)',
       args: [
-        { value: 'default', description: 'no flag', apply: () => (selectedModel = '') },
+        { value: 'default', description: 'server default', apply: () => (selectedModel = '') },
         ...(config?.models || []).map((model) => ({
           value: model.label,
-          description: model.flag,
-          apply: () => (selectedModel = model.label)
+          description: model.value,
+          apply: () => (selectedModel = model.value)
         }))
       ]
     })
@@ -272,12 +271,7 @@
   async function launch(): Promise<void> {
     if (!store.selectedWorktreeId || !selectedAgent) return
     try {
-      await window.workbench.agents.start(
-        store.selectedWorktreeId,
-        selectedAgent,
-        prompt.trim() || undefined,
-        extraArgs()
-      )
+      await window.workbench.agents.start(store.selectedWorktreeId, selectedAgent, launchOptions())
       prompt = ''
       await refreshRuntimes(store.selectedWorktreeId)
     } catch (err) {
@@ -289,6 +283,36 @@
     if (!store.selectedWorktreeId || !selectedAgent) return
     await window.workbench.agents.stop(store.selectedWorktreeId, selectedAgent)
     await refreshRuntimes(store.selectedWorktreeId)
+  }
+
+  // ── Interactive permission prompt ──────────────────────────────
+  const pendingPermission = $derived(
+    store.pendingPermissions.find(
+      (request) => request.worktreeId === store.selectedWorktreeId && request.agent === selectedAgent
+    ) || null
+  )
+  let denyReasonMode = $state(false)
+  let denyReason = $state('')
+
+  function approve(remember: boolean): void {
+    if (!pendingPermission) return
+    void respondPermission(pendingPermission.id, { behavior: 'allow', remember })
+    denyReasonMode = false
+    denyReason = ''
+  }
+  function deny(message: string): void {
+    if (!pendingPermission) return
+    void respondPermission(pendingPermission.id, {
+      behavior: 'deny',
+      message: message.trim() || 'Denied by user'
+    })
+    denyReasonMode = false
+    denyReason = ''
+  }
+  function showInEditor(): void {
+    if (pendingPermission?.path && store.selectedWorktreeId) {
+      openFileInEditor(store.selectedWorktreeId, pendingPermission.path)
+    }
   }
 
   function truncate(text: string, max = 600): string {
@@ -386,6 +410,71 @@
 
     <!-- Input + config status line pinned at the bottom -->
     <div class="relative shrink-0 border-t border-line p-3">
+      {#if pendingPermission}
+        <!-- Permission prompt replaces the input until answered -->
+        <div class="rounded-md border border-amber/40 bg-amber-soft p-2">
+          <div class="mb-2 text-xs text-default">{pendingPermission.title}</div>
+          {#if pendingPermission.path}
+            <div class="mb-2 truncate font-mono text-2xs text-muted">{pendingPermission.path}</div>
+          {/if}
+          {#if denyReasonMode}
+            <textarea
+              class="mb-2 h-16 w-full resize-none rounded-md border border-line bg-input px-2 py-1.5 text-xs"
+              placeholder="Reason for denying…"
+              bind:value={denyReason}
+            ></textarea>
+            <div class="flex gap-2">
+              <button
+                class="rounded-md bg-red px-3 py-1 text-xs text-action-fg"
+                onclick={() => deny(denyReason)}
+              >
+                Deny with reason
+              </button>
+              <button
+                class="rounded-md border border-line px-3 py-1 text-xs hover:bg-hover"
+                onclick={() => (denyReasonMode = false)}
+              >
+                Cancel
+              </button>
+            </div>
+          {:else}
+            <div class="flex flex-col gap-1.5">
+              <button
+                class="rounded-md bg-green px-3 py-1.5 text-left text-xs text-action-fg"
+                onclick={() => approve(false)}
+              >
+                Yes
+              </button>
+              <button
+                class="rounded-md bg-violet px-3 py-1.5 text-left text-xs text-action-fg"
+                onclick={() => approve(true)}
+              >
+                Yes, don't ask again for this
+              </button>
+              {#if pendingPermission.path}
+                <button
+                  class="rounded-md border border-line px-3 py-1.5 text-left text-xs hover:bg-hover"
+                  onclick={showInEditor}
+                >
+                  Show in editor
+                </button>
+              {/if}
+              <button
+                class="rounded-md border border-line px-3 py-1.5 text-left text-xs text-red hover:bg-hover"
+                onclick={() => deny('')}
+              >
+                No
+              </button>
+              <button
+                class="rounded-md border border-line px-3 py-1.5 text-left text-xs text-dim hover:bg-hover"
+                onclick={() => (denyReasonMode = true)}
+              >
+                No, with reason…
+              </button>
+            </div>
+          {/if}
+        </div>
+      {:else}
       {#if slashOpen}
         <!-- Slash menu floats above the input -->
         <div
@@ -458,6 +547,7 @@
           </button>
         {/if}
       </div>
+      {/if}
     </div>
   {/if}
 </div>

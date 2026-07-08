@@ -1,15 +1,11 @@
 <script lang="ts">
   import { onDestroy } from 'svelte'
   import { store } from '../lib/store.svelte'
-  import FileExplorer from './FileExplorer.svelte'
   import { languageExtension, editorTheme, baseExtensions } from '../lib/editor'
   import { EditorView } from '@codemirror/view'
   import { EditorState, Compartment } from '@codemirror/state'
   import { vim, Vim, getCM } from '@replit/codemirror-vim'
   import { keymap } from '../lib/keymap.svelte'
-  import { layout } from '../lib/layout.svelte'
-  import UIPane from './UIPane.svelte'
-  import type { FileNode } from '../../../shared/types'
 
   let editorHost = $state<HTMLDivElement>()
   let view: EditorView | null = null
@@ -80,12 +76,6 @@
       effects: languageComp.reconfigure(languageExtension(path))
     })
     suppressDirty = false
-  }
-
-  function openFile(node: FileNode): void {
-    if (!store.selectedWorktreeId) return
-    // Opening only sets the active tab; the effect below loads it into the view.
-    store.openTab({ worktreeId: store.selectedWorktreeId, path: node.path, name: node.name })
   }
 
   async function loadIntoEditor(path: string): Promise<void> {
@@ -198,20 +188,7 @@
   onDestroy(() => view?.destroy())
 </script>
 
-<div class="flex h-full min-h-0">
-  <!-- File tree -->
-  <UIPane side="right" bind:size={layout.paneSizes.tree} min={140} max={420} class="border-r border-line">
-    {#if store.selectedWorktreeId}
-      {#key store.selectedWorktreeId}
-        <FileExplorer worktreeId={store.selectedWorktreeId} onOpen={openFile} />
-      {/key}
-    {:else}
-      <div class="px-3 py-2 text-2xs text-dim">No worktree.</div>
-    {/if}
-  </UIPane>
-
-  <!-- Editor -->
-  <div class="flex min-w-0 flex-1 flex-col">
+<div class="flex h-full min-h-0 flex-col">
     <div class="flex items-center gap-1 border-b border-line px-2 py-1">
       <div class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
         {#each activeTabs as tab (tab.path)}
@@ -251,6 +228,5 @@
       </button>
     </div>
 
-    <div bind:this={editorHost} class="min-h-0 flex-1 overflow-hidden"></div>
-  </div>
+  <div bind:this={editorHost} class="min-h-0 flex-1 overflow-hidden"></div>
 </div>

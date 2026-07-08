@@ -4,6 +4,7 @@
 // separately via agentSessions + transcript replay.
 
 import { store } from './store.svelte'
+import { activity } from './activity.svelte'
 
 const DEFAULT_SIZES: Record<string, number> = {
   sidebar: 256,
@@ -55,6 +56,7 @@ class LayoutStore {
         paneSizes: this.paneSizes,
         panelsOpen: { logs: this.logsOpen },
         centerView: store.centerView,
+        activeView: activity.activeView,
         openTabs: store.tabs.map((tab) => tab.path),
         activeTabPath: store.activeTabPath
       })

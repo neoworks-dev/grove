@@ -30,6 +30,7 @@ interface RepoStateShape {
   paneSizes: Record<string, number>
   panelsOpen: Record<string, boolean>
   centerView: string | null
+  activeView: string | null
 }
 
 export interface WorkbenchApi {

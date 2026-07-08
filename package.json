@@ -52,6 +52,7 @@
     "electron-updater": "^6.3.9",
     "js-yaml": "^5.2.1",
     "marked": "^18.0.5",
+    "phosphor-svelte": "^3.1.0",
     "simple-git": "^3.36.0"
   },
   "devDependencies": {

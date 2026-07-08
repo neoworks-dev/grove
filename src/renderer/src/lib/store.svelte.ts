@@ -26,6 +26,7 @@ import { currentPackName, setIconPack } from './icons'
 import { currentThemeName, applyThemeVars, themeFor } from './themes'
 import type { ColorTheme } from './themes'
 import { layout } from './layout.svelte'
+import { activity } from './activity.svelte'
 
 export interface EditorTab {
   worktreeId: string
@@ -311,8 +312,9 @@ export async function openRepoResult(result: {
     restored && result.worktrees.some((worktree) => worktree.id === restored)
       ? restored
       : result.worktrees[0]?.id || null
-  // Restore UI layout (pane sizes, panels, center view, open tabs).
+  // Restore UI layout (pane sizes, panels, center view, sidebar view, open tabs).
   layout.apply(repoState)
+  if (repoState.activeView) activity.setActive(repoState.activeView)
   const CENTER_VIEWS: CenterView[] = ['editor', 'diff', 'preview', 'dashboard']
   if (repoState.centerView && CENTER_VIEWS.includes(repoState.centerView as CenterView)) {
     store.centerView = repoState.centerView as CenterView

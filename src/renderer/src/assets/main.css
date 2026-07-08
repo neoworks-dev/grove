@@ -16,6 +16,9 @@
  */
 
 @import 'tailwindcss';
+/* Scan the linked NeoWorks UI package (via its node_modules entry) so its
+   component classes are generated. */
+@source '../../../../node_modules/@neoworks-dev/ui';
 @plugin "@tailwindcss/typography";
 @plugin "daisyui" {
   themes: neoworks --default;
@@ -530,6 +533,35 @@
     width: 8px;
   }
 
+  /* NeoWorks-style thin scrollbar. Matches the FloatingScrollbar thumb (thin,
+     rounded, line-strong) for native overflow containers where the component
+     can't attach: the CodeMirror viewport (editor + diff, both axes) and
+     horizontal strips tagged with `.nw-scroll`. Higher specificity than the
+     app-wide default above, so these show an always-visible thin thumb. */
+  .cm-scroller::-webkit-scrollbar,
+  .nw-scroll::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .cm-scroller::-webkit-scrollbar-track,
+  .nw-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .cm-scroller::-webkit-scrollbar-thumb,
+  .nw-scroll::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border: none;
+    border-radius: var(--radius-full);
+  }
+  .cm-scroller::-webkit-scrollbar-thumb:hover,
+  .nw-scroll::-webkit-scrollbar-thumb:hover {
+    background: var(--text-dim);
+  }
+  .cm-scroller::-webkit-scrollbar-corner,
+  .nw-scroll::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
   /* Focus ring */
   :focus-visible {
     outline: none;
@@ -666,6 +698,14 @@
 @utility rows-* {
   grid-row: span --value(integer) / span --value(integer);
   height: calc(--value(integer) * var(--row));
+}
+
+/* Hide the native scrollbar (used by the NeoWorks FloatingScrollbar component). */
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════

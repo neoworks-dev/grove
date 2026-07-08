@@ -1,9 +1,11 @@
 <script lang="ts">
+  import { tick } from 'svelte'
   import Icon from '@iconify/svelte'
   import { store } from '../lib/store.svelte'
   import { keymap, pane } from '../lib/keymap.svelte'
   import { fileIcon, folderIcon } from '../lib/icons'
   import ContextMenu, { type MenuItem } from './ContextMenu.svelte'
+  import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
   import type { FileNode } from '../../../shared/types'
 
   let {
@@ -21,11 +23,9 @@
   const loadedDirs = new Set<string>()
 
   let selectedIndex = $state(0)
-  let searchQuery = $state('')
-  let allFiles = $state<string[]>([])
 
   let rootEl = $state<HTMLDivElement>()
-  let searchEl = $state<HTMLInputElement>()
+  let treeViewport = $state<HTMLDivElement>()
   let pendingG = false
 
   type Editing = { mode: 'create-file' | 'create-dir' | 'rename'; parentRel: string; targetRel?: string }
@@ -44,15 +44,10 @@
     }
   }
 
-  async function loadAll(): Promise<void> {
-    allFiles = await window.workbench.files.listAll(worktreeId).catch(() => [])
-  }
-
   async function reloadCached(): Promise<void> {
     const keys = new Set<string>([''])
     for (const rel of loadedDirs) keys.add(rel)
     await Promise.all([...keys].map(loadDir))
-    await loadAll()
   }
 
   let lastWorktree = ''
@@ -65,7 +60,7 @@
       expanded = {}
       loadedDirs.clear()
       selectedIndex = 0
-      void loadDir('').then(loadAll)
+      void loadDir('')
     } else {
       void reloadCached()
     }
@@ -88,20 +83,37 @@
     return out
   })
 
-  const searching = $derived(searchQuery.trim().length > 0)
-  const searchResults = $derived.by<string[]>(() => {
-    const q = searchQuery.trim().toLowerCase()
-    if (!q) return []
-    return allFiles.filter((file) => file.toLowerCase().includes(q)).slice(0, 200)
-  })
-
   // Keep the selection in range as the visible list changes.
   $effect(() => {
-    const length = searching ? searchResults.length : rows.length
-    if (selectedIndex >= length) selectedIndex = Math.max(0, length - 1)
+    if (selectedIndex >= rows.length) selectedIndex = Math.max(0, rows.length - 1)
   })
 
-  const selectedRow = $derived(searching ? null : rows[selectedIndex])
+  const selectedRow = $derived(rows[selectedIndex])
+
+  // ── Reveal (from the search overlays) ──────────────────────────
+  // Expand every ancestor directory of a worktree-relative path, then select
+  // and scroll its row into view.
+  async function reveal(relPath: string): Promise<void> {
+    const parts = relPath.split('/')
+    let rel = ''
+    for (let depth = 0; depth < parts.length - 1; depth++) {
+      rel = rel ? `${rel}/${parts[depth]}` : parts[depth]
+      if (!loadedDirs.has(rel)) await loadDir(rel)
+      expanded = { ...expanded, [rel]: true }
+    }
+    await tick()
+    const index = rows.findIndex((row) => row.node.relPath === relPath)
+    if (index < 0) return
+    selectedIndex = index
+    await tick()
+    treeViewport?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' })
+  }
+
+  $effect(() => {
+    const target = store.revealInTree
+    if (!target || worktreeId !== store.selectedWorktreeId) return
+    void reveal(target.path)
+  })
 
   function iconFor(node: FileNode): string {
     store.iconPack
@@ -124,16 +136,10 @@
     else onOpen(node)
   }
 
-  function nodeFromRel(rel: string): FileNode {
-    const root = store.selectedWorktree?.path || ''
-    return { name: rel.split('/').pop() || rel, path: `${root}/${rel}`, relPath: rel, isDir: false }
-  }
-
   function activate(index: number): void {
     selectedIndex = index
     rootEl?.focus({ preventScroll: true })
-    if (searching) onOpen(nodeFromRel(searchResults[index]))
-    else if (rows[index]) openOrExpand(rows[index].node)
+    if (rows[index]) openOrExpand(rows[index].node)
   }
 
   // Where a new entry should be created relative to the current selection.
@@ -186,27 +192,9 @@
     }
   }
 
-  function focusSearch(): void {
-    searchEl?.focus()
-  }
-
   // ── Keyboard (tree pane) ───────────────────────────────────────
   function onKey(event: KeyboardEvent): void {
     if (editing) return
-    if (searching) {
-      // In search mode only navigation keys act here; typing lives in the input.
-      if (event.key === 'ArrowDown' || (event.key === 'j' && event.ctrlKey)) {
-        event.preventDefault()
-        selectedIndex = Math.min(selectedIndex + 1, searchResults.length - 1)
-      } else if (event.key === 'ArrowUp' || (event.key === 'k' && event.ctrlKey)) {
-        event.preventDefault()
-        selectedIndex = Math.max(selectedIndex - 1, 0)
-      } else if (event.key === 'Enter') {
-        event.preventDefault()
-        if (searchResults[selectedIndex]) onOpen(nodeFromRel(searchResults[selectedIndex]))
-      }
-      return
-    }
 
     const key = event.key
     if (key === 'j' || key === 'ArrowDown') {
@@ -231,9 +219,6 @@
       startRename()
     } else if (key === 'd') {
       if (selectedRow) void deleteNode(selectedRow.node)
-    } else if (key === '/') {
-      event.preventDefault()
-      focusSearch()
     } else {
       return
     }
@@ -290,26 +275,11 @@
   role="tree"
   tabindex="-1"
 >
-  <!-- Search -->
-  <div class="flex items-center gap-1 border-b border-line px-2 py-1.5">
-    <Icon icon="vscode-icons:default-file" class="opacity-0" width="12" />
-    <input
-      bind:this={searchEl}
-      bind:value={searchQuery}
-      class="w-full bg-transparent text-xs outline-none placeholder:text-dim"
-      placeholder="Search files… (/)"
-      onkeydown={(event) => {
-        if (event.key === 'Escape') {
-          searchQuery = ''
-          rootEl?.focus()
-        } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Enter') {
-          onKey(event)
-        }
-      }}
-    />
-  </div>
-
-  <div class="min-h-0 flex-1 overflow-auto py-1" oncontextmenu={(event) => openMenu(event, null)}>
+  <FloatingScrollbar
+    class="min-h-0 flex-1 py-1"
+    bind:viewport={treeViewport}
+    oncontextmenu={(event) => openMenu(event, null)}
+  >
     <!-- Inline create row -->
     {#if editing && editing.mode !== 'rename'}
       <div class="flex items-center gap-1 px-2 py-0.5" style="padding-left: 8px">
@@ -330,23 +300,7 @@
       </div>
     {/if}
 
-    {#if searching}
-      {#each searchResults as file, index (file)}
-        <button
-          class="flex w-full items-center gap-1 px-2 py-[3px] text-left text-xs {index === selectedIndex
-            ? 'bg-hover text-default'
-            : 'text-muted'} hover:bg-hover"
-          onclick={() => activate(index)}
-        >
-          <Icon icon={fileIcon(file)} width="16" height="16" class="shrink-0" />
-          <span class="truncate">{file}</span>
-        </button>
-      {/each}
-      {#if searchResults.length === 0}
-        <p class="px-3 py-3 text-xs text-dim">No files match.</p>
-      {/if}
-    {:else}
-      {#each rows as row, index (row.node.relPath)}
+    {#each rows as row, index (row.node.relPath)}
         <div
           class="flex w-full items-center gap-1 px-2 py-[3px] text-left text-xs {index === selectedIndex
             ? 'bg-hover text-default'
@@ -385,8 +339,7 @@
           {/if}
         </div>
       {/each}
-    {/if}
-  </div>
+  </FloatingScrollbar>
 </div>
 
 {#if menu}

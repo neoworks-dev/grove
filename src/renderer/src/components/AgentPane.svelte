@@ -14,6 +14,7 @@
   import type { AgentRuntime, AgentConfig } from '../../../shared/types'
   import { parseAgentLines, parseAgentMeta, toolSummary } from '../lib/agentStream'
   import { renderMarkdown } from '../lib/markdown'
+  import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
 
   let prompt = $state('')
   let promptEl = $state<HTMLTextAreaElement>()
@@ -722,7 +723,8 @@
     <p class="px-3 py-3 text-xs text-dim">Select a worktree.</p>
   {:else}
     <!-- Chat transcript -->
-    <div class="min-h-0 flex-1 overflow-auto px-3 py-3 text-xs leading-relaxed">
+    <FloatingScrollbar class="min-h-0 flex-1">
+      <div class="px-3 py-3 text-xs leading-relaxed">
       {#each items as item (item.key)}
         {#if item.kind === 'user'}
           <!-- User message: distinct bubble, right-aligned. -->
@@ -792,7 +794,8 @@
       {#if items.length === 0}
         <p class="text-dim">No agent output yet. Write a prompt below and run.</p>
       {/if}
-    </div>
+      </div>
+    </FloatingScrollbar>
 
     <!-- Working-state bar: live indicator, funny status, token count, state. -->
     {#if isRunning}

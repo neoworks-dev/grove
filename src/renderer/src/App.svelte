@@ -15,6 +15,7 @@
   import UIPane from './components/UIPane.svelte'
   import CommandPalette from './components/CommandPalette.svelte'
   import RipgrepSearch from './components/RipgrepSearch.svelte'
+  import FileFinder from './components/FileFinder.svelte'
   import WhichKey from './components/WhichKey.svelte'
   import Folder from 'phosphor-svelte/lib/Folder'
   import GitBranch from 'phosphor-svelte/lib/GitBranch'
@@ -315,3 +316,4 @@
 
 <CommandPalette />
 <RipgrepSearch />
+<FileFinder />

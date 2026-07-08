@@ -35,6 +35,22 @@ export function registerCoreBindings(): void {
       description: 'Focus file tree',
       run: () => keymap.focusPane('tree')
     },
+    {
+      id: 'leader.preferences',
+      keys: 'leader ,',
+      context: 'global',
+      group: 'Settings',
+      description: 'Open preferences',
+      run: () => layout.ensurePane('preferences')
+    },
+    {
+      id: 'leader.keybindings',
+      keys: 'leader k',
+      context: 'global',
+      group: 'Settings',
+      description: 'Open keyboard shortcuts',
+      run: () => layout.ensurePane('keybindings')
+    },
     // Spatial pane navigation — ordinary bindings now, so they show up in
     // which-key listings and stay rebindable.
     {
@@ -181,6 +197,20 @@ export function registerCoreBindings(): void {
       group: 'Window',
       keywords: 'close pane window',
       run: () => layout.closeFocused()
+    },
+    {
+      id: 'preferences.open',
+      title: 'Preferences: Open Settings',
+      group: 'Settings',
+      keywords: 'settings options configure preferences',
+      run: () => layout.ensurePane('preferences')
+    },
+    {
+      id: 'keybindings.open',
+      title: 'Preferences: Keyboard Shortcuts',
+      group: 'Settings',
+      keywords: 'keyboard shortcuts keybindings keys rebind',
+      run: () => layout.ensurePane('keybindings')
     }
   ])
 }

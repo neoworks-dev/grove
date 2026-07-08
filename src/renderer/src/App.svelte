@@ -117,6 +117,8 @@
   }
 
   function onGlobalKey(event: KeyboardEvent): void {
+    // The keybind-capture widget owns the keyboard entirely while recording.
+    if (keymap.captureMode) return
     if (event.key === 'F1') {
       event.preventDefault()
       commands.toggle()

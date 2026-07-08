@@ -14,6 +14,8 @@ import PreviewPane from '../components/PreviewPane.svelte'
 import Dashboard from '../components/Dashboard.svelte'
 import AgentPane from '../components/AgentPane.svelte'
 import LogsPane from '../components/LogsPane.svelte'
+import PreferencesPane from '../components/PreferencesPane.svelte'
+import KeyboardPane from '../components/KeyboardPane.svelte'
 import { panes } from './panes.svelte'
 import { store } from './store.svelte'
 
@@ -101,5 +103,19 @@ export function registerCorePanes(): void {
     component: LogsPane,
     containerClass: 'bg-elevated',
     minHeight: 120
+  })
+  panes.register({
+    id: 'preferences',
+    title: 'Preferences',
+    component: PreferencesPane,
+    slot: CENTER_SLOT,
+    minWidth: 320
+  })
+  panes.register({
+    id: 'keybindings',
+    title: 'Keyboard Shortcuts',
+    component: KeyboardPane,
+    slot: CENTER_SLOT,
+    minWidth: 320
   })
 }

@@ -15,7 +15,7 @@
   import { parseQuestions, buildAnswerResult } from '../lib/agentDialog'
   import WaveSpinner from './WaveSpinner.svelte'
   import type { LogLine } from '../lib/store.svelte'
-  import type { AgentRuntime, AgentConfig } from '../../../shared/types'
+  import type { AgentRuntime, AgentConfig, ChatMeta } from '../../../shared/types'
   import { parseAgentLines, parseAgentMeta, toolSummary } from '../lib/agentStream'
   import { renderMarkdown } from '../lib/markdown'
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
@@ -235,6 +235,51 @@
       void refreshChats(store.selectedWorktreeId, selectedAgent)
     }
   })
+
+  // ── Stale-chat compact suggestion ──────────────────────────────
+  // When reopening a chat that's been idle for a while, offer to compact it
+  // rather than resuming a large stale context. Only a suggestion — compaction
+  // never runs on its own, and fresh chats (no session yet) are never flagged.
+  const STALE_CHAT_MS = 8 * 60 * 60 * 1000
+
+  const activeChatMeta = $derived(
+    currentChats?.chats.find((chat) => chat.id === currentChats.activeId) || null
+  )
+
+  // Chats the user already answered the suggestion for (compacted or dismissed).
+  let compactSuggestionAnswered = $state<Set<string>>(new Set())
+
+  function isStaleChat(chat: ChatMeta | null): boolean {
+    // Needs a real session (something to compact) and a real timestamp; legacy
+    // chats carry updatedAt 0, so skip them rather than treat them as ancient.
+    if (!chat || !chat.session || chat.updatedAt === 0) return false
+    return Date.now() - chat.updatedAt > STALE_CHAT_MS
+  }
+
+  const showCompactSuggestion = $derived(
+    !!activeChatMeta &&
+      isStaleChat(activeChatMeta) &&
+      !compactSuggestionAnswered.has(activeChatMeta.id) &&
+      !isRunning &&
+      !pendingPermission &&
+      !pendingDialog
+  )
+
+  function staleHoursLabel(chat: ChatMeta): string {
+    const hours = Math.floor((Date.now() - chat.updatedAt) / (60 * 60 * 1000))
+    if (hours < 24) return `${hours}h`
+    return `${Math.floor(hours / 24)}d`
+  }
+
+  function answerCompactSuggestion(): void {
+    if (!activeChatMeta) return
+    compactSuggestionAnswered = new Set([...compactSuggestionAnswered, activeChatMeta.id])
+  }
+
+  function acceptCompactSuggestion(): void {
+    answerCompactSuggestion()
+    compactCurrentChat('')
+  }
 
   function clearChat(): void {
     if (!store.selectedWorktreeId) return
@@ -1199,6 +1244,29 @@
           {/if}
         </div>
       {:else}
+        {#if showCompactSuggestion && activeChatMeta}
+          <!-- Idle chat: offer to compact before resuming a stale context. -->
+          <div
+            class="mb-2 flex items-center gap-2 rounded-md border border-violet/30 bg-violet-soft px-2 py-1.5 text-2xs text-violet"
+          >
+            <span class="min-w-0 flex-1 truncate">
+              This chat has been idle for {staleHoursLabel(activeChatMeta)}. Compact it?
+            </span>
+            <button
+              class="shrink-0 rounded bg-violet px-2 py-0.5 text-action-fg"
+              onclick={acceptCompactSuggestion}
+            >
+              Compact
+            </button>
+            <button
+              class="shrink-0 rounded border border-line px-2 py-0.5 text-dim hover:bg-hover"
+              onclick={answerCompactSuggestion}
+            >
+              Dismiss
+            </button>
+          </div>
+        {/if}
+
         {#if slashOpen}
           <!-- Slash menu floats above the input -->
           <div

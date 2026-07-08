@@ -11,24 +11,23 @@
   import CommandPalette from './components/CommandPalette.svelte'
   import { store, subscribeEvents, openRepoResult, applyIconPack, applyColorTheme } from './lib/store.svelte'
   import { commands } from './lib/commands.svelte'
+  import { keymap, pane } from './lib/keymap.svelte'
+  import { layout } from './lib/layout.svelte'
   import { initIcons, availablePacks } from './lib/icons'
   import { initThemes, availableThemes } from './lib/themes'
   import type { CenterView } from './lib/store.svelte'
 
-  let bottomOpen = $state(true)
-
-  // Persisted pane sizes (px).
-  function persisted(key: string, fallback: number): number {
-    const stored = Number(localStorage.getItem(key))
-    return Number.isFinite(stored) && stored > 0 ? stored : fallback
-  }
-  let sidebarWidth = $state(persisted('pane.sidebar', 256))
-  let agentWidth = $state(persisted('pane.agent', 320))
-  let logsHeight = $state(persisted('pane.logs', 224))
-
-  $effect(() => localStorage.setItem('pane.sidebar', String(sidebarWidth)))
-  $effect(() => localStorage.setItem('pane.agent', String(agentWidth)))
-  $effect(() => localStorage.setItem('pane.logs', String(logsHeight)))
+  // Persist layout (pane sizes, panels, center view, open tabs) whenever any of
+  // these change; layout.schedule() debounces the write to per-repo state.
+  $effect(() => {
+    const sizes = Object.values(layout.paneSizes)
+    const open = layout.logsOpen
+    const view = store.centerView
+    const tabs = store.tabs.map((tab) => tab.path).join('|')
+    const active = store.activeTabPath
+    void [sizes, open, view, tabs, active]
+    layout.schedule()
+  })
 
   const views: { id: CenterView; label: string }[] = [
     { id: 'editor', label: 'Editor' },
@@ -60,7 +59,7 @@
       title: 'Toggle Logs Panel',
       group: 'View',
       run: () => {
-        bottomOpen = !bottomOpen
+        layout.setLogsOpen(!layout.logsOpen)
       }
     })
     // Icon theme selection — dynamically one command per available pack.
@@ -89,6 +88,13 @@
     if (event.key === 'F1') {
       event.preventDefault()
       commands.toggle()
+      return
+    }
+    // Delegate to the keymap core (pane nav, leader). Capture phase so Ctrl+hjkl
+    // and the leader beat CodeMirror/Vim's own handlers.
+    if (keymap.handleKey(event)) {
+      event.preventDefault()
+      event.stopPropagation()
     }
   }
 
@@ -97,7 +103,7 @@
     initIcons()
     subscribeEvents()
     registerCoreCommands()
-    window.addEventListener('keydown', onGlobalKey)
+    window.addEventListener('keydown', onGlobalKey, true)
 
     void (async () => {
       const last = await window.workbench.repo.last()
@@ -111,7 +117,7 @@
       }
     })()
 
-    return () => window.removeEventListener('keydown', onGlobalKey)
+    return () => window.removeEventListener('keydown', onGlobalKey, true)
   })
 
   async function pickRepo(): Promise<void> {
@@ -155,10 +161,10 @@
         </button>
       {/each}
       <button
-        class="ml-2 rounded-md px-2.5 py-1 text-xs {bottomOpen
+        class="ml-2 rounded-md px-2.5 py-1 text-xs {layout.logsOpen
           ? 'text-default'
           : 'text-dim'} hover:text-default"
-        onclick={() => (bottomOpen = !bottomOpen)}
+        onclick={() => layout.setLogsOpen(!layout.logsOpen)}
       >
         Logs
       </button>
@@ -187,17 +193,27 @@
   <div class="flex min-h-0 flex-1">
     <UIPane
       side="right"
-      bind:size={sidebarWidth}
+      bind:size={layout.paneSizes.sidebar}
       min={180}
       max={480}
       class="border-r border-line bg-elevated"
     >
-      <WorktreeSidebar />
+      <div
+        use:pane={'sidebar'}
+        class="h-full outline-none {keymap.activePane === 'sidebar' ? 'pane-active' : ''}"
+      >
+        <WorktreeSidebar />
+      </div>
     </UIPane>
 
     <main class="flex min-w-0 flex-1 flex-col">
       <div class="flex min-h-0 flex-1">
-        <section class="flex min-w-0 flex-1 flex-col">
+        <section
+          use:pane={'center'}
+          class="flex min-w-0 flex-1 flex-col outline-none {keymap.activePane === 'center'
+            ? 'pane-active'
+            : ''}"
+        >
           {#if !store.repo}
             <div class="flex flex-1 items-center justify-center text-dim">
               Open a Git repository to begin.
@@ -215,24 +231,34 @@
 
         <UIPane
           side="left"
-          bind:size={agentWidth}
+          bind:size={layout.paneSizes.agent}
           min={240}
           max={560}
           class="border-l border-line bg-elevated"
         >
-          <AgentPane />
+          <div
+            use:pane={'agent'}
+            class="h-full outline-none {keymap.activePane === 'agent' ? 'pane-active' : ''}"
+          >
+            <AgentPane />
+          </div>
         </UIPane>
       </div>
 
-      {#if bottomOpen}
+      {#if layout.logsOpen}
         <UIPane
           side="top"
-          bind:size={logsHeight}
+          bind:size={layout.paneSizes.logs}
           min={120}
           max={600}
           class="border-t border-line bg-elevated"
         >
-          <LogsPane />
+          <div
+            use:pane={'logs'}
+            class="h-full outline-none {keymap.activePane === 'logs' ? 'pane-active' : ''}"
+          >
+            <LogsPane />
+          </div>
         </UIPane>
       {/if}
     </main>

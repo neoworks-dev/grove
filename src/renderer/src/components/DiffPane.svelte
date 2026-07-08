@@ -6,10 +6,8 @@
   import { EditorState, type Extension } from '@codemirror/state'
   import { EditorView, lineNumbers, highlightSpecialChars } from '@codemirror/view'
   import UIPane from './UIPane.svelte'
+  import { layout } from '../lib/layout.svelte'
   import type { DiffFile } from '../../../shared/types'
-
-  let listWidth = $state(Number(localStorage.getItem('pane.diffList')) || 256)
-  $effect(() => localStorage.setItem('pane.diffList', String(listWidth)))
 
   let diffHost = $state<HTMLDivElement>()
   let mergeView: MergeView | null = null
@@ -134,7 +132,7 @@
 
 <div class="flex h-full min-h-0">
   <!-- Changed files -->
-  <UIPane side="right" bind:size={listWidth} min={160} max={480} class="border-r border-line">
+  <UIPane side="right" bind:size={layout.paneSizes.diffList} min={160} max={480} class="border-r border-line">
     <div class="flex h-full flex-col">
     <div class="flex items-center justify-between px-3 py-2">
       <span class="text-2xs font-semibold uppercase tracking-caps text-dim">Changes</span>

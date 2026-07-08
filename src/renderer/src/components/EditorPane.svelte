@@ -5,12 +5,11 @@
   import { languageExtension, editorTheme, baseExtensions } from '../lib/editor'
   import { EditorView } from '@codemirror/view'
   import { EditorState, Compartment } from '@codemirror/state'
-  import { vim, Vim } from '@replit/codemirror-vim'
+  import { vim, Vim, getCM } from '@replit/codemirror-vim'
+  import { keymap, pane } from '../lib/keymap.svelte'
+  import { layout } from '../lib/layout.svelte'
   import UIPane from './UIPane.svelte'
   import type { FileNode } from '../../../shared/types'
-
-  let treeWidth = $state(Number(localStorage.getItem('pane.editorTree')) || 224)
-  $effect(() => localStorage.setItem('pane.editorTree', String(treeWidth)))
 
   let editorHost = $state<HTMLDivElement>()
   let view: EditorView | null = null
@@ -49,12 +48,26 @@
       ]
     })
     view = new EditorView({ state, parent: editorHost })
+    if (vimEnabled) attachVimMode()
+  }
+
+  // Publish the Vim mode so the keymap only treats space as leader in normal
+  // mode (never while inserting text). Vim off = treat as insert (no leader).
+  function attachVimMode(): void {
+    if (!view) return
+    const cm = getCM(view)
+    keymap.editorVimMode = 'normal'
+    cm?.on('vim-mode-change', (event: { mode: string }) => {
+      keymap.editorVimMode = event.mode
+    })
   }
 
   function toggleVim(): void {
     vimEnabled = !vimEnabled
     localStorage.setItem('editor.vim', vimEnabled ? 'on' : 'off')
     view?.dispatch({ effects: vimComp.reconfigure(vimEnabled ? vim() : []) })
+    if (vimEnabled) attachVimMode()
+    else keymap.editorVimMode = 'insert'
   }
 
   // Replace the whole document and switch the language grammar in one dispatch.
@@ -162,8 +175,11 @@
 
 <div class="flex h-full min-h-0">
   <!-- File tree -->
-  <UIPane side="right" bind:size={treeWidth} min={140} max={420} class="border-r border-line">
-    <div class="flex h-full flex-col">
+  <UIPane side="right" bind:size={layout.paneSizes.tree} min={140} max={420} class="border-r border-line">
+    <div
+      use:pane={'tree'}
+      class="flex h-full flex-col outline-none {keymap.activePane === 'tree' ? 'pane-active' : ''}"
+    >
       <div class="px-3 py-2 text-2xs font-semibold uppercase tracking-caps text-dim">Files</div>
       <div class="min-h-0 flex-1 overflow-auto pb-2">
         {#if store.selectedWorktreeId}

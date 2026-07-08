@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from 'svelte'
+  import { tick, untrack } from 'svelte'
   import Icon from '@iconify/svelte'
   import { store } from '../lib/store.svelte'
   import { keymap, pane } from '../lib/keymap.svelte'
@@ -114,9 +114,14 @@
   $effect(() => {
     const active = store.activeTabPath
     if (!active || worktreeId !== store.selectedWorktreeId) return
-    const root = store.selectedWorktree?.path || ''
-    const rel = active.startsWith(`${root}/`) ? active.slice(root.length + 1) : active
-    void reveal(rel)
+    // Run untracked: reveal reads and writes `expanded` (via the spread), which
+    // would otherwise make this effect depend on state it mutates → an infinite
+    // update loop when expanding nested paths.
+    untrack(() => {
+      const root = store.selectedWorktree?.path || ''
+      const rel = active.startsWith(`${root}/`) ? active.slice(root.length + 1) : active
+      void reveal(rel)
+    })
   })
 
   function iconFor(node: FileNode): string {

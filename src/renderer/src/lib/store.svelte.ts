@@ -57,6 +57,10 @@ class WorkbenchStore {
   // Set by the fs watcher when a running agent edits a file → DiffPane focuses it.
   requestedDiffFile = $state<string | null>(null)
 
+  // Set when opening a file at a specific line (ripgrep search) → EditorPane
+  // scrolls the cursor there once the file is loaded.
+  revealTarget = $state<{ path: string; line: number } | null>(null)
+
   // Pending interactive tool-permission requests (agent → user).
   pendingPermissions = $state<PermissionRequestEvent[]>([])
 
@@ -162,6 +166,12 @@ export function openFileInEditor(worktreeId: string, path: string): void {
   const name = path.split('/').pop() || path
   store.selectedWorktreeId = worktreeId
   store.openTab({ worktreeId, path, name })
+}
+
+// Open a file and reveal a specific line (ripgrep search results).
+export function openFileAtLine(worktreeId: string, path: string, line: number): void {
+  openFileInEditor(worktreeId, path)
+  store.revealTarget = { path, line }
 }
 
 // Seed the in-memory transcript from the persisted on-disk log so a chat

@@ -45,6 +45,7 @@
     "@openai/codex-sdk": "0.143.0",
     "@opencode-ai/sdk": "1.17.15",
     "@replit/codemirror-vim": "^6.3.0",
+    "@vscode/ripgrep": "^1.18.0",
     "chokidar": "^5.0.0",
     "codemirror": "^6.0.2",
     "dompurify": "^3.4.11",

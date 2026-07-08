@@ -12,6 +12,9 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 asarUnpack:
   - resources/**
+  # Ripgrep ships a native binary that must run from disk, not inside the asar.
+  - '**/node_modules/@vscode/ripgrep/**'
+  - '**/node_modules/@vscode/ripgrep-*/**'
 win:
   executableName: git-worktree-editor
 nsis:

@@ -91,6 +91,10 @@ export interface WorkbenchApi {
     rename: (worktreeId: string, fromRel: string, toRel: string) => Promise<string>
     delete: (worktreeId: string, relPath: string) => Promise<void>
   }
+  search: {
+    ripgrep: (worktreeId: string, query: string, reqId: string) => Promise<void>
+    cancel: () => Promise<void>
+  }
   state: {
     getRepo: () => Promise<RepoStateShape>
     update: (patch: Partial<RepoStateShape>) => Promise<RepoStateShape>

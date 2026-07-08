@@ -133,6 +133,14 @@ export interface FileNode {
   isDir: boolean
 }
 
+// A ripgrep content-search hit (file is relative to the search root).
+export interface SearchMatch {
+  file: string
+  line: number
+  column: number
+  text: string
+}
+
 // ── IPC event payloads (main → renderer) ────────────────────────
 
 export interface LogLineEvent {

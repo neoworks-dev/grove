@@ -9,6 +9,7 @@
     resetAgentChat
   } from '../lib/store.svelte'
   import { parseQuestions, buildAnswerResult } from '../lib/agentDialog'
+  import WaveSpinner from './WaveSpinner.svelte'
   import type { LogLine } from '../lib/store.svelte'
   import type { AgentRuntime, AgentConfig } from '../../../shared/types'
   import { parseAgentLines, parseAgentMeta, toolSummary } from '../lib/agentStream'
@@ -707,7 +708,7 @@
       <div
         class="flex shrink-0 items-center gap-2 border-t border-line bg-elevated px-3 py-1.5 text-2xs"
       >
-        <span class="inline-block h-2 w-2 shrink-0 animate-pulse rounded-full bg-green"></span>
+        <span class="shrink-0 text-green"><WaveSpinner /></span>
         <span class="font-medium text-default">{workState}</span>
         <span class="ml-auto truncate italic text-dim">{funnyMessage}</span>
         <span class="shrink-0 font-mono text-muted" title="input + output tokens"

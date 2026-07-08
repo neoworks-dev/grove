@@ -727,13 +727,11 @@
       <div class="px-3 py-3 text-xs leading-relaxed">
       {#each items as item (item.key)}
         {#if item.kind === 'user'}
-          <!-- User message: distinct bubble, right-aligned. -->
-          <div class="mb-3 flex justify-end">
-            <div
-              class="max-w-[85%] whitespace-pre-wrap rounded-lg rounded-br-sm border border-blue/30 bg-blue-soft px-3 py-2 text-default"
-            >
-              {item.text}
-            </div>
+          <!-- User message: full-width band tinted like the logo leaves. -->
+          <div
+            class="-mx-3 mb-3 whitespace-pre-wrap border-y border-green/30 bg-green-soft px-3 py-2 text-default"
+          >
+            {item.text}
           </div>
         {:else if item.kind === 'text'}
           <!-- Assistant message: markdown-rendered. -->
@@ -816,11 +814,11 @@
       {#if pendingDialog}
         <!-- Agent question: render the questions + options and return the answer -->
         <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="rounded-md border border-blue/40 bg-blue-soft p-2" tabindex="-1" onkeydown={onDialogKey}>
+        <div class="-mx-3 border-y border-green/40 bg-green-soft p-2" tabindex="-1" onkeydown={onDialogKey}>
           {#each dialogQuestions as question, questionIndex (questionIndex)}
             <div class="mb-3 last:mb-1">
               {#if question.header}
-                <div class="mb-0.5 flex items-center gap-2 text-2xs font-semibold uppercase tracking-caps text-blue">
+                <div class="mb-0.5 flex items-center gap-2 text-2xs font-semibold uppercase tracking-caps text-green">
                   <span>{question.header}</span>
                   {#if question.multiSelect}<span class="normal-case tracking-normal text-dim">· multi-select</span>{/if}
                 </div>
@@ -831,7 +829,7 @@
                   {@const selected = (dialogSelections[questionIndex] || []).includes(option.label)}
                   <button
                     class="rounded-md border px-2 py-1.5 text-left text-xs {selected
-                      ? 'border-blue bg-blue/15 text-default'
+                      ? 'border-green bg-green/15 text-default'
                       : 'border-line hover:bg-hover text-muted'}"
                     onclick={() => toggleOption(questionIndex, option.label, question.multiSelect)}
                   >

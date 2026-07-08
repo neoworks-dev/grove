@@ -11,6 +11,19 @@
   let effortIndex = $state(0)
   let selectedModel = $state('')
 
+  // Submitted-prompt history (most recent first), navigated with Arrow Up/Down.
+  function loadHistory(): string[] {
+    try {
+      const parsed = JSON.parse(localStorage.getItem('agent.history') || '[]')
+      return Array.isArray(parsed) ? parsed : []
+    } catch {
+      return []
+    }
+  }
+  let history = $state<string[]>(loadHistory())
+  let historyIndex = $state(-1) // -1 = not navigating
+  let draft = $state('') // in-progress text stashed while navigating
+
   const agentNames = $derived(Object.keys(store.agentConfigs))
   const config = $derived<AgentConfig | undefined>(store.agentConfigs[selectedAgent])
   const modes = $derived(config?.modes || [])
@@ -316,11 +329,62 @@
         return
       }
     }
+    // Prompt history: Arrow Up recalls older entries (from the caret start),
+    // Arrow Down walks back toward the in-progress draft.
+    if (history.length > 0) {
+      if (event.key === 'ArrowUp' && (historyIndex !== -1 || caretAtStart())) {
+        event.preventDefault()
+        navigateHistory(1)
+        return
+      }
+      if (event.key === 'ArrowDown' && historyIndex !== -1) {
+        event.preventDefault()
+        navigateHistory(-1)
+        return
+      }
+    }
     // Enter submits; Shift+Enter inserts a newline.
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
       void launch()
     }
+  }
+
+  function caretAtStart(): boolean {
+    return !!promptEl && promptEl.selectionStart === 0 && promptEl.selectionEnd === 0
+  }
+
+  function navigateHistory(direction: 1 | -1): void {
+    if (direction === 1) {
+      if (historyIndex === -1) {
+        draft = prompt
+        historyIndex = 0
+      } else {
+        historyIndex = Math.min(historyIndex + 1, history.length - 1)
+      }
+      prompt = history[historyIndex]
+    } else {
+      if (historyIndex <= 0) {
+        historyIndex = -1
+        prompt = draft
+      } else {
+        historyIndex -= 1
+        prompt = history[historyIndex]
+      }
+    }
+    // Place the caret at the end after the value updates.
+    const end = prompt.length
+    queueMicrotask(() => {
+      if (promptEl) promptEl.setSelectionRange(end, end)
+    })
+  }
+
+  function pushHistory(text: string): void {
+    if (!text.trim()) return
+    history = [text, ...history.filter((entry) => entry !== text)].slice(0, 100)
+    localStorage.setItem('agent.history', JSON.stringify(history))
+    historyIndex = -1
+    draft = ''
   }
 
   // ── Runtime ────────────────────────────────────────────────────
@@ -342,6 +406,7 @@
     if (!store.selectedWorktreeId || !selectedAgent) return
     try {
       await window.workbench.agents.start(store.selectedWorktreeId, selectedAgent, launchOptions())
+      pushHistory(prompt)
       prompt = ''
       await refreshRuntimes(store.selectedWorktreeId)
     } catch (err) {
@@ -379,8 +444,11 @@
     denyReasonMode = false
     denyReason = ''
   }
-  function showInEditor(): void {
-    if (pendingPermission?.path && store.selectedWorktreeId) {
+  function showChange(): void {
+    // Prefer the proposed-change diff; fall back to opening the file.
+    if (store.proposedDiff) {
+      store.centerView = 'diff'
+    } else if (pendingPermission?.path && store.selectedWorktreeId) {
       openFileInEditor(store.selectedWorktreeId, pendingPermission.path)
     }
   }
@@ -524,9 +592,9 @@
               {#if pendingPermission.path}
                 <button
                   class="rounded-md border border-line px-3 py-1.5 text-left text-xs hover:bg-hover"
-                  onclick={showInEditor}
+                  onclick={showChange}
                 >
-                  Show in editor
+                  Show in diff editor
                 </button>
               {/if}
               <button
@@ -601,9 +669,10 @@
       <textarea
         bind:this={promptEl}
         class="mb-2 h-20 w-full resize-none rounded-md border border-line bg-input px-2 py-1.5 text-xs"
-        placeholder="Prompt…  ( / options · @ files · Shift+Tab mode · Enter run )"
+        placeholder="Prompt…  ( / options · @ files · ↑↓ history · Shift+Tab mode · Enter run )"
         bind:value={prompt}
         onkeydown={onPromptKey}
+        oninput={() => (historyIndex = -1)}
       ></textarea>
 
       <div class="flex items-center gap-3 text-2xs">

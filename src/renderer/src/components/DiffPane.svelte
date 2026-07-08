@@ -86,12 +86,38 @@
     old?.modified.dispose()
   }
 
-  // Reload on worktree change, on file changes, and when an auto-diff is requested.
+  const proposed = $derived(store.proposedDiff)
+
+  // Render a proposed (not-yet-applied) change from a pending Write/Edit.
+  async function showProposed(change: {
+    original: string
+    modified: string
+    language: string
+  }): Promise<void> {
+    ensureDiffEditor()
+    if (!diffEditor || !monaco) return
+    selected = null
+    const original = monaco.editor.createModel(change.original, change.language)
+    const modified = monaco.editor.createModel(change.modified, change.language)
+    const old = diffEditor.getModel()
+    diffEditor.setModel({ original, modified })
+    old?.original.dispose()
+    old?.modified.dispose()
+  }
+
+  // Git changes: reload on worktree/file change and auto-diff requests, but a
+  // proposed change takes over the editor while it is pending.
   $effect(() => {
+    if (store.proposedDiff) return
     store.selectedWorktreeId
     store.fsVersion[store.selectedWorktreeId ?? '']
     store.requestedDiffFile
     void loadFiles()
+  })
+
+  $effect(() => {
+    const change = store.proposedDiff
+    if (change) void showProposed(change)
   })
 
   // Follow the active color theme (Monaco themes are global).
@@ -110,6 +136,9 @@
       <span class="text-2xs font-semibold uppercase tracking-caps text-dim">Changes</span>
       <button class="text-dim hover:text-default" title="Refresh" onclick={loadFiles}>⟳</button>
     </div>
+    {#if proposed}
+      <p class="px-3 py-4 text-xs text-amber">Reviewing a proposed change — approve or deny it in the Agent panel.</p>
+    {:else}
     <div class="min-h-0 flex-1 overflow-auto">
       {#each files as file (fileKey(file))}
         <button
@@ -130,15 +159,21 @@
         <p class="px-3 py-4 text-xs text-dim">No changes vs HEAD.</p>
       {/if}
     </div>
+    {/if}
     </div>
   </UIPane>
 
   <!-- Diff editor -->
   <div class="flex min-w-0 flex-1 flex-col">
     <div class="border-b border-line px-3 py-1.5 font-mono text-xs text-muted">
-      {selected ? selected.path : 'Select a file'}
-      {#if selected}
-        <span class="ml-2 text-dim">({selected.staged ? 'staged' : 'working tree'} vs HEAD)</span>
+      {#if proposed}
+        {proposed.path}
+        <span class="ml-2 text-amber">(proposed change · pending approval)</span>
+      {:else}
+        {selected ? selected.path : 'Select a file'}
+        {#if selected}
+          <span class="ml-2 text-dim">({selected.staged ? 'staged' : 'working tree'} vs HEAD)</span>
+        {/if}
       {/if}
     </div>
     <div bind:this={diffHost} class="min-h-0 flex-1"></div>

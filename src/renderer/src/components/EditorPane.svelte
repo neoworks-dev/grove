@@ -1,6 +1,12 @@
+<script module lang="ts">
+  // The Vim key→action map is global to the Vim singleton; map the LSP keys
+  // once across all editor instances.
+  let vimLspMapped = false
+</script>
+
 <script lang="ts">
   import { settings } from '../lib/settings.svelte'
-  import { onDestroy } from 'svelte'
+  import { onMount, onDestroy } from 'svelte'
   import Icon from '@iconify/svelte'
   import { store } from '../lib/store.svelte'
   import { languageExtension, editorTheme, baseExtensions } from '../lib/editor'
@@ -10,12 +16,19 @@
     lspLanguageFor,
     fileUri,
     toCmDiagnostics,
+    offsetToPosition,
     type LspContext
   } from '../lib/lspClient'
-  import type { LspDiagnosticsEvent } from '../../../shared/types'
+  import { showLocations } from '../lib/lspLocations'
+  import { applyEditsToText, workspaceEditToFiles } from '../lib/lspEdits'
+  import { hoverTooltipField, setHoverTooltip, hoverTooltipAt } from '../lib/editorHover'
+  import { overlays } from '../lib/overlays.svelte'
+  import { dialogs } from '../lib/dialogs.svelte'
+  import type { LspDiagnosticsEvent, LspDiagnostic, LspPosition, LspRange } from '../../../shared/types'
+  import type { Location, WorkspaceEdit, Command, CodeAction } from 'vscode-languageserver-types'
   import { EditorView } from '@codemirror/view'
   import { EditorState, Compartment, type Extension } from '@codemirror/state'
-  import { setDiagnostics } from '@codemirror/lint'
+  import { setDiagnostics, forEachDiagnostic } from '@codemirror/lint'
   import { vim, Vim, getCM } from '@replit/codemirror-vim'
   import { keymap } from '../lib/keymap.svelte'
 
@@ -70,6 +83,7 @@
       baseExtensions(() => void save()),
       languageComp.of(languageExtension(path)),
       lspComp.of([]),
+      hoverTooltipField,
       themeComp.of(editorTheme(theme.palette, theme.scheme)),
       EditorView.updateListener.of(onEditorUpdate)
     ]
@@ -325,20 +339,348 @@
     invalidateInactiveBuffers()
   })
 
+  // Latest LSP diagnostics for the open file, kept in their native shape so
+  // code actions and the line-diagnostics popup can use them.
+  let lastDiagnostics: LspDiagnostic[] = []
+
   // Apply diagnostics pushed by the language server for the open file.
   const stopLspDiagnostics = window.workbench.on('event:lsp-diagnostics', (payload) => {
     const event = payload as LspDiagnosticsEvent
     if (!view || !lspCtx || event.uri !== lspCtx.uri) return
+    lastDiagnostics = event.diagnostics
     view.dispatch(setDiagnostics(view.state, toCmDiagnostics(view.state.doc, event.diagnostics)))
   })
+
+  // ── LSP actions (definition, references, rename, format, …) ─────
+  // These are wired to Vim normal-mode keys (gd/gr/gI/gy/gD/K, ]d/[d/]e/[e)
+  // and leader bindings (<leader>c a/r/d/f). All no-op without a server.
+  function cursorPosition(): LspPosition | null {
+    if (!view) return null
+    return offsetToPosition(view.state.doc, view.state.selection.main.head)
+  }
+
+  async function gotoLocations(
+    request: (w: string, l: string, u: string, p: LspPosition) => Promise<Location[]>,
+    title: string
+  ): Promise<void> {
+    if (!lspCtx) return
+    const position = cursorPosition()
+    if (!position) return
+    const ctx = lspCtx
+    const locations = await request(ctx.worktreeId, ctx.language, ctx.uri, position).catch(() => [])
+    showLocations(ctx.worktreeId, locations, title)
+  }
+
+  function gotoDefinition(): Promise<void> {
+    return gotoLocations(window.workbench.lsp.definition, 'Definition')
+  }
+  function gotoReferences(): Promise<void> {
+    return gotoLocations(window.workbench.lsp.references, 'References')
+  }
+  function gotoImplementation(): Promise<void> {
+    return gotoLocations(window.workbench.lsp.implementation, 'Implementation')
+  }
+  function gotoTypeDefinition(): Promise<void> {
+    return gotoLocations(window.workbench.lsp.typeDefinition, 'Type definition')
+  }
+  function gotoDeclaration(): Promise<void> {
+    return gotoLocations(window.workbench.lsp.declaration, 'Declaration')
+  }
+
+  async function hoverAtCursor(): Promise<void> {
+    if (!view || !lspCtx) return
+    const pos = view.state.selection.main.head
+    const text = await window.workbench.lsp
+      .hover(lspCtx.worktreeId, lspCtx.language, lspCtx.uri, offsetToPosition(view.state.doc, pos))
+      .catch(() => null)
+    if (!text || !view) return
+    view.dispatch({ effects: setHoverTooltip.of(hoverTooltipAt(pos, text)) })
+  }
+
+  // Jump to the next/previous diagnostic from the cursor, optionally errors only.
+  function gotoDiagnostic(direction: 'next' | 'prev', errorsOnly: boolean): void {
+    if (!view) return
+    const spots: number[] = []
+    forEachDiagnostic(view.state, (diagnostic, from) => {
+      if (errorsOnly && diagnostic.severity !== 'error') return
+      spots.push(from)
+    })
+    if (spots.length === 0) return
+    spots.sort((a, b) => a - b)
+    const cursor = view.state.selection.main.head
+    let target: number
+    if (direction === 'next') {
+      target = spots.find((spot) => spot > cursor) ?? spots[0]
+    } else {
+      const before = spots.filter((spot) => spot < cursor)
+      target = before.length > 0 ? before[before.length - 1] : spots[spots.length - 1]
+    }
+    view.dispatch({ selection: { anchor: target }, scrollIntoView: true })
+    view.focus()
+  }
+
+  // Show the diagnostics on the cursor's line as a toast.
+  function lineDiagnostics(): void {
+    if (!view) return
+    const line = view.state.doc.lineAt(view.state.selection.main.head).number - 1
+    const onLine = lastDiagnostics.filter(
+      (diagnostic) => line >= diagnostic.range.start.line && line <= diagnostic.range.end.line
+    )
+    if (onLine.length === 0) {
+      dialogs.notify({ level: 'info', message: 'No diagnostics on this line', timeoutMs: 2000 })
+      return
+    }
+    const worst = onLine.some((diagnostic) => diagnostic.severity === 1) ? 'error' : 'warn'
+    dialogs.notify({ level: worst, message: onLine.map((d) => d.message).join('\n') })
+  }
+
+  function wordAtCursor(): string {
+    if (!view) return ''
+    const head = view.state.selection.main.head
+    const line = view.state.doc.lineAt(head)
+    const column = head - line.from
+    const before = line.text.slice(0, column).match(/[\w$]*$/)?.[0] ?? ''
+    const after = line.text.slice(column).match(/^[\w$]*/)?.[0] ?? ''
+    return before + after
+  }
+
+  function rename(): void {
+    if (!view || !lspCtx) return
+    const symbol = wordAtCursor()
+    const position = cursorPosition()
+    if (!position) return
+    const ctx = lspCtx
+    overlays.show({
+      id: 'lsp.rename',
+      placeholder: `Rename '${symbol}' to…`,
+      initialQuery: symbol,
+      onQuery: (query, emit) => {
+        const name = query.trim()
+        emit([{ id: 'rename', label: name ? `Rename to "${name}"` : 'Enter a new name…', data: name }], {
+          replace: true
+        })
+      },
+      onAccept: async (picked) => {
+        const newName = ((picked[0]?.data as string) ?? '').trim()
+        if (!newName || newName === symbol) return
+        const edit = await window.workbench.lsp
+          .rename(ctx.worktreeId, ctx.language, ctx.uri, position, newName)
+          .catch(() => null)
+        if (!edit) {
+          dialogs.notify({ level: 'warn', message: 'Rename not available here', timeoutMs: 2500 })
+          return
+        }
+        await applyWorkspaceEdit(edit)
+      }
+    })
+  }
+
+  async function format(): Promise<void> {
+    if (!view || !lspCtx) return
+    const edits = await window.workbench.lsp
+      .formatting(lspCtx.worktreeId, lspCtx.language, lspCtx.uri, view.state.tabSize)
+      .catch(() => [])
+    if (edits.length === 0) return
+    const current = view.state.doc.toString()
+    const updated = applyEditsToText(current, edits)
+    if (updated === current) return
+    const cursor = view.state.selection.main.head
+    suppressDirty = true
+    view.dispatch({
+      changes: { from: 0, to: current.length, insert: updated },
+      selection: { anchor: Math.min(cursor, updated.length) }
+    })
+    suppressDirty = false
+    dirtyPaths = { ...dirtyPaths, [lspCtx.path]: true }
+  }
+
+  function diagnosticsInRange(range: LspRange): LspDiagnostic[] {
+    return lastDiagnostics.filter(
+      (diagnostic) =>
+        diagnostic.range.start.line <= range.end.line &&
+        diagnostic.range.end.line >= range.start.line
+    )
+  }
+
+  function codeAction(): void {
+    if (!view || !lspCtx) return
+    const selection = view.state.selection.main
+    const range: LspRange = {
+      start: offsetToPosition(view.state.doc, selection.from),
+      end: offsetToPosition(view.state.doc, selection.to)
+    }
+    const ctx = lspCtx
+    void (async () => {
+      const actions = await window.workbench.lsp
+        .codeAction(ctx.worktreeId, ctx.language, ctx.uri, range, diagnosticsInRange(range))
+        .catch(() => [])
+      if (actions.length === 0) {
+        dialogs.notify({ level: 'info', message: 'No code actions', timeoutMs: 2000 })
+        return
+      }
+      overlays.show({
+        id: 'lsp.codeAction',
+        placeholder: 'Code action',
+        onQuery: (query, emit) => {
+          const needle = query.trim().toLowerCase()
+          const items = actions
+            .map((action, index) => ({ id: String(index), label: actionTitle(action), data: index }))
+            .filter((item) => !needle || item.label.toLowerCase().includes(needle))
+          emit(items, { replace: true })
+        },
+        onAccept: async (picked) => {
+          const index = picked[0]?.data as number | undefined
+          if (index === undefined) return
+          await runCodeAction(ctx, actions[index])
+        }
+      })
+    })()
+  }
+
+  function actionTitle(action: Command | CodeAction): string {
+    return action.title
+  }
+
+  function isCommand(action: Command | CodeAction): action is Command {
+    return typeof (action as Command).command === 'string'
+  }
+
+  async function runCodeAction(ctx: LspContext, action: Command | CodeAction): Promise<void> {
+    if (isCommand(action)) {
+      await window.workbench.lsp.executeCommand(
+        ctx.worktreeId,
+        ctx.language,
+        action.command,
+        action.arguments ?? []
+      )
+      return
+    }
+    let resolved = action
+    if (!resolved.edit) {
+      resolved = await window.workbench.lsp
+        .resolveCodeAction(ctx.worktreeId, ctx.language, action)
+        .catch(() => action)
+    }
+    if (resolved.edit) await applyWorkspaceEdit(resolved.edit)
+    if (resolved.command) {
+      await window.workbench.lsp.executeCommand(
+        ctx.worktreeId,
+        ctx.language,
+        resolved.command.command,
+        resolved.command.arguments ?? []
+      )
+    }
+  }
+
+  // Apply a WorkspaceEdit: the active buffer is edited live; other files are
+  // rewritten on disk (their cached buffer states are dropped so they re-read).
+  async function applyWorkspaceEdit(edit: WorkspaceEdit): Promise<void> {
+    if (!store.selectedWorktreeId) return
+    const worktreeId = store.selectedWorktreeId
+    const files = workspaceEditToFiles(edit)
+    let changed = 0
+    for (const file of files) {
+      if (file.path === store.activeTabPath && view) {
+        const current = view.state.doc.toString()
+        suppressDirty = true
+        view.dispatch({ changes: { from: 0, to: current.length, insert: applyEditsToText(current, file.edits) } })
+        suppressDirty = false
+        dirtyPaths = { ...dirtyPaths, [file.path]: true }
+      } else {
+        const current = await window.workbench.files.read(worktreeId, file.path).catch(() => null)
+        if (current === null) continue
+        await window.workbench.files.write(worktreeId, file.path, applyEditsToText(current, file.edits))
+        contentCache.delete(file.path)
+        bufferStates.delete(file.path)
+      }
+      changed += 1
+    }
+    if (changed > 0) {
+      dialogs.notify({ level: 'info', message: `Updated ${changed} file(s)`, timeoutMs: 2000 })
+    }
+  }
 
   const activeTabs = $derived(
     store.tabs.filter((tab) => tab.worktreeId === store.selectedWorktreeId)
   )
 
+  // Bind the Vim normal-mode LSP keys (gd/gr/gI/gy/gD/K, ]d/[d/]e/[e) through
+  // the Vim adapter so they coexist with builtin motions (gg, ]}, …). Actions
+  // are (re)defined on mount so they close over the live editor; the key→action
+  // map is by name, so it always resolves the latest definition.
+  function setupVimLspKeys(): void {
+    Vim.defineAction('groveLspDefinition', () => void gotoDefinition())
+    Vim.defineAction('groveLspReferences', () => void gotoReferences())
+    Vim.defineAction('groveLspImplementation', () => void gotoImplementation())
+    Vim.defineAction('groveLspTypeDefinition', () => void gotoTypeDefinition())
+    Vim.defineAction('groveLspDeclaration', () => void gotoDeclaration())
+    Vim.defineAction('groveLspHover', () => void hoverAtCursor())
+    Vim.defineAction('groveLspNextDiag', () => gotoDiagnostic('next', false))
+    Vim.defineAction('groveLspPrevDiag', () => gotoDiagnostic('prev', false))
+    Vim.defineAction('groveLspNextError', () => gotoDiagnostic('next', true))
+    Vim.defineAction('groveLspPrevError', () => gotoDiagnostic('prev', true))
+
+    if (vimLspMapped) return
+    vimLspMapped = true
+    const normal = { context: 'normal' } as const
+    Vim.mapCommand('gd', 'action', 'groveLspDefinition', {}, normal)
+    Vim.mapCommand('gr', 'action', 'groveLspReferences', {}, normal)
+    Vim.mapCommand('gI', 'action', 'groveLspImplementation', {}, normal)
+    Vim.mapCommand('gy', 'action', 'groveLspTypeDefinition', {}, normal)
+    Vim.mapCommand('gD', 'action', 'groveLspDeclaration', {}, normal)
+    Vim.mapCommand('K', 'action', 'groveLspHover', {}, normal)
+    Vim.mapCommand(']d', 'action', 'groveLspNextDiag', {}, normal)
+    Vim.mapCommand('[d', 'action', 'groveLspPrevDiag', {}, normal)
+    Vim.mapCommand(']e', 'action', 'groveLspNextError', {}, normal)
+    Vim.mapCommand('[e', 'action', 'groveLspPrevError', {}, normal)
+  }
+
+  let disposeLspBindings: (() => void) | null = null
+
+  onMount(() => {
+    setupVimLspKeys()
+    // Leader LSP bindings go through the keymap so they show in which-key and
+    // stay customizable. Active only while an editor pane is focused.
+    disposeLspBindings = keymap.registerBindings([
+      {
+        id: 'lsp.codeAction',
+        keys: 'leader c a',
+        context: 'editor',
+        group: 'LSP',
+        description: 'Code action',
+        run: () => codeAction()
+      },
+      {
+        id: 'lsp.rename',
+        keys: 'leader c r',
+        context: 'editor',
+        group: 'LSP',
+        description: 'Rename symbol',
+        run: () => rename()
+      },
+      {
+        id: 'lsp.lineDiagnostics',
+        keys: 'leader c d',
+        context: 'editor',
+        group: 'LSP',
+        description: 'Line diagnostics',
+        run: () => lineDiagnostics()
+      },
+      {
+        id: 'lsp.format',
+        keys: 'leader c f',
+        context: 'editor',
+        group: 'LSP',
+        description: 'Format document',
+        run: () => void format()
+      }
+    ])
+  })
+
   onDestroy(() => {
     stopHighlighterWatch()
     stopLspDiagnostics()
+    disposeLspBindings?.()
     if (lspChangeTimer) clearTimeout(lspChangeTimer)
     view?.destroy()
   })

@@ -20,18 +20,31 @@ import {
   PublishDiagnosticsNotification,
   CompletionRequest,
   HoverRequest,
+  DefinitionRequest,
+  ReferencesRequest,
+  ImplementationRequest,
+  TypeDefinitionRequest,
+  DeclarationRequest,
+  RenameRequest,
+  DocumentFormattingRequest,
+  CodeActionRequest,
+  CodeActionResolveRequest,
+  ExecuteCommandRequest,
   type InitializeParams,
   type Diagnostic,
   type Hover,
-  type CompletionItem
+  type CompletionItem,
+  type Location,
+  type LocationLink,
+  type Definition,
+  type WorkspaceEdit,
+  type TextEdit,
+  type Range,
+  type CodeAction,
+  type Command
 } from 'vscode-languageserver-protocol'
 import { catalogEntry, listInstalled } from './extensions'
-import type {
-  CatalogEntry,
-  LspCompletion,
-  LspDiagnostic,
-  LspPosition
-} from '../shared/types'
+import type { CatalogEntry, LspCompletion, LspDiagnostic, LspPosition } from '../shared/types'
 
 export interface LspEvents {
   onDiagnostics: (uri: string, diagnostics: LspDiagnostic[]) => void
@@ -197,7 +210,18 @@ export class LspManager {
             synchronization: { dynamicRegistration: false },
             completion: { completionItem: { snippetSupport: false } },
             hover: { contentFormat: ['markdown', 'plaintext'] },
-            publishDiagnostics: {}
+            publishDiagnostics: {},
+            definition: { dynamicRegistration: false },
+            references: { dynamicRegistration: false },
+            implementation: { dynamicRegistration: false },
+            typeDefinition: { dynamicRegistration: false },
+            declaration: { dynamicRegistration: false },
+            rename: { dynamicRegistration: false },
+            formatting: { dynamicRegistration: false },
+            codeAction: {
+              dynamicRegistration: false,
+              resolveSupport: { properties: ['edit'] }
+            }
           }
         }
       }
@@ -260,6 +284,172 @@ export class LspManager {
       .sendRequest(HoverRequest.type, { textDocument: { uri }, position })
       .catch(() => null)
     return hoverToText(hover as Hover | null)
+  }
+
+  // ── Navigation (definition, references, implementation, …) ──────
+  // Normalize the server's Location | Location[] | LocationLink[] into a flat
+  // Location list. LocationLink carries the target on `targetUri`/`targetRange`.
+  private toLocations(result: Definition | LocationLink[] | null): Location[] {
+    if (!result) return []
+    const items = Array.isArray(result) ? result : [result]
+    return items.map((item) => {
+      if ('targetUri' in item) {
+        return { uri: item.targetUri, range: item.targetSelectionRange ?? item.targetRange }
+      }
+      return item
+    })
+  }
+
+  private async locationRequest(
+    type:
+      | typeof DefinitionRequest.type
+      | typeof ImplementationRequest.type
+      | typeof TypeDefinitionRequest.type
+      | typeof DeclarationRequest.type,
+    worktreeId: string,
+    language: string,
+    uri: string,
+    position: LspPosition
+  ): Promise<Location[]> {
+    const server = await this.serverFor(worktreeId, language)
+    if (!server || !server.alive) return []
+    const result = await server.connection
+      .sendRequest(type, { textDocument: { uri }, position })
+      .catch(() => null)
+    return this.toLocations(result as Definition | LocationLink[] | null)
+  }
+
+  async definition(
+    worktreeId: string,
+    language: string,
+    uri: string,
+    position: LspPosition
+  ): Promise<Location[]> {
+    return this.locationRequest(DefinitionRequest.type, worktreeId, language, uri, position)
+  }
+
+  async implementation(
+    worktreeId: string,
+    language: string,
+    uri: string,
+    position: LspPosition
+  ): Promise<Location[]> {
+    return this.locationRequest(ImplementationRequest.type, worktreeId, language, uri, position)
+  }
+
+  async typeDefinition(
+    worktreeId: string,
+    language: string,
+    uri: string,
+    position: LspPosition
+  ): Promise<Location[]> {
+    return this.locationRequest(TypeDefinitionRequest.type, worktreeId, language, uri, position)
+  }
+
+  async declaration(
+    worktreeId: string,
+    language: string,
+    uri: string,
+    position: LspPosition
+  ): Promise<Location[]> {
+    return this.locationRequest(DeclarationRequest.type, worktreeId, language, uri, position)
+  }
+
+  async references(
+    worktreeId: string,
+    language: string,
+    uri: string,
+    position: LspPosition
+  ): Promise<Location[]> {
+    const server = await this.serverFor(worktreeId, language)
+    if (!server || !server.alive) return []
+    const result = await server.connection
+      .sendRequest(ReferencesRequest.type, {
+        textDocument: { uri },
+        position,
+        context: { includeDeclaration: true }
+      })
+      .catch(() => null)
+    return Array.isArray(result) ? result : []
+  }
+
+  // ── Refactor (rename, format, code action) ──────────────────────
+  async rename(
+    worktreeId: string,
+    language: string,
+    uri: string,
+    position: LspPosition,
+    newName: string
+  ): Promise<WorkspaceEdit | null> {
+    const server = await this.serverFor(worktreeId, language)
+    if (!server || !server.alive) return null
+    return server.connection
+      .sendRequest(RenameRequest.type, { textDocument: { uri }, position, newName })
+      .catch(() => null)
+  }
+
+  async formatting(
+    worktreeId: string,
+    language: string,
+    uri: string,
+    tabSize: number
+  ): Promise<TextEdit[]> {
+    const server = await this.serverFor(worktreeId, language)
+    if (!server || !server.alive) return []
+    const result = await server.connection
+      .sendRequest(DocumentFormattingRequest.type, {
+        textDocument: { uri },
+        options: { tabSize, insertSpaces: true }
+      })
+      .catch(() => null)
+    return Array.isArray(result) ? result : []
+  }
+
+  async codeAction(
+    worktreeId: string,
+    language: string,
+    uri: string,
+    range: Range,
+    diagnostics: Diagnostic[]
+  ): Promise<(Command | CodeAction)[]> {
+    const server = await this.serverFor(worktreeId, language)
+    if (!server || !server.alive) return []
+    const result = await server.connection
+      .sendRequest(CodeActionRequest.type, {
+        textDocument: { uri },
+        range,
+        context: { diagnostics }
+      })
+      .catch(() => null)
+    return Array.isArray(result) ? result : []
+  }
+
+  // Resolve a code action's edit when the server deferred it (resolveSupport).
+  async resolveCodeAction(
+    worktreeId: string,
+    language: string,
+    action: CodeAction
+  ): Promise<CodeAction> {
+    const server = await this.serverFor(worktreeId, language)
+    if (!server || !server.alive) return action
+    const resolved = await server.connection
+      .sendRequest(CodeActionResolveRequest.type, action)
+      .catch(() => null)
+    return resolved ?? action
+  }
+
+  // Run a server command (code actions that are Commands rather than edits).
+  async executeCommand(
+    worktreeId: string,
+    language: string,
+    command: string,
+    args: unknown[]
+  ): Promise<void> {
+    const server = await this.serverFor(worktreeId, language)
+    if (!server || !server.alive) return
+    await server.connection
+      .sendRequest(ExecuteCommandRequest.type, { command, arguments: args })
+      .catch(() => null)
   }
 
   stopAll(): void {

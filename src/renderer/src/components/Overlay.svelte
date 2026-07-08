@@ -20,7 +20,12 @@
   const hasPreview = $derived(descriptor?.onPreview !== undefined)
 
   $effect(() => {
-    if (descriptor) queueMicrotask(() => inputEl?.focus())
+    if (!descriptor) return
+    queueMicrotask(() => {
+      inputEl?.focus()
+      // Prefilled query (e.g. rename): select it so typing replaces the name.
+      if (descriptor.initialQuery) inputEl?.select()
+    })
   })
 
   function onKeyDown(event: KeyboardEvent): void {

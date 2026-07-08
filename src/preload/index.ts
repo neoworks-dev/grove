@@ -100,7 +100,37 @@ const workbench = {
     completion: (worktreeId: string, language: string, uri: string, position: unknown) =>
       ipcRenderer.invoke('lsp:completion', worktreeId, language, uri, position),
     hover: (worktreeId: string, language: string, uri: string, position: unknown) =>
-      ipcRenderer.invoke('lsp:hover', worktreeId, language, uri, position)
+      ipcRenderer.invoke('lsp:hover', worktreeId, language, uri, position),
+    definition: (worktreeId: string, language: string, uri: string, position: unknown) =>
+      ipcRenderer.invoke('lsp:definition', worktreeId, language, uri, position),
+    references: (worktreeId: string, language: string, uri: string, position: unknown) =>
+      ipcRenderer.invoke('lsp:references', worktreeId, language, uri, position),
+    implementation: (worktreeId: string, language: string, uri: string, position: unknown) =>
+      ipcRenderer.invoke('lsp:implementation', worktreeId, language, uri, position),
+    typeDefinition: (worktreeId: string, language: string, uri: string, position: unknown) =>
+      ipcRenderer.invoke('lsp:typeDefinition', worktreeId, language, uri, position),
+    declaration: (worktreeId: string, language: string, uri: string, position: unknown) =>
+      ipcRenderer.invoke('lsp:declaration', worktreeId, language, uri, position),
+    rename: (
+      worktreeId: string,
+      language: string,
+      uri: string,
+      position: unknown,
+      newName: string
+    ) => ipcRenderer.invoke('lsp:rename', worktreeId, language, uri, position, newName),
+    formatting: (worktreeId: string, language: string, uri: string, tabSize: number) =>
+      ipcRenderer.invoke('lsp:formatting', worktreeId, language, uri, tabSize),
+    codeAction: (
+      worktreeId: string,
+      language: string,
+      uri: string,
+      range: unknown,
+      diagnostics: unknown
+    ) => ipcRenderer.invoke('lsp:codeAction', worktreeId, language, uri, range, diagnostics),
+    resolveCodeAction: (worktreeId: string, language: string, action: unknown) =>
+      ipcRenderer.invoke('lsp:resolveCodeAction', worktreeId, language, action),
+    executeCommand: (worktreeId: string, language: string, command: string, args: unknown[]) =>
+      ipcRenderer.invoke('lsp:executeCommand', worktreeId, language, command, args)
   },
   state: {
     getRepo: () => ipcRenderer.invoke('state:getRepo'),

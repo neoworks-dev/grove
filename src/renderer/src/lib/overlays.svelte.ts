@@ -58,6 +58,8 @@ export interface OverlayDescriptor {
   placeholder: string
   multiSelect?: boolean
   debounceMs?: number
+  // Prefill the input (e.g. rename pre-filled with the current symbol).
+  initialQuery?: string
   // Custom row renderer (props: item, active); default row shows icon/label/detail.
   itemComponent?: Component
   // Applied once after the first emit (e.g. start on the active buffer).
@@ -94,13 +96,13 @@ class OverlayController {
   show(descriptor: OverlayDescriptor): void {
     if (this.active) this.dismiss()
     this.active = descriptor
-    this.query = ''
+    this.query = descriptor.initialQuery ?? ''
     this.items = []
     this.activeIndex = 0
     this.selectedIds = new Set()
     this.preview = null
     this.appliedInitialFocus = false
-    this.runQuery('')
+    this.runQuery(this.query)
   }
 
   setQuery(query: string): void {

@@ -5,15 +5,24 @@
 import { keymap } from './keymap.svelte'
 import { commands } from './commands.svelte'
 import { search } from './search.svelte'
+import { fileFinder } from './filefinder.svelte'
 
 export function registerCoreBindings(): void {
   keymap.registerBindings([
     {
-      id: 'leader.search',
+      id: 'leader.files',
       keys: 'space',
       context: 'global',
       group: 'Search',
-      description: 'Search files (ripgrep)',
+      description: 'Search files by name',
+      run: () => fileFinder.show()
+    },
+    {
+      id: 'leader.search',
+      keys: '/',
+      context: 'global',
+      group: 'Search',
+      description: 'Search file contents (ripgrep)',
       run: () => search.show()
     },
     {
@@ -68,9 +77,17 @@ export function registerCoreBindings(): void {
 
   commands.register({
     id: 'search.files',
-    title: 'Search Files (ripgrep)',
+    title: 'Search File Contents (ripgrep)',
     group: 'Search',
     keywords: 'grep ripgrep content find',
     run: () => search.show()
+  })
+
+  commands.register({
+    id: 'files.find',
+    title: 'Go to File (by name)',
+    group: 'Search',
+    keywords: 'open file name quick finder goto',
+    run: () => fileFinder.show()
   })
 }

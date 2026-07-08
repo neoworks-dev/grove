@@ -279,10 +279,10 @@
 
 <div class="flex h-full min-h-0 flex-col">
     <div class="flex items-center gap-1 border-b border-line px-2 py-1">
-      <div class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+      <div class="nw-scroll flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
         {#each activeTabs as tab (tab.path)}
           <div
-            class="flex items-center gap-1 rounded-md px-2 py-1 text-xs {store.activeTabPath ===
+            class="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs {store.activeTabPath ===
             tab.path
               ? 'bg-surface text-default'
               : 'text-dim hover:text-default'}"

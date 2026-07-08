@@ -64,6 +64,11 @@ class WorkbenchStore {
   // scrolls the cursor there once the file is loaded.
   revealTarget = $state<{ path: string; line: number } | null>(null)
 
+  // Set when a file is opened via the search overlays → FileExplorer expands the
+  // ancestor directories and selects the row. `nonce` forces re-trigger even
+  // when the same path is revealed twice in a row.
+  revealInTree = $state<{ path: string; nonce: number } | null>(null)
+
   // Pending interactive tool-permission requests (agent → user).
   pendingPermissions = $state<PermissionRequestEvent[]>([])
 
@@ -178,6 +183,14 @@ export function openFileInEditor(worktreeId: string, path: string): void {
 export function openFileAtLine(worktreeId: string, path: string, line: number): void {
   openFileInEditor(worktreeId, path)
   store.revealTarget = { path, line }
+}
+
+// Ask the file explorer to expand to and select a worktree-relative path. Used
+// by the search overlays so an opened file is located in the tree.
+let revealNonce = 0
+export function revealInTree(path: string): void {
+  revealNonce += 1
+  store.revealInTree = { path, nonce: revealNonce }
 }
 
 // Move between open editor tabs (Shift+hjkl in the editor).

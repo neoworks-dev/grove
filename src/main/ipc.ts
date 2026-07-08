@@ -9,7 +9,9 @@ import * as config from './config'
 import * as files from './files'
 import * as worktrees from './worktrees'
 import { ServiceSupervisor } from './services'
-import { AgentManager } from './agents'
+import { AgentManager, detectAgents, mergeAgents } from './agents'
+import { WorktreeWatcher } from './watcher'
+import type { AgentConfig } from '../shared/types'
 import { getRepoState, updateRepoState, setLastRepo, loadState } from './state'
 
 interface Context {
@@ -37,6 +39,8 @@ const agents = new AgentManager({
   onLog: (worktreeId, name, line) => send('event:log', { worktreeId, source: 'agent', name, line })
 })
 
+const watcher = new WorktreeWatcher((change) => send('event:fs-change', change))
+
 function findWorktree(worktreeId: string): Worktree {
   const worktree = context.worktrees.find((entry) => entry.id === worktreeId)
   if (!worktree) throw new Error(`unknown worktree: ${worktreeId}`)
@@ -48,6 +52,13 @@ function requireRepo(): { repoPath: string; config: WorkbenchConfig } {
     throw new Error('no repository opened')
   }
   return { repoPath: context.repoPath, config: context.config }
+}
+
+// Auto-detected CLIs merged with config-defined agents (config overrides).
+async function effectiveAgents(): Promise<Record<string, AgentConfig>> {
+  const detected = await detectAgents()
+  const configured = context.config?.agents || {}
+  return mergeAgents(detected, configured)
 }
 
 async function refreshWorktrees(): Promise<Worktree[]> {
@@ -202,9 +213,9 @@ export function registerIpc(): void {
   })
 
   // ── Agents ────────────────────────────────────────────────────
-  ipcMain.handle('agents:list', (_e, worktreeId: string) => {
-    const { config: cfg } = requireRepo()
-    return Object.entries(cfg.agents).map(([name, agent]) => {
+  ipcMain.handle('agents:list', async (_e, worktreeId: string) => {
+    const all = await effectiveAgents()
+    return Object.entries(all).map(([name, agent]) => {
       const live = agents.getRuntime(worktreeId, name)
       if (live) return live
       return {
@@ -221,13 +232,14 @@ export function registerIpc(): void {
 
   ipcMain.handle(
     'agents:start',
-    (_e, worktreeId: string, name: string, prompt?: string) => {
+    async (_e, worktreeId: string, name: string, prompt?: string, extraArgs?: string) => {
       const { config: cfg } = requireRepo()
       const worktree = findWorktree(worktreeId)
-      const agent = cfg.agents[name]
+      const all = await effectiveAgents()
+      const agent = all[name]
       if (!agent) throw new Error(`unknown agent: ${name}`)
       const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
-      return agents.start(worktree, name, agent, ports, prompt)
+      return agents.start(worktree, name, agent, ports, prompt, extraArgs || '')
     }
   )
 
@@ -236,6 +248,10 @@ export function registerIpc(): void {
   )
 
   ipcMain.handle('agents:active', () => agents.activeWorktreeIds())
+
+  // Effective agent configs (detected + config), including discovered models and
+  // modes/efforts, for building the launch UI.
+  ipcMain.handle('agents:configs', () => effectiveAgents())
 
   // ── Files ─────────────────────────────────────────────────────
   ipcMain.handle('files:listDir', (_e, worktreeId: string, relPath: string) => {
@@ -264,6 +280,15 @@ export function registerIpc(): void {
     return updateRepoState(repoPath, patch)
   })
 
+  // ── File watching ─────────────────────────────────────────────
+  // Watch exactly the given worktrees (selected + those with running agents).
+  ipcMain.handle('fs:watch', (_e, worktreeIds: string[]) => {
+    const paths = worktreeIds
+      .map((id) => context.worktrees.find((worktree) => worktree.id === id)?.path)
+      .filter((path): path is string => Boolean(path))
+    watcher.setWatched(paths)
+  })
+
   // ── Misc ──────────────────────────────────────────────────────
   ipcMain.handle('shell:openExternal', (_e: IpcMainInvokeEvent, url: string) =>
     shell.openExternal(url)
@@ -274,4 +299,5 @@ export function registerIpc(): void {
 export async function shutdown(): Promise<void> {
   await supervisor.stopAll()
   await agents.stopAll()
+  await watcher.closeAll()
 }

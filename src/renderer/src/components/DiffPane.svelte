@@ -2,8 +2,12 @@
   import { onDestroy } from 'svelte'
   import { store } from '../lib/store.svelte'
   import { setupMonaco } from '../lib/monaco'
+  import UIPane from './UIPane.svelte'
   import type { DiffFile } from '../../../shared/types'
   import type * as Monaco from 'monaco-editor'
+
+  let listWidth = $state(Number(localStorage.getItem('pane.diffList')) || 256)
+  $effect(() => localStorage.setItem('pane.diffList', String(listWidth)))
 
   let diffHost = $state<HTMLDivElement>()
   let diffEditor: Monaco.editor.IStandaloneDiffEditor | null = null
@@ -30,8 +34,15 @@
     loading = true
     try {
       files = await window.workbench.git.changedFiles(store.selectedWorktreeId)
-      if (files.length > 0) {
-        await showDiff(files[0])
+      // Prefer a file the agent just touched (auto-diff), else keep/pick first.
+      const requested = store.requestedDiffFile
+      const target =
+        (requested && files.find((file) => file.path === requested)) ||
+        (selected && files.find((file) => fileKey(file) === fileKey(selected!))) ||
+        files[0]
+      if (requested) store.requestedDiffFile = null
+      if (target) {
+        await showDiff(target)
       } else {
         selected = null
         clearDiff()
@@ -47,7 +58,7 @@
     if (diffEditor || !diffHost) return
     monaco = setupMonaco()
     diffEditor = monaco.editor.createDiffEditor(diffHost, {
-      theme: 'vs-dark',
+      theme: store.monacoTheme,
       automaticLayout: true,
       readOnly: true,
       renderSideBySide: true,
@@ -75,9 +86,17 @@
     old?.modified.dispose()
   }
 
+  // Reload on worktree change, on file changes, and when an auto-diff is requested.
   $effect(() => {
     store.selectedWorktreeId
+    store.fsVersion[store.selectedWorktreeId ?? '']
+    store.requestedDiffFile
     void loadFiles()
+  })
+
+  // Follow the active color theme (Monaco themes are global).
+  $effect(() => {
+    if (monaco) monaco.editor.setTheme(store.monacoTheme)
   })
 
   onDestroy(() => diffEditor?.dispose())
@@ -85,7 +104,8 @@
 
 <div class="flex h-full min-h-0">
   <!-- Changed files -->
-  <div class="flex w-64 shrink-0 flex-col border-r border-line">
+  <UIPane side="right" bind:size={listWidth} min={160} max={480} class="border-r border-line">
+    <div class="flex h-full flex-col">
     <div class="flex items-center justify-between px-3 py-2">
       <span class="text-2xs font-semibold uppercase tracking-caps text-dim">Changes</span>
       <button class="text-dim hover:text-default" title="Refresh" onclick={loadFiles}>⟳</button>
@@ -110,7 +130,8 @@
         <p class="px-3 py-4 text-xs text-dim">No changes vs HEAD.</p>
       {/if}
     </div>
-  </div>
+    </div>
+  </UIPane>
 
   <!-- Diff editor -->
   <div class="flex min-w-0 flex-1 flex-col">

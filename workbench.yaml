@@ -20,12 +20,9 @@ services:
     health: http://localhost:${PORT_0}
     log: web.log
 
+# Agents auto-detected from PATH (claude, codex, opencode, gemini, aider,
+# cursor-agent). Entries here override a command or add an unknown CLI.
+# `echo` is a stub for testing the pane without a real agent installed.
 agents:
-  claude:
-    command: claude -p
-  codex:
-    command: codex exec
-  opencode:
-    command: opencode -?
   echo:
     command: echo '{"role":"assistant","content":"stub agent output"}'

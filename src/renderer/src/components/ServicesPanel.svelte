@@ -43,7 +43,7 @@
       void withRefresh(() => window.workbench.services.stopAll(store.selectedWorktreeId!))
   }
 
-  function openPreview(url: string): void {
+  function openPreview(_url: string): void {
     store.centerView = 'preview'
   }
 </script>

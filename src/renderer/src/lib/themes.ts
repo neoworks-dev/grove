@@ -1,0 +1,264 @@
+// Color-theme registry with pluggable themes. A theme is a full set of CSS
+// custom-property values applied inline on <html>, so it fully overrides the
+// design-system tokens (bg, surfaces, text, borders, accents). Applying inline
+// (rather than editing CSS) means a plugin can register a theme at runtime with
+// a plain object — no stylesheet changes needed. Each theme also carries a
+// matching Monaco editor theme so the code editor chrome tracks the app.
+
+// The complete palette every theme must define. Keeping the key set identical
+// across themes means switching never leaves a stale value behind.
+export interface ThemePalette {
+  bg: string
+  bgElevated: string
+  surface: string
+  surfaceRaised: string
+  surfaceHover: string
+  surfaceInput: string
+  border: string
+  borderStrong: string
+  borderFaint: string
+  text: string
+  textMuted: string
+  textDim: string
+  textFaint: string
+  textInverse: string
+  primary: string
+  primaryHover: string
+  primaryFg: string
+  secondaryHover: string
+  secondaryFg: string
+  focusRing: string
+  gridDot: string
+  gridDotBold: string
+  overlayScrim: string
+  ctxGreen: string
+  ctxRed: string
+  ctxAmber: string
+  ctxBlue: string
+  ctxViolet: string
+  ctxPink: string
+}
+
+export interface ColorTheme {
+  name: string
+  label: string
+  scheme: 'dark' | 'light'
+  palette: ThemePalette
+}
+
+// Maps a palette field to its CSS custom-property name.
+const CSS_VARS: Record<keyof ThemePalette, string> = {
+  bg: '--bg',
+  bgElevated: '--bg-elevated',
+  surface: '--surface',
+  surfaceRaised: '--surface-raised',
+  surfaceHover: '--surface-hover',
+  surfaceInput: '--surface-input',
+  border: '--border',
+  borderStrong: '--border-strong',
+  borderFaint: '--border-faint',
+  text: '--text',
+  textMuted: '--text-muted',
+  textDim: '--text-dim',
+  textFaint: '--text-faint',
+  textInverse: '--text-inverse',
+  primary: '--primary',
+  primaryHover: '--primary-hover',
+  primaryFg: '--primary-fg',
+  secondaryHover: '--secondary-hover',
+  secondaryFg: '--secondary-fg',
+  focusRing: '--focus-ring',
+  gridDot: '--grid-dot',
+  gridDotBold: '--grid-dot-bold',
+  overlayScrim: '--overlay-scrim',
+  ctxGreen: '--ctx-green',
+  ctxRed: '--ctx-red',
+  ctxAmber: '--ctx-amber',
+  ctxBlue: '--ctx-blue',
+  ctxViolet: '--ctx-violet',
+  ctxPink: '--ctx-pink'
+}
+
+// ── Neoworks base (dark) — the design-system default palette. ──────────
+const neoworksDark: ThemePalette = {
+  bg: '#000000',
+  bgElevated: '#0b0b0d',
+  surface: '#141416',
+  surfaceRaised: '#1c1c1f',
+  surfaceHover: '#1f1f23',
+  surfaceInput: '#0e0e10',
+  border: '#262626',
+  borderStrong: '#3f3f46',
+  borderFaint: 'rgba(255, 255, 255, 0.06)',
+  text: '#fafafa',
+  textMuted: '#a1a1aa',
+  textDim: '#71717a',
+  textFaint: '#52525b',
+  textInverse: '#0b0b0d',
+  primary: '#fafafa',
+  primaryHover: '#e4e4e7',
+  primaryFg: '#0b0b0d',
+  secondaryHover: '#1f1f23',
+  secondaryFg: '#fafafa',
+  focusRing: 'rgba(250, 250, 250, 0.55)',
+  gridDot: 'rgba(255, 255, 255, 0.045)',
+  gridDotBold: 'rgba(255, 255, 255, 0.16)',
+  overlayScrim: 'rgba(0, 0, 0, 0.66)',
+  ctxGreen: '#4ade80',
+  ctxRed: '#f87171',
+  ctxAmber: '#fbbf24',
+  ctxBlue: '#60a5fa',
+  ctxViolet: '#a78bfa',
+  ctxPink: '#f472b6'
+}
+
+// ── Neoworks light — the design-system light palette. ──────────────────
+const neoworksLight: ThemePalette = {
+  bg: '#f4f4f5',
+  bgElevated: '#ffffff',
+  surface: '#ffffff',
+  surfaceRaised: '#f9f9fa',
+  surfaceHover: '#e4e4e7',
+  surfaceInput: '#ffffff',
+  border: '#d4d4d8',
+  borderStrong: '#a1a1aa',
+  borderFaint: 'rgba(0, 0, 0, 0.08)',
+  text: '#09090b',
+  textMuted: '#3f3f46',
+  textDim: '#52525b',
+  textFaint: '#71717a',
+  textInverse: '#fafafa',
+  primary: '#09090b',
+  primaryHover: '#3f3f46',
+  primaryFg: '#ffffff',
+  secondaryHover: '#e4e4e7',
+  secondaryFg: '#09090b',
+  focusRing: 'rgba(9, 9, 11, 0.5)',
+  gridDot: 'rgba(0, 0, 0, 0.18)',
+  gridDotBold: 'rgba(0, 0, 0, 0.3)',
+  overlayScrim: 'rgba(9, 9, 11, 0.45)',
+  ctxGreen: '#16a34a',
+  ctxRed: '#dc2626',
+  ctxAmber: '#d97706',
+  ctxBlue: '#2563eb',
+  ctxViolet: '#7c3aed',
+  ctxPink: '#db2777'
+}
+
+// ── Midnight — indigo-tinted dark, blue/violet accents. ────────────────
+const midnight: ThemePalette = {
+  ...neoworksDark,
+  bg: '#0a0e1a',
+  bgElevated: '#0f1424',
+  surface: '#161c30',
+  surfaceRaised: '#1d2440',
+  surfaceHover: '#232b4d',
+  surfaceInput: '#0d1220',
+  border: '#26304d',
+  borderStrong: '#3b4770',
+  borderFaint: 'rgba(148, 163, 255, 0.08)',
+  text: '#e8ecff',
+  textMuted: '#a5b0d8',
+  textDim: '#6f7bb0',
+  textFaint: '#4c5680',
+  primary: '#818cf8',
+  primaryHover: '#a5b4fc',
+  primaryFg: '#0a0e1a',
+  secondaryHover: '#232b4d',
+  secondaryFg: '#e8ecff',
+  focusRing: 'rgba(129, 140, 248, 0.6)',
+  gridDot: 'rgba(148, 163, 255, 0.06)',
+  gridDotBold: 'rgba(148, 163, 255, 0.2)',
+  ctxViolet: '#a5b4fc',
+  ctxBlue: '#7dd3fc'
+}
+
+// ── Ember — warm dark, amber/orange accents. ───────────────────────────
+const ember: ThemePalette = {
+  ...neoworksDark,
+  bg: '#140f0c',
+  bgElevated: '#1c1512',
+  surface: '#241a15',
+  surfaceRaised: '#2e211a',
+  surfaceHover: '#382920',
+  surfaceInput: '#180f0b',
+  border: '#3a2a20',
+  borderStrong: '#5c4433',
+  borderFaint: 'rgba(255, 200, 150, 0.08)',
+  text: '#f5ece2',
+  textMuted: '#d1b9a3',
+  textDim: '#9c7f68',
+  textFaint: '#6e5646',
+  primary: '#fb923c',
+  primaryHover: '#fdba74',
+  primaryFg: '#140f0c',
+  secondaryHover: '#382920',
+  secondaryFg: '#f5ece2',
+  focusRing: 'rgba(251, 146, 60, 0.6)',
+  gridDot: 'rgba(255, 200, 150, 0.05)',
+  gridDotBold: 'rgba(255, 200, 150, 0.18)',
+  ctxAmber: '#fbbf24',
+  ctxGreen: '#a3e635'
+}
+
+const builtins: ColorTheme[] = [
+  { name: 'neoworks', label: 'Neoworks (Dark)', scheme: 'dark', palette: neoworksDark },
+  { name: 'neoworks-light', label: 'Neoworks Light', scheme: 'light', palette: neoworksLight },
+  { name: 'midnight', label: 'Midnight', scheme: 'dark', palette: midnight },
+  { name: 'ember', label: 'Ember', scheme: 'dark', palette: ember }
+]
+
+const themes = new Map<string, ColorTheme>()
+for (const theme of builtins) themes.set(theme.name, theme)
+
+const DEFAULT_THEME = 'neoworks'
+let activeName = DEFAULT_THEME
+
+export function availableThemes(): ColorTheme[] {
+  return [...themes.values()]
+}
+
+// Register a theme at runtime (plugin hook). Returns an unregister function.
+export function registerTheme(theme: ColorTheme): () => void {
+  themes.set(theme.name, theme)
+  return () => themes.delete(theme.name)
+}
+
+export function currentThemeName(): string {
+  return activeName
+}
+
+// Monaco editor theme name that pairs with an app theme. Registered in monaco.ts.
+export function monacoThemeFor(name: string): string {
+  return themes.has(name) ? `neoworks-${name}` : 'vs-dark'
+}
+
+// Monaco defineTheme inputs for every registered theme, so the editor background
+// and foreground match the app chrome.
+export function monacoThemeDefs(): { name: string; base: 'vs' | 'vs-dark'; palette: ThemePalette }[] {
+  return availableThemes().map((theme) => ({
+    name: `neoworks-${theme.name}`,
+    base: theme.scheme === 'light' ? 'vs' : 'vs-dark',
+    palette: theme.palette
+  }))
+}
+
+// Write a theme's palette as inline CSS variables on <html> and set data-theme
+// (drives color-scheme and the [data-theme='light'] soft-accent overrides).
+export function applyThemeVars(name: string): void {
+  const theme = themes.get(name)
+  if (!theme) return
+  const root = document.documentElement
+  root.setAttribute('data-theme', theme.scheme)
+  for (const key of Object.keys(CSS_VARS) as (keyof ThemePalette)[]) {
+    root.style.setProperty(CSS_VARS[key], theme.palette[key])
+  }
+  activeName = name
+  localStorage.setItem('colorTheme', name)
+}
+
+// Apply the saved (or default) theme on boot.
+export function initThemes(): void {
+  const saved = localStorage.getItem('colorTheme')
+  applyThemeVars(saved && themes.has(saved) ? saved : DEFAULT_THEME)
+}

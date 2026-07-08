@@ -60,8 +60,18 @@ export interface ServiceConfig {
   log?: string
 }
 
+// A selectable agent option (mode / model / effort). `flag` is appended to the
+// command verbatim when chosen; an empty flag means "no extra argument".
+export interface AgentOption {
+  label: string
+  flag: string
+}
+
 export interface AgentConfig {
   command: string
+  modes?: AgentOption[]
+  models?: AgentOption[]
+  efforts?: AgentOption[]
 }
 
 // ── Runtime state ───────────────────────────────────────────────

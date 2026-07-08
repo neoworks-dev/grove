@@ -10,6 +10,7 @@ import {
   type CompletionSource
 } from '@codemirror/autocomplete'
 import { type Diagnostic } from '@codemirror/lint'
+import { hoverDom } from './editorHover'
 import type { LspDiagnostic, LspPosition } from '../../../shared/types'
 
 export interface LspContext {
@@ -96,11 +97,9 @@ function hover(context: LspContext): Extension {
     if (!text) return null
     return {
       pos,
+      above: true,
       create() {
-        const dom = document.createElement('div')
-        dom.className = 'cm-lsp-hover'
-        dom.textContent = text
-        return { dom }
+        return { dom: hoverDom(text) }
       }
     }
   })

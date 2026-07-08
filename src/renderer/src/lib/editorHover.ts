@@ -4,6 +4,18 @@
 
 import { StateEffect, StateField } from '@codemirror/state'
 import { showTooltip, type Tooltip } from '@codemirror/view'
+import { renderMarkdown } from './markdown'
+
+// Build the tooltip body: LSP hover/type info is markdown, rendered (and
+// sanitized) into a styled container that floats above the token. Shared by
+// the mouse hover and the `K` keybind so both look the same.
+export function hoverDom(text: string): HTMLElement {
+  const dom = document.createElement('div')
+  dom.className = 'cm-lsp-hover'
+  // renderMarkdown sanitizes via DOMPurify before it reaches innerHTML.
+  dom.innerHTML = renderMarkdown(text)
+  return dom
+}
 
 export const setHoverTooltip = StateEffect.define<Tooltip | null>()
 
@@ -29,10 +41,7 @@ export function hoverTooltipAt(pos: number, text: string): Tooltip {
     pos,
     above: true,
     create() {
-      const dom = document.createElement('div')
-      dom.className = 'cm-lsp-hover'
-      dom.textContent = text
-      return { dom }
+      return { dom: hoverDom(text) }
     }
   }
 }

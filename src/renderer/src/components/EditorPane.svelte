@@ -310,13 +310,6 @@
       >
         VIM
       </button>
-      <button
-        class="rounded-md bg-action px-2 py-1 text-2xs text-action-fg"
-        onclick={save}
-        title="Save (Ctrl/Cmd+S or :w)"
-      >
-        Save
-      </button>
     </div>
 
   <div bind:this={editorHost} class="min-h-0 flex-1 overflow-hidden"></div>

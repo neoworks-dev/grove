@@ -14,9 +14,13 @@
   // opens. Themes installed as extensions appear here once registered.
   $effect(() => {
     if (!themePicker.open) return
-    themes = availableThemes()
-    originalName = currentThemeName()
-    const current = themes.findIndex((theme) => theme.name === originalName)
+    // Compute in locals; reading the `themes`/`originalName` state we just wrote
+    // inside this effect would make it depend on itself and loop forever.
+    const list = availableThemes()
+    const original = currentThemeName()
+    const current = list.findIndex((theme) => theme.name === original)
+    themes = list
+    originalName = original
     activeIndex = current >= 0 ? current : 0
     queueMicrotask(() => dialogEl?.focus())
   })

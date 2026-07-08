@@ -53,7 +53,9 @@
     "js-yaml": "^5.2.1",
     "marked": "^18.0.5",
     "phosphor-svelte": "^3.1.0",
-    "simple-git": "^3.36.0"
+    "simple-git": "^3.36.0",
+    "tree-sitter-wasms": "^0.1.13",
+    "web-tree-sitter": "^0.26.10"
   },
   "devDependencies": {
     "@electron-toolkit/eslint-config-prettier": "^3.0.0",

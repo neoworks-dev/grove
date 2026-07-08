@@ -58,6 +58,15 @@ class WorkbenchStore {
   // Pending interactive tool-permission requests (agent → user).
   pendingPermissions = $state<PermissionRequestEvent[]>([])
 
+  // A proposed (not-yet-applied) file change from a pending Write/Edit, shown in
+  // the diff editor so the user reviews before approving.
+  proposedDiff = $state<{
+    path: string
+    original: string
+    modified: string
+    language: string
+  } | null>(null)
+
   // Streamed logs keyed by worktreeId.
   logs = $state<Record<string, LogLine[]>>({})
 
@@ -157,7 +166,69 @@ export async function respondPermission(
   decision: PermissionDecision
 ): Promise<void> {
   store.pendingPermissions = store.pendingPermissions.filter((request) => request.id !== id)
+  store.proposedDiff = null
   await window.workbench.agents.respondPermission(id, decision)
+}
+
+const LANGUAGE_BY_EXT: Record<string, string> = {
+  ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript',
+  json: 'json', md: 'markdown', css: 'css', scss: 'scss', html: 'html',
+  svelte: 'html', yml: 'yaml', yaml: 'yaml', py: 'python', rs: 'rust',
+  go: 'go', sh: 'shell', toml: 'ini'
+}
+
+function languageForPath(path: string): string {
+  const ext = path.split('.').pop()?.toLowerCase() || ''
+  return LANGUAGE_BY_EXT[ext] || 'plaintext'
+}
+
+// Apply an Edit-style string replacement the way the agent tools do.
+function applyStringEdit(text: string, oldString: string, newString: string, all: boolean): string {
+  if (typeof oldString !== 'string' || oldString.length === 0) return text
+  return all ? text.split(oldString).join(newString) : text.replace(oldString, newString)
+}
+
+// Build a diff of the current file vs. what a pending Write/Edit would produce,
+// and surface it in the diff view. No-op for non-file-editing tools.
+export async function openProposedDiff(request: PermissionRequestEvent): Promise<void> {
+  const path = request.path
+  if (!path || !store.selectedWorktreeId) return
+  const input = request.input as Record<string, unknown>
+
+  let original = ''
+  try {
+    original = await window.workbench.files.read(store.selectedWorktreeId, path)
+  } catch {
+    original = '' // new file
+  }
+
+  let modified: string
+  if (request.toolName === 'Write' && typeof input.content === 'string') {
+    modified = input.content
+  } else if (request.toolName === 'Edit') {
+    modified = applyStringEdit(
+      original,
+      input.old_string as string,
+      input.new_string as string,
+      input.replace_all === true
+    )
+  } else if (request.toolName === 'MultiEdit' && Array.isArray(input.edits)) {
+    modified = (input.edits as Record<string, unknown>[]).reduce(
+      (acc, edit) =>
+        applyStringEdit(
+          acc,
+          edit.old_string as string,
+          edit.new_string as string,
+          edit.replace_all === true
+        ),
+      original
+    )
+  } else {
+    return // not a file-editing tool
+  }
+
+  store.proposedDiff = { path, original, modified, language: languageForPath(path) }
+  store.centerView = 'diff'
 }
 
 // ── Actions ───────────────────────────────────────────────────
@@ -230,6 +301,7 @@ export function subscribeEvents(): void {
       store.pendingPermissions = store.pendingPermissions.filter(
         (request) => !(request.worktreeId === runtime.worktreeId && request.agent === runtime.name)
       )
+      if (store.pendingPermissions.length === 0) store.proposedDiff = null
     }
     void window.workbench.agents.active().then((ids) => {
       store.activeAgentWorktrees = ids
@@ -237,7 +309,10 @@ export function subscribeEvents(): void {
     })
   })
   window.workbench.on('event:agent-permission', (payload) => {
-    store.pendingPermissions = [...store.pendingPermissions, payload as PermissionRequestEvent]
+    const request = payload as PermissionRequestEvent
+    store.pendingPermissions = [...store.pendingPermissions, request]
+    // Show a proposed-change diff for file-editing tools so review isn't blind.
+    void openProposedDiff(request)
   })
 
   window.workbench.on('event:fs-change', (payload) => {

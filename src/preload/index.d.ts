@@ -10,6 +10,8 @@ import type {
   AgentConfig,
   AgentLaunchOptions,
   AgentDialogDecision,
+  AgentChats,
+  ChatMeta,
   PermissionDecision,
   FileNode,
   RepoInfo,
@@ -80,8 +82,16 @@ export interface WorkbenchApi {
       options: AgentLaunchOptions
     ) => Promise<AgentRuntime>
     stop: (worktreeId: string, name: string) => Promise<void>
-    reset: (worktreeId: string, name: string) => Promise<void>
+    reset: (worktreeId: string, name: string) => Promise<ChatMeta>
     transcript: (worktreeId: string, name: string) => Promise<string[]>
+    chats: (worktreeId: string, name: string) => Promise<AgentChats>
+    renameChat: (
+      worktreeId: string,
+      name: string,
+      chatId: string,
+      chatName: string
+    ) => Promise<void>
+    activateChat: (worktreeId: string, name: string, chatId: string) => Promise<string[]>
     respondPermission: (id: string, decision: PermissionDecision) => Promise<void>
     respondDialog: (id: string, decision: AgentDialogDecision) => Promise<void>
     active: () => Promise<string[]>

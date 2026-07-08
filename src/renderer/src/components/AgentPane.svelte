@@ -6,7 +6,10 @@
     respondPermission,
     respondDialog,
     seedAgentTranscript,
-    resetAgentChat
+    resetAgentChat,
+    refreshChats,
+    renameChat,
+    resumeChat
   } from '../lib/store.svelte'
   import { parseQuestions, buildAnswerResult } from '../lib/agentDialog'
   import WaveSpinner from './WaveSpinner.svelte'
@@ -124,6 +127,9 @@
     args: SlashArg[]
     // Action commands run immediately on selection instead of offering args.
     run?: () => void
+    // Accept a free-text argument (e.g. a model name or chat name).
+    freeText?: (raw: string) => void
+    freeTextHint?: string
   }
   interface SlashEntry {
     label: string
@@ -177,20 +183,58 @@
           description: model.value,
           apply: () => (selectedModel = model.value)
         }))
-      ]
+      ],
+      freeText: (raw) => (selectedModel = raw),
+      freeTextHint: 'custom model'
     })
     commands.push({
       name: 'clear',
-      description: 'Clear this chat (wipes conversation memory)',
+      description: 'Clear this chat (new conversation)',
       args: [],
       run: clearChat
     })
+    commands.push({
+      name: 'rename',
+      description: 'Name this chat',
+      args: [],
+      freeText: renameCurrentChat,
+      freeTextHint: 'chat name'
+    })
+    if (currentChats && currentChats.chats.length > 0) {
+      commands.push({
+        name: 'resume',
+        description: 'Resume a previous chat',
+        args: currentChats.chats.map((chat) => ({
+          value: chat.name,
+          description: chat.id === currentChats.activeId ? 'current' : 'resume',
+          apply: () => resumeCurrentChat(chat.id)
+        }))
+      })
+    }
     return commands
+  })
+
+  const chatsKey = $derived(`${store.selectedWorktreeId}::${selectedAgent}`)
+  const currentChats = $derived(store.agentChats[chatsKey])
+
+  // Keep the chat list current for /resume and /rename.
+  $effect(() => {
+    if (store.selectedWorktreeId && selectedAgent) {
+      void refreshChats(store.selectedWorktreeId, selectedAgent)
+    }
   })
 
   function clearChat(): void {
     if (!store.selectedWorktreeId) return
-    resetAgentChat(store.selectedWorktreeId, selectedAgent)
+    void resetAgentChat(store.selectedWorktreeId, selectedAgent)
+  }
+  function renameCurrentChat(name: string): void {
+    if (!store.selectedWorktreeId || !currentChats || !name.trim()) return
+    void renameChat(store.selectedWorktreeId, selectedAgent, currentChats.activeId, name.trim())
+  }
+  function resumeCurrentChat(chatId: string): void {
+    if (!store.selectedWorktreeId) return
+    void resumeChat(store.selectedWorktreeId, selectedAgent, chatId)
   }
 
   function finishSlash(action: () => void): void {
@@ -236,15 +280,16 @@
       .filter((arg) => arg.value.toLowerCase().includes(argQuery))
       .map((arg) => ({ label: arg.value, description: arg.description, apply: () => finishSlash(arg.apply) }))
 
-    // Free-text model value for CLIs without a model-list command (e.g. claude).
-    if (command.name === 'model') {
+    // Free-text argument (e.g. a custom model name, or a chat name for /rename).
+    if (command.freeText) {
       const raw = rest.slice(space + 1).trim()
       const exists = command.args.some((arg) => arg.value.toLowerCase() === raw.toLowerCase())
       if (raw && !exists) {
+        const apply = command.freeText
         entries.unshift({
           label: raw,
-          description: 'custom model',
-          apply: () => finishSlash(() => (selectedModel = raw))
+          description: command.freeTextHint || 'custom',
+          apply: () => finishSlash(() => apply(raw))
         })
       }
     }

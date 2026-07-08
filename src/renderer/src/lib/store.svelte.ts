@@ -13,7 +13,8 @@ import type {
   PermissionRequestEvent,
   PermissionDecision,
   AgentDialogRequest,
-  AgentDialogDecision
+  AgentDialogDecision,
+  AgentChats
 } from '../../../shared/types'
 
 export interface LogLine {
@@ -51,6 +52,8 @@ class WorkbenchStore {
   services = $state<Record<string, ServiceRuntime[]>>({})
   agents = $state<Record<string, AgentRuntime[]>>({})
   activeAgentWorktrees = $state<string[]>([])
+  // Named chats keyed by "worktreeId::agent".
+  agentChats = $state<Record<string, AgentChats>>({})
 
   // Effective agent configs (detected + config) keyed by agent name.
   agentConfigs = $state<Record<string, AgentConfig>>({})
@@ -259,6 +262,40 @@ export async function resetAgentChat(worktreeId: string, agent: string): Promise
   store.proposedDiff = null
 }
 
+// Replace the visible agent transcript with a given set of lines (used when
+// switching to another chat). Non-agent log lines for the worktree are kept.
+function setAgentTranscript(worktreeId: string, name: string, lines: string[]): void {
+  const others = (store.logs[worktreeId] || []).filter((line) => line.source !== 'agent')
+  const entries: LogLine[] = lines.map((line) => ({ source: 'agent', name, line }))
+  store.logs = { ...store.logs, [worktreeId]: [...entries, ...others] }
+}
+
+// Fetch the named-chat list for a worktree+agent into the store.
+export async function refreshChats(worktreeId: string, agent: string): Promise<void> {
+  const chats = await window.workbench.agents.chats(worktreeId, agent)
+  store.agentChats = { ...store.agentChats, [`${worktreeId}::${agent}`]: chats }
+}
+
+// Rename a chat so it's easy to find when resuming.
+export async function renameChat(
+  worktreeId: string,
+  agent: string,
+  chatId: string,
+  chatName: string
+): Promise<void> {
+  await window.workbench.agents.renameChat(worktreeId, agent, chatId, chatName)
+}
+
+// Resume a previous chat: activate it server-side and swap its transcript in.
+export async function resumeChat(worktreeId: string, agent: string, chatId: string): Promise<void> {
+  const lines = await window.workbench.agents.activateChat(worktreeId, agent, chatId)
+  setAgentTranscript(worktreeId, agent, lines)
+  store.pendingPermissions = store.pendingPermissions.filter(
+    (request) => !(request.worktreeId === worktreeId && request.agent === agent)
+  )
+  store.proposedDiff = null
+}
+
 // Answer a pending permission request and drop it from the queue.
 export async function respondPermission(
   id: string,
@@ -446,6 +483,13 @@ export function subscribeEvents(): void {
   })
   window.workbench.on('event:agent-dialog', (payload) => {
     store.pendingDialogs = [...store.pendingDialogs, payload as AgentDialogRequest]
+  })
+  window.workbench.on('event:agent-chats', (payload) => {
+    const event = payload as { worktreeId: string; name: string; chats: AgentChats }
+    store.agentChats = {
+      ...store.agentChats,
+      [`${event.worktreeId}::${event.name}`]: event.chats
+    }
   })
 
   window.workbench.on('event:fs-change', (payload) => {

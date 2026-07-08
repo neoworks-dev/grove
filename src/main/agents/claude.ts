@@ -33,6 +33,24 @@ const config: AgentConfig = {
   // Models are free-text (no runtime model-list API).
 }
 
+// Read-only tools auto-approved in every mode — they cannot mutate the
+// worktree, so routing them through the permission prompt is pure friction.
+// Bash entries are prefix rules: only these exact read-only commands match.
+const alwaysAllowedTools = [
+  'Read',
+  'Grep',
+  'Glob',
+  'LS',
+  'Bash(grep:*)',
+  'Bash(rg:*)',
+  'Bash(ls:*)',
+  'Bash(cat:*)',
+  'Bash(find:*)',
+  'Bash(head:*)',
+  'Bash(tail:*)',
+  'Bash(wc:*)'
+]
+
 function filePathOf(input: Record<string, unknown>): string | null {
   if (typeof input.file_path === 'string') return input.file_path
   if (typeof input.path === 'string') return input.path
@@ -71,6 +89,8 @@ function start(context: AdapterContext): RunHandle {
           permissionMode: permissionMode as 'default' | 'plan' | 'acceptEdits' | 'bypassPermissions',
           model: context.options.model || undefined,
           effort: (context.options.effort as 'low' | 'medium' | 'high' | 'xhigh' | 'max') || undefined,
+          // Safe read-only tools skip the permission prompt in every mode.
+          allowedTools: alwaysAllowedTools,
           includePartialMessages: false,
           stderr: (data: string) => context.emit(textLine('stderr', data)),
           // MUST declare the dialog kinds we render, or the CLI emits none at

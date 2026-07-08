@@ -160,11 +160,21 @@ export class LspManager {
     )
 
     // Mark dead + drop from the map on any end-of-life signal, so no later write
-    // hits a destroyed stream. `server` is captured below once created.
+    // hits a destroyed stream. Disposing the connection cancels pending handlers
+    // and internal writes (server-initiated request replies) that would
+    // otherwise reject with ERR_STREAM_DESTROYED after the stdio pipe dies.
+    let dropped = false
     const drop = (): void => {
+      if (dropped) return
+      dropped = true
       const server = this.servers.get(key)
       if (server) server.alive = false
       this.servers.delete(key)
+      try {
+        connection.dispose()
+      } catch {
+        // already disposed
+      }
     }
     child.on('error', drop)
     child.on('exit', drop)

@@ -12,6 +12,7 @@
   let dragging = $state(false)
   let lastPos = 0
   let containerPx = 1
+  let rootEl: HTMLElement
 
   // Smallest fraction either neighbor may shrink to, from the pane types'
   // pixel minimums inside each subtree (default 120px).
@@ -28,8 +29,10 @@
     return Math.max(MIN_PANE_FRACTION, Math.min(0.45, minPx / containerPx))
   }
 
-  function measure(el: HTMLElement): void {
-    const parent = el.parentElement
+  // The split's flex container is the gutter root's parent; its size is the
+  // basis for converting pixel drag deltas into size fractions.
+  function measure(): void {
+    const parent = rootEl?.parentElement
     if (!parent) return
     containerPx = Math.max(1, horizontal ? parent.clientWidth : parent.clientHeight)
   }
@@ -37,7 +40,7 @@
   function onPointerDown(event: PointerEvent): void {
     dragging = true
     lastPos = horizontal ? event.clientX : event.clientY
-    measure(event.currentTarget as HTMLElement)
+    measure()
     event.preventDefault()
     window.addEventListener('pointermove', onPointerMove)
     window.addEventListener('pointerup', onPointerUp)
@@ -63,13 +66,14 @@
     const shrink = event.key === 'ArrowLeft' || event.key === 'ArrowUp'
     if (!grow && !shrink) return
     event.preventDefault()
-    measure(event.currentTarget as HTMLElement)
+    measure()
     const deltaPx = grow ? 24 : -24
     layout.resize(split.id, gutterIndex, deltaPx / containerPx, minFraction())
   }
 </script>
 
 <div
+  bind:this={rootEl}
   class="relative shrink-0 {horizontal ? 'w-px' : 'h-px'} bg-line"
   role="separator"
   aria-orientation={horizontal ? 'vertical' : 'horizontal'}

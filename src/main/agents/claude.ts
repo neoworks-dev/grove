@@ -41,6 +41,9 @@ const alwaysAllowedTools = [
   'Grep',
   'Glob',
   'LS',
+  // Let the model spawn subagents without a prompt; the subagent's own tools
+  // still route through the permission flow.
+  'Task',
   'Bash(grep:*)',
   'Bash(rg:*)',
   'Bash(ls:*)',

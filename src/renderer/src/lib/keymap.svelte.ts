@@ -24,16 +24,13 @@ export interface KeyBinding {
   run: () => void | Promise<void>
 }
 
+import { startsWith, pickNeighbor } from './keymapCore'
+
 const LEADER_DELAY_MS = 300
 
 function tokenFor(event: KeyboardEvent): string {
   if (event.key === ' ' || event.key === 'Spacebar') return 'space'
   return event.key
-}
-
-function startsWith(seq: string[], prefix: string[]): boolean {
-  if (prefix.length > seq.length) return false
-  return prefix.every((token, index) => seq[index] === token)
 }
 
 class Keymap {
@@ -76,30 +73,12 @@ class Keymap {
   movePane(dir: 'h' | 'j' | 'k' | 'l'): void {
     const active = this.panes.get(this.activePane)
     if (!active) return
-    const a = active.getBoundingClientRect()
-    const ax = a.left + a.width / 2
-    const ay = a.top + a.height / 2
-
-    let best: PaneId | null = null
-    let bestScore = Infinity
+    const others: { id: string; rect: DOMRect }[] = []
     for (const [id, el] of this.panes) {
       if (id === this.activePane) continue
-      const r = el.getBoundingClientRect()
-      const dx = r.left + r.width / 2 - ax
-      const dy = r.top + r.height / 2 - ay
-      if (dir === 'h' && dx > -1) continue
-      if (dir === 'l' && dx < 1) continue
-      if (dir === 'k' && dy > -1) continue
-      if (dir === 'j' && dy < 1) continue
-      const horizontal = dir === 'h' || dir === 'l'
-      const primary = horizontal ? Math.abs(dx) : Math.abs(dy)
-      const cross = horizontal ? Math.abs(dy) : Math.abs(dx)
-      const score = primary + cross * 2
-      if (score < bestScore) {
-        bestScore = score
-        best = id
-      }
+      others.push({ id, rect: el.getBoundingClientRect() })
     }
+    const best = pickNeighbor(active.getBoundingClientRect(), others, dir)
     if (best) this.focusPane(best)
   }
 

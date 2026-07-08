@@ -77,15 +77,32 @@ export function buildDefaultTree(options: DefaultTreeOptions = {}): LayoutNode {
 }
 
 class LayoutStore {
-  tree = $state<LayoutNode>(buildDefaultTree())
   activeViewId = $state<string>('code')
   paneSizes = $state<Record<string, number>>({ ...DEFAULT_PANEL_SIZES })
 
-  // Per-view working copies for the current repo (plain snapshots, keyed by
-  // view id; the active view's live tree is `tree`).
-  private viewTrees: Record<string, LayoutNode> = {}
+  // Live tree per MOUNTED view. Views the user has visited stay in the DOM
+  // (hidden when inactive) so switching back never remounts their panes — that
+  // remount was rebuilding CodeMirror and every AgentPane message on each
+  // switch. Only the active view's tree is ever mutated.
+  trees = $state<Record<string, LayoutNode>>({ code: buildDefaultTree() })
+
+  // Render order of mounted views. App iterates this, showing only the active.
+  mountedViewIds = $state<string[]>(['code'])
+
+  // Snapshots restored from disk for views not yet visited this session; used
+  // to seed a view's live tree the first time it is shown.
+  private storedTrees: Record<string, LayoutNode> = {}
   private ready = false
   private timer: ReturnType<typeof setTimeout> | null = null
+
+  // The active view's live tree. All tree ops read and write through here.
+  get tree(): LayoutNode {
+    return this.trees[this.activeViewId] ?? buildDefaultTree()
+  }
+
+  private setActiveTree(next: LayoutNode): void {
+    this.trees[this.activeViewId] = next
+  }
 
   size(key: string): number {
     return this.paneSizes[key] ?? DEFAULT_PANEL_SIZES[key] ?? 256
@@ -107,7 +124,7 @@ class LayoutStore {
     const focused = this.focusedLeaf() ?? leaves(this.tree)[0]
     if (!focused) return
     const newLeaf = createLeaf(paneTypeId ?? focused.paneTypeId)
-    this.tree = splitLeaf(this.tree, focused.id, direction, newLeaf)
+    this.setActiveTree(splitLeaf(this.tree, focused.id, direction, newLeaf))
     this.focusLeafSoon(newLeaf.id)
     this.schedule()
   }
@@ -116,7 +133,7 @@ class LayoutStore {
     if (leaves(this.tree).length <= 1) return
     const next = removeLeaf(this.tree, leafId)
     if (!next) return
-    this.tree = next
+    this.setActiveTree(next)
     const fallback = leaves(next)[0]
     if (keymap.activeLeafId === leafId && fallback) this.focusLeafSoon(fallback.id)
     this.schedule()
@@ -134,23 +151,23 @@ class LayoutStore {
     const leafIds = new Set(leaves(this.tree).map((leaf) => leaf.id))
     const neighborId = keymap.neighborPane(focused.id, dir, leafIds)
     if (!neighborId) return
-    this.tree = swapLeaves(this.tree, focused.id, neighborId)
+    this.setActiveTree(swapLeaves(this.tree, focused.id, neighborId))
     this.focusLeafSoon(focused.id)
     this.schedule()
   }
 
   resize(splitId: string, gutterIndex: number, deltaFraction: number, minFraction?: number): void {
-    this.tree = resizeGutter(this.tree, splitId, gutterIndex, deltaFraction, minFraction)
+    this.setActiveTree(resizeGutter(this.tree, splitId, gutterIndex, deltaFraction, minFraction))
     this.schedule()
   }
 
   setLeafType(leafId: string, paneTypeId: string, paneState?: Record<string, unknown>): void {
-    this.tree = replaceLeafType(this.tree, leafId, paneTypeId, paneState)
+    this.setActiveTree(replaceLeafType(this.tree, leafId, paneTypeId, paneState))
     this.schedule()
   }
 
   updateLeafState(leafId: string, patch: Record<string, unknown>): void {
-    this.tree = updateLeafState(this.tree, leafId, patch)
+    this.setActiveTree(updateLeafState(this.tree, leafId, patch))
     this.schedule()
   }
 
@@ -182,7 +199,7 @@ class LayoutStore {
     const slot = panes.get(paneTypeId)?.slot
     const slotMate = slot ? this.slotLeaf(slot) : null
     if (slotMate) {
-      this.tree = replaceLeafType(this.tree, slotMate.id, paneTypeId)
+      this.setActiveTree(replaceLeafType(this.tree, slotMate.id, paneTypeId))
       this.focusLeafSoon(slotMate.id)
       this.schedule()
       return
@@ -206,17 +223,24 @@ class LayoutStore {
   }
 
   // ── Views ─────────────────────────────────────────────────────
-  // Switch to a named view: stash the current tree, restore the target's
-  // stored tree (or a fresh default), and focus its initial pane type.
+  // Switch to a named view. The previous view stays mounted (hidden) and the
+  // target is mounted on first visit, then kept — so switching only flips which
+  // subtree is visible instead of tearing down and rebuilding panes.
   switchView(viewId: string): void {
     if (viewId === this.activeViewId) return
     const definition = views.get(viewId)
     if (!definition) return
-    this.viewTrees[this.activeViewId] = $state.snapshot(this.tree) as LayoutNode
-    this.tree = this.viewTrees[viewId] ?? definition.buildTree()
+    this.ensureMounted(viewId, definition)
     this.activeViewId = viewId
     this.focusInitial(definition)
     this.schedule()
+  }
+
+  // Give a view a live tree and add it to the render list if it isn't mounted.
+  private ensureMounted(viewId: string, definition: { buildTree: () => LayoutNode }): void {
+    if (this.trees[viewId]) return
+    this.trees[viewId] = this.storedTrees[viewId] ?? definition.buildTree()
+    this.mountedViewIds = [...this.mountedViewIds, viewId]
   }
 
   private focusInitial(definition: { initialFocus?: string }): void {
@@ -237,10 +261,13 @@ class LayoutStore {
   }): void {
     this.ready = false
     this.paneSizes = { ...DEFAULT_PANEL_SIZES, ...(state.paneSizes || {}) }
-    this.viewTrees = restoreViewTrees(state.viewLayouts)
+    this.storedTrees = restoreViewTrees(state.viewLayouts)
     const activeId = this.restoreActiveViewId(state.activeLayoutView)
     this.activeViewId = activeId
-    this.tree = this.viewTrees[activeId] ?? this.initialTree(activeId, state)
+    // Mount only the active view; others mount lazily on first switch.
+    const activeTree = this.storedTrees[activeId] ?? this.initialTree(activeId, state)
+    this.trees = { [activeId]: activeTree }
+    this.mountedViewIds = [activeId]
     this.ready = true
   }
 
@@ -286,9 +313,11 @@ class LayoutStore {
   private async flush(): Promise<void> {
     try {
       await window.workbench.state.update({
+        // Unvisited views keep their stored layout; mounted views persist their
+        // live tree over it.
         viewLayouts: {
-          ...this.viewTrees,
-          [this.activeViewId]: $state.snapshot(this.tree)
+          ...this.storedTrees,
+          ...($state.snapshot(this.trees) as Record<string, LayoutNode>)
         },
         activeLayoutView: this.activeViewId,
         paneSizes: $state.snapshot(this.paneSizes),

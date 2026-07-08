@@ -40,6 +40,12 @@ import {
 } from './keySequence'
 
 import { settings } from './settings.svelte'
+import {
+  resolveDefaultBindings,
+  readCustomBindings,
+  readOverrideMap
+} from './bindingResolution'
+import { executeAction } from './actions.svelte'
 
 // Fallback when the workbench.whichKeyDelay setting isn't loaded yet.
 const LEADER_DELAY_MS = 300
@@ -75,6 +81,40 @@ class Keymap {
   private panes = new Map<PaneId, HTMLElement>()
   private paneTypes = new Map<PaneId, string>()
   private leaderTimer: ReturnType<typeof setTimeout> | null = null
+
+  // Effective bindings: registered defaults with user/project overrides from
+  // the settings provider applied (null override = unbound), plus custom
+  // bindings whose run executes a keybind action. Re-derives on any settings
+  // or registration change.
+  effective = $derived.by<ResolvedBinding[]>(() => {
+    const userOverrides = readOverrideMap(settings.userValues['keybindings.overrides'])
+    const projectOverrides = readOverrideMap(settings.projectValues['keybindings.overrides'])
+    const resolved = resolveDefaultBindings(this.bindings, userOverrides, projectOverrides)
+    const byId = new Map(this.bindings.map((binding) => [binding.id, binding]))
+    const active: ResolvedBinding[] = []
+    for (const entry of resolved) {
+      if (entry.unbound) continue
+      const base = byId.get(entry.id)
+      if (!base) continue
+      active.push({ ...base, keys: entry.keys, sequence: entry.sequence })
+    }
+    const custom = [
+      ...readCustomBindings(settings.userValues['keybindings.custom'], 'custom-user'),
+      ...readCustomBindings(settings.projectValues['keybindings.custom'], 'custom-project')
+    ]
+    for (const { binding, sequence, source } of custom) {
+      active.push({
+        id: binding.id,
+        keys: binding.keys,
+        context: binding.context,
+        group: 'Custom',
+        description: binding.description,
+        sequence,
+        run: () => executeAction(binding.action, source === 'custom-project')
+      })
+    }
+    return active
+  })
 
   get activePaneType(): string | null {
     return this.activePaneTypeState
@@ -169,7 +209,7 @@ class Keymap {
   // Bindings reachable in the current context matching the typed step prefix.
   // A binding context matches 'global', the active pane id, or its pane type.
   matching(prefix: KeyStep[], leader: boolean): ResolvedBinding[] {
-    return this.bindings.filter((binding) => {
+    return this.effective.filter((binding) => {
       if (binding.sequence.leader !== leader) return false
       const context = binding.context || 'global'
       const inContext =

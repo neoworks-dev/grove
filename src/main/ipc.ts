@@ -24,6 +24,7 @@ import type {
 } from '../shared/types'
 import { getRepoState, updateRepoState, setLastRepo, loadState } from './state'
 import { SettingsService } from './settings'
+import { ActionRunner } from './actions'
 import type { SettingScope } from '../shared/settings'
 
 interface Context {
@@ -70,6 +71,11 @@ const watcher = new WorktreeWatcher((change) => send('event:fs-change', change))
 
 const settings = new SettingsService({
   onChange: (snapshot) => send('event:settings-changed', snapshot)
+})
+
+const actionRunner = new ActionRunner({
+  onLog: (worktreeId, line) =>
+    send('event:log', { worktreeId, source: 'service', name: 'keybind', line })
 })
 
 // Active ripgrep search (at most one; a new query cancels it).
@@ -496,6 +502,17 @@ export function registerIpc(): void {
     watcher.setWatched(paths)
   })
 
+  // ── Keybind actions ───────────────────────────────────────────
+  ipcMain.handle(
+    'actions:runShell',
+    (_e: IpcMainInvokeEvent, worktreeId: string, commandLine: string) => {
+      const { config: cfg } = requireRepo()
+      const worktree = findWorktree(worktreeId)
+      const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
+      actionRunner.run(worktree, commandLine, ports)
+    }
+  )
+
   // ── Settings ──────────────────────────────────────────────────
   void settings.loadUser()
   ipcMain.handle('settings:read', () => settings.snapshot())
@@ -527,4 +544,5 @@ export async function shutdown(): Promise<void> {
   await watcher.closeAll()
   lsp.stopAll()
   settings.close()
+  actionRunner.stopAll()
 }

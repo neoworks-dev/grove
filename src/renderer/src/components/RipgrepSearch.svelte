@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { search } from '../lib/search.svelte'
-  import { store, openFileAtLine, revealInTree } from '../lib/store.svelte'
+  import { store, openFileAtLine } from '../lib/store.svelte'
   import type { SearchMatch } from '../../../shared/types'
 
   let query = $state('')
@@ -89,7 +89,6 @@
   function open(match: SearchMatch): void {
     if (!worktreeId) return
     openFileAtLine(worktreeId, `${worktreeRoot}/${match.file}`, match.line)
-    revealInTree(match.file)
     search.close()
   }
 

@@ -32,6 +32,7 @@ export interface EditorTab {
   worktreeId: string
   path: string // absolute
   name: string
+  pinned?: boolean
 }
 
 export type CenterView = 'editor' | 'diff' | 'preview' | 'dashboard'
@@ -63,11 +64,6 @@ class WorkbenchStore {
   // Set when opening a file at a specific line (ripgrep search) → EditorPane
   // scrolls the cursor there once the file is loaded.
   revealTarget = $state<{ path: string; line: number } | null>(null)
-
-  // Set when a file is opened via the search overlays → FileExplorer expands the
-  // ancestor directories and selects the row. `nonce` forces re-trigger even
-  // when the same path is revealed twice in a row.
-  revealInTree = $state<{ path: string; nonce: number } | null>(null)
 
   // Pending interactive tool-permission requests (agent → user).
   pendingPermissions = $state<PermissionRequestEvent[]>([])
@@ -157,6 +153,49 @@ class WorkbenchStore {
       this.activeTabPath = this.tabs.length > 0 ? this.tabs[this.tabs.length - 1].path : null
     }
   }
+
+  // ── Buffer operations (leader b menu) ──────────────────────────
+  // "Buffer" is just an open editor tab. Bulk closes act within the buffer's
+  // own worktree and never touch pinned buffers.
+  togglePin(path: string): void {
+    this.tabs = this.tabs.map((tab) => (tab.path === path ? { ...tab, pinned: !tab.pinned } : tab))
+  }
+
+  private worktreeTabs(worktreeId: string): EditorTab[] {
+    return this.tabs.filter((tab) => tab.worktreeId === worktreeId)
+  }
+
+  // Drop the given paths, then keep `keepActive` selected if the old active tab
+  // was among those closed.
+  private dropTabs(doomed: Set<string>, keepActive: string): void {
+    if (doomed.size === 0) return
+    this.tabs = this.tabs.filter((tab) => !doomed.has(tab.path))
+    if (this.activeTabPath && doomed.has(this.activeTabPath)) {
+      this.activeTabPath = this.tabs.some((tab) => tab.path === keepActive) ? keepActive : null
+    }
+  }
+
+  closeOtherTabs(path: string): void {
+    const target = this.tabs.find((tab) => tab.path === path)
+    if (!target) return
+    const doomed = new Set(
+      this.worktreeTabs(target.worktreeId)
+        .filter((tab) => tab.path !== path && !tab.pinned)
+        .map((tab) => tab.path)
+    )
+    this.dropTabs(doomed, path)
+  }
+
+  closeTabsToSide(path: string, side: 'left' | 'right'): void {
+    const target = this.tabs.find((tab) => tab.path === path)
+    if (!target) return
+    const siblings = this.worktreeTabs(target.worktreeId)
+    const index = siblings.findIndex((tab) => tab.path === path)
+    if (index < 0) return
+    const range = side === 'left' ? siblings.slice(0, index) : siblings.slice(index + 1)
+    const doomed = new Set(range.filter((tab) => !tab.pinned).map((tab) => tab.path))
+    this.dropTabs(doomed, path)
+  }
 }
 
 export const store = new WorkbenchStore()
@@ -183,14 +222,6 @@ export function openFileInEditor(worktreeId: string, path: string): void {
 export function openFileAtLine(worktreeId: string, path: string, line: number): void {
   openFileInEditor(worktreeId, path)
   store.revealTarget = { path, line }
-}
-
-// Ask the file explorer to expand to and select a worktree-relative path. Used
-// by the search overlays so an opened file is located in the tree.
-let revealNonce = 0
-export function revealInTree(path: string): void {
-  revealNonce += 1
-  store.revealInTree = { path, nonce: revealNonce }
 }
 
 // Move between open editor tabs (Shift+hjkl in the editor).

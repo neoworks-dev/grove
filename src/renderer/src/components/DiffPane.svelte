@@ -96,7 +96,12 @@
   async function showDiff(file: DiffFile): Promise<void> {
     if (!store.selectedWorktreeId) return
     selected = file
-    const sides = await window.workbench.git.diffSides(store.selectedWorktreeId, file)
+    // Snapshot the reactive proxy to a plain object; Electron IPC cannot
+    // structured-clone a Svelte $state Proxy ("An object could not be cloned").
+    const sides = await window.workbench.git.diffSides(
+      store.selectedWorktreeId,
+      $state.snapshot(file)
+    )
     renderMerge(sides.original, sides.modified, sides.language)
   }
 

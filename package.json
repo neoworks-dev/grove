@@ -1,7 +1,7 @@
 {
-  "name": "git-worktree-editor",
+  "name": "grove",
   "version": "1.0.0",
-  "description": "An Electron application with Svelte and TypeScript",
+  "description": "Grove — a git worktree editor",
   "main": "./out/main/index.js",
   "author": "example.com",
   "homepage": "https://electron-vite.org",

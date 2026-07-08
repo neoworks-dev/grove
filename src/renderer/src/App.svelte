@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import groveLogo from './assets/grove-icon.svg'
   import WorktreeSidebar from './components/WorktreeSidebar.svelte'
   import FilesView from './components/FilesView.svelte'
   import ExtensionsView from './components/ExtensionsView.svelte'
@@ -181,7 +182,7 @@
   <header
     class="flex h-11 shrink-0 items-center gap-3 border-b border-line bg-elevated px-3 text-sm"
   >
-    <span class="font-semibold tracking-tight">Worktree Workbench</span>
+    <img src={groveLogo} alt="Grove" class="h-6 w-auto" />
     <button
       class="rounded-md border border-line bg-surface px-2 py-1 text-xs hover:bg-hover"
       onclick={pickRepo}

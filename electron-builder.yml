@@ -1,5 +1,5 @@
-appId: com.electron.app
-productName: git-worktree-editor
+appId: com.grove.app
+productName: Grove
 directories:
   buildResources: build
 files:
@@ -10,13 +10,16 @@ files:
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  # musl-libc variant of the bundled claude binary. Desktop AppImage targets
+  # glibc, so drop it to save ~240MB. Breaks only on musl systems (Alpine).
+  - '!**/node_modules/@anthropic-ai/claude-agent-sdk-linux-*-musl/**'
 asarUnpack:
   - resources/**
   # Ripgrep ships a native binary that must run from disk, not inside the asar.
   - '**/node_modules/@vscode/ripgrep/**'
   - '**/node_modules/@vscode/ripgrep-*/**'
 win:
-  executableName: git-worktree-editor
+  executableName: grove
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}

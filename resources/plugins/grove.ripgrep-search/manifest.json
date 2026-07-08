@@ -1,0 +1,39 @@
+{
+  "id": "grove.ripgrep-search",
+  "name": "Ripgrep Search",
+  "version": "1.0.0",
+  "description": "Full-text search across the worktree with live preview.",
+  "entry": "dist/extension.js",
+  "engines": { "grove": "^0.1.0" },
+  "permissions": ["workspace.read"],
+  "activation": ["onCommand:search.files", "onOverlay:ripgrep"],
+  "contributes": {
+    "commands": [
+      {
+        "id": "search.files",
+        "title": "Search File Contents (ripgrep)",
+        "group": "Search",
+        "keywords": "grep ripgrep content find text"
+      }
+    ],
+    "keybindings": [
+      {
+        "id": "leader.search",
+        "keys": "leader /",
+        "context": "global",
+        "group": "Search",
+        "description": "Search file contents (ripgrep)",
+        "command": "search.files"
+      }
+    ],
+    "overlays": [
+      {
+        "id": "ripgrep",
+        "title": "Search file contents…",
+        "placeholder": "Search file contents…",
+        "preview": true,
+        "debounceMs": 120
+      }
+    ]
+  }
+}

@@ -7,6 +7,15 @@ import { readdir } from 'fs/promises'
 import { join } from 'path'
 
 const pluginsRoot = join(import.meta.dir, '..', 'resources', 'plugins')
+const sdkEntry = join(import.meta.dir, '..', 'sdk', 'src', 'index.ts')
+
+// Resolve the SDK from the repo directly — plugin dirs have no node_modules.
+const sdkAlias = {
+  name: 'grove-sdk-alias',
+  setup(build: Bun.PluginBuilder): void {
+    build.onResolve({ filter: /^@grove\/plugin-sdk$/ }, () => ({ path: sdkEntry }))
+  }
+}
 
 async function buildPlugin(dir: string): Promise<void> {
   const entry = join(pluginsRoot, dir, 'src', 'extension.ts')
@@ -16,7 +25,8 @@ async function buildPlugin(dir: string): Promise<void> {
     outdir,
     target: 'browser',
     format: 'esm',
-    naming: 'extension.js'
+    naming: 'extension.js',
+    plugins: [sdkAlias]
   })
   if (!result.success) {
     console.error(`build failed for ${dir}:`)

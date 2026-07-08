@@ -5,6 +5,14 @@
   import Icon from '@iconify/svelte'
   import { overlays } from '../lib/overlays.svelte'
   import { stepFromEvent, formatStep } from '../lib/keySequence'
+  import { fileIcon } from '../lib/icons'
+
+  // 'file:<name>' resolves through the active icon pack (plugins can't call
+  // fileIcon themselves).
+  function resolveIcon(icon: string): string {
+    if (icon.startsWith('file:')) return fileIcon(icon.slice(5))
+    return icon
+  }
 
   let inputEl = $state<HTMLInputElement>()
 
@@ -105,7 +113,7 @@
                 <ItemRow {item} {active} />
               {:else}
                 {#if item.icon}
-                  <Icon icon={item.icon} width="16" height="16" class="shrink-0" />
+                  <Icon icon={resolveIcon(item.icon)} width="16" height="16" class="shrink-0" />
                 {/if}
                 <span class="min-w-0 flex-1 truncate text-xs {active ? 'text-default' : 'text-muted'}">
                   {item.label}

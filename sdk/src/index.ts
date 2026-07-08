@@ -6,7 +6,7 @@
 
 import type { GroveApi } from './api'
 
-export type * from './api'
+export type * from './api';
 export type { PluginManifest, PluginPermission, RpcMessage, RpcError } from './protocol'
 
 declare global {

@@ -139,8 +139,9 @@
       event.stopPropagation()
       return
     }
-    // Shift+hjkl: editor tab motion, but only in Vim-normal so insert typing
-    // (which produces H/J/K/L) is never hijacked.
+    // Shift+H / Shift+L: previous / next editor tab, but only in Vim-normal so
+    // insert typing is never hijacked. K and J are left to Vim (K = hover/type
+    // info, J = join), so they are deliberately not mapped here.
     if (
       keymap.activePaneType === 'editor' &&
       keymap.editorVimMode === 'normal' &&
@@ -149,12 +150,7 @@
       !event.altKey &&
       !event.metaKey
     ) {
-      const move = { H: 'prev', L: 'next', K: 'first', J: 'last' }[event.key] as
-        | 'prev'
-        | 'next'
-        | 'first'
-        | 'last'
-        | undefined
+      const move = { H: 'prev', L: 'next' }[event.key] as 'prev' | 'next' | undefined
       if (move) {
         switchTab(move)
         event.preventDefault()

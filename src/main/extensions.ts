@@ -255,6 +255,42 @@ async function fetchText(url: string): Promise<string> {
   return response.text()
 }
 
+// nvim-treesitter highlight queries start with a "; inherits: a,b" modeline:
+// most of a language's rules live in a shared base query (e.g. TypeScript
+// inherits nearly everything from `ecma`). The runtime is expected to expand
+// it by concatenating the inherited queries (parents first, so the language's
+// own patterns override). Without this a standalone query colors almost
+// nothing. Recurses depth-first with a visited set to break inherit cycles.
+async function expandHighlights(queryLang: string, seen: Set<string>): Promise<string> {
+  if (seen.has(queryLang)) return ''
+  seen.add(queryLang)
+  const own = await fetchText(`${QUERY_BASE}/${queryLang}/highlights.scm`).catch(() => '')
+  if (!own) return ''
+  const inherits = own.match(/;\s*inherits\s*:\s*([a-z0-9_,\s]+)/i)
+  if (!inherits) return own
+  const parents = inherits[1]
+    .split(',')
+    .map((name) => name.trim())
+    .filter(Boolean)
+  let prefix = ''
+  for (const parent of parents) prefix += (await expandHighlights(parent, seen)) + '\n'
+  return prefix + own
+}
+
+// Strip Neovim-only 3-argument `(#set! @capture key value)` directives (e.g.
+// commentstring metadata). The tree-sitter query parser we ship rejects them,
+// and they carry no highlighting information.
+function sanitizeHighlights(scm: string): string {
+  return scm.replace(/\(#set!\s+@[^\n)]*\)/g, '')
+}
+
+// Language directory under nvim-treesitter's queries for a grammar's highlights
+// URL — the segment before /highlights.scm.
+function queryLangOf(highlightsUrl: string): string | null {
+  const match = highlightsUrl.match(/\/queries\/([^/]+)\/highlights\.scm$/)
+  return match ? match[1] : null
+}
+
 export async function install(id: string): Promise<InstalledExtension> {
   const entry = catalogEntry(id)
   if (!entry) throw new Error(`unknown extension: ${id}`)
@@ -264,7 +300,15 @@ export async function install(id: string): Promise<InstalledExtension> {
     await mkdir(dir, { recursive: true })
     await writeFile(join(dir, 'grammar.wasm'), await fetchBuffer(entry.wasmUrl!))
     // Highlights are best-effort — a grammar with no query still parses.
-    const highlights = await fetchText(entry.highlightsUrl!).catch(() => '')
+    // Expand the "; inherits:" modeline and drop parser-incompatible directives
+    // so the stored query actually colors the language.
+    const queryLang = queryLangOf(entry.highlightsUrl!)
+    let highlights = ''
+    if (queryLang) {
+      highlights = await expandHighlights(queryLang, new Set())
+        .then(sanitizeHighlights)
+        .catch(() => '')
+    }
     await writeFile(join(dir, 'highlights.scm'), highlights, 'utf8')
   }
 

@@ -47,5 +47,14 @@ export function resolveHighlighter(path: string): Extension | null {
     if (!provider.extensions.includes(ext)) continue
     if (!best || (provider.priority || 0) > (best.priority || 0)) best = provider
   }
-  return best ? best.build() : null
+  if (!best) return null
+  // build() compiles the tree-sitter query, which throws if the query references
+  // node types the (pinned) grammar lacks. Fall back to Lezer instead of letting
+  // the editor reconfigure blow up.
+  try {
+    return best.build()
+  } catch (error) {
+    console.error(`highlighter ${best.id} failed to build; falling back`, error)
+    return null
+  }
 }

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onMount, untrack } from 'svelte'
   import groveLogo from './assets/grove-icon.svg'
   import ActivityBar from './components/ActivityBar.svelte'
   import SplitTree from './components/SplitTree.svelte'
@@ -54,31 +54,36 @@
   })
 
   // Registered views drive the header switcher, palette commands, and the
-  // View menu — re-registered reactively as plugins add views.
+  // View menu — re-registered reactively as plugins add views. The registry
+  // writes are untracked: register() also READS its own $state list, which
+  // would otherwise make this effect depend on what it writes and loop.
   $effect(() => {
     const list = views.views
-    const disposeCommands = commands.registerAll(
-      list.map((view) => ({
-        id: `view.${view.id}`,
-        title: `View: ${view.label}`,
-        group: 'View',
-        run: () => layout.switchView(view.id)
-      }))
-    )
-    const disposeItems = menu.registerItems(
-      list.map((view) => ({
-        id: `view.switch.${view.id}`,
-        menuId: 'view',
-        label: view.label,
-        group: '1-views',
-        order: view.order,
-        run: () => layout.switchView(view.id)
-      }))
-    )
-    return () => {
-      disposeCommands()
-      disposeItems()
-    }
+    const dispose = untrack(() => {
+      const disposeCommands = commands.registerAll(
+        list.map((view) => ({
+          id: `view.${view.id}`,
+          title: `View: ${view.label}`,
+          group: 'View',
+          run: () => layout.switchView(view.id)
+        }))
+      )
+      const disposeItems = menu.registerItems(
+        list.map((view) => ({
+          id: `view.switch.${view.id}`,
+          menuId: 'view',
+          label: view.label,
+          group: '1-views',
+          order: view.order,
+          run: () => layout.switchView(view.id)
+        }))
+      )
+      return () => {
+        disposeCommands()
+        disposeItems()
+      }
+    })
+    return dispose
   })
 
   // Core commands. Other components contribute their own via commands.register.

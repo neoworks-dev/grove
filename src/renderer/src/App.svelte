@@ -5,8 +5,6 @@
   import SplitTree from './components/SplitTree.svelte'
   import MenuBar from './components/MenuBar.svelte'
   import Overlay from './components/Overlay.svelte'
-  import RipgrepSearch from './components/RipgrepSearch.svelte'
-  import FileFinder from './components/FileFinder.svelte'
   import WhichKey from './components/WhichKey.svelte'
   import StatusBar from './components/StatusBar.svelte'
   import DialogHost from './components/DialogHost.svelte'
@@ -263,7 +261,5 @@
 </div>
 
 <Overlay />
-<RipgrepSearch />
-<FileFinder />
 <DialogHost />
 <NotificationHost />

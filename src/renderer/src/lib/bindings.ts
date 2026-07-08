@@ -7,28 +7,10 @@
 import { keymap } from './keymap.svelte'
 import { commands } from './commands.svelte'
 import { layout } from './layout.svelte'
-import { search } from './search.svelte'
-import { fileFinder } from './filefinder.svelte'
 import { bufferMenu } from './buffermenu.svelte'
 
 export function registerCoreBindings(): void {
   keymap.registerBindings([
-    {
-      id: 'leader.files',
-      keys: 'leader space',
-      context: 'global',
-      group: 'Search',
-      description: 'Search files by name',
-      run: () => fileFinder.show()
-    },
-    {
-      id: 'leader.search',
-      keys: 'leader /',
-      context: 'global',
-      group: 'Search',
-      description: 'Search file contents (ripgrep)',
-      run: () => search.show()
-    },
     {
       id: 'leader.buffers',
       keys: 'leader b',
@@ -199,20 +181,6 @@ export function registerCoreBindings(): void {
       group: 'Window',
       keywords: 'close pane window',
       run: () => layout.closeFocused()
-    },
-    {
-      id: 'search.files',
-      title: 'Search File Contents (ripgrep)',
-      group: 'Search',
-      keywords: 'grep ripgrep content find',
-      run: () => search.show()
-    },
-    {
-      id: 'files.find',
-      title: 'Go to File (by name)',
-      group: 'Search',
-      keywords: 'open file name quick finder goto',
-      run: () => fileFinder.show()
     }
   ])
 }

@@ -83,11 +83,6 @@ const workbench = {
     delete: (worktreeId: string, relPath: string) =>
       ipcRenderer.invoke('files:delete', worktreeId, relPath)
   },
-  search: {
-    ripgrep: (worktreeId: string, query: string, reqId: string) =>
-      ipcRenderer.invoke('search:ripgrep', worktreeId, query, reqId),
-    cancel: () => ipcRenderer.invoke('search:cancel')
-  },
   extensions: {
     catalog: () => ipcRenderer.invoke('extensions:catalog'),
     installed: () => ipcRenderer.invoke('extensions:installed'),

@@ -1,0 +1,38 @@
+{
+  "id": "grove.file-finder",
+  "name": "File Finder",
+  "version": "1.0.0",
+  "description": "Fuzzy quick-open for files by name.",
+  "entry": "dist/extension.js",
+  "engines": { "grove": "^0.1.0" },
+  "permissions": ["workspace.read"],
+  "activation": ["onCommand:files.find", "onOverlay:fileFinder"],
+  "contributes": {
+    "commands": [
+      {
+        "id": "files.find",
+        "title": "Go to File (by name)",
+        "group": "Search",
+        "keywords": "open file name quick finder goto"
+      }
+    ],
+    "keybindings": [
+      {
+        "id": "leader.files",
+        "keys": "leader space",
+        "context": "global",
+        "group": "Search",
+        "description": "Search files by name",
+        "command": "files.find"
+      }
+    ],
+    "overlays": [
+      {
+        "id": "fileFinder",
+        "title": "Search files by name…",
+        "placeholder": "Search files by name…",
+        "debounceMs": 0
+      }
+    ]
+  }
+}

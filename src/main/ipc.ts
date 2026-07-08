@@ -536,6 +536,11 @@ export function registerIpc(): void {
     (_e, worktreeId: string, language: string, command: string, args: unknown[]) =>
       lsp.executeCommand(worktreeId, language, command, args)
   )
+  ipcMain.handle(
+    'lsp:inlayHints',
+    (_e, worktreeId: string, language: string, uri: string, range: LspRange) =>
+      lsp.inlayHints(worktreeId, language, uri, range)
+  )
 
   // ── State ─────────────────────────────────────────────────────
   ipcMain.handle('state:getRepo', () => {

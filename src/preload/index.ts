@@ -130,7 +130,9 @@ const workbench = {
     resolveCodeAction: (worktreeId: string, language: string, action: unknown) =>
       ipcRenderer.invoke('lsp:resolveCodeAction', worktreeId, language, action),
     executeCommand: (worktreeId: string, language: string, command: string, args: unknown[]) =>
-      ipcRenderer.invoke('lsp:executeCommand', worktreeId, language, command, args)
+      ipcRenderer.invoke('lsp:executeCommand', worktreeId, language, command, args),
+    inlayHints: (worktreeId: string, language: string, uri: string, range: unknown) =>
+      ipcRenderer.invoke('lsp:inlayHints', worktreeId, language, uri, range)
   },
   state: {
     getRepo: () => ipcRenderer.invoke('state:getRepo'),

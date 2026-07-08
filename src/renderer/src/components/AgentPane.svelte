@@ -4,9 +4,11 @@
     refreshRuntimes,
     openFileInEditor,
     respondPermission,
+    respondDialog,
     seedAgentTranscript,
     resetAgentChat
   } from '../lib/store.svelte'
+  import { parseQuestions, buildAnswerResult } from '../lib/agentDialog'
   import type { LogLine } from '../lib/store.svelte'
   import type { AgentRuntime, AgentConfig } from '../../../shared/types'
   import { parseAgentLines, parseAgentMeta, toolSummary } from '../lib/agentStream'
@@ -523,6 +525,52 @@
     }
   }
 
+  // ── Agent question dialog ──────────────────────────────────────
+  const pendingDialog = $derived(
+    store.pendingDialogs.find(
+      (request) => request.worktreeId === store.selectedWorktreeId && request.agent === selectedAgent
+    ) || null
+  )
+  const dialogQuestions = $derived(pendingDialog ? parseQuestions(pendingDialog.payload) : [])
+  let dialogSelections = $state<string[][]>([])
+
+  // Reset selections whenever the pending dialog changes.
+  $effect(() => {
+    pendingDialog?.id
+    dialogSelections = dialogQuestions.map(() => [])
+  })
+
+  const dialogReady = $derived(
+    dialogQuestions.length > 0 &&
+      dialogQuestions.every((_question, index) => (dialogSelections[index]?.length || 0) > 0)
+  )
+
+  function toggleOption(questionIndex: number, label: string, multiSelect: boolean): void {
+    const current = dialogSelections[questionIndex] || []
+    let next: string[]
+    if (multiSelect) {
+      next = current.includes(label) ? current.filter((item) => item !== label) : [...current, label]
+    } else {
+      next = [label]
+    }
+    dialogSelections = dialogSelections.map((selection, index) =>
+      index === questionIndex ? next : selection
+    )
+  }
+
+  function submitDialog(): void {
+    if (!pendingDialog) return
+    void respondDialog(pendingDialog.id, {
+      behavior: 'completed',
+      result: buildAnswerResult(dialogQuestions, dialogSelections)
+    })
+  }
+
+  function cancelDialog(): void {
+    if (!pendingDialog) return
+    void respondDialog(pendingDialog.id, { behavior: 'cancelled' })
+  }
+
   // The file a tool card acts on, if any — makes the card open-in-editor.
   function filePath(input: Record<string, unknown>): string | null {
     if (typeof input.file_path === 'string') return input.file_path
@@ -670,7 +718,52 @@
 
     <!-- Input + config status line pinned at the bottom -->
     <div class="relative shrink-0 border-t border-line p-3">
-      {#if pendingPermission}
+      {#if pendingDialog}
+        <!-- Agent question: render the questions + options and return the answer -->
+        <div class="rounded-md border border-blue/40 bg-blue-soft p-2">
+          {#each dialogQuestions as question, questionIndex (questionIndex)}
+            <div class="mb-3 last:mb-1">
+              {#if question.header}
+                <div class="mb-0.5 text-2xs font-semibold uppercase tracking-caps text-blue">
+                  {question.header}
+                </div>
+              {/if}
+              <div class="mb-1.5 text-xs text-default">{question.question}</div>
+              <div class="flex flex-col gap-1">
+                {#each question.options as option (option.label)}
+                  {@const selected = (dialogSelections[questionIndex] || []).includes(option.label)}
+                  <button
+                    class="rounded-md border px-2 py-1.5 text-left text-xs {selected
+                      ? 'border-blue bg-blue/15 text-default'
+                      : 'border-line hover:bg-hover text-muted'}"
+                    onclick={() => toggleOption(questionIndex, option.label, question.multiSelect)}
+                  >
+                    <span class="font-medium">{option.label}</span>
+                    {#if option.description}
+                      <span class="block text-2xs text-dim">{option.description}</span>
+                    {/if}
+                  </button>
+                {/each}
+              </div>
+            </div>
+          {/each}
+          <div class="flex gap-2">
+            <button
+              class="rounded-md bg-action px-3 py-1 text-xs text-action-fg disabled:opacity-40"
+              disabled={!dialogReady}
+              onclick={submitDialog}
+            >
+              Answer
+            </button>
+            <button
+              class="rounded-md border border-line px-3 py-1 text-xs text-dim hover:bg-hover"
+              onclick={cancelDialog}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      {:else if pendingPermission}
         <!-- Permission prompt replaces the input until answered -->
         <div class="rounded-md border border-amber/40 bg-amber-soft p-2">
           <div class="mb-2 text-xs text-default">{pendingPermission.title}</div>

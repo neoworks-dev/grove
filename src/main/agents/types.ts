@@ -6,6 +6,8 @@
 
 import type {
   AgentConfig,
+  AgentDialogDecision,
+  AgentDialogRequest,
   AgentLaunchOptions,
   AgentStatus,
   PermissionDecision,
@@ -30,6 +32,8 @@ export interface AdapterContext {
   requestPermission: (
     request: Omit<PermissionRequestEvent, 'id'>
   ) => Promise<PermissionDecision>
+  // Surface a blocking dialog (e.g. an agent question) and await the answer.
+  requestDialog: (request: Omit<AgentDialogRequest, 'id'>) => Promise<AgentDialogDecision>
 }
 
 export interface RunHandle {

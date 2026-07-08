@@ -13,7 +13,12 @@ import * as worktrees from './worktrees'
 import { ServiceSupervisor } from './services'
 import { AgentManager, detectAgents, mergeAgents } from './agents'
 import { WorktreeWatcher } from './watcher'
-import type { AgentConfig, AgentLaunchOptions, PermissionDecision } from '../shared/types'
+import type {
+  AgentConfig,
+  AgentDialogDecision,
+  AgentLaunchOptions,
+  PermissionDecision
+} from '../shared/types'
 import { getRepoState, updateRepoState, setLastRepo, loadState } from './state'
 
 interface Context {
@@ -41,6 +46,7 @@ const agents = new AgentManager({
   onStatus: (runtime) => send('event:agent-status', runtime),
   onLog: (worktreeId, name, line) => send('event:log', { worktreeId, source: 'agent', name, line }),
   onPermission: (request) => send('event:agent-permission', request),
+  onDialog: (request) => send('event:agent-dialog', request),
   // Mirror continuation tokens into persisted repo state (empty = reset).
   onSession: (worktreeId, name, token) => {
     if (!context.repoPath) return
@@ -280,6 +286,11 @@ export function registerIpc(): void {
   // Answer an interactive tool-permission request.
   ipcMain.handle('agents:respondPermission', (_e, id: string, decision: PermissionDecision) =>
     agents.respondPermission(id, decision)
+  )
+
+  // Answer a blocking agent dialog (e.g. a question).
+  ipcMain.handle('agents:respondDialog', (_e, id: string, decision: AgentDialogDecision) =>
+    agents.respondDialog(id, decision)
   )
 
   ipcMain.handle('agents:active', () => agents.activeWorktreeIds())

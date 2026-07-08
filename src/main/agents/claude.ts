@@ -48,6 +48,23 @@ function start(context: AdapterContext): RunHandle {
           model: context.options.model || undefined,
           includePartialMessages: false,
           stderr: (data: string) => context.emit(textLine('stderr', data)),
+          // Blocking dialogs (agent questions etc.) — surfaced to the user and
+          // answered. Without this, the CLI auto-cancels them and the question
+          // is never shown. The payload/result shapes are SDK-defined per kind.
+          onUserDialog: async (request) => {
+            // eslint-disable-next-line no-console
+            console.error('[agent-dialog]', request.dialogKind, JSON.stringify(request.payload))
+            const decision = await context.requestDialog({
+              worktreeId: context.worktree.id,
+              agent: 'claude',
+              dialogKind: request.dialogKind,
+              payload: request.payload
+            })
+            if (decision.behavior === 'completed') {
+              return { behavior: 'completed', result: decision.result }
+            }
+            return { behavior: 'cancelled' }
+          },
           canUseTool: async (toolName, input, options): Promise<PermissionResult> => {
             const decision = await context.requestPermission({
               worktreeId: context.worktree.id,

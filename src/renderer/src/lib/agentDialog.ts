@@ -51,17 +51,16 @@ export function parseQuestions(payload: Record<string, unknown>): DialogQuestion
   return list.map(normalizeQuestion).filter((q) => q.question || q.options.length > 0)
 }
 
-// Build the result handed back to the agent: one entry per question with the
-// selected option labels.
+// Build the result handed back to the agent. The AskUserQuestion output shape is
+// `answers: { [questionText]: answerString }` with multi-select answers joined by
+// commas (per the SDK tool schema).
 export function buildAnswerResult(
   questions: DialogQuestion[],
   selections: string[][]
-): { answers: { header: string; question: string; selectedOptions: string[] }[] } {
-  return {
-    answers: questions.map((question, index) => ({
-      header: question.header || question.question,
-      question: question.question,
-      selectedOptions: selections[index] || []
-    }))
-  }
+): { answers: Record<string, string> } {
+  const answers: Record<string, string> = {}
+  questions.forEach((question, index) => {
+    answers[question.question] = (selections[index] || []).join(', ')
+  })
+  return { answers }
 }

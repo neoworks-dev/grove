@@ -48,6 +48,10 @@ function start(context: AdapterContext): RunHandle {
           model: context.options.model || undefined,
           includePartialMessages: false,
           stderr: (data: string) => context.emit(textLine('stderr', data)),
+          // MUST declare the dialog kinds we render, or the CLI emits none at
+          // all (fails closed) and onUserDialog never fires. `side_question` is
+          // the AskUserQuestion dialog.
+          supportedDialogKinds: ['side_question', 'sdk_side_question'],
           // Blocking dialogs (agent questions etc.) — surfaced to the user and
           // answered. Without this, the CLI auto-cancels them and the question
           // is never shown. The payload/result shapes are SDK-defined per kind.
@@ -66,6 +70,12 @@ function start(context: AdapterContext): RunHandle {
             return { behavior: 'cancelled' }
           },
           canUseTool: async (toolName, input, options): Promise<PermissionResult> => {
+            // AskUserQuestion is the model asking the user a question — not a
+            // privileged action. Never gate it behind a permission prompt; it is
+            // presented and answered through onUserDialog above.
+            if (toolName === 'AskUserQuestion') {
+              return { behavior: 'allow', updatedInput: input }
+            }
             const decision = await context.requestPermission({
               worktreeId: context.worktree.id,
               agent: 'claude',

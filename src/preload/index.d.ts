@@ -4,7 +4,8 @@ import type {
   WorkspaceEdit,
   TextEdit,
   CodeAction,
-  Command
+  Command,
+  InlayHint
 } from 'vscode-languageserver-types'
 import type {
   Worktree,
@@ -217,6 +218,12 @@ export interface WorkbenchApi {
       command: string,
       args: unknown[]
     ) => Promise<void>
+    inlayHints: (
+      worktreeId: string,
+      language: string,
+      uri: string,
+      range: LspRange
+    ) => Promise<InlayHint[]>
   }
   state: {
     getRepo: () => Promise<RepoStateShape>

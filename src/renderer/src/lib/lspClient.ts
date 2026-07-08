@@ -11,6 +11,7 @@ import {
 } from '@codemirror/autocomplete'
 import { type Diagnostic } from '@codemirror/lint'
 import { hoverDom } from './editorHover'
+import { inlayHints } from './inlayHints'
 import type { LspDiagnostic, LspPosition } from '../../../shared/types'
 
 export interface LspContext {
@@ -105,12 +106,14 @@ function hover(context: LspContext): Extension {
   })
 }
 
-// The full LSP extension bundle for one file's editor (completion + hover).
-// Diagnostics are applied separately via setDiagnostics on incoming events.
+// The full LSP extension bundle for one file's editor (completion, hover, and
+// inlay hints). Diagnostics are applied separately via setDiagnostics on
+// incoming events.
 export function lspExtensions(context: LspContext): Extension {
   return [
     autocompletion({ override: [completionSource(context)] }),
     keymap.of(completionKeymap),
-    hover(context)
+    hover(context),
+    inlayHints(context)
   ]
 }

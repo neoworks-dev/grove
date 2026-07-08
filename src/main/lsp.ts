@@ -30,6 +30,7 @@ import {
   CodeActionRequest,
   CodeActionResolveRequest,
   ExecuteCommandRequest,
+  InlayHintRequest,
   type InitializeParams,
   type Diagnostic,
   type Hover,
@@ -41,7 +42,8 @@ import {
   type TextEdit,
   type Range,
   type CodeAction,
-  type Command
+  type Command,
+  type InlayHint
 } from 'vscode-languageserver-protocol'
 import { catalogEntry, listInstalled } from './extensions'
 import type { CatalogEntry, LspCompletion, LspDiagnostic, LspPosition } from '../shared/types'
@@ -221,7 +223,8 @@ export class LspManager {
             codeAction: {
               dynamicRegistration: false,
               resolveSupport: { properties: ['edit'] }
-            }
+            },
+            inlayHint: { dynamicRegistration: false }
           }
         }
       }
@@ -436,6 +439,21 @@ export class LspManager {
       .sendRequest(CodeActionResolveRequest.type, action)
       .catch(() => null)
     return resolved ?? action
+  }
+
+  // ── Inlay hints (inline type/parameter annotations) ─────────────
+  async inlayHints(
+    worktreeId: string,
+    language: string,
+    uri: string,
+    range: Range
+  ): Promise<InlayHint[]> {
+    const server = await this.serverFor(worktreeId, language)
+    if (!server || !server.alive) return []
+    const result = await server.connection
+      .sendRequest(InlayHintRequest.type, { textDocument: { uri }, range })
+      .catch(() => null)
+    return Array.isArray(result) ? result : []
   }
 
   // Run a server command (code actions that are Commands rather than edits).

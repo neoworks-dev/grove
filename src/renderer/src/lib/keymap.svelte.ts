@@ -13,10 +13,10 @@ export type PaneId = string
 
 export interface KeyBinding {
   id: string
-  // Token sequence AFTER the leader, space-separated. E.g. "space" (double
-  // space), "f f", "w h". Tokens are single keys; "space" means the space key.
+  // Canonical key sequence (see keySequence.ts): leader sequences like
+  // "leader w h" and modifier chords like "ctrl+k ctrl+s".
   keys: string
-  // Where the binding is active: "global", or a specific pane id.
+  // Where the binding is active: "global", a pane id, or a pane type.
   context?: string
   group?: string
   description: string
@@ -24,18 +24,26 @@ export interface KeyBinding {
   run: () => void | Promise<void>
 }
 
-import { startsWith, pickNeighbor } from './keymapCore'
+// A registered binding with its parsed sequence attached.
+export interface ResolvedBinding extends KeyBinding {
+  sequence: ParsedSequence
+}
+
+import { pickNeighbor } from './keymapCore'
+import {
+  parseSequence,
+  stepFromEvent,
+  sequenceStartsWith,
+  isModifierKey,
+  type KeyStep,
+  type ParsedSequence
+} from './keySequence'
 
 const LEADER_DELAY_MS = 300
 
-function tokenFor(event: KeyboardEvent): string {
-  if (event.key === ' ' || event.key === 'Spacebar') return 'space'
-  return event.key
-}
-
 class Keymap {
   activePane = $state<PaneId | null>(null)
-  bindings = $state<KeyBinding[]>([])
+  bindings = $state<ResolvedBinding[]>([])
 
   // The layout-tree leaf containing the active pane (a pane may be nested
   // inside a leaf, e.g. the file tree inside the files leaf).
@@ -44,9 +52,11 @@ class Keymap {
   // Pane type of the active pane (e.g. 'editor'), when the registrar gave one.
   activePaneTypeState = $state<string | null>(null)
 
-  // Leader state (read by WhichKey.svelte).
-  leaderActive = $state(false)
-  leaderKeys = $state<string[]>([])
+  // Pending-sequence state (read by WhichKey.svelte). A pending sequence is
+  // either a leader sequence (space …) or a chord prefix (ctrl+k …).
+  pendingActive = $state(false)
+  pendingLeader = $state(false)
+  pendingSteps = $state<KeyStep[]>([])
   whichKeyVisible = $state(false)
 
   // Published by EditorPane so the leader never hijacks Vim insert-mode typing.
@@ -128,28 +138,40 @@ class Keymap {
   }
 
   // ── Binding registry ──────────────────────────────────────────
+  // Invalid sequences (e.g. from hand-edited settings) are skipped with a
+  // console warning rather than failing the whole batch.
   registerBindings(list: KeyBinding[]): () => void {
-    this.bindings = [...this.bindings, ...list]
-    const ids = new Set(list.map((binding) => binding.id))
+    const resolved: ResolvedBinding[] = []
+    for (const binding of list) {
+      const sequence = parseSequence(binding.keys)
+      if (!sequence) {
+        console.warn(`keymap: ignoring binding "${binding.id}" with invalid keys "${binding.keys}"`)
+        continue
+      }
+      resolved.push({ ...binding, sequence })
+    }
+    this.bindings = [...this.bindings, ...resolved]
+    const ids = new Set(resolved.map((binding) => binding.id))
     return () => {
       this.bindings = this.bindings.filter((binding) => !ids.has(binding.id))
     }
   }
 
-  // Bindings reachable in the current context matching the typed prefix.
+  // Bindings reachable in the current context matching the typed step prefix.
   // A binding context matches 'global', the active pane id, or its pane type.
-  matching(prefix: string[]): KeyBinding[] {
+  matching(prefix: KeyStep[], leader: boolean): ResolvedBinding[] {
     return this.bindings.filter((binding) => {
+      if (binding.sequence.leader !== leader) return false
       const context = binding.context || 'global'
       const inContext =
         context === 'global' || context === this.activePane || context === this.activePaneType
       if (!inContext) return false
       if (binding.when && !binding.when()) return false
-      return startsWith(binding.keys.split(' '), prefix)
+      return sequenceStartsWith(binding.sequence.steps, prefix)
     })
   }
 
-  // ── Leader engine ─────────────────────────────────────────────
+  // ── Sequence engine ───────────────────────────────────────────
   private eligible(): boolean {
     const el = document.activeElement
     const tag = el?.tagName
@@ -159,18 +181,22 @@ class Keymap {
     return true
   }
 
-  private startLeader(): void {
-    this.leaderActive = true
-    this.leaderKeys = []
-    this.whichKeyVisible = false
+  private startPending(leader: boolean, steps: KeyStep[] = []): void {
+    this.pendingActive = true
+    this.pendingLeader = leader
+    this.pendingSteps = steps
+    // Leader waits before revealing which-key; chord prefixes are deliberate,
+    // so their hints show immediately.
+    this.whichKeyVisible = !leader
+    if (!leader) return
     this.leaderTimer = setTimeout(() => {
-      if (this.leaderActive) this.whichKeyVisible = true
+      if (this.pendingActive) this.whichKeyVisible = true
     }, LEADER_DELAY_MS)
   }
 
-  cancelLeader(): void {
-    this.leaderActive = false
-    this.leaderKeys = []
+  cancelPending(): void {
+    this.pendingActive = false
+    this.pendingSteps = []
     this.whichKeyVisible = false
     if (this.leaderTimer) {
       clearTimeout(this.leaderTimer)
@@ -180,57 +206,59 @@ class Keymap {
 
   // Main dispatch. Returns true if the key was consumed.
   handleKey(event: KeyboardEvent): boolean {
-    if (this.leaderActive) return this.handleLeaderKey(event)
+    // Lone modifier presses never advance or break a sequence.
+    if (isModifierKey(event.key)) return this.pendingActive
+    if (this.pendingActive) return this.handlePendingKey(event)
 
-    // Ctrl+hjkl: spatial pane navigation (must beat CodeMirror/Vim).
-    if (event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey) {
-      const dir = { h: 'h', j: 'j', k: 'k', l: 'l' }[event.key] as
-        | 'h'
-        | 'j'
-        | 'k'
-        | 'l'
-        | undefined
-      if (dir) {
-        this.movePane(dir)
-        return true
-      }
-    }
+    const step = stepFromEvent(event)
 
-    // Space starts the leader when we're not typing.
-    if (tokenFor(event) === 'space' && !event.ctrlKey && !event.metaKey && this.eligible()) {
-      this.startLeader()
+    // Unmodified space starts the leader when we're not typing.
+    if (step.key === 'space' && !step.ctrl && !step.alt && !step.meta) {
+      if (!this.eligible()) return false
+      this.startPending(true)
       return true
     }
-    return false
+
+    // Non-leader bindings: modifier chords fire anywhere (they must beat
+    // CodeMirror/Vim); bare keys only when not typing.
+    const hasModifier = step.ctrl || step.alt || step.meta
+    if (!hasModifier && !this.eligible()) return false
+    const matches = this.matching([step], false)
+    if (matches.length === 0) return false
+    const exact = matches.find((binding) => binding.sequence.steps.length === 1)
+    if (exact) {
+      void exact.run()
+      return true
+    }
+    this.startPending(false, [step])
+    return true
   }
 
-  private handleLeaderKey(event: KeyboardEvent): boolean {
+  private handlePendingKey(event: KeyboardEvent): boolean {
     if (event.key === 'Escape') {
-      this.cancelLeader()
+      this.cancelPending()
       return true
     }
     if (event.key === 'Backspace') {
-      this.leaderKeys = this.leaderKeys.slice(0, -1)
+      this.pendingSteps = this.pendingSteps.slice(0, -1)
       return true
     }
-    // Ignore lone modifier presses so they don't break the sequence.
-    if (['Shift', 'Control', 'Alt', 'Meta'].includes(event.key)) return true
 
-    const next = [...this.leaderKeys, tokenFor(event)]
-    const matches = this.matching(next)
-    const exact = matches.find((binding) => binding.keys.split(' ').length === next.length)
+    const next = [...this.pendingSteps, stepFromEvent(event)]
+    const matches = this.matching(next, this.pendingLeader)
+    const exact = matches.find((binding) => binding.sequence.steps.length === next.length)
     if (exact) {
-      this.cancelLeader()
+      this.cancelPending()
       void exact.run()
       return true
     }
     if (matches.length > 0) {
-      this.leaderKeys = next
+      this.pendingSteps = next
       this.whichKeyVisible = true // deeper level: reveal immediately
       return true
     }
-    // Dead end — swallow the key and drop out of leader mode.
-    this.cancelLeader()
+    // Dead end — swallow the key and drop out of the sequence.
+    this.cancelPending()
     return true
   }
 }

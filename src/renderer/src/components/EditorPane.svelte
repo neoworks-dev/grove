@@ -14,7 +14,7 @@
   } from '../lib/lspClient'
   import type { LspDiagnosticsEvent } from '../../../shared/types'
   import { EditorView } from '@codemirror/view'
-  import { EditorState, Compartment } from '@codemirror/state'
+  import { EditorState, Compartment, type Extension } from '@codemirror/state'
   import { setDiagnostics } from '@codemirror/lint'
   import { vim, Vim, getCM } from '@replit/codemirror-vim'
   import { keymap } from '../lib/keymap.svelte'
@@ -41,31 +41,87 @@
   // Cache of open file contents keyed by absolute path.
   const contentCache = new Map<string, string>()
 
+  // Full editor state per open buffer, keyed by absolute path. Swapping tabs
+  // restores the cached state via view.setState() so each buffer keeps its
+  // parsed syntax tree, selection, scroll, and undo history in memory — no
+  // re-parse or re-highlight on every tab switch. `activeBufferPath` is the
+  // buffer whose state is currently live in the view (not yet stashed).
+  const bufferStates = new Map<string, EditorState>()
+  let activeBufferPath: string | null = null
+
   // `:w` in Vim saves the active buffer, like the toolbar Save button.
   Vim.defineEx('write', 'w', () => void save())
 
+  function onEditorUpdate(update: { docChanged: boolean }): void {
+    if (!update.docChanged) return
+    if (!suppressDirty && store.activeTabPath) {
+      dirtyPaths = { ...dirtyPaths, [store.activeTabPath]: true }
+    }
+    if (lspCtx && !suppressDirty) scheduleLspChange()
+  }
+
+  // Extensions for a buffer's state. Language is baked per buffer (so its parse
+  // tree is retained across swaps); theme/vim/lsp live in compartments that are
+  // re-synced to the current global settings after each swap.
+  function buildExtensions(path: string): Extension[] {
+    const theme = store.activeTheme
+    return [
+      vimComp.of(vimEnabled ? vim() : []),
+      baseExtensions(() => void save()),
+      languageComp.of(languageExtension(path)),
+      lspComp.of([]),
+      themeComp.of(editorTheme(theme.palette, theme.scheme)),
+      EditorView.updateListener.of(onEditorUpdate)
+    ]
+  }
+
   function ensureEditor(): void {
     if (view || !editorHost) return
+    const state = EditorState.create({ doc: '', extensions: buildExtensions('untitled.txt') })
+    view = new EditorView({ state, parent: editorHost })
+    activeBufferPath = null
+    if (vimEnabled) attachVimMode()
+  }
+
+  // Stash the live buffer's state so a later swap back restores its parse tree,
+  // cursor, scroll, and undo.
+  function stashActive(): void {
+    if (view && activeBufferPath) bufferStates.set(activeBufferPath, view.state)
+  }
+
+  // Re-apply the global theme and Vim setting to the freshly swapped-in state.
+  // Neither touches the language compartment, so the parse tree is preserved.
+  function syncGlobalCompartments(): void {
+    if (!view) return
     const theme = store.activeTheme
-    const state = EditorState.create({
-      doc: '',
-      extensions: [
-        vimComp.of(vimEnabled ? vim() : []),
-        baseExtensions(() => void save()),
-        languageComp.of([]),
-        lspComp.of([]),
-        themeComp.of(editorTheme(theme.palette, theme.scheme)),
-        EditorView.updateListener.of((update) => {
-          if (!update.docChanged) return
-          if (!suppressDirty && store.activeTabPath) {
-            dirtyPaths = { ...dirtyPaths, [store.activeTabPath]: true }
-          }
-          if (lspCtx && !suppressDirty) scheduleLspChange()
-        })
+    view.dispatch({
+      effects: [
+        themeComp.reconfigure(editorTheme(theme.palette, theme.scheme)),
+        vimComp.reconfigure(vimEnabled ? vim() : [])
       ]
     })
-    view = new EditorView({ state, parent: editorHost })
     if (vimEnabled) attachVimMode()
+    else keymap.editorVimMode = 'insert'
+  }
+
+  // Drop cached states for inactive buffers so they rebuild with current
+  // theme/grammar on next open (treesitter colors bake the palette in). The
+  // live buffer is refreshed separately via reapplyLanguage.
+  function invalidateInactiveBuffers(): void {
+    for (const key of [...bufferStates.keys()]) {
+      if (key !== activeBufferPath) bufferStates.delete(key)
+    }
+  }
+
+  // Show an empty buffer (no file open).
+  function blankEditor(): void {
+    if (!view) return
+    stashActive()
+    suppressDirty = true
+    view.setState(EditorState.create({ doc: '', extensions: buildExtensions('untitled.txt') }))
+    suppressDirty = false
+    activeBufferPath = null
+    syncGlobalCompartments()
   }
 
   // Publish the Vim mode so the keymap only treats space as leader in normal
@@ -87,29 +143,30 @@
     else keymap.editorVimMode = 'insert'
   }
 
-  // Replace the whole document and switch the language grammar in one dispatch.
-  function setDocument(content: string, path: string): void {
-    if (!view) return
-    suppressDirty = true
-    view.dispatch({
-      changes: { from: 0, to: view.state.doc.length, insert: content },
-      selection: { anchor: 0 },
-      effects: languageComp.reconfigure(languageExtension(path))
-    })
-    suppressDirty = false
-  }
-
   async function loadIntoEditor(path: string): Promise<void> {
     ensureEditor()
     if (!view || !store.selectedWorktreeId) return
-    let content = contentCache.get(path)
-    if (content === undefined) {
-      content = await window.workbench.files.read(store.selectedWorktreeId, path)
-      contentCache.set(path, content)
+
+    let state = bufferStates.get(path)
+    if (!state) {
+      let content = contentCache.get(path)
+      if (content === undefined) {
+        content = await window.workbench.files.read(store.selectedWorktreeId, path)
+        contentCache.set(path, content)
+      }
+      // A newer tab switch superseded this load during the async read.
+      if (store.activeTabPath !== path || !view) return
+      state = EditorState.create({ doc: content, extensions: buildExtensions(path) })
+      bufferStates.set(path, state)
     }
-    setDocument(content, path)
-    store.activeTabPath = path
-    void applyLsp(path, content)
+
+    stashActive()
+    suppressDirty = true
+    view.setState(state)
+    suppressDirty = false
+    activeBufferPath = path
+    syncGlobalCompartments()
+    void applyLsp(path, view.state.doc.toString())
     // If we were asked to reveal a line in this file, do it now that it's loaded.
     if (store.revealTarget?.path === path) {
       revealLine(store.revealTarget.line)
@@ -187,8 +244,12 @@
   function closeTab(path: string, event: MouseEvent): void {
     event.stopPropagation()
     contentCache.delete(path)
+    bufferStates.delete(path)
+    if (activeBufferPath === path) activeBufferPath = null
     store.closeTab(path)
-    if (!store.activeTabPath && view) setDocument('', 'untitled.txt')
+    // If that emptied the tab strip, the load effect blanks the view; when
+    // another tab becomes active it drives the swap.
+    if (!store.activeTabPath && view) blankEditor()
   }
 
   // Load whichever tab is active. This is the single load path, so opening a
@@ -199,7 +260,7 @@
     if (path === loadedPath) return
     loadedPath = path
     if (!path) {
-      if (view) setDocument('', 'untitled.txt')
+      blankEditor()
       return
     }
     void loadIntoEditor(path)
@@ -255,10 +316,14 @@
     if (view) {
       view.dispatch({ effects: themeComp.reconfigure(editorTheme(theme.palette, theme.scheme)) })
       reapplyLanguage()
+      invalidateInactiveBuffers()
     }
   })
 
-  const stopHighlighterWatch = onHighlightersChanged(reapplyLanguage)
+  const stopHighlighterWatch = onHighlightersChanged(() => {
+    reapplyLanguage()
+    invalidateInactiveBuffers()
+  })
 
   // Apply diagnostics pushed by the language server for the open file.
   const stopLspDiagnostics = window.workbench.on('event:lsp-diagnostics', (payload) => {

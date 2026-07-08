@@ -525,7 +525,8 @@
     )
     const list: Subagent[] = []
     for (const item of items) {
-      if (item.kind !== 'tool' || item.tool !== 'Task') continue
+      // Modern SDK names the subagent tool `Agent`; older builds used `Task`.
+      if (item.kind !== 'tool' || (item.tool !== 'Agent' && item.tool !== 'Task')) continue
       const input = item.input
       list.push({
         key: item.key,

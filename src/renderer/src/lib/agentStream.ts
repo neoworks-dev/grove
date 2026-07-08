@@ -11,6 +11,11 @@ export type OutputItem =
   | { kind: 'tool-result'; text: string; isError: boolean; key: string }
   | { kind: 'raw'; text: string; key: string }
 
+// Internal plumbing tools the agent uses to run itself — not work the user
+// asked for, so their cards and results are hidden from the transcript.
+// `ToolSearch` loads deferred tool schemas; `SendMessage` talks to subagents.
+const HIDDEN_TOOLS = new Set(['ToolSearch', 'SendMessage'])
+
 // Extract plain text from a content value that is either a string or an array
 // of content blocks ({ type: 'text', text }).
 function contentToText(content: unknown): string {
@@ -28,7 +33,11 @@ function contentToText(content: unknown): string {
   return ''
 }
 
-function parseAssistant(event: Record<string, unknown>, items: OutputItem[]): void {
+function parseAssistant(
+  event: Record<string, unknown>,
+  items: OutputItem[],
+  hiddenToolIds: Set<string>
+): void {
   const message = event.message as { id?: string; content?: unknown[] } | undefined
   if (!message || !Array.isArray(message.content)) return
   const messageId = message.id || 'assistant'
@@ -37,33 +46,50 @@ function parseAssistant(event: Record<string, unknown>, items: OutputItem[]): vo
     if (block.type === 'text' && typeof block.text === 'string' && block.text.trim().length > 0) {
       items.push({ kind: 'text', text: block.text, key: `${messageId}:${index}` })
     } else if (block.type === 'tool_use') {
+      const tool = String(block.name || 'tool')
+      const id = String(block.id || `${messageId}:${index}`)
+      // Internal plumbing tool: skip the card and remember its id so its
+      // result is skipped too.
+      if (HIDDEN_TOOLS.has(tool)) {
+        hiddenToolIds.add(id)
+        return
+      }
       items.push({
         kind: 'tool',
-        tool: String(block.name || 'tool'),
+        tool,
         input: (block.input as Record<string, unknown>) || {},
-        key: String(block.id || `${messageId}:${index}`)
+        key: id
       })
     }
   })
 }
 
-function parseUser(event: Record<string, unknown>, items: OutputItem[]): void {
+function parseUser(
+  event: Record<string, unknown>,
+  items: OutputItem[],
+  hiddenToolIds: Set<string>
+): void {
   const message = event.message as { content?: unknown[] } | undefined
   if (!message || !Array.isArray(message.content)) return
   for (const raw of message.content) {
     const block = raw as Record<string, unknown>
     if (block.type !== 'tool_result') continue
+    const toolUseId = String(block.tool_use_id || '')
+    if (toolUseId && hiddenToolIds.has(toolUseId)) continue
     items.push({
       kind: 'tool-result',
       text: contentToText(block.content),
       isError: block.is_error === true,
-      key: `result:${String(block.tool_use_id || items.length)}`
+      key: `result:${toolUseId || items.length}`
     })
   }
 }
 
 export function parseAgentLines(lines: string[]): OutputItem[] {
   const items: OutputItem[] = []
+  // tool_use ids of hidden plumbing tools, so their tool_results are skipped
+  // too. A tool_use always precedes its result in the stream.
+  const hiddenToolIds = new Set<string>()
   lines.forEach((line, index) => {
     const trimmed = line.trim()
     if (trimmed.startsWith('{')) {
@@ -73,8 +99,8 @@ export function parseAgentLines(lines: string[]): OutputItem[] {
           // Synthetic event the manager emits so the user's own prompt shows in
           // the transcript as a chat message.
           items.push({ kind: 'user', text: String(event.text ?? ''), key: `prompt:${index}` })
-        } else if (event.type === 'assistant') parseAssistant(event, items)
-        else if (event.type === 'user') parseUser(event, items)
+        } else if (event.type === 'assistant') parseAssistant(event, items, hiddenToolIds)
+        else if (event.type === 'user') parseUser(event, items, hiddenToolIds)
         // 'system' and 'result' events are control/summary noise — the result
         // text merely repeats the last assistant message, so we drop them.
         return

@@ -35,24 +35,36 @@ const config: AgentConfig = {
 
 // Read-only tools auto-approved in every mode — they cannot mutate the
 // worktree, so routing them through the permission prompt is pure friction.
-// Bash entries are prefix rules: only these exact read-only commands match.
-const alwaysAllowedTools = [
+// These are approved inside canUseTool (not via `allowedTools`): a bare
+// `allowedTools` entry auto-approves the tool BEFORE canUseTool runs, which
+// shadows the callback (the SDK warns about this) and means we can't gate
+// subagent tool calls. Approving here keeps the callback authoritative.
+const alwaysAllowedTools = new Set([
   'Read',
   'Grep',
   'Glob',
   'LS',
   // Let the model spawn subagents without a prompt; the subagent's own tools
-  // still route through the permission flow.
-  'Task',
-  'Bash(grep:*)',
-  'Bash(rg:*)',
-  'Bash(ls:*)',
-  'Bash(cat:*)',
-  'Bash(find:*)',
-  'Bash(head:*)',
-  'Bash(tail:*)',
-  'Bash(wc:*)'
-]
+  // still route through this callback and prompt as usual.
+  'Task'
+])
+
+// Read-only Bash commands auto-approved by leading executable. Only an exact
+// program match at the start of the command line counts.
+const alwaysAllowedBash = ['grep', 'rg', 'ls', 'cat', 'find', 'head', 'tail', 'wc']
+
+function isReadOnlyBash(input: Record<string, unknown>): boolean {
+  const command = typeof input.command === 'string' ? input.command.trim() : ''
+  if (!command) return false
+  const program = command.split(/\s+/)[0]
+  return alwaysAllowedBash.includes(program)
+}
+
+function isAutoAllowed(toolName: string, input: Record<string, unknown>): boolean {
+  if (alwaysAllowedTools.has(toolName)) return true
+  if (toolName === 'Bash') return isReadOnlyBash(input)
+  return false
+}
 
 function filePathOf(input: Record<string, unknown>): string | null {
   if (typeof input.file_path === 'string') return input.file_path
@@ -97,8 +109,6 @@ function start(context: AdapterContext): RunHandle {
           permissionMode: permissionMode as 'default' | 'plan' | 'acceptEdits' | 'bypassPermissions',
           model: context.options.model || undefined,
           effort: (context.options.effort as 'low' | 'medium' | 'high' | 'xhigh' | 'max') || undefined,
-          // Safe read-only tools skip the permission prompt in every mode.
-          allowedTools: alwaysAllowedTools,
           includePartialMessages: false,
           stderr: (data: string) => context.emit(textLine('stderr', data)),
           // MUST declare the dialog kinds we render, or the CLI emits none at
@@ -138,6 +148,10 @@ function start(context: AdapterContext): RunHandle {
                 return { behavior: 'deny', message: 'The user dismissed the question without answering.' }
               }
               return { behavior: 'deny', message: formatDialogAnswer(dialog.result) }
+            }
+            // Read-only tools skip the prompt in every mode.
+            if (isAutoAllowed(toolName, input)) {
+              return { behavior: 'allow', updatedInput: input }
             }
             const decision = await context.requestPermission({
               worktreeId: context.worktree.id,

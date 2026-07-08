@@ -90,6 +90,21 @@ const workbench = {
       ipcRenderer.invoke('extensions:setEnabled', id, enabled),
     grammar: (id: string) => ipcRenderer.invoke('extensions:grammar', id)
   },
+  lsp: {
+    ensure: (worktreeId: string, language: string, uri: string, text: string) =>
+      ipcRenderer.invoke('lsp:ensure', worktreeId, language, uri, text),
+    didChange: (
+      worktreeId: string,
+      language: string,
+      uri: string,
+      version: number,
+      text: string
+    ) => ipcRenderer.invoke('lsp:didChange', worktreeId, language, uri, version, text),
+    completion: (worktreeId: string, language: string, uri: string, position: unknown) =>
+      ipcRenderer.invoke('lsp:completion', worktreeId, language, uri, position),
+    hover: (worktreeId: string, language: string, uri: string, position: unknown) =>
+      ipcRenderer.invoke('lsp:hover', worktreeId, language, uri, position)
+  },
   state: {
     getRepo: () => ipcRenderer.invoke('state:getRepo'),
     update: (patch: Record<string, unknown>) => ipcRenderer.invoke('state:update', patch)

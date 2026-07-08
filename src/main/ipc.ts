@@ -10,6 +10,8 @@ import * as files from './files'
 import * as search from './search'
 import type { SearchMatch } from './search'
 import * as extensions from './extensions'
+import { LspManager } from './lsp'
+import type { LspPosition } from '../shared/types'
 import * as worktrees from './worktrees'
 import { ServiceSupervisor } from './services'
 import { AgentManager, detectAgents, mergeAgents } from './agents'
@@ -62,6 +64,10 @@ const watcher = new WorktreeWatcher((change) => send('event:fs-change', change))
 
 // Active ripgrep search (at most one; a new query cancels it).
 let currentSearch: { cancel: () => void } | null = null
+
+const lsp = new LspManager({
+  onDiagnostics: (uri, diagnostics) => send('event:lsp-diagnostics', { uri, diagnostics })
+})
 
 function findWorktree(worktreeId: string): Worktree {
   const worktree = context.worktrees.find((entry) => entry.id === worktreeId)
@@ -396,6 +402,30 @@ export function registerIpc(): void {
   )
   ipcMain.handle('extensions:grammar', (_e, id: string) => extensions.readGrammar(id))
 
+  // ── LSP ───────────────────────────────────────────────────────
+  ipcMain.handle(
+    'lsp:ensure',
+    (_e, worktreeId: string, language: string, uri: string, text: string) => {
+      const worktree = findWorktree(worktreeId)
+      return lsp.ensure(worktreeId, worktree.path, language, uri, text)
+    }
+  )
+  ipcMain.handle(
+    'lsp:didChange',
+    (_e, worktreeId: string, language: string, uri: string, version: number, text: string) =>
+      lsp.didChange(worktreeId, language, uri, version, text)
+  )
+  ipcMain.handle(
+    'lsp:completion',
+    (_e, worktreeId: string, language: string, uri: string, position: LspPosition) =>
+      lsp.completion(worktreeId, language, uri, position)
+  )
+  ipcMain.handle(
+    'lsp:hover',
+    (_e, worktreeId: string, language: string, uri: string, position: LspPosition) =>
+      lsp.hover(worktreeId, language, uri, position)
+  )
+
   // ── State ─────────────────────────────────────────────────────
   ipcMain.handle('state:getRepo', () => {
     const { repoPath } = requireRepo()
@@ -427,4 +457,5 @@ export async function shutdown(): Promise<void> {
   await supervisor.stopAll()
   await agents.stopAll()
   await watcher.closeAll()
+  lsp.stopAll()
 }

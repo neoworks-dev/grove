@@ -17,6 +17,7 @@ export interface RepoState {
   paneSizes: Record<string, number> // pane key -> px
   panelsOpen: Record<string, boolean> // panel key -> open
   centerView: string | null
+  activeView: string | null // active sidebar view (activity bar)
 }
 
 export interface AppState {
@@ -65,7 +66,8 @@ export function emptyRepoState(): RepoState {
     agentSessions: {},
     paneSizes: {},
     panelsOpen: {},
-    centerView: null
+    centerView: null,
+    activeView: null
   }
 }
 

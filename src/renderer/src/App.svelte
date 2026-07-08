@@ -1,6 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import WorktreeSidebar from './components/WorktreeSidebar.svelte'
+  import FilesView from './components/FilesView.svelte'
+  import ExtensionsView from './components/ExtensionsView.svelte'
+  import ActivityBar from './components/ActivityBar.svelte'
+  import SidebarHost from './components/SidebarHost.svelte'
   import EditorPane from './components/EditorPane.svelte'
   import DiffPane from './components/DiffPane.svelte'
   import PreviewPane from './components/PreviewPane.svelte'
@@ -11,14 +15,23 @@
   import CommandPalette from './components/CommandPalette.svelte'
   import RipgrepSearch from './components/RipgrepSearch.svelte'
   import WhichKey from './components/WhichKey.svelte'
+  import Folder from 'phosphor-svelte/lib/Folder'
+  import GitBranch from 'phosphor-svelte/lib/GitBranch'
+  import PuzzlePiece from 'phosphor-svelte/lib/PuzzlePiece'
   import { store, subscribeEvents, openRepoResult, applyIconPack, applyColorTheme, switchTab } from './lib/store.svelte'
   import { commands } from './lib/commands.svelte'
   import { keymap, pane } from './lib/keymap.svelte'
   import { layout } from './lib/layout.svelte'
+  import { activity } from './lib/activity.svelte'
   import { registerCoreBindings } from './lib/bindings'
   import { initIcons, availablePacks } from './lib/icons'
   import { initThemes, availableThemes } from './lib/themes'
   import type { CenterView } from './lib/store.svelte'
+
+  // Core sidebar views for the activity bar (plugins can register more).
+  activity.register({ id: 'files', label: 'Explorer', icon: Folder, view: FilesView, order: 1 })
+  activity.register({ id: 'worktrees', label: 'Worktrees', icon: GitBranch, view: WorktreeSidebar, order: 2 })
+  activity.register({ id: 'extensions', label: 'Extensions', icon: PuzzlePiece, view: ExtensionsView, order: 3 })
 
   // Persist layout (pane sizes, panels, center view, open tabs) whenever any of
   // these change; layout.schedule() debounces the write to per-repo state.
@@ -28,7 +41,8 @@
     const view = store.centerView
     const tabs = store.tabs.map((tab) => tab.path).join('|')
     const active = store.activeTabPath
-    void [sizes, open, view, tabs, active]
+    const sidebarView = activity.activeView
+    void [sizes, open, view, tabs, active, sidebarView]
     layout.schedule()
   })
 
@@ -218,6 +232,7 @@
 
   <!-- Main body -->
   <div class="flex min-h-0 flex-1">
+    <ActivityBar />
     <UIPane
       side="right"
       bind:size={layout.paneSizes.sidebar}
@@ -229,7 +244,7 @@
         use:pane={'sidebar'}
         class="h-full outline-none {keymap.activePane === 'sidebar' ? 'pane-active' : ''}"
       >
-        <WorktreeSidebar />
+        <SidebarHost />
       </div>
     </UIPane>
 

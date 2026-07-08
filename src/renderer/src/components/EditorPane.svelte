@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte'
+  import Icon from '@iconify/svelte'
   import { store } from '../lib/store.svelte'
   import { languageExtension, editorTheme, baseExtensions } from '../lib/editor'
   import { onHighlightersChanged } from '../lib/highlighters'
@@ -288,6 +289,7 @@
               : 'text-dim hover:text-default'}"
           >
             <button class="flex items-center gap-1" onclick={() => selectTab(tab.path)}>
+              {#if tab.pinned}<Icon icon="ph:push-pin-fill" width="11" height="11" class="text-amber" />{/if}
               <span>{tab.name}</span>
               {#if dirtyPaths[tab.path]}<span class="text-amber">●</span>{/if}
             </button>

@@ -6,6 +6,7 @@ import { keymap } from './keymap.svelte'
 import { commands } from './commands.svelte'
 import { search } from './search.svelte'
 import { fileFinder } from './filefinder.svelte'
+import { bufferMenu } from './buffermenu.svelte'
 
 export function registerCoreBindings(): void {
   keymap.registerBindings([
@@ -24,6 +25,14 @@ export function registerCoreBindings(): void {
       group: 'Search',
       description: 'Search file contents (ripgrep)',
       run: () => search.show()
+    },
+    {
+      id: 'leader.buffers',
+      keys: 'b',
+      context: 'global',
+      group: 'Buffer',
+      description: 'Buffer menu',
+      run: () => bufferMenu.show()
     },
     {
       id: 'leader.palette',

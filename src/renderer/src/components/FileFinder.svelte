@@ -1,7 +1,7 @@
 <script lang="ts">
   import Icon from '@iconify/svelte'
   import { fileFinder } from '../lib/filefinder.svelte'
-  import { store, openFileInEditor, revealInTree } from '../lib/store.svelte'
+  import { store, openFileInEditor } from '../lib/store.svelte'
   import { fileIcon } from '../lib/icons'
 
   let query = $state('')
@@ -45,7 +45,6 @@
   function open(file: string): void {
     if (!worktreeId) return
     openFileInEditor(worktreeId, `${worktreeRoot}/${file}`)
-    revealInTree(file)
     fileFinder.close()
   }
 

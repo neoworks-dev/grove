@@ -109,10 +109,14 @@
     treeViewport?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' })
   }
 
+  // Reveal the active buffer whenever it changes — buffer switches, overlay
+  // opens, tab clicks — by expanding to and selecting its row.
   $effect(() => {
-    const target = store.revealInTree
-    if (!target || worktreeId !== store.selectedWorktreeId) return
-    void reveal(target.path)
+    const active = store.activeTabPath
+    if (!active || worktreeId !== store.selectedWorktreeId) return
+    const root = store.selectedWorktree?.path || ''
+    const rel = active.startsWith(`${root}/`) ? active.slice(root.length + 1) : active
+    void reveal(rel)
   })
 
   function iconFor(node: FileNode): string {

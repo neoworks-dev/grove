@@ -60,6 +60,8 @@
       modeIndex = 0
       effortIndex = 0
       selectedModel = ''
+      agentNavActive = false
+      focusedSubagentKey = null
       localStorage.setItem('agent.selected', selectedAgent)
     }
   })
@@ -403,6 +405,36 @@
         return
       }
     }
+    // Active-agents list: when the prompt is empty and subagents exist, Arrow
+    // keys navigate the list and Enter opens the selected subagent's transcript.
+    if (subagents.length > 0 && prompt.length === 0) {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        if (!agentNavActive) {
+          agentNavActive = true
+          agentIndex = 0
+        } else {
+          agentIndex = Math.min(agentIndex + 1, subagents.length - 1)
+        }
+        return
+      }
+      if (agentNavActive && event.key === 'ArrowUp') {
+        event.preventDefault()
+        if (agentIndex === 0) agentNavActive = false
+        else agentIndex -= 1
+        return
+      }
+      if (agentNavActive && event.key === 'Enter') {
+        event.preventDefault()
+        focusSubagent(subagents[agentIndex].key)
+        return
+      }
+      if (agentNavActive && event.key === 'Escape') {
+        event.preventDefault()
+        agentNavActive = false
+        return
+      }
+    }
     // Prompt history: Arrow Up recalls older entries (from the caret start),
     // Arrow Down walks back toward the in-progress draft.
     if (history.length > 0) {
@@ -477,6 +509,56 @@
   const rawLines = $derived(agentLines.map((line) => line.line))
   const items = $derived(parseAgentLines(rawLines))
   const meta = $derived(parseAgentMeta(rawLines))
+
+  // ── Subagents (Task tool spawns) ───────────────────────────────
+  // Derived from the main stream: each Task tool call is a subagent, running
+  // until its tool-result arrives.
+  interface Subagent {
+    key: string
+    type: string
+    description: string
+    running: boolean
+  }
+  const subagents = $derived.by<Subagent[]>(() => {
+    const resultKeys = new Set(
+      items.filter((item) => item.kind === 'tool-result').map((item) => item.key)
+    )
+    const list: Subagent[] = []
+    for (const item of items) {
+      if (item.kind !== 'tool' || item.tool !== 'Task') continue
+      const input = item.input
+      list.push({
+        key: item.key,
+        type: String(input.subagent_type || 'agent'),
+        description: String(input.description || input.prompt || ''),
+        running: !resultKeys.has(`result:${item.key}`)
+      })
+    }
+    return list
+  })
+
+  let agentNavActive = $state(false)
+  let agentIndex = $state(0)
+  let focusedSubagentKey = $state<string | null>(null)
+
+  $effect(() => {
+    if (agentIndex >= subagents.length) agentIndex = Math.max(0, subagents.length - 1)
+  })
+
+  // The transcript shows all items, or just one subagent's Task card + result
+  // when a subagent is focused from the list.
+  const visibleItems = $derived.by(() => {
+    if (!focusedSubagentKey) return items
+    const resultKey = `result:${focusedSubagentKey}`
+    return items.filter((item) => item.key === focusedSubagentKey || item.key === resultKey)
+  })
+
+  function focusSubagent(key: string): void {
+    focusedSubagentKey = key
+    agentNavActive = false
+    expandedTools = { ...expandedTools, [key]: true }
+    expandedResults = { ...expandedResults, [`result:${key}`]: true }
+  }
 
   // ── Working-state indicator ────────────────────────────────────
   // What the agent is doing right now, inferred from the latest transcript item.
@@ -787,7 +869,15 @@
     <!-- Chat transcript -->
     <FloatingScrollbar class="min-h-0 flex-1">
       <div class="px-3 py-3 text-xs leading-relaxed">
-      {#each items as item (item.key)}
+      {#if focusedSubagentKey}
+        <button
+          class="-mx-3 mb-3 flex w-[calc(100%+1.5rem)] items-center gap-2 border-y border-line bg-surface px-3 py-1.5 text-2xs text-dim hover:text-default"
+          onclick={() => (focusedSubagentKey = null)}
+        >
+          ← Back to full chat
+        </button>
+      {/if}
+      {#each visibleItems as item (item.key)}
         {#if item.kind === 'user'}
           <!-- User message: full-width band tinted like the logo leaves. -->
           <div
@@ -868,6 +958,39 @@
         <span class="shrink-0 font-mono text-muted" title="input + output tokens"
           >{formatTokens(meta.totalTokens)} tok</span
         >
+      </div>
+    {/if}
+
+    <!-- Active agents: subagents spawned via the Task tool. ↓ to navigate,
+         Enter to open one's transcript. -->
+    {#if subagents.length > 0}
+      <div class="shrink-0 border-t border-line bg-elevated px-2 py-1.5">
+        <div class="mb-1 px-1 text-2xs uppercase tracking-caps text-dim">
+          Agents · <span class="normal-case tracking-normal">↓ navigate · enter open</span>
+        </div>
+        <div class="flex flex-col gap-0.5">
+          {#each subagents as agent, index (agent.key)}
+            <button
+              class="flex items-center gap-2 rounded px-2 py-1 text-left text-2xs {agentNavActive &&
+              index === agentIndex
+                ? 'bg-action text-action-fg'
+                : 'text-muted hover:bg-hover'} {agent.key === focusedSubagentKey
+                ? 'ring-1 ring-green'
+                : ''}"
+              onclick={() => focusSubagent(agent.key)}
+            >
+              {#if agent.running}
+                <span class="shrink-0 text-green"><WaveSpinner /></span>
+              {:else}
+                <span class="shrink-0 text-dim">✓</span>
+              {/if}
+              <span class="shrink-0 font-mono font-semibold text-violet">{agent.type}</span>
+              {#if agent.description}
+                <span class="truncate text-muted">{agent.description}</span>
+              {/if}
+            </button>
+          {/each}
+        </div>
       </div>
     {/if}
 

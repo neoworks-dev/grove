@@ -9,10 +9,12 @@
   import AgentPane from './components/AgentPane.svelte'
   import UIPane from './components/UIPane.svelte'
   import CommandPalette from './components/CommandPalette.svelte'
+  import RipgrepSearch from './components/RipgrepSearch.svelte'
   import { store, subscribeEvents, openRepoResult, applyIconPack, applyColorTheme } from './lib/store.svelte'
   import { commands } from './lib/commands.svelte'
   import { keymap, pane } from './lib/keymap.svelte'
   import { layout } from './lib/layout.svelte'
+  import { registerCoreBindings } from './lib/bindings'
   import { initIcons, availablePacks } from './lib/icons'
   import { initThemes, availableThemes } from './lib/themes'
   import type { CenterView } from './lib/store.svelte'
@@ -103,6 +105,7 @@
     initIcons()
     subscribeEvents()
     registerCoreCommands()
+    registerCoreBindings()
     window.addEventListener('keydown', onGlobalKey, true)
 
     void (async () => {
@@ -266,3 +269,4 @@
 </div>
 
 <CommandPalette />
+<RipgrepSearch />

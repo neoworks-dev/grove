@@ -7,6 +7,8 @@ import type { WorkbenchConfig, Worktree, DiffFile } from '../shared/types'
 import * as git from './git'
 import * as config from './config'
 import * as files from './files'
+import * as search from './search'
+import type { SearchMatch } from './search'
 import * as worktrees from './worktrees'
 import { ServiceSupervisor } from './services'
 import { AgentManager, detectAgents, mergeAgents } from './agents'
@@ -50,6 +52,9 @@ const agents = new AgentManager({
 })
 
 const watcher = new WorktreeWatcher((change) => send('event:fs-change', change))
+
+// Active ripgrep search (at most one; a new query cancels it).
+let currentSearch: { cancel: () => void } | null = null
 
 function findWorktree(worktreeId: string): Worktree {
   const worktree = context.worktrees.find((entry) => entry.id === worktreeId)
@@ -322,6 +327,51 @@ export function registerIpc(): void {
   ipcMain.handle('files:delete', (_e, worktreeId: string, relPath: string) => {
     const worktree = findWorktree(worktreeId)
     return files.removePath(worktree.path, relPath)
+  })
+
+  // ── Content search (ripgrep) ──────────────────────────────────
+  // One search at a time: a new query cancels the previous. Matches stream to
+  // the renderer in small batches tagged with the request id.
+  ipcMain.handle('search:ripgrep', (_e, worktreeId: string, query: string, reqId: string) => {
+    const worktree = findWorktree(worktreeId)
+    currentSearch?.cancel()
+    currentSearch = null
+    if (!query.trim()) {
+      send('event:search-done', { reqId })
+      return
+    }
+    let batch: SearchMatch[] = []
+    const flush = (): void => {
+      if (batch.length === 0) return
+      send('event:search-result', { reqId, matches: batch })
+      batch = []
+    }
+    const timer = setInterval(flush, 60)
+    const handle = search.ripgrepSearch(
+      worktree.path,
+      query,
+      (match) => {
+        batch.push(match)
+        if (batch.length >= 100) flush()
+      },
+      () => {
+        clearInterval(timer)
+        flush()
+        send('event:search-done', { reqId })
+        currentSearch = null
+      }
+    )
+    currentSearch = {
+      cancel: () => {
+        clearInterval(timer)
+        handle.cancel()
+      }
+    }
+  })
+
+  ipcMain.handle('search:cancel', () => {
+    currentSearch?.cancel()
+    currentSearch = null
   })
 
   // ── State ─────────────────────────────────────────────────────

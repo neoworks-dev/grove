@@ -98,6 +98,21 @@
     }
     setDocument(content, path)
     store.activeTabPath = path
+    // If we were asked to reveal a line in this file, do it now that it's loaded.
+    if (store.revealTarget?.path === path) {
+      revealLine(store.revealTarget.line)
+      store.revealTarget = null
+    }
+  }
+
+  // Move the cursor to a 1-based line and scroll it into view.
+  function revealLine(line: number): void {
+    if (!view) return
+    const total = view.state.doc.lines
+    const target = Math.max(1, Math.min(line, total))
+    const pos = view.state.doc.line(target).from
+    view.dispatch({ selection: { anchor: pos }, scrollIntoView: true })
+    view.focus()
   }
 
   async function save(): Promise<void> {
@@ -131,6 +146,16 @@
       return
     }
     void loadIntoEditor(path)
+  })
+
+  // Reveal request for a file that is already open (loadIntoEditor handles the
+  // not-yet-loaded case).
+  $effect(() => {
+    const target = store.revealTarget
+    if (target && loadedPath === target.path) {
+      revealLine(target.line)
+      store.revealTarget = null
+    }
   })
 
   // Reload the open file when it changes on disk (e.g. an agent edit), unless it

@@ -74,6 +74,11 @@ const workbench = {
     delete: (worktreeId: string, relPath: string) =>
       ipcRenderer.invoke('files:delete', worktreeId, relPath)
   },
+  search: {
+    ripgrep: (worktreeId: string, query: string, reqId: string) =>
+      ipcRenderer.invoke('search:ripgrep', worktreeId, query, reqId),
+    cancel: () => ipcRenderer.invoke('search:cancel')
+  },
   state: {
     getRepo: () => ipcRenderer.invoke('state:getRepo'),
     update: (patch: Record<string, unknown>) => ipcRenderer.invoke('state:update', patch)

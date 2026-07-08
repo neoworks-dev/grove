@@ -5,6 +5,7 @@
 import { store } from './store.svelte'
 import { keymap } from './keymap.svelte'
 import { panes } from './panes.svelte'
+import { views } from './views.svelte'
 import {
   createLeaf,
   createSplit,
@@ -49,7 +50,8 @@ interface DefaultTreeOptions {
 
 // The classic Grove layout: files | [[center | agent] / logs]. Fractions are
 // derived from the legacy pixel sizes so pre-tree layouts migrate cleanly.
-function buildDefaultTree(options: DefaultTreeOptions = {}): LayoutNode {
+// Exported for the base "code" view definition.
+export function buildDefaultTree(options: DefaultTreeOptions = {}): LayoutNode {
   const width = window.innerWidth || 1440
   const height = window.innerHeight || 900
   const sidebarPx = options.sidebarPx ?? 256
@@ -76,8 +78,12 @@ function buildDefaultTree(options: DefaultTreeOptions = {}): LayoutNode {
 
 class LayoutStore {
   tree = $state<LayoutNode>(buildDefaultTree())
+  activeViewId = $state<string>('code')
   paneSizes = $state<Record<string, number>>({ ...DEFAULT_PANEL_SIZES })
 
+  // Per-view working copies for the current repo (plain snapshots, keyed by
+  // view id; the active view's live tree is `tree`).
+  private viewTrees: Record<string, LayoutNode> = {}
   private ready = false
   private timer: ReturnType<typeof setTimeout> | null = null
 
@@ -199,42 +205,74 @@ class LayoutStore {
     this.ensurePane(paneTypeId)
   }
 
+  // ── Views ─────────────────────────────────────────────────────
+  // Switch to a named view: stash the current tree, restore the target's
+  // stored tree (or a fresh default), and focus its initial pane type.
+  switchView(viewId: string): void {
+    if (viewId === this.activeViewId) return
+    const definition = views.get(viewId)
+    if (!definition) return
+    this.viewTrees[this.activeViewId] = $state.snapshot(this.tree) as LayoutNode
+    this.tree = this.viewTrees[viewId] ?? definition.buildTree()
+    this.activeViewId = viewId
+    this.focusInitial(definition)
+    this.schedule()
+  }
+
+  private focusInitial(definition: { initialFocus?: string }): void {
+    if (!definition.initialFocus) return
+    const target = leaves(this.tree).find((leaf) => leaf.paneTypeId === definition.initialFocus)
+    if (target) this.focusLeafSoon(target.id)
+  }
+
   // ── Persistence ───────────────────────────────────────────────
   // Restore from persisted repo state (once per repo open). Suppresses saving
   // until the restored values are in place.
   apply(state: {
     viewLayouts?: Record<string, unknown>
+    activeLayoutView?: string | null
     paneSizes?: Record<string, number>
     panelsOpen?: Record<string, boolean>
     centerView?: string | null
   }): void {
     this.ready = false
     this.paneSizes = { ...DEFAULT_PANEL_SIZES, ...(state.paneSizes || {}) }
-    this.tree = this.restoreTree(state)
+    this.viewTrees = restoreViewTrees(state.viewLayouts)
+    const activeId = this.restoreActiveViewId(state.activeLayoutView)
+    this.activeViewId = activeId
+    this.tree = this.viewTrees[activeId] ?? this.initialTree(activeId, state)
     this.ready = true
   }
 
-  private restoreTree(state: {
-    viewLayouts?: Record<string, unknown>
-    paneSizes?: Record<string, number>
-    panelsOpen?: Record<string, boolean>
-    centerView?: string | null
-  }): LayoutNode {
-    const stored = state.viewLayouts?.default
-    if (stored) {
-      const restored = sanitize(stored)
-      if (restored) return restored
+  private restoreActiveViewId(stored: string | null | undefined): string {
+    if (stored && views.get(stored)) return stored
+    return views.get('code') ? 'code' : (views.views[0]?.id ?? 'code')
+  }
+
+  private initialTree(
+    viewId: string,
+    state: {
+      paneSizes?: Record<string, number>
+      panelsOpen?: Record<string, boolean>
+      centerView?: string | null
     }
-    // Legacy pre-tree state: rebuild the classic layout from pixel sizes.
+  ): LayoutNode {
+    // Legacy pre-tree state seeds the code view from its pixel sizes.
     const legacySizes = state.paneSizes || {}
-    const centerView = state.centerView
-    return buildDefaultTree({
-      sidebarPx: legacySizes.sidebar,
-      agentPx: legacySizes.agent,
-      logsPx: legacySizes.logs,
-      logsOpen: state.panelsOpen?.logs ?? true,
-      centerType: centerView && CENTER_TYPES.includes(centerView) ? centerView : 'editor'
-    })
+    const hasLegacy = legacySizes.sidebar !== undefined || state.centerView
+    if (viewId === 'code' && hasLegacy) {
+      const centerView = state.centerView
+      return buildDefaultTree({
+        sidebarPx: legacySizes.sidebar,
+        agentPx: legacySizes.agent,
+        logsPx: legacySizes.logs,
+        logsOpen: state.panelsOpen?.logs ?? true,
+        centerType: centerView && CENTER_TYPES.includes(centerView) ? centerView : 'editor'
+      })
+    }
+    const definition = views.get(viewId)
+    if (definition) return definition.buildTree()
+    return buildDefaultTree()
   }
 
   // Debounced persist. Also invoked by an App effect when open tabs change,
@@ -248,8 +286,11 @@ class LayoutStore {
   private async flush(): Promise<void> {
     try {
       await window.workbench.state.update({
-        viewLayouts: { default: $state.snapshot(this.tree) },
-        activeLayoutView: 'default',
+        viewLayouts: {
+          ...this.viewTrees,
+          [this.activeViewId]: $state.snapshot(this.tree)
+        },
+        activeLayoutView: this.activeViewId,
         paneSizes: $state.snapshot(this.paneSizes),
         openTabs: store.tabs.map((tab) => tab.path),
         activeTabPath: store.activeTabPath
@@ -258,6 +299,18 @@ class LayoutStore {
       // best-effort; layout is non-critical
     }
   }
+}
+
+// Sanitize every stored view tree; the phase-2 'default' key maps to 'code'.
+function restoreViewTrees(raw: Record<string, unknown> | undefined): Record<string, LayoutNode> {
+  const trees: Record<string, LayoutNode> = {}
+  for (const [id, value] of Object.entries(raw ?? {})) {
+    const tree = sanitize(value)
+    if (!tree) continue
+    const key = id === 'default' ? 'code' : id
+    trees[key] = tree
+  }
+  return trees
 }
 
 export const layout = new LayoutStore()

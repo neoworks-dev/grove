@@ -3,6 +3,7 @@
   import groveLogo from './assets/grove-icon.svg'
   import ActivityBar from './components/ActivityBar.svelte'
   import SplitTree from './components/SplitTree.svelte'
+  import MenuBar from './components/MenuBar.svelte'
   import CommandPalette from './components/CommandPalette.svelte'
   import RipgrepSearch from './components/RipgrepSearch.svelte'
   import FileFinder from './components/FileFinder.svelte'
@@ -19,15 +20,21 @@
   import { statusBar } from './lib/statusbar.svelte'
   import { registerCoreBindings } from './lib/bindings'
   import { registerCorePanes } from './lib/corePanes'
+  import { registerCoreViews } from './lib/coreViews'
+  import { registerCoreMenu } from './lib/coreMenu'
+  import { views } from './lib/views.svelte'
+  import { menu } from './lib/menu.svelte'
   import { initBundledGrammars } from './lib/bundledGrammars'
   import { loadInstalledExtensions } from './lib/extensions'
   import { initIcons, availablePacks } from './lib/icons'
   import { initThemes } from './lib/themes'
   import { themePicker } from './lib/themepicker.svelte'
 
-  // Core pane types (sidebar family, center views, agent, logs). Plugins
-  // register theirs through the same registry.
+  // Core pane types, views, and menu structure. Plugins register theirs
+  // through the same registries.
   registerCorePanes()
+  registerCoreViews()
+  registerCoreMenu()
 
   // Core status bar items (plugins can register more, left or right aligned).
   statusBar.register({ id: 'git.branch', align: 'left', order: 1, component: StatusBranch })
@@ -44,12 +51,33 @@
     layout.schedule()
   })
 
-  const views: { id: string; label: string }[] = [
-    { id: 'editor', label: 'Editor' },
-    { id: 'diff', label: 'Diff' },
-    { id: 'preview', label: 'Preview' },
-    { id: 'dashboard', label: 'Dashboard' }
-  ]
+  // Registered views drive the header switcher, palette commands, and the
+  // View menu — re-registered reactively as plugins add views.
+  $effect(() => {
+    const list = views.views
+    const disposeCommands = commands.registerAll(
+      list.map((view) => ({
+        id: `view.${view.id}`,
+        title: `View: ${view.label}`,
+        group: 'View',
+        run: () => layout.switchView(view.id)
+      }))
+    )
+    const disposeItems = menu.registerItems(
+      list.map((view) => ({
+        id: `view.switch.${view.id}`,
+        menuId: 'view',
+        label: view.label,
+        group: '1-views',
+        order: view.order,
+        run: () => layout.switchView(view.id)
+      }))
+    )
+    return () => {
+      disposeCommands()
+      disposeItems()
+    }
+  })
 
   // Core commands. Other components contribute their own via commands.register.
   function registerCoreCommands(): void {
@@ -59,14 +87,6 @@
       group: 'Repository',
       run: pickRepo
     })
-    for (const view of views) {
-      commands.register({
-        id: `view.${view.id}`,
-        title: `View: ${view.label}`,
-        group: 'View',
-        run: () => layout.showCenterPane(view.id)
-      })
-    }
     commands.register({
       id: 'view.toggleLogs',
       title: 'Toggle Logs Panel',
@@ -173,37 +193,31 @@
     class="flex h-11 shrink-0 items-center gap-3 border-b border-line bg-elevated px-3 text-sm"
   >
     <img src={groveLogo} alt="Grove" class="h-6 w-auto" />
-    <button
-      class="rounded-md border border-line bg-surface px-2 py-1 text-xs hover:bg-hover"
-      onclick={pickRepo}
-    >
-      {store.repo ? 'Change Repo' : 'Open Repo'}
-    </button>
+    <MenuBar />
     {#if store.repo}
       <span class="text-muted">{store.repo.name}</span>
       <span class="text-dim">·</span>
       <span class="font-mono text-xs text-dim">{store.repo.currentBranch}</span>
+    {:else}
+      <button
+        class="rounded-md border border-line bg-surface px-2 py-1 text-xs hover:bg-hover"
+        onclick={pickRepo}
+      >
+        Open Repo
+      </button>
     {/if}
 
     <div class="ml-auto flex items-center gap-1">
-      {#each views as view (view.id)}
+      {#each views.views as view (view.id)}
         <button
-          class="rounded-md px-2.5 py-1 text-xs {layout.slotType('center') === view.id
+          class="rounded-md px-2.5 py-1 text-xs {layout.activeViewId === view.id
             ? 'bg-surface text-default'
             : 'text-dim hover:text-default'}"
-          onclick={() => layout.showCenterPane(view.id)}
+          onclick={() => layout.switchView(view.id)}
         >
           {view.label}
         </button>
       {/each}
-      <button
-        class="ml-2 rounded-md px-2.5 py-1 text-xs {layout.hasPane('logs')
-          ? 'text-default'
-          : 'text-dim'} hover:text-default"
-        onclick={() => layout.togglePane('logs')}
-      >
-        Logs
-      </button>
       <button
         class="ml-2 rounded-md border border-line px-2 py-1 text-2xs text-dim hover:text-default"
         title="Command palette (F1)"

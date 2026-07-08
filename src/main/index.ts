@@ -4,6 +4,34 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { registerIpc, shutdown } from './ipc'
 
+// Scale the whole UI with Ctrl/Cmd +, Ctrl/Cmd -, and Ctrl/Cmd 0 to reset.
+// Electron performs no zoom on its own (no zoom-role menu), so drive it here.
+function registerZoomShortcuts(window: BrowserWindow): void {
+  const { webContents } = window
+  const ZOOM_STEP = 0.5
+  const ZOOM_MIN = -3
+  const ZOOM_MAX = 3
+
+  webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return
+    if (!input.control && !input.meta) return
+
+    const zoomIn = input.code === 'Equal' || input.code === 'NumpadAdd'
+    const zoomOut = input.code === 'Minus' || input.code === 'NumpadSubtract'
+    const reset = input.code === 'Digit0' || input.code === 'Numpad0'
+    if (!zoomIn && !zoomOut && !reset) return
+
+    event.preventDefault()
+    if (reset) {
+      webContents.setZoomLevel(0)
+      return
+    }
+    const delta = zoomIn ? ZOOM_STEP : -ZOOM_STEP
+    const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, webContents.getZoomLevel() + delta))
+    webContents.setZoomLevel(next)
+  })
+}
+
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
     width: 1440,
@@ -23,6 +51,8 @@ function createWindow(): void {
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
   })
+
+  registerZoomShortcuts(mainWindow)
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)

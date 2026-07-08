@@ -48,11 +48,7 @@ export interface WorkbenchApi {
   }
   worktrees: {
     list: () => Promise<Worktree[]>
-    create: (options: {
-      name: string
-      baseBranch: string
-      newBranch?: string
-    }) => Promise<Worktree>
+    create: (options: { name: string; baseBranch: string; newBranch?: string }) => Promise<Worktree>
     remove: (worktreeId: string, force: boolean) => Promise<Worktree[]>
   }
   git: {
@@ -76,12 +72,9 @@ export interface WorkbenchApi {
   agents: {
     list: (worktreeId: string) => Promise<AgentRuntime[]>
     configs: () => Promise<Record<string, AgentConfig>>
-    start: (
-      worktreeId: string,
-      name: string,
-      options: AgentLaunchOptions
-    ) => Promise<AgentRuntime>
+    start: (worktreeId: string, name: string, options: AgentLaunchOptions) => Promise<AgentRuntime>
     stop: (worktreeId: string, name: string) => Promise<void>
+    compact: (worktreeId: string, name: string, instructions?: string) => Promise<AgentRuntime>
     reset: (worktreeId: string, name: string) => Promise<ChatMeta>
     transcript: (worktreeId: string, name: string) => Promise<string[]>
     chats: (worktreeId: string, name: string) => Promise<AgentChats>

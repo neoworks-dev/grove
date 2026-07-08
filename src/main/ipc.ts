@@ -156,16 +156,13 @@ export function registerIpc(): void {
     }
   )
 
-  ipcMain.handle(
-    'worktrees:remove',
-    async (_e, worktreeId: string, force: boolean) => {
-      const { repoPath } = requireRepo()
-      const worktree = findWorktree(worktreeId)
-      await supervisor.stopAllForWorktree(worktreeId)
-      await worktrees.removeWorktree(repoPath, worktree.path, force)
-      return refreshWorktrees()
-    }
-  )
+  ipcMain.handle('worktrees:remove', async (_e, worktreeId: string, force: boolean) => {
+    const { repoPath } = requireRepo()
+    const worktree = findWorktree(worktreeId)
+    await supervisor.stopAllForWorktree(worktreeId)
+    await worktrees.removeWorktree(repoPath, worktree.path, force)
+    return refreshWorktrees()
+  })
 
   // ── Git (branches + diff) ─────────────────────────────────────
   ipcMain.handle('git:branches', () => {
@@ -280,6 +277,19 @@ export function registerIpc(): void {
 
   ipcMain.handle('agents:stop', (_e, worktreeId: string, name: string) =>
     agents.stop(worktreeId, name)
+  )
+
+  // Compact the active chat (summarize + continue with less context).
+  ipcMain.handle(
+    'agents:compact',
+    (_e, worktreeId: string, name: string, instructions?: string) => {
+      const { config: cfg } = requireRepo()
+      const worktree = findWorktree(worktreeId)
+      const agent = effectiveAgents()[name]
+      if (!agent) throw new Error(`unknown agent: ${name}`)
+      const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
+      return agents.compact(worktree, name, agent, ports, instructions)
+    }
   )
 
   // New chat: start a fresh active chat (prior chats stay resumable).

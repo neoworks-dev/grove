@@ -9,7 +9,8 @@
     resetAgentChat,
     refreshChats,
     renameChat,
-    resumeChat
+    resumeChat,
+    compactChat
   } from '../lib/store.svelte'
   import { parseQuestions, buildAnswerResult } from '../lib/agentDialog'
   import WaveSpinner from './WaveSpinner.svelte'
@@ -196,6 +197,15 @@
       run: clearChat
     })
     commands.push({
+      name: 'compact',
+      description: 'Summarize & compact the conversation',
+      args: [],
+      // Enter runs it straight away; typing text after it steers the summary.
+      run: () => compactCurrentChat(''),
+      freeText: compactCurrentChat,
+      freeTextHint: 'focus (optional)'
+    })
+    commands.push({
       name: 'rename',
       description: 'Name this chat',
       args: [],
@@ -229,6 +239,12 @@
   function clearChat(): void {
     if (!store.selectedWorktreeId) return
     void resetAgentChat(store.selectedWorktreeId, selectedAgent)
+  }
+  function compactCurrentChat(instructions: string): void {
+    if (!store.selectedWorktreeId) return
+    // A compact turn is fresh output — re-pin the view to follow it.
+    stuckToBottom = true
+    void compactChat(store.selectedWorktreeId, selectedAgent, instructions.trim() || undefined)
   }
   function renameCurrentChat(name: string): void {
     if (!store.selectedWorktreeId || !currentChats || !name.trim()) return
@@ -280,7 +296,11 @@
     if (!command) return []
     const entries: SlashEntry[] = command.args
       .filter((arg) => arg.value.toLowerCase().includes(argQuery))
-      .map((arg) => ({ label: arg.value, description: arg.description, apply: () => finishSlash(arg.apply) }))
+      .map((arg) => ({
+        label: arg.value,
+        description: arg.description,
+        apply: () => finishSlash(arg.apply)
+      }))
 
     // Free-text argument (e.g. a custom model name, or a chat name for /rename).
     if (command.freeText) {
@@ -549,9 +569,15 @@
   // The transcript shows all items, or just one subagent's Task card + result
   // when a subagent is focused from the list.
   const visibleItems = $derived.by(() => {
-    if (!focusedSubagentKey) return items
-    const resultKey = `result:${focusedSubagentKey}`
-    return items.filter((item) => item.key === focusedSubagentKey || item.key === resultKey)
+    if (focusedSubagentKey) {
+      const resultKey = `result:${focusedSubagentKey}`
+      return items.filter((item) => item.key === focusedSubagentKey || item.key === resultKey)
+    }
+    // After a /compact, hide the summarized history and keep the boundary marker
+    // as the new top of the conversation (like Claude Code's compact view).
+    const lastCompact = items.findLastIndex((item) => item.kind === 'compact')
+    if (lastCompact > 0) return items.slice(lastCompact)
+    return items
   })
 
   // ── Transcript auto-scroll ─────────────────────────────────────
@@ -670,7 +696,8 @@
   // ── Interactive permission prompt ──────────────────────────────
   const pendingPermission = $derived(
     store.pendingPermissions.find(
-      (request) => request.worktreeId === store.selectedWorktreeId && request.agent === selectedAgent
+      (request) =>
+        request.worktreeId === store.selectedWorktreeId && request.agent === selectedAgent
     ) || null
   )
   let denyReasonMode = $state(false)
@@ -724,7 +751,11 @@
         run: showChange
       })
     }
-    choices.push({ label: 'No', class: 'border border-line text-red hover:bg-hover', run: () => deny('') })
+    choices.push({
+      label: 'No',
+      class: 'border border-line text-red hover:bg-hover',
+      run: () => deny('')
+    })
     choices.push({
       label: 'No, with reason…',
       class: 'border border-line text-dim hover:bg-hover',
@@ -773,7 +804,8 @@
   // ── Agent question dialog ──────────────────────────────────────
   const pendingDialog = $derived(
     store.pendingDialogs.find(
-      (request) => request.worktreeId === store.selectedWorktreeId && request.agent === selectedAgent
+      (request) =>
+        request.worktreeId === store.selectedWorktreeId && request.agent === selectedAgent
     ) || null
   )
   const dialogQuestions = $derived(pendingDialog ? parseQuestions(pendingDialog.payload) : [])
@@ -815,7 +847,9 @@
     const current = dialogSelections[questionIndex] || []
     let next: string[]
     if (multiSelect) {
-      next = current.includes(label) ? current.filter((item) => item !== label) : [...current, label]
+      next = current.includes(label)
+        ? current.filter((item) => item !== label)
+        : [...current, label]
     } else {
       next = [label]
     }
@@ -896,83 +930,100 @@
     <p class="px-3 py-3 text-xs text-dim">Select a worktree.</p>
   {:else}
     <!-- Chat transcript -->
-    <FloatingScrollbar class="min-h-0 flex-1" bind:viewport={transcriptViewport} onscroll={onTranscriptScroll}>
+    <FloatingScrollbar
+      class="min-h-0 flex-1"
+      bind:viewport={transcriptViewport}
+      onscroll={onTranscriptScroll}
+    >
       <div class="px-3 py-3 text-xs leading-relaxed">
-      {#if focusedSubagentKey}
-        <button
-          class="-mx-3 mb-3 flex w-[calc(100%+1.5rem)] items-center gap-2 border-y border-line bg-surface px-3 py-1.5 text-2xs text-dim hover:text-default"
-          onclick={() => (focusedSubagentKey = null)}
-        >
-          ← Back to full chat
-        </button>
-      {/if}
-      {#each visibleItems as item (item.key)}
-        {#if item.kind === 'user'}
-          <!-- User message: full-width band tinted like the logo leaves. -->
-          <div
-            class="-mx-3 mb-3 whitespace-pre-wrap border-y border-green/30 bg-green-soft px-3 py-2 text-default"
+        {#if focusedSubagentKey}
+          <button
+            class="-mx-3 mb-3 flex w-[calc(100%+1.5rem)] items-center gap-2 border-y border-line bg-surface px-3 py-1.5 text-2xs text-dim hover:text-default"
+            onclick={() => (focusedSubagentKey = null)}
           >
-            {item.text}
-          </div>
-        {:else if item.kind === 'text'}
-          <!-- Assistant message: markdown-rendered. -->
-          <div class="agent-markdown prose mb-3 max-w-none text-xs text-default">
-            <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-            {@html renderMarkdown(item.text)}
-          </div>
-        {:else if item.kind === 'tool'}
-          {@const path = filePath(item.input)}
-          {@const summary = toolSummary(item.tool, item.input)}
-          <div class="mb-2 overflow-hidden rounded-md border border-line bg-surface">
-            <div class="flex w-full items-center gap-2 border-b border-line px-2 py-1">
-              <button
-                class="flex min-w-0 flex-1 items-center gap-2 text-left"
-                onclick={() => toggleTool(item.key)}
-                title="Expand full command"
-              >
-                <span class="shrink-0 text-2xs text-dim">{expandedTools[item.key] ? '▾' : '▸'}</span>
-                <span class="shrink-0 font-mono text-2xs font-semibold text-violet">{item.tool}</span
-                >
-                {#if summary}
-                  <span class="truncate font-mono text-2xs text-muted">{summary}</span>
-                {/if}
-              </button>
-              {#if path}
+            ← Back to full chat
+          </button>
+        {/if}
+        {#each visibleItems as item (item.key)}
+          {#if item.kind === 'user'}
+            <!-- User message: full-width band tinted like the logo leaves. -->
+            <div
+              class="-mx-3 mb-3 whitespace-pre-wrap border-y border-green/30 bg-green-soft px-3 py-2 text-default"
+            >
+              {item.text}
+            </div>
+          {:else if item.kind === 'text'}
+            <!-- Assistant message: markdown-rendered. -->
+            <div class="agent-markdown prose mb-3 max-w-none text-xs text-default">
+              <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+              {@html renderMarkdown(item.text)}
+            </div>
+          {:else if item.kind === 'tool'}
+            {@const path = filePath(item.input)}
+            {@const summary = toolSummary(item.tool, item.input)}
+            <div class="mb-2 overflow-hidden rounded-md border border-line bg-surface">
+              <div class="flex w-full items-center gap-2 border-b border-line px-2 py-1">
                 <button
-                  class="ml-auto shrink-0 text-2xs text-dim hover:text-default"
-                  onclick={() => openCard(item.input)}>open ↗</button
+                  class="flex min-w-0 flex-1 items-center gap-2 text-left"
+                  onclick={() => toggleTool(item.key)}
+                  title="Expand full command"
                 >
+                  <span class="shrink-0 text-2xs text-dim"
+                    >{expandedTools[item.key] ? '▾' : '▸'}</span
+                  >
+                  <span class="shrink-0 font-mono text-2xs font-semibold text-violet"
+                    >{item.tool}</span
+                  >
+                  {#if summary}
+                    <span class="truncate font-mono text-2xs text-muted">{summary}</span>
+                  {/if}
+                </button>
+                {#if path}
+                  <button
+                    class="ml-auto shrink-0 text-2xs text-dim hover:text-default"
+                    onclick={() => openCard(item.input)}>open ↗</button
+                  >
+                {/if}
+              </div>
+              {#if expandedTools[item.key]}
+                <pre
+                  class="max-h-72 overflow-auto whitespace-pre-wrap px-2 py-1.5 font-mono text-2xs text-muted">{toolDetail(
+                    item.tool,
+                    item.input
+                  )}</pre>
               {/if}
             </div>
-            {#if expandedTools[item.key]}
+          {:else if item.kind === 'tool-result'}
+            <button
+              class="mb-2 flex w-full items-center gap-2 rounded-md bg-canvas px-2 py-1 text-left font-mono text-2xs {item.isError
+                ? 'text-red'
+                : 'text-dim'}"
+              onclick={() => toggleResult(item.key)}
+            >
+              <span class="shrink-0">{expandedResults[item.key] ? '▾' : '▸'}</span>
+              <span class="truncate">{resultLabel(item.text, item.isError)}</span>
+            </button>
+            {#if expandedResults[item.key]}
               <pre
-                class="max-h-72 overflow-auto whitespace-pre-wrap px-2 py-1.5 font-mono text-2xs text-muted">{toolDetail(
-                  item.tool,
-                  item.input
-                )}</pre>
+                class="mb-2 max-h-60 overflow-auto whitespace-pre-wrap rounded-md bg-canvas px-2 py-1 font-mono text-2xs text-dim">{item.text}</pre>
             {/if}
-          </div>
-        {:else if item.kind === 'tool-result'}
-          <button
-            class="mb-2 flex w-full items-center gap-2 rounded-md bg-canvas px-2 py-1 text-left font-mono text-2xs {item.isError
-              ? 'text-red'
-              : 'text-dim'}"
-            onclick={() => toggleResult(item.key)}
-          >
-            <span class="shrink-0">{expandedResults[item.key] ? '▾' : '▸'}</span>
-            <span class="truncate">{resultLabel(item.text, item.isError)}</span>
-          </button>
-          {#if expandedResults[item.key]}
-            <pre
-              class="mb-2 max-h-60 overflow-auto whitespace-pre-wrap rounded-md bg-canvas px-2 py-1 font-mono text-2xs text-dim">{item.text}</pre>
+          {:else if item.kind === 'compact'}
+            <!-- Compaction boundary: earlier turns were summarized away. -->
+            <div
+              class="-mx-3 mb-3 flex items-center gap-2 border-y border-violet/30 bg-violet-soft px-3 py-1.5 text-2xs text-violet"
+            >
+              <span class="font-medium">✦ Conversation compacted</span>
+              {#if item.freedTokens > 0}
+                <span class="text-dim">· freed {formatTokens(item.freedTokens)} tokens</span>
+              {/if}
+            </div>
+          {:else}
+            <pre class="mb-1 whitespace-pre-wrap font-mono text-2xs text-muted">{item.text}</pre>
           {/if}
-        {:else}
-          <pre class="mb-1 whitespace-pre-wrap font-mono text-2xs text-muted">{item.text}</pre>
+        {/each}
+        {#if items.length === 0}
+          <p class="text-dim">No agent output yet. Write a prompt below and run.</p>
         {/if}
-      {/each}
-      {#if items.length === 0}
-        <p class="text-dim">No agent output yet. Write a prompt below and run.</p>
-      {/if}
       </div>
     </FloatingScrollbar>
 
@@ -1028,13 +1079,21 @@
       {#if pendingDialog}
         <!-- Agent question: render the questions + options and return the answer -->
         <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="-mx-3 border-y border-green/40 bg-green-soft p-2" tabindex="-1" onkeydown={onDialogKey}>
+        <div
+          class="-mx-3 border-y border-green/40 bg-green-soft p-2"
+          tabindex="-1"
+          onkeydown={onDialogKey}
+        >
           {#each dialogQuestions as question, questionIndex (questionIndex)}
             <div class="mb-3 last:mb-1">
               {#if question.header}
-                <div class="mb-0.5 flex items-center gap-2 text-2xs font-semibold uppercase tracking-caps text-green">
+                <div
+                  class="mb-0.5 flex items-center gap-2 text-2xs font-semibold uppercase tracking-caps text-green"
+                >
                   <span>{question.header}</span>
-                  {#if question.multiSelect}<span class="normal-case tracking-normal text-dim">· multi-select</span>{/if}
+                  {#if question.multiSelect}<span class="normal-case tracking-normal text-dim"
+                      >· multi-select</span
+                    >{/if}
                 </div>
               {/if}
               <div class="mb-1.5 text-xs text-default">{question.question}</div>
@@ -1140,106 +1199,109 @@
           {/if}
         </div>
       {:else}
-      {#if slashOpen}
-        <!-- Slash menu floats above the input -->
-        <div
-          class="absolute bottom-full left-3 right-3 mb-1 max-h-56 overflow-auto rounded-md border border-line bg-elevated shadow-lg"
-        >
-          {#each slashEntries as entry, index (entry.label)}
-            <button
-              class="flex w-full items-center gap-3 px-2 py-1.5 text-left text-xs {index === slashIndex
-                ? 'bg-action text-action-fg'
-                : 'text-muted hover:bg-hover'}"
-              onmousedown={(event) => {
-                event.preventDefault()
-                entry.apply()
-              }}
-            >
-              <span class="font-mono font-medium">{entry.label}</span>
-              {#if entry.description}
-                <span class="ml-auto truncate font-mono text-2xs {index === slashIndex
-                  ? 'text-action-fg/70'
-                  : 'text-dim'}">{entry.description}</span>
-              {/if}
-            </button>
-          {/each}
-        </div>
-      {/if}
-
-      {#if mentionOpen}
-        <!-- File-mention menu floats above the input -->
-        <div
-          class="absolute bottom-full left-3 right-3 mb-1 max-h-56 overflow-auto rounded-md border border-line bg-elevated shadow-lg"
-        >
-          {#each mentionItems as file, index (file)}
-            <button
-              class="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs {index ===
-              mentionIndex
-                ? 'bg-action text-action-fg'
-                : 'text-muted hover:bg-hover'}"
-              onmousedown={(event) => {
-                event.preventDefault()
-                applyMention(file)
-              }}
-            >
-              <span class="font-mono font-medium">{baseName(file)}</span>
-              <span
-                class="ml-auto truncate font-mono text-2xs {index === mentionIndex
-                  ? 'text-action-fg/70'
-                  : 'text-dim'}">{file}</span
-              >
-            </button>
-          {/each}
-        </div>
-      {/if}
-
-      <textarea
-        bind:this={promptEl}
-        class="mb-2 h-20 w-full resize-none rounded-md border border-line bg-input px-2 py-1.5 text-xs"
-        placeholder="Prompt…  ( / options · @ files · ↑↓ history · Shift+Tab mode · Enter run )"
-        bind:value={prompt}
-        onkeydown={onPromptKey}
-        oninput={() => (historyIndex = -1)}
-      ></textarea>
-
-      <div class="flex items-center gap-3 text-2xs">
-        <button class="flex items-center gap-1" title="Cycle agent" onclick={cycleAgent}>
-          <span class="text-dim">agent</span>
-          <span class="font-medium text-default">{selectedAgent || '—'}</span>
-        </button>
-        <button
-          class="flex items-center gap-1"
-          title="Cycle mode (Shift+Tab)"
-          onclick={cycleMode}
-          disabled={modes.length === 0}
-        >
-          <span class="text-dim">mode</span>
-          <span class="font-medium {modeColor(modeLabel)}">{modeLabel}</span>
-        </button>
-
-        <button class="ml-auto flex items-center gap-1" title="Cycle model" onclick={cycleModel}>
-          <span class="text-dim">model</span>
-          <span class="font-medium text-default">{modelLabel}</span>
-        </button>
-        <button
-          class="flex items-center gap-1"
-          title="Cycle effort"
-          onclick={cycleEffort}
-          disabled={efforts.length === 0}
-        >
-          <span class="text-dim">effort</span>
-          <span class="font-medium text-default">{effortLabel}</span>
-        </button>
-
-        {#if isRunning}
-          <button
-            class="rounded-md border border-line px-3 py-1 text-xs hover:bg-hover"
-            onclick={stop}
+        {#if slashOpen}
+          <!-- Slash menu floats above the input -->
+          <div
+            class="absolute bottom-full left-3 right-3 mb-1 max-h-56 overflow-auto rounded-md border border-line bg-elevated shadow-lg"
           >
-            ■ Stop
-          </button>
+            {#each slashEntries as entry, index (entry.label)}
+              <button
+                class="flex w-full items-center gap-3 px-2 py-1.5 text-left text-xs {index ===
+                slashIndex
+                  ? 'bg-action text-action-fg'
+                  : 'text-muted hover:bg-hover'}"
+                onmousedown={(event) => {
+                  event.preventDefault()
+                  entry.apply()
+                }}
+              >
+                <span class="font-mono font-medium">{entry.label}</span>
+                {#if entry.description}
+                  <span
+                    class="ml-auto truncate font-mono text-2xs {index === slashIndex
+                      ? 'text-action-fg/70'
+                      : 'text-dim'}">{entry.description}</span
+                  >
+                {/if}
+              </button>
+            {/each}
+          </div>
         {/if}
-      </div>
+
+        {#if mentionOpen}
+          <!-- File-mention menu floats above the input -->
+          <div
+            class="absolute bottom-full left-3 right-3 mb-1 max-h-56 overflow-auto rounded-md border border-line bg-elevated shadow-lg"
+          >
+            {#each mentionItems as file, index (file)}
+              <button
+                class="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs {index ===
+                mentionIndex
+                  ? 'bg-action text-action-fg'
+                  : 'text-muted hover:bg-hover'}"
+                onmousedown={(event) => {
+                  event.preventDefault()
+                  applyMention(file)
+                }}
+              >
+                <span class="font-mono font-medium">{baseName(file)}</span>
+                <span
+                  class="ml-auto truncate font-mono text-2xs {index === mentionIndex
+                    ? 'text-action-fg/70'
+                    : 'text-dim'}">{file}</span
+                >
+              </button>
+            {/each}
+          </div>
+        {/if}
+
+        <textarea
+          bind:this={promptEl}
+          class="mb-2 h-20 w-full resize-none rounded-md border border-line bg-input px-2 py-1.5 text-xs"
+          placeholder="Prompt…  ( / options · @ files · ↑↓ history · Shift+Tab mode · Enter run )"
+          bind:value={prompt}
+          onkeydown={onPromptKey}
+          oninput={() => (historyIndex = -1)}
+        ></textarea>
+
+        <div class="flex items-center gap-3 text-2xs">
+          <button class="flex items-center gap-1" title="Cycle agent" onclick={cycleAgent}>
+            <span class="text-dim">agent</span>
+            <span class="font-medium text-default">{selectedAgent || '—'}</span>
+          </button>
+          <button
+            class="flex items-center gap-1"
+            title="Cycle mode (Shift+Tab)"
+            onclick={cycleMode}
+            disabled={modes.length === 0}
+          >
+            <span class="text-dim">mode</span>
+            <span class="font-medium {modeColor(modeLabel)}">{modeLabel}</span>
+          </button>
+
+          <button class="ml-auto flex items-center gap-1" title="Cycle model" onclick={cycleModel}>
+            <span class="text-dim">model</span>
+            <span class="font-medium text-default">{modelLabel}</span>
+          </button>
+          <button
+            class="flex items-center gap-1"
+            title="Cycle effort"
+            onclick={cycleEffort}
+            disabled={efforts.length === 0}
+          >
+            <span class="text-dim">effort</span>
+            <span class="font-medium text-default">{effortLabel}</span>
+          </button>
+
+          {#if isRunning}
+            <button
+              class="rounded-md border border-line px-3 py-1 text-xs hover:bg-hover"
+              onclick={stop}
+            >
+              ■ Stop
+            </button>
+          {/if}
+        </div>
       {/if}
     </div>
   {/if}

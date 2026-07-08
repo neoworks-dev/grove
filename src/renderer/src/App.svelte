@@ -17,11 +17,12 @@
   import RipgrepSearch from './components/RipgrepSearch.svelte'
   import FileFinder from './components/FileFinder.svelte'
   import BufferMenu from './components/BufferMenu.svelte'
+  import ThemePicker from './components/ThemePicker.svelte'
   import WhichKey from './components/WhichKey.svelte'
   import Folder from 'phosphor-svelte/lib/Folder'
   import GitBranch from 'phosphor-svelte/lib/GitBranch'
   import PuzzlePiece from 'phosphor-svelte/lib/PuzzlePiece'
-  import { store, subscribeEvents, openRepoResult, applyIconPack, applyColorTheme, switchTab } from './lib/store.svelte'
+  import { store, subscribeEvents, openRepoResult, applyIconPack, switchTab } from './lib/store.svelte'
   import { commands } from './lib/commands.svelte'
   import { keymap, pane } from './lib/keymap.svelte'
   import { layout } from './lib/layout.svelte'
@@ -30,7 +31,8 @@
   import { initBundledGrammars } from './lib/bundledGrammars'
   import { loadInstalledExtensions } from './lib/extensions'
   import { initIcons, availablePacks } from './lib/icons'
-  import { initThemes, availableThemes } from './lib/themes'
+  import { initThemes } from './lib/themes'
+  import { themePicker } from './lib/themepicker.svelte'
   import type { CenterView } from './lib/store.svelte'
 
   // Core sidebar views for the activity bar (plugins can register more).
@@ -94,16 +96,15 @@
         run: () => applyIconPack(pack.name)
       })
     }
-    // Color theme selection — dynamically one command per registered theme.
-    for (const theme of availableThemes()) {
-      commands.register({
-        id: `theme.${theme.name}`,
-        title: `Color Theme: ${theme.label}`,
-        group: 'Appearance',
-        keywords: 'color theme palette scheme dark light',
-        run: () => applyColorTheme(theme.name)
-      })
-    }
+    // A single entry opens the theme picker (live-previews on focus, applies on
+    // Enter) rather than one command per theme.
+    commands.register({
+      id: 'theme.switch',
+      title: 'Switch Color Theme',
+      group: 'Appearance',
+      keywords: 'color theme palette scheme dark light appearance',
+      run: () => themePicker.show()
+    })
   }
 
   function onGlobalKey(event: KeyboardEvent): void {
@@ -319,3 +320,4 @@
 <RipgrepSearch />
 <FileFinder />
 <BufferMenu />
+<ThemePicker />

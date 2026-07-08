@@ -145,67 +145,12 @@ const neoworksLight: ThemePalette = {
   ctxPink: '#db2777'
 }
 
-// ── Midnight — indigo-tinted dark, blue/violet accents. ────────────────
-const midnight: ThemePalette = {
-  ...neoworksDark,
-  bg: '#0a0e1a',
-  bgElevated: '#0f1424',
-  surface: '#161c30',
-  surfaceRaised: '#1d2440',
-  surfaceHover: '#232b4d',
-  surfaceInput: '#0d1220',
-  border: '#26304d',
-  borderStrong: '#3b4770',
-  borderFaint: 'rgba(148, 163, 255, 0.08)',
-  text: '#e8ecff',
-  textMuted: '#a5b0d8',
-  textDim: '#6f7bb0',
-  textFaint: '#4c5680',
-  primary: '#818cf8',
-  primaryHover: '#a5b4fc',
-  primaryFg: '#0a0e1a',
-  secondaryHover: '#232b4d',
-  secondaryFg: '#e8ecff',
-  focusRing: 'rgba(129, 140, 248, 0.6)',
-  gridDot: 'rgba(148, 163, 255, 0.06)',
-  gridDotBold: 'rgba(148, 163, 255, 0.2)',
-  ctxViolet: '#a5b4fc',
-  ctxBlue: '#7dd3fc'
-}
-
-// ── Ember — warm dark, amber/orange accents. ───────────────────────────
-const ember: ThemePalette = {
-  ...neoworksDark,
-  bg: '#140f0c',
-  bgElevated: '#1c1512',
-  surface: '#241a15',
-  surfaceRaised: '#2e211a',
-  surfaceHover: '#382920',
-  surfaceInput: '#180f0b',
-  border: '#3a2a20',
-  borderStrong: '#5c4433',
-  borderFaint: 'rgba(255, 200, 150, 0.08)',
-  text: '#f5ece2',
-  textMuted: '#d1b9a3',
-  textDim: '#9c7f68',
-  textFaint: '#6e5646',
-  primary: '#fb923c',
-  primaryHover: '#fdba74',
-  primaryFg: '#140f0c',
-  secondaryHover: '#382920',
-  secondaryFg: '#f5ece2',
-  focusRing: 'rgba(251, 146, 60, 0.6)',
-  gridDot: 'rgba(255, 200, 150, 0.05)',
-  gridDotBold: 'rgba(255, 200, 150, 0.18)',
-  ctxAmber: '#fbbf24',
-  ctxGreen: '#a3e635'
-}
-
+// Only the two Neoworks design-system palettes ship by default. Every other
+// theme (Midnight, Ember, Nord, Gruvbox, Catppuccin Mocha, …) lives in the
+// extensions catalog and is registered at runtime once installed.
 const builtins: ColorTheme[] = [
   { name: 'neoworks', label: 'Neoworks (Dark)', scheme: 'dark', palette: neoworksDark },
-  { name: 'neoworks-light', label: 'Neoworks Light', scheme: 'light', palette: neoworksLight },
-  { name: 'midnight', label: 'Midnight', scheme: 'dark', palette: midnight },
-  { name: 'ember', label: 'Ember', scheme: 'dark', palette: ember }
+  { name: 'neoworks-light', label: 'Neoworks Light', scheme: 'light', palette: neoworksLight }
 ]
 
 const themes = new Map<string, ColorTheme>()

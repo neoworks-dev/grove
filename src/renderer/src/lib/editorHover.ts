@@ -4,17 +4,21 @@
 
 import { StateEffect, StateField } from '@codemirror/state'
 import { showTooltip, type Tooltip } from '@codemirror/view'
-import { renderMarkdown } from './markdown'
+import { mount, unmount } from 'svelte'
+import HoverTooltip from '../components/HoverTooltip.svelte'
 
-// Build the tooltip body: LSP hover/type info is markdown, rendered (and
-// sanitized) into a styled container that floats above the token. Shared by
-// the mouse hover and the `K` keybind so both look the same.
-export function hoverDom(text: string): HTMLElement {
+// Mount the tooltip body (markdown type info in a FloatingScrollbar) into a
+// host element. Shared by the mouse hover and the `K` keybind so both match.
+// Returns the CodeMirror TooltipView shape (dom + destroy to unmount).
+export function mountHoverTooltip(text: string): { dom: HTMLElement; destroy: () => void } {
   const dom = document.createElement('div')
-  dom.className = 'cm-lsp-hover'
-  // renderMarkdown sanitizes via DOMPurify before it reaches innerHTML.
-  dom.innerHTML = renderMarkdown(text)
-  return dom
+  const component = mount(HoverTooltip, { target: dom, props: { text } })
+  return {
+    dom,
+    destroy() {
+      void unmount(component)
+    }
+  }
 }
 
 export const setHoverTooltip = StateEffect.define<Tooltip | null>()
@@ -41,7 +45,7 @@ export function hoverTooltipAt(pos: number, text: string): Tooltip {
     pos,
     above: true,
     create() {
-      return { dom: hoverDom(text) }
+      return mountHoverTooltip(text)
     }
   }
 }

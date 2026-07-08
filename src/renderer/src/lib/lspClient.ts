@@ -10,7 +10,7 @@ import {
   type CompletionSource
 } from '@codemirror/autocomplete'
 import { type Diagnostic } from '@codemirror/lint'
-import { hoverDom } from './editorHover'
+import { mountHoverTooltip } from './editorHover'
 import { inlayHints } from './inlayHints'
 import type { LspDiagnostic, LspPosition } from '../../../shared/types'
 
@@ -100,7 +100,7 @@ function hover(context: LspContext): Extension {
       pos,
       above: true,
       create() {
-        return { dom: hoverDom(text) }
+        return mountHoverTooltip(text)
       }
     }
   })

@@ -42,6 +42,8 @@ function start(context: AdapterContext): RunHandle {
         options: {
           cwd: context.worktree.path,
           abortController: abort,
+          // Resume the prior conversation when we have its session id.
+          resume: context.resume || undefined,
           permissionMode: permissionMode as 'default' | 'plan' | 'acceptEdits' | 'bypassPermissions',
           model: context.options.model || undefined,
           includePartialMessages: false,
@@ -69,6 +71,10 @@ function start(context: AdapterContext): RunHandle {
       })
       run = iterator
       for await (const message of iterator) {
+        // Capture the session id (carried on system/init and result messages)
+        // so the next turn resumes this conversation.
+        const sessionId = (message as { session_id?: string }).session_id
+        if (sessionId) context.setSession(sessionId)
         context.emit(JSON.stringify(message))
       }
       context.setStatus('exited', 0)

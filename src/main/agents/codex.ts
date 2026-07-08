@@ -63,22 +63,28 @@ function start(context: AdapterContext): RunHandle {
     try {
       const { Codex } = await import('@openai/codex-sdk')
       const codex = new Codex()
-      const thread = codex.startThread({
+      const threadOptions = {
         workingDirectory: context.worktree.path,
         skipGitRepoCheck: true,
-        sandboxMode: 'workspace-write',
+        sandboxMode: 'workspace-write' as const,
         approvalPolicy:
           (context.options.mode as 'on-request' | 'on-failure' | 'untrusted' | 'never') ||
           'on-request',
         model: context.options.model || undefined,
         modelReasoningEffort:
           (context.options.effort as 'minimal' | 'low' | 'medium' | 'high' | 'xhigh') || undefined
-      })
+      }
+      // Resume the prior thread when we have its id, else start a new one.
+      const thread = context.resume
+        ? codex.resumeThread(context.resume, threadOptions)
+        : codex.startThread(threadOptions)
       const { events } = await thread.runStreamed(context.options.prompt || '')
       for await (const event of events) {
         if (stopped) break
         handleEvent(context, event)
       }
+      // thread.id is populated once the turn starts; persist it for next time.
+      if (thread.id) context.setSession(thread.id)
       context.setStatus(stopped ? 'stopped' : 'exited', 0)
     } catch (error) {
       if (stopped) {

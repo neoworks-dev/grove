@@ -68,6 +68,8 @@ export interface WorkbenchApi {
       options: AgentLaunchOptions
     ) => Promise<AgentRuntime>
     stop: (worktreeId: string, name: string) => Promise<void>
+    reset: (worktreeId: string, name: string) => Promise<void>
+    transcript: (worktreeId: string, name: string) => Promise<string[]>
     respondPermission: (id: string, decision: PermissionDecision) => Promise<void>
     active: () => Promise<string[]>
   }

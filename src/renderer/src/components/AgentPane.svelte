@@ -1,5 +1,12 @@
 <script lang="ts">
-  import { store, refreshRuntimes, openFileInEditor, respondPermission } from '../lib/store.svelte'
+  import {
+    store,
+    refreshRuntimes,
+    openFileInEditor,
+    respondPermission,
+    seedAgentTranscript,
+    resetAgentChat
+  } from '../lib/store.svelte'
   import type { LogLine } from '../lib/store.svelte'
   import type { AgentRuntime, AgentConfig } from '../../../shared/types'
   import { parseAgentLines, parseAgentMeta, toolSummary } from '../lib/agentStream'
@@ -455,6 +462,34 @@
     await refreshRuntimes(store.selectedWorktreeId)
   }
 
+  // ── Transcript replay + New chat ───────────────────────────────
+  // Restore a chat after a restart: when a (worktree, agent) has no in-memory
+  // history yet, load its persisted transcript from disk once.
+  const replayed = new Set<string>()
+  $effect(() => {
+    const worktreeId = store.selectedWorktreeId
+    const agent = selectedAgent
+    if (!worktreeId || !agent) return
+    const replayKey = `${worktreeId}::${agent}`
+    if (replayed.has(replayKey)) return
+    const hasAgentLines = (store.logs[worktreeId] || []).some((line) => line.source === 'agent')
+    replayed.add(replayKey)
+    if (hasAgentLines) return
+    void window.workbench.agents
+      .transcript(worktreeId, agent)
+      .then((lines) => seedAgentTranscript(worktreeId, agent, lines))
+      .catch(() => {})
+  })
+
+  async function newChat(): Promise<void> {
+    if (!store.selectedWorktreeId || !selectedAgent) return
+    if (!confirm('Start a new chat? This clears the current conversation and its memory.')) return
+    const worktreeId = store.selectedWorktreeId
+    await resetAgentChat(worktreeId, selectedAgent)
+    replayed.delete(`${worktreeId}::${selectedAgent}`)
+    await refreshRuntimes(worktreeId)
+  }
+
   // ── Interactive permission prompt ──────────────────────────────
   const pendingPermission = $derived(
     store.pendingPermissions.find(
@@ -531,6 +566,15 @@
     <span>Agent</span>
     {#if store.selectedWorktree}
       <span class="normal-case text-muted">· {store.selectedWorktree.name}</span>
+    {/if}
+    {#if store.selectedWorktreeId && items.length > 0}
+      <button
+        class="ml-auto rounded border border-line px-2 py-0.5 text-2xs normal-case tracking-normal text-dim hover:text-default"
+        title="New chat (clears conversation memory)"
+        onclick={newChat}
+      >
+        ＋ New chat
+      </button>
     {/if}
   </div>
 

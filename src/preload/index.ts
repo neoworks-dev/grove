@@ -46,6 +46,10 @@ const workbench = {
       ipcRenderer.invoke('agents:start', worktreeId, name, options),
     stop: (worktreeId: string, name: string) =>
       ipcRenderer.invoke('agents:stop', worktreeId, name),
+    reset: (worktreeId: string, name: string) =>
+      ipcRenderer.invoke('agents:reset', worktreeId, name),
+    transcript: (worktreeId: string, name: string) =>
+      ipcRenderer.invoke('agents:transcript', worktreeId, name),
     respondPermission: (id: string, decision: unknown) =>
       ipcRenderer.invoke('agents:respondPermission', id, decision),
     active: () => ipcRenderer.invoke('agents:active')

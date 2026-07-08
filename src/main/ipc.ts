@@ -18,9 +18,10 @@ interface Context {
   repoPath: string | null
   config: WorkbenchConfig | null
   worktrees: Worktree[]
+  agentSessions: Record<string, string> // "worktreeId::agent" -> continuation token
 }
 
-const context: Context = { repoPath: null, config: null, worktrees: [] }
+const context: Context = { repoPath: null, config: null, worktrees: [], agentSessions: {} }
 
 function send(channel: string, payload: unknown): void {
   for (const window of BrowserWindow.getAllWindows()) {
@@ -37,7 +38,15 @@ const supervisor = new ServiceSupervisor({
 const agents = new AgentManager({
   onStatus: (runtime) => send('event:agent-status', runtime),
   onLog: (worktreeId, name, line) => send('event:log', { worktreeId, source: 'agent', name, line }),
-  onPermission: (request) => send('event:agent-permission', request)
+  onPermission: (request) => send('event:agent-permission', request),
+  // Mirror continuation tokens into persisted repo state (empty = reset).
+  onSession: (worktreeId, name, token) => {
+    if (!context.repoPath) return
+    const key = `${worktreeId}::${name}`
+    if (token) context.agentSessions[key] = token
+    else delete context.agentSessions[key]
+    void updateRepoState(context.repoPath, { agentSessions: { ...context.agentSessions } })
+  }
 })
 
 const watcher = new WorktreeWatcher((change) => send('event:fs-change', change))
@@ -80,6 +89,10 @@ async function openRepo(repoPath: string): Promise<{
   context.repoPath = root
   context.config = await config.loadConfig(root)
   await setLastRepo(root)
+  // Restore agent continuation tokens so prior chats resume after a restart.
+  const repoState = await getRepoState(root)
+  context.agentSessions = { ...(repoState.agentSessions || {}) }
+  agents.loadSessions(context.agentSessions)
   const list = await refreshWorktrees()
   return {
     info: {
@@ -246,6 +259,18 @@ export function registerIpc(): void {
   ipcMain.handle('agents:stop', (_e, worktreeId: string, name: string) =>
     agents.stop(worktreeId, name)
   )
+
+  // New chat: drop the continuation token and wipe the transcript.
+  ipcMain.handle('agents:reset', (_e, worktreeId: string, name: string) => {
+    const worktree = findWorktree(worktreeId)
+    return agents.resetSession(worktree, name)
+  })
+
+  // Replay the persisted transcript (for restoring a chat after a restart).
+  ipcMain.handle('agents:transcript', (_e, worktreeId: string, name: string) => {
+    const worktree = findWorktree(worktreeId)
+    return agents.readTranscript(worktree.path, name)
+  })
 
   // Answer an interactive tool-permission request.
   ipcMain.handle('agents:respondPermission', (_e, id: string, decision: PermissionDecision) =>

@@ -11,6 +11,7 @@ export interface RepoState {
   openTabs: string[] // absolute file paths
   selectedWorktreeId: string | null
   setupOnceDone: boolean
+  agentSessions: Record<string, string> // "worktreeId::agent" -> continuation token
 }
 
 export interface AppState {
@@ -54,7 +55,8 @@ export function emptyRepoState(): RepoState {
     portSlots: {},
     openTabs: [],
     selectedWorktreeId: null,
-    setupOnceDone: false
+    setupOnceDone: false,
+    agentSessions: {}
   }
 }
 

@@ -707,3 +707,56 @@
 .doc-article.prose :not(pre) > code::after {
   content: '';
 }
+
+/* ═══════════════════════════════════════════════════════════════
+ * AGENT CHAT MARKDOWN — compact prose for the Agent panel
+ * ═══════════════════════════════════════════════════════════════
+ * Same unlayered approach as .doc-article so daisyUI's dark-only prose vars
+ * can't override our [data-theme] tokens. Tighter spacing for a chat bubble. */
+.agent-markdown.prose {
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  --tw-prose-body: var(--text);
+  --tw-prose-headings: var(--text);
+  --tw-prose-links: var(--ctx-blue);
+  --tw-prose-bold: var(--text);
+  --tw-prose-code: var(--text);
+  --tw-prose-pre-code: var(--text);
+  --tw-prose-pre-bg: var(--surface-input);
+  --tw-prose-quotes: var(--text-muted);
+  --tw-prose-quote-borders: var(--border);
+  --tw-prose-hr: var(--border);
+  --tw-prose-bullets: var(--border-strong);
+  --tw-prose-counters: var(--text-dim);
+  color: var(--text);
+}
+.agent-markdown.prose :where(p, ul, ol, pre, blockquote, table):not(:last-child) {
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+}
+.agent-markdown.prose :where(h1, h2, h3, h4) {
+  margin-top: 0.75rem;
+  margin-bottom: 0.375rem;
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.agent-markdown.prose pre {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0.5rem 0.75rem;
+  font-size: var(--text-2xs);
+  overflow-x: auto;
+}
+.agent-markdown.prose :not(pre) > code {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border-faint);
+  border-radius: var(--radius-sm);
+  padding: 0.0625rem 0.25rem;
+  font-size: var(--text-2xs);
+  font-weight: 400;
+}
+.agent-markdown.prose :not(pre) > code::before,
+.agent-markdown.prose :not(pre) > code::after {
+  content: '';
+}

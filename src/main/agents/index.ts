@@ -15,6 +15,7 @@ import type {
   Worktree
 } from '../../shared/types'
 import type { AgentAdapter, RunHandle } from './types'
+import { userPromptLine } from './types'
 import { claudeAdapter } from './claude'
 import { codexAdapter } from './codex'
 import { opencodeAdapter } from './opencode'
@@ -109,14 +110,18 @@ export class AgentManager {
     }
     this.running.set(key, entry)
 
+    const emit = (line: string): void => {
+      logStream.write(line + '\n')
+      this.events.onLog(worktree.id, name, line)
+    }
+    // Echo the user's prompt first so it opens the transcript as a chat message.
+    if (options.prompt && options.prompt.trim()) emit(userPromptLine(options.prompt.trim()))
+
     entry.handle = adapter.start({
       worktree,
       ports,
       options,
-      emit: (line) => {
-        logStream.write(line + '\n')
-        this.events.onLog(worktree.id, name, line)
-      },
+      emit,
       setStatus: (status, exitCode) => this.handleStatus(worktree.id, name, status, exitCode ?? null),
       requestPermission: (request) => this.requestPermission(worktree.id, name, request)
     })

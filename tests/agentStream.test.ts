@@ -1,8 +1,11 @@
 import { describe, it, expect } from 'bun:test'
-import { parseAgentLines, toolSummary } from '../src/renderer/src/lib/agentStream'
+import { parseAgentLines, parseAgentMeta, toolSummary } from '../src/renderer/src/lib/agentStream'
 
-function assistant(content: unknown[], id = 'msg_1'): string {
-  return JSON.stringify({ type: 'assistant', message: { id, role: 'assistant', content } })
+function assistant(content: unknown[], id = 'msg_1', usage?: Record<string, number>): string {
+  return JSON.stringify({
+    type: 'assistant',
+    message: { id, role: 'assistant', content, ...(usage ? { usage } : {}) }
+  })
 }
 
 describe('parseAgentLines', () => {
@@ -71,5 +74,40 @@ describe('parseAgentLines', () => {
       })
     ])
     expect(items[0]).toMatchObject({ kind: 'tool-result', text: 'blocktext' })
+  })
+
+  it('surfaces the user prompt as a user message', () => {
+    const items = parseAgentLines([JSON.stringify({ type: 'user_prompt', text: 'fix the bug' })])
+    expect(items[0]).toMatchObject({ kind: 'user', text: 'fix the bug' })
+  })
+})
+
+describe('parseAgentMeta', () => {
+  it('sums output tokens across turns and takes the largest input', () => {
+    const meta = parseAgentMeta([
+      assistant([{ type: 'text', text: 'a' }], 'm1', { input_tokens: 100, output_tokens: 20 }),
+      assistant([{ type: 'text', text: 'b' }], 'm2', { input_tokens: 140, output_tokens: 30 })
+    ])
+    expect(meta.inputTokens).toBe(140)
+    expect(meta.outputTokens).toBe(50)
+    expect(meta.totalTokens).toBe(190)
+  })
+
+  it('counts cache reads toward input and lets the result total win', () => {
+    const meta = parseAgentMeta([
+      assistant([{ type: 'text', text: 'a' }], 'm1', {
+        input_tokens: 10,
+        cache_read_input_tokens: 90,
+        output_tokens: 15
+      }),
+      JSON.stringify({ type: 'result', usage: { input_tokens: 100, output_tokens: 40 } })
+    ])
+    expect(meta.inputTokens).toBe(100)
+    expect(meta.outputTokens).toBe(40) // result total supersedes the running sum
+  })
+
+  it('returns zeros when no usage is present', () => {
+    const meta = parseAgentMeta([assistant([{ type: 'text', text: 'a' }])])
+    expect(meta).toMatchObject({ inputTokens: 0, outputTokens: 0, totalTokens: 0 })
   })
 })

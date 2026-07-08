@@ -39,6 +39,11 @@ export interface AgentAdapter {
 
 // Helpers to build normalized stream lines so every adapter renders uniformly.
 
+// The user's own prompt, surfaced in the transcript as a chat message.
+export function userPromptLine(text: string): string {
+  return JSON.stringify({ type: 'user_prompt', text })
+}
+
 export function textLine(id: string, text: string): string {
   return JSON.stringify({
     type: 'assistant',

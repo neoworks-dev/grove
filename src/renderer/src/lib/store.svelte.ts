@@ -21,7 +21,8 @@ export interface LogLine {
 }
 
 import { currentPackName, setIconPack } from './icons'
-import { currentThemeName, applyThemeVars, monacoThemeFor } from './themes'
+import { currentThemeName, applyThemeVars, themeFor } from './themes'
+import type { ColorTheme } from './themes'
 
 export interface EditorTab {
   worktreeId: string
@@ -83,8 +84,10 @@ class WorkbenchStore {
   loading = $state(false)
   error = $state<string | null>(null)
 
-  get monacoTheme(): string {
-    return monacoThemeFor(this.colorTheme)
+  // Active theme (name + scheme + palette) for the CodeMirror editor/diff views.
+  // Reading `colorTheme` here makes those views react to theme changes.
+  get activeTheme(): ColorTheme {
+    return themeFor(this.colorTheme)
   }
 
   get selectedWorktree(): Worktree | null {

@@ -2,100 +2,94 @@
   import { onDestroy } from 'svelte'
   import { store } from '../lib/store.svelte'
   import FileTree from './FileTree.svelte'
-  import { setupMonaco } from '../lib/monaco'
-  import { initVimMode } from 'monaco-vim'
+  import { languageExtension, editorTheme, baseExtensions } from '../lib/editor'
+  import { EditorView } from '@codemirror/view'
+  import { EditorState, Compartment } from '@codemirror/state'
+  import { vim, Vim } from '@replit/codemirror-vim'
   import UIPane from './UIPane.svelte'
   import type { FileNode } from '../../../shared/types'
-  import type * as Monaco from 'monaco-editor'
 
   let treeWidth = $state(Number(localStorage.getItem('pane.editorTree')) || 224)
   $effect(() => localStorage.setItem('pane.editorTree', String(treeWidth)))
 
   let editorHost = $state<HTMLDivElement>()
-  let statusHost = $state<HTMLDivElement>()
-  let editor: Monaco.editor.IStandaloneCodeEditor | null = null
-  let vimMode: { dispose: () => void } | null = null
-  let monaco: typeof Monaco | null = null
-  let vimEnabled = $state(true)
+  let view: EditorView | null = null
+  let vimEnabled = $state(localStorage.getItem('editor.vim') !== 'off')
   let dirtyPaths = $state<Record<string, boolean>>({})
+
+  // Compartments let us swap language, theme, and Vim without recreating the view.
+  const languageComp = new Compartment()
+  const themeComp = new Compartment()
+  const vimComp = new Compartment()
+
+  // Guards the dirty flag while we replace the document programmatically.
+  let suppressDirty = false
 
   // Cache of open file contents keyed by absolute path.
   const contentCache = new Map<string, string>()
 
-  function languageFor(path: string): string {
-    const ext = path.split('.').pop()?.toLowerCase() || ''
-    const map: Record<string, string> = {
-      ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript',
-      json: 'json', md: 'markdown', css: 'css', scss: 'scss', html: 'html',
-      svelte: 'html', yml: 'yaml', yaml: 'yaml', py: 'python', rs: 'rust',
-      go: 'go', sh: 'shell', toml: 'ini'
-    }
-    return map[ext] || 'plaintext'
-  }
+  // `:w` in Vim saves the active buffer, like the toolbar Save button.
+  Vim.defineEx('write', 'w', () => void save())
 
   function ensureEditor(): void {
-    if (editor || !editorHost) return
-    monaco = setupMonaco()
-    editor = monaco.editor.create(editorHost, {
-      value: '',
-      language: 'plaintext',
-      theme: store.monacoTheme,
-      automaticLayout: true,
-      fontSize: 13,
-      fontFamily: 'Geist Mono, monospace',
-      minimap: { enabled: false },
-      scrollBeyondLastLine: false
+    if (view || !editorHost) return
+    const theme = store.activeTheme
+    const state = EditorState.create({
+      doc: '',
+      extensions: [
+        vimComp.of(vimEnabled ? vim() : []),
+        baseExtensions(() => void save()),
+        languageComp.of([]),
+        themeComp.of(editorTheme(theme.palette, theme.scheme)),
+        EditorView.updateListener.of((update) => {
+          if (update.docChanged && !suppressDirty && store.activeTabPath) {
+            dirtyPaths = { ...dirtyPaths, [store.activeTabPath]: true }
+          }
+        })
+      ]
     })
-    editor.onDidChangeModelContent(() => {
-      if (store.activeTabPath) {
-        dirtyPaths = { ...dirtyPaths, [store.activeTabPath]: true }
-      }
-    })
-    // Ctrl/Cmd+S saves.
-    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => void save())
-    if (vimEnabled) enableVim()
-  }
-
-  function enableVim(): void {
-    if (!editor || !statusHost || vimMode) return
-    vimMode = initVimMode(editor, statusHost)
-  }
-
-  function disableVim(): void {
-    vimMode?.dispose()
-    vimMode = null
+    view = new EditorView({ state, parent: editorHost })
   }
 
   function toggleVim(): void {
     vimEnabled = !vimEnabled
-    if (vimEnabled) enableVim()
-    else disableVim()
+    localStorage.setItem('editor.vim', vimEnabled ? 'on' : 'off')
+    view?.dispatch({ effects: vimComp.reconfigure(vimEnabled ? vim() : []) })
+  }
+
+  // Replace the whole document and switch the language grammar in one dispatch.
+  function setDocument(content: string, path: string): void {
+    if (!view) return
+    suppressDirty = true
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: content },
+      selection: { anchor: 0 },
+      effects: languageComp.reconfigure(languageExtension(path))
+    })
+    suppressDirty = false
   }
 
   function openFile(node: FileNode): void {
     if (!store.selectedWorktreeId) return
-    // Opening only sets the active tab; the effect below loads it into Monaco.
+    // Opening only sets the active tab; the effect below loads it into the view.
     store.openTab({ worktreeId: store.selectedWorktreeId, path: node.path, name: node.name })
   }
 
   async function loadIntoEditor(path: string): Promise<void> {
     ensureEditor()
-    if (!editor || !monaco || !store.selectedWorktreeId) return
+    if (!view || !store.selectedWorktreeId) return
     let content = contentCache.get(path)
     if (content === undefined) {
       content = await window.workbench.files.read(store.selectedWorktreeId, path)
       contentCache.set(path, content)
     }
-    const model = monaco.editor.createModel(content, languageFor(path))
-    const old = editor.getModel()
-    editor.setModel(model)
-    old?.dispose()
+    setDocument(content, path)
     store.activeTabPath = path
   }
 
   async function save(): Promise<void> {
-    if (!editor || !store.activeTabPath || !store.selectedWorktreeId) return
-    const content = editor.getValue()
+    if (!view || !store.activeTabPath || !store.selectedWorktreeId) return
+    const content = view.state.doc.toString()
     await window.workbench.files.write(store.selectedWorktreeId, store.activeTabPath, content)
     contentCache.set(store.activeTabPath, content)
     dirtyPaths = { ...dirtyPaths, [store.activeTabPath]: false }
@@ -109,19 +103,18 @@
     event.stopPropagation()
     contentCache.delete(path)
     store.closeTab(path)
-    if (!store.activeTabPath && editor) editor.setModel(null)
+    if (!store.activeTabPath && view) setDocument('', 'untitled.txt')
   }
 
-  // Load whichever tab is active into Monaco. This is the single load path, so
-  // opening a file from the tree, tabs, or another pane (e.g. an agent card)
-  // all funnel through here.
+  // Load whichever tab is active. This is the single load path, so opening a
+  // file from the tree, tabs, or another pane (e.g. an agent card) funnels here.
   let loadedPath: string | null = null
   $effect(() => {
     const path = store.activeTabPath
     if (path === loadedPath) return
     loadedPath = path
     if (!path) {
-      editor?.setModel(null)
+      if (view) setDocument('', 'untitled.txt')
       return
     }
     void loadIntoEditor(path)
@@ -130,18 +123,21 @@
   // Reload the open file when it changes on disk (e.g. an agent edit), unless it
   // has unsaved edits — never clobber the user's buffer.
   async function reloadIfExternal(): Promise<void> {
-    if (!editor || !store.activeTabPath || !store.selectedWorktreeId) return
+    if (!view || !store.activeTabPath || !store.selectedWorktreeId) return
     const path = store.activeTabPath
     if (dirtyPaths[path]) return
     const content = await window.workbench.files.read(store.selectedWorktreeId, path)
     contentCache.set(path, content)
-    const model = editor.getModel()
-    if (model && model.getValue() !== content) {
-      const position = editor.getPosition()
-      model.setValue(content)
-      if (position) editor.setPosition(position)
-      dirtyPaths = { ...dirtyPaths, [path]: false }
-    }
+    if (view.state.doc.toString() === content) return
+    const selection = view.state.selection.main
+    suppressDirty = true
+    const anchor = Math.min(selection.anchor, content.length)
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: content },
+      selection: { anchor }
+    })
+    suppressDirty = false
+    dirtyPaths = { ...dirtyPaths, [path]: false }
   }
 
   $effect(() => {
@@ -151,19 +147,17 @@
     void reloadIfExternal()
   })
 
-  // Follow the active color theme (Monaco themes are global — one call suffices).
+  // Follow the active color theme (per-instance CM theme, reconfigured live).
   $effect(() => {
-    if (monaco) monaco.editor.setTheme(store.monacoTheme)
+    const theme = store.activeTheme
+    if (view) view.dispatch({ effects: themeComp.reconfigure(editorTheme(theme.palette, theme.scheme)) })
   })
 
   const activeTabs = $derived(
     store.tabs.filter((tab) => tab.worktreeId === store.selectedWorktreeId)
   )
 
-  onDestroy(() => {
-    disableVim()
-    editor?.dispose()
-  })
+  onDestroy(() => view?.destroy())
 </script>
 
 <div class="flex h-full min-h-0">
@@ -216,16 +210,12 @@
       <button
         class="rounded-md bg-action px-2 py-1 text-2xs text-action-fg"
         onclick={save}
-        title="Save (Ctrl/Cmd+S)"
+        title="Save (Ctrl/Cmd+S or :w)"
       >
         Save
       </button>
     </div>
 
-    <div bind:this={editorHost} class="min-h-0 flex-1"></div>
-    <div
-      bind:this={statusHost}
-      class="h-6 shrink-0 border-t border-line bg-canvas px-2 font-mono text-2xs text-muted"
-    ></div>
+    <div bind:this={editorHost} class="min-h-0 flex-1 overflow-hidden"></div>
   </div>
 </div>

@@ -5,6 +5,7 @@
 // re-parsing an appended log never produces visual duplicates.
 
 export type OutputItem =
+  | { kind: 'user'; text: string; key: string }
   | { kind: 'text'; text: string; key: string }
   | { kind: 'tool'; tool: string; input: Record<string, unknown>; key: string }
   | { kind: 'tool-result'; text: string; isError: boolean; key: string }
@@ -68,7 +69,11 @@ export function parseAgentLines(lines: string[]): OutputItem[] {
     if (trimmed.startsWith('{')) {
       try {
         const event = JSON.parse(trimmed) as Record<string, unknown>
-        if (event.type === 'assistant') parseAssistant(event, items)
+        if (event.type === 'user_prompt') {
+          // Synthetic event the manager emits so the user's own prompt shows in
+          // the transcript as a chat message.
+          items.push({ kind: 'user', text: String(event.text ?? ''), key: `prompt:${index}` })
+        } else if (event.type === 'assistant') parseAssistant(event, items)
         else if (event.type === 'user') parseUser(event, items)
         // 'system' and 'result' events are control/summary noise — the result
         // text merely repeats the last assistant message, so we drop them.
@@ -89,6 +94,54 @@ export function parseAgentLines(lines: string[]): OutputItem[] {
     seen.add(item.key)
     return true
   })
+}
+
+// ── Token accounting ────────────────────────────────────────────
+// Cumulative input/output token usage across the run, read from the `usage`
+// block that assistant and result events carry (SDK stream-json shape).
+export interface AgentMeta {
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+}
+
+function usageOf(event: Record<string, unknown>): Record<string, unknown> | null {
+  const message = event.message as { usage?: Record<string, unknown> } | undefined
+  if (message?.usage) return message.usage
+  if (event.usage && typeof event.usage === 'object') return event.usage as Record<string, unknown>
+  return null
+}
+
+function num(value: unknown): number {
+  return typeof value === 'number' ? value : 0
+}
+
+export function parseAgentMeta(lines: string[]): AgentMeta {
+  let inputTokens = 0
+  let assistantOutput = 0 // summed across streamed assistant turns
+  let resultOutput = 0 // authoritative total from the terminal result event
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed.startsWith('{')) continue
+    try {
+      const event = JSON.parse(trimmed) as Record<string, unknown>
+      const usage = usageOf(event)
+      if (!usage) continue
+      // Input includes cache reads; take the largest turn seen.
+      const turnInput =
+        num(usage.input_tokens) +
+        num(usage.cache_read_input_tokens) +
+        num(usage.cache_creation_input_tokens)
+      inputTokens = Math.max(inputTokens, turnInput)
+      if (event.type === 'result') resultOutput = num(usage.output_tokens)
+      else assistantOutput += num(usage.output_tokens)
+    } catch {
+      // ignore non-JSON lines
+    }
+  }
+  // The result event's total supersedes the running sum once the run finishes.
+  const outputTokens = Math.max(assistantOutput, resultOutput)
+  return { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens }
 }
 
 // A short primary line for a tool card (the command / file it acts on).

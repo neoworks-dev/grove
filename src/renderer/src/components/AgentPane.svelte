@@ -534,17 +534,38 @@
   )
   const dialogQuestions = $derived(pendingDialog ? parseQuestions(pendingDialog.payload) : [])
   let dialogSelections = $state<string[][]>([])
+  let dialogNotes = $state('')
+  let notesOpen = $state(false)
+  let notesEl = $state<HTMLTextAreaElement>()
 
-  // Reset selections whenever the pending dialog changes.
+  // Reset per-dialog state whenever the pending dialog changes.
   $effect(() => {
     pendingDialog?.id
     dialogSelections = dialogQuestions.map(() => [])
+    dialogNotes = ''
+    notesOpen = false
   })
 
+  // Ready when every question has a pick, or the user wrote free-form notes.
   const dialogReady = $derived(
     dialogQuestions.length > 0 &&
-      dialogQuestions.every((_question, index) => (dialogSelections[index]?.length || 0) > 0)
+      (dialogNotes.trim().length > 0 ||
+        dialogQuestions.every((_question, index) => (dialogSelections[index]?.length || 0) > 0))
   )
+
+  function openNotes(): void {
+    notesOpen = true
+    queueMicrotask(() => notesEl?.focus())
+  }
+
+  // Press "n" in the chooser to jot free-form notes (unless already typing).
+  function onDialogKey(event: KeyboardEvent): void {
+    const tag = (event.target as HTMLElement)?.tagName
+    if (event.key === 'n' && !notesOpen && tag !== 'TEXTAREA' && tag !== 'INPUT') {
+      event.preventDefault()
+      openNotes()
+    }
+  }
 
   function toggleOption(questionIndex: number, label: string, multiSelect: boolean): void {
     const current = dialogSelections[questionIndex] || []
@@ -563,7 +584,7 @@
     if (!pendingDialog) return
     void respondDialog(pendingDialog.id, {
       behavior: 'completed',
-      result: buildAnswerResult(dialogQuestions, dialogSelections)
+      result: buildAnswerResult(dialogQuestions, dialogSelections, dialogNotes)
     })
   }
 
@@ -721,12 +742,14 @@
     <div class="relative shrink-0 border-t border-line p-3">
       {#if pendingDialog}
         <!-- Agent question: render the questions + options and return the answer -->
-        <div class="rounded-md border border-blue/40 bg-blue-soft p-2">
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div class="rounded-md border border-blue/40 bg-blue-soft p-2" tabindex="-1" onkeydown={onDialogKey}>
           {#each dialogQuestions as question, questionIndex (questionIndex)}
             <div class="mb-3 last:mb-1">
               {#if question.header}
-                <div class="mb-0.5 text-2xs font-semibold uppercase tracking-caps text-blue">
-                  {question.header}
+                <div class="mb-0.5 flex items-center gap-2 text-2xs font-semibold uppercase tracking-caps text-blue">
+                  <span>{question.header}</span>
+                  {#if question.multiSelect}<span class="normal-case tracking-normal text-dim">· multi-select</span>{/if}
                 </div>
               {/if}
               <div class="mb-1.5 text-xs text-default">{question.question}</div>
@@ -748,7 +771,17 @@
               </div>
             </div>
           {/each}
-          <div class="flex gap-2">
+
+          {#if notesOpen}
+            <textarea
+              bind:this={notesEl}
+              bind:value={dialogNotes}
+              class="mb-2 h-16 w-full resize-none rounded-md border border-line bg-input px-2 py-1.5 text-xs"
+              placeholder="Notes / free-form answer…"
+            ></textarea>
+          {/if}
+
+          <div class="flex items-center gap-2">
             <button
               class="rounded-md bg-action px-3 py-1 text-xs text-action-fg disabled:opacity-40"
               disabled={!dialogReady}
@@ -756,8 +789,17 @@
             >
               Answer
             </button>
+            {#if !notesOpen}
+              <button
+                class="rounded-md border border-line px-3 py-1 text-xs text-dim hover:bg-hover"
+                title="Add free-form notes"
+                onclick={openNotes}
+              >
+                Notes (n)
+              </button>
+            {/if}
             <button
-              class="rounded-md border border-line px-3 py-1 text-xs text-dim hover:bg-hover"
+              class="ml-auto rounded-md border border-line px-3 py-1 text-xs text-dim hover:bg-hover"
               onclick={cancelDialog}
             >
               Cancel

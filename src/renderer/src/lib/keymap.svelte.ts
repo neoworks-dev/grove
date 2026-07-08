@@ -178,6 +178,9 @@ class Keymap {
     for (const [id, el] of this.panes) {
       if (id === fromId) continue
       if (candidates && !candidates.has(id)) continue
+      // Skip panes in hidden views (display:none → no offset parent); their
+      // zero-rects would otherwise be picked as bogus neighbors.
+      if (el.offsetParent === null) continue
       others.push({ id, rect: el.getBoundingClientRect() })
     }
     return pickNeighbor(from.getBoundingClientRect(), others, dir)

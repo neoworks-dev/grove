@@ -257,10 +257,16 @@
     </div>
   {/if}
 
-  <!-- Main body: launcher rail + the split tree -->
+  <!-- Main body: launcher rail + the split trees. Every visited view stays
+       mounted; only the active one is shown (others display:none), so switching
+       views flips visibility instead of remounting panes. -->
   <div class="flex min-h-0 flex-1">
     <ActivityBar />
-    <SplitTree node={layout.tree} />
+    {#each layout.mountedViewIds as viewId (viewId)}
+      <div class="flex min-h-0 flex-1 {viewId === layout.activeViewId ? '' : 'hidden'}">
+        <SplitTree node={layout.trees[viewId]} />
+      </div>
+    {/each}
   </div>
 
   <StatusBar />

@@ -2,13 +2,19 @@
 // a WASM grammar, runs its highlights query, and emits colored decorations. The
 // grammar runtime and grammars are WASM (instantiated under CSP wasm-unsafe-eval);
 // grammar bytes are fetched by the main process and loaded here.
+//
+// Pinned to web-tree-sitter 0.24: its grammar-loading ABI matches the widely
+// available prebuilt grammars (tree-sitter-wasms). 0.25+ rejects them
+// ("need dylink section").
 
 import { EditorView, Decoration, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view'
 import { RangeSetBuilder, type Extension } from '@codemirror/state'
-import { Parser, Language, Query, type Node } from 'web-tree-sitter'
-import runtimeWasmUrl from 'web-tree-sitter/web-tree-sitter.wasm?url'
+import Parser from 'web-tree-sitter'
+import runtimeWasmUrl from 'web-tree-sitter/tree-sitter.wasm?url'
 import { colorForCapture } from './treesitterColors'
 import type { ThemePalette } from './themes'
+
+export type Language = Parser.Language
 
 // Don't tree-sitter enormous files (avoids blocking the UI thread).
 const MAX_DOC = 500_000
@@ -24,7 +30,7 @@ export function initTreeSitter(): Promise<void> {
 // Load a grammar from raw wasm bytes or a (same-origin) URL. Caller must have
 // awaited initTreeSitter() first.
 export function loadGrammar(input: string | Uint8Array): Promise<Language> {
-  return Language.load(input)
+  return Parser.Language.load(input)
 }
 
 // Cache one mark decoration per color so repeated colors don't reallocate.
@@ -44,7 +50,11 @@ interface ColoredRange {
   color: string
 }
 
-function decorationsFor(tree: { rootNode: Node }, query: Query, palette: ThemePalette): DecorationSet {
+function decorationsFor(
+  tree: Parser.Tree,
+  query: Parser.Query,
+  palette: ThemePalette
+): DecorationSet {
   const ranges: ColoredRange[] = []
   for (const capture of query.captures(tree.rootNode)) {
     const color = colorForCapture(capture.name, palette)
@@ -67,13 +77,13 @@ export function treeSitterExtension(
   highlightsScm: string,
   palette: ThemePalette
 ): Extension {
-  const query = new Query(language, highlightsScm)
+  const query = language.query(highlightsScm)
 
   return ViewPlugin.fromClass(
     class {
       decorations: DecorationSet
       private parser: Parser
-      private tree: ReturnType<Parser['parse']>
+      private tree: Parser.Tree | null
 
       constructor(view: EditorView) {
         this.parser = new Parser()
@@ -82,7 +92,7 @@ export function treeSitterExtension(
         this.decorations = this.build()
       }
 
-      private reparse(text: string): ReturnType<Parser['parse']> {
+      private reparse(text: string): Parser.Tree | null {
         if (text.length > MAX_DOC) return null
         return this.parser.parse(text)
       }

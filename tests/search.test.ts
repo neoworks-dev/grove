@@ -38,3 +38,13 @@ describe('parseRgMatch', () => {
     expect(parseRgMatch(line)?.column).toBe(0)
   })
 })
+
+describe('parseRgMatch path normalization', () => {
+  it('strips a leading "./" from the file path', () => {
+    const line = JSON.stringify({
+      type: 'match',
+      data: { path: { text: './src/foo.ts' }, lines: { text: 'x\n' }, line_number: 1 }
+    })
+    expect(parseRgMatch(line)?.file).toBe('src/foo.ts')
+  })
+})

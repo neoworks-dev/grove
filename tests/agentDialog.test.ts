@@ -50,4 +50,12 @@ describe('buildAnswerResult', () => {
     })
     expect(buildAnswerResult(questions, [['a', 'b']])).toEqual({ answers: { Pick: 'a, b' } })
   })
+
+  it('includes free-form notes when provided', () => {
+    const questions = parseQuestions({ questions: [{ question: 'Q', options: [{ label: 'a' }] }] })
+    expect(buildAnswerResult(questions, [[]], '  use option C instead  ')).toEqual({
+      answers: { Q: '' },
+      notes: 'use option C instead'
+    })
+  })
 })

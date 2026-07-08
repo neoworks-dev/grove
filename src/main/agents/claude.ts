@@ -29,6 +29,20 @@ function filePathOf(input: Record<string, unknown>): string | null {
   return null
 }
 
+// Render the user's dialog answer as readable text for the model. The dialog
+// result carries `answers` (question → chosen label[s]) plus optional free-form
+// `notes`.
+function formatDialogAnswer(result: unknown): string {
+  const data = (result || {}) as { answers?: Record<string, string>; notes?: string }
+  const lines: string[] = []
+  for (const [question, answer] of Object.entries(data.answers || {})) {
+    if (answer && answer.trim()) lines.push(`- ${question}: ${answer.trim()}`)
+  }
+  if (data.notes && data.notes.trim()) lines.push(`- Additional notes: ${data.notes.trim()}`)
+  if (lines.length === 0) return 'The user acknowledged the question without selecting an option.'
+  return `The user answered your question(s):\n${lines.join('\n')}`
+}
+
 function start(context: AdapterContext): RunHandle {
   const abort = new AbortController()
   const permissionMode = context.options.mode || 'default'
@@ -70,11 +84,21 @@ function start(context: AdapterContext): RunHandle {
             return { behavior: 'cancelled' }
           },
           canUseTool: async (toolName, input, options): Promise<PermissionResult> => {
-            // AskUserQuestion is the model asking the user a question — not a
-            // privileged action. Never gate it behind a permission prompt; it is
-            // presented and answered through onUserDialog above.
+            // AskUserQuestion is the model asking the user — the questions ride in
+            // `input`. Surface them as a chooser and feed the answer back. (The
+            // answer returns via deny-with-message: the only canUseTool channel
+            // that delivers text to the model, which reads it as the reply.)
             if (toolName === 'AskUserQuestion') {
-              return { behavior: 'allow', updatedInput: input }
+              const dialog = await context.requestDialog({
+                worktreeId: context.worktree.id,
+                agent: 'claude',
+                dialogKind: 'askUserQuestion',
+                payload: input
+              })
+              if (dialog.behavior === 'cancelled') {
+                return { behavior: 'deny', message: 'The user dismissed the question without answering.' }
+              }
+              return { behavior: 'deny', message: formatDialogAnswer(dialog.result) }
             }
             const decision = await context.requestPermission({
               worktreeId: context.worktree.id,

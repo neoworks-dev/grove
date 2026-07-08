@@ -3,11 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <title>Worktree Workbench</title>
-    <!-- Relaxed for Monaco: workers load from blob: URLs and the TS language
-         service needs 'unsafe-eval'. Local desktop tool, no remote content. -->
+    <!-- CodeMirror injects its own <style> tags, so style-src needs
+         'unsafe-inline'. Local desktop tool, no remote content. -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; worker-src 'self' blob:; connect-src 'self'"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'"
     />
   </head>
 

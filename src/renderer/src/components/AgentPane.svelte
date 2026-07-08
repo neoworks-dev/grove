@@ -2,7 +2,8 @@
   import { store, refreshRuntimes, openFileInEditor, respondPermission } from '../lib/store.svelte'
   import type { LogLine } from '../lib/store.svelte'
   import type { AgentRuntime, AgentConfig } from '../../../shared/types'
-  import { parseAgentLines, toolSummary } from '../lib/agentStream'
+  import { parseAgentLines, parseAgentMeta, toolSummary } from '../lib/agentStream'
+  import { renderMarkdown } from '../lib/markdown'
 
   let prompt = $state('')
   let promptEl = $state<HTMLTextAreaElement>()
@@ -400,7 +401,41 @@
       (line) => line.source === 'agent'
     )
   )
-  const items = $derived(parseAgentLines(agentLines.map((line) => line.line)))
+  const rawLines = $derived(agentLines.map((line) => line.line))
+  const items = $derived(parseAgentLines(rawLines))
+  const meta = $derived(parseAgentMeta(rawLines))
+
+  // ── Working-state indicator ────────────────────────────────────
+  // What the agent is doing right now, inferred from the latest transcript item.
+  const workState = $derived.by(() => {
+    if (!isRunning) return ''
+    const last = items[items.length - 1]
+    if (!last) return 'thinking'
+    if (last.kind === 'tool') return `using ${last.tool}`
+    if (last.kind === 'text') return 'writing'
+    if (last.kind === 'tool-result') return 'working'
+    return 'thinking'
+  })
+
+  const FUNNY_MESSAGES = [
+    'reticulating splines…',
+    'bribing the compiler…',
+    'summoning semicolons…',
+    'consulting the rubber duck…',
+    'untangling the yak…',
+    'negotiating with the borrow checker…',
+    'feeding the hamsters…',
+    'aligning the tab stops…',
+    'blaming the cache…',
+    'warming up the tubes…'
+  ]
+  // Rotate slowly as work progresses; stable within a render.
+  const funnyMessage = $derived(FUNNY_MESSAGES[items.length % FUNNY_MESSAGES.length])
+
+  function formatTokens(count: number): string {
+    if (count >= 1000) return `${(count / 1000).toFixed(1)}k`
+    return String(count)
+  }
 
   async function launch(): Promise<void> {
     if (!store.selectedWorktreeId || !selectedAgent) return
@@ -453,10 +488,6 @@
     }
   }
 
-  function truncate(text: string, max = 600): string {
-    return text.length > max ? text.slice(0, max) + '…' : text
-  }
-
   // The file a tool card acts on, if any — makes the card open-in-editor.
   function filePath(input: Record<string, unknown>): string | null {
     if (typeof input.file_path === 'string') return input.file_path
@@ -467,6 +498,18 @@
   function openCard(input: Record<string, unknown>): void {
     const path = filePath(input)
     if (path && store.selectedWorktreeId) openFileInEditor(store.selectedWorktreeId, path)
+  }
+
+  // Tool cards show a one-line summary; expand to see the full command / input.
+  let expandedTools = $state<Record<string, boolean>>({})
+  function toggleTool(key: string): void {
+    expandedTools = { ...expandedTools, [key]: !expandedTools[key] }
+  }
+
+  // Full, untruncated detail for a tool card (the whole command or input JSON).
+  function toolDetail(tool: string, input: Record<string, unknown>): string {
+    if (typeof input.command === 'string') return input.command
+    return JSON.stringify(input, null, 2)
   }
 
   // Tool results (e.g. a Read returning a whole file) are collapsed so the
@@ -494,32 +537,53 @@
   {#if !store.selectedWorktreeId}
     <p class="px-3 py-3 text-xs text-dim">Select a worktree.</p>
   {:else}
-    <!-- Output -->
-    <div class="min-h-0 flex-1 overflow-auto px-3 py-2 text-xs leading-relaxed">
+    <!-- Chat transcript -->
+    <div class="min-h-0 flex-1 overflow-auto px-3 py-3 text-xs leading-relaxed">
       {#each items as item (item.key)}
-        {#if item.kind === 'text'}
-          <div class="mb-2 whitespace-pre-wrap text-default">{item.text}</div>
+        {#if item.kind === 'user'}
+          <!-- User message: distinct bubble, right-aligned. -->
+          <div class="mb-3 flex justify-end">
+            <div
+              class="max-w-[85%] whitespace-pre-wrap rounded-lg rounded-br-sm border border-blue/30 bg-blue-soft px-3 py-2 text-default"
+            >
+              {item.text}
+            </div>
+          </div>
+        {:else if item.kind === 'text'}
+          <!-- Assistant message: markdown-rendered. -->
+          <div class="agent-markdown prose mb-3 max-w-none text-xs text-default">
+            <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+            {@html renderMarkdown(item.text)}
+          </div>
         {:else if item.kind === 'tool'}
           {@const path = filePath(item.input)}
+          {@const summary = toolSummary(item.tool, item.input)}
           <div class="mb-2 overflow-hidden rounded-md border border-line bg-surface">
-            <button
-              class="flex w-full items-center gap-2 border-b border-line px-2 py-1 text-left {path
-                ? 'hover:bg-hover'
-                : 'cursor-default'}"
-              disabled={!path}
-              onclick={() => openCard(item.input)}
-            >
-              <span class="font-mono text-2xs font-semibold text-violet">{item.tool}</span>
-              {#if toolSummary(item.tool, item.input)}
-                <span class="truncate font-mono text-2xs text-muted"
-                  >{toolSummary(item.tool, item.input)}</span
+            <div class="flex w-full items-center gap-2 border-b border-line px-2 py-1">
+              <button
+                class="flex min-w-0 flex-1 items-center gap-2 text-left"
+                onclick={() => toggleTool(item.key)}
+                title="Expand full command"
+              >
+                <span class="shrink-0 text-2xs text-dim">{expandedTools[item.key] ? '▾' : '▸'}</span>
+                <span class="shrink-0 font-mono text-2xs font-semibold text-violet">{item.tool}</span
+                >
+                {#if summary}
+                  <span class="truncate font-mono text-2xs text-muted">{summary}</span>
+                {/if}
+              </button>
+              {#if path}
+                <button
+                  class="ml-auto shrink-0 text-2xs text-dim hover:text-default"
+                  onclick={() => openCard(item.input)}>open ↗</button
                 >
               {/if}
-              {#if path}<span class="ml-auto shrink-0 text-2xs text-dim">open ↗</span>{/if}
-            </button>
-            {#if !toolSummary(item.tool, item.input)}
-              <pre class="overflow-auto px-2 py-1 font-mono text-2xs text-dim">{truncate(
-                  JSON.stringify(item.input, null, 2)
+            </div>
+            {#if expandedTools[item.key]}
+              <pre
+                class="max-h-72 overflow-auto whitespace-pre-wrap px-2 py-1.5 font-mono text-2xs text-muted">{toolDetail(
+                  item.tool,
+                  item.input
                 )}</pre>
             {/if}
           </div>
@@ -545,6 +609,20 @@
         <p class="text-dim">No agent output yet. Write a prompt below and run.</p>
       {/if}
     </div>
+
+    <!-- Working-state bar: live indicator, funny status, token count, state. -->
+    {#if isRunning}
+      <div
+        class="flex shrink-0 items-center gap-2 border-t border-line bg-elevated px-3 py-1.5 text-2xs"
+      >
+        <span class="inline-block h-2 w-2 shrink-0 animate-pulse rounded-full bg-green"></span>
+        <span class="font-medium text-default">{workState}</span>
+        <span class="ml-auto truncate italic text-dim">{funnyMessage}</span>
+        <span class="shrink-0 font-mono text-muted" title="input + output tokens"
+          >{formatTokens(meta.totalTokens)} tok</span
+        >
+      </div>
+    {/if}
 
     <!-- Input + config status line pinned at the bottom -->
     <div class="relative shrink-0 border-t border-line p-3">

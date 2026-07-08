@@ -1,21 +1,25 @@
 <script lang="ts">
   import { onDestroy } from 'svelte'
   import { store } from '../lib/store.svelte'
-  import { setupMonaco } from '../lib/monaco'
+  import { languageExtension, editorTheme } from '../lib/editor'
+  import { MergeView } from '@codemirror/merge'
+  import { EditorState, type Extension } from '@codemirror/state'
+  import { EditorView, lineNumbers, highlightSpecialChars } from '@codemirror/view'
   import UIPane from './UIPane.svelte'
   import type { DiffFile } from '../../../shared/types'
-  import type * as Monaco from 'monaco-editor'
 
   let listWidth = $state(Number(localStorage.getItem('pane.diffList')) || 256)
   $effect(() => localStorage.setItem('pane.diffList', String(listWidth)))
 
   let diffHost = $state<HTMLDivElement>()
-  let diffEditor: Monaco.editor.IStandaloneDiffEditor | null = null
-  let monaco: typeof Monaco | null = null
+  let mergeView: MergeView | null = null
 
   let files = $state<DiffFile[]>([])
   let selected = $state<DiffFile | null>(null)
   let loading = $state(false)
+
+  // The sides currently rendered, kept so a theme change can re-render them.
+  let current: { original: string; modified: string; language: string } | null = null
 
   function fileKey(file: DiffFile): string {
     return `${file.staged ? 'S' : 'U'}:${file.changeType}:${file.path}`
@@ -27,6 +31,43 @@
     deleted: 'text-red',
     renamed: 'text-blue',
     untracked: 'text-violet'
+  }
+
+  // Read-only extensions for one side of the diff.
+  function sideExtensions(language: string): Extension {
+    const theme = store.activeTheme
+    return [
+      lineNumbers(),
+      highlightSpecialChars(),
+      languageExtension(`x.${language}`),
+      editorTheme(theme.palette, theme.scheme),
+      EditorState.readOnly.of(true),
+      EditorView.editable.of(false)
+    ]
+  }
+
+  function destroyMerge(): void {
+    mergeView?.destroy()
+    mergeView = null
+  }
+
+  function renderMerge(original: string, modified: string, language: string): void {
+    if (!diffHost) return
+    current = { original, modified, language }
+    destroyMerge()
+    mergeView = new MergeView({
+      a: { doc: original, extensions: sideExtensions(language) },
+      b: { doc: modified, extensions: sideExtensions(language) },
+      parent: diffHost,
+      collapseUnchanged: { margin: 3, minSize: 4 },
+      highlightChanges: true,
+      gutter: true
+    })
+  }
+
+  function clearDiff(): void {
+    current = null
+    destroyMerge()
   }
 
   async function loadFiles(): Promise<void> {
@@ -54,56 +95,14 @@
     }
   }
 
-  function ensureDiffEditor(): void {
-    if (diffEditor || !diffHost) return
-    monaco = setupMonaco()
-    diffEditor = monaco.editor.createDiffEditor(diffHost, {
-      theme: store.monacoTheme,
-      automaticLayout: true,
-      readOnly: true,
-      renderSideBySide: true,
-      fontSize: 13,
-      fontFamily: 'Geist Mono, monospace',
-      minimap: { enabled: false }
-    })
-  }
-
-  function clearDiff(): void {
-    diffEditor?.setModel(null)
-  }
-
   async function showDiff(file: DiffFile): Promise<void> {
     if (!store.selectedWorktreeId) return
     selected = file
-    ensureDiffEditor()
-    if (!diffEditor || !monaco) return
     const sides = await window.workbench.git.diffSides(store.selectedWorktreeId, file)
-    const original = monaco.editor.createModel(sides.original, sides.language)
-    const modified = monaco.editor.createModel(sides.modified, sides.language)
-    const old = diffEditor.getModel()
-    diffEditor.setModel({ original, modified })
-    old?.original.dispose()
-    old?.modified.dispose()
+    renderMerge(sides.original, sides.modified, sides.language)
   }
 
   const proposed = $derived(store.proposedDiff)
-
-  // Render a proposed (not-yet-applied) change from a pending Write/Edit.
-  async function showProposed(change: {
-    original: string
-    modified: string
-    language: string
-  }): Promise<void> {
-    ensureDiffEditor()
-    if (!diffEditor || !monaco) return
-    selected = null
-    const original = monaco.editor.createModel(change.original, change.language)
-    const modified = monaco.editor.createModel(change.modified, change.language)
-    const old = diffEditor.getModel()
-    diffEditor.setModel({ original, modified })
-    old?.original.dispose()
-    old?.modified.dispose()
-  }
 
   // Git changes: reload on worktree/file change and auto-diff requests, but a
   // proposed change takes over the editor while it is pending.
@@ -115,17 +114,22 @@
     void loadFiles()
   })
 
+  // Render a proposed (not-yet-applied) change from a pending Write/Edit.
   $effect(() => {
     const change = store.proposedDiff
-    if (change) void showProposed(change)
+    if (change) {
+      selected = null
+      renderMerge(change.original, change.modified, change.language)
+    }
   })
 
-  // Follow the active color theme (Monaco themes are global).
+  // Follow the active color theme (re-render current sides with the new theme).
   $effect(() => {
-    if (monaco) monaco.editor.setTheme(store.monacoTheme)
+    store.activeTheme
+    if (current) renderMerge(current.original, current.modified, current.language)
   })
 
-  onDestroy(() => diffEditor?.dispose())
+  onDestroy(() => destroyMerge())
 </script>
 
 <div class="flex h-full min-h-0">
@@ -176,6 +180,6 @@
         {/if}
       {/if}
     </div>
-    <div bind:this={diffHost} class="min-h-0 flex-1"></div>
+    <div bind:this={diffHost} class="min-h-0 flex-1 overflow-auto"></div>
   </div>
 </div>

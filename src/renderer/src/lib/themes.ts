@@ -228,19 +228,14 @@ export function currentThemeName(): string {
   return activeName
 }
 
-// Monaco editor theme name that pairs with an app theme. Registered in monaco.ts.
-export function monacoThemeFor(name: string): string {
-  return themes.has(name) ? `neoworks-${name}` : 'vs-dark'
+// Resolve a theme (falls back to the default) — used by the CodeMirror editor
+// and diff view to build their per-instance themes.
+export function themeFor(name: string): ColorTheme {
+  return themes.get(name) || themes.get(DEFAULT_THEME)!
 }
 
-// Monaco defineTheme inputs for every registered theme, so the editor background
-// and foreground match the app chrome.
-export function monacoThemeDefs(): { name: string; base: 'vs' | 'vs-dark'; palette: ThemePalette }[] {
-  return availableThemes().map((theme) => ({
-    name: `neoworks-${theme.name}`,
-    base: theme.scheme === 'light' ? 'vs' : 'vs-dark',
-    palette: theme.palette
-  }))
+export function paletteFor(name: string): ThemePalette {
+  return themeFor(name).palette
 }
 
 // Write a theme's palette as inline CSS variables on <html> and set data-theme

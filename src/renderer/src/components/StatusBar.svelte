@@ -10,12 +10,12 @@
 >
   <div class="flex items-center gap-3">
     {#each left as item (item.id)}
-      <item.component />
+      <item.component {...item.props ?? {}} />
     {/each}
   </div>
   <div class="ml-auto flex items-center gap-3">
     {#each right as item (item.id)}
-      <item.component />
+      <item.component {...item.props ?? {}} />
     {/each}
   </div>
 </footer>

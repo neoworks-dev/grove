@@ -24,6 +24,7 @@
   import { registerCoreMenu } from './lib/coreMenu'
   import { settings } from './lib/settings.svelte'
   import { registerBaseSettings, applyBaseSettings } from './lib/baseSettings'
+  import { pluginHost } from './plugins/host.svelte'
   import { views } from './lib/views.svelte'
   import { menu } from './lib/menu.svelte'
   import { initBundledGrammars } from './lib/bundledGrammars'
@@ -173,6 +174,7 @@
     void (async () => {
       await settings.init()
       await applyBaseSettings()
+      await pluginHost.init()
       const last = await window.workbench.repo.last()
       if (last) {
         try {

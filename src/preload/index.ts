@@ -115,6 +115,19 @@ const workbench = {
     runShell: (worktreeId: string, commandLine: string) =>
       ipcRenderer.invoke('actions:runShell', worktreeId, commandLine)
   },
+  plugins: {
+    list: () => ipcRenderer.invoke('plugins:list'),
+    trust: (pluginId: string) => ipcRenderer.invoke('plugins:trust', pluginId),
+    setEnabled: (pluginId: string, enabled: boolean) =>
+      ipcRenderer.invoke('plugins:setEnabled', pluginId, enabled),
+    invoke: (pluginId: string, callId: string, method: string, params: unknown) =>
+      ipcRenderer.invoke('plugins:invoke', pluginId, callId, method, params),
+    cancel: (pluginId: string, callId: string) =>
+      ipcRenderer.invoke('plugins:cancel', pluginId, callId),
+    cancelAll: (pluginId: string) => ipcRenderer.invoke('plugins:cancelAll', pluginId),
+    respondPermission: (id: string, decision: string) =>
+      ipcRenderer.invoke('plugins:respondPermission', id, decision)
+  },
   settings: {
     read: () => ipcRenderer.invoke('settings:read'),
     set: (key: string, value: unknown, scope: 'user' | 'project') =>

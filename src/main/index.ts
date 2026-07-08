@@ -3,6 +3,10 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { registerIpc, shutdown } from './ipc'
+import { registerPluginScheme } from './plugins/protocol'
+
+// Custom scheme privileges must be declared before app ready.
+registerPluginScheme()
 
 // Scale the whole UI with Ctrl/Cmd +, Ctrl/Cmd -, and Ctrl/Cmd 0 to reset.
 // Electron performs no zoom on its own (no zoom-role menu), so drive it here.

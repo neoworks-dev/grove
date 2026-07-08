@@ -23,7 +23,23 @@ export type OverlayPreviewContent =
   | { kind: 'component'; component: Component; props?: Record<string, unknown> }
 
 export interface OverlayToken {
-  isCancelled: boolean
+  readonly isCancelled: boolean
+  onCancel: (callback: () => void) => void
+}
+
+class CancellableToken implements OverlayToken {
+  isCancelled = false
+  private callbacks: (() => void)[] = []
+
+  onCancel(callback: () => void): void {
+    this.callbacks.push(callback)
+  }
+
+  cancel(): void {
+    if (this.isCancelled) return
+    this.isCancelled = true
+    for (const callback of this.callbacks) callback()
+  }
 }
 
 export type OverlayEmit = (items: OverlayItem[], options?: { replace?: boolean }) => void
@@ -67,8 +83,8 @@ class OverlayController {
   preview = $state<OverlayPreviewContent | null>(null)
 
   private queryTimer: ReturnType<typeof setTimeout> | null = null
-  private queryToken: OverlayToken | null = null
-  private previewToken: OverlayToken | null = null
+  private queryToken: CancellableToken | null = null
+  private previewToken: CancellableToken | null = null
   private appliedInitialFocus = false
 
   isOpen(id: string): boolean {
@@ -97,8 +113,8 @@ class OverlayController {
   private runQuery(query: string): void {
     const descriptor = this.active
     if (!descriptor) return
-    if (this.queryToken) this.queryToken.isCancelled = true
-    const token: OverlayToken = { isCancelled: false }
+    this.queryToken?.cancel()
+    const token = new CancellableToken()
     this.queryToken = token
     this.items = []
     const emit: OverlayEmit = (batch, options) => {
@@ -138,8 +154,8 @@ class OverlayController {
     const descriptor = this.active
     const item = this.items[this.activeIndex]
     if (!descriptor?.onPreview || !item) return
-    if (this.previewToken) this.previewToken.isCancelled = true
-    const token: OverlayToken = { isCancelled: false }
+    this.previewToken?.cancel()
+    const token = new CancellableToken()
     this.previewToken = token
     void descriptor.onPreview(item, token).then((content) => {
       if (!token.isCancelled && this.active === descriptor) this.preview = content
@@ -190,8 +206,8 @@ class OverlayController {
 
   private dismiss(): void {
     if (this.queryTimer) clearTimeout(this.queryTimer)
-    if (this.queryToken) this.queryToken.isCancelled = true
-    if (this.previewToken) this.previewToken.isCancelled = true
+    this.queryToken?.cancel()
+    this.previewToken?.cancel()
     this.active = null
     this.items = []
     this.preview = null

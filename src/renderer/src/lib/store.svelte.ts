@@ -174,6 +174,19 @@ export function openFileAtLine(worktreeId: string, path: string, line: number): 
   store.revealTarget = { path, line }
 }
 
+// Move between open editor tabs (Shift+hjkl in the editor).
+export function switchTab(direction: 'prev' | 'next' | 'first' | 'last'): void {
+  const tabs = store.tabs.filter((tab) => tab.worktreeId === store.selectedWorktreeId)
+  if (tabs.length === 0) return
+  const index = tabs.findIndex((tab) => tab.path === store.activeTabPath)
+  let next = index < 0 ? 0 : index
+  if (direction === 'prev') next = (next - 1 + tabs.length) % tabs.length
+  else if (direction === 'next') next = (next + 1) % tabs.length
+  else if (direction === 'first') next = 0
+  else next = tabs.length - 1
+  store.activeTabPath = tabs[next].path
+}
+
 // Seed the in-memory transcript from the persisted on-disk log so a chat
 // reappears after an app restart. Caller only invokes this when no agent lines
 // exist yet for the worktree.

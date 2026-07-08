@@ -10,7 +10,8 @@
   import UIPane from './components/UIPane.svelte'
   import CommandPalette from './components/CommandPalette.svelte'
   import RipgrepSearch from './components/RipgrepSearch.svelte'
-  import { store, subscribeEvents, openRepoResult, applyIconPack, applyColorTheme } from './lib/store.svelte'
+  import WhichKey from './components/WhichKey.svelte'
+  import { store, subscribeEvents, openRepoResult, applyIconPack, applyColorTheme, switchTab } from './lib/store.svelte'
   import { commands } from './lib/commands.svelte'
   import { keymap, pane } from './lib/keymap.svelte'
   import { layout } from './lib/layout.svelte'
@@ -97,6 +98,29 @@
     if (keymap.handleKey(event)) {
       event.preventDefault()
       event.stopPropagation()
+      return
+    }
+    // Shift+hjkl: editor tab motion, but only in Vim-normal so insert typing
+    // (which produces H/J/K/L) is never hijacked.
+    if (
+      keymap.activePane === 'center' &&
+      keymap.editorVimMode === 'normal' &&
+      event.shiftKey &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.metaKey
+    ) {
+      const move = { H: 'prev', L: 'next', K: 'first', J: 'last' }[event.key] as
+        | 'prev'
+        | 'next'
+        | 'first'
+        | 'last'
+        | undefined
+      if (move) {
+        switchTab(move)
+        event.preventDefault()
+        event.stopPropagation()
+      }
     }
   }
 
@@ -213,10 +237,11 @@
       <div class="flex min-h-0 flex-1">
         <section
           use:pane={'center'}
-          class="flex min-w-0 flex-1 flex-col outline-none {keymap.activePane === 'center'
+          class="relative flex min-w-0 flex-1 flex-col outline-none {keymap.activePane === 'center'
             ? 'pane-active'
             : ''}"
         >
+          <WhichKey />
           {#if !store.repo}
             <div class="flex flex-1 items-center justify-center text-dim">
               Open a Git repository to begin.

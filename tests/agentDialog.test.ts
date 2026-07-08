@@ -35,13 +35,19 @@ describe('parseQuestions', () => {
 })
 
 describe('buildAnswerResult', () => {
-  it('pairs each question with its selected options', () => {
+  it('maps question text to the selected answer(s)', () => {
     const questions = parseQuestions({
       questions: [{ question: 'Q1', header: 'H1', options: [{ label: 'x' }, { label: 'y' }] }]
     })
-    const result = buildAnswerResult(questions, [['y']])
-    expect(result).toEqual({
-      answers: [{ header: 'H1', question: 'Q1', selectedOptions: ['y'] }]
+    expect(buildAnswerResult(questions, [['y']])).toEqual({ answers: { Q1: 'y' } })
+  })
+
+  it('joins multi-select answers with commas', () => {
+    const questions = parseQuestions({
+      questions: [
+        { question: 'Pick', header: 'H', multiSelect: true, options: [{ label: 'a' }, { label: 'b' }] }
+      ]
     })
+    expect(buildAnswerResult(questions, [['a', 'b']])).toEqual({ answers: { Pick: 'a, b' } })
   })
 })

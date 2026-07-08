@@ -1,6 +1,7 @@
 <script lang="ts">
   import Icon from '@iconify/svelte'
   import { bufferMenu } from '../lib/buffermenu.svelte'
+  import { layout } from '../lib/layout.svelte'
   import { store } from '../lib/store.svelte'
   import { fileIcon } from '../lib/icons'
 
@@ -28,7 +29,7 @@
 
   function switchTo(path: string): void {
     store.activeTabPath = path
-    store.centerView = 'editor'
+    layout.showCenterPane('editor')
     bufferMenu.close()
   }
 

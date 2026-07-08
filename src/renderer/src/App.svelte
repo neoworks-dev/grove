@@ -1,18 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import groveLogo from './assets/grove-icon.svg'
-  import WorktreeSidebar from './components/WorktreeSidebar.svelte'
-  import FilesView from './components/FilesView.svelte'
-  import ExtensionsView from './components/ExtensionsView.svelte'
   import ActivityBar from './components/ActivityBar.svelte'
-  import SidebarHost from './components/SidebarHost.svelte'
-  import EditorPane from './components/EditorPane.svelte'
-  import DiffPane from './components/DiffPane.svelte'
-  import PreviewPane from './components/PreviewPane.svelte'
-  import Dashboard from './components/Dashboard.svelte'
-  import LogsPane from './components/LogsPane.svelte'
-  import AgentPane from './components/AgentPane.svelte'
-  import UIPane from './components/UIPane.svelte'
+  import SplitTree from './components/SplitTree.svelte'
   import CommandPalette from './components/CommandPalette.svelte'
   import RipgrepSearch from './components/RipgrepSearch.svelte'
   import FileFinder from './components/FileFinder.svelte'
@@ -22,46 +12,39 @@
   import StatusBar from './components/StatusBar.svelte'
   import StatusBranch from './components/StatusBranch.svelte'
   import StatusClock from './components/StatusClock.svelte'
-  import Folder from 'phosphor-svelte/lib/Folder'
-  import GitBranch from 'phosphor-svelte/lib/GitBranch'
-  import PuzzlePiece from 'phosphor-svelte/lib/PuzzlePiece'
   import { store, subscribeEvents, openRepoResult, applyIconPack, switchTab } from './lib/store.svelte'
   import { commands } from './lib/commands.svelte'
-  import { keymap, pane } from './lib/keymap.svelte'
+  import { keymap } from './lib/keymap.svelte'
   import { layout } from './lib/layout.svelte'
-  import { activity } from './lib/activity.svelte'
   import { statusBar } from './lib/statusbar.svelte'
   import { registerCoreBindings } from './lib/bindings'
+  import { registerCorePanes } from './lib/corePanes'
   import { initBundledGrammars } from './lib/bundledGrammars'
   import { loadInstalledExtensions } from './lib/extensions'
   import { initIcons, availablePacks } from './lib/icons'
   import { initThemes } from './lib/themes'
   import { themePicker } from './lib/themepicker.svelte'
-  import type { CenterView } from './lib/store.svelte'
 
-  // Core sidebar views for the activity bar (plugins can register more).
-  activity.register({ id: 'files', label: 'Explorer', icon: Folder, view: FilesView, order: 1 })
-  activity.register({ id: 'worktrees', label: 'Worktrees', icon: GitBranch, view: WorktreeSidebar, order: 2 })
-  activity.register({ id: 'extensions', label: 'Extensions', icon: PuzzlePiece, view: ExtensionsView, order: 3 })
+  // Core pane types (sidebar family, center views, agent, logs). Plugins
+  // register theirs through the same registry.
+  registerCorePanes()
 
   // Core status bar items (plugins can register more, left or right aligned).
   statusBar.register({ id: 'git.branch', align: 'left', order: 1, component: StatusBranch })
   statusBar.register({ id: 'clock', align: 'right', order: 100, component: StatusClock })
 
-  // Persist layout (pane sizes, panels, center view, open tabs) whenever any of
+  // Persist layout (split tree, nested panel sizes, open tabs) whenever any of
   // these change; layout.schedule() debounces the write to per-repo state.
   $effect(() => {
+    const tree = layout.tree
     const sizes = Object.values(layout.paneSizes)
-    const open = layout.logsOpen
-    const view = store.centerView
     const tabs = store.tabs.map((tab) => tab.path).join('|')
     const active = store.activeTabPath
-    const sidebarView = activity.activeView
-    void [sizes, open, view, tabs, active, sidebarView]
+    void [tree, sizes, tabs, active]
     layout.schedule()
   })
 
-  const views: { id: CenterView; label: string }[] = [
+  const views: { id: string; label: string }[] = [
     { id: 'editor', label: 'Editor' },
     { id: 'diff', label: 'Diff' },
     { id: 'preview', label: 'Preview' },
@@ -81,18 +64,14 @@
         id: `view.${view.id}`,
         title: `View: ${view.label}`,
         group: 'View',
-        run: () => {
-          store.centerView = view.id
-        }
+        run: () => layout.showCenterPane(view.id)
       })
     }
     commands.register({
       id: 'view.toggleLogs',
       title: 'Toggle Logs Panel',
       group: 'View',
-      run: () => {
-        layout.setLogsOpen(!layout.logsOpen)
-      }
+      run: () => layout.togglePane('logs')
     })
     // Icon theme selection — dynamically one command per available pack.
     for (const pack of availablePacks()) {
@@ -131,7 +110,7 @@
     // Shift+hjkl: editor tab motion, but only in Vim-normal so insert typing
     // (which produces H/J/K/L) is never hijacked.
     if (
-      keymap.activePane === 'center' &&
+      keymap.activePaneType === 'editor' &&
       keymap.editorVimMode === 'normal' &&
       event.shiftKey &&
       !event.ctrlKey &&
@@ -209,19 +188,19 @@
     <div class="ml-auto flex items-center gap-1">
       {#each views as view (view.id)}
         <button
-          class="rounded-md px-2.5 py-1 text-xs {store.centerView === view.id
+          class="rounded-md px-2.5 py-1 text-xs {layout.slotType('center') === view.id
             ? 'bg-surface text-default'
             : 'text-dim hover:text-default'}"
-          onclick={() => (store.centerView = view.id)}
+          onclick={() => layout.showCenterPane(view.id)}
         >
           {view.label}
         </button>
       {/each}
       <button
-        class="ml-2 rounded-md px-2.5 py-1 text-xs {layout.logsOpen
+        class="ml-2 rounded-md px-2.5 py-1 text-xs {layout.hasPane('logs')
           ? 'text-default'
           : 'text-dim'} hover:text-default"
-        onclick={() => layout.setLogsOpen(!layout.logsOpen)}
+        onclick={() => layout.togglePane('logs')}
       >
         Logs
       </button>
@@ -246,84 +225,14 @@
     </div>
   {/if}
 
-  <!-- Main body -->
+  <!-- Main body: launcher rail + the split tree -->
   <div class="flex min-h-0 flex-1">
     <ActivityBar />
-    <UIPane
-      side="right"
-      bind:size={layout.paneSizes.sidebar}
-      min={180}
-      max={480}
-      class="border-r border-line bg-elevated"
-    >
-      <div
-        use:pane={'sidebar'}
-        class="h-full outline-none {keymap.activePane === 'sidebar' ? 'pane-active' : ''}"
-      >
-        <SidebarHost />
-      </div>
-    </UIPane>
-
-    <main class="flex min-w-0 flex-1 flex-col">
-      <div class="flex min-h-0 flex-1">
-        <section
-          use:pane={'center'}
-          class="relative flex min-w-0 flex-1 flex-col outline-none {keymap.activePane === 'center'
-            ? 'pane-active'
-            : ''}"
-        >
-          <WhichKey />
-          {#if !store.repo}
-            <div class="flex flex-1 items-center justify-center text-dim">
-              Open a Git repository to begin.
-            </div>
-          {:else if store.centerView === 'editor'}
-            <EditorPane />
-          {:else if store.centerView === 'diff'}
-            <DiffPane />
-          {:else if store.centerView === 'preview'}
-            <PreviewPane />
-          {:else}
-            <Dashboard />
-          {/if}
-        </section>
-
-        <UIPane
-          side="left"
-          bind:size={layout.paneSizes.agent}
-          min={240}
-          max={560}
-          class="border-l border-line bg-elevated"
-        >
-          <div
-            use:pane={'agent'}
-            class="h-full outline-none {keymap.activePane === 'agent' ? 'pane-active' : ''}"
-          >
-            <AgentPane />
-          </div>
-        </UIPane>
-      </div>
-
-      {#if layout.logsOpen}
-        <UIPane
-          side="top"
-          bind:size={layout.paneSizes.logs}
-          min={120}
-          max={600}
-          class="border-t border-line bg-elevated"
-        >
-          <div
-            use:pane={'logs'}
-            class="h-full outline-none {keymap.activePane === 'logs' ? 'pane-active' : ''}"
-          >
-            <LogsPane />
-          </div>
-        </UIPane>
-      {/if}
-    </main>
+    <SplitTree node={layout.tree} />
   </div>
 
   <StatusBar />
+  <WhichKey />
 </div>
 
 <CommandPalette />

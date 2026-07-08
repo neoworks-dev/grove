@@ -34,8 +34,15 @@ function tokenFor(event: KeyboardEvent): string {
 }
 
 class Keymap {
-  activePane = $state<PaneId>('center')
+  activePane = $state<PaneId | null>(null)
   bindings = $state<KeyBinding[]>([])
+
+  // The layout-tree leaf containing the active pane (a pane may be nested
+  // inside a leaf, e.g. the file tree inside the files leaf).
+  activeLeafId = $state<string | null>(null)
+
+  // Pane type of the active pane (e.g. 'editor'), when the registrar gave one.
+  activePaneTypeState = $state<string | null>(null)
 
   // Leader state (read by WhichKey.svelte).
   leaderActive = $state(false)
@@ -47,19 +54,36 @@ class Keymap {
 
   // Pane elements are plain (geometry is read on demand, not reactive).
   private panes = new Map<PaneId, HTMLElement>()
+  private paneTypes = new Map<PaneId, string>()
   private leaderTimer: ReturnType<typeof setTimeout> | null = null
 
+  get activePaneType(): string | null {
+    return this.activePaneTypeState
+  }
+
   // ── Focus model ───────────────────────────────────────────────
-  registerPane(id: PaneId, el: HTMLElement): void {
+  registerPane(id: PaneId, el: HTMLElement, type?: string): void {
     this.panes.set(id, el)
+    if (type) this.paneTypes.set(id, type)
+    else this.paneTypes.delete(id)
+    if (this.activePane === id) this.refreshActive(id)
   }
 
   unregisterPane(id: PaneId): void {
     this.panes.delete(id)
+    this.paneTypes.delete(id)
   }
 
   setActive(id: PaneId): void {
     this.activePane = id
+    this.refreshActive(id)
+  }
+
+  private refreshActive(id: PaneId): void {
+    this.activePaneTypeState = this.paneTypes.get(id) ?? null
+    const el = this.panes.get(id)
+    const leafEl = el?.closest('[data-leaf]') as HTMLElement | null
+    this.activeLeafId = leafEl?.dataset.leaf ?? null
   }
 
   focusPane(id: PaneId): void {
@@ -82,16 +106,24 @@ class Keymap {
     return best
   }
 
-  // Move focus to the nearest pane whose center lies in the given direction.
-  movePane(dir: 'h' | 'j' | 'k' | 'l'): void {
-    const active = this.panes.get(this.activePane)
-    if (!active) return
+  // Nearest pane whose center lies in the given direction from `fromId`,
+  // optionally restricted to a candidate set (layout leaf swaps).
+  neighborPane(fromId: PaneId, dir: 'h' | 'j' | 'k' | 'l', candidates?: Set<PaneId>): PaneId | null {
+    const from = this.panes.get(fromId)
+    if (!from) return null
     const others: { id: string; rect: DOMRect }[] = []
     for (const [id, el] of this.panes) {
-      if (id === this.activePane) continue
+      if (id === fromId) continue
+      if (candidates && !candidates.has(id)) continue
       others.push({ id, rect: el.getBoundingClientRect() })
     }
-    const best = pickNeighbor(active.getBoundingClientRect(), others, dir)
+    return pickNeighbor(from.getBoundingClientRect(), others, dir)
+  }
+
+  // Move focus to the nearest pane whose center lies in the given direction.
+  movePane(dir: 'h' | 'j' | 'k' | 'l'): void {
+    if (!this.activePane) return
+    const best = this.neighborPane(this.activePane, dir)
     if (best) this.focusPane(best)
   }
 
@@ -105,10 +137,13 @@ class Keymap {
   }
 
   // Bindings reachable in the current context matching the typed prefix.
+  // A binding context matches 'global', the active pane id, or its pane type.
   matching(prefix: string[]): KeyBinding[] {
     return this.bindings.filter((binding) => {
       const context = binding.context || 'global'
-      if (context !== 'global' && context !== this.activePane) return false
+      const inContext =
+        context === 'global' || context === this.activePane || context === this.activePaneType
+      if (!inContext) return false
       if (binding.when && !binding.when()) return false
       return startsWith(binding.keys.split(' '), prefix)
     })
@@ -120,7 +155,7 @@ class Keymap {
     const tag = el?.tagName
     if (tag === 'INPUT' || tag === 'TEXTAREA') return false
     // The editor is a contenteditable; only steal space in Vim normal mode.
-    if (this.activePane === 'center') return this.editorVimMode === 'normal'
+    if (this.activePaneType === 'editor') return this.editorVimMode === 'normal'
     return true
   }
 
@@ -203,23 +238,43 @@ class Keymap {
 export const keymap = new Keymap()
 
 // Svelte action: register a DOM element as a focusable pane. Panes may nest
-// (e.g. the file tree inside the center pane); only the innermost pane under the
-// event target claims focus, so a click in the tree doesn't also select center.
-export function pane(node: HTMLElement, id: PaneId): { destroy: () => void } {
-  keymap.registerPane(id, node)
-  node.dataset.pane = id
+// (e.g. the file tree inside the files leaf); only the innermost pane under the
+// event target claims focus, so a click in the tree doesn't also select the leaf.
+// Accepts a plain id or `{ id, type }` — the type feeds context matching and
+// the editor Vim guards.
+export type PaneAttachment = PaneId | { id: PaneId; type?: string }
+
+function attachmentParts(attachment: PaneAttachment): { id: PaneId; type?: string } {
+  if (typeof attachment === 'string') return { id: attachment }
+  return attachment
+}
+
+export function pane(
+  node: HTMLElement,
+  attachment: PaneAttachment
+): { update: (next: PaneAttachment) => void; destroy: () => void } {
+  let current = attachmentParts(attachment)
+  keymap.registerPane(current.id, node, current.type)
+  node.dataset.pane = current.id
   if (!node.hasAttribute('tabindex')) node.tabIndex = -1
   const activate = (event: Event): void => {
     const target = event.target as HTMLElement | null
-    if (target?.closest('[data-pane]') === node) keymap.setActive(id)
+    if (target?.closest('[data-pane]') === node) keymap.setActive(current.id)
   }
   node.addEventListener('focusin', activate)
   node.addEventListener('mousedown', activate)
   return {
+    update(next: PaneAttachment) {
+      const parts = attachmentParts(next)
+      if (parts.id !== current.id) keymap.unregisterPane(current.id)
+      current = parts
+      keymap.registerPane(current.id, node, current.type)
+      node.dataset.pane = current.id
+    },
     destroy() {
       node.removeEventListener('focusin', activate)
       node.removeEventListener('mousedown', activate)
-      keymap.unregisterPane(id)
+      keymap.unregisterPane(current.id)
     }
   }
 }

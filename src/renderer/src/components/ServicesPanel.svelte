@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { layout } from '../lib/layout.svelte'
   import { store, refreshRuntimes } from '../lib/store.svelte'
   import type { ServiceRuntime } from '../../../shared/types'
 
@@ -44,7 +45,7 @@
   }
 
   function openPreview(_url: string): void {
-    store.centerView = 'preview'
+    layout.showCenterPane('preview')
   }
 </script>
 

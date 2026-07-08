@@ -111,6 +111,12 @@ const workbench = {
     getRepo: () => ipcRenderer.invoke('state:getRepo'),
     update: (patch: Record<string, unknown>) => ipcRenderer.invoke('state:update', patch)
   },
+  settings: {
+    read: () => ipcRenderer.invoke('settings:read'),
+    set: (key: string, value: unknown, scope: 'user' | 'project') =>
+      ipcRenderer.invoke('settings:set', key, value, scope),
+    openFile: (scope: 'user' | 'project') => ipcRenderer.invoke('settings:openFile', scope)
+  },
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
 
   // Subscribe to a main->renderer event. Returns an unsubscribe function.

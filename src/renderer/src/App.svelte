@@ -24,6 +24,8 @@
   import { registerCorePanes } from './lib/corePanes'
   import { registerCoreViews } from './lib/coreViews'
   import { registerCoreMenu } from './lib/coreMenu'
+  import { settings } from './lib/settings.svelte'
+  import { registerBaseSettings, applyBaseSettings } from './lib/baseSettings'
   import { views } from './lib/views.svelte'
   import { menu } from './lib/menu.svelte'
   import { initBundledGrammars } from './lib/bundledGrammars'
@@ -154,8 +156,11 @@
   }
 
   onMount(() => {
+    // Theme/icons apply synchronously from localStorage (no flash), then get
+    // re-applied from the settings provider once it loads.
     initThemes()
     initIcons()
+    registerBaseSettings()
     subscribeEvents()
     registerCoreCommands()
     registerCoreBindings()
@@ -164,6 +169,8 @@
     window.addEventListener('keydown', onGlobalKey, true)
 
     void (async () => {
+      await settings.init()
+      await applyBaseSettings()
       const last = await window.workbench.repo.last()
       if (last) {
         try {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { settings } from '../lib/settings.svelte'
   import { layout } from '../lib/layout.svelte'
   import {
     store,
@@ -23,7 +24,7 @@
 
   let prompt = $state('')
   let promptEl = $state<HTMLTextAreaElement>()
-  let selectedAgent = $state<string>(localStorage.getItem('agent.selected') || '')
+  let selectedAgent = $state<string>(settings.get<string>('workbench.defaultAgent') || '')
   let modeIndex = $state(0)
   let effortIndex = $state(0)
   let selectedModel = $state('')
@@ -49,7 +50,7 @@
   // Pick a default agent once configs load.
   $effect(() => {
     if (!selectedAgent && agentNames.length > 0) {
-      const saved = localStorage.getItem('agent.selected') || ''
+      const saved = settings.get<string>('workbench.defaultAgent') || ''
       selectedAgent = agentNames.includes(saved) ? saved : agentNames[0]
     }
   })
@@ -64,7 +65,7 @@
       selectedModel = ''
       agentNavActive = false
       focusedSubagentKey = null
-      localStorage.setItem('agent.selected', selectedAgent)
+      void settings.set('workbench.defaultAgent', selectedAgent, 'user')
     }
   })
 

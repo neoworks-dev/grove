@@ -27,6 +27,7 @@ import { currentPackName, setIconPack } from './icons'
 import { currentThemeName, applyThemeVars, themeFor } from './themes'
 import type { ColorTheme } from './themes'
 import { layout } from './layout.svelte'
+import { settings } from './settings.svelte'
 
 export interface EditorTab {
   worktreeId: string
@@ -202,11 +203,13 @@ export const store = new WorkbenchStore()
 export function applyIconPack(name: string): void {
   setIconPack(name)
   store.iconPack = name
+  void settings.set('workbench.iconPack', name, 'user')
 }
 
 export function applyColorTheme(name: string): void {
   applyThemeVars(name)
   store.colorTheme = name
+  void settings.set('workbench.colorTheme', name, 'user')
 }
 
 // Open an absolute file path in the editor (used by the file tree and by agent

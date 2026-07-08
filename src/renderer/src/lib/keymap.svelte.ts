@@ -39,7 +39,16 @@ import {
   type ParsedSequence
 } from './keySequence'
 
+import { settings } from './settings.svelte'
+
+// Fallback when the workbench.whichKeyDelay setting isn't loaded yet.
 const LEADER_DELAY_MS = 300
+
+function whichKeyDelay(): number {
+  const configured = settings.get<number>('workbench.whichKeyDelay')
+  if (typeof configured === 'number' && configured >= 0) return configured
+  return LEADER_DELAY_MS
+}
 
 class Keymap {
   activePane = $state<PaneId | null>(null)
@@ -191,7 +200,7 @@ class Keymap {
     if (!leader) return
     this.leaderTimer = setTimeout(() => {
       if (this.pendingActive) this.whichKeyVisible = true
-    }, LEADER_DELAY_MS)
+    }, whichKeyDelay())
   }
 
   cancelPending(): void {

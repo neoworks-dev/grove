@@ -34,10 +34,17 @@ interface RepoStateShape {
   selectedWorktreeId: string | null
   setupOnceDone: boolean
   agentSessions: Record<string, string>
+  viewLayouts: Record<string, unknown>
+  activeLayoutView: string | null
   paneSizes: Record<string, number>
   panelsOpen: Record<string, boolean>
   centerView: string | null
   activeView: string | null
+}
+
+interface SettingsSnapshotShape {
+  user: Record<string, unknown>
+  project: Record<string, unknown>
 }
 
 export interface WorkbenchApi {
@@ -139,6 +146,11 @@ export interface WorkbenchApi {
   state: {
     getRepo: () => Promise<RepoStateShape>
     update: (patch: Partial<RepoStateShape>) => Promise<RepoStateShape>
+  }
+  settings: {
+    read: () => Promise<SettingsSnapshotShape>
+    set: (key: string, value: unknown, scope: 'user' | 'project') => Promise<SettingsSnapshotShape>
+    openFile: (scope: 'user' | 'project') => Promise<string | void>
   }
   openExternal: (url: string) => Promise<void>
   on: (channel: string, callback: (payload: unknown) => void) => () => void

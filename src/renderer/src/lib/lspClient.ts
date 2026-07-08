@@ -34,18 +34,15 @@ export function lspLanguageFor(path: string): string | null {
   return LANGUAGE_BY_EXT[ext] || null
 }
 
-export function fileUri(path: string): string {
-  // Encode each segment; keep the leading slash structure.
-  const encoded = path.split('/').map(encodeURIComponent).join('/')
-  return `file://${encoded}`
-}
+// URI helpers live in a dependency-free module; re-exported here for callers.
+export { fileUri, uriToPath } from './lspUri'
 
-function offsetToPosition(doc: Text, offset: number): LspPosition {
+export function offsetToPosition(doc: Text, offset: number): LspPosition {
   const line = doc.lineAt(offset)
   return { line: line.number - 1, character: offset - line.from }
 }
 
-function positionToOffset(doc: Text, position: LspPosition): number {
+export function positionToOffset(doc: Text, position: LspPosition): number {
   const lineNumber = Math.min(Math.max(position.line + 1, 1), doc.lines)
   const line = doc.line(lineNumber)
   return Math.min(line.from + position.character, line.to)

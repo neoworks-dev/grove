@@ -1,5 +1,12 @@
 import { ElectronAPI } from '@electron-toolkit/preload'
 import type {
+  Location,
+  WorkspaceEdit,
+  TextEdit,
+  CodeAction,
+  Command
+} from 'vscode-languageserver-types'
+import type {
   Worktree,
   BranchList,
   DiffFile,
@@ -19,7 +26,9 @@ import type {
   InstalledExtension,
   GrammarPayload,
   LspPosition,
-  LspCompletion
+  LspCompletion,
+  LspRange,
+  LspDiagnostic
 } from '../shared/types'
 
 interface OpenRepoResult {
@@ -147,6 +156,67 @@ export interface WorkbenchApi {
       uri: string,
       position: LspPosition
     ) => Promise<string | null>
+    definition: (
+      worktreeId: string,
+      language: string,
+      uri: string,
+      position: LspPosition
+    ) => Promise<Location[]>
+    references: (
+      worktreeId: string,
+      language: string,
+      uri: string,
+      position: LspPosition
+    ) => Promise<Location[]>
+    implementation: (
+      worktreeId: string,
+      language: string,
+      uri: string,
+      position: LspPosition
+    ) => Promise<Location[]>
+    typeDefinition: (
+      worktreeId: string,
+      language: string,
+      uri: string,
+      position: LspPosition
+    ) => Promise<Location[]>
+    declaration: (
+      worktreeId: string,
+      language: string,
+      uri: string,
+      position: LspPosition
+    ) => Promise<Location[]>
+    rename: (
+      worktreeId: string,
+      language: string,
+      uri: string,
+      position: LspPosition,
+      newName: string
+    ) => Promise<WorkspaceEdit | null>
+    formatting: (
+      worktreeId: string,
+      language: string,
+      uri: string,
+      tabSize: number
+    ) => Promise<TextEdit[]>
+    codeAction: (
+      worktreeId: string,
+      language: string,
+      uri: string,
+      range: LspRange,
+      diagnostics: LspDiagnostic[]
+    ) => Promise<(Command | CodeAction)[]>
+    resolveCodeAction: (
+      worktreeId: string,
+      language: string,
+      action: CodeAction
+    ) => Promise<CodeAction>
+    executeCommand: (
+      worktreeId: string,
+      language: string,
+      command: string,
+      args: unknown[]
+    ) => Promise<void>
   }
   state: {
     getRepo: () => Promise<RepoStateShape>

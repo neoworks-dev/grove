@@ -64,6 +64,7 @@
     "tree-sitter-wasms": "^0.1.13",
     "vscode-jsonrpc": "^9.0.1",
     "vscode-languageserver-protocol": "^3.18.2",
+    "vscode-languageserver-types": "^3.18.0",
     "web-tree-sitter": "0.24.7",
     "zod": "^4.0.0"
   },

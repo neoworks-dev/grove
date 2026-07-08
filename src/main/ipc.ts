@@ -9,7 +9,8 @@ import * as config from './config'
 import * as files from './files'
 import * as extensions from './extensions'
 import { LspManager } from './lsp'
-import type { LspPosition } from '../shared/types'
+import type { LspPosition, LspRange, LspDiagnostic } from '../shared/types'
+import type { CodeAction, Diagnostic } from 'vscode-languageserver-protocol'
 import * as worktrees from './worktrees'
 import { ServiceSupervisor } from './services'
 import { AgentManager, detectAgents, mergeAgents } from './agents'
@@ -471,6 +472,69 @@ export function registerIpc(): void {
     'lsp:hover',
     (_e, worktreeId: string, language: string, uri: string, position: LspPosition) =>
       lsp.hover(worktreeId, language, uri, position)
+  )
+  ipcMain.handle(
+    'lsp:definition',
+    (_e, worktreeId: string, language: string, uri: string, position: LspPosition) =>
+      lsp.definition(worktreeId, language, uri, position)
+  )
+  ipcMain.handle(
+    'lsp:references',
+    (_e, worktreeId: string, language: string, uri: string, position: LspPosition) =>
+      lsp.references(worktreeId, language, uri, position)
+  )
+  ipcMain.handle(
+    'lsp:implementation',
+    (_e, worktreeId: string, language: string, uri: string, position: LspPosition) =>
+      lsp.implementation(worktreeId, language, uri, position)
+  )
+  ipcMain.handle(
+    'lsp:typeDefinition',
+    (_e, worktreeId: string, language: string, uri: string, position: LspPosition) =>
+      lsp.typeDefinition(worktreeId, language, uri, position)
+  )
+  ipcMain.handle(
+    'lsp:declaration',
+    (_e, worktreeId: string, language: string, uri: string, position: LspPosition) =>
+      lsp.declaration(worktreeId, language, uri, position)
+  )
+  ipcMain.handle(
+    'lsp:rename',
+    (
+      _e,
+      worktreeId: string,
+      language: string,
+      uri: string,
+      position: LspPosition,
+      newName: string
+    ) => lsp.rename(worktreeId, language, uri, position, newName)
+  )
+  ipcMain.handle(
+    'lsp:formatting',
+    (_e, worktreeId: string, language: string, uri: string, tabSize: number) =>
+      lsp.formatting(worktreeId, language, uri, tabSize)
+  )
+  ipcMain.handle(
+    'lsp:codeAction',
+    (
+      _e,
+      worktreeId: string,
+      language: string,
+      uri: string,
+      range: LspRange,
+      diagnostics: LspDiagnostic[]
+      // severity is a plain number over IPC; identical to DiagnosticSeverity.
+    ) => lsp.codeAction(worktreeId, language, uri, range, diagnostics as unknown as Diagnostic[])
+  )
+  ipcMain.handle(
+    'lsp:resolveCodeAction',
+    (_e, worktreeId: string, language: string, action: CodeAction) =>
+      lsp.resolveCodeAction(worktreeId, language, action)
+  )
+  ipcMain.handle(
+    'lsp:executeCommand',
+    (_e, worktreeId: string, language: string, command: string, args: unknown[]) =>
+      lsp.executeCommand(worktreeId, language, command, args)
   )
 
   // ── State ─────────────────────────────────────────────────────

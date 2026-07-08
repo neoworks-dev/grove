@@ -1,5 +1,6 @@
 <script lang="ts">
   import { settings } from '../lib/settings.svelte'
+  import { agentPrompt } from '../lib/agentPrompt.svelte'
   import { layout } from '../lib/layout.svelte'
   import {
     store,
@@ -24,6 +25,15 @@
 
   let prompt = $state('')
   let promptEl = $state<HTMLTextAreaElement>()
+
+  // Keybind 'ai-prompt' actions prefill the composer and focus it.
+  $effect(() => {
+    if (agentPrompt.prefill === null) return
+    const text = agentPrompt.consume()
+    if (text === null) return
+    prompt = text
+    promptEl?.focus()
+  })
   let selectedAgent = $state<string>(settings.get<string>('workbench.defaultAgent') || '')
   let modeIndex = $state(0)
   let effortIndex = $state(0)

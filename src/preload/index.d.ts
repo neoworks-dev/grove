@@ -34,6 +34,7 @@ interface RepoStateShape {
   selectedWorktreeId: string | null
   setupOnceDone: boolean
   agentSessions: Record<string, string>
+  trustedActionHashes: string[]
   viewLayouts: Record<string, unknown>
   activeLayoutView: string | null
   paneSizes: Record<string, number>
@@ -146,6 +147,9 @@ export interface WorkbenchApi {
   state: {
     getRepo: () => Promise<RepoStateShape>
     update: (patch: Partial<RepoStateShape>) => Promise<RepoStateShape>
+  }
+  actions: {
+    runShell: (worktreeId: string, commandLine: string) => Promise<void>
   }
   settings: {
     read: () => Promise<SettingsSnapshotShape>

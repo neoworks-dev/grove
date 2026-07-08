@@ -17,6 +17,9 @@ export interface RepoState {
   setupOnceDone: boolean
   agentSessions: Record<string, string> // legacy: "worktreeId::agent" -> token
   agentChats: Record<string, AgentChats> // "worktreeId::agent" -> named chats
+  // Hashes of project-scope shell/ai keybind actions the user has approved
+  // (project settings are repo-supplied — running them needs consent).
+  trustedActionHashes: string[]
   // UI layout (restored on repo open).
   viewLayouts: Record<string, unknown> // view id -> serialized layout tree
   activeLayoutView: string | null
@@ -75,6 +78,7 @@ export function emptyRepoState(): RepoState {
     setupOnceDone: false,
     agentSessions: {},
     agentChats: {},
+    trustedActionHashes: [],
     viewLayouts: {},
     activeLayoutView: null,
     paneSizes: {},

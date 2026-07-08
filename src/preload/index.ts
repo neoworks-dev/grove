@@ -111,6 +111,10 @@ const workbench = {
     getRepo: () => ipcRenderer.invoke('state:getRepo'),
     update: (patch: Record<string, unknown>) => ipcRenderer.invoke('state:update', patch)
   },
+  actions: {
+    runShell: (worktreeId: string, commandLine: string) =>
+      ipcRenderer.invoke('actions:runShell', worktreeId, commandLine)
+  },
   settings: {
     read: () => ipcRenderer.invoke('settings:read'),
     set: (key: string, value: unknown, scope: 'user' | 'project') =>

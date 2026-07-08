@@ -83,6 +83,22 @@ export interface AgentLaunchOptions {
   effort?: string
 }
 
+// ── Named chats (multiple conversations per worktree+agent) ─────
+// Each chat owns a continuation token and its own on-disk transcript, so a
+// worktree can hold several resumable, individually named conversations.
+export interface ChatMeta {
+  id: string
+  name: string
+  session: string // provider continuation token ('' = fresh)
+  createdAt: number
+  updatedAt: number
+}
+
+export interface AgentChats {
+  activeId: string
+  chats: ChatMeta[]
+}
+
 // ── Interactive permissions (agent → user → agent) ──────────────
 
 export interface PermissionRequestEvent {

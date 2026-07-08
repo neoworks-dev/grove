@@ -28,10 +28,9 @@ interface Context {
   repoPath: string | null
   config: WorkbenchConfig | null
   worktrees: Worktree[]
-  agentSessions: Record<string, string> // "worktreeId::agent" -> continuation token
 }
 
-const context: Context = { repoPath: null, config: null, worktrees: [], agentSessions: {} }
+const context: Context = { repoPath: null, config: null, worktrees: [] }
 
 function send(channel: string, payload: unknown): void {
   for (const window of BrowserWindow.getAllWindows()) {
@@ -50,15 +49,20 @@ const agents = new AgentManager({
   onLog: (worktreeId, name, line) => send('event:log', { worktreeId, source: 'agent', name, line }),
   onPermission: (request) => send('event:agent-permission', request),
   onDialog: (request) => send('event:agent-dialog', request),
-  // Mirror continuation tokens into persisted repo state (empty = reset).
-  onSession: (worktreeId, name, token) => {
+  // Any session/chat change re-persists the whole named-chat map and notifies
+  // the renderer so its chat list stays in sync.
+  onSession: (worktreeId, name) => {
+    send('event:agent-chats', { worktreeId, name, chats: agents.listChats(worktreeId, name) })
     if (!context.repoPath) return
-    const key = `${worktreeId}::${name}`
-    if (token) context.agentSessions[key] = token
-    else delete context.agentSessions[key]
-    void updateRepoState(context.repoPath, { agentSessions: { ...context.agentSessions } })
+    void updateRepoState(context.repoPath, { agentChats: agents.allChats() })
   }
 })
+
+// Persist the named-chat map after a mutation and push it to the renderer.
+function persistChats(worktreeId: string, name: string): void {
+  send('event:agent-chats', { worktreeId, name, chats: agents.listChats(worktreeId, name) })
+  if (context.repoPath) void updateRepoState(context.repoPath, { agentChats: agents.allChats() })
+}
 
 const watcher = new WorktreeWatcher((change) => send('event:fs-change', change))
 
@@ -107,10 +111,10 @@ async function openRepo(repoPath: string): Promise<{
   context.repoPath = root
   context.config = await config.loadConfig(root)
   await setLastRepo(root)
-  // Restore agent continuation tokens so prior chats resume after a restart.
+  // Restore named chats (and migrate legacy tokens) so prior chats resume.
   const repoState = await getRepoState(root)
-  context.agentSessions = { ...(repoState.agentSessions || {}) }
-  agents.loadSessions(context.agentSessions)
+  agents.loadChats(repoState.agentChats || {})
+  agents.loadSessions(repoState.agentSessions || {})
   const list = await refreshWorktrees()
   return {
     info: {
@@ -278,17 +282,46 @@ export function registerIpc(): void {
     agents.stop(worktreeId, name)
   )
 
-  // New chat: drop the continuation token and wipe the transcript.
-  ipcMain.handle('agents:reset', (_e, worktreeId: string, name: string) => {
+  // New chat: start a fresh active chat (prior chats stay resumable).
+  ipcMain.handle('agents:reset', async (_e, worktreeId: string, name: string) => {
     const worktree = findWorktree(worktreeId)
-    return agents.resetSession(worktree, name)
+    const chat = await agents.resetSession(worktree, name)
+    return chat
   })
 
-  // Replay the persisted transcript (for restoring a chat after a restart).
+  // Replay the active chat's transcript (restore after restart).
   ipcMain.handle('agents:transcript', (_e, worktreeId: string, name: string) => {
     const worktree = findWorktree(worktreeId)
-    return agents.readTranscript(worktree.path, name)
+    const active = agents.listChats(worktreeId, name).activeId
+    return agents.readTranscript(worktree.path, name, active)
   })
+
+  // List the named chats for a worktree+agent.
+  ipcMain.handle('agents:chats', (_e, worktreeId: string, name: string) =>
+    agents.listChats(worktreeId, name)
+  )
+
+  // Rename a chat so it's easy to find when resuming.
+  ipcMain.handle(
+    'agents:renameChat',
+    (_e, worktreeId: string, name: string, chatId: string, chatName: string) => {
+      agents.renameChat(worktreeId, name, chatId, chatName)
+      persistChats(worktreeId, name)
+    }
+  )
+
+  // Switch to a previous chat: stop the current run, activate the target, and
+  // return its transcript so the renderer can swap the conversation.
+  ipcMain.handle(
+    'agents:activateChat',
+    async (_e, worktreeId: string, name: string, chatId: string) => {
+      await agents.stop(worktreeId, name)
+      agents.activateChat(worktreeId, name, chatId)
+      persistChats(worktreeId, name)
+      const worktree = findWorktree(worktreeId)
+      return agents.readTranscript(worktree.path, name, chatId)
+    }
+  )
 
   // Answer an interactive tool-permission request.
   ipcMain.handle('agents:respondPermission', (_e, id: string, decision: PermissionDecision) =>

@@ -5,13 +5,16 @@
 import { createWriteStream, type WriteStream } from 'fs'
 import { mkdir, writeFile, readFile } from 'fs/promises'
 import { join } from 'path'
+import { randomUUID } from 'crypto'
 import type {
+  AgentChats,
   AgentConfig,
   AgentDialogDecision,
   AgentDialogRequest,
   AgentLaunchOptions,
   AgentRuntime,
   AgentStatus,
+  ChatMeta,
   PermissionDecision,
   PermissionRequestEvent,
   Worktree
@@ -72,8 +75,9 @@ export class AgentManager {
   private permissionSeq = 0
   private dialogResolvers = new Map<string, (decision: AgentDialogDecision) => void>()
   private dialogSeq = 0
-  // Continuation tokens per (worktree, agent) — the key to multi-turn memory.
-  private sessions = new Map<string, string>()
+  // Named chats per (worktree, agent). Each carries its own continuation token
+  // and transcript file, so a worktree holds several resumable conversations.
+  private chats = new Map<string, AgentChats>()
 
   constructor(private events: AgentEvents) {}
 
@@ -81,9 +85,82 @@ export class AgentManager {
     return `${worktreeId}::${name}`
   }
 
-  // Seed persisted tokens on repo open so a restart resumes prior chats.
+  // ── Named chats ────────────────────────────────────────────────
+  loadChats(map: Record<string, AgentChats>): void {
+    this.chats = new Map(
+      Object.entries(map).map(([key, value]) => [
+        key,
+        { activeId: value.activeId, chats: value.chats.map((chat) => ({ ...chat })) }
+      ])
+    )
+  }
+
+  // Migrate legacy single-token sessions into a default 'legacy' chat (whose
+  // transcript still lives in the old agent-<name>.log file). Only fills keys
+  // that have no chats yet, so loadChats stays authoritative.
   loadSessions(map: Record<string, string>): void {
-    this.sessions = new Map(Object.entries(map))
+    for (const [key, token] of Object.entries(map)) {
+      if (this.chats.has(key)) continue
+      this.chats.set(key, {
+        activeId: 'legacy',
+        chats: [{ id: 'legacy', name: 'Chat 1', session: token, createdAt: 0, updatedAt: 0 }]
+      })
+    }
+  }
+
+  allChats(): Record<string, AgentChats> {
+    return Object.fromEntries(this.chats.entries())
+  }
+
+  private ensureChats(key: string): AgentChats {
+    let entry = this.chats.get(key)
+    if (!entry || entry.chats.length === 0) {
+      const chat = this.newChat('Chat 1')
+      entry = { activeId: chat.id, chats: [chat] }
+      this.chats.set(key, entry)
+    }
+    return entry
+  }
+
+  private newChat(name: string): ChatMeta {
+    const now = Date.now()
+    return { id: randomUUID(), name, session: '', createdAt: now, updatedAt: now }
+  }
+
+  private activeChat(key: string): ChatMeta {
+    const entry = this.ensureChats(key)
+    return entry.chats.find((chat) => chat.id === entry.activeId) || entry.chats[0]
+  }
+
+  listChats(worktreeId: string, name: string): AgentChats {
+    return this.ensureChats(this.key(worktreeId, name))
+  }
+
+  createChat(worktreeId: string, name: string, chatName?: string): ChatMeta {
+    const key = this.key(worktreeId, name)
+    const entry = this.ensureChats(key)
+    const chat = this.newChat(chatName || `Chat ${entry.chats.length + 1}`)
+    entry.chats.push(chat)
+    entry.activeId = chat.id
+    return chat
+  }
+
+  renameChat(worktreeId: string, name: string, chatId: string, chatName: string): void {
+    const entry = this.ensureChats(this.key(worktreeId, name))
+    const chat = entry.chats.find((candidate) => candidate.id === chatId)
+    if (!chat) return
+    chat.name = chatName
+    chat.updatedAt = Date.now()
+  }
+
+  activateChat(worktreeId: string, name: string, chatId: string): void {
+    const entry = this.ensureChats(this.key(worktreeId, name))
+    if (entry.chats.some((chat) => chat.id === chatId)) entry.activeId = chatId
+  }
+
+  private transcriptPath(worktreePath: string, name: string, chatId: string): string {
+    const file = chatId === 'legacy' ? `agent-${name}.log` : `agent-${name}__${chatId}.log`
+    return join(logsDir(worktreePath), file)
   }
 
   getRuntime(worktreeId: string, name: string): AgentRuntime | null {
@@ -106,11 +183,12 @@ export class AgentManager {
     if (!adapter) throw new Error(`unknown agent: ${name}`)
 
     const key = this.key(worktree.id, name)
-    const resume = this.sessions.get(key)
+    const chat = this.activeChat(key)
+    const resume = chat.session || undefined
 
     const dir = logsDir(worktree.path)
     await mkdir(dir, { recursive: true })
-    const logPath = join(dir, `agent-${name}.log`)
+    const logPath = this.transcriptPath(worktree.path, name, chat.id)
     // Only wipe the transcript for a fresh chat; resuming appends to it.
     if (!resume) await writeFile(logPath, '', 'utf8').catch(() => {})
     const logStream = createWriteStream(logPath, { flags: 'a' })
@@ -159,25 +237,25 @@ export class AgentManager {
 
   private rememberSession(worktreeId: string, name: string, token: string): void {
     if (!token) return
-    const key = this.key(worktreeId, name)
-    if (this.sessions.get(key) === token) return
-    this.sessions.set(key, token)
+    const chat = this.activeChat(this.key(worktreeId, name))
+    if (chat.session === token) return
+    chat.session = token
+    chat.updatedAt = Date.now()
     this.events.onSession?.(worktreeId, name, token)
   }
 
-  // "New chat": drop the continuation token and wipe the transcript so the next
-  // message starts a fresh conversation.
-  async resetSession(worktree: Worktree, name: string): Promise<void> {
+  // "New chat": start a fresh active chat, leaving prior chats resumable.
+  async resetSession(worktree: Worktree, name: string): Promise<ChatMeta> {
     await this.stop(worktree.id, name)
-    this.sessions.delete(this.key(worktree.id, name))
+    const chat = this.createChat(worktree.id, name)
+    // Reuse the onSession event as the persistence trigger.
     this.events.onSession?.(worktree.id, name, '')
-    const logPath = join(logsDir(worktree.path), `agent-${name}.log`)
-    await writeFile(logPath, '', 'utf8').catch(() => {})
+    return chat
   }
 
-  // Read the on-disk transcript (newest-capped) for replay after a restart.
-  async readTranscript(worktreePath: string, name: string): Promise<string[]> {
-    const logPath = join(logsDir(worktreePath), `agent-${name}.log`)
+  // Read a chat's on-disk transcript (newest-capped) for replay/switching.
+  async readTranscript(worktreePath: string, name: string, chatId: string): Promise<string[]> {
+    const logPath = this.transcriptPath(worktreePath, name, chatId)
     try {
       const text = await readFile(logPath, 'utf8')
       const lines = text.split('\n').filter((line) => line.length > 0)

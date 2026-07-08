@@ -5,7 +5,7 @@
 import { app } from 'electron'
 import { readFile, writeFile, mkdir } from 'fs/promises'
 import { join, dirname } from 'path'
-import type { InstalledExtension } from '../shared/types'
+import type { InstalledExtension, AgentChats } from '../shared/types'
 
 export type { InstalledExtension }
 
@@ -15,7 +15,8 @@ export interface RepoState {
   activeTabPath: string | null
   selectedWorktreeId: string | null
   setupOnceDone: boolean
-  agentSessions: Record<string, string> // "worktreeId::agent" -> continuation token
+  agentSessions: Record<string, string> // legacy: "worktreeId::agent" -> token
+  agentChats: Record<string, AgentChats> // "worktreeId::agent" -> named chats
   // UI layout (restored on repo open).
   paneSizes: Record<string, number> // pane key -> px
   panelsOpen: Record<string, boolean> // panel key -> open
@@ -69,6 +70,7 @@ export function emptyRepoState(): RepoState {
     selectedWorktreeId: null,
     setupOnceDone: false,
     agentSessions: {},
+    agentChats: {},
     paneSizes: {},
     panelsOpen: {},
     centerView: null,

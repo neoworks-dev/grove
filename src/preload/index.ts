@@ -50,6 +50,12 @@ const workbench = {
       ipcRenderer.invoke('agents:reset', worktreeId, name),
     transcript: (worktreeId: string, name: string) =>
       ipcRenderer.invoke('agents:transcript', worktreeId, name),
+    chats: (worktreeId: string, name: string) =>
+      ipcRenderer.invoke('agents:chats', worktreeId, name),
+    renameChat: (worktreeId: string, name: string, chatId: string, chatName: string) =>
+      ipcRenderer.invoke('agents:renameChat', worktreeId, name, chatId, chatName),
+    activateChat: (worktreeId: string, name: string, chatId: string) =>
+      ipcRenderer.invoke('agents:activateChat', worktreeId, name, chatId),
     respondPermission: (id: string, decision: unknown) =>
       ipcRenderer.invoke('agents:respondPermission', id, decision),
     respondDialog: (id: string, decision: unknown) =>

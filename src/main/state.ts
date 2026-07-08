@@ -18,6 +18,10 @@ export interface RepoState {
   agentSessions: Record<string, string> // legacy: "worktreeId::agent" -> token
   agentChats: Record<string, AgentChats> // "worktreeId::agent" -> named chats
   // UI layout (restored on repo open).
+  viewLayouts: Record<string, unknown> // view id -> serialized layout tree
+  activeLayoutView: string | null
+  // Legacy pre-tree layout fields, kept as migration input. paneSizes still
+  // carries sizes for panels nested inside panes (tree, diffList).
   paneSizes: Record<string, number> // pane key -> px
   panelsOpen: Record<string, boolean> // panel key -> open
   centerView: string | null
@@ -71,6 +75,8 @@ export function emptyRepoState(): RepoState {
     setupOnceDone: false,
     agentSessions: {},
     agentChats: {},
+    viewLayouts: {},
+    activeLayoutView: null,
     paneSizes: {},
     panelsOpen: {},
     centerView: null,

@@ -42,7 +42,7 @@
 
 {#if visible}
   <div
-    class="pointer-events-none absolute bottom-3 right-3 z-overlay max-h-[60%] w-72 overflow-auto rounded-lg border border-line bg-elevated/95 shadow-overlay backdrop-blur"
+    class="pointer-events-none fixed bottom-8 right-3 z-overlay max-h-[60%] w-72 overflow-auto rounded-lg border border-line bg-elevated/95 shadow-overlay backdrop-blur"
   >
     <div class="flex items-center gap-2 border-b border-line px-3 py-1.5">
       <span class="text-2xs font-semibold uppercase tracking-caps text-dim">Leader</span>

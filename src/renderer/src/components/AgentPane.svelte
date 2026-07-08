@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { layout } from '../lib/layout.svelte'
   import {
     store,
     refreshRuntimes,
@@ -766,7 +767,7 @@
   function showChange(): void {
     // Prefer the proposed-change diff; fall back to opening the file.
     if (store.proposedDiff) {
-      store.centerView = 'diff'
+      layout.showCenterPane('diff')
     } else if (pendingPermission?.path && store.selectedWorktreeId) {
       openFileInEditor(store.selectedWorktreeId, pendingPermission.path)
     }

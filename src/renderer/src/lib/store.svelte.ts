@@ -27,7 +27,6 @@ import { currentPackName, setIconPack } from './icons'
 import { currentThemeName, applyThemeVars, themeFor } from './themes'
 import type { ColorTheme } from './themes'
 import { layout } from './layout.svelte'
-import { activity } from './activity.svelte'
 
 export interface EditorTab {
   worktreeId: string
@@ -35,8 +34,6 @@ export interface EditorTab {
   name: string
   pinned?: boolean
 }
-
-export type CenterView = 'editor' | 'diff' | 'preview' | 'dashboard'
 
 const MAX_LOG_LINES = 2000
 
@@ -46,7 +43,6 @@ class WorkbenchStore {
   selectedWorktreeId = $state<string | null>(null)
   config = $state<WorkbenchConfig | null>(null)
   branches = $state<BranchList | null>(null)
-  centerView = $state<CenterView>('editor')
 
   // Per-worktree runtime keyed by worktreeId.
   services = $state<Record<string, ServiceRuntime[]>>({})
@@ -147,7 +143,7 @@ class WorkbenchStore {
       this.tabs = [...this.tabs, tab]
     }
     this.activeTabPath = tab.path
-    this.centerView = 'editor'
+    layout.showCenterPane('editor')
   }
 
   closeTab(path: string): void {
@@ -392,7 +388,7 @@ export async function openProposedDiff(request: PermissionRequestEvent): Promise
   }
 
   store.proposedDiff = { path, original, modified, language: languageForPath(path) }
-  store.centerView = 'diff'
+  layout.showCenterPane('diff')
 }
 
 // ── Actions ───────────────────────────────────────────────────
@@ -412,13 +408,8 @@ export async function openRepoResult(result: {
     restored && result.worktrees.some((worktree) => worktree.id === restored)
       ? restored
       : result.worktrees[0]?.id || null
-  // Restore UI layout (pane sizes, panels, center view, sidebar view, open tabs).
+  // Restore UI layout (split tree — or the legacy pane sizes — and open tabs).
   layout.apply(repoState)
-  if (repoState.activeView) activity.setActive(repoState.activeView)
-  const CENTER_VIEWS: CenterView[] = ['editor', 'diff', 'preview', 'dashboard']
-  if (repoState.centerView && CENTER_VIEWS.includes(repoState.centerView as CenterView)) {
-    store.centerView = repoState.centerView as CenterView
-  }
   if (store.selectedWorktreeId && repoState.openTabs && repoState.openTabs.length > 0) {
     const worktreeId = store.selectedWorktreeId
     store.tabs = repoState.openTabs.map((path) => ({
@@ -533,7 +524,7 @@ export function subscribeEvents(): void {
     if (isFile && store.activeAgentWorktrees.includes(event.worktreeId)) {
       store.selectedWorktreeId = event.worktreeId
       store.requestedDiffFile = event.relPath
-      store.centerView = 'diff'
+      layout.showCenterPane('diff')
     }
   })
 }

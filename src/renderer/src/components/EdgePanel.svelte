@@ -1,10 +1,11 @@
 <script lang="ts">
   import type { Snippet } from 'svelte'
 
-  // Reusable resizable pane. Renders content plus a drag handle on one edge.
-  // `side` is the edge the handle sits on: left/right control width, top/bottom
-  // control height. E.g. a left-docked sidebar uses side="right" (handle on its
-  // right edge). `size` is bindable so callers can persist it.
+  // Edge-docked resizable panel used INSIDE pane components (e.g. the diff
+  // file list) — the split-tree PaneLeaf is the canonical top-level window.
+  // Renders content plus a drag handle on one edge. `side` is the edge the
+  // handle sits on: left/right control width, top/bottom control height.
+  // `size` is bindable so callers can persist it.
   let {
     side = 'right',
     size = $bindable(256),

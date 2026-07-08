@@ -73,9 +73,18 @@ function start(context: AdapterContext): RunHandle {
       const { client, server: srv } = await createOpencode()
       server = srv
 
-      const created = await client.session.create({ query: { directory } })
-      sessionId = created.data?.id || ''
-      if (!sessionId) throw new Error('failed to create opencode session')
+      // Reuse the prior session when resuming (OpenCode's global data dir keeps
+      // sessions across ephemeral servers); otherwise create a fresh one.
+      // Best-effort: if the stored session is gone the prompt below will error
+      // and surface as an agent error, prompting a New chat.
+      if (context.resume) {
+        sessionId = context.resume
+      } else {
+        const created = await client.session.create({ query: { directory } })
+        sessionId = created.data?.id || ''
+        if (!sessionId) throw new Error('failed to create opencode session')
+        context.setSession(sessionId)
+      }
 
       // Subscribe for permission prompts in the background.
       void respondToPermissions(client).catch(() => {})

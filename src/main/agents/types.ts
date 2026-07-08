@@ -17,10 +17,15 @@ export interface AdapterContext {
   worktree: Worktree
   ports: number[]
   options: AgentLaunchOptions
+  // Continuation token from a prior turn (SDK session/thread id). When set, the
+  // adapter resumes that conversation instead of starting a fresh one.
+  resume?: string
   // Emit one normalized stream event (a JSON string in the claude stream-json
   // shape: { type: 'assistant' | 'user' | ... , message: { content: [...] } }).
   emit: (line: string) => void
   setStatus: (status: AgentStatus, exitCode?: number | null) => void
+  // Report the live session/thread id so the manager can resume it next turn.
+  setSession: (token: string) => void
   // Ask the user to approve a tool call; resolves once they decide.
   requestPermission: (
     request: Omit<PermissionRequestEvent, 'id'>

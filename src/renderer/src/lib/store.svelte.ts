@@ -163,6 +163,28 @@ export function openFileInEditor(worktreeId: string, path: string): void {
   store.openTab({ worktreeId, path, name })
 }
 
+// Seed the in-memory transcript from the persisted on-disk log so a chat
+// reappears after an app restart. Caller only invokes this when no agent lines
+// exist yet for the worktree.
+export function seedAgentTranscript(worktreeId: string, name: string, lines: string[]): void {
+  if (lines.length === 0) return
+  const entries: LogLine[] = lines.map((line) => ({ source: 'agent', name, line }))
+  const current = store.logs[worktreeId] || []
+  store.logs = { ...store.logs, [worktreeId]: [...entries, ...current] }
+}
+
+// "New chat": reset the agent's continuation server-side and clear its
+// transcript + any pending review state from the UI.
+export async function resetAgentChat(worktreeId: string, agent: string): Promise<void> {
+  await window.workbench.agents.reset(worktreeId, agent)
+  const current = store.logs[worktreeId] || []
+  store.logs = { ...store.logs, [worktreeId]: current.filter((line) => line.source !== 'agent') }
+  store.pendingPermissions = store.pendingPermissions.filter(
+    (request) => !(request.worktreeId === worktreeId && request.agent === agent)
+  )
+  store.proposedDiff = null
+}
+
 // Answer a pending permission request and drop it from the queue.
 export async function respondPermission(
   id: string,

@@ -3,7 +3,7 @@
 // bridges interactive tool-permission requests between adapters and the user.
 
 import { createWriteStream, type WriteStream } from 'fs'
-import { mkdir, writeFile } from 'fs/promises'
+import { mkdir, writeFile, readFile } from 'fs/promises'
 import { join } from 'path'
 import type {
   AgentConfig,
@@ -42,7 +42,13 @@ export interface AgentEvents {
   onStatus: (runtime: AgentRuntime) => void
   onLog: (worktreeId: string, name: string, line: string) => void
   onPermission: (request: PermissionRequestEvent) => void
+  // Continuation token changed (empty string = conversation reset). Lets ipc
+  // mirror it into persisted repo state so chats survive restarts.
+  onSession?: (worktreeId: string, name: string, token: string) => void
 }
+
+// Cap transcript replay so a very long conversation can't flood the renderer.
+const MAX_TRANSCRIPT_LINES = 4000
 
 interface RunningAgent {
   handle: RunHandle
@@ -59,11 +65,18 @@ export class AgentManager {
   private running = new Map<string, RunningAgent>()
   private permissionResolvers = new Map<string, (decision: PermissionDecision) => void>()
   private permissionSeq = 0
+  // Continuation tokens per (worktree, agent) — the key to multi-turn memory.
+  private sessions = new Map<string, string>()
 
   constructor(private events: AgentEvents) {}
 
   private key(worktreeId: string, name: string): string {
     return `${worktreeId}::${name}`
+  }
+
+  // Seed persisted tokens on repo open so a restart resumes prior chats.
+  loadSessions(map: Record<string, string>): void {
+    this.sessions = new Map(Object.entries(map))
   }
 
   getRuntime(worktreeId: string, name: string): AgentRuntime | null {
@@ -85,10 +98,14 @@ export class AgentManager {
     const adapter = registry.get(name)
     if (!adapter) throw new Error(`unknown agent: ${name}`)
 
+    const key = this.key(worktree.id, name)
+    const resume = this.sessions.get(key)
+
     const dir = logsDir(worktree.path)
     await mkdir(dir, { recursive: true })
     const logPath = join(dir, `agent-${name}.log`)
-    await writeFile(logPath, '', 'utf8').catch(() => {})
+    // Only wipe the transcript for a fresh chat; resuming appends to it.
+    if (!resume) await writeFile(logPath, '', 'utf8').catch(() => {})
     const logStream = createWriteStream(logPath, { flags: 'a' })
 
     const runtime: AgentRuntime = {
@@ -101,7 +118,6 @@ export class AgentManager {
       logPath
     }
 
-    const key = this.key(worktree.id, name)
     const entry: RunningAgent = {
       handle: { stop: async () => {} },
       logStream,
@@ -121,13 +137,45 @@ export class AgentManager {
       worktree,
       ports,
       options,
+      resume,
       emit,
       setStatus: (status, exitCode) => this.handleStatus(worktree.id, name, status, exitCode ?? null),
+      setSession: (token) => this.rememberSession(worktree.id, name, token),
       requestPermission: (request) => this.requestPermission(worktree.id, name, request)
     })
 
     this.events.onStatus({ ...runtime })
     return { ...runtime }
+  }
+
+  private rememberSession(worktreeId: string, name: string, token: string): void {
+    if (!token) return
+    const key = this.key(worktreeId, name)
+    if (this.sessions.get(key) === token) return
+    this.sessions.set(key, token)
+    this.events.onSession?.(worktreeId, name, token)
+  }
+
+  // "New chat": drop the continuation token and wipe the transcript so the next
+  // message starts a fresh conversation.
+  async resetSession(worktree: Worktree, name: string): Promise<void> {
+    await this.stop(worktree.id, name)
+    this.sessions.delete(this.key(worktree.id, name))
+    this.events.onSession?.(worktree.id, name, '')
+    const logPath = join(logsDir(worktree.path), `agent-${name}.log`)
+    await writeFile(logPath, '', 'utf8').catch(() => {})
+  }
+
+  // Read the on-disk transcript (newest-capped) for replay after a restart.
+  async readTranscript(worktreePath: string, name: string): Promise<string[]> {
+    const logPath = join(logsDir(worktreePath), `agent-${name}.log`)
+    try {
+      const text = await readFile(logPath, 'utf8')
+      const lines = text.split('\n').filter((line) => line.length > 0)
+      return lines.slice(-MAX_TRANSCRIPT_LINES)
+    } catch {
+      return []
+    }
   }
 
   private requestPermission(

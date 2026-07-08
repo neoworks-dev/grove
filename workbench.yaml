@@ -1,0 +1,31 @@
+workbench:
+  worktrees_dir: ../.worktrees
+  default_base_branch: main
+
+ports:
+  start: 3100
+  count_per_worktree: 10
+
+setup:
+  once:
+    - echo "one-time setup"
+  per_worktree:
+    - echo "per-worktree setup for ${WT_NAME}"
+
+services:
+  # Simple static server so previews work out of the box (no project deps needed).
+  web:
+    command: python3 -m http.server ${PORT_0}
+    preview: http://localhost:${PORT_0}
+    health: http://localhost:${PORT_0}
+    log: web.log
+
+agents:
+  claude:
+    command: claude -p
+  codex:
+    command: codex exec
+  opencode:
+    command: opencode -?
+  echo:
+    command: echo '{"role":"assistant","content":"stub agent output"}'

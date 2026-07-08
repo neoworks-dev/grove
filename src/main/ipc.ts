@@ -1,0 +1,277 @@
+// Central IPC surface. Registers every ipcMain.handle channel and pushes
+// streamed events (logs, service/agent status) to the renderer. This is the
+// single source of truth for the API exposed via preload.
+
+import { ipcMain, dialog, shell, BrowserWindow, type IpcMainInvokeEvent } from 'electron'
+import type { WorkbenchConfig, Worktree, DiffFile } from '../shared/types'
+import * as git from './git'
+import * as config from './config'
+import * as files from './files'
+import * as worktrees from './worktrees'
+import { ServiceSupervisor } from './services'
+import { AgentManager } from './agents'
+import { getRepoState, updateRepoState, setLastRepo, loadState } from './state'
+
+interface Context {
+  repoPath: string | null
+  config: WorkbenchConfig | null
+  worktrees: Worktree[]
+}
+
+const context: Context = { repoPath: null, config: null, worktrees: [] }
+
+function send(channel: string, payload: unknown): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    window.webContents.send(channel, payload)
+  }
+}
+
+const supervisor = new ServiceSupervisor({
+  onStatus: (runtime) => send('event:service-status', runtime),
+  onLog: (worktreeId, name, line) =>
+    send('event:log', { worktreeId, source: 'service', name, line })
+})
+
+const agents = new AgentManager({
+  onStatus: (runtime) => send('event:agent-status', runtime),
+  onLog: (worktreeId, name, line) => send('event:log', { worktreeId, source: 'agent', name, line })
+})
+
+function findWorktree(worktreeId: string): Worktree {
+  const worktree = context.worktrees.find((entry) => entry.id === worktreeId)
+  if (!worktree) throw new Error(`unknown worktree: ${worktreeId}`)
+  return worktree
+}
+
+function requireRepo(): { repoPath: string; config: WorkbenchConfig } {
+  if (!context.repoPath || !context.config) {
+    throw new Error('no repository opened')
+  }
+  return { repoPath: context.repoPath, config: context.config }
+}
+
+async function refreshWorktrees(): Promise<Worktree[]> {
+  const { repoPath, config: cfg } = requireRepo()
+  context.worktrees = await worktrees.listWithPorts(repoPath, cfg)
+  return context.worktrees
+}
+
+// Open a repo: validate, load config, remember it, list worktrees.
+async function openRepo(repoPath: string): Promise<{
+  info: { path: string; name: string; currentBranch: string }
+  worktrees: Worktree[]
+}> {
+  if (!(await git.isGitRepo(repoPath))) {
+    throw new Error('not a git repository')
+  }
+  const root = await git.repoRoot(repoPath)
+  context.repoPath = root
+  context.config = await config.loadConfig(root)
+  await setLastRepo(root)
+  const list = await refreshWorktrees()
+  return {
+    info: {
+      path: root,
+      name: root.split('/').pop() || root,
+      currentBranch: await git.currentBranch(root)
+    },
+    worktrees: list
+  }
+}
+
+export function registerIpc(): void {
+  // ── Repo ──────────────────────────────────────────────────────
+  ipcMain.handle('repo:pick', async () => {
+    const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
+    if (result.canceled || result.filePaths.length === 0) return null
+    return openRepo(result.filePaths[0])
+  })
+
+  ipcMain.handle('repo:open', (_e, repoPath: string) => openRepo(repoPath))
+
+  ipcMain.handle('repo:last', async () => {
+    const state = await loadState()
+    return state.lastRepoPath
+  })
+
+  // ── Worktrees ─────────────────────────────────────────────────
+  ipcMain.handle('worktrees:list', () => refreshWorktrees())
+
+  ipcMain.handle(
+    'worktrees:create',
+    async (_e, options: { name: string; baseBranch: string; newBranch?: string }) => {
+      const { repoPath, config: cfg } = requireRepo()
+      const created = await worktrees.createWorktree(repoPath, cfg, options, (worktreeId, line) =>
+        send('event:log', { worktreeId, source: 'service', name: 'setup', line })
+      )
+      await refreshWorktrees()
+      return created
+    }
+  )
+
+  ipcMain.handle(
+    'worktrees:remove',
+    async (_e, worktreeId: string, force: boolean) => {
+      const { repoPath } = requireRepo()
+      const worktree = findWorktree(worktreeId)
+      await supervisor.stopAllForWorktree(worktreeId)
+      await worktrees.removeWorktree(repoPath, worktree.path, force)
+      return refreshWorktrees()
+    }
+  )
+
+  // ── Git (branches + diff) ─────────────────────────────────────
+  ipcMain.handle('git:branches', () => {
+    const { repoPath } = requireRepo()
+    return git.listBranches(repoPath)
+  })
+
+  ipcMain.handle('git:changedFiles', (_e, worktreeId: string) => {
+    const worktree = findWorktree(worktreeId)
+    return git.changedFiles(worktree.path)
+  })
+
+  ipcMain.handle('git:diffSides', (_e, worktreeId: string, file: DiffFile) => {
+    const worktree = findWorktree(worktreeId)
+    return git.diffSides(worktree.path, file)
+  })
+
+  // ── Config ────────────────────────────────────────────────────
+  ipcMain.handle('config:load', async () => {
+    const { repoPath } = requireRepo()
+    context.config = await config.loadConfig(repoPath)
+    return context.config
+  })
+
+  ipcMain.handle('config:exists', () => {
+    const { repoPath } = requireRepo()
+    return config.configExists(repoPath)
+  })
+
+  ipcMain.handle('config:writeSample', async () => {
+    const { repoPath } = requireRepo()
+    const written = await config.writeSampleConfig(repoPath)
+    context.config = await config.loadConfig(repoPath)
+    return written
+  })
+
+  // ── Services ──────────────────────────────────────────────────
+  ipcMain.handle('services:list', (_e, worktreeId: string) => {
+    const { config: cfg } = requireRepo()
+    const worktree = findWorktree(worktreeId)
+    const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
+    return Object.entries(cfg.services).map(([name, service]) => {
+      const live = supervisor.getRuntime(worktreeId, name)
+      return live || supervisor.buildIdleRuntime(worktree, name, service, ports)
+    })
+  })
+
+  ipcMain.handle('services:start', (_e, worktreeId: string, name: string) => {
+    const { config: cfg } = requireRepo()
+    const worktree = findWorktree(worktreeId)
+    const service = cfg.services[name]
+    if (!service) throw new Error(`unknown service: ${name}`)
+    const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
+    return supervisor.start(worktree, name, service, ports)
+  })
+
+  ipcMain.handle('services:startAll', async (_e, worktreeId: string) => {
+    const { config: cfg } = requireRepo()
+    const worktree = findWorktree(worktreeId)
+    const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
+    for (const [name, service] of Object.entries(cfg.services)) {
+      await supervisor.start(worktree, name, service, ports)
+    }
+  })
+
+  ipcMain.handle('services:stop', (_e, worktreeId: string, name: string) =>
+    supervisor.stop(worktreeId, name)
+  )
+
+  ipcMain.handle('services:stopAll', (_e, worktreeId: string) =>
+    supervisor.stopAllForWorktree(worktreeId)
+  )
+
+  ipcMain.handle('services:restart', (_e, worktreeId: string, name: string) => {
+    const { config: cfg } = requireRepo()
+    const worktree = findWorktree(worktreeId)
+    const service = cfg.services[name]
+    if (!service) throw new Error(`unknown service: ${name}`)
+    const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
+    return supervisor.start(worktree, name, service, ports)
+  })
+
+  // ── Agents ────────────────────────────────────────────────────
+  ipcMain.handle('agents:list', (_e, worktreeId: string) => {
+    const { config: cfg } = requireRepo()
+    return Object.entries(cfg.agents).map(([name, agent]) => {
+      const live = agents.getRuntime(worktreeId, name)
+      if (live) return live
+      return {
+        worktreeId,
+        name,
+        status: 'stopped' as const,
+        pid: null,
+        command: agent.command,
+        exitCode: null,
+        logPath: ''
+      }
+    })
+  })
+
+  ipcMain.handle(
+    'agents:start',
+    (_e, worktreeId: string, name: string, prompt?: string) => {
+      const { config: cfg } = requireRepo()
+      const worktree = findWorktree(worktreeId)
+      const agent = cfg.agents[name]
+      if (!agent) throw new Error(`unknown agent: ${name}`)
+      const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
+      return agents.start(worktree, name, agent, ports, prompt)
+    }
+  )
+
+  ipcMain.handle('agents:stop', (_e, worktreeId: string, name: string) =>
+    agents.stop(worktreeId, name)
+  )
+
+  ipcMain.handle('agents:active', () => agents.activeWorktreeIds())
+
+  // ── Files ─────────────────────────────────────────────────────
+  ipcMain.handle('files:listDir', (_e, worktreeId: string, relPath: string) => {
+    const worktree = findWorktree(worktreeId)
+    return files.listDir(worktree.path, relPath)
+  })
+
+  ipcMain.handle('files:read', (_e, worktreeId: string, absPath: string) => {
+    const worktree = findWorktree(worktreeId)
+    return files.readFileContent(worktree.path, absPath)
+  })
+
+  ipcMain.handle('files:write', (_e, worktreeId: string, absPath: string, content: string) => {
+    const worktree = findWorktree(worktreeId)
+    return files.writeFileContent(worktree.path, absPath, content)
+  })
+
+  // ── State ─────────────────────────────────────────────────────
+  ipcMain.handle('state:getRepo', () => {
+    const { repoPath } = requireRepo()
+    return getRepoState(repoPath)
+  })
+
+  ipcMain.handle('state:update', (_e, patch: Record<string, unknown>) => {
+    const { repoPath } = requireRepo()
+    return updateRepoState(repoPath, patch)
+  })
+
+  // ── Misc ──────────────────────────────────────────────────────
+  ipcMain.handle('shell:openExternal', (_e: IpcMainInvokeEvent, url: string) =>
+    shell.openExternal(url)
+  )
+}
+
+// Clean shutdown: kill every child process.
+export async function shutdown(): Promise<void> {
+  await supervisor.stopAll()
+  await agents.stopAll()
+}

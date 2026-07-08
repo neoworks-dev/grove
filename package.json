@@ -23,7 +23,12 @@
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
-    "electron-updater": "^6.3.9"
+    "chokidar": "^5.0.0",
+    "electron-updater": "^6.3.9",
+    "js-yaml": "^5.2.1",
+    "monaco-editor": "^0.55.1",
+    "monaco-vim": "^0.4.4",
+    "simple-git": "^3.36.0"
   },
   "devDependencies": {
     "@electron-toolkit/eslint-config-prettier": "^3.0.0",

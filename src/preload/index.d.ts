@@ -163,6 +163,7 @@ export interface WorkbenchApi {
     cancel: (pluginId: string, callId: string) => Promise<void>
     cancelAll: (pluginId: string) => Promise<void>
     respondPermission: (id: string, decision: string) => Promise<void>
+    respondToolCall: (id: string, result: unknown, errorMessage?: string) => Promise<void>
   }
   settings: {
     read: () => Promise<SettingsSnapshotShape>

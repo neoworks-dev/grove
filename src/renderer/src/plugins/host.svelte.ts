@@ -115,6 +115,7 @@ class PluginHost {
   // ── Lifecycle ─────────────────────────────────────────────────
   async init(): Promise<void> {
     window.workbench.on('event:plugin-stream', (payload) => this.onMainStream(payload))
+    window.workbench.on('event:plugin-tool-call', (payload) => void this.onPluginToolCall(payload))
     window.workbench.on('event:plugin-permission', (payload) => void this.onPermissionRequest(payload))
     window.workbench.on('event:plugins-changed', (payload) =>
       this.applyRecords(payload as PluginRecordShape[])
@@ -417,24 +418,19 @@ class PluginHost {
     this.registerMainForwarding(instance, rpc)
     this.registerSettingsMethods(instance, rpc)
 
-    rpc.handle('host.registerSkill', async (params) => {
-      const skill = params as { name: string }
-      instance.skills.set(skill.name, params)
-      return undefined
-    })
-    rpc.handle('host.registerSkill:dispose', async (params) => {
-      instance.skills.delete((params as { id: string }).id)
-      return undefined
-    })
-    rpc.handle('host.registerMcpServer', async (params) => {
-      const server = params as { name: string }
-      instance.mcpServers.set(server.name, params)
-      return undefined
-    })
-    rpc.handle('host.registerMcpServer:dispose', async (params) => {
-      instance.mcpServers.delete((params as { id: string }).id)
-      return undefined
-    })
+    // Skill/MCP declarations forward to the main-process AI bridge; the tool
+    // handlers stay in the worker and are invoked via event:plugin-tool-call.
+    const pluginId = instance.record.id
+    const forwardAi = (workerMethod: string, mainMethod: string): void => {
+      rpc.handle(workerMethod, async (params) => {
+        const callId = `${pluginId}-${Math.random().toString(36).slice(2)}`
+        return window.workbench.plugins.invoke(pluginId, callId, mainMethod, params)
+      })
+    }
+    forwardAi('host.registerSkill', 'ai.registerSkill')
+    forwardAi('host.registerSkill:dispose', 'ai.disposeSkill')
+    forwardAi('host.registerMcpServer', 'ai.registerMcpServer')
+    forwardAi('host.registerMcpServer:dispose', 'ai.disposeMcpServer')
     rpc.handle('host.subscribeEvent', async (params) => {
       instance.subscribedEvents.add((params as { event: string }).event)
       return undefined
@@ -684,7 +680,7 @@ class PluginHost {
       rpc.handle(`main.${method}`, async (params, context) => {
         const callId = `${pluginId}-${Math.random().toString(36).slice(2)}`
         const args = { worktreeId: store.selectedWorktreeId, ...(params as object) }
-        const streaming = method === 'workspace.searchText'
+        const streaming = method === 'workspace.searchText' || method === 'ai.prompt'
         if (!streaming) return window.workbench.plugins.invoke(pluginId, callId, method, args)
 
         const done = new Promise<void>((resolve, reject) => {
@@ -708,6 +704,7 @@ class PluginHost {
     forward('workspace.readExcerpt')
     forward('workspace.writeFile')
     forward('workspace.searchText')
+    forward('ai.prompt')
     forward('storage.get')
     forward('storage.set')
     forward('storage.delete')
@@ -736,6 +733,27 @@ class PluginHost {
       instance.runtimeDisposers.set(`setting-watch:${key}`, dispose)
       return undefined
     })
+  }
+
+  // Agent-run MCP tool call → invoke the plugin worker's handler and reply.
+  private async onPluginToolCall(payload: unknown): Promise<void> {
+    const request = payload as { id: string; pluginId: string; tool: string; input: unknown }
+    try {
+      await this.ensureActivated(request.pluginId)
+      const instance = this.instances.get(request.pluginId)
+      if (!instance?.rpc) throw new Error('plugin not running')
+      const result = await instance.rpc.request('mcp:invokeTool', {
+        tool: request.tool,
+        input: request.input
+      })
+      await window.workbench.plugins.respondToolCall(request.id, result)
+    } catch (error) {
+      await window.workbench.plugins.respondToolCall(
+        request.id,
+        null,
+        (error as Error).message
+      )
+    }
   }
 
   private onMainStream(payload: unknown): void {

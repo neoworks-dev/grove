@@ -34,6 +34,12 @@ export interface AdapterContext {
   ) => Promise<PermissionDecision>
   // Surface a blocking dialog (e.g. an agent question) and await the answer.
   requestDialog: (request: Omit<AgentDialogRequest, 'id'>) => Promise<AgentDialogDecision>
+  // Plugin AI contributions (MCP servers proxied into plugin workers, skill
+  // text appended to the system prompt). Absent when no plugins register any.
+  pluginAi?: {
+    mcpServers: () => Promise<Record<string, unknown>>
+    systemAppend: () => string
+  }
 }
 
 export interface RunHandle {

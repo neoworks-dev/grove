@@ -121,7 +121,9 @@ const workbench = {
       ipcRenderer.invoke('plugins:cancel', pluginId, callId),
     cancelAll: (pluginId: string) => ipcRenderer.invoke('plugins:cancelAll', pluginId),
     respondPermission: (id: string, decision: string) =>
-      ipcRenderer.invoke('plugins:respondPermission', id, decision)
+      ipcRenderer.invoke('plugins:respondPermission', id, decision),
+    respondToolCall: (id: string, result: unknown, errorMessage?: string) =>
+      ipcRenderer.invoke('plugins:respondToolCall', id, result, errorMessage)
   },
   settings: {
     read: () => ipcRenderer.invoke('settings:read'),

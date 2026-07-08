@@ -94,15 +94,27 @@ function start(context: AdapterContext): RunHandle {
   void (async () => {
     try {
       const { query } = await import('@anthropic-ai/claude-agent-sdk')
+      // Plugin-contributed MCP servers (in-process, handlers proxied to the
+      // plugin workers) and skill text.
+      const pluginMcpServers = context.pluginAi ? await context.pluginAi.mcpServers() : {}
+      const skillAppend = context.pluginAi ? context.pluginAi.systemAppend() : ''
       const iterator = query({
         prompt: context.options.prompt || '',
         options: {
           cwd: context.worktree.path,
           abortController: abort,
+          mcpServers:
+            Object.keys(pluginMcpServers).length > 0
+              ? (pluginMcpServers as never)
+              : undefined,
           // Use Claude Code's default system prompt so its dynamic auto-memory
           // section loads CLAUDE.md, and load project settings so that memory
           // (and .claude settings) is actually read from disk.
-          systemPrompt: { type: 'preset', preset: 'claude_code' },
+          systemPrompt: {
+            type: 'preset',
+            preset: 'claude_code',
+            append: skillAppend || undefined
+          },
           settingSources: ['user', 'project', 'local'],
           // Resume the prior conversation when we have its session id.
           resume: context.resume || undefined,

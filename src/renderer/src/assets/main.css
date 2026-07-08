@@ -563,21 +563,29 @@
   }
 
   /* LSP hover tooltip — markdown-rendered type info floating over the token.
-     The CM tooltip wrapper is neutralized so .cm-lsp-hover carries the look. */
-  .cm-tooltip:has(.cm-lsp-hover) {
+     The CM tooltip wrapper is neutralized so the shell carries the look. The
+     flex shell gives the FloatingScrollbar a bounded height to fill. */
+  .cm-tooltip:has(.cm-lsp-hover-shell) {
     border: none;
     background: transparent;
   }
-  .cm-lsp-hover {
+  .cm-lsp-hover-shell {
+    display: flex;
+    flex-direction: column;
     max-width: 480px;
     max-height: 320px;
-    overflow: auto;
-    padding: 6px 10px;
     border: 1px solid var(--border-faint);
     border-radius: var(--radius-md);
     background: var(--surface-raised);
-    color: var(--text);
     box-shadow: var(--shadow-overlay);
+  }
+  .cm-lsp-hover-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+  .cm-lsp-hover {
+    padding: 6px 10px;
+    color: var(--text);
     font-family: var(--font-sans);
     font-size: 12px;
     line-height: 1.5;

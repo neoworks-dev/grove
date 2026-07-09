@@ -51,6 +51,14 @@ export function registerCoreBindings(): void {
       description: 'Open keyboard shortcuts',
       run: () => layout.ensurePane('keybindings')
     },
+    {
+      id: 'leader.cheatsheet',
+      keys: 'leader ?',
+      context: 'global',
+      group: 'Help',
+      description: 'Show all keybindings',
+      run: () => keymap.toggleCheatsheet()
+    },
     // Spatial pane navigation — ordinary bindings now, so they show up in
     // which-key listings and stay rebindable.
     {
@@ -211,6 +219,13 @@ export function registerCoreBindings(): void {
       group: 'Settings',
       keywords: 'keyboard shortcuts keybindings keys rebind',
       run: () => layout.ensurePane('keybindings')
+    },
+    {
+      id: 'help.keybindings',
+      title: 'Help: Keybindings Cheatsheet',
+      group: 'Help',
+      keywords: 'keys shortcuts help cheatsheet which key reference',
+      run: () => keymap.toggleCheatsheet()
     }
   ])
 }

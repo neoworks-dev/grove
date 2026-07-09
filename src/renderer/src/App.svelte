@@ -9,6 +9,7 @@
   import StatusBar from './components/StatusBar.svelte'
   import DialogHost from './components/DialogHost.svelte'
   import NotificationHost from './components/NotificationHost.svelte'
+  import KeybindCheatsheet from './components/KeybindCheatsheet.svelte'
   import StatusBranch from './components/StatusBranch.svelte'
   import StatusClock from './components/StatusClock.svelte'
   import { store, subscribeEvents, openRepoResult, applyIconPack, switchTab } from './lib/store.svelte'
@@ -276,3 +277,4 @@
 <Overlay />
 <DialogHost />
 <NotificationHost />
+<KeybindCheatsheet />

@@ -22,6 +22,7 @@
   import { showLocations } from '../lib/lspLocations'
   import { applyEditsToText, workspaceEditToFiles } from '../lib/lspEdits'
   import { hoverTooltipField, setHoverTooltip, hoverTooltipAt } from '../lib/editorHover'
+  import { VIM_LSP_KEYS } from '../lib/editorVimKeys'
   import { overlays } from '../lib/overlays.svelte'
   import { dialogs } from '../lib/dialogs.svelte'
   import type { LspDiagnosticsEvent, LspDiagnostic, LspPosition, LspRange } from '../../../shared/types'
@@ -609,30 +610,26 @@
   // are (re)defined on mount so they close over the live editor; the key→action
   // map is by name, so it always resolves the latest definition.
   function setupVimLspKeys(): void {
-    Vim.defineAction('groveLspDefinition', () => void gotoDefinition())
-    Vim.defineAction('groveLspReferences', () => void gotoReferences())
-    Vim.defineAction('groveLspImplementation', () => void gotoImplementation())
-    Vim.defineAction('groveLspTypeDefinition', () => void gotoTypeDefinition())
-    Vim.defineAction('groveLspDeclaration', () => void gotoDeclaration())
-    Vim.defineAction('groveLspHover', () => void hoverAtCursor())
-    Vim.defineAction('groveLspNextDiag', () => gotoDiagnostic('next', false))
-    Vim.defineAction('groveLspPrevDiag', () => gotoDiagnostic('prev', false))
-    Vim.defineAction('groveLspNextError', () => gotoDiagnostic('next', true))
-    Vim.defineAction('groveLspPrevError', () => gotoDiagnostic('prev', true))
-
+    const handlers: Record<string, () => void> = {
+      groveLspDefinition: () => void gotoDefinition(),
+      groveLspReferences: () => void gotoReferences(),
+      groveLspImplementation: () => void gotoImplementation(),
+      groveLspTypeDefinition: () => void gotoTypeDefinition(),
+      groveLspDeclaration: () => void gotoDeclaration(),
+      groveLspHover: () => void hoverAtCursor(),
+      groveLspNextDiag: () => gotoDiagnostic('next', false),
+      groveLspPrevDiag: () => gotoDiagnostic('prev', false),
+      groveLspNextError: () => gotoDiagnostic('next', true),
+      groveLspPrevError: () => gotoDiagnostic('prev', true)
+    }
+    for (const entry of VIM_LSP_KEYS) {
+      Vim.defineAction(entry.action, handlers[entry.action])
+    }
     if (vimLspMapped) return
     vimLspMapped = true
-    const normal = { context: 'normal' } as const
-    Vim.mapCommand('gd', 'action', 'groveLspDefinition', {}, normal)
-    Vim.mapCommand('gr', 'action', 'groveLspReferences', {}, normal)
-    Vim.mapCommand('gI', 'action', 'groveLspImplementation', {}, normal)
-    Vim.mapCommand('gy', 'action', 'groveLspTypeDefinition', {}, normal)
-    Vim.mapCommand('gD', 'action', 'groveLspDeclaration', {}, normal)
-    Vim.mapCommand('K', 'action', 'groveLspHover', {}, normal)
-    Vim.mapCommand(']d', 'action', 'groveLspNextDiag', {}, normal)
-    Vim.mapCommand('[d', 'action', 'groveLspPrevDiag', {}, normal)
-    Vim.mapCommand(']e', 'action', 'groveLspNextError', {}, normal)
-    Vim.mapCommand('[e', 'action', 'groveLspPrevError', {}, normal)
+    for (const entry of VIM_LSP_KEYS) {
+      Vim.mapCommand(entry.keys, 'action', entry.action, {}, { context: 'normal' })
+    }
   }
 
   let disposeLspBindings: (() => void) | null = null

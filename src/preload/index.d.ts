@@ -225,6 +225,12 @@ export interface WorkbenchApi {
       range: LspRange
     ) => Promise<InlayHint[]>
   }
+  terminal: {
+    create: (worktreeId: string | null, cols: number, rows: number) => Promise<string>
+    write: (id: string, data: string) => Promise<void>
+    resize: (id: string, cols: number, rows: number) => Promise<void>
+    kill: (id: string) => Promise<void>
+  }
   state: {
     getRepo: () => Promise<RepoStateShape>
     update: (patch: Partial<RepoStateShape>) => Promise<RepoStateShape>

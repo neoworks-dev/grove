@@ -134,6 +134,14 @@ const workbench = {
     inlayHints: (worktreeId: string, language: string, uri: string, range: unknown) =>
       ipcRenderer.invoke('lsp:inlayHints', worktreeId, language, uri, range)
   },
+  terminal: {
+    create: (worktreeId: string | null, cols: number, rows: number) =>
+      ipcRenderer.invoke('terminal:create', worktreeId, cols, rows),
+    write: (id: string, data: string) => ipcRenderer.invoke('terminal:write', id, data),
+    resize: (id: string, cols: number, rows: number) =>
+      ipcRenderer.invoke('terminal:resize', id, cols, rows),
+    kill: (id: string) => ipcRenderer.invoke('terminal:kill', id)
+  },
   state: {
     getRepo: () => ipcRenderer.invoke('state:getRepo'),
     update: (patch: Record<string, unknown>) => ipcRenderer.invoke('state:update', patch)

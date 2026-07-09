@@ -5,6 +5,7 @@
 import Folder from 'phosphor-svelte/lib/Folder'
 import GitBranch from 'phosphor-svelte/lib/GitBranch'
 import PuzzlePiece from 'phosphor-svelte/lib/PuzzlePiece'
+import TerminalWindow from 'phosphor-svelte/lib/TerminalWindow'
 import FilesView from '../components/FilesView.svelte'
 import WorktreeSidebar from '../components/WorktreeSidebar.svelte'
 import ExtensionsView from '../components/ExtensionsView.svelte'
@@ -14,6 +15,7 @@ import PreviewPane from '../components/PreviewPane.svelte'
 import Dashboard from '../components/Dashboard.svelte'
 import AgentPane from '../components/AgentPane.svelte'
 import LogsPane from '../components/LogsPane.svelte'
+import TerminalPane from '../components/TerminalPane.svelte'
 import PreferencesPane from '../components/PreferencesPane.svelte'
 import KeyboardPane from '../components/KeyboardPane.svelte'
 import { panes } from './panes.svelte'
@@ -103,6 +105,15 @@ export function registerCorePanes(): void {
     component: LogsPane,
     containerClass: 'bg-elevated',
     minHeight: 120
+  })
+  panes.register({
+    id: 'terminal',
+    title: 'Terminal',
+    icon: TerminalWindow,
+    component: TerminalPane,
+    containerClass: 'bg-canvas',
+    minHeight: 120,
+    when: repoOpen
   })
   panes.register({
     id: 'preferences',

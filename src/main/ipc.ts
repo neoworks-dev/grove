@@ -24,6 +24,8 @@ import type {
 import { getRepoState, updateRepoState, setLastRepo, loadState } from './state'
 import { SettingsService } from './settings'
 import { ActionRunner } from './actions'
+import { TerminalManager } from './terminals'
+import { buildWorktreeEnv, spawnEnv } from './env'
 import { PermissionBroker, type PermissionDecision as PluginPermissionDecision } from './plugins/broker'
 import { PluginRegistry } from './plugins/loader'
 import { PluginRouter } from './plugins/router'
@@ -86,6 +88,11 @@ const settings = new SettingsService({
 const actionRunner = new ActionRunner({
   onLog: (worktreeId, line) =>
     send('event:log', { worktreeId, source: 'service', name: 'keybind', line })
+})
+
+const terminals = new TerminalManager({
+  onData: (id, data) => send('event:terminal-data', { id, data }),
+  onExit: (id, exitCode) => send('event:terminal-exit', { id, exitCode })
 })
 
 const pluginBroker = new PermissionBroker({
@@ -542,6 +549,29 @@ export function registerIpc(): void {
       lsp.inlayHints(worktreeId, language, uri, range)
   )
 
+  // ── Terminal ──────────────────────────────────────────────────
+  // Spawn a shell in the worktree's directory with its WT_*/PORT_n vars, so a
+  // terminal matches what services and keybind actions see.
+  ipcMain.handle(
+    'terminal:create',
+    (_e, worktreeId: string | null, cols: number, rows: number) => {
+      let cwd = context.repoPath ?? process.cwd()
+      let vars: Record<string, string> = {}
+      if (worktreeId) {
+        const worktree = findWorktree(worktreeId)
+        const cfg = requireRepo().config
+        vars = buildWorktreeEnv(worktree, worktrees.portsForWorktree(cfg, worktree.portSlot))
+        cwd = worktree.path
+      }
+      return terminals.create({ cwd, env: spawnEnv(vars), cols, rows })
+    }
+  )
+  ipcMain.handle('terminal:write', (_e, id: string, data: string) => terminals.write(id, data))
+  ipcMain.handle('terminal:resize', (_e, id: string, cols: number, rows: number) =>
+    terminals.resize(id, cols, rows)
+  )
+  ipcMain.handle('terminal:kill', (_e, id: string) => terminals.kill(id))
+
   // ── State ─────────────────────────────────────────────────────
   ipcMain.handle('state:getRepo', () => {
     const { repoPath } = requireRepo()
@@ -648,6 +678,7 @@ export async function shutdown(): Promise<void> {
   await agents.stopAll()
   await watcher.closeAll()
   lsp.stopAll()
+  terminals.killAll()
   settings.close()
   actionRunner.stopAll()
 }

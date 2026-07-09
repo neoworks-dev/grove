@@ -133,6 +133,15 @@
     // While an overlay is open it owns the keyboard (its own ctrl+j/k etc.);
     // the global capture-phase handlers must stand down.
     if (overlays.active) return
+    // The terminal owns every key while focused (so Ctrl+C/L/hjkl reach the
+    // shell), except the toggle chord that hides it again.
+    if (keymap.activePaneType === 'terminal') {
+      if (event.ctrlKey && event.key === '`' && !event.altKey && !event.metaKey) {
+        event.preventDefault()
+        layout.togglePane('terminal')
+      }
+      return
+    }
     // Delegate to the keymap core (pane nav, leader). Capture phase so Ctrl+hjkl
     // and the leader beat CodeMirror/Vim's own handlers.
     if (keymap.handleKey(event)) {

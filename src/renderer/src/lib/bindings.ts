@@ -59,6 +59,14 @@ export function registerCoreBindings(): void {
       description: 'Show all keybindings',
       run: () => keymap.toggleCheatsheet()
     },
+    {
+      id: 'terminal.toggle',
+      keys: 'ctrl+`',
+      context: 'global',
+      group: 'Terminal',
+      description: 'Toggle terminal',
+      run: () => layout.togglePane('terminal')
+    },
     // Spatial pane navigation — ordinary bindings now, so they show up in
     // which-key listings and stay rebindable.
     {
@@ -226,6 +234,13 @@ export function registerCoreBindings(): void {
       group: 'Help',
       keywords: 'keys shortcuts help cheatsheet which key reference',
       run: () => keymap.toggleCheatsheet()
+    },
+    {
+      id: 'terminal.toggle',
+      title: 'Terminal: Toggle',
+      group: 'Terminal',
+      keywords: 'terminal shell console pty command line',
+      run: () => layout.togglePane('terminal')
     }
   ])
 }

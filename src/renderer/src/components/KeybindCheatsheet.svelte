@@ -48,12 +48,15 @@
   }
 
   function onKeyDown(event: KeyboardEvent): void {
+    if (!keymap.cheatsheetOpen) return
     if (event.key === 'Escape') {
       event.preventDefault()
       close()
     }
   }
 </script>
+
+<svelte:window onkeydown={onKeyDown} />
 
 {#if keymap.cheatsheetOpen}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -92,5 +95,4 @@
       </div>
     </div>
   </div>
-  <svelte:window onkeydown={onKeyDown} />
 {/if}

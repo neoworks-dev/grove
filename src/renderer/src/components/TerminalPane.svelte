@@ -15,6 +15,34 @@
   let stopExit: (() => void) | null = null
   let observer: ResizeObserver | null = null
 
+  // Fit only when the host's pixel size actually changes, coalesced to one
+  // animation frame. Fitting on every ResizeObserver tick lets xterm's own
+  // relayout feed back into the observer and spin the main thread (a known
+  // xterm + FitAddon hang).
+  let fitScheduled = false
+  let lastWidth = 0
+  let lastHeight = 0
+
+  function scheduleFit(): void {
+    if (fitScheduled) return
+    fitScheduled = true
+    requestAnimationFrame(() => {
+      fitScheduled = false
+      if (!hostEl || !fit) return
+      const width = hostEl.clientWidth
+      const height = hostEl.clientHeight
+      if (width < 2 || height < 2) return
+      if (width === lastWidth && height === lastHeight) return
+      lastWidth = width
+      lastHeight = height
+      try {
+        fit.fit()
+      } catch {
+        // not laid out yet
+      }
+    })
+  }
+
   function cssVar(name: string, fallback: string): string {
     const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
     return value || fallback
@@ -65,18 +93,14 @@
     // Start the pty once the view has a size, then wire the streams.
     requestAnimationFrame(() => void start())
 
-    observer = new ResizeObserver(() => {
-      try {
-        fit?.fit()
-      } catch {
-        // not laid out yet
-      }
-    })
+    observer = new ResizeObserver(scheduleFit)
     observer.observe(hostEl)
   })
 
   async function start(): Promise<void> {
-    if (!term || !fit) return
+    if (!term || !fit || !hostEl) return
+    lastWidth = hostEl.clientWidth
+    lastHeight = hostEl.clientHeight
     try {
       fit.fit()
     } catch {

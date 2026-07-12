@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 
 // Typed, namespaced bridge exposed as window.workbench. Every method is a thin
@@ -61,7 +61,15 @@ const workbench = {
       ipcRenderer.invoke('agents:respondPermission', id, decision),
     respondDialog: (id: string, decision: unknown) =>
       ipcRenderer.invoke('agents:respondDialog', id, decision),
-    active: () => ipcRenderer.invoke('agents:active')
+    active: () => ipcRenderer.invoke('agents:active'),
+    send: (worktreeId: string, name: string, text: string) =>
+      ipcRenderer.invoke('agents:send', worktreeId, name, text),
+    queue: (worktreeId: string, name: string) =>
+      ipcRenderer.invoke('agents:queue', worktreeId, name),
+    cancelQueued: (worktreeId: string, name: string, id: string) =>
+      ipcRenderer.invoke('agents:cancelQueued', worktreeId, name, id),
+    commands: (worktreeId: string, name: string) =>
+      ipcRenderer.invoke('agents:commands', worktreeId, name)
   },
   fs: {
     watch: (worktreeIds: string[]) => ipcRenderer.invoke('fs:watch', worktreeIds)
@@ -81,7 +89,11 @@ const workbench = {
     rename: (worktreeId: string, fromRel: string, toRel: string) =>
       ipcRenderer.invoke('files:rename', worktreeId, fromRel, toRel),
     delete: (worktreeId: string, relPath: string) =>
-      ipcRenderer.invoke('files:delete', worktreeId, relPath)
+      ipcRenderer.invoke('files:delete', worktreeId, relPath),
+    saveAttachment: (worktreeId: string, data: Uint8Array, ext: string) =>
+      ipcRenderer.invoke('files:saveAttachment', worktreeId, data, ext),
+    // Absolute OS path of a dropped File (Electron removed File.path).
+    pathForFile: (file: File) => webUtils.getPathForFile(file)
   },
   extensions: {
     catalog: () => ipcRenderer.invoke('extensions:catalog'),

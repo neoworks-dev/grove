@@ -8,15 +8,20 @@ import { join } from 'path'
 import { randomUUID } from 'crypto'
 import type {
   AgentChats,
+  AgentCommandsEvent,
   AgentConfig,
   AgentDialogDecision,
   AgentDialogRequest,
   AgentLaunchOptions,
+  AgentQueueEvent,
   AgentRuntime,
+  AgentSendResult,
+  AgentSlashCommand,
   AgentStatus,
   ChatMeta,
   PermissionDecision,
   PermissionRequestEvent,
+  QueuedMessage,
   Worktree
 } from '../../shared/types'
 import type { AgentAdapter, RunHandle } from './types'
@@ -52,6 +57,10 @@ export interface AgentEvents {
   // Continuation token changed (empty string = conversation reset). Lets ipc
   // mirror it into persisted repo state so chats survive restarts.
   onSession?: (worktreeId: string, name: string, token: string) => void
+  // Queued-message list changed (message queued, cancelled, drained, cleared).
+  onQueue?: (event: AgentQueueEvent) => void
+  // Provider-discovered slash commands changed.
+  onCommands?: (event: AgentCommandsEvent) => void
   // Plugin AI contributions passed through to adapters (MCP servers + skills).
   pluginAi?: {
     mcpServers: () => Promise<Record<string, unknown>>
@@ -68,6 +77,21 @@ interface RunningAgent {
   runtime: AgentRuntime
   pendingPermissions: Set<string>
   pendingDialogs: Set<string>
+  // Monotonic run marker: late setStatus/emit callbacks from a replaced run
+  // must not touch the entry of the run that superseded it.
+  runId: number
+  // Set by an explicit user stop so the terminal handler flushes the queue
+  // instead of auto-submitting what the user just interrupted.
+  clearQueueOnStop: boolean
+}
+
+// Everything needed to start a follow-up run with the same configuration —
+// recorded per key so queued messages can auto-submit when the run ends.
+interface LastLaunch {
+  worktree: Worktree
+  agent: AgentConfig
+  ports: number[]
+  options: AgentLaunchOptions
 }
 
 function logsDir(worktreePath: string): string {
@@ -83,8 +107,19 @@ export class AgentManager {
   // Named chats per (worktree, agent). Each carries its own continuation token
   // and transcript file, so a worktree holds several resumable conversations.
   private chats = new Map<string, AgentChats>()
+  // Messages typed while a run is active that could not be injected live.
+  // Survives run teardown; drained into a follow-up run on clean exit.
+  private queues = new Map<string, QueuedMessage[]>()
+  // Provider-discovered slash commands per (worktree, agent).
+  private commands = new Map<string, AgentSlashCommand[]>()
+  private lastLaunch = new Map<string, LastLaunch>()
+  private runSeq = 0
 
-  constructor(private events: AgentEvents) {}
+  // `adapters` is injectable for tests; production uses the module registry.
+  constructor(
+    private events: AgentEvents,
+    private adapters: Map<string, AgentAdapter> = registry
+  ) {}
 
   private key(worktreeId: string, name: string): string {
     return `${worktreeId}::${name}`
@@ -160,7 +195,9 @@ export class AgentManager {
 
   activateChat(worktreeId: string, name: string, chatId: string): void {
     const entry = this.ensureChats(this.key(worktreeId, name))
-    if (entry.chats.some((chat) => chat.id === chatId)) entry.activeId = chatId
+    if (!entry.chats.some((chat) => chat.id === chatId)) return
+    if (entry.activeId !== chatId) this.clearQueue(worktreeId, name, false)
+    entry.activeId = chatId
   }
 
   private transcriptPath(worktreePath: string, name: string, chatId: string): string {
@@ -179,7 +216,7 @@ export class AgentManager {
   async start(
     worktree: Worktree,
     name: string,
-    _agent: AgentConfig,
+    agent: AgentConfig,
     ports: number[],
     options: AgentLaunchOptions,
     // Internal turns (e.g. /compact) suppress the prompt echo so the command
@@ -187,10 +224,11 @@ export class AgentManager {
     echoPrompt = true
   ): Promise<AgentRuntime> {
     await this.stop(worktree.id, name)
-    const adapter = registry.get(name)
+    const adapter = this.adapters.get(name)
     if (!adapter) throw new Error(`unknown agent: ${name}`)
 
     const key = this.key(worktree.id, name)
+    this.lastLaunch.set(key, { worktree, agent, ports, options })
     const chat = this.activeChat(key)
     const resume = chat.session || undefined
 
@@ -211,16 +249,24 @@ export class AgentManager {
       logPath
     }
 
+    const runId = ++this.runSeq
     const entry: RunningAgent = {
       handle: { stop: async () => {} },
       logStream,
       runtime,
       pendingPermissions: new Set(),
-      pendingDialogs: new Set()
+      pendingDialogs: new Set(),
+      runId,
+      clearQueueOnStop: false
     }
     this.running.set(key, entry)
 
+    // Drop callbacks from a replaced run: its async teardown can fire after the
+    // successor registered, and must not write into the new run's entry/stream.
+    const isCurrentRun = (): boolean => this.running.get(key)?.runId === runId
+
     const emit = (line: string): void => {
+      if (!isCurrentRun()) return
       logStream.write(line + '\n')
       this.events.onLog(worktree.id, name, line)
     }
@@ -235,16 +281,90 @@ export class AgentManager {
       options,
       resume,
       emit,
-      setStatus: (status, exitCode) =>
-        this.handleStatus(worktree.id, name, status, exitCode ?? null),
+      setStatus: (status, exitCode) => {
+        if (!isCurrentRun()) return
+        this.handleStatus(worktree.id, name, status, exitCode ?? null)
+      },
       setSession: (token) => this.rememberSession(worktree.id, name, token),
       requestPermission: (request) => this.requestPermission(worktree.id, name, request),
       requestDialog: (request) => this.requestDialog(worktree.id, name, request),
-      pluginAi: this.events.pluginAi
+      pluginAi: this.events.pluginAi,
+      setCommands: (commands) => {
+        this.commands.set(key, commands)
+        this.events.onCommands?.({ worktreeId: worktree.id, name, commands })
+      }
     })
 
     this.events.onStatus({ ...runtime })
     return { ...runtime }
+  }
+
+  // ── Mid-run sends + queue ──────────────────────────────────────
+  // One entry point for "the user typed a message": inject into the live run
+  // when the adapter supports it, queue it when it doesn't, or start a resumed
+  // run when nothing is running.
+  async send(
+    worktree: Worktree,
+    name: string,
+    agent: AgentConfig,
+    ports: number[],
+    text: string
+  ): Promise<AgentSendResult> {
+    const key = this.key(worktree.id, name)
+    const trimmed = text.trim()
+    const entry = this.running.get(key)
+    if (entry) {
+      if (entry.handle.send?.(trimmed)) {
+        // Echo like start() does so the injection shows as a chat message.
+        const line = userPromptLine(trimmed)
+        entry.logStream.write(line + '\n')
+        this.events.onLog(worktree.id, name, line)
+        return { delivered: 'injected' }
+      }
+      const item: QueuedMessage = { id: randomUUID(), text: trimmed, createdAt: Date.now() }
+      const queue = this.queues.get(key) ?? []
+      queue.push(item)
+      this.queues.set(key, queue)
+      this.emitQueue(worktree.id, name)
+      return { delivered: 'queued', id: item.id }
+    }
+    const launch = this.lastLaunch.get(key)
+    await this.start(worktree, name, agent, ports, {
+      ...(launch?.options ?? {}),
+      prompt: trimmed
+    })
+    return { delivered: 'started' }
+  }
+
+  getQueue(worktreeId: string, name: string): QueuedMessage[] {
+    return [...(this.queues.get(this.key(worktreeId, name)) ?? [])]
+  }
+
+  cancelQueued(worktreeId: string, name: string, id: string): void {
+    const key = this.key(worktreeId, name)
+    const queue = this.queues.get(key)
+    if (!queue) return
+    const index = queue.findIndex((item) => item.id === id)
+    if (index === -1) return
+    queue.splice(index, 1)
+    this.emitQueue(worktreeId, name)
+  }
+
+  getCommands(worktreeId: string, name: string): AgentSlashCommand[] {
+    return [...(this.commands.get(this.key(worktreeId, name)) ?? [])]
+  }
+
+  private emitQueue(worktreeId: string, name: string, cleared?: QueuedMessage[]): void {
+    const queue = [...(this.queues.get(this.key(worktreeId, name)) ?? [])]
+    this.events.onQueue?.({ worktreeId, name, queue, cleared })
+  }
+
+  private clearQueue(worktreeId: string, name: string, restoreToUser: boolean): void {
+    const key = this.key(worktreeId, name)
+    const queue = this.queues.get(key) ?? []
+    if (queue.length === 0) return
+    this.queues.set(key, [])
+    this.emitQueue(worktreeId, name, restoreToUser ? queue : undefined)
   }
 
   private rememberSession(worktreeId: string, name: string, token: string): void {
@@ -276,6 +396,9 @@ export class AgentManager {
   // "New chat": start a fresh active chat, leaving prior chats resumable.
   async resetSession(worktree: Worktree, name: string): Promise<ChatMeta> {
     await this.stop(worktree.id, name)
+    // The conversation context changes — queued messages must not auto-submit
+    // into a chat they weren't written for.
+    this.clearQueue(worktree.id, name, false)
     const chat = this.createChat(worktree.id, name)
     // Reuse the onSession event as the persistence trigger.
     this.events.onSession?.(worktree.id, name, '')
@@ -359,6 +482,37 @@ export class AgentManager {
     entry.logStream.end()
     this.events.onStatus({ ...entry.runtime })
     this.running.delete(this.key(worktreeId, name))
+    this.settleQueue(worktreeId, name, status, entry.clearQueueOnStop)
+  }
+
+  // What happens to queued messages when a run reaches a terminal state:
+  // clean exit auto-submits them as the next turn; a user stop hands their
+  // text back to the composer; an error keeps them visible for manual retry.
+  private settleQueue(
+    worktreeId: string,
+    name: string,
+    status: AgentStatus,
+    clearQueueOnStop: boolean
+  ): void {
+    const key = this.key(worktreeId, name)
+    const queue = this.queues.get(key) ?? []
+    if (queue.length === 0) return
+
+    if (status === 'stopped') {
+      if (clearQueueOnStop) this.clearQueue(worktreeId, name, true)
+      return
+    }
+    if (status !== 'exited') return
+
+    const launch = this.lastLaunch.get(key)
+    if (!launch) return
+    this.queues.set(key, [])
+    this.emitQueue(worktreeId, name)
+    const prompt = queue.map((item) => item.text).join('\n\n')
+    void this.start(launch.worktree, name, launch.agent, launch.ports, {
+      ...launch.options,
+      prompt
+    }).catch(() => {})
   }
 
   private denyPending(entry: RunningAgent): void {
@@ -380,9 +534,18 @@ export class AgentManager {
     entry.pendingDialogs.clear()
   }
 
-  async stop(worktreeId: string, name: string): Promise<void> {
+  async stop(
+    worktreeId: string,
+    name: string,
+    opts?: { clearQueue?: boolean }
+  ): Promise<void> {
     const entry = this.running.get(this.key(worktreeId, name))
-    if (!entry) return
+    if (!entry) {
+      // Nothing running, but a user stop still flushes any waiting messages.
+      if (opts?.clearQueue) this.clearQueue(worktreeId, name, true)
+      return
+    }
+    if (opts?.clearQueue) entry.clearQueueOnStop = true
     this.denyPending(entry)
     await entry.handle.stop().catch(() => {})
   }

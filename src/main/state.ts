@@ -5,7 +5,7 @@
 import { app } from 'electron'
 import { readFile, writeFile, mkdir } from 'fs/promises'
 import { join, dirname } from 'path'
-import type { InstalledExtension, AgentChats } from '../shared/types'
+import type { InstalledExtension, AgentChats, AgentSlashCommand } from '../shared/types'
 
 export type { InstalledExtension }
 
@@ -17,6 +17,9 @@ export interface RepoState {
   setupOnceDone: boolean
   agentSessions: Record<string, string> // legacy: "worktreeId::agent" -> token
   agentChats: Record<string, AgentChats> // "worktreeId::agent" -> named chats
+  // Last-known provider-discovered slash commands, so the menu is populated
+  // before the first run of a session.
+  agentCommands: Record<string, AgentSlashCommand[]>
   // Hashes of project-scope shell/ai keybind actions the user has approved
   // (project settings are repo-supplied — running them needs consent).
   trustedActionHashes: string[]
@@ -78,6 +81,7 @@ export function emptyRepoState(): RepoState {
     setupOnceDone: false,
     agentSessions: {},
     agentChats: {},
+    agentCommands: {},
     trustedActionHashes: [],
     viewLayouts: {},
     activeLayoutView: null,

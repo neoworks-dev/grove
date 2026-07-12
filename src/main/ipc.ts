@@ -72,7 +72,13 @@ const agents = new AgentManager({
     void updateRepoState(context.repoPath, { agentChats: agents.allChats() })
   },
   onQueue: (event) => send('event:agent-queue', event),
-  onCommands: (event) => send('event:agent-commands', event)
+  onCommands: (event) => {
+    send('event:agent-commands', event)
+    // Persist so the slash menu is populated before the next session's first run.
+    if (context.repoPath) {
+      void updateRepoState(context.repoPath, { agentCommands: agents.allCommands() })
+    }
+  }
 })
 
 // Persist the named-chat map after a mutation and push it to the renderer.
@@ -174,6 +180,8 @@ async function openRepo(repoPath: string): Promise<{
   const repoState = await getRepoState(root)
   agents.loadChats(repoState.agentChats || {})
   agents.loadSessions(repoState.agentSessions || {})
+  // Last-known slash commands populate the menu before the first run.
+  agents.loadCommands(repoState.agentCommands || {})
   const list = await refreshWorktrees()
   return {
     info: {
@@ -442,6 +450,12 @@ export function registerIpc(): void {
   ipcMain.handle('files:listAll', (_e, worktreeId: string) => {
     const worktree = findWorktree(worktreeId)
     return files.listAll(worktree.path)
+  })
+
+  // Arbitrary-directory listing for @ path completion (may leave the worktree).
+  ipcMain.handle('files:listPath', (_e, worktreeId: string, rawPath: string) => {
+    const worktree = findWorktree(worktreeId)
+    return files.listPath(worktree.path, rawPath)
   })
 
   ipcMain.handle('files:read', (_e, worktreeId: string, absPath: string) => {

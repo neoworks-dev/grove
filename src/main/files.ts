@@ -2,7 +2,8 @@
 // Paths are validated to stay inside the worktree (no traversal escapes).
 
 import { readdir, readFile, writeFile, stat, mkdir, rename as fsRename, rm, appendFile } from 'fs/promises'
-import { join, relative, resolve, sep, dirname } from 'path'
+import { join, relative, resolve, sep, dirname, isAbsolute } from 'path'
+import { homedir } from 'os'
 import { randomUUID } from 'crypto'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
@@ -66,6 +67,33 @@ export async function listAll(worktreeRoot: string, limit = 5000): Promise<strin
 
   await walk(worktreeRoot)
   return results.sort((a, b) => a.localeCompare(b))
+}
+
+// List the entries of an arbitrary directory for the composer's @ path
+// completion. Deliberately NOT worktree-scoped: `@../sibling/file` and
+// `@~/notes.md` are valid agent mentions, so escapes are the point here.
+export async function listPath(worktreeRoot: string, rawPath: string): Promise<FileNode[]> {
+  let expanded = rawPath
+  if (expanded === '~' || expanded.startsWith('~/')) {
+    expanded = join(homedir(), expanded.slice(1))
+  }
+  const dir = isAbsolute(expanded) ? expanded : resolve(worktreeRoot, expanded)
+  const entries = await readdir(dir, { withFileTypes: true })
+  const nodes: FileNode[] = []
+  for (const entry of entries) {
+    const abs = join(dir, entry.name)
+    nodes.push({
+      name: entry.name,
+      path: abs,
+      relPath: relative(worktreeRoot, abs),
+      isDir: entry.isDirectory()
+    })
+  }
+  nodes.sort((a, b) => {
+    if (a.isDir !== b.isDir) return a.isDir ? -1 : 1
+    return a.name.localeCompare(b.name)
+  })
+  return nodes
 }
 
 export async function readFileContent(worktreeRoot: string, absPath: string): Promise<string> {

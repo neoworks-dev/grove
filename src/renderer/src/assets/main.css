@@ -533,10 +533,19 @@
     width: 8px;
   }
 
+  /* The editor pane overlays the FloatingScrollbar on CodeMirror's scroller
+     (attachTo mode), so the native bars must disappear entirely there.
+     scrollbar-width (not ::-webkit-scrollbar) because daisyUI sets an
+     inherited scrollbar-color on :root, which switches Chromium to the
+     standard scrollbar renderer where ::-webkit-scrollbar rules are ignored. */
+  .cm-hide-native-scrollbars .cm-scroller {
+    scrollbar-width: none;
+  }
+
   /* NeoWorks-style thin scrollbar. Matches the FloatingScrollbar thumb (thin,
-     rounded, line-strong) for the CodeMirror viewport (editor + diff, both
-     axes), where the component can't attach. Higher specificity than the
-     app-wide default above, so these show an always-visible thin thumb. */
+     rounded, line-strong) for the diff MergeView scrollers, where the overlay
+     doesn't attach yet. Higher specificity than the app-wide default above, so
+     these show an always-visible thin thumb. */
   .cm-scroller::-webkit-scrollbar {
     width: 6px;
     height: 6px;

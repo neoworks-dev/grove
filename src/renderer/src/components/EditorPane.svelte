@@ -36,6 +36,10 @@
 
   let editorHost = $state<HTMLDivElement>()
   let view: EditorView | null = null
+  // CodeMirror's scroll element, handed to the FloatingScrollbar overlay once
+  // the view exists. CM virtualizes the DOM but keeps real scroll geometry on
+  // this element, so the floating thumbs track it like any scroll container.
+  let editorScroller = $state<HTMLElement | null>(null)
   let vimEnabled = $state(settings.get<boolean>('workbench.vimMode') ?? true)
   let dirtyPaths = $state<Record<string, boolean>>({})
 
@@ -95,6 +99,7 @@
     if (view || !editorHost) return
     const state = EditorState.create({ doc: '', extensions: buildExtensions('untitled.txt') })
     view = new EditorView({ state, parent: editorHost })
+    editorScroller = view.scrollDOM
     activeBufferPath = null
     if (vimEnabled) attachVimMode()
   }
@@ -720,5 +725,10 @@
       </button>
     </div>
 
-  <div bind:this={editorHost} class="min-h-0 flex-1 overflow-hidden"></div>
+  <div class="cm-hide-native-scrollbars relative min-h-0 flex-1 overflow-hidden">
+    <div bind:this={editorHost} class="h-full w-full"></div>
+    {#if editorScroller}
+      <FloatingScrollbar attachTo={editorScroller} axis="both" class="absolute inset-0" />
+    {/if}
+  </div>
 </div>

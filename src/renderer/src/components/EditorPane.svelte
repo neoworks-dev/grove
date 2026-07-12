@@ -8,6 +8,7 @@
   import { settings } from '../lib/settings.svelte'
   import { onMount, onDestroy } from 'svelte'
   import Icon from '@iconify/svelte'
+  import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
   import { store } from '../lib/store.svelte'
   import { languageExtension, editorTheme, baseExtensions } from '../lib/editor'
   import { onHighlightersChanged } from '../lib/highlighters'
@@ -685,27 +686,29 @@
 
 <div class="flex h-full min-h-0 flex-col">
     <div class="flex items-center gap-1 border-b border-line px-2 py-1">
-      <div class="nw-scroll flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
-        {#each activeTabs as tab (tab.path)}
-          <div
-            class="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs {store.activeTabPath ===
-            tab.path
-              ? 'bg-surface text-default'
-              : 'text-dim hover:text-default'}"
-          >
-            <button class="flex items-center gap-1" onclick={() => selectTab(tab.path)}>
-              {#if tab.pinned}<Icon icon="ph:push-pin-fill" width="11" height="11" class="text-amber" />{/if}
-              <span>{tab.name}</span>
-              {#if dirtyPaths[tab.path]}<span class="text-amber">●</span>{/if}
-            </button>
-            <button
-              class="text-dim hover:text-red"
-              title="Close tab"
-              onclick={(event) => closeTab(tab.path, event)}>✕</button
+      <FloatingScrollbar axis="horizontal" class="min-w-0 flex-1">
+        <div class="flex w-max items-center gap-1">
+          {#each activeTabs as tab (tab.path)}
+            <div
+              class="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs {store.activeTabPath ===
+              tab.path
+                ? 'bg-surface text-default'
+                : 'text-dim hover:text-default'}"
             >
-          </div>
-        {/each}
-      </div>
+              <button class="flex items-center gap-1" onclick={() => selectTab(tab.path)}>
+                {#if tab.pinned}<Icon icon="ph:push-pin-fill" width="11" height="11" class="text-amber" />{/if}
+                <span>{tab.name}</span>
+                {#if dirtyPaths[tab.path]}<span class="text-amber">●</span>{/if}
+              </button>
+              <button
+                class="text-dim hover:text-red"
+                title="Close tab"
+                onclick={(event) => closeTab(tab.path, event)}>✕</button
+              >
+            </div>
+          {/each}
+        </div>
+      </FloatingScrollbar>
       <button
         class="rounded-md border border-line px-2 py-1 text-2xs {vimEnabled
           ? 'text-green'

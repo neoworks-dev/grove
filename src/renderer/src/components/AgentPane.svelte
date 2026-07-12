@@ -1774,7 +1774,7 @@
         {#if slashOpen}
           <!-- Slash menu floats above the input -->
           <div
-            class="absolute bottom-full left-3 right-3 mb-1 overflow-hidden rounded-md border border-line bg-elevated shadow-lg"
+            class="absolute bottom-full left-3 right-3 z-20 mb-1 overflow-hidden rounded-md border border-line bg-elevated shadow-lg"
           >
             <FloatingScrollbar class="max-h-56" bind:viewport={slashListEl}>
             {#each slashEntries as entry, index (entry.label)}
@@ -1811,7 +1811,7 @@
         {#if mentionOpen}
           <!-- File-mention menu floats above the input -->
           <div
-            class="absolute bottom-full left-3 right-3 mb-1 overflow-hidden rounded-md border border-line bg-elevated shadow-lg"
+            class="absolute bottom-full left-3 right-3 z-20 mb-1 overflow-hidden rounded-md border border-line bg-elevated shadow-lg"
           >
             <FloatingScrollbar class="max-h-56" bind:viewport={mentionListEl}>
             {#each mentionItems as file, index (file)}

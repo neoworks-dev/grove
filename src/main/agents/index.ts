@@ -152,6 +152,18 @@ export class AgentManager {
     return Object.fromEntries(this.chats.entries())
   }
 
+  // Restore last-known discovered slash commands so the menu is populated
+  // before the first run of this session refreshes them.
+  loadCommands(map: Record<string, AgentSlashCommand[]>): void {
+    for (const [key, commands] of Object.entries(map)) {
+      if (!this.commands.has(key)) this.commands.set(key, commands)
+    }
+  }
+
+  allCommands(): Record<string, AgentSlashCommand[]> {
+    return Object.fromEntries(this.commands.entries())
+  }
+
   private ensureChats(key: string): AgentChats {
     let entry = this.chats.get(key)
     if (!entry || entry.chats.length === 0) {

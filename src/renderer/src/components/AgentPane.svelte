@@ -158,6 +158,24 @@
 
   let slashDismissed = $state(false)
   let slashIndex = $state(0)
+  let slashListEl = $state<HTMLDivElement>()
+  let mentionListEl = $state<HTMLDivElement>()
+
+  // Keep the keyboard-highlighted menu row visible while arrowing through a
+  // list longer than the menu's max height.
+  function scrollMenuRowIntoView(viewport: HTMLDivElement | undefined, index: number): void {
+    if (!viewport) return
+    const row = viewport.querySelector(`[data-menu-index="${index}"]`)
+    row?.scrollIntoView({ block: 'nearest' })
+  }
+
+  $effect(() => {
+    scrollMenuRowIntoView(slashListEl, slashIndex)
+  })
+
+  $effect(() => {
+    scrollMenuRowIntoView(mentionListEl, mentionIndex)
+  })
 
   // The "/token" being typed at the end of the prompt, if any. `rest` keeps
   // spaces so multi-word values ("manual review") and free-text models work.
@@ -461,16 +479,62 @@
   let mentionDismissed = $state(false)
   let mentionIndex = $state(0)
 
-  // The "@token" being typed at the end of the prompt, if any.
+  // The "@token" being typed at the end of the prompt, if any. `raw` keeps the
+  // original casing for path completion; `query` is the lowercase fuzzy needle.
   const mention = $derived.by(() => {
     const match = prompt.match(/(?:^|\s)@([^\s]*)$/)
     if (!match) return null
     const token = `@${match[1]}`
-    return { start: prompt.length - token.length, query: match[1].toLowerCase() }
+    return { start: prompt.length - token.length, raw: match[1], query: match[1].toLowerCase() }
+  })
+
+  // Tokens that look like paths (./ ../ / ~) switch from fuzzy matching over
+  // the worktree file list to real directory completion, so any file on disk —
+  // including one directory up via `@..` — can be mentioned.
+  function parsePathMention(raw: string): { dir: string; base: string } | null {
+    const looksLikePath = raw.startsWith('/') || raw.startsWith('~') || raw.startsWith('.')
+    if (!looksLikePath) return null
+    if (raw.endsWith('/')) return { dir: raw.slice(0, -1) || '/', base: '' }
+    if (raw === '.' || raw === '..' || raw === '~') return { dir: raw, base: '' }
+    const slash = raw.lastIndexOf('/')
+    if (slash === -1) return { dir: '.', base: raw }
+    return { dir: raw.slice(0, slash) || '/', base: raw.slice(slash + 1) }
+  }
+
+  const mentionPath = $derived(mention ? parsePathMention(mention.raw) : null)
+
+  // Directory entries for the path being completed, fetched per directory.
+  let mentionDirEntries = $state<{ name: string; isDir: boolean }[]>([])
+  let mentionDirLoaded = $state<string | null>(null)
+
+  $effect(() => {
+    const worktreeId = store.selectedWorktreeId
+    const dir = mentionPath?.dir
+    if (!worktreeId || dir === undefined) return
+    if (dir === mentionDirLoaded) return
+    void window.workbench.files
+      .listPath(worktreeId, dir)
+      .then((entries) => {
+        mentionDirEntries = entries.map((node) => ({ name: node.name, isDir: node.isDir }))
+        mentionDirLoaded = dir
+      })
+      .catch(() => {
+        mentionDirEntries = []
+        mentionDirLoaded = dir
+      })
   })
 
   const mentionItems = $derived.by<string[]>(() => {
     if (!mention || mentionDismissed) return []
+    if (mentionPath) {
+      if (mentionDirLoaded !== mentionPath.dir) return []
+      const base = mentionPath.base.toLowerCase()
+      const prefix = mentionPath.dir === '/' ? '' : mentionPath.dir
+      return mentionDirEntries
+        .filter((node) => node.name.toLowerCase().startsWith(base))
+        .slice(0, 50)
+        .map((node) => `${prefix}/${node.name}${node.isDir ? '/' : ''}`)
+    }
     return worktreeFiles.filter((file) => file.toLowerCase().includes(mention.query)).slice(0, 50)
   })
   const mentionOpen = $derived(mentionItems.length > 0)
@@ -483,7 +547,10 @@
 
   function applyMention(path: string): void {
     if (!mention) return
-    prompt = `${prompt.slice(0, mention.start)}@${path} `
+    // A directory keeps the token open (no trailing space) so completion
+    // continues into it; a file finishes the mention.
+    const suffix = path.endsWith('/') ? '' : ' '
+    prompt = `${prompt.slice(0, mention.start)}@${path}${suffix}`
     promptEl?.focus()
   }
 
@@ -552,7 +619,11 @@
   }
 
   function baseName(path: string): string {
-    return path.split('/').pop() || path
+    // Directory completions carry a trailing slash — keep it in the display.
+    const trimmed = path.endsWith('/') ? path.slice(0, -1) : path
+    const name = trimmed.split('/').pop() || trimmed
+    if (path.endsWith('/')) return `${name}/`
+    return name
   }
 
   function onPromptKey(event: KeyboardEvent): void {
@@ -617,15 +688,18 @@
       }
     }
     // Active-agents list: when the prompt is empty and subagents exist, Arrow
-    // keys navigate the list and Enter opens the selected subagent's transcript.
+    // keys navigate the list (row 0 = the main chat) and Enter opens the
+    // selected transcript. Entering the list lands on the currently viewed
+    // agent; ArrowUp walks up the rows and only exits at the top.
     if (subagents.length > 0 && prompt.length === 0) {
+      const rowCount = subagents.length + 1
       if (event.key === 'ArrowDown') {
         event.preventDefault()
         if (!agentNavActive) {
           agentNavActive = true
-          agentIndex = 0
+          agentIndex = activeAgentRow()
         } else {
-          agentIndex = Math.min(agentIndex + 1, subagents.length - 1)
+          agentIndex = Math.min(agentIndex + 1, rowCount - 1)
         }
         return
       }
@@ -637,7 +711,12 @@
       }
       if (agentNavActive && event.key === 'Enter') {
         event.preventDefault()
-        focusSubagent(subagents[agentIndex].key)
+        if (agentIndex === 0) {
+          focusedSubagentKey = null
+          agentNavActive = false
+        } else {
+          focusSubagent(subagents[agentIndex - 1].key)
+        }
         return
       }
       if (agentNavActive && event.key === 'Escape') {
@@ -814,11 +893,21 @@
   })
 
   let agentNavActive = $state(false)
+  // Row in the agents list: 0 is the main chat, 1..n are the subagents.
   let agentIndex = $state(0)
   let focusedSubagentKey = $state<string | null>(null)
 
+  // The row of the transcript currently being viewed — where keyboard
+  // navigation enters the list.
+  function activeAgentRow(): number {
+    if (!focusedSubagentKey) return 0
+    const index = subagents.findIndex((agent) => agent.key === focusedSubagentKey)
+    if (index === -1) return 0
+    return index + 1
+  }
+
   $effect(() => {
-    if (agentIndex >= subagents.length) agentIndex = Math.max(0, subagents.length - 1)
+    if (agentIndex > subagents.length) agentIndex = subagents.length
   })
 
   // The transcript shows all items, or just one subagent's Task card + result
@@ -836,6 +925,7 @@
       (item) => !(item.kind === 'tool-result' && taskResultKeys.has(item.key))
     )
   })
+
 
   // ── Transcript auto-scroll ─────────────────────────────────────
   // Follow new output as it streams in, but yield to the user the moment they
@@ -968,17 +1058,6 @@
   })
 
   // ── Working-state indicator ────────────────────────────────────
-  // What the agent is doing right now, inferred from the latest transcript item.
-  const workState = $derived.by(() => {
-    if (!isRunning) return ''
-    const last = items[items.length - 1]
-    if (!last) return 'thinking'
-    if (last.kind === 'tool') return `using ${last.tool}`
-    if (last.kind === 'text') return 'writing'
-    if (last.kind === 'tool-result') return 'working'
-    return 'thinking'
-  })
-
   const FUNNY_MESSAGES = [
     'reticulating splines…',
     'bribing the compiler…',
@@ -1354,25 +1433,25 @@
       onscroll={onTranscriptScroll}
     >
       <div class="px-3 py-3 text-xs leading-relaxed">
-        {#if focusedSubagentKey}
-          <button
-            class="-mx-3 mb-3 flex w-[calc(100%+1.5rem)] items-center gap-2 border-y border-line bg-surface px-3 py-1.5 text-2xs text-dim hover:text-default"
-            onclick={() => (focusedSubagentKey = null)}
-          >
-            ← Back to full chat
-          </button>
-        {/if}
         {#each visibleItems as item (item.key)}
           <!-- Class-light wrapper: the find bar scrolls to it by key; margins
-               stay on the children so the -mx-3 full-bleed bands keep working. -->
+               stay on the children so the -mx-3 full-bleed bands keep working.
+               Every user message is sticky (section-header style): it pins to
+               the top while its response scrolls, and the next one pushes it
+               out — so scrolling up swaps in the earlier question. -->
           <div
             data-item-key={item.key}
-            class={item.key === highlightedKey ? 'rounded ring-1 ring-amber' : ''}
+            class="{item.key === highlightedKey ? 'rounded ring-1 ring-amber' : ''} {item.kind ===
+            'user'
+              ? 'sticky top-0 z-10'
+              : ''}"
           >
           {#if item.kind === 'user'}
-            <!-- User message: full-width band tinted like the logo leaves. -->
+            <!-- User message: full-width band tinted like the logo leaves.
+                 Sticky bands scroll over content, so the tint is layered over
+                 the base background to stay opaque. -->
             <div
-              class="-mx-3 mb-3 whitespace-pre-wrap border-y border-green/30 bg-green-soft px-3 py-2 text-default"
+              class="agent-sticky-user -mx-3 mb-3 whitespace-pre-wrap border-y border-green/30 px-3 py-2 text-default"
             >
               {item.text}
             </div>
@@ -1475,9 +1554,8 @@
         class="flex shrink-0 items-center gap-2 border-t border-line bg-elevated px-3 py-1.5 text-2xs"
       >
         <span class="shrink-0 text-green"><WaveSpinner /></span>
-        <span class="font-medium text-default">{workState}</span>
-        <span class="ml-auto truncate italic text-dim">{funnyMessage}</span>
-        <span class="shrink-0 font-mono text-muted" title="input + output tokens"
+        <span class="truncate italic text-muted">{funnyMessage}</span>
+        <span class="ml-auto shrink-0 font-mono text-muted" title="input + output tokens"
           >{formatTokens(meta.totalTokens)} tok</span
         >
       </div>
@@ -1540,39 +1618,6 @@
             {/each}
           </div>
         {/if}
-      </div>
-    {/if}
-
-    <!-- Active agents: subagents spawned via the Task tool. ↓ to navigate,
-         Enter to open one's transcript. -->
-    {#if subagents.length > 0}
-      <div class="shrink-0 border-t border-line bg-elevated px-2 py-1.5">
-        <div class="mb-1 px-1 text-2xs uppercase tracking-caps text-dim">
-          Agents · <span class="normal-case tracking-normal">↓ navigate · enter open</span>
-        </div>
-        <div class="flex flex-col gap-0.5">
-          {#each subagents as agent, index (agent.key)}
-            <button
-              class="flex items-center gap-2 rounded px-2 py-1 text-left text-2xs {agentNavActive &&
-              index === agentIndex
-                ? 'bg-action text-action-fg'
-                : 'text-muted hover:bg-hover'} {agent.key === focusedSubagentKey
-                ? 'ring-1 ring-green'
-                : ''}"
-              onclick={() => focusSubagent(agent.key)}
-            >
-              {#if agent.running}
-                <span class="shrink-0 text-green"><WaveSpinner /></span>
-              {:else}
-                <span class="shrink-0 text-dim">✓</span>
-              {/if}
-              <span class="shrink-0 font-mono font-semibold text-violet">{agent.type}</span>
-              {#if agent.description}
-                <span class="truncate text-muted">{agent.description}</span>
-              {/if}
-            </button>
-          {/each}
-        </div>
       </div>
     {/if}
 
@@ -1727,10 +1772,12 @@
         {#if slashOpen}
           <!-- Slash menu floats above the input -->
           <div
-            class="absolute bottom-full left-3 right-3 mb-1 max-h-56 overflow-auto rounded-md border border-line bg-elevated shadow-lg"
+            class="absolute bottom-full left-3 right-3 mb-1 overflow-hidden rounded-md border border-line bg-elevated shadow-lg"
           >
+            <FloatingScrollbar class="max-h-56" bind:viewport={slashListEl}>
             {#each slashEntries as entry, index (entry.label)}
               <button
+                data-menu-index={index}
                 class="flex w-full items-center gap-3 px-2 py-1.5 text-left text-xs {index ===
                 slashIndex
                   ? 'bg-action text-action-fg'
@@ -1755,16 +1802,19 @@
                 {/if}
               </button>
             {/each}
+            </FloatingScrollbar>
           </div>
         {/if}
 
         {#if mentionOpen}
           <!-- File-mention menu floats above the input -->
           <div
-            class="absolute bottom-full left-3 right-3 mb-1 max-h-56 overflow-auto rounded-md border border-line bg-elevated shadow-lg"
+            class="absolute bottom-full left-3 right-3 mb-1 overflow-hidden rounded-md border border-line bg-elevated shadow-lg"
           >
+            <FloatingScrollbar class="max-h-56" bind:viewport={mentionListEl}>
             {#each mentionItems as file, index (file)}
               <button
+                data-menu-index={index}
                 class="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs {index ===
                 mentionIndex
                   ? 'bg-action text-action-fg'
@@ -1782,6 +1832,7 @@
                 >
               </button>
             {/each}
+            </FloatingScrollbar>
           </div>
         {/if}
 
@@ -1839,5 +1890,54 @@
         </div>
       {/if}
     </div>
+
+    <!-- Active agents: the main chat plus subagents spawned via the Task tool.
+         ↓ to navigate, Enter to open one's transcript. -->
+    {#if subagents.length > 0}
+      <div class="shrink-0 border-t border-line bg-elevated px-2 py-1.5">
+        <div class="mb-1 px-1 text-2xs uppercase tracking-caps text-dim">
+          Agents · <span class="normal-case tracking-normal">↓ navigate · enter open</span>
+        </div>
+        <div class="flex flex-col gap-0.5">
+          <button
+            class="flex items-center gap-2 rounded px-2 py-1 text-left text-2xs {agentNavActive &&
+            agentIndex === 0
+              ? 'bg-action text-action-fg'
+              : 'text-muted hover:bg-hover'} {focusedSubagentKey === null
+              ? 'ring-1 ring-green'
+              : ''}"
+            onclick={() => (focusedSubagentKey = null)}
+          >
+            {#if isRunning}
+              <span class="shrink-0 text-green"><WaveSpinner /></span>
+            {:else}
+              <span class="shrink-0 text-dim">✓</span>
+            {/if}
+            <span class="shrink-0 font-mono font-semibold text-green">main</span>
+          </button>
+          {#each subagents as agent, index (agent.key)}
+            <button
+              class="flex items-center gap-2 rounded px-2 py-1 text-left text-2xs {agentNavActive &&
+              index + 1 === agentIndex
+                ? 'bg-action text-action-fg'
+                : 'text-muted hover:bg-hover'} {agent.key === focusedSubagentKey
+                ? 'ring-1 ring-green'
+                : ''}"
+              onclick={() => focusSubagent(agent.key)}
+            >
+              {#if agent.running}
+                <span class="shrink-0 text-green"><WaveSpinner /></span>
+              {:else}
+                <span class="shrink-0 text-dim">✓</span>
+              {/if}
+              <span class="shrink-0 font-mono font-semibold text-violet">{agent.type}</span>
+              {#if agent.description}
+                <span class="truncate text-muted">{agent.description}</span>
+              {/if}
+            </button>
+          {/each}
+        </div>
+      </div>
+    {/if}
   {/if}
 </div>

@@ -834,6 +834,14 @@
  * ═══════════════════════════════════════════════════════════════
  * Same unlayered approach as .doc-article so daisyUI's dark-only prose vars
  * can't override our [data-theme] tokens. Tighter spacing for a chat bubble. */
+/* Sticky newest-user-message band: green-soft is translucent, so layer it over
+   the base background to stay opaque while transcript content scrolls under. */
+.agent-sticky-user {
+  background:
+    linear-gradient(var(--ctx-green-soft), var(--ctx-green-soft)),
+    var(--bg);
+}
+
 .agent-markdown.prose {
   font-size: var(--text-xs);
   line-height: var(--leading-normal);

@@ -113,27 +113,50 @@ describe('parseAgentLines', () => {
 })
 
 describe('parseAgentMeta', () => {
-  it('sums output tokens across turns and takes the largest input', () => {
+  it('reports the latest main-conversation response (point-in-time, like Claude Code)', () => {
     const meta = parseAgentMeta([
       assistant([{ type: 'text', text: 'a' }], 'm1', { input_tokens: 100, output_tokens: 20 }),
       assistant([{ type: 'text', text: 'b' }], 'm2', { input_tokens: 140, output_tokens: 30 })
     ])
     expect(meta.inputTokens).toBe(140)
-    expect(meta.outputTokens).toBe(50)
-    expect(meta.totalTokens).toBe(190)
+    expect(meta.outputTokens).toBe(30)
+    expect(meta.totalTokens).toBe(170)
   })
 
-  it('counts cache reads toward input and lets the result total win', () => {
+  it('counts cache reads and writes toward context fill', () => {
     const meta = parseAgentMeta([
       assistant([{ type: 'text', text: 'a' }], 'm1', {
         input_tokens: 10,
-        cache_read_input_tokens: 90,
+        cache_read_input_tokens: 80,
+        cache_creation_input_tokens: 10,
         output_tokens: 15
-      }),
-      JSON.stringify({ type: 'result', usage: { input_tokens: 100, output_tokens: 40 } })
+      })
     ])
     expect(meta.inputTokens).toBe(100)
-    expect(meta.outputTokens).toBe(40) // result total supersedes the running sum
+    expect(meta.outputTokens).toBe(15)
+  })
+
+  it('ignores subagent turns, result totals, and synthetic zero-usage events', () => {
+    const meta = parseAgentMeta([
+      assistant([{ type: 'text', text: 'a' }], 'm1', { input_tokens: 100, output_tokens: 20 }),
+      // Subagent turn: separate context window.
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: 'toolu_1',
+        message: {
+          id: 'm2',
+          role: 'assistant',
+          content: [],
+          usage: { input_tokens: 900, output_tokens: 90 }
+        }
+      }),
+      // Terminal result: run totals, not a context snapshot.
+      JSON.stringify({ type: 'result', usage: { input_tokens: 999, output_tokens: 400 } }),
+      // Synthetic local-command output (e.g. /usage): zero usage.
+      assistant([{ type: 'text', text: 'usage info' }], 'm3', { input_tokens: 0, output_tokens: 0 })
+    ])
+    expect(meta.inputTokens).toBe(100)
+    expect(meta.outputTokens).toBe(20)
   })
 
   it('returns zeros when no usage is present', () => {

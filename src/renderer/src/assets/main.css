@@ -534,31 +534,25 @@
   }
 
   /* NeoWorks-style thin scrollbar. Matches the FloatingScrollbar thumb (thin,
-     rounded, line-strong) for native overflow containers where the component
-     can't attach: the CodeMirror viewport (editor + diff, both axes) and
-     horizontal strips tagged with `.nw-scroll`. Higher specificity than the
+     rounded, line-strong) for the CodeMirror viewport (editor + diff, both
+     axes), where the component can't attach. Higher specificity than the
      app-wide default above, so these show an always-visible thin thumb. */
-  .cm-scroller::-webkit-scrollbar,
-  .nw-scroll::-webkit-scrollbar {
+  .cm-scroller::-webkit-scrollbar {
     width: 6px;
     height: 6px;
   }
-  .cm-scroller::-webkit-scrollbar-track,
-  .nw-scroll::-webkit-scrollbar-track {
+  .cm-scroller::-webkit-scrollbar-track {
     background: transparent;
   }
-  .cm-scroller::-webkit-scrollbar-thumb,
-  .nw-scroll::-webkit-scrollbar-thumb {
+  .cm-scroller::-webkit-scrollbar-thumb {
     background: var(--border-strong);
     border: none;
     border-radius: var(--radius-full);
   }
-  .cm-scroller::-webkit-scrollbar-thumb:hover,
-  .nw-scroll::-webkit-scrollbar-thumb:hover {
+  .cm-scroller::-webkit-scrollbar-thumb:hover {
     background: var(--text-dim);
   }
-  .cm-scroller::-webkit-scrollbar-corner,
-  .nw-scroll::-webkit-scrollbar-corner {
+  .cm-scroller::-webkit-scrollbar-corner {
     background: transparent;
   }
 

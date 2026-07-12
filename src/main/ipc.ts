@@ -70,7 +70,9 @@ const agents = new AgentManager({
     send('event:agent-chats', { worktreeId, name, chats: agents.listChats(worktreeId, name) })
     if (!context.repoPath) return
     void updateRepoState(context.repoPath, { agentChats: agents.allChats() })
-  }
+  },
+  onQueue: (event) => send('event:agent-queue', event),
+  onCommands: (event) => send('event:agent-commands', event)
 })
 
 // Persist the named-chat map after a mutation and push it to the renderer.
@@ -332,8 +334,33 @@ export function registerIpc(): void {
     }
   )
 
+  // User-initiated stop: also flushes queued messages back to the composer.
   ipcMain.handle('agents:stop', (_e, worktreeId: string, name: string) =>
-    agents.stop(worktreeId, name)
+    agents.stop(worktreeId, name, { clearQueue: true })
+  )
+
+  // Message typed while a run is active: inject live, queue, or start a
+  // resumed run when idle.
+  ipcMain.handle('agents:send', (_e, worktreeId: string, name: string, text: string) => {
+    const { config: cfg } = requireRepo()
+    const worktree = findWorktree(worktreeId)
+    const agent = effectiveAgents()[name]
+    if (!agent) throw new Error(`unknown agent: ${name}`)
+    const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
+    return agents.send(worktree, name, agent, ports, text)
+  })
+
+  ipcMain.handle('agents:queue', (_e, worktreeId: string, name: string) =>
+    agents.getQueue(worktreeId, name)
+  )
+
+  ipcMain.handle('agents:cancelQueued', (_e, worktreeId: string, name: string, id: string) =>
+    agents.cancelQueued(worktreeId, name, id)
+  )
+
+  // Provider-discovered slash commands (claude); [] for other adapters.
+  ipcMain.handle('agents:commands', (_e, worktreeId: string, name: string) =>
+    agents.getCommands(worktreeId, name)
   )
 
   // Compact the active chat (summarize + continue with less context).
@@ -426,6 +453,15 @@ export function registerIpc(): void {
     const worktree = findWorktree(worktreeId)
     return files.writeFileContent(worktree.path, absPath, content)
   })
+
+  // Save a pasted/dropped attachment for @-mentioning in the agent prompt.
+  ipcMain.handle(
+    'files:saveAttachment',
+    (_e, worktreeId: string, data: Uint8Array, ext: string) => {
+      const worktree = findWorktree(worktreeId)
+      return files.saveAttachment(worktree.path, data, ext)
+    }
+  )
 
   ipcMain.handle('files:create', (_e, worktreeId: string, relPath: string) => {
     const worktree = findWorktree(worktreeId)

@@ -9,6 +9,7 @@ import type {
   AgentDialogDecision,
   AgentDialogRequest,
   AgentLaunchOptions,
+  AgentSlashCommand,
   AgentStatus,
   PermissionDecision,
   PermissionRequestEvent,
@@ -40,10 +41,16 @@ export interface AdapterContext {
     mcpServers: () => Promise<Record<string, unknown>>
     systemAppend: () => string
   }
+  // Full slash-command list discovered from the provider (replace semantics —
+  // each call supersedes the previous list).
+  setCommands?: (commands: AgentSlashCommand[]) => void
 }
 
 export interface RunHandle {
   stop: () => Promise<void>
+  // Inject a user message into the live run. Returns false when the run can no
+  // longer accept input (input stream closed / unsupported) — caller queues.
+  send?: (text: string) => boolean
 }
 
 export interface AgentAdapter {

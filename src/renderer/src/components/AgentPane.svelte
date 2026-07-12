@@ -17,9 +17,11 @@
   } from '../lib/store.svelte'
   import { parseQuestions, buildAnswerResult } from '../lib/agentDialog'
   import WaveSpinner from './WaveSpinner.svelte'
+  import { onMount, onDestroy } from 'svelte'
+  import { keymap } from '../lib/keymap.svelte'
   import type { LogLine } from '../lib/store.svelte'
   import type { AgentRuntime, AgentConfig, ChatMeta } from '../../../shared/types'
-  import { parseAgentLines, parseAgentMeta, toolSummary } from '../lib/agentStream'
+  import { parseAgentLines, parseAgentMeta, toolSummary, type OutputItem } from '../lib/agentStream'
   import { renderMarkdown } from '../lib/markdown'
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
 
@@ -149,6 +151,8 @@
   interface SlashEntry {
     label: string
     description?: string
+    // Small tag shown next to the label (e.g. 'agent' for discovered commands).
+    badge?: string
     apply: () => void
   }
 
@@ -248,6 +252,39 @@
     }
   })
 
+  // ── Mid-run queue + discovered slash commands ──────────────────
+  const queuedMessages = $derived(store.agentQueues[chatsKey] || [])
+  const discoveredCommands = $derived(store.agentCommands[chatsKey] || [])
+
+  // Events only push changes; pull the current queue + command list when the
+  // worktree/agent selection changes (e.g. after a pane reload).
+  $effect(() => {
+    const worktreeId = store.selectedWorktreeId
+    const agent = selectedAgent
+    if (!worktreeId || !agent) return
+    const key = `${worktreeId}::${agent}`
+    void window.workbench.agents.queue(worktreeId, agent).then((queue) => {
+      store.agentQueues = { ...store.agentQueues, [key]: queue }
+    })
+    void window.workbench.agents.commands(worktreeId, agent).then((commands) => {
+      store.agentCommands = { ...store.agentCommands, [key]: commands }
+    })
+  })
+
+  // A user stop flushed queued messages — restore their text into the composer.
+  $effect(() => {
+    const restored = store.restoredQueueText[chatsKey]
+    if (!restored) return
+    const { [chatsKey]: _consumed, ...rest } = store.restoredQueueText
+    store.restoredQueueText = rest
+    prompt = prompt.trim() ? `${prompt}\n\n${restored}` : restored
+  })
+
+  function cancelQueued(id: string): void {
+    if (!store.selectedWorktreeId) return
+    void window.workbench.agents.cancelQueued(store.selectedWorktreeId, selectedAgent, id)
+  }
+
   // ── Stale-chat compact suggestion ──────────────────────────────
   // When reopening a chat that's been idle for a while, offer to compact it
   // rather than resuming a large stale context. Only a suggestion — compaction
@@ -319,6 +356,14 @@
     promptEl?.focus()
   }
 
+  // A discovered command stays in the prompt (unlike app commands): the agent
+  // resolves it, so Enter submits `/name args` as-is.
+  function insertDiscoveredCommand(name: string): void {
+    if (!slash) return
+    prompt = prompt.slice(0, slash.start) + `/${name} `
+    promptEl?.focus()
+  }
+
   const slashEntries = $derived.by<SlashEntry[]>(() => {
     if (!slash || slashDismissed) return []
     const rest = slash.rest
@@ -327,7 +372,7 @@
     // Command-selection phase: no argument typed yet.
     if (space === -1) {
       const query = rest.toLowerCase()
-      return slashCommands
+      const entries: SlashEntry[] = slashCommands
         .filter((command) => command.name.includes(query))
         .map((command) => ({
           label: `/${command.name}`,
@@ -344,6 +389,21 @@
             promptEl?.focus()
           }
         }))
+      // Provider-discovered commands after the built-ins (built-ins win name
+      // collisions). Selecting one only inserts `/name ` — the full text is
+      // submitted verbatim and resolved by the agent itself.
+      const builtinNames = new Set(slashCommands.map((command) => command.name))
+      for (const command of discoveredCommands) {
+        if (builtinNames.has(command.name)) continue
+        if (!command.name.toLowerCase().includes(query)) continue
+        entries.push({
+          label: `/${command.name}`,
+          description: command.description || command.argumentHint || 'agent command',
+          badge: 'agent',
+          apply: () => insertDiscoveredCommand(command.name)
+        })
+      }
+      return entries
     }
 
     // Argument phase: a command is chosen, filter its values.
@@ -427,11 +487,85 @@
     promptEl?.focus()
   }
 
+  // ── Attachments (paste image / drop file into the composer) ────
+  // The inserted @relpath text is the single source of truth: editable and
+  // deletable like any mention, no parallel chip state to reconcile.
+  function insertMentionAtCaret(relPath: string): void {
+    const caret = promptEl ? promptEl.selectionStart : prompt.length
+    const mentionText = `@${relPath} `
+    prompt = prompt.slice(0, caret) + mentionText + prompt.slice(caret)
+    queueMicrotask(() => {
+      if (!promptEl) return
+      const position = caret + mentionText.length
+      promptEl.setSelectionRange(position, position)
+      promptEl.focus()
+    })
+  }
+
+  function attachmentExtension(file: File): string {
+    const fromName = file.name.split('.').pop()
+    if (fromName && fromName !== file.name) return fromName.toLowerCase()
+    const fromMime = file.type.split('/').pop()
+    return fromMime || 'png'
+  }
+
+  async function attachFile(file: File): Promise<void> {
+    if (!store.selectedWorktreeId) return
+    try {
+      const data = new Uint8Array(await file.arrayBuffer())
+      const saved = await window.workbench.files.saveAttachment(
+        store.selectedWorktreeId,
+        data,
+        attachmentExtension(file)
+      )
+      insertMentionAtCaret(saved.relPath)
+    } catch (err) {
+      store.setError((err as Error).message)
+    }
+  }
+
+  function onPromptPaste(event: ClipboardEvent): void {
+    const images = Array.from(event.clipboardData?.files || []).filter((file) =>
+      file.type.startsWith('image/')
+    )
+    // Plain-text pastes fall through untouched.
+    if (images.length === 0) return
+    event.preventDefault()
+    for (const image of images) void attachFile(image)
+  }
+
+  function onPromptDrop(event: DragEvent): void {
+    const files = Array.from(event.dataTransfer?.files || [])
+    if (files.length === 0) return
+    event.preventDefault()
+    for (const file of files) {
+      // Files already inside the worktree are mentioned in place; anything
+      // external is copied into .workbench/attachments first.
+      const absPath = window.workbench.files.pathForFile(file)
+      const relPath = absPath ? relativeToWorktree(absPath) : null
+      if (relPath) {
+        insertMentionAtCaret(relPath)
+        continue
+      }
+      void attachFile(file)
+    }
+  }
+
   function baseName(path: string): string {
     return path.split('/').pop() || path
   }
 
   function onPromptKey(event: KeyboardEvent): void {
+    // Ctrl+C interrupts the running agent — but only with a collapsed caret,
+    // so copying selected text keeps working.
+    if (event.key === 'c' && event.ctrlKey && !event.altKey && !event.metaKey && isRunning) {
+      const target = event.currentTarget as HTMLTextAreaElement
+      if (target.selectionStart === target.selectionEnd) {
+        event.preventDefault()
+        void stop()
+        return
+      }
+    }
     // Shift+Tab cycles the mode regardless of menu state.
     if (event.key === 'Tab' && event.shiftKey) {
       event.preventDefault()
@@ -615,6 +749,70 @@
     return list
   })
 
+  // ── Task list (TaskCreate/TaskUpdate folded into a live checklist) ──
+  const TASK_TOOLS = new Set(['TaskCreate', 'TaskUpdate'])
+
+  interface TaskItem {
+    id: string
+    subject: string
+    status: string
+    activeForm: string
+  }
+
+  // The assigned task id lives in the TaskCreate result text ("Task #3
+  // created…"); fall back to creation order if the format changes.
+  function taskIdFromResult(text: string | undefined): string | null {
+    const match = text?.match(/#(\d+)/)
+    if (match) return match[1]
+    return null
+  }
+
+  const taskList = $derived.by<TaskItem[]>(() => {
+    const resultsByKey = new Map(
+      items
+        .filter((item) => item.kind === 'tool-result')
+        .map((item) => [item.key, item.text] as const)
+    )
+    const tasks: TaskItem[] = []
+    const tasksById = new Map<string, TaskItem>()
+    for (const item of items) {
+      if (item.kind !== 'tool' || !TASK_TOOLS.has(item.tool)) continue
+      if (item.tool === 'TaskCreate') {
+        const fallbackId = String(tasks.length + 1)
+        const id = taskIdFromResult(resultsByKey.get(`result:${item.key}`)) || fallbackId
+        const task: TaskItem = {
+          id,
+          subject: String(item.input.subject || ''),
+          status: 'pending',
+          activeForm: String(item.input.activeForm || '')
+        }
+        tasks.push(task)
+        tasksById.set(id, task)
+        continue
+      }
+      const task = tasksById.get(String(item.input.taskId || ''))
+      if (!task) continue
+      if (typeof item.input.status === 'string') task.status = item.input.status
+      if (typeof item.input.subject === 'string') task.subject = item.input.subject
+      if (typeof item.input.activeForm === 'string') task.activeForm = item.input.activeForm
+    }
+    return tasks.filter((task) => task.status !== 'deleted')
+  })
+  let tasksOpen = $state(true)
+  const tasksDone = $derived(taskList.filter((task) => task.status === 'completed').length)
+  const activeTaskLabel = $derived(
+    taskList.find((task) => task.status === 'in_progress')?.activeForm || ''
+  )
+
+  // Task tool-results are folded into the checklist; hide their raw rows.
+  const taskResultKeys = $derived.by(() => {
+    const keys = new Set<string>()
+    for (const item of items) {
+      if (item.kind === 'tool' && TASK_TOOLS.has(item.tool)) keys.add(`result:${item.key}`)
+    }
+    return keys
+  })
+
   let agentNavActive = $state(false)
   let agentIndex = $state(0)
   let focusedSubagentKey = $state<string | null>(null)
@@ -633,8 +831,10 @@
     // After a /compact, hide the summarized history and keep the boundary marker
     // as the new top of the conversation (like Claude Code's compact view).
     const lastCompact = items.findLastIndex((item) => item.kind === 'compact')
-    if (lastCompact > 0) return items.slice(lastCompact)
-    return items
+    const base = lastCompact > 0 ? items.slice(lastCompact) : items
+    return base.filter(
+      (item) => !(item.kind === 'tool-result' && taskResultKeys.has(item.key))
+    )
   })
 
   // ── Transcript auto-scroll ─────────────────────────────────────
@@ -669,6 +869,103 @@
     expandedTools = { ...expandedTools, [key]: true }
     expandedResults = { ...expandedResults, [`result:${key}`]: true }
   }
+
+  // ── Transcript find bar (Ctrl+F) ───────────────────────────────
+  // Matches at item granularity: jumping scrolls the item into view with a
+  // brief highlight ring (no text-level marks inside rendered markdown).
+  let findOpen = $state(false)
+  let findQuery = $state('')
+  let findIndex = $state(0)
+  let findInputEl = $state<HTMLInputElement>()
+  let highlightedKey = $state<string | null>(null)
+  let highlightTimer: ReturnType<typeof setTimeout> | undefined
+
+  function itemSearchText(item: OutputItem): string {
+    if (item.kind === 'tool') return `${item.tool} ${toolSummary(item.tool, item.input)}`
+    if (item.kind === 'compact') return ''
+    return item.text
+  }
+
+  const findMatches = $derived.by<string[]>(() => {
+    const query = findQuery.trim().toLowerCase()
+    if (!findOpen || !query) return []
+    return visibleItems
+      .filter((item) => itemSearchText(item).toLowerCase().includes(query))
+      .map((item) => item.key)
+  })
+
+  // A changed query restarts at (and jumps to) the first match.
+  $effect(() => {
+    void findMatches
+    findIndex = 0
+    if (findMatches.length > 0) jumpToMatch(0)
+  })
+
+  // Manual scrollTop instead of scrollIntoView: the FloatingScrollbar viewport
+  // is the scroll container, and scrollIntoView can also scroll ancestors.
+  function jumpToMatch(index: number): void {
+    const key = findMatches[index]
+    const viewport = transcriptViewport
+    if (!key || !viewport) return
+    // Searching disengages follow-mode so streamed output doesn't yank the view.
+    stuckToBottom = false
+    const node = viewport.querySelector(`[data-item-key="${CSS.escape(key)}"]`)
+    if (!(node instanceof HTMLElement)) return
+    const nodeTop =
+      node.getBoundingClientRect().top - viewport.getBoundingClientRect().top + viewport.scrollTop
+    viewport.scrollTop = Math.max(0, nodeTop - viewport.clientHeight / 3)
+    highlightedKey = key
+    clearTimeout(highlightTimer)
+    highlightTimer = setTimeout(() => (highlightedKey = null), 1200)
+  }
+
+  function stepMatch(direction: 1 | -1): void {
+    if (findMatches.length === 0) return
+    findIndex = (findIndex + direction + findMatches.length) % findMatches.length
+    jumpToMatch(findIndex)
+  }
+
+  function openFind(): void {
+    findOpen = true
+    queueMicrotask(() => findInputEl?.select())
+  }
+
+  function closeFind(): void {
+    findOpen = false
+    findQuery = ''
+    highlightedKey = null
+    promptEl?.focus()
+  }
+
+  function onFindKey(event: KeyboardEvent): void {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      stepMatch(event.shiftKey ? -1 : 1)
+      return
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      closeFind()
+    }
+  }
+
+  let disposeFindBinding: (() => void) | null = null
+  onMount(() => {
+    disposeFindBinding = keymap.registerBindings([
+      {
+        id: 'agent.findTranscript',
+        keys: 'ctrl+f',
+        context: 'agent',
+        group: 'Agent',
+        description: 'Find in transcript',
+        run: openFind
+      }
+    ])
+  })
+  onDestroy(() => {
+    disposeFindBinding?.()
+    clearTimeout(highlightTimer)
+  })
 
   // ── Working-state indicator ────────────────────────────────────
   // What the agent is doing right now, inferred from the latest transcript item.
@@ -705,12 +1002,24 @@
   async function launch(): Promise<void> {
     if (!store.selectedWorktreeId || !selectedAgent) return
     try {
-      await window.workbench.agents.start(store.selectedWorktreeId, selectedAgent, launchOptions())
+      if (isRunning) {
+        // A run is active: inject the message live (or queue it) instead of
+        // tearing the run down.
+        const text = prompt.trim()
+        if (!text) return
+        await window.workbench.agents.send(store.selectedWorktreeId, selectedAgent, text)
+      } else {
+        await window.workbench.agents.start(
+          store.selectedWorktreeId,
+          selectedAgent,
+          launchOptions()
+        )
+        await refreshRuntimes(store.selectedWorktreeId)
+      }
       // Sending a new prompt re-pins the view to the newest output.
       stuckToBottom = true
       pushHistory(prompt)
       prompt = ''
-      await refreshRuntimes(store.selectedWorktreeId)
     } catch (err) {
       store.setError((err as Error).message)
     }
@@ -940,6 +1249,28 @@
     if (path && store.selectedWorktreeId) openFileInEditor(store.selectedWorktreeId, path)
   }
 
+  // File-editing tools get a "diff" action that opens the file's full
+  // side-by-side diff in the editor's diff pane.
+  const FILE_EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
+
+  // Tool inputs carry absolute paths; the diff pane and fs watcher speak
+  // worktree-relative ones.
+  function relativeToWorktree(absPath: string): string | null {
+    const root = store.selectedWorktree?.path
+    if (!root) return null
+    if (!absPath.startsWith(`${root}/`)) return null
+    return absPath.slice(root.length + 1)
+  }
+
+  function openCardDiff(input: Record<string, unknown>): void {
+    const path = filePath(input)
+    if (!path) return
+    const relPath = path.startsWith('/') ? relativeToWorktree(path) : path
+    if (!relPath) return
+    store.requestedDiffFile = relPath
+    layout.showCenterPane('diff')
+  }
+
   // Tool cards show a one-line summary; expand to see the full command / input.
   let expandedTools = $state<Record<string, boolean>>({})
   function toggleTool(key: string): void {
@@ -986,6 +1317,36 @@
   {#if !store.selectedWorktreeId}
     <p class="px-3 py-3 text-xs text-dim">Select a worktree.</p>
   {:else}
+    {#if findOpen}
+      <!-- Transcript find bar (Ctrl+F): pinned below the pane header. -->
+      <div class="flex shrink-0 items-center gap-2 border-b border-line bg-elevated px-3 py-1.5">
+        <input
+          bind:this={findInputEl}
+          bind:value={findQuery}
+          onkeydown={onFindKey}
+          class="min-w-0 flex-1 rounded border border-line bg-input px-2 py-0.5 text-xs"
+          placeholder="Find in transcript…"
+        />
+        <span class="shrink-0 font-mono text-2xs text-dim">
+          {findMatches.length === 0 ? '0/0' : `${findIndex + 1}/${findMatches.length}`}
+        </span>
+        <button
+          class="shrink-0 text-2xs text-dim hover:text-default"
+          title="Previous match (Shift+Enter)"
+          onclick={() => stepMatch(-1)}>↑</button
+        >
+        <button
+          class="shrink-0 text-2xs text-dim hover:text-default"
+          title="Next match (Enter)"
+          onclick={() => stepMatch(1)}>↓</button
+        >
+        <button
+          class="shrink-0 text-2xs text-dim hover:text-default"
+          title="Close (Esc)"
+          onclick={closeFind}>✕</button
+        >
+      </div>
+    {/if}
     <!-- Chat transcript -->
     <FloatingScrollbar
       class="min-h-0 flex-1"
@@ -1002,6 +1363,12 @@
           </button>
         {/if}
         {#each visibleItems as item (item.key)}
+          <!-- Class-light wrapper: the find bar scrolls to it by key; margins
+               stay on the children so the -mx-3 full-bleed bands keep working. -->
+          <div
+            data-item-key={item.key}
+            class={item.key === highlightedKey ? 'rounded ring-1 ring-amber' : ''}
+          >
           {#if item.kind === 'user'}
             <!-- User message: full-width band tinted like the logo leaves. -->
             <div
@@ -1014,6 +1381,14 @@
             <div class="agent-markdown prose mb-3 max-w-none text-xs text-default">
               <!-- eslint-disable-next-line svelte/no-at-html-tags -->
               {@html renderMarkdown(item.text)}
+            </div>
+          {:else if item.kind === 'tool' && TASK_TOOLS.has(item.tool)}
+            <!-- Task tool calls fold into the pinned checklist; keep a one-line
+                 marker so the timeline shows when statuses changed. -->
+            <div class="mb-2 font-mono text-2xs text-dim">
+              ☑ {item.tool === 'TaskCreate'
+                ? `task: ${item.input.subject || ''}`
+                : `task #${item.input.taskId || '?'} → ${item.input.status || 'updated'}`}
             </div>
           {:else if item.kind === 'tool'}
             {@const path = filePath(item.input)}
@@ -1035,9 +1410,18 @@
                     <span class="truncate font-mono text-2xs text-muted">{summary}</span>
                   {/if}
                 </button>
-                {#if path}
+                {#if path && FILE_EDIT_TOOLS.has(item.tool)}
                   <button
                     class="ml-auto shrink-0 text-2xs text-dim hover:text-default"
+                    title="Show side-by-side diff"
+                    onclick={() => openCardDiff(item.input)}>diff</button
+                  >
+                {/if}
+                {#if path}
+                  <button
+                    class="{FILE_EDIT_TOOLS.has(item.tool)
+                      ? ''
+                      : 'ml-auto'} shrink-0 text-2xs text-dim hover:text-default"
                     onclick={() => openCard(item.input)}>open ↗</button
                   >
                 {/if}
@@ -1077,6 +1461,7 @@
           {:else}
             <pre class="mb-1 whitespace-pre-wrap font-mono text-2xs text-muted">{item.text}</pre>
           {/if}
+          </div>
         {/each}
         {#if items.length === 0}
           <p class="text-dim">No agent output yet. Write a prompt below and run.</p>
@@ -1095,6 +1480,66 @@
         <span class="shrink-0 font-mono text-muted" title="input + output tokens"
           >{formatTokens(meta.totalTokens)} tok</span
         >
+      </div>
+    {/if}
+
+    <!-- Messages waiting for the current run to finish; auto-submitted on a
+         clean exit, removable until then. -->
+    {#if queuedMessages.length > 0}
+      <div
+        class="flex max-h-20 shrink-0 flex-wrap gap-1 overflow-auto border-t border-line bg-elevated px-3 py-1.5"
+      >
+        {#each queuedMessages as message (message.id)}
+          <span
+            class="flex max-w-full items-center gap-1 rounded-full border border-line px-2 py-0.5 text-2xs text-muted"
+          >
+            <span class="truncate" title={message.text}>{message.text}</span>
+            <button
+              class="shrink-0 text-dim hover:text-red"
+              title="Remove queued message"
+              onclick={() => cancelQueued(message.id)}>✕</button
+            >
+          </span>
+        {/each}
+      </div>
+    {/if}
+
+    <!-- Live task checklist folded from TaskCreate/TaskUpdate tool calls. -->
+    {#if taskList.length > 0}
+      <div class="shrink-0 border-t border-line bg-elevated px-2 py-1.5">
+        <button
+          class="flex w-full items-center gap-2 px-1 text-2xs uppercase tracking-caps text-dim"
+          onclick={() => (tasksOpen = !tasksOpen)}
+        >
+          <span>{tasksOpen ? '▾' : '▸'} Tasks · {tasksDone}/{taskList.length}</span>
+          {#if !tasksOpen && activeTaskLabel}
+            <span class="truncate normal-case tracking-normal text-muted">{activeTaskLabel}</span>
+          {/if}
+        </button>
+        {#if tasksOpen}
+          <div class="mt-1 flex max-h-40 flex-col gap-0.5 overflow-auto">
+            {#each taskList as task (task.id)}
+              <div class="flex items-center gap-2 px-2 py-0.5 text-2xs">
+                {#if task.status === 'completed'}
+                  <span class="shrink-0 text-dim">✓</span>
+                {:else if task.status === 'in_progress'}
+                  <span class="shrink-0 text-green"><WaveSpinner /></span>
+                {:else}
+                  <span class="shrink-0 text-dim">○</span>
+                {/if}
+                <span
+                  class="truncate {task.status === 'completed'
+                    ? 'text-dim line-through'
+                    : 'text-muted'}"
+                >
+                  {task.status === 'in_progress' && task.activeForm
+                    ? task.activeForm
+                    : task.subject}
+                </span>
+              </div>
+            {/each}
+          </div>
+        {/if}
       </div>
     {/if}
 
@@ -1296,6 +1741,11 @@
                 }}
               >
                 <span class="font-mono font-medium">{entry.label}</span>
+                {#if entry.badge}
+                  <span class="rounded bg-violet/15 px-1 font-mono text-2xs text-violet"
+                    >{entry.badge}</span
+                  >
+                {/if}
                 {#if entry.description}
                   <span
                     class="ml-auto truncate font-mono text-2xs {index === slashIndex
@@ -1338,10 +1788,15 @@
         <textarea
           bind:this={promptEl}
           class="mb-2 h-20 w-full resize-none rounded-md border border-line bg-input px-2 py-1.5 text-xs"
-          placeholder="Prompt…  ( / options · @ files · ↑↓ history · Shift+Tab mode · Enter run )"
+          placeholder={isRunning
+            ? 'Message the running agent…  ( Enter send · Ctrl+C stop )'
+            : 'Prompt…  ( / options · @ files · ↑↓ history · Shift+Tab mode · Enter run )'}
           bind:value={prompt}
           onkeydown={onPromptKey}
           oninput={() => (historyIndex = -1)}
+          onpaste={onPromptPaste}
+          ondrop={onPromptDrop}
+          ondragover={(event) => event.preventDefault()}
         ></textarea>
 
         <div class="flex items-center gap-3 text-2xs">

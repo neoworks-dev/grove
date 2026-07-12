@@ -14,7 +14,11 @@ import type {
   PermissionDecision,
   AgentDialogRequest,
   AgentDialogDecision,
-  AgentChats
+  AgentChats,
+  AgentQueueEvent,
+  AgentCommandsEvent,
+  AgentSlashCommand,
+  QueuedMessage
 } from '../../../shared/types'
 
 export interface LogLine {
@@ -54,6 +58,16 @@ class WorkbenchStore {
 
   // Effective agent configs (detected + config) keyed by agent name.
   agentConfigs = $state<Record<string, AgentConfig>>({})
+
+  // Messages queued while a run was active, keyed by "worktreeId::agent".
+  agentQueues = $state<Record<string, QueuedMessage[]>>({})
+
+  // Provider-discovered slash commands keyed by "worktreeId::agent".
+  agentCommands = $state<Record<string, AgentSlashCommand[]>>({})
+
+  // Text of queue items flushed by a user stop, keyed by "worktreeId::agent".
+  // The composer consumes (and clears) this to restore the text.
+  restoredQueueText = $state<Record<string, string>>({})
 
   // Bumped per worktree on any file change, so trees/diffs re-read reactively.
   fsVersion = $state<Record<string, number>>({})
@@ -507,6 +521,23 @@ export function subscribeEvents(): void {
     store.agentChats = {
       ...store.agentChats,
       [`${event.worktreeId}::${event.name}`]: event.chats
+    }
+  })
+  window.workbench.on('event:agent-queue', (payload) => {
+    const event = payload as AgentQueueEvent
+    const key = `${event.worktreeId}::${event.name}`
+    store.agentQueues = { ...store.agentQueues, [key]: event.queue }
+    // A user stop flushed these messages — hand their text back to the composer.
+    if (event.cleared && event.cleared.length > 0) {
+      const text = event.cleared.map((item) => item.text).join('\n\n')
+      store.restoredQueueText = { ...store.restoredQueueText, [key]: text }
+    }
+  })
+  window.workbench.on('event:agent-commands', (payload) => {
+    const event = payload as AgentCommandsEvent
+    store.agentCommands = {
+      ...store.agentCommands,
+      [`${event.worktreeId}::${event.name}`]: event.commands
     }
   })
 

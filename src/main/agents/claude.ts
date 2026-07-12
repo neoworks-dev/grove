@@ -5,8 +5,8 @@
 
 // The SDK is ESM-only; the Electron main is CommonJS with externalized deps, so
 // it must be loaded via dynamic import() (require() of an ESM package throws).
-import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk'
-import type { AgentConfig } from '../../shared/types'
+import type { PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import type { AgentConfig, AgentSlashCommand } from '../../shared/types'
 import type { AdapterContext, AgentAdapter, RunHandle } from './types'
 import { textLine } from './types'
 
@@ -86,9 +86,55 @@ function formatDialogAnswer(result: unknown): string {
   return `The user answered your question(s):\n${lines.join('\n')}`
 }
 
+// Push-buffer async generator feeding the SDK's streaming-input mode. Messages
+// pushed while a turn runs are injected into the conversation; closing the
+// queue lets the current turn finish and then ends the run.
+interface InputQueue {
+  push: (text: string) => boolean
+  close: () => void
+  pendingCount: () => number
+  stream: () => AsyncGenerator<SDKUserMessage>
+}
+
+function createInputQueue(): InputQueue {
+  const buffer: SDKUserMessage[] = []
+  let closed = false
+  let notify: (() => void) | null = null
+
+  function push(text: string): boolean {
+    if (closed) return false
+    buffer.push({
+      type: 'user',
+      message: { role: 'user', content: text },
+      parent_tool_use_id: null
+    })
+    notify?.()
+    return true
+  }
+
+  function close(): void {
+    closed = true
+    notify?.()
+  }
+
+  async function* stream(): AsyncGenerator<SDKUserMessage> {
+    while (true) {
+      while (buffer.length > 0) yield buffer.shift()!
+      if (closed) return
+      await new Promise<void>((resolve) => {
+        notify = resolve
+      })
+      notify = null
+    }
+  }
+
+  return { push, close, pendingCount: () => buffer.length, stream }
+}
+
 function start(context: AdapterContext): RunHandle {
   const abort = new AbortController()
   const permissionMode = context.options.mode || 'default'
+  const input = createInputQueue()
   let run: { interrupt: () => Promise<void> } | null = null
 
   void (async () => {
@@ -98,8 +144,12 @@ function start(context: AdapterContext): RunHandle {
       // plugin workers) and skill text.
       const pluginMcpServers = context.pluginAi ? await context.pluginAi.mcpServers() : {}
       const skillAppend = context.pluginAi ? context.pluginAi.systemAppend() : ''
+      // Streaming-input mode: the prompt rides in as the first queued message,
+      // and later sends inject into the live conversation. It also unlocks the
+      // SDK's control requests (interrupt, supportedCommands).
+      input.push(context.options.prompt || '')
       const iterator = query({
-        prompt: context.options.prompt || '',
+        prompt: input.stream(),
         options: {
           cwd: context.worktree.path,
           abortController: abort,
@@ -186,11 +236,51 @@ function start(context: AdapterContext): RunHandle {
         }
       })
       run = iterator
+
+      // Discovered slash commands: the init message only carries names, so ask
+      // the control channel for the full list (descriptions + argument hints).
+      function reportCommands(): void {
+        void iterator
+          .supportedCommands()
+          .then((commands) => {
+            const list: AgentSlashCommand[] = commands.map((command) => ({
+              name: command.name,
+              description: command.description,
+              argumentHint: command.argumentHint
+            }))
+            context.setCommands?.(list)
+          })
+          .catch(() => {})
+      }
+
       for await (const message of iterator) {
         // Capture the session id (carried on system/init and result messages)
         // so the next turn resumes this conversation.
         const sessionId = (message as { session_id?: string }).session_id
         if (sessionId) context.setSession(sessionId)
+        if (message.type === 'system' && message.subtype === 'init') {
+          reportCommands()
+        }
+        if (message.type === 'system' && message.subtype === 'commands_changed') {
+          const changed = (message as { commands?: AgentSlashCommand[] }).commands
+          if (changed) {
+            context.setCommands?.(
+              changed.map(({ name, description, argumentHint }) => ({
+                name,
+                description,
+                argumentHint
+              }))
+            )
+          }
+        }
+        // Turn finished with nothing else queued: close the input stream so the
+        // run exits like the old one-shot mode. A send racing this close gets
+        // `false` back and the manager queues it instead. (If some flows emit
+        // `result` while still expecting input, switch this to close on
+        // `session_state_changed` with state 'idle'.)
+        if (message.type === 'result' && input.pendingCount() === 0) {
+          input.close()
+        }
         context.emit(JSON.stringify(message))
       }
       context.setStatus('exited', 0)
@@ -205,7 +295,9 @@ function start(context: AdapterContext): RunHandle {
   })()
 
   return {
+    send: (text) => input.push(text),
     stop: async () => {
+      input.close()
       abort.abort()
       try {
         await run?.interrupt()

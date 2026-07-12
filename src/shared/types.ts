@@ -83,6 +83,42 @@ export interface AgentLaunchOptions {
   effort?: string
 }
 
+// ── Mid-run message queue ────────────────────────────────────────
+// A message typed while the agent runs. Injected live when the adapter
+// supports it, otherwise held and auto-submitted when the run ends.
+export interface QueuedMessage {
+  id: string
+  text: string
+  createdAt: number
+}
+
+export type AgentSendResult =
+  | { delivered: 'injected' } // pushed into the live turn loop
+  | { delivered: 'queued'; id: string } // run active, no live injection
+  | { delivered: 'started' } // no run active; started a resumed run
+
+export interface AgentQueueEvent {
+  worktreeId: string
+  name: string
+  queue: QueuedMessage[]
+  // Present when an explicit user stop flushed pending items, so the
+  // renderer can restore their text into the composer.
+  cleared?: QueuedMessage[]
+}
+
+// ── Dynamic slash commands (discovered from the provider) ───────
+export interface AgentSlashCommand {
+  name: string
+  description: string
+  argumentHint: string
+}
+
+export interface AgentCommandsEvent {
+  worktreeId: string
+  name: string
+  commands: AgentSlashCommand[]
+}
+
 // ── Named chats (multiple conversations per worktree+agent) ─────
 // Each chat owns a continuation token and its own on-disk transcript, so a
 // worktree can hold several resumable, individually named conversations.

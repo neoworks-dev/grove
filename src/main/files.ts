@@ -1,9 +1,14 @@
 // File tree + read/write for the editor, scoped to a worktree root.
 // Paths are validated to stay inside the worktree (no traversal escapes).
 
-import { readdir, readFile, writeFile, stat, mkdir, rename as fsRename, rm } from 'fs/promises'
+import { readdir, readFile, writeFile, stat, mkdir, rename as fsRename, rm, appendFile } from 'fs/promises'
 import { join, relative, resolve, sep, dirname } from 'path'
+import { randomUUID } from 'crypto'
+import { execFile } from 'child_process'
+import { promisify } from 'util'
 import type { FileNode } from '../shared/types'
+
+const execFileAsync = promisify(execFile)
 
 const IGNORED = new Set(['.git', 'node_modules', '.workbench', '.worktrees', 'out', 'dist'])
 
@@ -83,6 +88,51 @@ export async function writeFileContent(
     throw new Error('path outside worktree')
   }
   await writeFile(absPath, content, 'utf8')
+}
+
+// ── Attachments (composer paste/drop) ────────────────────────────
+// Saved under .workbench/attachments so the agent can read them via an
+// @-mention; the dir is excluded from the app's own tree/search (IGNORED).
+
+const ATTACHMENT_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp'])
+const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
+
+export async function saveAttachment(
+  worktreeRoot: string,
+  data: Uint8Array,
+  ext: string
+): Promise<{ relPath: string }> {
+  if (data.byteLength === 0) throw new Error('empty attachment')
+  if (data.byteLength > MAX_ATTACHMENT_BYTES) throw new Error('attachment too large (max 20 MB)')
+  const safeExt = ATTACHMENT_EXTS.has(ext.toLowerCase()) ? ext.toLowerCase() : 'png'
+
+  const dir = join(worktreeRoot, '.workbench', 'attachments')
+  await mkdir(dir, { recursive: true })
+  const file = `${Date.now()}-${randomUUID().slice(0, 8)}.${safeExt}`
+  await writeFile(join(dir, file), data)
+  await excludeWorkbenchFromGit(worktreeRoot)
+  return { relPath: join('.workbench', 'attachments', file) }
+}
+
+// Keep attachments (and everything else under .workbench) out of git status so
+// they never pollute the diff panel. info/exclude in the common git dir covers
+// every worktree without touching the repo's .gitignore. Best-effort.
+async function excludeWorkbenchFromGit(worktreeRoot: string): Promise<void> {
+  try {
+    const { stdout } = await execFileAsync(
+      'git',
+      ['rev-parse', '--path-format=absolute', '--git-common-dir'],
+      { cwd: worktreeRoot }
+    )
+    const excludePath = join(stdout.trim(), 'info', 'exclude')
+    const existing = await readFile(excludePath, 'utf8').catch(() => '')
+    if (existing.split('\n').some((line) => line.trim() === '.workbench/')) return
+    await mkdir(dirname(excludePath), { recursive: true })
+    await appendFile(excludePath, `${existing.endsWith('\n') || existing === '' ? '' : '\n'}.workbench/\n`)
+  } catch {
+    // Not a git repo / git missing — attachments still work, they just show up
+    // as untracked files.
+  }
 }
 
 // ── Mutations (context-menu / keyboard CRUD) ────────────────────

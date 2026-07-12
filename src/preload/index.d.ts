@@ -19,6 +19,9 @@ import type {
   AgentLaunchOptions,
   AgentDialogDecision,
   AgentChats,
+  AgentSendResult,
+  AgentSlashCommand,
+  QueuedMessage,
   ChatMeta,
   PermissionDecision,
   FileNode,
@@ -114,6 +117,10 @@ export interface WorkbenchApi {
     respondPermission: (id: string, decision: PermissionDecision) => Promise<void>
     respondDialog: (id: string, decision: AgentDialogDecision) => Promise<void>
     active: () => Promise<string[]>
+    send: (worktreeId: string, name: string, text: string) => Promise<AgentSendResult>
+    queue: (worktreeId: string, name: string) => Promise<QueuedMessage[]>
+    cancelQueued: (worktreeId: string, name: string, id: string) => Promise<void>
+    commands: (worktreeId: string, name: string) => Promise<AgentSlashCommand[]>
   }
   fs: {
     watch: (worktreeIds: string[]) => Promise<void>
@@ -127,6 +134,12 @@ export interface WorkbenchApi {
     createDir: (worktreeId: string, relPath: string) => Promise<string>
     rename: (worktreeId: string, fromRel: string, toRel: string) => Promise<string>
     delete: (worktreeId: string, relPath: string) => Promise<void>
+    saveAttachment: (
+      worktreeId: string,
+      data: Uint8Array,
+      ext: string
+    ) => Promise<{ relPath: string }>
+    pathForFile: (file: File) => string
   }
   extensions: {
     catalog: () => Promise<CatalogEntry[]>

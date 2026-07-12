@@ -1555,7 +1555,9 @@
       >
         <span class="shrink-0 text-green"><WaveSpinner /></span>
         <span class="truncate italic text-muted">{funnyMessage}</span>
-        <span class="ml-auto shrink-0 font-mono text-muted" title="input + output tokens"
+        <span
+          class="ml-auto shrink-0 font-mono text-muted"
+          title="context window fill + output of the latest turn"
           >{formatTokens(meta.totalTokens)} tok</span
         >
       </div>

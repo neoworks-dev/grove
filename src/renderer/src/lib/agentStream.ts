@@ -165,31 +165,37 @@ function num(value: unknown): number {
   return typeof value === 'number' ? value : 0
 }
 
+// Matches Claude Code's statusline accounting: point-in-time context fill from
+// the LATEST main-conversation API response — fresh input plus cache writes
+// plus cache reads — and that response's output. Not cumulative spend.
+// Subagent turns (parent_tool_use_id) run in their own context windows, so
+// their usage never counts toward the main gauge; the terminal result event
+// carries run totals, not a context snapshot, so it's skipped too.
 export function parseAgentMeta(lines: string[]): AgentMeta {
   let inputTokens = 0
-  let assistantOutput = 0 // summed across streamed assistant turns
-  let resultOutput = 0 // authoritative total from the terminal result event
+  let outputTokens = 0
   for (const line of lines) {
     const trimmed = line.trim()
     if (!trimmed.startsWith('{')) continue
     try {
       const event = JSON.parse(trimmed) as Record<string, unknown>
+      if (event.type !== 'assistant') continue
+      if (event.parent_tool_use_id) continue
       const usage = usageOf(event)
       if (!usage) continue
-      // Input includes cache reads; take the largest turn seen.
       const turnInput =
         num(usage.input_tokens) +
         num(usage.cache_read_input_tokens) +
         num(usage.cache_creation_input_tokens)
-      inputTokens = Math.max(inputTokens, turnInput)
-      if (event.type === 'result') resultOutput = num(usage.output_tokens)
-      else assistantOutput += num(usage.output_tokens)
+      // Zero-input events are synthetic (local command output) — keep the last
+      // real API response instead.
+      if (turnInput === 0) continue
+      inputTokens = turnInput
+      outputTokens = num(usage.output_tokens)
     } catch {
       // ignore non-JSON lines
     }
   }
-  // The result event's total supersedes the running sum once the run finishes.
-  const outputTokens = Math.max(assistantOutput, resultOutput)
   return { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens }
 }
 

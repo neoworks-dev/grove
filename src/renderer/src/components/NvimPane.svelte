@@ -9,6 +9,7 @@
   import { keymap } from '../lib/keymap.svelte'
   import BufferTabs from './BufferTabs.svelte'
   import Minimap from './Minimap.svelte'
+  import InlineEditPrompt from './InlineEditPrompt.svelte'
   import { settings } from '../lib/settings.svelte'
   import { NvimCanvasSession } from '../lib/nvim/session'
   import { registerNvimSession, unregisterNvimSession } from '../lib/nvim/registry'
@@ -236,6 +237,7 @@
         tabindex="0"
         aria-label="Neovim input"
       ></div>
+      <InlineEditPrompt {leafId} />
     {/if}
   </div>
 </div>

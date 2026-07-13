@@ -135,6 +135,29 @@ export class NvimCanvasSession {
     return this.nvimId
   }
 
+  get leafId(): string {
+    return this.config.leafId
+  }
+
+  // Pixel offset (within the pane host) of a 1-based buffer line's screen row,
+  // for anchoring overlays like the inline-edit prompt. Null when off-screen
+  // bookkeeping isn't available (no session/metrics).
+  async screenYForLine(bufferLine: number): Promise<number | null> {
+    const id = this.nvimId
+    if (!id || !this.metrics) return null
+    try {
+      const top = await window.workbench.nvim.request(id, 'nvim_exec_lua', [
+        "return vim.fn.line('w0')",
+        []
+      ])
+      if (typeof top !== 'number') return null
+      const row = Math.max(0, bufferLine - top)
+      return row * this.metrics.cellHeight
+    } catch {
+      return null
+    }
+  }
+
   focus(): void {
     this.elements.input.focus()
   }

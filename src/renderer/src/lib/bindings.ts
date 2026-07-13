@@ -8,7 +8,21 @@ import { keymap } from './keymap.svelte'
 import { commands } from './commands.svelte'
 import { layout } from './layout.svelte'
 import { bufferMenu } from './buffermenu.svelte'
-import { sendSelectionToComposer } from './inlineEdit.svelte'
+import { inlineEdit } from './inlineEdit.svelte'
+import { dialogs } from './dialogs.svelte'
+import type { ReviewMode } from './inlineEditRef'
+
+// One-line descriptor shown when the review mode is cycled.
+const REVIEW_MODE_HINT: Record<ReviewMode, string> = {
+  auto: 'auto — edits applied, no review',
+  inline: 'inline — per-hunk accept/reject in the buffer',
+  gated: 'gated — permission prompt before any write'
+}
+
+function cycleReviewMode(): void {
+  const mode = inlineEdit.cycleMode()
+  dialogs.notify({ level: 'info', message: `Edit mode: ${REVIEW_MODE_HINT[mode]}` })
+}
 
 export function registerCoreBindings(): void {
   keymap.registerBindings([
@@ -47,15 +61,32 @@ export function registerCoreBindings(): void {
       run: () => layout.ensurePane('agent')
     },
     {
-      // Editor-only: send the current selection to the agent composer as an
-      // @file:lines reference. Normal-mode, so it reads the last visual range
-      // ('</'> marks) — select, leave visual, then <Leader> i.
-      id: 'editor.sendSelection',
+      // Editor-only: open the inline-edit prompt over the current selection.
+      // Normal-mode, so it reads the last visual range ('</'> marks) — select,
+      // leave visual, then <Leader> i.
+      id: 'editor.inlineEdit',
       keys: '<Leader> i',
       context: 'editor',
       group: 'Agent',
-      description: 'Send selection to agent',
-      run: () => void sendSelectionToComposer()
+      description: 'Inline edit selection',
+      run: () => void inlineEdit.openPrompt()
+    },
+    {
+      // Send the selection to the composer instead, to attach a longer prompt.
+      id: 'editor.sendSelection',
+      keys: '<Leader> I',
+      context: 'editor',
+      group: 'Agent',
+      description: 'Send selection to composer',
+      run: () => void inlineEdit.sendSelectionToComposer()
+    },
+    {
+      id: 'editor.cycleMode',
+      keys: '<Leader> m',
+      context: 'global',
+      group: 'Agent',
+      description: 'Cycle edit review mode',
+      run: cycleReviewMode
     },
     {
       id: 'leader.focusMode',
@@ -306,11 +337,25 @@ export function registerCoreBindings(): void {
       run: () => layout.showCenterPane('nvim')
     },
     {
+      id: 'editor.inlineEdit',
+      title: 'Agent: Inline Edit Selection',
+      group: 'Agent',
+      keywords: 'inline edit selection cmdk prompt agent range change',
+      run: () => void inlineEdit.openPrompt()
+    },
+    {
       id: 'editor.sendSelection',
       title: 'Agent: Send Selection to Composer',
       group: 'Agent',
       keywords: 'inline edit selection reference mention agent range',
-      run: () => void sendSelectionToComposer()
+      run: () => void inlineEdit.sendSelectionToComposer()
+    },
+    {
+      id: 'editor.cycleMode',
+      title: 'Agent: Cycle Edit Review Mode',
+      group: 'Agent',
+      keywords: 'mode review auto inline gated accept edits permission',
+      run: cycleReviewMode
     }
   ])
 }

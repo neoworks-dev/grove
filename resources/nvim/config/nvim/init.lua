@@ -1,8 +1,9 @@
--- Grove-managed Neovim config for the embedded editor pane. Loaded via
--- XDG_CONFIG_HOME pointing at resources/nvim/config, so the user's own
--- ~/.config/nvim is never touched. Grove owns tabs and the statusline, so
--- nvim's chrome is disabled; the in-grid cmdline row stays (search/:s
--- preview, wildmenu, hit-enter prompts).
+-- Grove-managed Neovim config for the embedded editor pane. Lives at
+-- ~/.config/grove/nvim (XDG_CONFIG_HOME=~/.config/grove) — for now a symlink
+-- to the bundled resources/nvim/config/nvim, so the user's own ~/.config/nvim
+-- is never touched. Grove owns tabs and the statusline, so nvim's chrome is
+-- disabled; the in-grid cmdline row stays (search/:s preview, wildmenu,
+-- hit-enter prompts).
 
 vim.opt.termguicolors = true
 vim.opt.number = true
@@ -34,7 +35,7 @@ if (vim.uv or vim.loop).fs_stat(lazyPath) then
   vim.opt.rtp:prepend(lazyPath)
   pcall(function()
     require('lazy').setup({
-      -- flash.nvim: proves the plugin pipeline. `s`/`S` jump by on-screen labels.
+      -- flash.nvim: quick label-based motion. `s`/`S` jump by on-screen labels.
       {
         'folke/flash.nvim',
         opts = {},
@@ -42,6 +43,45 @@ if (vim.uv or vim.loop).fs_stat(lazyPath) then
           { 's', mode = { 'n', 'x', 'o' }, function() require('flash').jump() end, desc = 'Flash' },
           { 'S', mode = { 'n', 'x', 'o' }, function() require('flash').treesitter() end, desc = 'Flash Treesitter' }
         }
+      },
+
+      -- Treesitter syntax + indentation. Parsers compile into the writable
+      -- lazy dir on first use; auto_install pulls any missing language.
+      {
+        'nvim-treesitter/nvim-treesitter',
+        branch = 'master',
+        build = ':TSUpdate',
+        opts = {
+          ensure_installed = {
+            'typescript', 'tsx', 'javascript', 'json', 'jsonc',
+            'html', 'css', 'lua', 'vim', 'vimdoc', 'markdown'
+          },
+          auto_install = true,
+          highlight = { enable = true },
+          indent = { enable = true }
+        },
+        config = function(_, opts)
+          require('nvim-treesitter.configs').setup(opts)
+        end
+      },
+
+      -- LSP: mason installs the servers into the writable data dir,
+      -- mason-lspconfig enables them through nvim's built-in LSP registry.
+      { 'williamboman/mason.nvim', opts = {} },
+      {
+        'williamboman/mason-lspconfig.nvim',
+        dependencies = { 'williamboman/mason.nvim', 'neovim/nvim-lspconfig' },
+        opts = {
+          ensure_installed = { 'ts_ls' },
+          automatic_installation = true
+        },
+        config = function(_, opts)
+          require('mason').setup()
+          require('mason-lspconfig').setup(opts)
+          -- Belt-and-suspenders on nvim 0.11+: enable the server explicitly in
+          -- case mason-lspconfig's automatic enable is unavailable.
+          pcall(vim.lsp.enable, 'ts_ls')
+        end
       }
     }, {
       root = vim.fs.joinpath(dataDir, 'lazy'),

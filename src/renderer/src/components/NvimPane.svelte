@@ -10,6 +10,7 @@
   import BufferTabs from './BufferTabs.svelte'
   import Minimap from './Minimap.svelte'
   import InlineEditPrompt from './InlineEditPrompt.svelte'
+  import InlineReviewOverlay from './InlineReviewOverlay.svelte'
   import { settings } from '../lib/settings.svelte'
   import { NvimCanvasSession } from '../lib/nvim/session'
   import { registerNvimSession, unregisterNvimSession } from '../lib/nvim/registry'
@@ -238,6 +239,7 @@
         aria-label="Neovim input"
       ></div>
       <InlineEditPrompt {leafId} />
+      <InlineReviewOverlay {leafId} tick={minimapTick} />
     {/if}
   </div>
 </div>

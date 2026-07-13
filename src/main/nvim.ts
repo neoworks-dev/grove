@@ -14,12 +14,9 @@ export interface NvimEvents {
   onExit: (id: string, exitCode: number) => void
 }
 
-export interface CreateNvimOptions {
+export interface SpawnNvimOptions {
   cwd: string
   env: NodeJS.ProcessEnv
-  cols: number
-  rows: number
-  file?: string
 }
 
 interface NvimSession {
@@ -44,7 +41,10 @@ export class NeovimManager {
 
   constructor(private events: NvimEvents) {}
 
-  async create(options: CreateNvimOptions): Promise<string> {
+  // Spawn the child and wire the RPC, but do NOT attach the UI yet. The
+  // renderer subscribes to event:nvim-redraw between spawn and attach, so
+  // nvim's first redraw batch (emitted on ui_attach) is never dropped.
+  async spawn(options: SpawnNvimOptions): Promise<string> {
     if (!nvimAvailable()) {
       throw new Error('nvim runtime missing — run `bun scripts/fetch-nvim.ts`')
     }
@@ -78,16 +78,17 @@ export class NeovimManager {
     rpc.onNotification((method, args) => {
       if (method === 'redraw') this.queueRedraw(id, session, args)
     })
-
-    await rpc.request('nvim_ui_attach', [
-      options.cols,
-      options.rows,
-      { rgb: true, ext_linegrid: true }
-    ])
-    if (options.file) {
-      await rpc.request('nvim_cmd', [{ cmd: 'edit', args: [options.file] }, {}])
-    }
     return id
+  }
+
+  // Attach the grid UI and open the initial file. Called after the renderer
+  // has subscribed to redraw events.
+  async attach(id: string, cols: number, rows: number, file?: string): Promise<void> {
+    const session = this.requireSession(id)
+    await session.rpc.request('nvim_ui_attach', [cols, rows, { rgb: true, ext_linegrid: true }])
+    if (file) {
+      await session.rpc.request('nvim_cmd', [{ cmd: 'edit', args: [file] }, {}])
+    }
   }
 
   input(id: string, keys: string): void {

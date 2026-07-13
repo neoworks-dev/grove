@@ -157,8 +157,9 @@ const workbench = {
     kill: (id: string) => ipcRenderer.invoke('terminal:kill', id)
   },
   nvim: {
-    create: (worktreeId: string | null, cols: number, rows: number, file?: string) =>
-      ipcRenderer.invoke('nvim:create', worktreeId, cols, rows, file),
+    spawn: (worktreeId: string | null) => ipcRenderer.invoke('nvim:spawn', worktreeId),
+    attach: (id: string, cols: number, rows: number, file?: string) =>
+      ipcRenderer.invoke('nvim:attach', id, cols, rows, file),
     input: (id: string, keys: string) => ipcRenderer.invoke('nvim:input', id, keys),
     resize: (id: string, cols: number, rows: number) =>
       ipcRenderer.invoke('nvim:resize', id, cols, rows),

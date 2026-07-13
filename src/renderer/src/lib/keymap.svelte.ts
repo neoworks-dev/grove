@@ -325,9 +325,11 @@ class Keymap {
 
   // ── Sequence engine ───────────────────────────────────────────
   private eligible(): boolean {
-    const el = document.activeElement
-    const tag = el?.tagName
-    if (tag === 'INPUT' || tag === 'TEXTAREA') return false
+    if (!this.trustModeEligibility) {
+      const el = document.activeElement
+      const tag = el?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return false
+    }
     // Panes with modes only give up bare keys / the leader in normal mode, so
     // e.g. Vim insert-mode typing (or the terminal) is never hijacked.
     const mode = this.mode
@@ -355,6 +357,25 @@ class Keymap {
     if (this.leaderTimer) {
       clearTimeout(this.leaderTimer)
       this.leaderTimer = null
+    }
+  }
+
+  // Set while dispatching a key that came from a mode-aware pane's own input
+  // element (nvim's hidden contenteditable). Such panes decide typing vs.
+  // command by their reported mode, so eligibility skips the INPUT/TEXTAREA
+  // tag gate meant for plain text fields.
+  private trustModeEligibility = false
+
+  // Dispatch a key originating inside a mode-aware pane. Grove's leader and
+  // chords overlay the pane: this consumes them (self-gated by the pane's
+  // reported mode) and returns true; anything it doesn't claim returns false
+  // so the pane can forward the key to its editor (e.g. nvim_input).
+  handleKeyFromModePane(event: KeyboardEvent): boolean {
+    this.trustModeEligibility = true
+    try {
+      return this.handleKey(event)
+    } finally {
+      this.trustModeEligibility = false
     }
   }
 

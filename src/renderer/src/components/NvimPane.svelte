@@ -142,6 +142,15 @@
 
   function handleKeydown(event: KeyboardEvent): void {
     if (!nvimId || composing) return
+    // Grove's keybinds overlay nvim: give the keymap first refusal (it gates
+    // itself by the reported mode, so the leader/bare keys only fire in normal
+    // mode). Whatever it doesn't claim falls through to nvim, so `space` in
+    // normal mode opens which-key while everything else edits as usual.
+    if (keymap.handleKeyFromModePane(event)) {
+      event.preventDefault()
+      event.stopPropagation()
+      return
+    }
     const keys = encodeKeyEvent(event)
     if (!keys) return
     event.preventDefault()

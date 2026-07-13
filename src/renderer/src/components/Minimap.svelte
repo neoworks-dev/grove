@@ -221,32 +221,33 @@
     ctx.fillRect(0, 0, canvasWidth, canvasHeight)
     ctx.globalAlpha = 1
     const geo = geometry()
+    drawDiffBackground(ctx, geo)
     drawRuns(ctx, baseRuns, geo)
     drawRuns(ctx, colorRuns, geo)
-    drawDiffGutter(ctx, geo)
     drawIndicator(ctx, geo)
   }
 
-  // Git gutter down the left edge: added/modified ranges as solid bars, pure
-  // deletions as a short tick at the line the removal sits after.
-  const GUTTER_WIDTH = 3
-  function drawDiffGutter(ctx: CanvasRenderingContext2D, geo: MinimapGeometry): void {
+  // Full-width translucent line background per changed line — green for
+  // additions, amber for modifications, red tick where lines were removed.
+  function drawDiffBackground(ctx: CanvasRenderingContext2D, geo: MinimapGeometry): void {
     if (diffMarkers.length === 0) return
     const color = {
       add: theme.palette.ctxGreen,
       del: theme.palette.ctxRed,
       mod: theme.palette.ctxAmber
     }
+    ctx.globalAlpha = 0.25
     for (const marker of diffMarkers) {
       ctx.fillStyle = color[marker.kind]
       if (marker.kind === 'del') {
         const y = (marker.start - 1) * LINE_PITCH - geo.mapScrollTop
-        ctx.fillRect(0, y - 1, GUTTER_WIDTH, 2)
+        ctx.fillRect(0, y - 1, canvasWidth, 2)
         continue
       }
       const y = (marker.start - 1) * LINE_PITCH - geo.mapScrollTop
-      ctx.fillRect(0, y, GUTTER_WIDTH, Math.max(LINE_PITCH, 1) * marker.count)
+      ctx.fillRect(0, y, canvasWidth, LINE_PITCH * marker.count)
     }
+    ctx.globalAlpha = 1
   }
 
   function drawRuns(ctx: CanvasRenderingContext2D, runs: LineRun[][], geo: MinimapGeometry): void {

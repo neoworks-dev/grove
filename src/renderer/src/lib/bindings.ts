@@ -1,8 +1,8 @@
 // Core bindings, registered on app start. Plugins add their own via
 // keymap.registerBindings — nothing here is special. The which-key overlay
 // renders whatever is registered, so descriptions double as help text.
-// Keys use the canonical sequence grammar: explicit "leader …" prefixes and
-// modifier chords like "ctrl+h" (spatial navigation, rebindable like the rest).
+// Keys use the canonical sequence grammar: a "<Leader> …" prefix and bracketed
+// modifier chords like "<Ctrl-H>" (spatial navigation, rebindable like the rest).
 
 import { keymap } from './keymap.svelte'
 import { commands } from './commands.svelte'
@@ -13,7 +13,7 @@ export function registerCoreBindings(): void {
   keymap.registerBindings([
     {
       id: 'leader.buffers',
-      keys: 'leader b',
+      keys: '<Leader> b',
       context: 'global',
       group: 'Buffer',
       description: 'Buffer menu',
@@ -21,7 +21,7 @@ export function registerCoreBindings(): void {
     },
     {
       id: 'leader.palette',
-      keys: 'leader p',
+      keys: '<Leader> p',
       context: 'global',
       group: 'Command',
       description: 'Command palette',
@@ -29,15 +29,25 @@ export function registerCoreBindings(): void {
     },
     {
       id: 'leader.tree',
-      keys: 'leader e',
+      keys: '<Leader> e',
       context: 'global',
       group: 'Focus',
-      description: 'Focus file tree',
-      run: () => keymap.focusPane('tree')
+      description: 'Open file explorer',
+      // Open/switch the sidebar to the Explorer (ensurePane), which focuses the
+      // tree inside it — so the binding works even when the sidebar is closed.
+      run: () => layout.ensurePane('files')
+    },
+    {
+      id: 'leader.agent',
+      keys: '<Leader> A',
+      context: 'global',
+      group: 'Focus',
+      description: 'Open agent panel',
+      run: () => layout.ensurePane('agent')
     },
     {
       id: 'leader.preferences',
-      keys: 'leader ,',
+      keys: '<Leader> ,',
       context: 'global',
       group: 'Settings',
       description: 'Open preferences',
@@ -45,7 +55,7 @@ export function registerCoreBindings(): void {
     },
     {
       id: 'leader.keybindings',
-      keys: 'leader k',
+      keys: '<Leader> k',
       context: 'global',
       group: 'Settings',
       description: 'Open keyboard shortcuts',
@@ -53,7 +63,7 @@ export function registerCoreBindings(): void {
     },
     {
       id: 'leader.cheatsheet',
-      keys: 'leader ?',
+      keys: '<Leader> ?',
       context: 'global',
       group: 'Help',
       description: 'Show all keybindings',
@@ -61,7 +71,7 @@ export function registerCoreBindings(): void {
     },
     {
       id: 'terminal.toggle',
-      keys: 'ctrl+`',
+      keys: '<Ctrl-`>',
       context: 'global',
       group: 'Terminal',
       description: 'Toggle terminal',
@@ -71,7 +81,7 @@ export function registerCoreBindings(): void {
     // which-key listings and stay rebindable.
     {
       id: 'pane.focus.h',
-      keys: 'ctrl+h',
+      keys: '<Ctrl-H>',
       context: 'global',
       group: 'Window',
       description: 'Focus pane left',
@@ -79,7 +89,7 @@ export function registerCoreBindings(): void {
     },
     {
       id: 'pane.focus.j',
-      keys: 'ctrl+j',
+      keys: '<Ctrl-J>',
       context: 'global',
       group: 'Window',
       description: 'Focus pane down',
@@ -87,7 +97,7 @@ export function registerCoreBindings(): void {
     },
     {
       id: 'pane.focus.k',
-      keys: 'ctrl+k',
+      keys: '<Ctrl-K>',
       context: 'global',
       group: 'Window',
       description: 'Focus pane up',
@@ -95,15 +105,31 @@ export function registerCoreBindings(): void {
     },
     {
       id: 'pane.focus.l',
-      keys: 'ctrl+l',
+      keys: '<Ctrl-L>',
       context: 'global',
       group: 'Window',
       description: 'Focus pane right',
       run: () => keymap.movePane('l')
     },
     {
+      id: 'pane.resize.grow',
+      keys: '<Ctrl-]>',
+      context: 'global',
+      group: 'Window',
+      description: 'Grow pane',
+      run: () => layout.resizeFocused(10)
+    },
+    {
+      id: 'pane.resize.shrink',
+      keys: '<Ctrl-[>',
+      context: 'global',
+      group: 'Window',
+      description: 'Shrink pane',
+      run: () => layout.resizeFocused(-10)
+    },
+    {
       id: 'leader.pane.h',
-      keys: 'leader w h',
+      keys: '<Leader> w h',
       context: 'global',
       group: 'Window',
       description: 'Focus pane left',
@@ -111,7 +137,7 @@ export function registerCoreBindings(): void {
     },
     {
       id: 'leader.pane.j',
-      keys: 'leader w j',
+      keys: '<Leader> w j',
       context: 'global',
       group: 'Window',
       description: 'Focus pane down',
@@ -119,7 +145,7 @@ export function registerCoreBindings(): void {
     },
     {
       id: 'leader.pane.k',
-      keys: 'leader w k',
+      keys: '<Leader> w k',
       context: 'global',
       group: 'Window',
       description: 'Focus pane up',
@@ -127,7 +153,7 @@ export function registerCoreBindings(): void {
     },
     {
       id: 'leader.pane.l',
-      keys: 'leader w l',
+      keys: '<Leader> w l',
       context: 'global',
       group: 'Window',
       description: 'Focus pane right',
@@ -136,7 +162,7 @@ export function registerCoreBindings(): void {
     // Window management (vim split semantics: v = side by side, s = stacked).
     {
       id: 'window.split.vertical',
-      keys: 'leader w v',
+      keys: '<Leader> w v',
       context: 'global',
       group: 'Window',
       description: 'Split window right',
@@ -144,7 +170,7 @@ export function registerCoreBindings(): void {
     },
     {
       id: 'window.split.horizontal',
-      keys: 'leader w s',
+      keys: '<Leader> w s',
       context: 'global',
       group: 'Window',
       description: 'Split window down',
@@ -152,7 +178,7 @@ export function registerCoreBindings(): void {
     },
     {
       id: 'window.close',
-      keys: 'leader w q',
+      keys: '<Leader> w q',
       context: 'global',
       group: 'Window',
       description: 'Close window',
@@ -160,7 +186,7 @@ export function registerCoreBindings(): void {
     },
     {
       id: 'window.move.h',
-      keys: 'leader w H',
+      keys: '<Leader> w H',
       context: 'global',
       group: 'Window',
       description: 'Move window left',
@@ -168,7 +194,7 @@ export function registerCoreBindings(): void {
     },
     {
       id: 'window.move.j',
-      keys: 'leader w J',
+      keys: '<Leader> w J',
       context: 'global',
       group: 'Window',
       description: 'Move window down',
@@ -176,7 +202,7 @@ export function registerCoreBindings(): void {
     },
     {
       id: 'window.move.k',
-      keys: 'leader w K',
+      keys: '<Leader> w K',
       context: 'global',
       group: 'Window',
       description: 'Move window up',
@@ -184,7 +210,7 @@ export function registerCoreBindings(): void {
     },
     {
       id: 'window.move.l',
-      keys: 'leader w L',
+      keys: '<Leader> w L',
       context: 'global',
       group: 'Window',
       description: 'Move window right',

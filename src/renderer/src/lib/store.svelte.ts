@@ -158,8 +158,7 @@ class WorkbenchStore {
       this.tabs = [...this.tabs, tab]
     }
     this.activeTabPath = tab.path
-    const editorPane = settings.get<string>('workbench.centerEditor') === 'nvim' ? 'nvim' : 'editor'
-    layout.showCenterPane(editorPane)
+    layout.showCenterPane(preferredEditorPane())
   }
 
   closeTab(path: string): void {
@@ -225,6 +224,16 @@ export function applyColorTheme(name: string): void {
   applyThemeVars(name)
   store.colorTheme = name
   void settings.set('workbench.colorTheme', name, 'user')
+}
+
+// Which center pane receives opened files: an already-open nvim leaf keeps
+// them (opening a file must never swap a live nvim session away); otherwise
+// the workbench.centerEditor setting decides. The default layout always
+// contains an editor leaf, so it must not short-circuit the setting.
+function preferredEditorPane(): string {
+  if (layout.hasPaneType('nvim')) return 'nvim'
+  if (settings.get<string>('workbench.centerEditor') === 'codemirror') return 'editor'
+  return 'nvim'
 }
 
 // Open an absolute file path in the editor (used by the file tree and by agent

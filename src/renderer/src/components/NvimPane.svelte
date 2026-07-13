@@ -7,6 +7,7 @@
   import { store } from '../lib/store.svelte'
   import { layout } from '../lib/layout.svelte'
   import { keymap } from '../lib/keymap.svelte'
+  import BufferTabs from './BufferTabs.svelte'
   import { settings } from '../lib/settings.svelte'
   import { createGridState } from '../lib/nvim/types'
   import { applyRedraw } from '../lib/nvim/grid'
@@ -26,6 +27,8 @@
   let unavailable = $state(false)
 
   let nvimId: string | null = null
+  let destroyed = false
+  let leafEl: HTMLElement | null = null
   let stopRedraw: (() => void) | null = null
   let stopExit: (() => void) | null = null
   let observer: ResizeObserver | null = null
@@ -39,6 +42,22 @@
   let pendingDirtyAll = false
   let lastPushedPath: string | null = null
   let composing = false
+  // Row the cursor was last painted on, so a plain cursor move repaints the
+  // vacated row and never leaves a ghost block behind.
+  let lastCursorRow = 0
+
+  const activeTabs = $derived(
+    store.tabs.filter((tab) => tab.worktreeId === store.selectedWorktreeId)
+  )
+
+  function selectTab(path: string): void {
+    store.activeTabPath = path
+  }
+
+  function closeTab(path: string, event: MouseEvent): void {
+    event.stopPropagation()
+    store.closeTab(path)
+  }
 
   function cssVar(name: string, fallback: string): string {
     const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
@@ -85,8 +104,11 @@
     if (dirty.all) pendingDirtyAll = true
     for (const row of dirty.rows) pendingDirtyRows.add(row)
     keymap.setPaneMode(leafId, mapMode(grid.modeName))
-    // Cursor moves without row edits still need a repaint.
+    // Cursor moves without row edits still need a repaint: the vacated row
+    // (to erase the old block) and the new row.
+    pendingDirtyRows.add(lastCursorRow)
     pendingDirtyRows.add(grid.cursor.row)
+    lastCursorRow = grid.cursor.row
     if (dirty.flushed || dirty.all) scheduleRender()
   }
 
@@ -108,8 +130,12 @@
       lastWidth = width
       lastHeight = height
       const { cols, rows } = gridSize()
+      // Changing canvas.width/height clears it; repaint the current grid at
+      // once so the pane never shows a half-blank buffer while waiting for
+      // nvim's grid_resize redraw.
       renderer.resize(cols, rows, window.devicePixelRatio)
       pendingDirtyAll = true
+      scheduleRender()
       void window.workbench.nvim.resize(nvimId, cols, rows)
     })
   }
@@ -172,6 +198,12 @@
       unavailable = true
       return
     }
+    // The pane may have been closed while create was in flight.
+    if (destroyed) {
+      void window.workbench.nvim.kill(nvimId)
+      nvimId = null
+      return
+    }
     lastPushedPath = store.activeTabPath
 
     stopRedraw = window.workbench.on('event:nvim-redraw', (payload) => {
@@ -197,8 +229,16 @@
     return 13
   }
 
+  // Pane navigation focuses the leaf container (spatial nav, focusLeafSoon);
+  // steer that focus into the hidden input so keydown reaches nvim.
+  function redirectLeafFocus(event: FocusEvent): void {
+    if (event.target === leafEl) inputEl?.focus()
+  }
+
   onMount(() => {
     keymap.setPaneMode(leafId, 'normal')
+    leafEl = (hostEl?.closest('[data-leaf]') as HTMLElement | null) ?? null
+    leafEl?.addEventListener('focusin', redirectLeafFocus)
     void start()
   })
 
@@ -225,6 +265,8 @@
   })
 
   onDestroy(() => {
+    destroyed = true
+    leafEl?.removeEventListener('focusin', redirectLeafFocus)
     stopRedraw?.()
     stopExit?.()
     observer?.disconnect()
@@ -233,29 +275,38 @@
   })
 </script>
 
-<div
-  bind:this={hostEl}
-  class="relative h-full w-full overflow-hidden bg-canvas"
-  onmousedown={() => inputEl?.focus()}
-  role="none"
->
-  {#if unavailable}
-    <div class="flex h-full items-center justify-center text-dim">
-      Neovim runtime missing — run `bun scripts/fetch-nvim.ts` and reopen this pane.
-    </div>
-  {:else}
-    <canvas bind:this={canvasEl} class="block"></canvas>
-    <div
-      bind:this={inputEl}
-      contenteditable="true"
-      class="absolute left-0 top-0 h-0 w-0 overflow-hidden opacity-0 outline-none"
-      role="textbox"
-      tabindex="0"
-      aria-label="Neovim input"
-      onkeydown={handleKeydown}
-      oncompositionstart={handleComposition}
-      oncompositionend={handleComposition}
-      onfocus={() => keymap.setPaneMode(leafId, mapMode(grid.modeName))}
-    ></div>
-  {/if}
+<div class="flex h-full min-h-0 w-full flex-col">
+  <BufferTabs tabs={activeTabs} onSelect={selectTab} onClose={closeTab} />
+
+  <div
+    bind:this={hostEl}
+    class="relative min-h-0 flex-1 overflow-hidden bg-canvas"
+    onmousedown={(event) => {
+      // Without preventDefault the browser moves focus to the focusable leaf
+      // container after this handler, stealing keys from the hidden input.
+      event.preventDefault()
+      inputEl?.focus()
+    }}
+    role="none"
+  >
+    {#if unavailable}
+      <div class="flex h-full items-center justify-center text-dim">
+        Neovim runtime missing — run `bun scripts/fetch-nvim.ts` and reopen this pane.
+      </div>
+    {:else}
+      <canvas bind:this={canvasEl} class="block"></canvas>
+      <div
+        bind:this={inputEl}
+        contenteditable="true"
+        class="absolute left-0 top-0 h-0 w-0 overflow-hidden opacity-0 outline-none"
+        role="textbox"
+        tabindex="0"
+        aria-label="Neovim input"
+        onkeydown={handleKeydown}
+        oncompositionstart={handleComposition}
+        oncompositionend={handleComposition}
+        onfocus={() => keymap.setPaneMode(leafId, mapMode(grid.modeName))}
+      ></div>
+    {/if}
+  </div>
 </div>

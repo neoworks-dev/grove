@@ -96,6 +96,21 @@ end
 
 -- Applied by grove over RPC (nvim_exec_lua) on create and on theme change.
 -- `palette` is a subset of grove's ThemePalette: hex strings.
+-- Mix two "#rrggbb" colors; ratio 0 = base, 1 = tint. Used to derive subtle
+-- diff line backgrounds from the saturated context colors.
+local function blend(base, tint, ratio)
+  local function channels(hex)
+    local h = hex:gsub('#', '')
+    return tonumber(h:sub(1, 2), 16), tonumber(h:sub(3, 4), 16), tonumber(h:sub(5, 6), 16)
+  end
+  local br, bg, bb = channels(base)
+  local tr, tg, tb = channels(tint)
+  local function mix(a, b)
+    return math.floor(a + (b - a) * ratio + 0.5)
+  end
+  return string.format('#%02x%02x%02x', mix(br, tr), mix(bg, tg), mix(bb, tb))
+end
+
 _G.grove_apply_theme = function(palette)
   local set = vim.api.nvim_set_hl
   set(0, 'Normal', { fg = palette.text, bg = palette.bg })
@@ -140,9 +155,11 @@ _G.grove_apply_theme = function(palette)
   set(0, 'PreProc', { fg = palette.ctxPink })
   set(0, 'Special', { fg = palette.ctxPink })
   set(0, 'Delimiter', { fg = palette.textMuted })
-  set(0, 'DiffAdd', { fg = palette.ctxGreen })
-  set(0, 'DiffDelete', { fg = palette.ctxRed })
-  set(0, 'DiffChange', { fg = palette.ctxAmber })
+  -- Full-line diff fills: tint the base bg toward green/red so changed lines
+  -- read at a glance without washing out the syntax-colored text on top.
+  set(0, 'DiffAdd', { bg = blend(palette.bg, palette.ctxGreen, 0.22) })
+  set(0, 'DiffDelete', { bg = blend(palette.bg, palette.ctxRed, 0.22) })
+  set(0, 'DiffChange', { bg = blend(palette.bg, palette.ctxAmber, 0.22) })
 end
 
 -- Sanctioned user-extension hook (Phase C): a writable init in nvim's data

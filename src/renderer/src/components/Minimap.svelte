@@ -23,12 +23,15 @@
     nvimId,
     tick,
     theme,
+    diffMarkers = [],
     class: className = ''
   }: {
     nvimId: string | null
     // Bumped by NvimPane on each redraw flush; triggers a throttled refresh.
     tick: number
     theme: { palette: ThemePalette; scheme: 'dark' | 'light' }
+    // Changed-line ranges of the open file (1-based), drawn as a git gutter.
+    diffMarkers?: { start: number; count: number; kind: 'add' | 'del' | 'mod' }[]
     class?: string
   } = $props()
 
@@ -161,6 +164,12 @@
     void refresh()
   })
 
+  // Repaint when the diff gutter changes (no buffer re-fetch needed).
+  $effect(() => {
+    void diffMarkers
+    scheduleDraw()
+  })
+
   $effect(() => {
     if (!canvas) return
     measureCanvas()
@@ -214,7 +223,30 @@
     const geo = geometry()
     drawRuns(ctx, baseRuns, geo)
     drawRuns(ctx, colorRuns, geo)
+    drawDiffGutter(ctx, geo)
     drawIndicator(ctx, geo)
+  }
+
+  // Git gutter down the left edge: added/modified ranges as solid bars, pure
+  // deletions as a short tick at the line the removal sits after.
+  const GUTTER_WIDTH = 3
+  function drawDiffGutter(ctx: CanvasRenderingContext2D, geo: MinimapGeometry): void {
+    if (diffMarkers.length === 0) return
+    const color = {
+      add: theme.palette.ctxGreen,
+      del: theme.palette.ctxRed,
+      mod: theme.palette.ctxAmber
+    }
+    for (const marker of diffMarkers) {
+      ctx.fillStyle = color[marker.kind]
+      if (marker.kind === 'del') {
+        const y = (marker.start - 1) * LINE_PITCH - geo.mapScrollTop
+        ctx.fillRect(0, y - 1, GUTTER_WIDTH, 2)
+        continue
+      }
+      const y = (marker.start - 1) * LINE_PITCH - geo.mapScrollTop
+      ctx.fillRect(0, y, GUTTER_WIDTH, Math.max(LINE_PITCH, 1) * marker.count)
+    }
   }
 
   function drawRuns(ctx: CanvasRenderingContext2D, runs: LineRun[][], geo: MinimapGeometry): void {

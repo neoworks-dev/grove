@@ -38,6 +38,46 @@
   // tick bumped on each redraw flush so it re-reads the buffer view.
   let minimapNvimId = $state<string | null>(null)
   let minimapTick = $state(0)
+  // Git gutter for the minimap: the open file's changed-line ranges.
+  let diffMarkers = $state<{ start: number; count: number; kind: 'add' | 'del' | 'mod' }[]>([])
+
+  // Fetch the active file's git hunks and map them to minimap gutter markers.
+  async function loadDiffMarkers(): Promise<void> {
+    const worktreeId = store.selectedWorktreeId
+    const root = store.selectedWorktree?.path
+    const path = store.activeTabPath
+    if (!worktreeId || !root || !path || !path.startsWith(`${root}/`)) {
+      diffMarkers = []
+      return
+    }
+    const relPath = path.slice(root.length + 1)
+    try {
+      const { hunks } = await window.workbench.git.diffHunks(worktreeId, {
+        path: relPath,
+        changeType: 'modified',
+        staged: false
+      })
+      diffMarkers = hunks.map((hunk) => {
+        if (hunk.originalCount === 0) {
+          return { start: hunk.modifiedStart, count: Math.max(1, hunk.modifiedCount), kind: 'add' }
+        }
+        if (hunk.modifiedCount === 0) {
+          return { start: hunk.modifiedStart + 1, count: 1, kind: 'del' }
+        }
+        return { start: hunk.modifiedStart, count: hunk.modifiedCount, kind: 'mod' }
+      })
+    } catch {
+      diffMarkers = []
+    }
+  }
+
+  // Reload the gutter when the file switches or the fs watcher reports a change.
+  $effect(() => {
+    void minimapNvimId
+    store.activeTabPath
+    store.fsVersion[store.selectedWorktreeId ?? '']
+    void loadDiffMarkers()
+  })
 
   const activeTabs = $derived(
     store.tabs.filter((tab) => tab.worktreeId === store.selectedWorktreeId)
@@ -227,6 +267,7 @@
           nvimId={minimapNvimId}
           tick={minimapTick}
           theme={store.activeTheme}
+          {diffMarkers}
           class="absolute right-0 top-0 z-20 h-full w-[64px] border-l border-line"
         />
       {/if}

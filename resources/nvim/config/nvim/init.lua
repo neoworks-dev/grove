@@ -71,22 +71,89 @@ if (vim.uv or vim.loop).fs_stat(lazyPath) then
         end
       },
 
+      -- Completion engine. blink.cmp ships a prebuilt fuzzy-matcher binary via
+      -- its release tag and falls back to a Lua matcher when the download is
+      -- unavailable, so it stays offline-tolerant like the rest of the config.
+      {
+        'saghen/blink.cmp',
+        version = '*',
+        opts = {
+          keymap = { preset = 'default' },
+          sources = { default = { 'lsp', 'path', 'snippets', 'buffer' } },
+          completion = { documentation = { auto_show = true } }
+        }
+      },
+
+      -- Format-on-save via conform. Prefers the fast daemonized prettier, falls
+      -- back to prettier, then to the LSP formatter.
+      {
+        'stevearc/conform.nvim',
+        opts = {
+          formatters_by_ft = {
+            lua = { 'stylua' },
+            javascript = { 'prettierd', 'prettier', stop_after_first = true },
+            javascriptreact = { 'prettierd', 'prettier', stop_after_first = true },
+            typescript = { 'prettierd', 'prettier', stop_after_first = true },
+            typescriptreact = { 'prettierd', 'prettier', stop_after_first = true },
+            json = { 'prettierd', 'prettier', stop_after_first = true },
+            css = { 'prettierd', 'prettier', stop_after_first = true },
+            html = { 'prettierd', 'prettier', stop_after_first = true },
+            markdown = { 'prettierd', 'prettier', stop_after_first = true }
+          },
+          format_on_save = { timeout_ms = 1000, lsp_format = 'fallback' }
+        }
+      },
+
+      -- Linting via nvim-lint. Feeds vim.diagnostic, which is what grove's
+      -- Diagnostics pane displays.
+      {
+        'mfussenegger/nvim-lint',
+        config = function()
+          require('lint').linters_by_ft = {
+            javascript = { 'eslint_d' },
+            javascriptreact = { 'eslint_d' },
+            typescript = { 'eslint_d' },
+            typescriptreact = { 'eslint_d' }
+          }
+          vim.api.nvim_create_autocmd({ 'BufWritePost', 'BufReadPost', 'InsertLeave' }, {
+            callback = function()
+              require('lint').try_lint()
+            end
+          })
+        end
+      },
+
       -- LSP: mason installs the servers into the writable data dir,
       -- mason-lspconfig enables them through nvim's built-in LSP registry.
       { 'williamboman/mason.nvim', opts = {} },
+
+      -- Install the external formatter/linter binaries conform and nvim-lint
+      -- shell out to (mason-lspconfig only handles LSP servers).
+      {
+        'WhoIsSethDaniel/mason-tool-installer.nvim',
+        dependencies = { 'williamboman/mason.nvim' },
+        opts = {
+          ensure_installed = { 'prettierd', 'eslint_d', 'stylua' }
+        }
+      },
       {
         'williamboman/mason-lspconfig.nvim',
-        dependencies = { 'williamboman/mason.nvim', 'neovim/nvim-lspconfig' },
+        dependencies = { 'williamboman/mason.nvim', 'neovim/nvim-lspconfig', 'saghen/blink.cmp' },
         opts = {
-          ensure_installed = { 'ts_ls' },
+          ensure_installed = { 'vtsls' },
           automatic_installation = true
         },
         config = function(_, opts)
           require('mason').setup()
+          -- Advertise blink.cmp's completion capabilities to every server.
+          local ok, blink = pcall(require, 'blink.cmp')
+          if ok then
+            vim.lsp.config('*', { capabilities = blink.get_lsp_capabilities() })
+          end
           require('mason-lspconfig').setup(opts)
           -- Belt-and-suspenders on nvim 0.11+: enable the server explicitly in
           -- case mason-lspconfig's automatic enable is unavailable.
-          pcall(vim.lsp.enable, 'ts_ls')
+          pcall(vim.lsp.enable, 'vtsls')
         end
       }
     }, {
@@ -99,6 +166,34 @@ if (vim.uv or vim.loop).fs_stat(lazyPath) then
     })
   end)
 end
+
+-- Push LSP/lint diagnostics to grove's native Diagnostics pane. rpcnotify(0,…)
+-- broadcasts to grove's msgpack channel, where the main process forwards it to
+-- the renderer. Debounced so a burst of DiagnosticChanged (e.g. a multi-file
+-- lint pass) collapses into one broadcast.
+local diagnostics_timer = nil
+local function grove_push_diagnostics()
+  local out = {}
+  for _, d in ipairs(vim.diagnostic.get()) do
+    out[#out + 1] = {
+      path = vim.api.nvim_buf_get_name(d.bufnr),
+      lnum = d.lnum,
+      col = d.col,
+      severity = d.severity,
+      message = d.message,
+      source = d.source
+    }
+  end
+  vim.rpcnotify(0, 'grove_diagnostics', out)
+end
+vim.api.nvim_create_autocmd('DiagnosticChanged', {
+  callback = function()
+    if diagnostics_timer then
+      diagnostics_timer:stop()
+    end
+    diagnostics_timer = vim.defer_fn(grove_push_diagnostics, 150)
+  end
+})
 
 -- Applied by grove over RPC (nvim_exec_lua) on create and on theme change.
 -- `palette` is a subset of grove's ThemePalette: hex strings.

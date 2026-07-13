@@ -6,11 +6,13 @@ import Folder from 'phosphor-svelte/lib/Folder'
 import GitBranch from 'phosphor-svelte/lib/GitBranch'
 import GitDiff from 'phosphor-svelte/lib/GitDiff'
 import PuzzlePiece from 'phosphor-svelte/lib/PuzzlePiece'
+import Warning from 'phosphor-svelte/lib/Warning'
 import TerminalWindow from 'phosphor-svelte/lib/TerminalWindow'
 import Robot from 'phosphor-svelte/lib/Robot'
 import FilesView from '../components/FilesView.svelte'
 import WorktreeSidebar from '../components/WorktreeSidebar.svelte'
 import GitChangesView from '../components/GitChangesView.svelte'
+import DiagnosticsPane from '../components/DiagnosticsPane.svelte'
 import ExtensionsView from '../components/ExtensionsView.svelte'
 import AgentsOverview from '../components/AgentsOverview.svelte'
 import NvimPane from '../components/NvimPane.svelte'
@@ -73,6 +75,17 @@ export function registerCorePanes(): void {
     slot: SIDEBAR_SLOT,
     containerClass: 'bg-elevated',
     minWidth: 180,
+    when: repoOpen
+  })
+  panes.register({
+    id: 'diagnostics',
+    title: 'Diagnostics',
+    icon: Warning,
+    component: DiagnosticsPane,
+    rail: { order: 6 },
+    slot: SIDEBAR_SLOT,
+    containerClass: 'bg-elevated',
+    minWidth: 200,
     when: repoOpen
   })
   panes.register({

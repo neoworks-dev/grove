@@ -115,7 +115,8 @@ const terminals = new TerminalManager({
 
 const nvims = new NeovimManager({
   onRedraw: (id, events) => send('event:nvim-redraw', { id, events }),
-  onExit: (id, exitCode) => send('event:nvim-exit', { id, exitCode })
+  onExit: (id, exitCode) => send('event:nvim-exit', { id, exitCode }),
+  onNotify: (id, method, args) => send('event:nvim-notify', { id, method, args })
 })
 
 const pluginBroker = new PermissionBroker({

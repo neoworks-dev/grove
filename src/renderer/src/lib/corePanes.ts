@@ -4,16 +4,18 @@
 
 import Folder from 'phosphor-svelte/lib/Folder'
 import GitBranch from 'phosphor-svelte/lib/GitBranch'
+import GitDiff from 'phosphor-svelte/lib/GitDiff'
 import PuzzlePiece from 'phosphor-svelte/lib/PuzzlePiece'
+import Warning from 'phosphor-svelte/lib/Warning'
 import TerminalWindow from 'phosphor-svelte/lib/TerminalWindow'
 import Robot from 'phosphor-svelte/lib/Robot'
 import FilesView from '../components/FilesView.svelte'
 import WorktreeSidebar from '../components/WorktreeSidebar.svelte'
+import GitChangesView from '../components/GitChangesView.svelte'
+import DiagnosticsPane from '../components/DiagnosticsPane.svelte'
 import ExtensionsView from '../components/ExtensionsView.svelte'
 import AgentsOverview from '../components/AgentsOverview.svelte'
 import NvimPane from '../components/NvimPane.svelte'
-import NvimDiffPane from '../components/NvimDiffPane.svelte'
-import PreviewPane from '../components/PreviewPane.svelte'
 import Dashboard from '../components/Dashboard.svelte'
 import EmptyCenter from '../components/EmptyCenter.svelte'
 import AgentPane from '../components/AgentPane.svelte'
@@ -54,10 +56,10 @@ export function registerCorePanes(): void {
     minWidth: 180
   })
   panes.register({
-    id: 'agents',
-    title: 'Agents',
-    icon: Robot,
-    component: AgentsOverview,
+    id: 'changes',
+    title: 'Git Changes',
+    icon: GitDiff,
+    component: GitChangesView,
     rail: { order: 3 },
     slot: SIDEBAR_SLOT,
     containerClass: 'bg-elevated',
@@ -65,11 +67,33 @@ export function registerCorePanes(): void {
     when: repoOpen
   })
   panes.register({
+    id: 'agents',
+    title: 'Agents',
+    icon: Robot,
+    component: AgentsOverview,
+    rail: { order: 4 },
+    slot: SIDEBAR_SLOT,
+    containerClass: 'bg-elevated',
+    minWidth: 180,
+    when: repoOpen
+  })
+  panes.register({
+    id: 'diagnostics',
+    title: 'Diagnostics',
+    icon: Warning,
+    component: DiagnosticsPane,
+    rail: { order: 6 },
+    slot: SIDEBAR_SLOT,
+    containerClass: 'bg-elevated',
+    minWidth: 200,
+    when: repoOpen
+  })
+  panes.register({
     id: 'extensions',
     title: 'Extensions',
     icon: PuzzlePiece,
     component: ExtensionsView,
-    rail: { order: 4 },
+    rail: { order: 5 },
     slot: SIDEBAR_SLOT,
     containerClass: 'bg-elevated',
     minWidth: 180
@@ -85,25 +109,6 @@ export function registerCorePanes(): void {
     contextType: 'editor',
     // Modes reported live from the embedded nvim's mode_change events.
     modes: ['normal', 'insert', 'visual', 'replace', 'cmdline', 'operator', 'terminal'],
-    when: repoOpen
-  })
-  panes.register({
-    id: 'diff',
-    title: 'Diff',
-    component: NvimDiffPane,
-    slot: CENTER_SLOT,
-    minWidth: 240,
-    // Same keymap context/modes as the editor: the diff sides are nvim buffers.
-    contextType: 'editor',
-    modes: ['normal', 'insert', 'visual', 'replace', 'cmdline', 'operator', 'terminal'],
-    when: repoOpen
-  })
-  panes.register({
-    id: 'preview',
-    title: 'Preview',
-    component: PreviewPane,
-    slot: CENTER_SLOT,
-    minWidth: 240,
     when: repoOpen
   })
   // Placeholder for an empty center leaf; renders its own empty state, so no

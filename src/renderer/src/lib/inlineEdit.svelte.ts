@@ -4,8 +4,8 @@
 //    applied under the current review mode (auto / inline / gated).
 //  - Phase C (later): an in-buffer accept/reject overlay over the change.
 
-import type { InlineHunk, AppliedRange } from '../../../shared/types'
-import { store, insertIntoComposer } from './store.svelte'
+import type { InlineHunk, AppliedRange, DiffFile } from '../../../shared/types'
+import { store, insertIntoComposer, openFileInEditor } from './store.svelte'
 import { layout } from './layout.svelte'
 import { settings } from './settings.svelte'
 import { activeNvimSession, nvimSessionFor } from './nvim/registry'
@@ -184,6 +184,42 @@ class InlineEdit {
       endLine: selection.endLine,
       leafId: session.leafId
     }
+  }
+
+  // ── Working-tree review: review a file's git changes in the editor ─
+  // Opens the file in the editor and paints its uncommitted hunks with the same
+  // floating accept/reject overlay used for agent edits. The snapshot is the
+  // file's HEAD content, so beginReview diffs HEAD vs working tree (the git
+  // change): rejecting a hunk reverts it to HEAD, accepting keeps it.
+  async reviewWorkingTreeFile(worktreeId: string, file: DiffFile, absPath: string): Promise<void> {
+    openFileInEditor(worktreeId, absPath)
+    const session = activeNvimSession()
+    if (!session) return
+    await session.openPath(absPath)
+    session.focus()
+
+    let snapshot = ''
+    try {
+      // Snapshot the reactive proxy: Electron IPC cannot clone a Svelte $state
+      // Proxy ("An object could not be cloned").
+      const sides = await window.workbench.git.diffSides(worktreeId, $state.snapshot(file))
+      snapshot = sides.original
+    } catch (err) {
+      store.setError((err as Error).message)
+      return
+    }
+
+    this.finishReview()
+    await this.beginReview({
+      worktreeId,
+      absPath,
+      relPath: file.path,
+      startLine: 0,
+      endLine: 0,
+      leafId: session.leafId,
+      snapshot,
+      review: 'inline'
+    })
   }
 
   // ── Phase C: in-buffer accept/reject review ───────────────────────

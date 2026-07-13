@@ -35,6 +35,8 @@ const workbench = {
       hunks: unknown,
       applied: boolean[]
     ) => ipcRenderer.invoke('git:applyInlineReview', worktreeId, relPath, snapshot, hunks, applied),
+    diffText: (worktreeId: string, before: string, after: string) =>
+      ipcRenderer.invoke('git:diffText', worktreeId, before, after),
     stage: (worktreeId: string, paths: string[]) =>
       ipcRenderer.invoke('git:stage', worktreeId, paths),
     unstage: (worktreeId: string, paths: string[]) =>

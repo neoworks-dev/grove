@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte'
+  import { cubicOut } from 'svelte/easing'
   import groveLogo from './assets/grove-icon.svg'
   import ActivityBar from './components/ActivityBar.svelte'
   import Dock from './components/Dock.svelte'
+  import PanelResizer from './components/PanelResizer.svelte'
   import SplitTree from './components/SplitTree.svelte'
   import MenuBar from './components/MenuBar.svelte'
   import Overlay from './components/Overlay.svelte'
@@ -31,6 +33,7 @@
   import { menu } from './lib/menu.svelte'
   import { loadInstalledExtensions } from './lib/extensions'
   import { initIcons, availablePacks } from './lib/icons'
+  import { diagnostics } from './lib/diagnostics.svelte'
   import { initThemes } from './lib/themes'
   import { themePicker } from './lib/themepicker.svelte'
   import { overlays } from './lib/overlays.svelte'
@@ -192,6 +195,7 @@
     // re-applied from the settings provider once it loads.
     initThemes()
     initIcons()
+    diagnostics.start()
     registerBaseSettings()
     subscribeEvents()
     registerCoreCommands()
@@ -217,6 +221,18 @@
     return () => window.removeEventListener('keydown', onGlobalKey, true)
   })
 
+  // Collapse a side panel's width to zero on enter/leave. Because the node keeps
+  // its box during the transition, flexbox reallocates the freed width to the
+  // center every frame, so the center's resize animates in sync.
+  function collapseWidth(node: HTMLElement, params: { duration?: number } = {}) {
+    const width = node.offsetWidth
+    return {
+      duration: params.duration ?? 200,
+      easing: cubicOut,
+      css: (t: number) => `width:${t * width}px; min-width:0; overflow:hidden;`
+    }
+  }
+
   async function pickRepo(): Promise<void> {
     store.clearError()
     try {
@@ -228,10 +244,10 @@
   }
 </script>
 
-<div class="flex h-screen w-screen flex-col overflow-hidden bg-canvas text-default">
+<div class="flex h-screen w-screen flex-col gap-2 overflow-hidden bg-canvas p-2 text-default">
   <!-- Top bar -->
   <header
-    class="flex h-11 shrink-0 items-center gap-3 border-b border-line bg-elevated px-3 text-sm"
+    class="flex h-9 shrink-0 items-center gap-3 rounded-xl border border-line-faint bg-surface px-3 text-sm"
   >
     <img src={groveLogo} alt="Grove" class="h-6 w-auto" />
     <MenuBar />
@@ -289,7 +305,7 @@
 
   {#if store.error}
     <div
-      class="flex items-center gap-2 border-b border-line bg-red-soft px-3 py-1.5 text-xs text-red"
+      class="flex items-center gap-2 rounded-xl border border-line-faint bg-red-soft px-3 py-1.5 text-xs text-red"
     >
       <span>{store.error}</span>
       <button class="ml-auto text-dim hover:text-default" onclick={() => store.clearError()}
@@ -305,36 +321,39 @@
        Focus mode hides the rail + docks and floats the center. -->
   <div class="flex min-h-0 min-w-0 flex-1 overflow-hidden">
     {#if !layout.focusMode}
-      <ActivityBar />
-      {#if layout.docks.left.open}
-        <Dock side="left" />
-      {/if}
+      <div class="flex min-h-0 shrink-0" transition:collapseWidth>
+        <!-- Left rail + left dock read as one floating surface panel. -->
+        <div class="flex shrink-0 overflow-hidden rounded-xl border border-line-faint bg-surface">
+          <ActivityBar />
+          {#if layout.docks.left.open}
+            <Dock side="left" />
+          {/if}
+        </div>
+        <PanelResizer side="left" enabled={layout.docks.left.open} />
+      </div>
     {/if}
 
     <div
-      class="flex min-h-0 min-w-0 flex-1 overflow-hidden {layout.focusMode
-        ? 'bg-canvas p-6'
-        : ''}"
+      class="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl border border-line-faint bg-surface"
     >
-      <div
-        class="flex min-h-0 min-w-0 flex-1 overflow-hidden {layout.focusMode
-          ? 'rounded-xl border border-line bg-canvas shadow-2xl'
-          : ''}"
-      >
-        {#each layout.mountedViewIds as viewId (viewId)}
-          <div
-            class="flex min-h-0 min-w-0 flex-1 overflow-hidden {viewId === layout.activeViewId
-              ? ''
-              : 'hidden'}"
-          >
-            <SplitTree node={layout.trees[viewId]} />
-          </div>
-        {/each}
-      </div>
+      {#each layout.mountedViewIds as viewId (viewId)}
+        <div
+          class="flex min-h-0 min-w-0 flex-1 overflow-hidden {viewId === layout.activeViewId
+            ? ''
+            : 'hidden'}"
+        >
+          <SplitTree node={layout.trees[viewId]} />
+        </div>
+      {/each}
     </div>
 
     {#if !layout.focusMode && layout.docks.right.open}
-      <Dock side="right" />
+      <div class="flex min-h-0 shrink-0" transition:collapseWidth>
+        <PanelResizer side="right" />
+        <div class="flex shrink-0 overflow-hidden rounded-xl border border-line-faint bg-surface">
+          <Dock side="right" />
+        </div>
+      </div>
     {/if}
   </div>
 

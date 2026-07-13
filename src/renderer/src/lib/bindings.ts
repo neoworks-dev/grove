@@ -8,6 +8,7 @@ import { keymap } from './keymap.svelte'
 import { commands } from './commands.svelte'
 import { layout } from './layout.svelte'
 import { bufferMenu } from './buffermenu.svelte'
+import { sendSelectionToComposer } from './inlineEdit.svelte'
 
 export function registerCoreBindings(): void {
   keymap.registerBindings([
@@ -44,6 +45,17 @@ export function registerCoreBindings(): void {
       group: 'Focus',
       description: 'Open agent panel',
       run: () => layout.ensurePane('agent')
+    },
+    {
+      // Editor-only: send the current selection to the agent composer as an
+      // @file:lines reference. Normal-mode, so it reads the last visual range
+      // ('</'> marks) — select, leave visual, then <Leader> i.
+      id: 'editor.sendSelection',
+      keys: '<Leader> i',
+      context: 'editor',
+      group: 'Agent',
+      description: 'Send selection to agent',
+      run: () => void sendSelectionToComposer()
     },
     {
       id: 'leader.focusMode',
@@ -292,6 +304,13 @@ export function registerCoreBindings(): void {
       group: 'Editor',
       keywords: 'neovim nvim vim editor embedded',
       run: () => layout.showCenterPane('nvim')
+    },
+    {
+      id: 'editor.sendSelection',
+      title: 'Agent: Send Selection to Composer',
+      group: 'Agent',
+      keywords: 'inline edit selection reference mention agent range',
+      run: () => void sendSelectionToComposer()
     }
   ])
 }

@@ -11,6 +11,7 @@
   import Minimap from './Minimap.svelte'
   import { settings } from '../lib/settings.svelte'
   import { NvimCanvasSession } from '../lib/nvim/session'
+  import { registerNvimSession, unregisterNvimSession } from '../lib/nvim/registry'
   import { nvimKeymapBindings, type NvimMapping } from '../lib/nvimKeymap'
   import { operatorHintEntries, operatorTitle } from '../lib/nvimOperatorHints'
 
@@ -145,6 +146,7 @@
         }
       }
     )
+    registerNvimSession(leafId, session)
     void session.start()
   })
 
@@ -203,6 +205,7 @@
   onDestroy(() => {
     disposeNvimBindings?.()
     keymap.hideHints()
+    unregisterNvimSession(leafId)
     session?.dispose()
   })
 </script>

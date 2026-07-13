@@ -1,9 +1,9 @@
 <script lang="ts">
   // Full keybinding cheatsheet (leader ?). A glanceable, grouped reference of
-  // every registered binding plus the Vim-adapter editor keys, complementing
-  // the transient which-key popup and the editable Keyboard pane.
+  // every registered binding, complementing the transient which-key popup and
+  // the editable Keyboard pane.
   import { keymap } from '../lib/keymap.svelte'
-  import { VIM_LSP_KEYS } from '../lib/editorVimKeys'
+  import { parseSequence, formatStep } from '../lib/keySequence'
 
   interface Row {
     keys: string
@@ -14,11 +14,17 @@
     rows: Row[]
   }
 
+  // Render a stored `keys` string (old or new grammar) with the leader and a
+  // literal space shown as ␣.
   function displayKeys(keys: string): string {
-    return keys
-      .split(' ')
-      .map((step) => (step === 'leader' ? '␣' : step))
-      .join(' ')
+    const parsed = parseSequence(keys)
+    if (!parsed) return keys
+    const parts = parsed.steps.map((step) => {
+      const text = formatStep(step)
+      return text === '<Space>' ? '␣' : text
+    })
+    if (parsed.leader) parts.unshift('␣')
+    return parts.join(' ')
   }
 
   const groups = $derived.by<Group[]>(() => {
@@ -29,12 +35,6 @@
       rows.push({ keys: displayKeys(binding.keys), description: binding.description })
       byGroup.set(name, rows)
     }
-    // Vim editor LSP keys are handled by the CodeMirror Vim adapter, not the
-    // keymap registry, so add them from their shared definition.
-    byGroup.set(
-      'Editor · LSP (Vim)',
-      VIM_LSP_KEYS.map((key) => ({ keys: key.keys, description: key.description }))
-    )
     return [...byGroup.entries()]
       .map(([name, rows]) => ({
         name,

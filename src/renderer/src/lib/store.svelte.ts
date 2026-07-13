@@ -72,10 +72,11 @@ class WorkbenchStore {
   // Bumped per worktree on any file change, so trees/diffs re-read reactively.
   fsVersion = $state<Record<string, number>>({})
 
-  // Set by the fs watcher when a running agent edits a file → DiffPane focuses it.
+  // Set by the fs watcher when a running agent edits a file → the diff pane
+  // focuses it.
   requestedDiffFile = $state<string | null>(null)
 
-  // Set when opening a file at a specific line (ripgrep search) → EditorPane
+  // Set when opening a file at a specific line (ripgrep search) → the editor
   // scrolls the cursor there once the file is loaded.
   revealTarget = $state<{ path: string; line: number } | null>(null)
 
@@ -110,8 +111,8 @@ class WorkbenchStore {
   loading = $state(false)
   error = $state<string | null>(null)
 
-  // Active theme (name + scheme + palette) for the CodeMirror editor/diff views.
-  // Reading `colorTheme` here makes those views react to theme changes.
+  // Active theme (name + scheme + palette). Reading `colorTheme` here makes
+  // theme-dependent views react to theme changes.
   get activeTheme(): ColorTheme {
     return themeFor(this.colorTheme)
   }
@@ -226,13 +227,8 @@ export function applyColorTheme(name: string): void {
   void settings.set('workbench.colorTheme', name, 'user')
 }
 
-// Which center pane receives opened files: an already-open nvim leaf keeps
-// them (opening a file must never swap a live nvim session away); otherwise
-// the workbench.centerEditor setting decides. The default layout always
-// contains an editor leaf, so it must not short-circuit the setting.
+// Opened files always go to the Neovim center pane — the only editor.
 function preferredEditorPane(): string {
-  if (layout.hasPaneType('nvim')) return 'nvim'
-  if (settings.get<string>('workbench.centerEditor') === 'codemirror') return 'editor'
   return 'nvim'
 }
 

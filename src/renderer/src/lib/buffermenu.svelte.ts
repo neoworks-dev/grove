@@ -30,7 +30,7 @@ class BufferMenuStore {
       onAccept: (picked) => {
         if (!picked[0]) return
         store.activeTabPath = picked[0].id
-        layout.showCenterPane('editor')
+        layout.showCenterPane('nvim')
       },
       actions: [
         {

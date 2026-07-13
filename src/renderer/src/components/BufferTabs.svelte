@@ -1,8 +1,7 @@
 <script lang="ts">
-  // The editor buffer tab strip, shared by the CodeMirror and Neovim center
-  // panes so both show the same row of open files. Dirty state is optional:
-  // CodeMirror tracks unsaved edits per path; nvim owns its own buffers and
-  // passes none.
+  // The editor buffer tab strip for the Neovim center pane, showing the row of
+  // open files. Dirty state is optional: nvim owns its own buffers and passes
+  // none.
   import Icon from '@iconify/svelte'
   import { store } from '../lib/store.svelte'
 

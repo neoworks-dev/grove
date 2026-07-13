@@ -29,6 +29,10 @@ export interface PaneType {
   slot?: string
   // Extra classes on the leaf container (e.g. 'bg-elevated' for chrome panes).
   containerClass?: string
+  // Keymap context this pane reports, when it differs from `id`. Lets several
+  // pane types share one binding context — e.g. the Neovim editor reports
+  // 'editor', so editor-scoped keybindings match it.
+  contextType?: string
   // Editor-style modes the pane supports (first entry = default). Feeds the
   // keymap's mode gate and the statusline mode indicator; mode-scoped
   // keybindings only fire while the pane is in that mode.

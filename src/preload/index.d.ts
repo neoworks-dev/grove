@@ -12,6 +12,7 @@ import type {
   BranchList,
   DiffFile,
   DiffSides,
+  DiffHunks,
   WorkbenchConfig,
   ServiceRuntime,
   AgentRuntime,
@@ -84,6 +85,7 @@ export interface WorkbenchApi {
     branches: () => Promise<BranchList>
     changedFiles: (worktreeId: string) => Promise<DiffFile[]>
     diffSides: (worktreeId: string, file: DiffFile) => Promise<DiffSides>
+    diffHunks: (worktreeId: string, file: DiffFile) => Promise<DiffHunks>
   }
   config: {
     load: () => Promise<WorkbenchConfig>
@@ -249,6 +251,14 @@ export interface WorkbenchApi {
     spawn: (worktreeId: string | null) => Promise<string>
     attach: (id: string, cols: number, rows: number, file?: string) => Promise<void>
     input: (id: string, keys: string) => Promise<void>
+    inputMouse: (
+      id: string,
+      button: string,
+      action: string,
+      modifier: string,
+      row: number,
+      col: number
+    ) => Promise<void>
     resize: (id: string, cols: number, rows: number) => Promise<void>
     command: (id: string, command: string) => Promise<void>
     request: (id: string, method: string, args: unknown[]) => Promise<unknown>

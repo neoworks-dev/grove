@@ -218,6 +218,35 @@ export function replaceLeafType(
   })
 }
 
+// Where a dragged pane lands relative to the target leaf: its middle swaps
+// places with the target; an edge splits the target and drops the pane on that
+// side.
+export type DropZone = 'center' | 'left' | 'right' | 'top' | 'bottom'
+
+// Move `draggedId` onto `targetId` at the given zone. Center swaps the two
+// leaves; an edge removes the dragged leaf and inserts it beside the target as
+// a split. The dragged leaf node keeps its id and state so its pane follows the
+// move. Returns the root unchanged when the move is a no-op or invalid (same
+// leaf, missing leaf, or dragging away the last pane).
+export function moveLeaf(
+  root: LayoutNode,
+  draggedId: string,
+  targetId: string,
+  zone: DropZone
+): LayoutNode {
+  if (draggedId === targetId) return root
+  const dragged = findLeaf(root, draggedId)
+  if (!dragged || !findLeaf(root, targetId)) return root
+  if (zone === 'center') {
+    return normalize(swapLeaves(root, draggedId, targetId))
+  }
+  const withoutDragged = removeLeaf(root, draggedId)
+  if (!withoutDragged || !findLeaf(withoutDragged, targetId)) return root
+  const direction: SplitDirection = zone === 'left' || zone === 'right' ? 'row' : 'column'
+  const position = zone === 'left' || zone === 'top' ? 'before' : 'after'
+  return normalize(splitLeaf(withoutDragged, targetId, direction, dragged, position))
+}
+
 export function updateLeafState(
   root: LayoutNode,
   leafId: string,

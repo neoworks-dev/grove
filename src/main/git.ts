@@ -6,7 +6,15 @@ import { simpleGit, type SimpleGit } from 'simple-git'
 import { basename } from 'path'
 import { readFile } from 'fs/promises'
 import { join } from 'path'
-import type { Worktree, BranchList, DiffFile, DiffSides, DiffChangeType } from '../shared/types'
+import type {
+  Worktree,
+  BranchList,
+  DiffFile,
+  DiffSides,
+  DiffChangeType,
+  DiffHunk,
+  DiffHunks
+} from '../shared/types'
 
 function gitFor(repoPath: string): SimpleGit {
   return simpleGit({ baseDir: repoPath })
@@ -250,6 +258,39 @@ export async function diffSides(
   const original = await fileAtRef(worktreePath, 'HEAD', file.oldPath || file.path)
   const modified = await workingTreeFile(worktreePath, file.path)
   return { path: file.path, original, modified, language }
+}
+
+// Changed line ranges for a file, from `git diff` hunk headers. Plain `git
+// diff` exits 0 even with differences (no --exit-code), so raw() resolves
+// normally. Untracked files have no tracked diff — every line is new, which
+// the renderer infers from the empty original side.
+export async function diffHunks(worktreePath: string, file: DiffFile): Promise<DiffHunks> {
+  if (file.changeType === 'untracked') return { path: file.path, hunks: [] }
+  const args = ['diff', '-U0', '--no-color']
+  if (file.staged) args.push('--cached')
+  args.push('--', file.path)
+  const output = await gitFor(worktreePath)
+    .raw(args)
+    .catch(() => '')
+  return { path: file.path, hunks: parseHunks(output) }
+}
+
+// Parse the `@@ -a,b +c,d @@` headers of a unified diff. A missing count means
+// 1 (git omits `,n` when n is 1).
+export function parseHunks(diff: string): DiffHunk[] {
+  const header = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/gm
+  const hunks: DiffHunk[] = []
+  let match = header.exec(diff)
+  while (match !== null) {
+    hunks.push({
+      originalStart: Number(match[1]),
+      originalCount: match[2] === undefined ? 1 : Number(match[2]),
+      modifiedStart: Number(match[3]),
+      modifiedCount: match[4] === undefined ? 1 : Number(match[4])
+    })
+    match = header.exec(diff)
+  }
+  return hunks
 }
 
 export function detectLanguage(path: string): string {

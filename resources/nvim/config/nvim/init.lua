@@ -5,6 +5,12 @@
 -- disabled; the in-grid cmdline row stays (search/:s preview, wildmenu,
 -- hit-enter prompts).
 
+-- Space is the shared leader: grove owns the space-leader which-key overlay and
+-- forwards completed leader sequences back here, so nvim's own <leader> maps
+-- appear in that overlay and stay executable. Set before any plugin maps load.
+vim.g.mapleader = ' '
+vim.g.maplocalleader = ' '
+
 vim.opt.termguicolors = true
 vim.opt.number = true
 vim.opt.relativenumber = false

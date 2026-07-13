@@ -173,8 +173,8 @@ export function currentThemeName(): string {
   return activeName
 }
 
-// Resolve a theme (falls back to the default) — used by the CodeMirror editor
-// and diff view to build their per-instance themes.
+// Resolve a theme (falls back to the default) — used to build per-instance
+// themes for theme-dependent views.
 export function themeFor(name: string): ColorTheme {
   return themes.get(name) || themes.get(DEFAULT_THEME)!
 }

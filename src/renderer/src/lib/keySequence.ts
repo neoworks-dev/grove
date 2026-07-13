@@ -45,6 +45,43 @@ const NAMED_KEYS = new Set([
   ...Array.from({ length: 12 }, (_, index) => `f${index + 1}`)
 ])
 
+// Bracket-grammar display names for named keys: canonical `keys` serialize as
+// <Leader> P <Space> <Ctrl-K>. Modifiers combine into one bracket per chord.
+const NAMED_DISPLAY: Record<string, string> = {
+  space: 'Space',
+  enter: 'Enter',
+  escape: 'Escape',
+  tab: 'Tab',
+  backspace: 'Backspace',
+  delete: 'Delete',
+  up: 'Up',
+  down: 'Down',
+  left: 'Left',
+  right: 'Right',
+  home: 'Home',
+  end: 'End',
+  pageup: 'PageUp',
+  pagedown: 'PageDown'
+}
+
+// Modifier spellings accepted inside a bracket chord (`<Ctrl-K>`, `<C-K>`).
+const MODIFIER_ALIASES: Record<string, keyof Pick<KeyStep, 'ctrl' | 'alt' | 'shift' | 'meta'>> = {
+  ctrl: 'ctrl',
+  control: 'ctrl',
+  c: 'ctrl',
+  alt: 'alt',
+  option: 'alt',
+  a: 'alt',
+  m: 'alt',
+  shift: 'shift',
+  s: 'shift',
+  meta: 'meta',
+  cmd: 'meta',
+  super: 'meta',
+  win: 'meta',
+  d: 'meta'
+}
+
 const EVENT_KEY_NAMES: Record<string, string> = {
   ' ': 'space',
   spacebar: 'space',
@@ -84,7 +121,32 @@ function normalizeStep(step: KeyStep): KeyStep | null {
   return { ...step, key: step.key.toUpperCase(), shift: false }
 }
 
+// Parse a bracket-grammar step: <Space>, <Ctrl-K>, <Alt-Shift-Q>. Leading
+// segments are modifiers (any alias in MODIFIER_ALIASES); the remainder is the
+// key (which may itself be '-').
+function parseBracketStep(token: string): KeyStep | null {
+  const inner = token.slice(1, -1)
+  if (inner.length === 0) return null
+  const segments = inner.split('-')
+  const step: KeyStep = { key: '', ctrl: false, alt: false, shift: false, meta: false }
+  let index = 0
+  while (index < segments.length - 1) {
+    const modifier = MODIFIER_ALIASES[segments[index].toLowerCase()]
+    if (!modifier) break
+    step[modifier] = true
+    index += 1
+  }
+  const rawKey = segments.slice(index).join('-')
+  if (!rawKey) return null
+  const lower = rawKey.toLowerCase()
+  if (isNamedKey(lower)) step.key = lower
+  else if (rawKey.length === 1) step.key = rawKey
+  else return null
+  return normalizeStep(step)
+}
+
 function parseStep(text: string): KeyStep | null {
+  if (text.startsWith('<') && text.endsWith('>')) return parseBracketStep(text)
   const parts = text.split('+')
   if (parts.some((part) => part.length === 0)) return null
   const rawKey = parts[parts.length - 1]
@@ -107,10 +169,14 @@ function parseStep(text: string): KeyStep | null {
 export function parseSequence(text: string): ParsedSequence | null {
   const tokens = text.trim().split(/\s+/).filter(Boolean)
   if (tokens.length === 0) return null
-  const leader = tokens[0].toLowerCase() === 'leader'
+  const isLeaderToken = (token: string): boolean => {
+    const lower = token.toLowerCase()
+    return lower === 'leader' || lower === '<leader>'
+  }
+  const leader = isLeaderToken(tokens[0])
   const stepTokens = leader ? tokens.slice(1) : tokens
   if (leader && stepTokens.length === 0) return null
-  if (stepTokens.some((token) => token.toLowerCase() === 'leader')) return null
+  if (stepTokens.some(isLeaderToken)) return null
   const steps: KeyStep[] = []
   for (const token of stepTokens) {
     const step = parseStep(token)
@@ -120,21 +186,36 @@ export function parseSequence(text: string): ParsedSequence | null {
   return { leader, steps }
 }
 
+// Key name inside a chord bracket: named keys use their display spelling, a
+// printable char is uppercased (`<Ctrl-K>`).
+function chordKeyName(key: string): string {
+  if (NAMED_DISPLAY[key]) return NAMED_DISPLAY[key]
+  return key.toUpperCase()
+}
+
+// A modifier-less step: named keys wrap in brackets (`<Space>`, `<F5>`), a
+// printable char stays literal so its case survives (`p`, `F`, `/`).
+function soloKeyToken(key: string): string {
+  if (NAMED_DISPLAY[key]) return `<${NAMED_DISPLAY[key]}>`
+  if (/^f([1-9]|1[0-2])$/.test(key)) return `<${key.toUpperCase()}>`
+  return key
+}
+
 export function formatStep(step: KeyStep): string {
-  const parts: string[] = []
-  if (step.ctrl) parts.push('ctrl')
-  if (step.alt) parts.push('alt')
-  if (step.shift) parts.push('shift')
-  if (step.meta) parts.push('meta')
-  parts.push(step.key)
-  return parts.join('+')
+  const modifiers: string[] = []
+  if (step.ctrl) modifiers.push('Ctrl')
+  if (step.alt) modifiers.push('Alt')
+  if (step.shift) modifiers.push('Shift')
+  if (step.meta) modifiers.push('Meta')
+  if (modifiers.length === 0) return soloKeyToken(step.key)
+  return `<${[...modifiers, chordKeyName(step.key)].join('-')}>`
 }
 
 export function formatSequence(parsed: ParsedSequence): string {
   const steps = parsed.steps.map(formatStep).join(' ')
   if (!parsed.leader) return steps
-  if (steps.length === 0) return 'leader'
-  return `leader ${steps}`
+  if (steps.length === 0) return '<Leader>'
+  return `<Leader> ${steps}`
 }
 
 // Round-trip a hand-written sequence into canonical form; null when invalid.

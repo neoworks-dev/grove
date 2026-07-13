@@ -96,6 +96,20 @@ export class NeovimManager {
     this.sessions.get(id)?.rpc.notify('nvim_input', [keys])
   }
 
+  // Forward a mouse event to nvim. Single-grid UI, so grid is 0.
+  inputMouse(
+    id: string,
+    button: string,
+    action: string,
+    modifier: string,
+    row: number,
+    col: number
+  ): void {
+    this.sessions
+      .get(id)
+      ?.rpc.notify('nvim_input_mouse', [button, action, modifier, 0, row, col])
+  }
+
   resize(id: string, cols: number, rows: number): void {
     const session = this.sessions.get(id)
     session?.rpc.notify('nvim_ui_try_resize', [Math.max(1, cols), Math.max(1, rows)])

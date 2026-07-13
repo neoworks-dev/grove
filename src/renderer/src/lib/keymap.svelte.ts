@@ -395,7 +395,7 @@ class Keymap {
     }
 
     // Non-leader bindings: modifier chords fire anywhere (they must beat
-    // CodeMirror/Vim); bare keys only when not typing.
+    // Neovim); bare keys only when not typing.
     const hasModifier = step.ctrl || step.alt || step.meta
     if (!hasModifier && !this.eligible()) return false
     const matches = this.matching([step], false)

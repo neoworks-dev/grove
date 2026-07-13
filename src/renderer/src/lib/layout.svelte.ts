@@ -11,16 +11,20 @@ import {
   createSplit,
   leaves,
   findLeaf,
+  findParentSplit,
   splitLeaf,
   removeLeaf,
   resizeGutter,
   swapLeaves,
   replaceLeafType,
   updateLeafState,
+  moveLeaf,
   sanitize,
+  type DropZone,
   type LayoutNode,
   type LeafNode,
-  type SplitDirection
+  type SplitDirection,
+  type SplitNode
 } from './layoutTree'
 
 // Sizes for panels nested INSIDE pane components (diff list, file tree rows) —
@@ -34,7 +38,7 @@ const HEADER_PX = 44
 const STATUS_BAR_PX = 24
 const ACTIVITY_BAR_PX = 44
 
-const CENTER_TYPES = ['editor', 'nvim', 'diff', 'preview', 'dashboard']
+const CENTER_TYPES = ['nvim', 'diff', 'preview', 'dashboard']
 
 function clampFraction(value: number): number {
   return Math.min(0.8, Math.max(0.1, value))
@@ -57,7 +61,7 @@ export function buildDefaultTree(options: DefaultTreeOptions = {}): LayoutNode {
   const sidebarPx = options.sidebarPx ?? 256
   const agentPx = options.agentPx ?? 320
   const logsPx = options.logsPx ?? 224
-  const centerType = options.centerType ?? 'editor'
+  const centerType = options.centerType ?? 'nvim'
 
   const bodyWidth = width - ACTIVITY_BAR_PX
   const sidebarFraction = clampFraction(sidebarPx / bodyWidth)
@@ -82,7 +86,7 @@ class LayoutStore {
 
   // Live tree per MOUNTED view. Views the user has visited stay in the DOM
   // (hidden when inactive) so switching back never remounts their panes — that
-  // remount was rebuilding CodeMirror and every AgentPane message on each
+  // remount was rebuilding the editor and every AgentPane message on each
   // switch. Only the active view's tree is ever mutated.
   trees = $state<Record<string, LayoutNode>>({ code: buildDefaultTree() })
 
@@ -161,9 +165,45 @@ class LayoutStore {
     this.schedule()
   }
 
+  // Relocate a leaf onto a target via drag-and-drop (see paneDrag controller).
+  moveLeaf(draggedId: string, targetId: string, zone: DropZone): void {
+    const next = moveLeaf(this.tree, draggedId, targetId, zone)
+    if (next === this.tree) return
+    this.setActiveTree(next)
+    this.focusLeafSoon(draggedId)
+    this.schedule()
+  }
+
   resize(splitId: string, gutterIndex: number, deltaFraction: number, minFraction?: number): void {
     this.setActiveTree(resizeGutter(this.tree, splitId, gutterIndex, deltaFraction, minFraction))
     this.schedule()
+  }
+
+  // Grow (positive) or shrink (negative) the focused leaf by a pixel amount
+  // along its parent split's axis. The last child has no gutter after it, so
+  // its boundary is the gutter before it — invert the delta there so "grow"
+  // always enlarges the pane.
+  resizeFocused(deltaPx: number): void {
+    const focused = this.focusedLeaf()
+    if (!focused) return
+    const parent = findParentSplit(this.tree, focused.id)
+    if (!parent) return
+    const index = parent.children.findIndex((child) => child.id === focused.id)
+    if (index < 0) return
+    const containerPx = this.splitContainerPx(parent)
+    if (containerPx <= 0) return
+    const isLastChild = index === parent.children.length - 1
+    const gutterIndex = isLastChild ? index - 1 : index
+    const signedPx = isLastChild ? -deltaPx : deltaPx
+    this.resize(parent.id, gutterIndex, signedPx / containerPx)
+  }
+
+  // Pixel extent of a split's flex container along its own axis, used to turn
+  // pixel resize deltas into size fractions. Zero when the split isn't mounted.
+  private splitContainerPx(split: SplitNode): number {
+    const element = document.querySelector<HTMLElement>(`[data-split-id="${split.id}"]`)
+    if (!element) return 0
+    return split.direction === 'row' ? element.clientWidth : element.clientHeight
   }
 
   setLeafType(leafId: string, paneTypeId: string, paneState?: Record<string, unknown>): void {
@@ -307,7 +347,7 @@ class LayoutStore {
         agentPx: legacySizes.agent,
         logsPx: legacySizes.logs,
         logsOpen: state.panelsOpen?.logs ?? true,
-        centerType: centerView && CENTER_TYPES.includes(centerView) ? centerView : 'editor'
+        centerType: centerView && CENTER_TYPES.includes(centerView) ? centerView : 'nvim'
       })
     }
     const definition = views.get(viewId)

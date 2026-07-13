@@ -54,6 +54,55 @@ export interface NvimSessionConfig {
 }
 
 const MOUSE_BUTTONS = ['left', 'middle', 'right']
+
+// Tint the given 1-based line ranges as additions in the live buffer, replacing
+// any previous inline-review highlight. Used by the accept/reject overlay.
+const INLINE_PAINT_LUA = `
+local ranges = ...
+local ns = vim.api.nvim_create_namespace('grove_inline')
+local buf = vim.api.nvim_get_current_buf()
+vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
+local total = vim.api.nvim_buf_line_count(buf)
+for _, r in ipairs(ranges) do
+  local startLine = r.start - 1
+  for line = startLine, startLine + r.count - 1 do
+    if line >= 0 and line < total then
+      vim.api.nvim_buf_set_extmark(buf, ns, line, 0, { line_hl_group = 'DiffAdd' })
+    end
+  end
+end
+`
+
+const INLINE_CLEAR_LUA = `
+local ns = vim.api.nvim_create_namespace('grove_inline')
+vim.api.nvim_buf_clear_namespace(vim.api.nvim_get_current_buf(), ns, 0, -1)
+`
+
+// Resolve the buffer path and the selected line range. While in a visual mode
+// it reads the live selection (`v` = anchor, `.` = cursor); otherwise it falls
+// back to the last visual marks (`'<`/`'>`), so the range survives leaving
+// visual — the path taken by the normal-mode inline-edit binding. A byte check
+// (22 = Ctrl-V) covers visual-block without embedding a control char here.
+const SELECTION_LUA = `
+local mode = vim.fn.mode()
+local first = mode:sub(1, 1)
+local visual = first == 'v' or first == 'V' or mode:byte(1) == 22
+local sp, ep
+if visual then
+  sp = vim.fn.getpos('v')
+  ep = vim.fn.getpos('.')
+else
+  sp = vim.fn.getpos("'<")
+  ep = vim.fn.getpos("'>")
+end
+local startLine, endLine = sp[2], ep[2]
+if startLine == 0 or endLine == 0 then
+  local cur = vim.api.nvim_win_get_cursor(0)
+  startLine, endLine = cur[1], cur[1]
+end
+if startLine > endLine then startLine, endLine = endLine, startLine end
+return { path = vim.api.nvim_buf_get_name(0), startLine = startLine, endLine = endLine }
+`
 // A pane that dies more than this many times inside the window is fatal — most
 // likely a config/runtime fault a respawn won't fix.
 const MAX_RESTARTS = 3
@@ -109,8 +158,108 @@ export class NvimCanvasSession {
     return this.nvimId
   }
 
+  get leafId(): string {
+    return this.config.leafId
+  }
+
+  get cellHeight(): number {
+    return this.metrics?.cellHeight ?? 0
+  }
+
+  // The 1-based buffer line at the top of the viewport (`line('w0')`), for
+  // placing overlays by screen row. Null when no session is live.
+  async viewportTop(): Promise<number | null> {
+    const id = this.nvimId
+    if (!id) return null
+    try {
+      const top = await window.workbench.nvim.request(id, 'nvim_exec_lua', [
+        "return vim.fn.line('w0')",
+        []
+      ])
+      return typeof top === 'number' ? top : null
+    } catch {
+      return null
+    }
+  }
+
+  // Tint the given 1-based line ranges as an inline-review highlight.
+  async paintInlineReview(ranges: { start: number; count: number }[]): Promise<void> {
+    const id = this.nvimId
+    if (!id) return
+    try {
+      await window.workbench.nvim.request(id, 'nvim_exec_lua', [INLINE_PAINT_LUA, [ranges]])
+    } catch {
+      // session gone
+    }
+  }
+
+  async clearInlineReview(): Promise<void> {
+    const id = this.nvimId
+    if (!id) return
+    try {
+      await window.workbench.nvim.request(id, 'nvim_exec_lua', [INLINE_CLEAR_LUA, []])
+    } catch {
+      // session gone
+    }
+  }
+
+  // Reload the current buffer from disk (`:edit!`), discarding in-memory edits —
+  // used after an inline-review reject rewrites the file underneath it.
+  async reloadBuffer(): Promise<void> {
+    const id = this.nvimId
+    if (!id) return
+    try {
+      await window.workbench.nvim.request(id, 'nvim_cmd', [{ cmd: 'edit', bang: true }, {}])
+    } catch {
+      // session gone
+    }
+  }
+
+  // Pixel offset (within the pane host) of a 1-based buffer line's screen row,
+  // for anchoring overlays like the inline-edit prompt. Null when off-screen
+  // bookkeeping isn't available (no session/metrics).
+  async screenYForLine(bufferLine: number): Promise<number | null> {
+    const id = this.nvimId
+    if (!id || !this.metrics) return null
+    try {
+      const top = await window.workbench.nvim.request(id, 'nvim_exec_lua', [
+        "return vim.fn.line('w0')",
+        []
+      ])
+      if (typeof top !== 'number') return null
+      const row = Math.max(0, bufferLine - top)
+      return row * this.metrics.cellHeight
+    } catch {
+      return null
+    }
+  }
+
   focus(): void {
     this.elements.input.focus()
+  }
+
+  // The current editor selection (buffer path + 1-based inclusive line range).
+  // Returns null when no session is live or the buffer is unnamed (scratch).
+  async getVisualSelection(): Promise<{
+    path: string
+    startLine: number
+    endLine: number
+  } | null> {
+    const id = this.nvimId
+    if (!id) return null
+    try {
+      const result = await window.workbench.nvim.request(id, 'nvim_exec_lua', [SELECTION_LUA, []])
+      if (!result || typeof result !== 'object') return null
+      const selection = result as { path?: string; startLine?: number; endLine?: number }
+      if (!selection.path || !selection.startLine || !selection.endLine) return null
+      return {
+        path: selection.path,
+        startLine: selection.startLine,
+        endLine: selection.endLine
+      }
+    } catch {
+      return null
+    }
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────

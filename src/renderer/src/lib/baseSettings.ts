@@ -47,6 +47,28 @@ export function registerBaseSettings(): void {
         category: 'Keyboard',
         minimum: 0,
         maximum: 2000
+      },
+      {
+        key: 'workbench.centerEditor',
+        type: 'enum',
+        default: 'codemirror',
+        title: 'Editor',
+        description: 'Which editor opens files: the built-in CodeMirror pane or embedded Neovim.',
+        category: 'Editor',
+        enumValues: [
+          { value: 'codemirror', label: 'CodeMirror' },
+          { value: 'nvim', label: 'Neovim (embedded)' }
+        ]
+      },
+      {
+        key: 'workbench.nvimFontSize',
+        type: 'number',
+        default: 13,
+        title: 'Neovim Font Size',
+        description: 'Grid font size in pixels for the embedded Neovim pane.',
+        category: 'Editor',
+        minimum: 6,
+        maximum: 32
       }
     ]
   })

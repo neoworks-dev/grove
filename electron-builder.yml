@@ -17,6 +17,10 @@ extraResources:
   # Built-in plugins (identical format to user/project plugins).
   - from: resources/plugins
     to: plugins
+  # Vendored Neovim (fetched by scripts/fetch-nvim.ts; dist/ holds the
+  # current build target only — CI fetches per platform).
+  - from: resources/nvim
+    to: nvim
 asarUnpack:
   - resources/**
   # Ripgrep ships a native binary that must run from disk, not inside the asar.

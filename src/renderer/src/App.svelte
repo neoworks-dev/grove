@@ -155,7 +155,7 @@
     // insert typing is never hijacked. K and J are left to Vim (K = hover/type
     // info, J = join), so they are deliberately not mapped here.
     if (
-      keymap.activePaneType === 'editor' &&
+      (keymap.activePaneType === 'editor' || keymap.activePaneType === 'nvim') &&
       keymap.mode === 'normal' &&
       event.shiftKey &&
       !event.ctrlKey &&

@@ -10,6 +10,7 @@ import FilesView from '../components/FilesView.svelte'
 import WorktreeSidebar from '../components/WorktreeSidebar.svelte'
 import ExtensionsView from '../components/ExtensionsView.svelte'
 import EditorPane from '../components/EditorPane.svelte'
+import NvimPane from '../components/NvimPane.svelte'
 import DiffPane from '../components/DiffPane.svelte'
 import PreviewPane from '../components/PreviewPane.svelte'
 import Dashboard from '../components/Dashboard.svelte'
@@ -68,6 +69,16 @@ export function registerCorePanes(): void {
     minWidth: 240,
     // Vim modes, reported live by EditorPane; 'normal' first = default.
     modes: ['normal', 'insert', 'visual', 'visual-line', 'visual-block', 'replace'],
+    when: repoOpen
+  })
+  panes.register({
+    id: 'nvim',
+    title: 'Neovim',
+    component: NvimPane,
+    slot: CENTER_SLOT,
+    minWidth: 240,
+    // Modes reported live from the embedded nvim's mode_change events.
+    modes: ['normal', 'insert', 'visual', 'replace', 'cmdline', 'operator', 'terminal'],
     when: repoOpen
   })
   panes.register({

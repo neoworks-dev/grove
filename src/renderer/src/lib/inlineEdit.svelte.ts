@@ -48,6 +48,9 @@ class InlineEdit {
   promptOpen = $state(false)
   promptLeafId = $state<string | null>(null)
   promptAnchorY = $state(0)
+  // Center the prompt (selection off-screen or taller than the viewport) rather
+  // than anchoring it at promptAnchorY.
+  promptCentered = $state(false)
   promptRefLabel = $state('')
 
   private selection: InlineSelection | null = null
@@ -98,10 +101,11 @@ class InlineEdit {
     if (!session) return
     const selection = await this.readSelectionFrom(session)
     if (!selection) return
-    const anchorY = await session.screenYForLine(selection.startLine)
+    const placement = await session.promptPlacement(selection.startLine, selection.endLine)
     this.selection = selection
     this.promptLeafId = session.leafId
-    this.promptAnchorY = anchorY ?? 0
+    this.promptAnchorY = placement.y
+    this.promptCentered = placement.centered
     this.promptRefLabel = selectionRef(selection.relPath, selection.startLine, selection.endLine)
     this.promptOpen = true
   }

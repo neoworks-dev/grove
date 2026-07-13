@@ -62,8 +62,8 @@ export function registerCoreBindings(): void {
     },
     {
       // Editor-only: open the inline-edit prompt over the current selection.
-      // Normal-mode, so it reads the last visual range ('</'> marks) — select,
-      // leave visual, then <Leader> i.
+      // The leader also starts in visual mode, so it fires on the live selection
+      // without leaving visual; from normal mode it reads the last visual range.
       id: 'editor.inlineEdit',
       keys: '<Leader> i',
       context: 'editor',

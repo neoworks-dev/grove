@@ -156,6 +156,62 @@ export async function removeWorktree(
   await gitFor(repoPath).raw(args)
 }
 
+// Delete a local branch. Uses -d (safe, refuses unmerged) unless force.
+export async function deleteBranch(
+  repoPath: string,
+  branch: string,
+  force: boolean
+): Promise<void> {
+  await gitFor(repoPath).raw(['branch', force ? '-D' : '-d', branch])
+}
+
+// ── Ship-it chain: stage → commit → push → merge ────────────────
+
+// Stage specific paths (git add). Empty list stages nothing.
+export async function stage(worktreePath: string, paths: string[]): Promise<void> {
+  if (paths.length === 0) return
+  await gitFor(worktreePath).raw(['add', '--', ...paths])
+}
+
+// Unstage specific paths, keeping working-tree changes (git restore --staged).
+export async function unstage(worktreePath: string, paths: string[]): Promise<void> {
+  if (paths.length === 0) return
+  await gitFor(worktreePath).raw(['restore', '--staged', '--', ...paths])
+}
+
+// Commit staged changes with a message. Returns git's summary output.
+export async function commit(worktreePath: string, message: string): Promise<string> {
+  const out = await gitFor(worktreePath).raw(['commit', '-m', message])
+  return out.trim()
+}
+
+// Push the current branch, setting upstream to origin. Returns git output.
+export async function push(worktreePath: string): Promise<string> {
+  const out = await gitFor(worktreePath).raw(['push', '-u', 'origin', 'HEAD'])
+  return out.trim()
+}
+
+// Merge a feature branch into the base branch locally. The merge runs in the
+// main worktree (mainWorktreePath) because a branch checked out in another
+// worktree cannot be checked out here; the base branch is expected to live in
+// the main worktree. Refuses to run if the main worktree is dirty.
+export async function mergeToBase(
+  mainWorktreePath: string,
+  branch: string,
+  baseBranch: string
+): Promise<string> {
+  const dirty = await isDirty(mainWorktreePath)
+  if (dirty) {
+    throw new Error(
+      `main worktree at ${mainWorktreePath} has uncommitted changes; cannot merge into ${baseBranch}`
+    )
+  }
+  const git = gitFor(mainWorktreePath)
+  await git.raw(['checkout', baseBranch])
+  const out = await git.raw(['merge', '--no-ff', branch])
+  return out.trim()
+}
+
 // ── Diff (all content sourced from Git) ─────────────────────────
 
 function mapStatusCode(code: string): DiffChangeType {

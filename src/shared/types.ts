@@ -51,6 +51,26 @@ export interface DiffHunks {
   hunks: DiffHunk[]
 }
 
+// ── Ship-it chain (PR / merge) ──────────────────────────────────
+
+export interface OpenPrOptions {
+  title: string
+  body: string
+  base: string
+}
+
+export type PrMergeMethod = 'squash' | 'merge' | 'rebase'
+
+export interface MergePrOptions {
+  method: PrMergeMethod
+  deleteBranch: boolean
+}
+
+export interface ArchiveOptions {
+  deleteBranch: boolean
+  force: boolean
+}
+
 // ── Config schema (repo-root YAML) ──────────────────────────────
 
 export interface WorkbenchConfig {

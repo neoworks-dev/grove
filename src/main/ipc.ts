@@ -25,6 +25,7 @@ import { getRepoState, updateRepoState, setLastRepo, loadState } from './state'
 import { SettingsService } from './settings'
 import { ActionRunner } from './actions'
 import { TerminalManager } from './terminals'
+import { NeovimManager } from './nvim'
 import { buildWorktreeEnv, spawnEnv } from './env'
 import { PermissionBroker, type PermissionDecision as PluginPermissionDecision } from './plugins/broker'
 import { PluginRegistry } from './plugins/loader'
@@ -101,6 +102,11 @@ const actionRunner = new ActionRunner({
 const terminals = new TerminalManager({
   onData: (id, data) => send('event:terminal-data', { id, data }),
   onExit: (id, exitCode) => send('event:terminal-exit', { id, exitCode })
+})
+
+const nvims = new NeovimManager({
+  onRedraw: (id, events) => send('event:nvim-redraw', { id, events }),
+  onExit: (id, exitCode) => send('event:nvim-exit', { id, exitCode })
 })
 
 const pluginBroker = new PermissionBroker({
@@ -622,6 +628,33 @@ export function registerIpc(): void {
   )
   ipcMain.handle('terminal:kill', (_e, id: string) => terminals.kill(id))
 
+  // ── Embedded Neovim ───────────────────────────────────────────
+  // A vendored `nvim --embed` per pane, spawned in the worktree with the same
+  // WT_*/PORT_n vars as terminals. Redraw batches stream via event:nvim-redraw.
+  ipcMain.handle(
+    'nvim:create',
+    (_e, worktreeId: string | null, cols: number, rows: number, file?: string) => {
+      let cwd = context.repoPath ?? process.cwd()
+      let vars: Record<string, string> = {}
+      if (worktreeId) {
+        const worktree = findWorktree(worktreeId)
+        const cfg = requireRepo().config
+        vars = buildWorktreeEnv(worktree, worktrees.portsForWorktree(cfg, worktree.portSlot))
+        cwd = worktree.path
+      }
+      return nvims.create({ cwd, env: spawnEnv(vars), cols, rows, file })
+    }
+  )
+  ipcMain.handle('nvim:input', (_e, id: string, keys: string) => nvims.input(id, keys))
+  ipcMain.handle('nvim:resize', (_e, id: string, cols: number, rows: number) =>
+    nvims.resize(id, cols, rows)
+  )
+  ipcMain.handle('nvim:command', (_e, id: string, command: string) => nvims.command(id, command))
+  ipcMain.handle('nvim:request', (_e, id: string, method: string, args: unknown[]) =>
+    nvims.request(id, method, args)
+  )
+  ipcMain.handle('nvim:kill', (_e, id: string) => nvims.kill(id))
+
   // ── State ─────────────────────────────────────────────────────
   ipcMain.handle('state:getRepo', () => {
     const { repoPath } = requireRepo()
@@ -729,6 +762,7 @@ export async function shutdown(): Promise<void> {
   await watcher.closeAll()
   lsp.stopAll()
   terminals.killAll()
+  nvims.killAll()
   settings.close()
   actionRunner.stopAll()
 }

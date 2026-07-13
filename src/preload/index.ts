@@ -156,6 +156,17 @@ const workbench = {
       ipcRenderer.invoke('terminal:resize', id, cols, rows),
     kill: (id: string) => ipcRenderer.invoke('terminal:kill', id)
   },
+  nvim: {
+    create: (worktreeId: string | null, cols: number, rows: number, file?: string) =>
+      ipcRenderer.invoke('nvim:create', worktreeId, cols, rows, file),
+    input: (id: string, keys: string) => ipcRenderer.invoke('nvim:input', id, keys),
+    resize: (id: string, cols: number, rows: number) =>
+      ipcRenderer.invoke('nvim:resize', id, cols, rows),
+    command: (id: string, command: string) => ipcRenderer.invoke('nvim:command', id, command),
+    request: (id: string, method: string, args: unknown[]) =>
+      ipcRenderer.invoke('nvim:request', id, method, args),
+    kill: (id: string) => ipcRenderer.invoke('nvim:kill', id)
+  },
   state: {
     getRepo: () => ipcRenderer.invoke('state:getRepo'),
     update: (patch: Record<string, unknown>) => ipcRenderer.invoke('state:update', patch)

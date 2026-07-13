@@ -34,7 +34,7 @@ const HEADER_PX = 44
 const STATUS_BAR_PX = 24
 const ACTIVITY_BAR_PX = 44
 
-const CENTER_TYPES = ['editor', 'diff', 'preview', 'dashboard']
+const CENTER_TYPES = ['editor', 'nvim', 'diff', 'preview', 'dashboard']
 
 function clampFraction(value: number): number {
   return Math.min(0.8, Math.max(0.1, value))

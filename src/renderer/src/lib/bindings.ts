@@ -241,6 +241,13 @@ export function registerCoreBindings(): void {
       group: 'Terminal',
       keywords: 'terminal shell console pty command line',
       run: () => layout.togglePane('terminal')
+    },
+    {
+      id: 'nvim.open',
+      title: 'Editor: Open Neovim Pane',
+      group: 'Editor',
+      keywords: 'neovim nvim vim editor embedded',
+      run: () => layout.showCenterPane('nvim')
     }
   ])
 }

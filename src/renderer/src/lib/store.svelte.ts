@@ -158,7 +158,8 @@ class WorkbenchStore {
       this.tabs = [...this.tabs, tab]
     }
     this.activeTabPath = tab.path
-    layout.showCenterPane('editor')
+    const editorPane = settings.get<string>('workbench.centerEditor') === 'nvim' ? 'nvim' : 'editor'
+    layout.showCenterPane(editorPane)
   }
 
   closeTab(path: string): void {

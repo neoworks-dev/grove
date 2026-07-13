@@ -11,7 +11,9 @@
     'visual-line': { text: 'V-LINE', class: 'bg-amber-soft text-amber' },
     'visual-block': { text: 'V-BLOCK', class: 'bg-amber-soft text-amber' },
     replace: { text: 'REPLACE', class: 'bg-red-soft text-red' },
-    terminal: { text: 'TERMINAL', class: 'bg-surface text-default' }
+    terminal: { text: 'TERMINAL', class: 'bg-surface text-default' },
+    cmdline: { text: 'CMDLINE', class: 'bg-surface text-default' },
+    operator: { text: 'O-PENDING', class: 'bg-amber-soft text-amber' }
   }
 
   const label = $derived.by(() => {

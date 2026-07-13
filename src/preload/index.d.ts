@@ -245,6 +245,14 @@ export interface WorkbenchApi {
     resize: (id: string, cols: number, rows: number) => Promise<void>
     kill: (id: string) => Promise<void>
   }
+  nvim: {
+    create: (worktreeId: string | null, cols: number, rows: number, file?: string) => Promise<string>
+    input: (id: string, keys: string) => Promise<void>
+    resize: (id: string, cols: number, rows: number) => Promise<void>
+    command: (id: string, command: string) => Promise<void>
+    request: (id: string, method: string, args: unknown[]) => Promise<unknown>
+    kill: (id: string) => Promise<void>
+  }
   state: {
     getRepo: () => Promise<RepoStateShape>
     update: (patch: Partial<RepoStateShape>) => Promise<RepoStateShape>

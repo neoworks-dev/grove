@@ -9,3 +9,4 @@ out
 
 *.tsbuildinfo
 resources/plugins/*/dist/
+resources/nvim/dist/

@@ -39,7 +39,7 @@ export function registerCoreBindings(): void {
     },
     {
       id: 'leader.agent',
-      keys: '<Leader> A',
+      keys: '<Leader> a',
       context: 'global',
       group: 'Focus',
       description: 'Open agent panel',

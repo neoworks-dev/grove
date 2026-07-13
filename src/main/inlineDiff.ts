@@ -89,6 +89,37 @@ function gitDiffNoIndex(cwd: string, beforePath: string, afterPath: string): Pro
   })
 }
 
+// Unified diff (with context) between two in-memory versions of a file, used to
+// preview a pending Write/Edit before it is applied to disk. Produced by git so
+// the diff isn't computed in JS.
+export async function diffStrings(
+  worktreePath: string,
+  before: string,
+  after: string
+): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), 'grove-proposed-'))
+  try {
+    const beforePath = join(dir, 'before')
+    const afterPath = join(dir, 'after')
+    await writeFile(beforePath, before)
+    await writeFile(afterPath, after)
+    return await gitDiffWithContext(worktreePath, beforePath, afterPath)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+}
+
+function gitDiffWithContext(cwd: string, beforePath: string, afterPath: string): Promise<string> {
+  return new Promise((resolve) => {
+    execFile(
+      'git',
+      ['diff', '--no-index', '-U3', '--no-color', beforePath, afterPath],
+      { cwd, maxBuffer: 20 * 1024 * 1024 },
+      (_error, stdout) => resolve(stdout || '')
+    )
+  })
+}
+
 // Diff a pre-edit snapshot against the current on-disk file → the agent's hunks.
 export async function diffSnapshot(
   worktreePath: string,

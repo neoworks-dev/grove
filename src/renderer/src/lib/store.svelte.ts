@@ -78,8 +78,8 @@ class WorkbenchStore {
   // Bumped per worktree on any file change, so trees/diffs re-read reactively.
   fsVersion = $state<Record<string, number>>({})
 
-  // Set by the fs watcher when a running agent edits a file → the diff pane
-  // focuses it.
+  // Set by the fs watcher when a running agent edits a file → the Git Changes
+  // sidebar highlights it.
   requestedDiffFile = $state<string | null>(null)
 
   // Set when opening a file at a specific line (ripgrep search) → the editor
@@ -385,8 +385,9 @@ function applyStringEdit(text: string, oldString: string, newString: string, all
   return all ? text.split(oldString).join(newString) : text.replace(oldString, newString)
 }
 
-// Build a diff of the current file vs. what a pending Write/Edit would produce,
-// and surface it in the diff view. No-op for non-file-editing tools.
+// Build a diff of the current file vs. what a pending Write/Edit would produce.
+// The permission card renders it inline so review isn't blind. No-op for
+// non-file-editing tools.
 export async function openProposedDiff(request: PermissionRequestEvent): Promise<void> {
   const path = request.path
   if (!path || !store.selectedWorktreeId) return
@@ -425,7 +426,6 @@ export async function openProposedDiff(request: PermissionRequestEvent): Promise
   }
 
   store.proposedDiff = { path, original, modified, language: languageForPath(path) }
-  layout.showCenterPane('diff')
 }
 
 // ── Actions ───────────────────────────────────────────────────
@@ -575,13 +575,14 @@ export function subscribeEvents(): void {
     }
     const isFile = event.type === 'add' || event.type === 'change' || event.type === 'unlink'
     // An inline edit under review keeps the change in the editor overlay, so it
-    // claims its own writes instead of the diff pane taking over.
+    // claims its own writes instead of the changes view taking over.
     if (isFile && inlineEdit.claimFsChange(event.worktreeId, event.relPath)) return
-    // Otherwise, if a running agent touched a file, auto-open its diff.
+    // Otherwise, if a running agent touched a file, reveal the Git Changes
+    // sidebar and highlight the file so the change is one click from review.
     if (isFile && store.activeAgentWorktrees.includes(event.worktreeId)) {
       store.selectedWorktreeId = event.worktreeId
       store.requestedDiffFile = event.relPath
-      layout.showCenterPane('diff')
+      layout.ensurePane('changes')
     }
   })
 }

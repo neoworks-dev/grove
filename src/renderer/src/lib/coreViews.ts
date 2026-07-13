@@ -14,24 +14,13 @@ export function registerCoreViews(): void {
     initialFocus: 'nvim'
   })
   // Views define only the center split tree now; the agent panel lives in the
-  // right dock, shared across views.
-  views.register({
-    id: 'review',
-    label: 'Review',
-    order: 2,
-    buildTree: () => createLeaf('diff'),
-    initialFocus: 'diff'
-  })
-  views.register({
-    id: 'preview',
-    label: 'Preview',
-    order: 3,
-    buildTree: () => createLeaf('preview')
-  })
+  // right dock, shared across views. Git changes review happens in the editor
+  // (floating hunk overlay) driven from the Git Changes sidebar, so there is no
+  // dedicated review/preview center view.
   views.register({
     id: 'dashboard',
     label: 'Dashboard',
-    order: 4,
+    order: 2,
     buildTree: () => createLeaf('dashboard')
   })
 }

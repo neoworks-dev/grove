@@ -533,11 +533,10 @@
     width: 8px;
   }
 
-  /* Focus ring */
+  /* Focus ring — suppressed globally; the pane-active inset marks keyboard focus. */
   :focus-visible {
     outline: none;
-    box-shadow: var(--ring);
-    border-radius: var(--radius-sm);
+    box-shadow: none;
   }
 
   /* Text inputs live inside their own styled containers, where the global ring
@@ -618,10 +617,10 @@
     font-family: var(--font-mono);
   }
 
-  /* Active-pane marker (keyboard focus model). Subtle inset ring so the user
-     always knows which pane Ctrl+hjkl / the leader will act on. */
+  /* Active-pane marker (keyboard focus model). No white ring; kept as a no-op
+     hook in case a subtler indicator is wired later. */
   .pane-active {
-    box-shadow: inset 0 0 0 1px var(--focus-ring);
+    box-shadow: none;
   }
 
   /* Shadows */

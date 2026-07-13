@@ -39,27 +39,27 @@
   })
 </script>
 
-<div class="flex h-8 shrink-0 items-stretch">
+<div class="flex h-7 shrink-0 items-stretch bg-surface">
   <div bind:this={stripEl} class="no-scrollbar min-w-0 flex-1 overflow-x-auto">
     <div class="flex h-full w-max items-stretch">
       {#each tabs as tab (tab.path)}
         <div
           data-tab={tab.path}
-          class="group/tab flex h-8 shrink-0 cursor-pointer items-center gap-1 px-3 text-xs {store.activeTabPath ===
+          class="group/tab flex h-7 shrink-0 cursor-pointer items-center px-3 text-xs {store.activeTabPath ===
           tab.path
             ? 'border-x border-line bg-elevated text-default'
             : 'border-y border-line text-dim hover:bg-hover hover:text-default'}"
         >
+          <button
+            class="inline-flex w-0 shrink-0 cursor-pointer items-center overflow-hidden text-dim opacity-0 transition-all duration-150 ease-out hover:text-red group-hover/tab:mr-1 group-hover/tab:w-3.5 group-hover/tab:opacity-100"
+            title="Close tab"
+            onclick={(event) => onClose(tab.path, event)}>✕</button
+          >
           <button class="flex cursor-pointer items-center gap-1" onclick={() => onSelect(tab.path)}>
             {#if tab.pinned}<Icon icon="ph:push-pin-fill" width="11" height="11" class="text-amber" />{/if}
             <span>{tab.name}</span>
             {#if dirtyPaths[tab.path]}<span class="text-amber">●</span>{/if}
           </button>
-          <button
-            class="invisible cursor-pointer text-dim hover:text-red group-hover/tab:visible"
-            title="Close tab"
-            onclick={(event) => onClose(tab.path, event)}>✕</button
-          >
         </div>
       {/each}
     </div>

@@ -115,7 +115,8 @@ const terminals = new TerminalManager({
 
 const nvims = new NeovimManager({
   onRedraw: (id, events) => send('event:nvim-redraw', { id, events }),
-  onExit: (id, exitCode) => send('event:nvim-exit', { id, exitCode })
+  onExit: (id, exitCode) => send('event:nvim-exit', { id, exitCode }),
+  onNotify: (id, method, args) => send('event:nvim-notify', { id, method, args })
 })
 
 const pluginBroker = new PermissionBroker({
@@ -294,6 +295,16 @@ export function registerIpc(): void {
     ) => {
       const worktree = findWorktree(worktreeId)
       return inlineDiff.applyInlineReview(worktree.path, relPath, snapshot, hunks, applied)
+    }
+  )
+
+  // Unified diff between two in-memory file versions, for previewing a pending
+  // Write/Edit inline in the permission card.
+  ipcMain.handle(
+    'git:diffText',
+    (_e, worktreeId: string, before: string, after: string) => {
+      const worktree = findWorktree(worktreeId)
+      return inlineDiff.diffStrings(worktree.path, before, after)
     }
   )
 

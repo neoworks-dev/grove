@@ -25,7 +25,7 @@ export function registerBaseSettings(): void {
       {
         key: 'workbench.iconPack',
         type: 'enum',
-        default: 'vscode-icons',
+        default: 'material-icon-theme',
         title: 'File Icon Theme',
         category: 'Appearance',
         enumValues: availablePacks().map((pack) => ({ value: pack.name, label: pack.label }))

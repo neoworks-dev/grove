@@ -5,6 +5,7 @@
 
 import { addCollection } from '@iconify/svelte'
 import vscodeIcons from '@iconify-json/vscode-icons/icons.json'
+import materialIcons from '@iconify-json/material-icon-theme/icons.json'
 
 export interface IconPack {
   name: string
@@ -54,15 +55,58 @@ const vscodePack: IconPack = {
   }
 }
 
+// Extension → material-icon-theme icon name. Unmapped extensions fall back to
+// the generic document icon.
+const MATERIAL_EXT: Record<string, string> = {
+  ts: 'typescript', mts: 'typescript', cts: 'typescript',
+  tsx: 'react-ts', js: 'javascript', mjs: 'javascript', cjs: 'javascript', jsx: 'react',
+  json: 'json', jsonc: 'json', md: 'markdown', markdown: 'markdown',
+  css: 'css', scss: 'sass', sass: 'sass', less: 'less',
+  html: 'html', htm: 'html', svelte: 'svelte', vue: 'vue',
+  yml: 'yaml', yaml: 'yaml', toml: 'toml', ini: 'document',
+  py: 'python', rs: 'rust', go: 'go', rb: 'ruby', php: 'php',
+  java: 'java', c: 'c', h: 'c', cpp: 'cpp', hpp: 'cpp',
+  sh: 'console', bash: 'console', zsh: 'console', fish: 'console',
+  png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', svg: 'svg',
+  webp: 'image', ico: 'image', txt: 'document', log: 'log'
+}
+
+// Special exact filenames → material-icon-theme icon name.
+const MATERIAL_NAME: Record<string, string> = {
+  'package.json': 'npm', 'package-lock.json': 'npm', 'bun.lock': 'bun',
+  'bun.lockb': 'bun', '.gitignore': 'git', '.gitattributes': 'git',
+  'tsconfig.json': 'tsconfig', '.eslintrc': 'eslint', 'eslint.config.mjs': 'eslint',
+  '.prettierrc': 'prettier', '.prettierrc.yaml': 'prettier',
+  'vite.config.ts': 'vite', 'tailwind.config.js': 'tailwindcss',
+  'dockerfile': 'docker', 'readme.md': 'readme', '.env': 'tune'
+}
+
+const materialPack: IconPack = {
+  name: 'material-icon-theme',
+  label: 'Material Icons',
+  file(name) {
+    const lower = name.toLowerCase()
+    if (MATERIAL_NAME[lower]) return `material-icon-theme:${MATERIAL_NAME[lower]}`
+    const ext = lower.includes('.') ? lower.slice(lower.lastIndexOf('.') + 1) : ''
+    const icon = MATERIAL_EXT[ext]
+    return icon ? `material-icon-theme:${icon}` : 'material-icon-theme:document'
+  },
+  folder(_name, expanded) {
+    return expanded ? 'material-icon-theme:folder-base-open' : 'material-icon-theme:folder-base'
+  }
+}
+
 const packs = new Map<string, IconPack>()
+packs.set(materialPack.name, materialPack)
 packs.set(vscodePack.name, vscodePack)
 
-let activePack = vscodePack
+let activePack = materialPack
 let initialized = false
 
 // Register icon collections once. Extend here to add more styles.
 export function initIcons(): void {
   if (initialized) return
+  addCollection(materialIcons)
   addCollection(vscodeIcons)
   initialized = true
   const saved = localStorage.getItem('iconPack')

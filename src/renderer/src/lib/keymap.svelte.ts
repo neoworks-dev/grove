@@ -56,6 +56,11 @@ import {
 } from './bindingResolution'
 import { executeAction } from './actions.svelte'
 
+function sameModes(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false
+  return a.every((mode, index) => mode === b[index])
+}
+
 // Fallback when the workbench.whichKeyDelay setting isn't loaded yet.
 const LEADER_DELAY_MS = 300
 
@@ -198,9 +203,15 @@ class Keymap {
     this.panes.set(id, el)
     if (type) this.paneTypes.set(id, type)
     else this.paneTypes.delete(id)
+    // Only write when the mode list actually changed: registerPane re-runs on
+    // every pane-action update, and an unconditional fresh object here
+    // re-invalidates that same update — an infinite effect loop.
+    const existing = this.supportedModes[id]
     if (modes && modes.length > 0) {
-      this.supportedModes = { ...this.supportedModes, [id]: modes }
-    } else if (this.supportedModes[id]) {
+      if (!existing || !sameModes(existing, modes)) {
+        this.supportedModes = { ...this.supportedModes, [id]: [...modes] }
+      }
+    } else if (existing) {
       const { [id]: _removed, ...rest } = this.supportedModes
       this.supportedModes = rest
     }

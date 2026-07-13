@@ -13,6 +13,9 @@ import type {
   DiffFile,
   DiffSides,
   DiffHunks,
+  OpenPrOptions,
+  MergePrOptions,
+  ArchiveOptions,
   WorkbenchConfig,
   ServiceRuntime,
   AgentRuntime,
@@ -80,12 +83,22 @@ export interface WorkbenchApi {
     list: () => Promise<Worktree[]>
     create: (options: { name: string; baseBranch: string; newBranch?: string }) => Promise<Worktree>
     remove: (worktreeId: string, force: boolean) => Promise<Worktree[]>
+    archive: (worktreeId: string, options: ArchiveOptions) => Promise<Worktree[]>
   }
   git: {
     branches: () => Promise<BranchList>
     changedFiles: (worktreeId: string) => Promise<DiffFile[]>
     diffSides: (worktreeId: string, file: DiffFile) => Promise<DiffSides>
     diffHunks: (worktreeId: string, file: DiffFile) => Promise<DiffHunks>
+    stage: (worktreeId: string, paths: string[]) => Promise<void>
+    unstage: (worktreeId: string, paths: string[]) => Promise<void>
+    commit: (worktreeId: string, message: string) => Promise<string>
+    push: (worktreeId: string) => Promise<string>
+    mergeLocal: (worktreeId: string, baseBranch: string) => Promise<string>
+  }
+  github: {
+    openPr: (worktreeId: string, options: OpenPrOptions) => Promise<string>
+    mergePr: (worktreeId: string, options: MergePrOptions) => Promise<string>
   }
   config: {
     load: () => Promise<WorkbenchConfig>

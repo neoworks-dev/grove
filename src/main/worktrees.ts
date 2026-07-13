@@ -106,3 +106,17 @@ export async function removeWorktree(
 ): Promise<void> {
   await git.removeWorktree(repoPath, worktreePath, force)
 }
+
+// Archive a finished worktree: remove the worktree directory and, when
+// requested, delete its (now-merged) branch. Service teardown is handled by the
+// IPC caller, mirroring removeWorktree.
+export async function archiveWorktree(
+  repoPath: string,
+  worktreePath: string,
+  options: { branch?: string; deleteBranch: boolean; force: boolean }
+): Promise<void> {
+  await git.removeWorktree(repoPath, worktreePath, options.force)
+  if (options.deleteBranch && options.branch) {
+    await git.deleteBranch(repoPath, options.branch, options.force)
+  }
+}

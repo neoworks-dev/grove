@@ -15,7 +15,9 @@ const workbench = {
     create: (options: { name: string; baseBranch: string; newBranch?: string }) =>
       ipcRenderer.invoke('worktrees:create', options),
     remove: (worktreeId: string, force: boolean) =>
-      ipcRenderer.invoke('worktrees:remove', worktreeId, force)
+      ipcRenderer.invoke('worktrees:remove', worktreeId, force),
+    archive: (worktreeId: string, options: unknown) =>
+      ipcRenderer.invoke('worktrees:archive', worktreeId, options)
   },
   git: {
     branches: () => ipcRenderer.invoke('git:branches'),
@@ -23,7 +25,22 @@ const workbench = {
     diffSides: (worktreeId: string, file: unknown) =>
       ipcRenderer.invoke('git:diffSides', worktreeId, file),
     diffHunks: (worktreeId: string, file: unknown) =>
-      ipcRenderer.invoke('git:diffHunks', worktreeId, file)
+      ipcRenderer.invoke('git:diffHunks', worktreeId, file),
+    stage: (worktreeId: string, paths: string[]) =>
+      ipcRenderer.invoke('git:stage', worktreeId, paths),
+    unstage: (worktreeId: string, paths: string[]) =>
+      ipcRenderer.invoke('git:unstage', worktreeId, paths),
+    commit: (worktreeId: string, message: string) =>
+      ipcRenderer.invoke('git:commit', worktreeId, message),
+    push: (worktreeId: string) => ipcRenderer.invoke('git:push', worktreeId),
+    mergeLocal: (worktreeId: string, baseBranch: string) =>
+      ipcRenderer.invoke('git:mergeLocal', worktreeId, baseBranch)
+  },
+  github: {
+    openPr: (worktreeId: string, options: unknown) =>
+      ipcRenderer.invoke('github:openPr', worktreeId, options),
+    mergePr: (worktreeId: string, options: unknown) =>
+      ipcRenderer.invoke('github:mergePr', worktreeId, options)
   },
   config: {
     load: () => ipcRenderer.invoke('config:load'),

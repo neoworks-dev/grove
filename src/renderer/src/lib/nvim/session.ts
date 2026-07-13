@@ -215,22 +215,32 @@ export class NvimCanvasSession {
     }
   }
 
-  // Pixel offset (within the pane host) of a 1-based buffer line's screen row,
-  // for anchoring overlays like the inline-edit prompt. Null when off-screen
-  // bookkeeping isn't available (no session/metrics).
-  async screenYForLine(bufferLine: number): Promise<number | null> {
+  // Where to place the inline-edit prompt for a selection. Anchors it at the
+  // selection's first row when the selection is visible and fits the viewport;
+  // otherwise (scrolled off-screen or taller than the page) asks to be centered.
+  async promptPlacement(
+    startLine: number,
+    endLine: number
+  ): Promise<{ centered: boolean; y: number }> {
     const id = this.nvimId
-    if (!id || !this.metrics) return null
+    if (!id || !this.metrics) return { centered: true, y: 0 }
     try {
-      const top = await window.workbench.nvim.request(id, 'nvim_exec_lua', [
-        "return vim.fn.line('w0')",
+      const view = await window.workbench.nvim.request(id, 'nvim_exec_lua', [
+        "return { top = vim.fn.line('w0'), bottom = vim.fn.line('w$') }",
         []
       ])
-      if (typeof top !== 'number') return null
-      const row = Math.max(0, bufferLine - top)
-      return row * this.metrics.cellHeight
+      const range = view as { top?: number; bottom?: number }
+      if (typeof range.top !== 'number' || typeof range.bottom !== 'number') {
+        return { centered: true, y: 0 }
+      }
+      const visibleRows = range.bottom - range.top + 1
+      const selectionRows = endLine - startLine + 1
+      const onPage = startLine >= range.top && startLine <= range.bottom
+      const fits = selectionRows <= visibleRows
+      if (!onPage || !fits) return { centered: true, y: 0 }
+      return { centered: false, y: (startLine - range.top) * this.metrics.cellHeight }
     } catch {
-      return null
+      return { centered: true, y: 0 }
     }
   }
 

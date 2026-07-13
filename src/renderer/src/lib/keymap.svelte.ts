@@ -324,16 +324,27 @@ class Keymap {
   }
 
   // ── Sequence engine ───────────────────────────────────────────
+  private notTyping(): boolean {
+    if (this.trustModeEligibility) return true
+    const tag = document.activeElement?.tagName
+    return tag !== 'INPUT' && tag !== 'TEXTAREA'
+  }
+
+  // Bare keys are only claimed from a mode-aware pane in normal mode, so Vim
+  // insert-mode typing (or the terminal) is never hijacked.
   private eligible(): boolean {
-    if (!this.trustModeEligibility) {
-      const el = document.activeElement
-      const tag = el?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return false
-    }
-    // Panes with modes only give up bare keys / the leader in normal mode, so
-    // e.g. Vim insert-mode typing (or the terminal) is never hijacked.
+    if (!this.notTyping()) return false
     const mode = this.mode
     if (mode !== null) return mode === 'normal'
+    return true
+  }
+
+  // The leader may also start in visual mode (only the editor has one), so
+  // selection-scoped bindings like <Leader> i fire without leaving visual first.
+  private leaderEligible(): boolean {
+    if (!this.notTyping()) return false
+    const mode = this.mode
+    if (mode !== null) return mode === 'normal' || mode === 'visual'
     return true
   }
 
@@ -387,9 +398,9 @@ class Keymap {
 
     const step = stepFromEvent(event)
 
-    // Unmodified space starts the leader when we're not typing.
+    // Unmodified space starts the leader when we're not typing (normal or visual).
     if (step.key === 'space' && !step.ctrl && !step.alt && !step.meta) {
-      if (!this.eligible()) return false
+      if (!this.leaderEligible()) return false
       this.startPending(true)
       return true
     }

@@ -25,7 +25,7 @@ import {
   StreamLanguage
 } from '@codemirror/language'
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search'
-import { tags } from '@lezer/highlight'
+import { tags, type Tag } from '@lezer/highlight'
 
 import { javascript } from '@codemirror/lang-javascript'
 import { json } from '@codemirror/lang-json'
@@ -131,16 +131,45 @@ export function editorTheme(palette: ThemePalette, scheme: 'dark' | 'light'): Ex
     { dark: scheme === 'dark' }
   )
 
-  const highlight = HighlightStyle.define([
-    { tag: [tags.keyword, tags.moduleKeyword, tags.controlKeyword, tags.operatorKeyword], color: palette.ctxViolet },
+  const highlight = HighlightStyle.define(tokenColorSpecs(palette))
+
+  return [theme, syntaxHighlighting(highlight)]
+}
+
+// One spec per token family: the tag→color table shared by the editor's
+// HighlightStyle and the minimap renderer, so both always agree on colors.
+export interface TokenColorSpec {
+  tag: Tag | Tag[]
+  color?: string
+  fontStyle?: string
+  fontWeight?: string
+  textDecoration?: string
+}
+
+export function tokenColorSpecs(palette: ThemePalette): TokenColorSpec[] {
+  return [
+    {
+      tag: [tags.keyword, tags.moduleKeyword, tags.controlKeyword, tags.operatorKeyword],
+      color: palette.ctxViolet
+    },
     { tag: [tags.string, tags.special(tags.string), tags.regexp], color: palette.ctxGreen },
     { tag: [tags.number, tags.bool, tags.null, tags.atom], color: palette.ctxAmber },
-    { tag: [tags.comment, tags.lineComment, tags.blockComment], color: palette.textDim, fontStyle: 'italic' },
-    { tag: [tags.function(tags.variableName), tags.function(tags.propertyName)], color: palette.ctxBlue },
+    {
+      tag: [tags.comment, tags.lineComment, tags.blockComment],
+      color: palette.textDim,
+      fontStyle: 'italic'
+    },
+    {
+      tag: [tags.function(tags.variableName), tags.function(tags.propertyName)],
+      color: palette.ctxBlue
+    },
     { tag: [tags.typeName, tags.className, tags.namespace], color: palette.ctxBlue },
     { tag: [tags.propertyName, tags.attributeName], color: palette.ctxBlue },
     { tag: [tags.tagName], color: palette.ctxViolet },
-    { tag: [tags.operator, tags.punctuation, tags.bracket, tags.separator], color: palette.textMuted },
+    {
+      tag: [tags.operator, tags.punctuation, tags.bracket, tags.separator],
+      color: palette.textMuted
+    },
     { tag: [tags.definition(tags.variableName), tags.variableName], color: palette.text },
     { tag: [tags.heading], color: palette.text, fontWeight: 'bold' },
     { tag: [tags.link, tags.url], color: palette.ctxBlue, textDecoration: 'underline' },
@@ -153,9 +182,7 @@ export function editorTheme(palette: ThemePalette, scheme: 'dark' | 'light'): Ex
     { tag: [tags.processingInstruction, tags.list], color: palette.ctxViolet },
     { tag: tags.contentSeparator, color: palette.textDim },
     { tag: [tags.invalid], color: palette.ctxRed }
-  ])
-
-  return [theme, syntaxHighlighting(highlight)]
+  ]
 }
 
 // ── Base extension set ──────────────────────────────────────────

@@ -20,7 +20,8 @@
       {
         "id": "leader.files",
         "keys": "leader space",
-        "context": "global",
+        "context": "editor",
+        "mode": "normal",
         "group": "Search",
         "description": "Search files by name",
         "command": "files.find"

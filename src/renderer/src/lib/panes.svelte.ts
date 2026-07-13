@@ -29,6 +29,10 @@ export interface PaneType {
   slot?: string
   // Extra classes on the leaf container (e.g. 'bg-elevated' for chrome panes).
   containerClass?: string
+  // Editor-style modes the pane supports (first entry = default). Feeds the
+  // keymap's mode gate and the statusline mode indicator; mode-scoped
+  // keybindings only fire while the pane is in that mode.
+  modes?: string[]
   // When false the leaf shows the "open a repository" placeholder.
   when?: () => boolean
 }

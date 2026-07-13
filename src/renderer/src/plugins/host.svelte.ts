@@ -304,6 +304,7 @@ class PluginHost {
             id: binding.id,
             keys: binding.keys,
             context: binding.context,
+            mode: binding.mode,
             group: binding.group,
             description: binding.description,
             run: () => void this.executeCommandById(binding.command, [])
@@ -798,12 +799,17 @@ class PluginHost {
         ? async (item) => {
             const rpc = rpcOf()
             if (!rpc) return null
-            const content = await rpc.request('overlay:preview', { overlayId, item })
+            // Snapshot: overlay items live in $state, and reactive proxies
+            // cannot be structured-cloned across the worker boundary.
+            const content = await rpc.request('overlay:preview', {
+              overlayId,
+              item: $state.snapshot(item)
+            })
             return content as OverlayPreviewContent | null
           }
         : undefined,
       onAccept: async (items) => {
-        await rpcOf()?.request('overlay:accept', { overlayId, items })
+        await rpcOf()?.request('overlay:accept', { overlayId, items: $state.snapshot(items) })
       }
     })
   }

@@ -9,6 +9,7 @@
   import { onMount, onDestroy } from 'svelte'
   import Icon from '@iconify/svelte'
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
+  import EditorMinimap from './EditorMinimap.svelte'
   import { store } from '../lib/store.svelte'
   import { languageExtension, editorTheme, baseExtensions } from '../lib/editor'
   import { onHighlightersChanged } from '../lib/highlighters'
@@ -23,10 +24,15 @@
   import { showLocations } from '../lib/lspLocations'
   import { applyEditsToText, workspaceEditToFiles } from '../lib/lspEdits'
   import { hoverTooltipField, setHoverTooltip, hoverTooltipAt } from '../lib/editorHover'
-  import { VIM_LSP_KEYS } from '../lib/editorVimKeys'
+  import { VIM_LSP_KEYS, VIM_OPERATOR_HINTS } from '../lib/editorVimKeys'
   import { overlays } from '../lib/overlays.svelte'
   import { dialogs } from '../lib/dialogs.svelte'
-  import type { LspDiagnosticsEvent, LspDiagnostic, LspPosition, LspRange } from '../../../shared/types'
+  import type {
+    LspDiagnosticsEvent,
+    LspDiagnostic,
+    LspPosition,
+    LspRange
+  } from '../../../shared/types'
   import type { Location, WorkspaceEdit, Command, CodeAction } from 'vscode-languageserver-types'
   import { EditorView } from '@codemirror/view'
   import { EditorState, Compartment, type Extension } from '@codemirror/state'
@@ -34,14 +40,42 @@
   import { vim, Vim, getCM } from '@replit/codemirror-vim'
   import { keymap } from '../lib/keymap.svelte'
 
+  // The split-tree leaf hosting this editor — the pane id the keymap tracks,
+  // used to report this instance's Vim mode.
+  let { leafId }: { leafId: string } = $props()
+
   let editorHost = $state<HTMLDivElement>()
-  let view: EditorView | null = null
+  let view = $state<EditorView | null>(null)
   // CodeMirror's scroll element, handed to the FloatingScrollbar overlay once
   // the view exists. CM virtualizes the DOM but keeps real scroll geometry on
   // this element, so the floating thumbs track it like any scroll container.
   let editorScroller = $state<HTMLElement | null>(null)
-  let vimEnabled = $state(settings.get<boolean>('workbench.vimMode') ?? true)
+  let tabStripEl = $state<HTMLDivElement>()
   let dirtyPaths = $state<Record<string, boolean>>({})
+
+  // Keep the active tab visible when it changes (e.g. opened via finder/tree
+  // while the strip is scrolled elsewhere).
+  $effect(() => {
+    const active = store.activeTabPath
+    if (!tabStripEl || !active) return
+    for (const el of tabStripEl.querySelectorAll<HTMLElement>('[data-tab]')) {
+      if (el.dataset.tab !== active) continue
+      el.scrollIntoView({ inline: 'nearest', block: 'nearest' })
+      return
+    }
+  })
+  // Tells the minimap to re-extract its runs. Bumped on document edits and on
+  // full state swaps (view.setState does not fire the update listener).
+  let minimapRevision = $state(0)
+  // Bumps happen inside $effects (theme follow) — a plain `minimapRevision++`
+  // there would read the state it writes and loop the effect. The shadow
+  // counter keeps the state write read-free.
+  let minimapRevisionCounter = 0
+
+  function bumpMinimapRevision(): void {
+    minimapRevisionCounter += 1
+    minimapRevision = minimapRevisionCounter
+  }
 
   // Compartments let us swap language, theme, Vim, and LSP without recreating.
   const languageComp = new Compartment()
@@ -73,6 +107,7 @@
 
   function onEditorUpdate(update: { docChanged: boolean }): void {
     if (!update.docChanged) return
+    bumpMinimapRevision()
     if (!suppressDirty && store.activeTabPath) {
       dirtyPaths = { ...dirtyPaths, [store.activeTabPath]: true }
     }
@@ -85,7 +120,7 @@
   function buildExtensions(path: string): Extension[] {
     const theme = store.activeTheme
     return [
-      vimComp.of(vimEnabled ? vim() : []),
+      vimComp.of(vim()),
       baseExtensions(() => void save()),
       languageComp.of(languageExtension(path)),
       lspComp.of([]),
@@ -101,7 +136,7 @@
     view = new EditorView({ state, parent: editorHost })
     editorScroller = view.scrollDOM
     activeBufferPath = null
-    if (vimEnabled) attachVimMode()
+    attachVimMode()
   }
 
   // Stash the live buffer's state so a later swap back restores its parse tree,
@@ -118,11 +153,10 @@
     view.dispatch({
       effects: [
         themeComp.reconfigure(editorTheme(theme.palette, theme.scheme)),
-        vimComp.reconfigure(vimEnabled ? vim() : [])
+        vimComp.reconfigure(vim())
       ]
     })
-    if (vimEnabled) attachVimMode()
-    else keymap.editorVimMode = 'insert'
+    attachVimMode()
   }
 
   // Drop cached states for inactive buffers so they rebuild with current
@@ -142,26 +176,51 @@
     view.setState(EditorState.create({ doc: '', extensions: buildExtensions('untitled.txt') }))
     suppressDirty = false
     activeBufferPath = null
+    bumpMinimapRevision()
     syncGlobalCompartments()
   }
 
   // Publish the Vim mode so the keymap only treats space as leader in normal
-  // mode (never while inserting text). Vim off = treat as insert (no leader).
+  // mode (never while inserting text) and the statusline indicator follows.
+  // Vim off = treat as insert (no leader). Visual submodes get their own names.
+  function reportVimMode(event: { mode: string; subMode?: string }): void {
+    let mode = event.mode
+    if (mode === 'visual' && event.subMode === 'linewise') mode = 'visual-line'
+    if (mode === 'visual' && event.subMode === 'blockwise') mode = 'visual-block'
+    vimMode = mode
+    if (operatorHintsShown) hideOperatorHints()
+    keymap.setPaneMode(leafId, mode)
+  }
+
+  // Operator-pending which-key (e.g. `d` → delete motions). The Vim adapter
+  // owns these keys; we only mirror its keypress stream to drive the hints.
+  let vimMode = 'normal'
+  let operatorHintsShown = false
+
+  function hideOperatorHints(): void {
+    operatorHintsShown = false
+    keymap.hideHints()
+  }
+
+  function handleVimKeypress(key: string): void {
+    if (operatorHintsShown) {
+      hideOperatorHints()
+      return
+    }
+    if (vimMode !== 'normal') return
+    const hints = VIM_OPERATOR_HINTS[key]
+    if (!hints) return
+    keymap.showHints(hints.title, hints.entries)
+    operatorHintsShown = true
+  }
+
   function attachVimMode(): void {
     if (!view) return
     const cm = getCM(view)
-    keymap.editorVimMode = 'normal'
-    cm?.on('vim-mode-change', (event: { mode: string }) => {
-      keymap.editorVimMode = event.mode
-    })
-  }
-
-  function toggleVim(): void {
-    vimEnabled = !vimEnabled
-    void settings.set('workbench.vimMode', vimEnabled, 'user')
-    view?.dispatch({ effects: vimComp.reconfigure(vimEnabled ? vim() : []) })
-    if (vimEnabled) attachVimMode()
-    else keymap.editorVimMode = 'insert'
+    keymap.setPaneMode(leafId, 'normal')
+    cm?.on('vim-mode-change', reportVimMode)
+    cm?.on('vim-keypress', handleVimKeypress)
+    cm?.on('vim-command-done', hideOperatorHints)
   }
 
   async function loadIntoEditor(path: string): Promise<void> {
@@ -186,6 +245,7 @@
     view.setState(state)
     suppressDirty = false
     activeBufferPath = path
+    bumpMinimapRevision()
     syncGlobalCompartments()
     void applyLsp(path, view.state.doc.toString())
     // If we were asked to reveal a line in this file, do it now that it's loaded.
@@ -193,6 +253,21 @@
       revealLine(store.revealTarget.line)
       store.revealTarget = null
     }
+    focusContentSoon(path)
+  }
+
+  // Land the cursor in the buffer after an open (finder/explorer/agent flows
+  // focus the leaf element, not the CodeMirror content). Deferred past
+  // focusLeafSoon's requestAnimationFrame so it wins; only when this pane is
+  // (or is about to be) the active one, so background loads never steal focus.
+  function focusContentSoon(path: string): void {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (!view || store.activeTabPath !== path) return
+        if (keymap.activeLeafId !== leafId) return
+        view.focus()
+      })
+    })
   }
 
   // Wire (or clear) the LSP for the open file: reconfigure the compartment and
@@ -328,7 +403,8 @@
   // baked from the palette, so also rebuild on theme change; and when a grammar
   // finishes loading asynchronously).
   function reapplyLanguage(): void {
-    if (view && loadedPath) view.dispatch({ effects: languageComp.reconfigure(languageExtension(loadedPath)) })
+    if (view && loadedPath)
+      view.dispatch({ effects: languageComp.reconfigure(languageExtension(loadedPath)) })
   }
 
   // Follow the active color theme (per-instance CM theme, reconfigured live).
@@ -338,12 +414,14 @@
       view.dispatch({ effects: themeComp.reconfigure(editorTheme(theme.palette, theme.scheme)) })
       reapplyLanguage()
       invalidateInactiveBuffers()
+      bumpMinimapRevision()
     }
   })
 
   const stopHighlighterWatch = onHighlightersChanged(() => {
     reapplyLanguage()
     invalidateInactiveBuffers()
+    bumpMinimapRevision()
   })
 
   // Latest LSP diagnostics for the open file, kept in their native shape so
@@ -463,9 +541,12 @@
       initialQuery: symbol,
       onQuery: (query, emit) => {
         const name = query.trim()
-        emit([{ id: 'rename', label: name ? `Rename to "${name}"` : 'Enter a new name…', data: name }], {
-          replace: true
-        })
+        emit(
+          [{ id: 'rename', label: name ? `Rename to "${name}"` : 'Enter a new name…', data: name }],
+          {
+            replace: true
+          }
+        )
       },
       onAccept: async (picked) => {
         const newName = ((picked[0]?.data as string) ?? '').trim()
@@ -531,7 +612,11 @@
         onQuery: (query, emit) => {
           const needle = query.trim().toLowerCase()
           const items = actions
-            .map((action, index) => ({ id: String(index), label: actionTitle(action), data: index }))
+            .map((action, index) => ({
+              id: String(index),
+              label: actionTitle(action),
+              data: index
+            }))
             .filter((item) => !needle || item.label.toLowerCase().includes(needle))
           emit(items, { replace: true })
         },
@@ -590,13 +675,19 @@
       if (file.path === store.activeTabPath && view) {
         const current = view.state.doc.toString()
         suppressDirty = true
-        view.dispatch({ changes: { from: 0, to: current.length, insert: applyEditsToText(current, file.edits) } })
+        view.dispatch({
+          changes: { from: 0, to: current.length, insert: applyEditsToText(current, file.edits) }
+        })
         suppressDirty = false
         dirtyPaths = { ...dirtyPaths, [file.path]: true }
       } else {
         const current = await window.workbench.files.read(worktreeId, file.path).catch(() => null)
         if (current === null) continue
-        await window.workbench.files.write(worktreeId, file.path, applyEditsToText(current, file.edits))
+        await window.workbench.files.write(
+          worktreeId,
+          file.path,
+          applyEditsToText(current, file.edits)
+        )
         contentCache.delete(file.path)
         bufferStates.delete(file.path)
       }
@@ -685,50 +776,62 @@
     stopLspDiagnostics()
     disposeLspBindings?.()
     if (lspChangeTimer) clearTimeout(lspChangeTimer)
+    if (operatorHintsShown) hideOperatorHints()
     view?.destroy()
   })
 </script>
 
 <div class="flex h-full min-h-0 flex-col">
-    <div class="flex items-center gap-1 border-b border-line px-2 py-1">
-      <FloatingScrollbar axis="horizontal" class="min-w-0 flex-1">
-        <div class="flex w-max items-center gap-1">
-          {#each activeTabs as tab (tab.path)}
-            <div
-              class="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs {store.activeTabPath ===
-              tab.path
-                ? 'bg-surface text-default'
-                : 'text-dim hover:text-default'}"
+  <div class="flex h-8 shrink-0 items-stretch">
+    <div bind:this={tabStripEl} class="no-scrollbar min-w-0 flex-1 overflow-x-auto">
+      <div class="flex h-full w-max items-stretch">
+        {#each activeTabs as tab (tab.path)}
+          <div
+            data-tab={tab.path}
+            class="group/tab flex h-8 shrink-0 cursor-pointer items-center gap-1 px-3 text-xs {store.activeTabPath ===
+            tab.path
+              ? 'border-x border-line bg-elevated text-default'
+              : 'border-y border-line text-dim hover:bg-hover hover:text-default'}"
+          >
+            <button
+              class="flex cursor-pointer items-center gap-1"
+              onclick={() => selectTab(tab.path)}
             >
-              <button class="flex items-center gap-1" onclick={() => selectTab(tab.path)}>
-                {#if tab.pinned}<Icon icon="ph:push-pin-fill" width="11" height="11" class="text-amber" />{/if}
-                <span>{tab.name}</span>
-                {#if dirtyPaths[tab.path]}<span class="text-amber">●</span>{/if}
-              </button>
-              <button
-                class="text-dim hover:text-red"
-                title="Close tab"
-                onclick={(event) => closeTab(tab.path, event)}>✕</button
-              >
-            </div>
-          {/each}
-        </div>
-      </FloatingScrollbar>
-      <button
-        class="rounded-md border border-line px-2 py-1 text-2xs {vimEnabled
-          ? 'text-green'
-          : 'text-dim'}"
-        onclick={toggleVim}
-        title="Toggle Vim mode"
-      >
-        VIM
-      </button>
+              {#if tab.pinned}<Icon
+                  icon="ph:push-pin-fill"
+                  width="11"
+                  height="11"
+                  class="text-amber"
+                />{/if}
+              <span>{tab.name}</span>
+              {#if dirtyPaths[tab.path]}<span class="text-amber">●</span>{/if}
+            </button>
+            <button
+              class="invisible cursor-pointer text-dim hover:text-red group-hover/tab:visible"
+              title="Close tab"
+              onclick={(event) => closeTab(tab.path, event)}>✕</button
+            >
+          </div>
+        {/each}
+      </div>
     </div>
+  </div>
 
-  <div class="cm-hide-native-scrollbars relative min-h-0 flex-1 overflow-hidden">
-    <div bind:this={editorHost} class="h-full w-full"></div>
-    {#if editorScroller}
-      <FloatingScrollbar attachTo={editorScroller} axis="both" class="absolute inset-0" />
+  <div class="cm-hide-native-scrollbars flex min-h-0 flex-1 overflow-hidden">
+    <div class="relative min-w-0 flex-1">
+      <div bind:this={editorHost} class="h-full w-full"></div>
+      {#if editorScroller}
+        <FloatingScrollbar attachTo={editorScroller} axis="horizontal" class="absolute inset-0" />
+      {/if}
+    </div>
+    {#if view && editorScroller}
+      <EditorMinimap
+        {view}
+        scroller={editorScroller}
+        revision={minimapRevision}
+        theme={store.activeTheme}
+        class="w-[72px] shrink-0"
+      />
     {/if}
   </div>
 </div>

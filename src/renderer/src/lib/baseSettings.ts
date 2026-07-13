@@ -31,14 +31,6 @@ export function registerBaseSettings(): void {
         enumValues: availablePacks().map((pack) => ({ value: pack.name, label: pack.label }))
       },
       {
-        key: 'workbench.vimMode',
-        type: 'boolean',
-        default: true,
-        title: 'Vim Mode',
-        description: 'Vim keybindings in the code editor.',
-        category: 'Editor'
-      },
-      {
         key: 'workbench.defaultAgent',
         type: 'string',
         default: '',
@@ -68,14 +60,6 @@ interface LegacyMapping {
 const LEGACY_MAPPINGS: LegacyMapping[] = [
   { key: 'workbench.colorTheme', read: () => localStorage.getItem('colorTheme') ?? undefined },
   { key: 'workbench.iconPack', read: () => localStorage.getItem('iconPack') ?? undefined },
-  {
-    key: 'workbench.vimMode',
-    read: () => {
-      const saved = localStorage.getItem('editor.vim')
-      if (saved === null) return undefined
-      return saved !== 'off'
-    }
-  },
   {
     key: 'workbench.defaultAgent',
     read: () => localStorage.getItem('agent.selected') ?? undefined

@@ -12,6 +12,7 @@
   import KeybindCheatsheet from './components/KeybindCheatsheet.svelte'
   import StatusBranch from './components/StatusBranch.svelte'
   import StatusClock from './components/StatusClock.svelte'
+  import StatusMode from './components/StatusMode.svelte'
   import { store, subscribeEvents, openRepoResult, applyIconPack, switchTab } from './lib/store.svelte'
   import { commands } from './lib/commands.svelte'
   import { keymap } from './lib/keymap.svelte'
@@ -40,6 +41,7 @@
   registerCoreMenu()
 
   // Core status bar items (plugins can register more, left or right aligned).
+  statusBar.register({ id: 'mode', align: 'left', order: 0, component: StatusMode })
   statusBar.register({ id: 'git.branch', align: 'left', order: 1, component: StatusBranch })
   statusBar.register({ id: 'clock', align: 'right', order: 100, component: StatusClock })
 
@@ -154,7 +156,7 @@
     // info, J = join), so they are deliberately not mapped here.
     if (
       keymap.activePaneType === 'editor' &&
-      keymap.editorVimMode === 'normal' &&
+      keymap.mode === 'normal' &&
       event.shiftKey &&
       !event.ctrlKey &&
       !event.altKey &&

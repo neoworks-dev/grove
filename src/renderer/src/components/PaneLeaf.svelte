@@ -18,7 +18,7 @@
 </script>
 
 <div
-  use:pane={{ id: leaf.id, type: leaf.paneTypeId }}
+  use:pane={{ id: leaf.id, type: leaf.paneTypeId, modes: type?.modes }}
   data-leaf={leaf.id}
   class="flex h-full w-full min-w-0 min-h-0 flex-col overflow-hidden outline-none {type?.containerClass ??
     ''} {keymap.activePane === leaf.id ? 'pane-active' : ''}"

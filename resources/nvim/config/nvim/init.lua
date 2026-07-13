@@ -17,6 +17,43 @@ vim.opt.mouse = 'a'
 vim.opt.shortmess:append('I')
 vim.opt.fillchars = { eob = ' ' }
 
+-- Plugin manager bootstrap. lazy.nvim clones itself and the declared plugins
+-- into the writable data dir (XDG_DATA_HOME → grove userData) on first launch;
+-- the user's own nvim install is untouched. Offline-tolerant: a failed clone
+-- just leaves the editor plugin-less.
+local dataDir = vim.fn.stdpath('data')
+local lazyPath = vim.fs.joinpath(dataDir, 'lazy', 'lazy.nvim')
+if not (vim.uv or vim.loop).fs_stat(lazyPath) then
+  vim.fn.system({
+    'git', 'clone', '--filter=blob:none', '--branch=stable',
+    'https://github.com/folke/lazy.nvim.git', lazyPath
+  })
+end
+
+if (vim.uv or vim.loop).fs_stat(lazyPath) then
+  vim.opt.rtp:prepend(lazyPath)
+  pcall(function()
+    require('lazy').setup({
+      -- flash.nvim: proves the plugin pipeline. `s`/`S` jump by on-screen labels.
+      {
+        'folke/flash.nvim',
+        opts = {},
+        keys = {
+          { 's', mode = { 'n', 'x', 'o' }, function() require('flash').jump() end, desc = 'Flash' },
+          { 'S', mode = { 'n', 'x', 'o' }, function() require('flash').treesitter() end, desc = 'Flash Treesitter' }
+        }
+      }
+    }, {
+      root = vim.fs.joinpath(dataDir, 'lazy'),
+      lockfile = vim.fs.joinpath(dataDir, 'lazy-lock.json'),
+      -- Grove owns the chrome; keep lazy from drawing its own UI on startup.
+      install = { colorscheme = {} },
+      ui = { border = 'rounded' },
+      change_detection = { enabled = false }
+    })
+  end)
+end
+
 -- Applied by grove over RPC (nvim_exec_lua) on create and on theme change.
 -- `palette` is a subset of grove's ThemePalette: hex strings.
 _G.grove_apply_theme = function(palette)

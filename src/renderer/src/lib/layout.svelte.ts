@@ -129,6 +129,11 @@ class LayoutStore {
     this.schedule()
   }
 
+  // Whether any leaf of the given pane type is open in the active view.
+  hasPaneType(paneTypeId: string): boolean {
+    return leaves(this.tree).some((leaf) => leaf.paneTypeId === paneTypeId)
+  }
+
   closeLeaf(leafId: string): void {
     if (leaves(this.tree).length <= 1) return
     const next = removeLeaf(this.tree, leafId)

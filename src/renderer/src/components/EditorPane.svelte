@@ -7,9 +7,9 @@
 <script lang="ts">
   import { settings } from '../lib/settings.svelte'
   import { onMount, onDestroy } from 'svelte'
-  import Icon from '@iconify/svelte'
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
   import EditorMinimap from './EditorMinimap.svelte'
+  import BufferTabs from './BufferTabs.svelte'
   import { store } from '../lib/store.svelte'
   import { languageExtension, editorTheme, baseExtensions } from '../lib/editor'
   import { onHighlightersChanged } from '../lib/highlighters'
@@ -50,20 +50,8 @@
   // the view exists. CM virtualizes the DOM but keeps real scroll geometry on
   // this element, so the floating thumbs track it like any scroll container.
   let editorScroller = $state<HTMLElement | null>(null)
-  let tabStripEl = $state<HTMLDivElement>()
   let dirtyPaths = $state<Record<string, boolean>>({})
 
-  // Keep the active tab visible when it changes (e.g. opened via finder/tree
-  // while the strip is scrolled elsewhere).
-  $effect(() => {
-    const active = store.activeTabPath
-    if (!tabStripEl || !active) return
-    for (const el of tabStripEl.querySelectorAll<HTMLElement>('[data-tab]')) {
-      if (el.dataset.tab !== active) continue
-      el.scrollIntoView({ inline: 'nearest', block: 'nearest' })
-      return
-    }
-  })
   // Tells the minimap to re-extract its runs. Bumped on document edits and on
   // full state swaps (view.setState does not fire the update listener).
   let minimapRevision = $state(0)
@@ -782,40 +770,7 @@
 </script>
 
 <div class="flex h-full min-h-0 flex-col">
-  <div class="flex h-8 shrink-0 items-stretch">
-    <div bind:this={tabStripEl} class="no-scrollbar min-w-0 flex-1 overflow-x-auto">
-      <div class="flex h-full w-max items-stretch">
-        {#each activeTabs as tab (tab.path)}
-          <div
-            data-tab={tab.path}
-            class="group/tab flex h-8 shrink-0 cursor-pointer items-center gap-1 px-3 text-xs {store.activeTabPath ===
-            tab.path
-              ? 'border-x border-line bg-elevated text-default'
-              : 'border-y border-line text-dim hover:bg-hover hover:text-default'}"
-          >
-            <button
-              class="flex cursor-pointer items-center gap-1"
-              onclick={() => selectTab(tab.path)}
-            >
-              {#if tab.pinned}<Icon
-                  icon="ph:push-pin-fill"
-                  width="11"
-                  height="11"
-                  class="text-amber"
-                />{/if}
-              <span>{tab.name}</span>
-              {#if dirtyPaths[tab.path]}<span class="text-amber">●</span>{/if}
-            </button>
-            <button
-              class="invisible cursor-pointer text-dim hover:text-red group-hover/tab:visible"
-              title="Close tab"
-              onclick={(event) => closeTab(tab.path, event)}>✕</button
-            >
-          </div>
-        {/each}
-      </div>
-    </div>
-  </div>
+  <BufferTabs tabs={activeTabs} {dirtyPaths} onSelect={selectTab} onClose={closeTab} />
 
   <div class="cm-hide-native-scrollbars flex min-h-0 flex-1 overflow-hidden">
     <div class="relative min-w-0 flex-1">

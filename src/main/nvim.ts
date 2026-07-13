@@ -27,6 +27,9 @@ interface NvimSession {
   rpc: NvimRpc
   pending: unknown[]
   flushTimer: ReturnType<typeof setTimeout> | null
+  // Set when grove kills the session itself; silences the expected
+  // "Caught deadly signal" stderr noise.
+  killedByUs: boolean
 }
 
 // Forward redraw events on nvim's own flush boundaries, with safety valves
@@ -53,10 +56,11 @@ export class NeovimManager {
     const child = spawn(nvimBinary(), ['--embed'], { cwd: options.cwd, env })
     if (!child.stdin || !child.stdout) throw new Error('nvim spawn failed: no stdio')
     const rpc = new NvimRpc(child.stdin, child.stdout)
-    const session: NvimSession = { child, rpc, pending: [], flushTimer: null }
+    const session: NvimSession = { child, rpc, pending: [], flushTimer: null, killedByUs: false }
     this.sessions.set(id, session)
 
     child.stderr?.on('data', (chunk: Buffer) => {
+      if (session.killedByUs) return
       console.warn(`[nvim ${id}]`, chunk.toString().trimEnd())
     })
     child.on('exit', (code) => {
@@ -110,6 +114,7 @@ export class NeovimManager {
     const session = this.sessions.get(id)
     if (!session) return
     this.sessions.delete(id)
+    session.killedByUs = true
     if (session.flushTimer) clearTimeout(session.flushTimer)
     session.rpc.close()
     session.child.kill('SIGTERM')

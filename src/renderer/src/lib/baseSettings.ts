@@ -51,13 +51,13 @@ export function registerBaseSettings(): void {
       {
         key: 'workbench.centerEditor',
         type: 'enum',
-        default: 'codemirror',
+        default: 'nvim',
         title: 'Editor',
-        description: 'Which editor opens files: the built-in CodeMirror pane or embedded Neovim.',
+        description: 'Which editor opens files: embedded Neovim or the built-in CodeMirror pane.',
         category: 'Editor',
         enumValues: [
-          { value: 'codemirror', label: 'CodeMirror' },
-          { value: 'nvim', label: 'Neovim (embedded)' }
+          { value: 'nvim', label: 'Neovim (embedded)' },
+          { value: 'codemirror', label: 'CodeMirror' }
         ]
       },
       {

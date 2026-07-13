@@ -168,8 +168,10 @@
     // Shift+H / Shift+L: previous / next editor tab, but only in Vim-normal so
     // insert typing is never hijacked. K and J are left to Vim (K = hover/type
     // info, J = join), so they are deliberately not mapped here.
+    // The nvim editor reports its keymap context as 'editor' (shared with the
+    // diff pane), so match the focused leaf's actual pane type instead.
     if (
-      keymap.activePaneType === 'nvim' &&
+      layout.focusedLeaf()?.paneTypeId === 'nvim' &&
       keymap.mode === 'normal' &&
       event.shiftKey &&
       !event.ctrlKey &&

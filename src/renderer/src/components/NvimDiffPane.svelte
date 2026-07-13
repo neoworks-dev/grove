@@ -10,6 +10,7 @@
   import { settings } from '../lib/settings.svelte'
   import { NvimCanvasSession } from '../lib/nvim/session'
   import EdgePanel from './EdgePanel.svelte'
+  import ShipItBar from './ShipItBar.svelte'
   import type { DiffFile } from '../../../shared/types'
 
   let { leafId }: { leafId: string } = $props()
@@ -160,6 +161,24 @@
     await buildDiff({ path: '', original: [], modified: [], removed: [], added: [], allAdded: false })
   }
 
+  // Stage or unstage a single file, then reload so its badge and the diff sides
+  // (working-tree vs index) update.
+  async function toggleStage(file: DiffFile): Promise<void> {
+    const worktreeId = store.selectedWorktreeId
+    if (!worktreeId) return
+    const snapshot = $state.snapshot(file)
+    try {
+      if (file.staged) {
+        await window.workbench.git.unstage(worktreeId, [snapshot.path])
+      } else {
+        await window.workbench.git.stage(worktreeId, [snapshot.path])
+      }
+      await loadFiles()
+    } catch (err) {
+      store.setError((err as Error).message)
+    }
+  }
+
   onMount(() => {
     if (!hostEl || !canvasEl || !inputEl) return
     const font = { family: cssVar('--font-mono', 'monospace'), sizePx: fontSize() }
@@ -232,24 +251,39 @@
       {:else}
         <div class="min-h-0 flex-1 overflow-auto">
           {#each files as file (fileKey(file))}
-            <button
-              class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs {selected &&
+            <div
+              class="flex w-full items-center gap-2 pr-2 text-xs {selected &&
               fileKey(selected) === fileKey(file)
                 ? 'bg-surface'
                 : 'hover:bg-hover'}"
-              onclick={() => showDiff(file)}
             >
-              <span class="w-4 shrink-0 font-mono {badge[file.changeType]}"
-                >{file.changeType[0].toUpperCase()}</span
+              <button
+                class="flex min-w-0 flex-1 items-center gap-2 py-1.5 pl-3 text-left"
+                onclick={() => showDiff(file)}
               >
-              <span class="truncate">{file.path}</span>
-              {#if file.staged}<span class="ml-auto text-2xs text-green">staged</span>{/if}
-            </button>
+                <span class="w-4 shrink-0 font-mono {badge[file.changeType]}"
+                  >{file.changeType[0].toUpperCase()}</span
+                >
+                <span class="truncate">{file.path}</span>
+              </button>
+              <button
+                class="shrink-0 rounded px-1 text-2xs {file.staged
+                  ? 'text-green hover:text-red'
+                  : 'text-dim hover:text-green'}"
+                title={file.staged ? 'Unstage' : 'Stage'}
+                onclick={() => toggleStage(file)}
+              >
+                {file.staged ? 'staged ✓' : 'stage +'}
+              </button>
+            </div>
           {/each}
           {#if !loading && files.length === 0}
             <p class="px-3 py-4 text-xs text-dim">No changes vs HEAD.</p>
           {/if}
         </div>
+        {#if store.selectedWorktreeId}
+          <ShipItBar worktreeId={store.selectedWorktreeId} {files} onChanged={loadFiles} />
+        {/if}
       {/if}
     </div>
   </EdgePanel>

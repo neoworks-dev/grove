@@ -1,16 +1,24 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
   import { store, selectWorktree, refreshRuntimes } from '../lib/store.svelte'
+  import {
+    serviceStatusColor,
+    agentStatusColor,
+    attentionFor
+  } from '../lib/worktreeStatus'
   import type { ServiceRuntime, AgentRuntime } from '../../../shared/types'
 
-  // Load runtimes for every worktree so the dashboard reflects all of them.
+  // Runtime status arrives via push events (subscribeEvents) and mutates the
+  // store reactively, so the dashboard just reads it. We seed once on mount
+  // because push events are edge-triggered — a worktree idle since launch would
+  // otherwise show nothing. The manual Refresh button re-seeds on demand.
   async function refreshAll(): Promise<void> {
     for (const worktree of store.worktrees) {
       await refreshRuntimes(worktree.id)
     }
   }
 
-  $effect(() => {
-    store.worktrees.length
+  onMount(() => {
     void refreshAll()
   })
 
@@ -19,13 +27,6 @@
   }
   function agents(worktreeId: string): AgentRuntime[] {
     return store.agents[worktreeId] || []
-  }
-
-  const statusColor: Record<string, string> = {
-    running: 'bg-green',
-    starting: 'bg-amber',
-    unhealthy: 'bg-red',
-    stopped: 'bg-neutral-600'
   }
 
   async function writeConfig(): Promise<void> {
@@ -54,8 +55,11 @@
 
   <div class="grid grid-cols-2 gap-3 xl:grid-cols-3">
     {#each store.worktrees as worktree (worktree.id)}
+      {@const attention = attentionFor(worktree.id)}
       <button
-        class="rounded-lg border border-line bg-surface p-3 text-left hover:border-line-strong"
+        class="rounded-lg border bg-surface p-3 text-left hover:border-line-strong {attention.needsAttention
+          ? 'border-amber'
+          : 'border-line'}"
         onclick={() => selectWorktree(worktree.id)}
       >
         <div class="mb-2 flex items-center gap-2">
@@ -67,6 +71,20 @@
           {#if worktree.isMain}
             <span class="rounded bg-raised px-1 text-2xs text-dim">main</span>
           {/if}
+          <span class="ml-auto flex items-center gap-1">
+            {#if attention.waitingPermission}
+              <span class="text-2xs text-amber" title="Waiting on permission">⊘ perm</span>
+            {/if}
+            {#if attention.waitingDialog}
+              <span class="text-2xs text-amber" title="Waiting on a question">❓ ask</span>
+            {/if}
+            {#if attention.agentDone}
+              <span class="text-2xs text-green" title="Agent finished">✓ done</span>
+            {/if}
+            {#if attention.serviceUnhealthy}
+              <span class="text-2xs text-red" title="A service is unhealthy">● svc</span>
+            {/if}
+          </span>
         </div>
         <div class="mb-2 truncate font-mono text-2xs text-dim">{worktree.branch}</div>
         <div class="mb-2 font-mono text-2xs text-dim">
@@ -79,7 +97,7 @@
         <div class="mb-2 flex flex-wrap gap-1">
           {#each services(worktree.id) as service (service.name)}
             <span class="flex items-center gap-1 rounded bg-raised px-1.5 py-0.5 text-2xs">
-              <span class="h-1.5 w-1.5 rounded-full {statusColor[service.status]}"></span>
+              <span class="h-1.5 w-1.5 rounded-full {serviceStatusColor[service.status]}"></span>
               {service.name}
             </span>
           {/each}
@@ -90,10 +108,16 @@
 
         <div class="mb-1 text-2xs uppercase tracking-caps text-dim">Agents</div>
         <div class="flex flex-wrap gap-1">
-          {#each agents(worktree.id).filter((agent) => agent.status === 'running') as agent (agent.name)}
-            <span class="rounded bg-violet/20 px-1.5 py-0.5 text-2xs text-violet">{agent.name}</span>
+          {#each agents(worktree.id) as agent (agent.name)}
+            <span class="flex items-center gap-1 rounded bg-raised px-1.5 py-0.5 text-2xs">
+              <span
+                class="h-1.5 w-1.5 rounded-full {agentStatusColor[agent.status] ||
+                  'bg-neutral-600'}"
+              ></span>
+              {agent.name}
+            </span>
           {/each}
-          {#if agents(worktree.id).filter((agent) => agent.status === 'running').length === 0}
+          {#if agents(worktree.id).length === 0}
             <span class="text-2xs text-dim">idle</span>
           {/if}
         </div>

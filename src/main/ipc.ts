@@ -3,8 +3,9 @@
 // single source of truth for the API exposed via preload.
 
 import { ipcMain, dialog, shell, BrowserWindow, type IpcMainInvokeEvent } from 'electron'
-import type { WorkbenchConfig, Worktree, DiffFile } from '../shared/types'
+import type { WorkbenchConfig, Worktree, DiffFile, OpenPrOptions, MergePrOptions } from '../shared/types'
 import * as git from './git'
+import * as github from './github'
 import * as config from './config'
 import * as files from './files'
 import * as extensions from './extensions'
@@ -257,6 +258,60 @@ export function registerIpc(): void {
     const worktree = findWorktree(worktreeId)
     return git.diffHunks(worktree.path, file)
   })
+
+  // ── Git ship-it chain (stage → commit → push → merge → archive) ──
+  ipcMain.handle('git:stage', (_e, worktreeId: string, paths: string[]) => {
+    const worktree = findWorktree(worktreeId)
+    return git.stage(worktree.path, paths)
+  })
+
+  ipcMain.handle('git:unstage', (_e, worktreeId: string, paths: string[]) => {
+    const worktree = findWorktree(worktreeId)
+    return git.unstage(worktree.path, paths)
+  })
+
+  ipcMain.handle('git:commit', (_e, worktreeId: string, message: string) => {
+    const worktree = findWorktree(worktreeId)
+    return git.commit(worktree.path, message)
+  })
+
+  ipcMain.handle('git:push', (_e, worktreeId: string) => {
+    const worktree = findWorktree(worktreeId)
+    return git.push(worktree.path)
+  })
+
+  // Local merge runs in the main worktree (repoPath), merging the feature
+  // worktree's branch into baseBranch.
+  ipcMain.handle('git:mergeLocal', (_e, worktreeId: string, baseBranch: string) => {
+    const { repoPath } = requireRepo()
+    const worktree = findWorktree(worktreeId)
+    return git.mergeToBase(repoPath, worktree.branch, baseBranch)
+  })
+
+  ipcMain.handle('github:openPr', (_e, worktreeId: string, options: OpenPrOptions) => {
+    const worktree = findWorktree(worktreeId)
+    return github.openPr(worktree.path, options)
+  })
+
+  ipcMain.handle('github:mergePr', (_e, worktreeId: string, options: MergePrOptions) => {
+    const worktree = findWorktree(worktreeId)
+    return github.mergePr(worktree.path, options)
+  })
+
+  ipcMain.handle(
+    'worktrees:archive',
+    async (_e, worktreeId: string, options: { deleteBranch: boolean; force: boolean }) => {
+      const { repoPath } = requireRepo()
+      const worktree = findWorktree(worktreeId)
+      await supervisor.stopAllForWorktree(worktreeId)
+      await worktrees.archiveWorktree(repoPath, worktree.path, {
+        branch: worktree.branch,
+        deleteBranch: options.deleteBranch,
+        force: options.force
+      })
+      return refreshWorktrees()
+    }
+  )
 
   // ── Config ────────────────────────────────────────────────────
   ipcMain.handle('config:load', async () => {

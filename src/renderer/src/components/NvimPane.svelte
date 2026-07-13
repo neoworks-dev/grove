@@ -9,8 +9,11 @@
   import { keymap } from '../lib/keymap.svelte'
   import BufferTabs from './BufferTabs.svelte'
   import Minimap from './Minimap.svelte'
+  import InlineEditPrompt from './InlineEditPrompt.svelte'
+  import InlineReviewOverlay from './InlineReviewOverlay.svelte'
   import { settings } from '../lib/settings.svelte'
   import { NvimCanvasSession } from '../lib/nvim/session'
+  import { registerNvimSession, unregisterNvimSession } from '../lib/nvim/registry'
   import { nvimKeymapBindings, type NvimMapping } from '../lib/nvimKeymap'
   import { operatorHintEntries, operatorTitle } from '../lib/nvimOperatorHints'
 
@@ -145,6 +148,7 @@
         }
       }
     )
+    registerNvimSession(leafId, session)
     void session.start()
   })
 
@@ -203,6 +207,7 @@
   onDestroy(() => {
     disposeNvimBindings?.()
     keymap.hideHints()
+    unregisterNvimSession(leafId)
     session?.dispose()
   })
 </script>
@@ -233,6 +238,8 @@
         tabindex="0"
         aria-label="Neovim input"
       ></div>
+      <InlineEditPrompt {leafId} />
+      <InlineReviewOverlay {leafId} tick={minimapTick} />
     {/if}
   </div>
 </div>

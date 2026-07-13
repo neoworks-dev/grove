@@ -32,6 +32,7 @@ import { currentThemeName, applyThemeVars, themeFor } from './themes'
 import type { ColorTheme } from './themes'
 import { layout } from './layout.svelte'
 import { settings } from './settings.svelte'
+import { inlineEdit } from './inlineEdit.svelte'
 
 export interface EditorTab {
   worktreeId: string
@@ -68,6 +69,11 @@ class WorkbenchStore {
   // Text of queue items flushed by a user stop, keyed by "worktreeId::agent".
   // The composer consumes (and clears) this to restore the text.
   restoredQueueText = $state<Record<string, string>>({})
+
+  // A pending insertion into the agent composer (e.g. an @file:lines reference
+  // built from the editor selection). AgentPane consumes it by nonce and clears
+  // the field; the nonce distinguishes repeat inserts of identical text.
+  composerInsert = $state<{ text: string; nonce: number } | null>(null)
 
   // Bumped per worktree on any file change, so trees/diffs re-read reactively.
   fsVersion = $state<Record<string, number>>({})
@@ -244,6 +250,14 @@ export function openFileInEditor(worktreeId: string, path: string): void {
 export function openFileAtLine(worktreeId: string, path: string, line: number): void {
   openFileInEditor(worktreeId, path)
   store.revealTarget = { path, line }
+}
+
+// Queue text for insertion into the agent composer at its caret. AgentPane
+// picks it up reactively (mounting it first via the caller's ensurePane).
+let composerInsertNonce = 0
+export function insertIntoComposer(text: string): void {
+  composerInsertNonce += 1
+  store.composerInsert = { text, nonce: composerInsertNonce }
 }
 
 // Move between open editor tabs (Shift+hjkl in the editor).
@@ -559,8 +573,11 @@ export function subscribeEvents(): void {
       ...store.fsVersion,
       [event.worktreeId]: (store.fsVersion[event.worktreeId] || 0) + 1
     }
-    // If a running agent touched a file, auto-open its diff.
     const isFile = event.type === 'add' || event.type === 'change' || event.type === 'unlink'
+    // An inline edit under review keeps the change in the editor overlay, so it
+    // claims its own writes instead of the diff pane taking over.
+    if (isFile && inlineEdit.claimFsChange(event.worktreeId, event.relPath)) return
+    // Otherwise, if a running agent touched a file, auto-open its diff.
     if (isFile && store.activeAgentWorktrees.includes(event.worktreeId)) {
       store.selectedWorktreeId = event.worktreeId
       store.requestedDiffFile = event.relPath

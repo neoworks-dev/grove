@@ -11,7 +11,10 @@
   import { NvimCanvasSession } from '../lib/nvim/session'
   import EdgePanel from './EdgePanel.svelte'
   import ShipItBar from './ShipItBar.svelte'
+  import { buildUnified } from '../lib/unifiedDiff'
   import type { DiffFile } from '../../../shared/types'
+
+  type DiffMode = 'split' | 'inline'
 
   let { leafId }: { leafId: string } = $props()
 
@@ -29,6 +32,18 @@
   let files = $state<DiffFile[]>([])
   let selected = $state<DiffFile | null>(null)
   let loading = $state(false)
+
+  // Side-by-side (two buffers) vs unified inline (one buffer). Persisted.
+  let diffMode = $state<DiffMode>(
+    settings.get<string>('workbench.diffMode') === 'inline' ? 'inline' : 'split'
+  )
+
+  function setDiffMode(mode: DiffMode): void {
+    if (mode === diffMode) return
+    diffMode = mode
+    void settings.set('workbench.diffMode', mode, 'user')
+    if (selected) void showDiff(selected)
+  }
 
   const proposed = $derived(store.proposedDiff)
 
@@ -82,6 +97,21 @@
     }
   }
 
+  async function buildInline(payload: {
+    path: string
+    lines: string[]
+    removed: number[]
+    added: number[]
+  }): Promise<void> {
+    const id = session?.id
+    if (!id) return
+    try {
+      await window.workbench.nvim.request(id, 'nvim_exec_lua', [LUA_BUILD_INLINE, [payload]])
+    } catch {
+      // session gone
+    }
+  }
+
   async function showDiff(file: DiffFile): Promise<void> {
     const worktreeId = store.selectedWorktreeId
     if (!worktreeId) return
@@ -95,6 +125,11 @@
     ])
     const original = toLines(sides.original)
     const modified = toLines(sides.modified)
+    if (diffMode === 'inline') {
+      const unified = buildUnified(original, modified, hunks.hunks)
+      await buildInline({ path: file.path, ...unified })
+      return
+    }
     const removed: number[][] = []
     const added: number[][] = []
     for (const hunk of hunks.hunks) {
@@ -242,7 +277,25 @@
     <div class="flex h-full flex-col">
       <div class="flex items-center justify-between px-3 py-2">
         <span class="text-2xs font-semibold uppercase tracking-caps text-dim">Changes</span>
-        <button class="text-dim hover:text-default" title="Refresh" onclick={loadFiles}>⟳</button>
+        <div class="flex items-center gap-1">
+          <div class="flex overflow-hidden rounded border border-line text-2xs">
+            <button
+              class="px-1.5 py-0.5 {diffMode === 'split' ? 'bg-surface text-default' : 'text-dim hover:text-default'}"
+              title="Side-by-side"
+              onclick={() => setDiffMode('split')}
+            >
+              Split
+            </button>
+            <button
+              class="px-1.5 py-0.5 {diffMode === 'inline' ? 'bg-surface text-default' : 'text-dim hover:text-default'}"
+              title="Unified inline"
+              onclick={() => setDiffMode('inline')}
+            >
+              Inline
+            </button>
+          </div>
+          <button class="text-dim hover:text-default" title="Refresh" onclick={loadFiles}>⟳</button>
+        </div>
       </div>
       {#if proposed}
         <p class="px-3 py-4 text-xs text-amber">
@@ -373,5 +426,48 @@ else
 end
 
 _grove_diff = { bufs = { lb, rb } }
+`
+
+  // Builds the unified inline diff: one scratch buffer holding the interleaved
+  // lines, with removed/added output line numbers (1-based) painted red/green.
+  const LUA_BUILD_INLINE = `
+local a = ...
+pcall(function() vim.cmd('silent! only') end)
+if _grove_diff and _grove_diff.bufs then
+  for _, b in ipairs(_grove_diff.bufs) do
+    if vim.api.nvim_buf_is_valid(b) then pcall(vim.api.nvim_buf_delete, b, { force = true }) end
+  end
+end
+_grove_diff = nil
+
+if not a.path or a.path == '' then return end
+
+local ft = vim.filetype.match({ filename = a.path }) or ''
+local buf = vim.api.nvim_create_buf(false, true)
+vim.api.nvim_buf_set_lines(buf, 0, -1, false, a.lines)
+vim.bo[buf].buftype = 'nofile'
+vim.bo[buf].swapfile = false
+if ft ~= '' then vim.bo[buf].filetype = ft end
+vim.bo[buf].modifiable = false
+
+local win = vim.api.nvim_get_current_win()
+vim.api.nvim_win_set_buf(win, buf)
+vim.wo[win].number = true
+vim.wo[win].wrap = false
+
+local ns = vim.api.nvim_create_namespace('grove_diff')
+local total = vim.api.nvim_buf_line_count(buf)
+local function paint(nums, group)
+  for _, ln in ipairs(nums) do
+    local line = ln - 1
+    if line >= 0 and line < total then
+      vim.api.nvim_buf_set_extmark(buf, ns, line, 0, { line_hl_group = group })
+    end
+  end
+end
+paint(a.removed, 'DiffDelete')
+paint(a.added, 'DiffAdd')
+
+_grove_diff = { bufs = { buf } }
 `
 </script>

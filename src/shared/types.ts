@@ -51,6 +51,25 @@ export interface DiffHunks {
   hunks: DiffHunk[]
 }
 
+// ── Inline agent edit (per-hunk accept/reject) ──────────────────
+
+// One hunk of an inline edit, with its line bodies. `beforeStart`/`afterStart`
+// are 1-based line numbers in the pre-edit snapshot / current file.
+export interface InlineHunk {
+  beforeStart: number
+  removed: string[]
+  afterStart: number
+  added: string[]
+}
+
+// The output line range (1-based) of an applied hunk after rebuild, tagged with
+// the hunk's original index so the overlay can repaint the right rows.
+export interface AppliedRange {
+  hunkIndex: number
+  start: number
+  count: number
+}
+
 // ── Docked side panels ──────────────────────────────────────────
 
 export type DockSide = 'left' | 'right'

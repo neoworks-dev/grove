@@ -13,6 +13,8 @@ import type {
   DiffFile,
   DiffSides,
   DiffHunks,
+  InlineHunk,
+  AppliedRange,
   OpenPrOptions,
   MergePrOptions,
   ArchiveOptions,
@@ -93,6 +95,18 @@ export interface WorkbenchApi {
     changedFiles: (worktreeId: string) => Promise<DiffFile[]>
     diffSides: (worktreeId: string, file: DiffFile) => Promise<DiffSides>
     diffHunks: (worktreeId: string, file: DiffFile) => Promise<DiffHunks>
+    beginInlineReview: (
+      worktreeId: string,
+      relPath: string,
+      snapshot: string
+    ) => Promise<{ hunks: InlineHunk[]; ranges: AppliedRange[] }>
+    applyInlineReview: (
+      worktreeId: string,
+      relPath: string,
+      snapshot: string,
+      hunks: InlineHunk[],
+      applied: boolean[]
+    ) => Promise<AppliedRange[]>
     stage: (worktreeId: string, paths: string[]) => Promise<void>
     unstage: (worktreeId: string, paths: string[]) => Promise<void>
     commit: (worktreeId: string, message: string) => Promise<string>

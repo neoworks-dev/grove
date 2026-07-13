@@ -4,6 +4,7 @@
 //    applied under the current review mode (auto / inline / gated).
 //  - Phase C (later): an in-buffer accept/reject overlay over the change.
 
+import type { InlineHunk, AppliedRange } from '../../../shared/types'
 import { store, insertIntoComposer } from './store.svelte'
 import { layout } from './layout.svelte'
 import { settings } from './settings.svelte'
@@ -12,6 +13,8 @@ import { relFromRoot, selectionRef, pickAgentMode, REVIEW_MODES, type ReviewMode
 
 const MODE_SETTING = 'workbench.inlineEditMode'
 
+type HunkStatus = 'pending' | 'accepted' | 'rejected'
+
 // The selection an inline edit targets, captured when the prompt opens.
 interface InlineSelection {
   worktreeId: string
@@ -19,13 +22,22 @@ interface InlineSelection {
   relPath: string
   startLine: number
   endLine: number
+  leafId: string
 }
 
-// A dispatched edit awaiting review, with the pre-edit snapshot so Phase C can
-// diff the agent's change precisely (snapshot vs on-disk, not vs HEAD).
+// A dispatched edit awaiting review, with the pre-edit snapshot so the change is
+// diffed precisely (snapshot vs on-disk, not vs HEAD).
 export interface PendingReview extends InlineSelection {
   snapshot: string
   review: ReviewMode
+}
+
+// An active in-buffer review: the hunks, per-hunk decision, and current output
+// ranges (recomputed after each reject shifts the lines).
+export interface ActiveReview extends PendingReview {
+  hunks: InlineHunk[]
+  status: HunkStatus[]
+  ranges: AppliedRange[]
 }
 
 class InlineEdit {
@@ -40,8 +52,12 @@ class InlineEdit {
 
   private selection: InlineSelection | null = null
 
-  // The most recent dispatched-but-unreviewed edit (consumed by Phase C).
+  // A dispatched inline edit awaiting its first disk write (fs-change begins the
+  // review). Only used for the 'inline' review mode.
   pendingReview = $state<PendingReview | null>(null)
+
+  // The active in-buffer accept/reject review, if any.
+  review = $state<ActiveReview | null>(null)
 
   private modeLoaded = false
 
@@ -161,8 +177,113 @@ class InlineEdit {
       absPath: selection.path,
       relPath: relFromRoot(store.selectedWorktree?.path, selection.path),
       startLine: selection.startLine,
-      endLine: selection.endLine
+      endLine: selection.endLine,
+      leafId: session.leafId
     }
+  }
+
+  // ── Phase C: in-buffer accept/reject review ───────────────────────
+  // Called from the fs-change handler. Claims a change when it is our own
+  // review write (ignore) or the first write of a pending inline edit (begin the
+  // review), returning true so the default diff-pane auto-open is suppressed.
+  // The edit currently being diffed, so writes landing while beginReview is in
+  // flight are still claimed (not handed to the diff pane).
+  private beginning: { worktreeId: string; relPath: string } | null = null
+
+  claimFsChange(worktreeId: string, relPath: string): boolean {
+    const active = this.review
+    if (active && active.worktreeId === worktreeId && active.relPath === relPath) return true
+    if (this.beginning && this.beginning.worktreeId === worktreeId && this.beginning.relPath === relPath) {
+      return true
+    }
+    const pending = this.pendingReview
+    if (
+      pending &&
+      pending.review === 'inline' &&
+      pending.worktreeId === worktreeId &&
+      pending.relPath === relPath
+    ) {
+      this.pendingReview = null
+      void this.beginReview(pending)
+      return true
+    }
+    return false
+  }
+
+  private async beginReview(pending: PendingReview): Promise<void> {
+    this.beginning = { worktreeId: pending.worktreeId, relPath: pending.relPath }
+    try {
+      const { hunks, ranges } = await window.workbench.git.beginInlineReview(
+        pending.worktreeId,
+        pending.relPath,
+        pending.snapshot
+      )
+      if (hunks.length === 0) return
+      this.review = { ...pending, hunks, status: hunks.map(() => 'pending'), ranges }
+      this.repaint()
+    } finally {
+      this.beginning = null
+    }
+  }
+
+  async decide(hunkIndex: number, accept: boolean): Promise<void> {
+    const review = this.review
+    if (!review || review.status[hunkIndex] !== 'pending') return
+    review.status = review.status.map((status, index) =>
+      index === hunkIndex ? (accept ? 'accepted' : 'rejected') : status
+    )
+    await this.applyDecisions(review, !accept)
+  }
+
+  async resolveAll(accept: boolean): Promise<void> {
+    const review = this.review
+    if (!review) return
+    let rejected = false
+    review.status = review.status.map((status) => {
+      if (status !== 'pending') return status
+      if (!accept) rejected = true
+      return accept ? 'accepted' : 'rejected'
+    })
+    await this.applyDecisions(review, rejected)
+  }
+
+  // Rewrite the file to reflect the current decisions, reload the buffer when a
+  // reject changed it, then repaint or finish.
+  private async applyDecisions(review: ActiveReview, reloadBuffer: boolean): Promise<void> {
+    const applied = review.status.map((status) => status !== 'rejected')
+    try {
+      review.ranges = await window.workbench.git.applyInlineReview(
+        review.worktreeId,
+        review.relPath,
+        review.snapshot,
+        review.hunks,
+        applied
+      )
+    } catch (err) {
+      store.setError((err as Error).message)
+      return
+    }
+    if (reloadBuffer) await nvimSessionFor(review.leafId)?.reloadBuffer()
+    if (review.status.every((status) => status !== 'pending')) {
+      this.finishReview()
+      return
+    }
+    this.repaint()
+  }
+
+  private repaint(): void {
+    const review = this.review
+    if (!review) return
+    const session = nvimSessionFor(review.leafId)
+    if (!session) return
+    const pending = review.ranges.filter((range) => review.status[range.hunkIndex] === 'pending')
+    void session.paintInlineReview(pending.map((range) => ({ start: range.start, count: range.count })))
+  }
+
+  private finishReview(): void {
+    const review = this.review
+    this.review = null
+    if (review) void nvimSessionFor(review.leafId)?.clearInlineReview()
   }
 }
 

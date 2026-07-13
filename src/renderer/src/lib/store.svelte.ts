@@ -32,6 +32,7 @@ import { currentThemeName, applyThemeVars, themeFor } from './themes'
 import type { ColorTheme } from './themes'
 import { layout } from './layout.svelte'
 import { settings } from './settings.svelte'
+import { inlineEdit } from './inlineEdit.svelte'
 
 export interface EditorTab {
   worktreeId: string
@@ -572,8 +573,11 @@ export function subscribeEvents(): void {
       ...store.fsVersion,
       [event.worktreeId]: (store.fsVersion[event.worktreeId] || 0) + 1
     }
-    // If a running agent touched a file, auto-open its diff.
     const isFile = event.type === 'add' || event.type === 'change' || event.type === 'unlink'
+    // An inline edit under review keeps the change in the editor overlay, so it
+    // claims its own writes instead of the diff pane taking over.
+    if (isFile && inlineEdit.claimFsChange(event.worktreeId, event.relPath)) return
+    // Otherwise, if a running agent touched a file, auto-open its diff.
     if (isFile && store.activeAgentWorktrees.includes(event.worktreeId)) {
       store.selectedWorktreeId = event.worktreeId
       store.requestedDiffFile = event.relPath

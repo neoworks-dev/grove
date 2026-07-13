@@ -54,6 +54,32 @@ export interface NvimSessionConfig {
 }
 
 const MOUSE_BUTTONS = ['left', 'middle', 'right']
+
+// Resolve the buffer path and the selected line range. While in a visual mode
+// it reads the live selection (`v` = anchor, `.` = cursor); otherwise it falls
+// back to the last visual marks (`'<`/`'>`), so the range survives leaving
+// visual — the path taken by the normal-mode inline-edit binding. A byte check
+// (22 = Ctrl-V) covers visual-block without embedding a control char here.
+const SELECTION_LUA = `
+local mode = vim.fn.mode()
+local first = mode:sub(1, 1)
+local visual = first == 'v' or first == 'V' or mode:byte(1) == 22
+local sp, ep
+if visual then
+  sp = vim.fn.getpos('v')
+  ep = vim.fn.getpos('.')
+else
+  sp = vim.fn.getpos("'<")
+  ep = vim.fn.getpos("'>")
+end
+local startLine, endLine = sp[2], ep[2]
+if startLine == 0 or endLine == 0 then
+  local cur = vim.api.nvim_win_get_cursor(0)
+  startLine, endLine = cur[1], cur[1]
+end
+if startLine > endLine then startLine, endLine = endLine, startLine end
+return { path = vim.api.nvim_buf_get_name(0), startLine = startLine, endLine = endLine }
+`
 // A pane that dies more than this many times inside the window is fatal — most
 // likely a config/runtime fault a respawn won't fix.
 const MAX_RESTARTS = 3
@@ -111,6 +137,30 @@ export class NvimCanvasSession {
 
   focus(): void {
     this.elements.input.focus()
+  }
+
+  // The current editor selection (buffer path + 1-based inclusive line range).
+  // Returns null when no session is live or the buffer is unnamed (scratch).
+  async getVisualSelection(): Promise<{
+    path: string
+    startLine: number
+    endLine: number
+  } | null> {
+    const id = this.nvimId
+    if (!id) return null
+    try {
+      const result = await window.workbench.nvim.request(id, 'nvim_exec_lua', [SELECTION_LUA, []])
+      if (!result || typeof result !== 'object') return null
+      const selection = result as { path?: string; startLine?: number; endLine?: number }
+      if (!selection.path || !selection.startLine || !selection.endLine) return null
+      return {
+        path: selection.path,
+        startLine: selection.startLine,
+        endLine: selection.endLine
+      }
+    } catch {
+      return null
+    }
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────

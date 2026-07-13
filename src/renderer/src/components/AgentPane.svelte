@@ -569,6 +569,16 @@
     })
   }
 
+  // An @file:lines reference pushed from the editor selection (inline edit,
+  // Phase A). Nonce-gated so the same reference can be sent twice in a row.
+  let lastComposerInsertNonce = 0
+  $effect(() => {
+    const request = store.composerInsert
+    if (!request || request.nonce === lastComposerInsertNonce) return
+    lastComposerInsertNonce = request.nonce
+    insertMentionAtCaret(request.text)
+  })
+
   function attachmentExtension(file: File): string {
     const fromName = file.name.split('.').pop()
     if (fromName && fromName !== file.name) return fromName.toLowerCase()

@@ -5,7 +5,12 @@
 import { app } from 'electron'
 import { readFile, writeFile, mkdir } from 'fs/promises'
 import { join, dirname } from 'path'
-import type { InstalledExtension, AgentChats, AgentSlashCommand } from '../shared/types'
+import type {
+  InstalledExtension,
+  AgentChats,
+  AgentSlashCommand,
+  DockLayoutState
+} from '../shared/types'
 
 export type { InstalledExtension }
 
@@ -32,6 +37,10 @@ export interface RepoState {
   panelsOpen: Record<string, boolean> // panel key -> open
   centerView: string | null
   activeView: string | null // active sidebar view (activity bar)
+  // Docked left/right side panels (outside the moveable split tree) and the
+  // distraction-free focus mode that floats the center.
+  docks: DockLayoutState | null
+  focusMode: boolean
 }
 
 export interface AppState {
@@ -88,7 +97,9 @@ export function emptyRepoState(): RepoState {
     paneSizes: {},
     panelsOpen: {},
     centerView: null,
-    activeView: null
+    activeView: null,
+    docks: null,
+    focusMode: false
   }
 }
 

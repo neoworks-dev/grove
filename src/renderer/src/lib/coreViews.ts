@@ -3,7 +3,7 @@
 
 import { views } from './views.svelte'
 import { buildDefaultTree } from './layout.svelte'
-import { createLeaf, createSplit } from './layoutTree'
+import { createLeaf } from './layoutTree'
 
 export function registerCoreViews(): void {
   views.register({
@@ -13,11 +13,13 @@ export function registerCoreViews(): void {
     buildTree: () => buildDefaultTree(),
     initialFocus: 'nvim'
   })
+  // Views define only the center split tree now; the agent panel lives in the
+  // right dock, shared across views.
   views.register({
     id: 'review',
     label: 'Review',
     order: 2,
-    buildTree: () => createSplit('row', [createLeaf('diff'), createLeaf('agent')], [0.72, 0.28]),
+    buildTree: () => createLeaf('diff'),
     initialFocus: 'diff'
   })
   views.register({

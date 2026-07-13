@@ -2,6 +2,7 @@
   import { onMount, untrack } from 'svelte'
   import groveLogo from './assets/grove-icon.svg'
   import ActivityBar from './components/ActivityBar.svelte'
+  import Dock from './components/Dock.svelte'
   import SplitTree from './components/SplitTree.svelte'
   import MenuBar from './components/MenuBar.svelte'
   import Overlay from './components/Overlay.svelte'
@@ -102,6 +103,19 @@
       title: 'Toggle Logs Panel',
       group: 'View',
       run: () => layout.togglePane('logs')
+    })
+    commands.register({
+      id: 'view.toggleRightDock',
+      title: 'Toggle Right Panel',
+      group: 'View',
+      run: () => layout.toggleDock('right')
+    })
+    commands.register({
+      id: 'view.toggleFocusMode',
+      title: 'Toggle Focus Mode',
+      group: 'View',
+      keywords: 'zen distraction free fullscreen center',
+      run: () => layout.toggleFocusMode()
     })
     // Icon theme selection — dynamically one command per available pack.
     for (const pack of availablePacks()) {
@@ -244,7 +258,25 @@
         </button>
       {/each}
       <button
-        class="ml-2 rounded-md border border-line px-2 py-1 text-2xs text-dim hover:text-default"
+        class="ml-2 rounded-md px-2 py-1 text-2xs {layout.docks.right.open
+          ? 'text-default'
+          : 'text-dim hover:text-default'}"
+        title="Toggle right panel"
+        onclick={() => layout.toggleDock('right')}
+      >
+        ▤
+      </button>
+      <button
+        class="rounded-md px-2 py-1 text-2xs {layout.focusMode
+          ? 'text-default'
+          : 'text-dim hover:text-default'}"
+        title="Focus mode"
+        onclick={() => layout.toggleFocusMode()}
+      >
+        ⛶
+      </button>
+      <button
+        class="rounded-md border border-line px-2 py-1 text-2xs text-dim hover:text-default"
         title="Command palette (F1)"
         onclick={() => commands.open()}
       >
@@ -264,20 +296,44 @@
     </div>
   {/if}
 
-  <!-- Main body: launcher rail + the split trees. Every visited view stays
-       mounted; only the active one is shown (others display:none), so switching
-       views flips visibility instead of remounting panes. -->
+  <!-- Main body: launcher rail + docked side panels + the center split trees.
+       Docks stay attached (outside the tree); only the center splits. Every
+       visited view stays mounted; only the active one is shown (others
+       display:none), so switching views flips visibility instead of remounting.
+       Focus mode hides the rail + docks and floats the center. -->
   <div class="flex min-h-0 min-w-0 flex-1 overflow-hidden">
-    <ActivityBar />
-    {#each layout.mountedViewIds as viewId (viewId)}
+    {#if !layout.focusMode}
+      <ActivityBar />
+      {#if layout.docks.left.open}
+        <Dock side="left" />
+      {/if}
+    {/if}
+
+    <div
+      class="flex min-h-0 min-w-0 flex-1 overflow-hidden {layout.focusMode
+        ? 'bg-canvas p-6'
+        : ''}"
+    >
       <div
-        class="flex min-h-0 min-w-0 flex-1 overflow-hidden {viewId === layout.activeViewId
-          ? ''
-          : 'hidden'}"
+        class="flex min-h-0 min-w-0 flex-1 overflow-hidden {layout.focusMode
+          ? 'rounded-xl border border-line bg-canvas shadow-2xl'
+          : ''}"
       >
-        <SplitTree node={layout.trees[viewId]} />
+        {#each layout.mountedViewIds as viewId (viewId)}
+          <div
+            class="flex min-h-0 min-w-0 flex-1 overflow-hidden {viewId === layout.activeViewId
+              ? ''
+              : 'hidden'}"
+          >
+            <SplitTree node={layout.trees[viewId]} />
+          </div>
+        {/each}
       </div>
-    {/each}
+    </div>
+
+    {#if !layout.focusMode && layout.docks.right.open}
+      <Dock side="right" />
+    {/if}
   </div>
 
   <StatusBar />

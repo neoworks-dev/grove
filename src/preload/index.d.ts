@@ -16,6 +16,7 @@ import type {
   OpenPrOptions,
   MergePrOptions,
   ArchiveOptions,
+  DockLayoutState,
   WorkbenchConfig,
   ServiceRuntime,
   AgentRuntime,
@@ -58,6 +59,8 @@ interface RepoStateShape {
   panelsOpen: Record<string, boolean>
   centerView: string | null
   activeView: string | null
+  docks: DockLayoutState | null
+  focusMode: boolean
 }
 
 interface SettingsSnapshotShape {

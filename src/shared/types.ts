@@ -34,6 +34,23 @@ export interface DiffSides {
   language: string
 }
 
+// One changed region, line ranges 1-based. A count of 0 marks a pure
+// insertion (original side) or deletion (modified side); `*Start` then points
+// at the line the change sits after.
+export interface DiffHunk {
+  originalStart: number
+  originalCount: number
+  modifiedStart: number
+  modifiedCount: number
+}
+
+// Changed line ranges for a file, parsed from `git diff` hunk headers. Empty
+// for untracked files, where every modified line is an addition.
+export interface DiffHunks {
+  path: string
+  hunks: DiffHunk[]
+}
+
 // ── Config schema (repo-root YAML) ──────────────────────────────
 
 export interface WorkbenchConfig {

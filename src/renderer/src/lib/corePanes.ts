@@ -9,9 +9,8 @@ import TerminalWindow from 'phosphor-svelte/lib/TerminalWindow'
 import FilesView from '../components/FilesView.svelte'
 import WorktreeSidebar from '../components/WorktreeSidebar.svelte'
 import ExtensionsView from '../components/ExtensionsView.svelte'
-import EditorPane from '../components/EditorPane.svelte'
 import NvimPane from '../components/NvimPane.svelte'
-import DiffPane from '../components/DiffPane.svelte'
+import NvimDiffPane from '../components/NvimDiffPane.svelte'
 import PreviewPane from '../components/PreviewPane.svelte'
 import Dashboard from '../components/Dashboard.svelte'
 import AgentPane from '../components/AgentPane.svelte'
@@ -62,21 +61,14 @@ export function registerCorePanes(): void {
     minWidth: 180
   })
   panes.register({
-    id: 'editor',
-    title: 'Editor',
-    component: EditorPane,
-    slot: CENTER_SLOT,
-    minWidth: 240,
-    // Vim modes, reported live by EditorPane; 'normal' first = default.
-    modes: ['normal', 'insert', 'visual', 'visual-line', 'visual-block', 'replace'],
-    when: repoOpen
-  })
-  panes.register({
     id: 'nvim',
     title: 'Neovim',
     component: NvimPane,
     slot: CENTER_SLOT,
     minWidth: 240,
+    // Reports the 'editor' keymap context so editor-scoped bindings (file
+    // finder, etc.) match here.
+    contextType: 'editor',
     // Modes reported live from the embedded nvim's mode_change events.
     modes: ['normal', 'insert', 'visual', 'replace', 'cmdline', 'operator', 'terminal'],
     when: repoOpen
@@ -84,9 +76,12 @@ export function registerCorePanes(): void {
   panes.register({
     id: 'diff',
     title: 'Diff',
-    component: DiffPane,
+    component: NvimDiffPane,
     slot: CENTER_SLOT,
     minWidth: 240,
+    // Same keymap context/modes as the editor: the diff sides are nvim buffers.
+    contextType: 'editor',
+    modes: ['normal', 'insert', 'visual', 'replace', 'cmdline', 'operator', 'terminal'],
     when: repoOpen
   })
   panes.register({

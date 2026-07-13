@@ -383,7 +383,7 @@ class PluginHost {
           id: view.id,
           label: view.label,
           order: view.order ?? 50,
-          buildTree: () => sanitize(view.tree) ?? createLeaf('editor')
+          buildTree: () => sanitize(view.tree) ?? createLeaf('nvim')
         })
       )
     }
@@ -621,7 +621,7 @@ class PluginHost {
           id: view.id,
           label: view.label,
           order: view.order ?? 50,
-          buildTree: () => sanitize(view.tree) ?? createLeaf('editor')
+          buildTree: () => sanitize(view.tree) ?? createLeaf('nvim')
         })
       )
       return undefined
@@ -680,7 +680,11 @@ class PluginHost {
     const forward = (method: string): void => {
       rpc.handle(`main.${method}`, async (params, context) => {
         const callId = `${pluginId}-${Math.random().toString(36).slice(2)}`
-        const args = { worktreeId: store.selectedWorktreeId, ...(params as object) }
+        // Default the worktree to the active one. Spread can't set the default
+        // because callers pass an explicit `worktreeId: undefined`, which would
+        // override it — patch it in afterwards when absent.
+        const args = { ...(params as { worktreeId?: string | null }) }
+        if (args.worktreeId == null) args.worktreeId = store.selectedWorktreeId
         const streaming = method === 'workspace.searchText' || method === 'ai.prompt'
         if (!streaming) return window.workbench.plugins.invoke(pluginId, callId, method, args)
 

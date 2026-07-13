@@ -19,7 +19,7 @@
     "keybindings": [
       {
         "id": "leader.search",
-        "keys": "leader /",
+        "keys": "<Leader> /",
         "context": "global",
         "group": "Search",
         "description": "Search file contents (ripgrep)",

@@ -19,7 +19,7 @@
     "keybindings": [
       {
         "id": "leader.files",
-        "keys": "leader space",
+        "keys": "<Leader> <Space>",
         "context": "editor",
         "mode": "normal",
         "group": "Search",

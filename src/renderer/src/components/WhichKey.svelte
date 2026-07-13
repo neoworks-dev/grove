@@ -14,7 +14,7 @@
 
   function display(step: KeyStep): string {
     const text = formatStep(step)
-    if (text === 'space') return '␣'
+    if (text === '<Space>') return '␣'
     return text
   }
 

@@ -14,6 +14,7 @@
   <PaneLeaf leaf={node} />
 {:else}
   <div
+    data-split-id={node.id}
     class="flex h-full w-full min-w-0 min-h-0 flex-1 {node.direction === 'row'
       ? 'flex-row'
       : 'flex-col'}"

@@ -253,6 +253,11 @@ export function registerIpc(): void {
     return git.diffSides(worktree.path, file)
   })
 
+  ipcMain.handle('git:diffHunks', (_e, worktreeId: string, file: DiffFile) => {
+    const worktree = findWorktree(worktreeId)
+    return git.diffHunks(worktree.path, file)
+  })
+
   // ── Config ────────────────────────────────────────────────────
   ipcMain.handle('config:load', async () => {
     const { repoPath } = requireRepo()
@@ -646,6 +651,11 @@ export function registerIpc(): void {
     nvims.attach(id, cols, rows, file)
   )
   ipcMain.handle('nvim:input', (_e, id: string, keys: string) => nvims.input(id, keys))
+  ipcMain.handle(
+    'nvim:inputMouse',
+    (_e, id: string, button: string, action: string, modifier: string, row: number, col: number) =>
+      nvims.inputMouse(id, button, action, modifier, row, col)
+  )
   ipcMain.handle('nvim:resize', (_e, id: string, cols: number, rows: number) =>
     nvims.resize(id, cols, rows)
   )

@@ -32,8 +32,11 @@ export class CanvasGridRenderer implements GridRenderer {
     const height = Math.round(rows * this.metrics.cellHeight * dpr)
     if (this.canvas.width !== width) this.canvas.width = width
     if (this.canvas.height !== height) this.canvas.height = height
-    this.canvas.style.width = `${cols * this.metrics.cellWidth}px`
-    this.canvas.style.height = `${rows * this.metrics.cellHeight}px`
+    // Fill the pane: the backing store stays grid-sized (cols*rows cells) but
+    // CSS stretches it over the whole host, so any sub-cell remainder on the
+    // right/bottom is covered instead of showing a gap.
+    this.canvas.style.width = '100%'
+    this.canvas.style.height = '100%'
   }
 
   render(state: GridState, dirty: DirtyState): void {

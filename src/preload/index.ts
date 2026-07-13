@@ -21,7 +21,9 @@ const workbench = {
     branches: () => ipcRenderer.invoke('git:branches'),
     changedFiles: (worktreeId: string) => ipcRenderer.invoke('git:changedFiles', worktreeId),
     diffSides: (worktreeId: string, file: unknown) =>
-      ipcRenderer.invoke('git:diffSides', worktreeId, file)
+      ipcRenderer.invoke('git:diffSides', worktreeId, file),
+    diffHunks: (worktreeId: string, file: unknown) =>
+      ipcRenderer.invoke('git:diffHunks', worktreeId, file)
   },
   config: {
     load: () => ipcRenderer.invoke('config:load'),
@@ -161,6 +163,14 @@ const workbench = {
     attach: (id: string, cols: number, rows: number, file?: string) =>
       ipcRenderer.invoke('nvim:attach', id, cols, rows, file),
     input: (id: string, keys: string) => ipcRenderer.invoke('nvim:input', id, keys),
+    inputMouse: (
+      id: string,
+      button: string,
+      action: string,
+      modifier: string,
+      row: number,
+      col: number
+    ) => ipcRenderer.invoke('nvim:inputMouse', id, button, action, modifier, row, col),
     resize: (id: string, cols: number, rows: number) =>
       ipcRenderer.invoke('nvim:resize', id, cols, rows),
     command: (id: string, command: string) => ipcRenderer.invoke('nvim:command', id, command),

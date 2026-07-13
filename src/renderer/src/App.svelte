@@ -6,6 +6,7 @@
   import MenuBar from './components/MenuBar.svelte'
   import Overlay from './components/Overlay.svelte'
   import WhichKey from './components/WhichKey.svelte'
+  import PaneDragOverlay from './components/PaneDragOverlay.svelte'
   import StatusBar from './components/StatusBar.svelte'
   import DialogHost from './components/DialogHost.svelte'
   import NotificationHost from './components/NotificationHost.svelte'
@@ -27,7 +28,6 @@
   import { pluginHost } from './plugins/host.svelte'
   import { views } from './lib/views.svelte'
   import { menu } from './lib/menu.svelte'
-  import { initBundledGrammars } from './lib/bundledGrammars'
   import { loadInstalledExtensions } from './lib/extensions'
   import { initIcons, availablePacks } from './lib/icons'
   import { initThemes } from './lib/themes'
@@ -145,7 +145,7 @@
       return
     }
     // Delegate to the keymap core (pane nav, leader). Capture phase so Ctrl+hjkl
-    // and the leader beat CodeMirror/Vim's own handlers.
+    // and the leader beat Neovim's own handlers.
     if (keymap.handleKey(event)) {
       event.preventDefault()
       event.stopPropagation()
@@ -155,7 +155,7 @@
     // insert typing is never hijacked. K and J are left to Vim (K = hover/type
     // info, J = join), so they are deliberately not mapped here.
     if (
-      (keymap.activePaneType === 'editor' || keymap.activePaneType === 'nvim') &&
+      keymap.activePaneType === 'nvim' &&
       keymap.mode === 'normal' &&
       event.shiftKey &&
       !event.ctrlKey &&
@@ -180,7 +180,6 @@
     subscribeEvents()
     registerCoreCommands()
     registerCoreBindings()
-    void initBundledGrammars()
     void loadInstalledExtensions()
     window.addEventListener('keydown', onGlobalKey, true)
 
@@ -285,6 +284,7 @@
   <WhichKey />
 </div>
 
+<PaneDragOverlay />
 <Overlay />
 <DialogHost />
 <NotificationHost />

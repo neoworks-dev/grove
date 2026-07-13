@@ -49,18 +49,6 @@ export function registerBaseSettings(): void {
         maximum: 2000
       },
       {
-        key: 'workbench.centerEditor',
-        type: 'enum',
-        default: 'nvim',
-        title: 'Editor',
-        description: 'Which editor opens files: embedded Neovim or the built-in CodeMirror pane.',
-        category: 'Editor',
-        enumValues: [
-          { value: 'nvim', label: 'Neovim (embedded)' },
-          { value: 'codemirror', label: 'CodeMirror' }
-        ]
-      },
-      {
         key: 'workbench.nvimFontSize',
         type: 'number',
         default: 13,

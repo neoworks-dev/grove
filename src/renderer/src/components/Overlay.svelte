@@ -3,6 +3,7 @@
   // the overlay controller: input + streamed list, optional preview column,
   // multi-select marks, and footer action hints.
   import Icon from '@iconify/svelte'
+  import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
   import { overlays } from '../lib/overlays.svelte'
   import { stepFromEvent, formatStep } from '../lib/keySequence'
   import { fileIcon } from '../lib/icons'
@@ -15,6 +16,7 @@
   }
 
   let inputEl = $state<HTMLInputElement>()
+  let listViewport = $state<HTMLDivElement>()
 
   const descriptor = $derived(overlays.active)
   const hasPreview = $derived(descriptor?.onPreview !== undefined)
@@ -26,6 +28,16 @@
       // Prefilled query (e.g. rename): select it so typing replaces the name.
       if (descriptor.initialQuery) inputEl?.select()
     })
+  })
+
+  // Keep the active result visible as arrow keys move the selection; the list
+  // viewport is FloatingScrollbar's own scroll element.
+  $effect(() => {
+    const index = overlays.activeIndex
+    void index
+    if (!listViewport) return
+    const active = listViewport.querySelector('[data-active="true"]') as HTMLElement | null
+    active?.scrollIntoView({ block: 'nearest' })
   })
 
   function onKeyDown(event: KeyboardEvent): void {
@@ -96,11 +108,18 @@
       </div>
 
       <div class="flex min-h-0 flex-1">
-        <div class="min-h-0 {hasPreview ? 'w-1/2 border-r border-line' : 'w-full'} overflow-auto py-1">
+        <FloatingScrollbar
+          class="min-h-0 {hasPreview ? 'w-1/2 border-r border-line' : 'w-full'} py-1"
+          bind:viewport={listViewport}
+        >
+          <!-- Single content wrapper so the scrollbar's ResizeObserver watches
+               one child, not one per result row. -->
+          <div>
           {#each overlays.items as item, index (item.id)}
             {@const active = index === overlays.activeIndex}
             {@const ItemRow = descriptor.itemComponent}
             <button
+              data-active={active}
               class="flex w-full items-center gap-2 px-3 py-1.5 text-left {active
                 ? 'bg-hover'
                 : ''} hover:bg-hover"
@@ -141,10 +160,12 @@
           {#if overlays.items.length === 0}
             <p class="px-3 py-4 text-xs text-dim">No results.</p>
           {/if}
-        </div>
+          </div>
+        </FloatingScrollbar>
 
         {#if hasPreview}
-          <div class="min-h-0 w-1/2 overflow-auto">
+          <FloatingScrollbar class="min-h-0 w-1/2">
+            <div>
             {#if overlays.preview?.kind === 'excerpt'}
               <div class="border-b border-line px-3 py-1.5 font-mono text-2xs text-dim">
                 {overlays.preview.file}
@@ -159,7 +180,8 @@
               {@const PreviewComponent = overlays.preview.component}
               <PreviewComponent {...overlays.preview.props ?? {}} />
             {/if}
-          </div>
+            </div>
+          </FloatingScrollbar>
         {/if}
       </div>
 

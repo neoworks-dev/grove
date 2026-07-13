@@ -11,7 +11,7 @@ export function registerCoreViews(): void {
     label: 'Code',
     order: 1,
     buildTree: () => buildDefaultTree(),
-    initialFocus: 'editor'
+    initialFocus: 'nvim'
   })
   views.register({
     id: 'review',

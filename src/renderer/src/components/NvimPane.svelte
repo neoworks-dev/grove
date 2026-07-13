@@ -1,50 +1,40 @@
 <script lang="ts">
   // Embedded Neovim editor: a canvas-rendered ext_linegrid UI bound to a
-  // vendored `nvim --embed` sidecar in main. Keys are encoded to vim
-  // notation and forwarded; nvim reports modes back which feed the keymap
-  // gate exactly like the CodeMirror editor pane.
+  // vendored `nvim --embed` sidecar in main. The session/canvas/input plumbing
+  // lives in NvimCanvasSession; this component adds the editor-specific chrome
+  // (buffer tabs, minimap) and effects (tab follow, reveal, theme, keymap sync).
   import { onMount, onDestroy } from 'svelte'
   import { store } from '../lib/store.svelte'
   import { layout } from '../lib/layout.svelte'
   import { keymap } from '../lib/keymap.svelte'
   import BufferTabs from './BufferTabs.svelte'
+  import Minimap from './Minimap.svelte'
   import { settings } from '../lib/settings.svelte'
-  import { createGridState } from '../lib/nvim/types'
-  import { applyRedraw } from '../lib/nvim/grid'
-  import { encodeKeyEvent } from '../lib/nvim/keys'
-  import { measureCell, type CellMetrics, type FontSpec } from '../lib/nvim/metrics'
-  import { CanvasGridRenderer } from '../lib/nvim/canvasRenderer'
-  import type { GridRenderer } from '../lib/nvim/renderer'
+  import { NvimCanvasSession } from '../lib/nvim/session'
+  import { nvimKeymapBindings, type NvimMapping } from '../lib/nvimKeymap'
+  import { operatorHintEntries, operatorTitle } from '../lib/nvimOperatorHints'
 
   let { leafId }: { leafId: string } = $props()
 
   let hostEl = $state<HTMLDivElement>()
   let canvasEl = $state<HTMLCanvasElement>()
-  // Hidden contenteditable rather than a textarea: it receives keydown and
-  // IME composition, but does not trip the keymap's INPUT/TEXTAREA guard, so
-  // the space leader still works while nvim is in normal mode.
+  // Hidden contenteditable rather than a textarea: it receives keydown and IME
+  // composition, but does not trip the keymap's INPUT/TEXTAREA guard, so the
+  // space leader still works while nvim is in normal mode.
   let inputEl = $state<HTMLDivElement>()
   let unavailable = $state(false)
 
-  let nvimId: string | null = null
-  let destroyed = false
-  let leafEl: HTMLElement | null = null
-  let stopRedraw: (() => void) | null = null
-  let stopExit: (() => void) | null = null
-  let observer: ResizeObserver | null = null
-  let renderer: GridRenderer | null = null
-  let metrics: CellMetrics | null = null
-  let font: FontSpec | null = null
-
-  const grid = createGridState()
-  let renderScheduled = false
-  let pendingDirtyRows = new Set<number>()
-  let pendingDirtyAll = false
+  let session: NvimCanvasSession | null = null
+  let disposeNvimBindings: (() => void) | null = null
   let lastPushedPath: string | null = null
-  let composing = false
-  // Row the cursor was last painted on, so a plain cursor move repaints the
-  // vacated row and never leaves a ghost block behind.
-  let lastCursorRow = 0
+  // Cached operator-pending maps (plugin text objects); refetched with the
+  // normal-mode keymap since it rarely changes mid-session.
+  let operatorMaps: NvimMapping[] = []
+
+  // Reactive mirrors for the minimap child: the session id once attached, and a
+  // tick bumped on each redraw flush so it re-reads the buffer view.
+  let minimapNvimId = $state<string | null>(null)
+  let minimapTick = $state(0)
 
   const activeTabs = $derived(
     store.tabs.filter((tab) => tab.worktreeId === store.selectedWorktreeId)
@@ -64,246 +54,177 @@
     return value || fallback
   }
 
-  // Grove → nvim mode names, clamped to what the pane registered.
-  function mapMode(name: string): string {
-    if (name.startsWith('cmdline')) return 'cmdline'
-    if (name === 'select' || name.startsWith('visual')) return 'visual'
-    if (name === 'showmatch') return 'insert'
-    if (name === 'operator') return 'operator'
-    const known = ['normal', 'insert', 'visual', 'replace', 'terminal']
-    if (known.includes(name)) return name
-    return 'normal'
-  }
-
-  function gridSize(): { cols: number; rows: number } {
-    if (!hostEl || !metrics) return { cols: 80, rows: 24 }
-    return {
-      cols: Math.max(2, Math.floor(hostEl.clientWidth / metrics.cellWidth)),
-      rows: Math.max(2, Math.floor(hostEl.clientHeight / metrics.cellHeight))
-    }
-  }
-
-  function scheduleRender(): void {
-    if (renderScheduled) return
-    renderScheduled = true
-    requestAnimationFrame(() => {
-      renderScheduled = false
-      if (!renderer) return
-      renderer.render(grid, {
-        all: pendingDirtyAll,
-        rows: pendingDirtyRows,
-        flushed: true
-      })
-      pendingDirtyAll = false
-      pendingDirtyRows = new Set()
-    })
-  }
-
-  function handleRedraw(events: unknown[]): void {
-    const dirty = applyRedraw(grid, events)
-    if (dirty.all) pendingDirtyAll = true
-    for (const row of dirty.rows) pendingDirtyRows.add(row)
-    keymap.setPaneMode(leafId, mapMode(grid.modeName))
-    // Cursor moves without row edits still need a repaint: the vacated row
-    // (to erase the old block) and the new row.
-    pendingDirtyRows.add(lastCursorRow)
-    pendingDirtyRows.add(grid.cursor.row)
-    lastCursorRow = grid.cursor.row
-    if (dirty.flushed || dirty.all) scheduleRender()
-  }
-
-  // Coalesced resize → nvim_ui_try_resize (nvim answers with grid_resize).
-  let fitScheduled = false
-  let lastWidth = 0
-  let lastHeight = 0
-
-  function scheduleFit(): void {
-    if (fitScheduled) return
-    fitScheduled = true
-    requestAnimationFrame(() => {
-      fitScheduled = false
-      if (!hostEl || !nvimId || !renderer) return
-      const width = hostEl.clientWidth
-      const height = hostEl.clientHeight
-      if (width < 2 || height < 2) return
-      if (width === lastWidth && height === lastHeight) return
-      lastWidth = width
-      lastHeight = height
-      const { cols, rows } = gridSize()
-      // Changing canvas.width/height clears it; repaint the current grid at
-      // once so the pane never shows a half-blank buffer while waiting for
-      // nvim's grid_resize redraw.
-      renderer.resize(cols, rows, window.devicePixelRatio)
-      pendingDirtyAll = true
-      scheduleRender()
-      void window.workbench.nvim.resize(nvimId, cols, rows)
-    })
-  }
-
-  function handleKeydown(event: KeyboardEvent): void {
-    if (!nvimId || composing) return
-    // Grove's keybinds overlay nvim: give the keymap first refusal (it gates
-    // itself by the reported mode, so the leader/bare keys only fire in normal
-    // mode). Whatever it doesn't claim falls through to nvim, so `space` in
-    // normal mode opens which-key while everything else edits as usual.
-    if (keymap.handleKeyFromModePane(event)) {
-      event.preventDefault()
-      event.stopPropagation()
-      return
-    }
-    const keys = encodeKeyEvent(event)
-    if (!keys) return
-    event.preventDefault()
-    event.stopPropagation()
-    void window.workbench.nvim.input(nvimId, keys)
-  }
-
-  function handleComposition(event: CompositionEvent): void {
-    if (event.type === 'compositionstart') {
-      composing = true
-      return
-    }
-    composing = false
-    if (!nvimId || !event.data) return
-    void window.workbench.nvim.input(nvimId, event.data.replaceAll('<', '<lt>'))
-    if (inputEl) inputEl.textContent = ''
-  }
-
-  async function pushTheme(): Promise<void> {
-    if (!nvimId) return
-    const palette = store.activeTheme.palette
-    try {
-      await window.workbench.nvim.request(nvimId, 'nvim_exec_lua', [
-        'grove_apply_theme(...)',
-        [palette]
-      ])
-    } catch {
-      // session already gone
-    }
-  }
-
-  async function start(): Promise<void> {
-    if (!hostEl || !canvasEl) return
-    await document.fonts.ready
-    font = { family: cssVar('--font-mono', 'monospace'), sizePx: fontSize() }
-    metrics = measureCell(font)
-    renderer = new CanvasGridRenderer()
-    renderer.attach(canvasEl)
-    renderer.setFont(font, metrics)
-
-    const { cols, rows } = gridSize()
-    renderer.resize(cols, rows, window.devicePixelRatio)
-    lastWidth = hostEl.clientWidth
-    lastHeight = hostEl.clientHeight
-
-    let spawnedId: string
-    try {
-      spawnedId = await window.workbench.nvim.spawn(store.selectedWorktreeId)
-    } catch {
-      unavailable = true
-      return
-    }
-    // The pane may have been closed while spawn was in flight.
-    if (destroyed) {
-      void window.workbench.nvim.kill(spawnedId)
-      return
-    }
-    nvimId = spawnedId
-    lastPushedPath = store.activeTabPath
-
-    // Subscribe before attaching: nvim emits its first redraw batch on
-    // ui_attach, and Electron drops events that have no listener, so the
-    // subscription must exist first or the canvas stays blank until a resize.
-    stopRedraw = window.workbench.on('event:nvim-redraw', (payload) => {
-      const event = payload as { id: string; events: unknown[] }
-      if (event.id === nvimId) handleRedraw(event.events)
-    })
-    stopExit = window.workbench.on('event:nvim-exit', (payload) => {
-      const event = payload as { id: string }
-      if (event.id !== nvimId) return
-      nvimId = null
-      layout.closeLeaf(leafId)
-    })
-
-    observer = new ResizeObserver(scheduleFit)
-    observer.observe(hostEl)
-    await window.workbench.nvim.attach(nvimId, cols, rows, store.activeTabPath ?? undefined)
-    void pushTheme()
-    inputEl?.focus()
-  }
-
   function fontSize(): number {
     const configured = settings.get<number>('workbench.nvimFontSize')
     if (typeof configured === 'number' && configured > 4) return configured
     return 13
   }
 
-  // Pane navigation focuses the leaf container (spatial nav, focusLeafSoon);
-  // steer that focus into the hidden input so keydown reaches nvim.
-  function redirectLeafFocus(event: FocusEvent): void {
-    if (event.target === leafEl) inputEl?.focus()
+  // Surface nvim's own leader maps in grove's which-key. Global + buffer-local
+  // normal-mode maps are refetched on attach and on buffer change (plugins and
+  // buffers register maps lazily); buffer-local entries win on collision.
+  async function syncNvimKeymap(): Promise<void> {
+    const id = session?.id
+    if (!id) return
+    try {
+      const [bufferMaps, globalMaps, bufferOmaps, globalOmaps] = await Promise.all([
+        window.workbench.nvim.request(id, 'nvim_buf_get_keymap', [0, 'n']),
+        window.workbench.nvim.request(id, 'nvim_get_keymap', ['n']),
+        window.workbench.nvim.request(id, 'nvim_buf_get_keymap', [0, 'o']),
+        window.workbench.nvim.request(id, 'nvim_get_keymap', ['o'])
+      ])
+      if (!session?.id || !Array.isArray(bufferMaps) || !Array.isArray(globalMaps)) return
+      const mappings = [...bufferMaps, ...globalMaps] as NvimMapping[]
+      const bindings = nvimKeymapBindings(mappings, 'editor', 'normal', (lhs) => {
+        if (session?.id) void window.workbench.nvim.input(session.id, lhs)
+      })
+      disposeNvimBindings?.()
+      disposeNvimBindings = keymap.registerBindings(bindings)
+      const omaps: NvimMapping[] = []
+      if (Array.isArray(bufferOmaps)) omaps.push(...(bufferOmaps as NvimMapping[]))
+      if (Array.isArray(globalOmaps)) omaps.push(...(globalOmaps as NvimMapping[]))
+      operatorMaps = omaps
+    } catch {
+      // session gone
+    }
+  }
+
+  // Surface the operator-pending which-key panel when nvim enters (e.g.) `d`,
+  // sourcing the pending operator from v:operator so the title matches. Hidden
+  // on any transition back out of operator-pending mode.
+  async function handleModeChange(mode: string): Promise<void> {
+    if (mode !== 'operator') {
+      keymap.hideHints()
+      return
+    }
+    const id = session?.id
+    if (!id) return
+    let operator = ''
+    try {
+      const value = await window.workbench.nvim.request(id, 'nvim_get_vvar', ['operator'])
+      if (typeof value === 'string') operator = value
+    } catch {
+      // session gone
+    }
+    // The operator may have completed while the query was in flight (fast `dw`).
+    if (keymap.mode !== 'operator') return
+    keymap.showHints(operatorTitle(operator), operatorHintEntries(operator, operatorMaps))
   }
 
   onMount(() => {
     keymap.setPaneMode(leafId, 'normal')
-    leafEl = (hostEl?.closest('[data-leaf]') as HTMLElement | null) ?? null
-    leafEl?.addEventListener('focusin', redirectLeafFocus)
-    void start()
+    if (!hostEl || !canvasEl || !inputEl) return
+    const font = { family: cssVar('--font-mono', 'monospace'), sizePx: fontSize() }
+    session = new NvimCanvasSession(
+      { host: hostEl, canvas: canvasEl, input: inputEl },
+      { leafId, font, initialFile: () => store.activeTabPath },
+      {
+        onAttached: (id) => {
+          // Claim the current path so the tab-follow effect doesn't re-edit it;
+          // a fresh session (start or restart) already opened it via initialFile.
+          lastPushedPath = store.activeTabPath
+          minimapNvimId = id
+          void syncNvimKeymap()
+        },
+        onFlush: () => {
+          minimapTick += 1
+        },
+        onModeChange: (mode) => {
+          void handleModeChange(mode)
+        },
+        onExited: (exitCode) => {
+          console.warn(`nvim editor pane crashed (code ${exitCode}); restarting`)
+          minimapNvimId = null
+        },
+        onClose: () => {
+          minimapNvimId = null
+          layout.closeLeaf(leafId)
+        },
+        onUnavailable: () => {
+          unavailable = true
+        }
+      }
+    )
+    void session.start()
   })
 
-  // Spatial pane nav focuses the leaf container; pull focus into the input
-  // element so keys reach nvim.
+  // Spatial pane nav focuses the leaf container; pull focus into the input so
+  // keys reach nvim.
   $effect(() => {
-    if (keymap.activePane === leafId) inputEl?.focus()
+    if (keymap.activePane === leafId) session?.focus()
   })
 
   // Follow grove's active tab into nvim (finder/tree opens).
   $effect(() => {
     const path = store.activeTabPath
-    if (!nvimId || !path || path === lastPushedPath) return
+    const id = session?.id
+    if (!id || !path || path === lastPushedPath) return
     lastPushedPath = path
     void window.workbench.nvim
-      .request(nvimId, 'nvim_cmd', [{ cmd: 'edit', args: [path] }, {}])
+      .request(id, 'nvim_cmd', [{ cmd: 'edit', args: [path] }, {}])
+      .then(() => syncNvimKeymap())
       .catch(() => {})
   })
+
+  // Jump to a specific line when a search result (ripgrep) is accepted. Claim
+  // lastPushedPath so the tab-follow effect doesn't also re-edit the file.
+  $effect(() => {
+    const target = store.revealTarget
+    const id = session?.id
+    if (!id || !target) return
+    store.revealTarget = null
+    lastPushedPath = target.path
+    void revealLine(target.path, target.line)
+  })
+
+  async function revealLine(path: string, line: number): Promise<void> {
+    const id = session?.id
+    if (!id) return
+    try {
+      await window.workbench.nvim.request(id, 'nvim_cmd', [{ cmd: 'edit', args: [path] }, {}])
+      await window.workbench.nvim.request(id, 'nvim_win_set_cursor', [0, [line, 0]])
+      // Center the target line and drop to the first non-blank column.
+      await window.workbench.nvim.request(id, 'nvim_cmd', [
+        { cmd: 'normal', args: ['zz^'], bang: true },
+        {}
+      ])
+    } catch {
+      // session gone or file vanished
+    }
+    session?.focus()
+  }
 
   // Restyle nvim when grove's theme changes.
   $effect(() => {
     void store.activeTheme
-    void pushTheme()
+    void session?.pushTheme()
   })
 
   onDestroy(() => {
-    destroyed = true
-    leafEl?.removeEventListener('focusin', redirectLeafFocus)
-    stopRedraw?.()
-    stopExit?.()
-    observer?.disconnect()
-    if (nvimId) void window.workbench.nvim.kill(nvimId)
-    renderer?.dispose()
+    disposeNvimBindings?.()
+    keymap.hideHints()
+    session?.dispose()
   })
 </script>
 
 <div class="flex h-full min-h-0 w-full flex-col">
   <BufferTabs tabs={activeTabs} onSelect={selectTab} onClose={closeTab} />
 
-  <div
-    bind:this={hostEl}
-    class="relative min-h-0 flex-1 overflow-hidden bg-canvas"
-    onmousedown={(event) => {
-      // Without preventDefault the browser moves focus to the focusable leaf
-      // container after this handler, stealing keys from the hidden input.
-      event.preventDefault()
-      inputEl?.focus()
-    }}
-    role="none"
-  >
+  <div bind:this={hostEl} class="relative min-h-0 flex-1 overflow-hidden bg-canvas" role="none">
     {#if unavailable}
       <div class="flex h-full items-center justify-center text-dim">
         Neovim runtime missing — run `bun scripts/fetch-nvim.ts` and reopen this pane.
       </div>
     {:else}
-      <canvas bind:this={canvasEl} class="block"></canvas>
+      <canvas bind:this={canvasEl} class="block h-full w-full"></canvas>
+      {#if minimapNvimId}
+        <Minimap
+          nvimId={minimapNvimId}
+          tick={minimapTick}
+          theme={store.activeTheme}
+          class="absolute right-0 top-0 z-20 h-full w-[64px] border-l border-line"
+        />
+      {/if}
       <div
         bind:this={inputEl}
         contenteditable="true"
@@ -311,10 +232,6 @@
         role="textbox"
         tabindex="0"
         aria-label="Neovim input"
-        onkeydown={handleKeydown}
-        oncompositionstart={handleComposition}
-        oncompositionend={handleComposition}
-        onfocus={() => keymap.setPaneMode(leafId, mapMode(grid.modeName))}
       ></div>
     {/if}
   </div>

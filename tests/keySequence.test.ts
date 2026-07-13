@@ -53,19 +53,45 @@ describe('parseSequence', () => {
     expect(parseSequence('notakey')).toBeNull()
     expect(parseSequence('shift+1')).toBeNull()
   })
+
+  it('parses the bracket grammar', () => {
+    expect(parseSequence('<Leader> a b')).toEqual({ leader: true, steps: [step('a'), step('b')] })
+    expect(parseSequence('<Ctrl-K> <Ctrl-S>')).toEqual({
+      leader: false,
+      steps: [step('k', { ctrl: true }), step('s', { ctrl: true })]
+    })
+    expect(parseSequence('<Leader> <Space>')).toEqual({ leader: true, steps: [step('space')] })
+    expect(parseSequence('<Alt-Q>')).toEqual({ leader: false, steps: [step('q', { alt: true })] })
+    expect(parseSequence('<C-S-P>')).toEqual({
+      leader: false,
+      steps: [step('p', { ctrl: true, shift: true })]
+    })
+  })
+
+  it('accepts old and new grammar interchangeably', () => {
+    expect(parseSequence('<Leader> w h')).toEqual(parseSequence('leader w h'))
+    expect(parseSequence('<Ctrl-H>')).toEqual(parseSequence('ctrl+h'))
+  })
 })
 
 describe('formatSequence / normalizeSequence', () => {
   it('round-trips canonical text', () => {
-    for (const text of ['leader a b', 'ctrl+k ctrl+s', 'leader space', 'F', 'ctrl+alt+shift+x']) {
+    for (const text of [
+      '<Leader> a b',
+      '<Ctrl-K> <Ctrl-S>',
+      '<Leader> <Space>',
+      'F',
+      '<Ctrl-Alt-Shift-X>'
+    ]) {
       expect(formatSequence(parseSequence(text)!)).toBe(text)
     }
   })
 
-  it('normalizes modifier order and case', () => {
-    expect(normalizeSequence('shift+ctrl+P')).toBe('ctrl+shift+p')
-    expect(normalizeSequence('  Leader   a  ')).toBe('leader a')
-    expect(normalizeSequence('META+ENTER')).toBe('meta+enter')
+  it('normalizes the old grammar into the bracket form', () => {
+    expect(normalizeSequence('shift+ctrl+P')).toBe('<Ctrl-Shift-P>')
+    expect(normalizeSequence('  leader   a  ')).toBe('<Leader> a')
+    expect(normalizeSequence('META+ENTER')).toBe('<Meta-Enter>')
+    expect(normalizeSequence('leader w h')).toBe('<Leader> w h')
     expect(normalizeSequence('bogus+x')).toBeNull()
   })
 })

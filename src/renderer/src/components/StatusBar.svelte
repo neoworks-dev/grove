@@ -6,7 +6,7 @@
 </script>
 
 <footer
-  class="flex h-6 shrink-0 items-center gap-3 border-t border-line bg-elevated px-3 text-2xs text-dim"
+  class="flex h-6 shrink-0 items-center gap-3 rounded-xl border border-line-faint bg-surface px-3 text-2xs text-dim"
 >
   <div class="flex items-center gap-3">
     {#each left as item (item.id)}

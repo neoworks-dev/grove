@@ -12,6 +12,9 @@ import { nvimBinary, nvimAvailable, nvimEnvOverlay, ensureNvimUserConfig } from 
 export interface NvimEvents {
   onRedraw: (id: string, events: unknown[]) => void
   onExit: (id: string, exitCode: number) => void
+  // Custom RPC notifications the config raises via vim.rpcnotify (e.g. diagnostic
+  // pushes). Redraw is handled separately; everything else lands here.
+  onNotify: (id: string, method: string, args: unknown[]) => void
 }
 
 export interface SpawnNvimOptions {
@@ -77,7 +80,11 @@ export class NeovimManager {
     })
 
     rpc.onNotification((method, args) => {
-      if (method === 'redraw') this.queueRedraw(id, session, args)
+      if (method === 'redraw') {
+        this.queueRedraw(id, session, args)
+        return
+      }
+      this.events.onNotify(id, method, toPlain(args) as unknown[])
     })
     return id
   }

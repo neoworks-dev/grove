@@ -8,13 +8,13 @@
   import { sidebar } from '../lib/sidebar.svelte'
 </script>
 
-<div class="flex w-11 shrink-0 flex-col items-center gap-1 border-r border-line bg-elevated py-2">
+<div class="flex w-11 shrink-0 flex-col items-center gap-1 py-2">
   {#each panes.railTypes() as type (type.id)}
     {@const RailIcon = type.icon}
     <button
       class="flex h-9 w-9 items-center justify-center rounded-md {layout.docks.left.open &&
       layout.docks.left.paneType === type.id
-        ? 'bg-surface text-default'
+        ? 'bg-raised text-default'
         : 'text-dim hover:bg-hover hover:text-default'}"
       title={type.title}
       aria-label={type.title}

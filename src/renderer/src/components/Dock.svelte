@@ -36,30 +36,12 @@
   // Dock content manages its own persistence (keyed by the stable dock leaf id),
   // so leaf state is a no-op here.
   function updateState(): void {}
-
-  // Drag the inner edge to resize. Left dock grows rightward, right dock leftward.
-  function startResize(event: PointerEvent): void {
-    event.preventDefault()
-    const startX = event.clientX
-    const startSize = dock.size
-    const onMove = (move: PointerEvent): void => {
-      const delta = move.clientX - startX
-      const next = side === 'left' ? startSize + delta : startSize - delta
-      layout.resizeDock(side, next)
-    }
-    const onUp = (): void => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-    }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-  }
 </script>
 
 <div
-  class="relative flex h-full shrink-0 flex-col bg-elevated {side === 'left'
-    ? 'border-r'
-    : 'border-l'} border-line"
+  class="relative flex h-full shrink-0 flex-col {side === 'left'
+    ? 'border-l border-line-faint'
+    : ''}"
   style="width:{dock.size}px"
 >
   <div
@@ -121,14 +103,4 @@
       {/if}
     </div>
   </div>
-
-  <!-- Resize handle on the inner edge. -->
-  <div
-    class="absolute top-0 z-10 h-full w-1 cursor-col-resize hover:bg-action/40 {side === 'left'
-      ? 'right-0'
-      : 'left-0'}"
-    onpointerdown={startResize}
-    role="separator"
-    aria-orientation="vertical"
-  ></div>
 </div>

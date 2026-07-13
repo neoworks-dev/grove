@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { layout } from '../lib/layout.svelte'
   import { store, refreshRuntimes } from '../lib/store.svelte'
   import type { ServiceRuntime } from '../../../shared/types'
 
@@ -44,8 +43,8 @@
       void withRefresh(() => window.workbench.services.stopAll(store.selectedWorktreeId!))
   }
 
-  function openPreview(_url: string): void {
-    layout.showCenterPane('preview')
+  function openPreview(url: string): void {
+    void window.workbench.openExternal(url)
   }
 </script>
 

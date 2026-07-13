@@ -107,6 +107,7 @@ export interface WorkbenchApi {
       hunks: InlineHunk[],
       applied: boolean[]
     ) => Promise<AppliedRange[]>
+    diffText: (worktreeId: string, before: string, after: string) => Promise<string>
     stage: (worktreeId: string, paths: string[]) => Promise<void>
     unstage: (worktreeId: string, paths: string[]) => Promise<void>
     commit: (worktreeId: string, message: string) => Promise<string>

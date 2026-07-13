@@ -297,6 +297,16 @@ export function registerIpc(): void {
     }
   )
 
+  // Unified diff between two in-memory file versions, for previewing a pending
+  // Write/Edit inline in the permission card.
+  ipcMain.handle(
+    'git:diffText',
+    (_e, worktreeId: string, before: string, after: string) => {
+      const worktree = findWorktree(worktreeId)
+      return inlineDiff.diffStrings(worktree.path, before, after)
+    }
+  )
+
   // ── Git ship-it chain (stage → commit → push → merge → archive) ──
   ipcMain.handle('git:stage', (_e, worktreeId: string, paths: string[]) => {
     const worktree = findWorktree(worktreeId)

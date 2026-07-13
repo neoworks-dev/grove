@@ -3,8 +3,16 @@
 // single source of truth for the API exposed via preload.
 
 import { ipcMain, dialog, shell, BrowserWindow, type IpcMainInvokeEvent } from 'electron'
-import type { WorkbenchConfig, Worktree, DiffFile, OpenPrOptions, MergePrOptions } from '../shared/types'
+import type {
+  WorkbenchConfig,
+  Worktree,
+  DiffFile,
+  OpenPrOptions,
+  MergePrOptions,
+  InlineHunk
+} from '../shared/types'
 import * as git from './git'
+import * as inlineDiff from './inlineDiff'
 import * as github from './github'
 import * as config from './config'
 import * as files from './files'
@@ -258,6 +266,36 @@ export function registerIpc(): void {
     const worktree = findWorktree(worktreeId)
     return git.diffHunks(worktree.path, file)
   })
+
+  // ── Inline agent edit (per-hunk accept/reject) ──────────────────
+  ipcMain.handle(
+    'git:beginInlineReview',
+    async (_e, worktreeId: string, relPath: string, snapshot: string) => {
+      const worktree = findWorktree(worktreeId)
+      const hunks = await inlineDiff.diffSnapshot(worktree.path, relPath, snapshot)
+      const ranges = inlineDiff.rebuildWithAccepted(
+        snapshot,
+        hunks,
+        hunks.map(() => true)
+      ).ranges
+      return { hunks, ranges }
+    }
+  )
+
+  ipcMain.handle(
+    'git:applyInlineReview',
+    (
+      _e,
+      worktreeId: string,
+      relPath: string,
+      snapshot: string,
+      hunks: InlineHunk[],
+      applied: boolean[]
+    ) => {
+      const worktree = findWorktree(worktreeId)
+      return inlineDiff.applyInlineReview(worktree.path, relPath, snapshot, hunks, applied)
+    }
+  )
 
   // ── Git ship-it chain (stage → commit → push → merge → archive) ──
   ipcMain.handle('git:stage', (_e, worktreeId: string, paths: string[]) => {

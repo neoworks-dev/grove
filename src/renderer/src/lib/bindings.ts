@@ -46,6 +46,24 @@ export function registerCoreBindings(): void {
       run: () => layout.ensurePane('agent')
     },
     {
+      id: 'leader.focusMode',
+      keys: '<Leader> z',
+      context: 'global',
+      group: 'View',
+      description: 'Toggle focus mode',
+      run: () => layout.toggleFocusMode()
+    },
+    {
+      // The left panel is content-driven (rail / <Leader> e open it); the right
+      // panel is a utility dock with no rail, so it gets a direct toggle.
+      id: 'leader.rightDock',
+      keys: '<Leader> w ]',
+      context: 'global',
+      group: 'View',
+      description: 'Toggle right panel',
+      run: () => layout.toggleDock('right')
+    },
+    {
       id: 'leader.preferences',
       keys: '<Leader> ,',
       context: 'global',

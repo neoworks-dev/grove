@@ -51,6 +51,23 @@ export interface DiffHunks {
   hunks: DiffHunk[]
 }
 
+// ── Docked side panels ──────────────────────────────────────────
+
+export type DockSide = 'left' | 'right'
+
+// One docked panel: which pane type it hosts, whether it's open, and its size
+// in pixels along the dock axis (width for left/right docks).
+export interface DockPaneState {
+  paneType: string
+  open: boolean
+  size: number
+}
+
+export interface DockLayoutState {
+  left: DockPaneState
+  right: DockPaneState
+}
+
 // ── Ship-it chain (PR / merge) ──────────────────────────────────
 
 export interface OpenPrOptions {

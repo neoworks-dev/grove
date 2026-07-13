@@ -15,6 +15,7 @@ import NvimPane from '../components/NvimPane.svelte'
 import NvimDiffPane from '../components/NvimDiffPane.svelte'
 import PreviewPane from '../components/PreviewPane.svelte'
 import Dashboard from '../components/Dashboard.svelte'
+import EmptyCenter from '../components/EmptyCenter.svelte'
 import AgentPane from '../components/AgentPane.svelte'
 import LogsPane from '../components/LogsPane.svelte'
 import TerminalPane from '../components/TerminalPane.svelte'
@@ -104,6 +105,15 @@ export function registerCorePanes(): void {
     slot: CENTER_SLOT,
     minWidth: 240,
     when: repoOpen
+  })
+  // Placeholder for an empty center leaf; renders its own empty state, so no
+  // `when` guard (it must show even before a repo is open).
+  panes.register({
+    id: 'empty',
+    title: 'Empty',
+    component: EmptyCenter,
+    slot: CENTER_SLOT,
+    minWidth: 240
   })
   panes.register({
     id: 'dashboard',

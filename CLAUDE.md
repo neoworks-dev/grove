@@ -2,14 +2,13 @@
 
 You're allowed to use git. Every time you make a big change, commit the current worktree if it's dirty before changing anything, then write your changes, choose a short to-the-point commit message, and push to the remote repository. If you are unsure about what to write in the commit message, ask for help. Write an explanation of the change in the body of the commit message if it is not obvious from the title. Always mention that a commit was made by you and not an actual human. In case you ever find yourself in a feature branch only commit the changes this branch was for and then merge it back into main.
 
-
 ## Validation
 
 If you need to verify the UI is working as intended ask me instead of trying to inspect it yourself using tmux.
 
 ## Style
 
-Neoworks uses a shared design system defined in the /home/moritz/Documents/neoworks/neoworks.dev/packages/ui package. This package also contains some predefined components that can be reused throughout the applications. When creating new components, try to reuse existing ones as much as possible, and if you need to create new ones, follow the design system guidelines.
+Neoworks uses a shared design system defined in the /home/moritz/Documents/neoworks/neoworks.dev/packages/ui package. This package also contains some predefined components that can be reused throughout the applications. When creating new components, try to reuse existing ones as much as possible, and if you need to create new ones, follow the design system guidelines. Whenever you want to design anything frontend scan what neoworks/ui offers first.
 
 ## Code Style
 

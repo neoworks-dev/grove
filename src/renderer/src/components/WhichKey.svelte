@@ -65,4 +65,26 @@
       {/each}
     </div>
   </div>
+{:else if keymap.hintVisible && keymap.hintTitle}
+  <!-- Static hint panel (Vim operator-pending etc.) — same look, fixed content. -->
+  <div
+    class="pointer-events-none fixed bottom-8 right-3 z-overlay max-h-[60%] w-72 overflow-auto rounded-lg border border-line bg-elevated/95 shadow-overlay backdrop-blur"
+  >
+    <div class="flex items-center gap-2 border-b border-line px-3 py-1.5">
+      <span class="text-2xs font-semibold uppercase tracking-caps text-dim"
+        >+{keymap.hintTitle}</span
+      >
+    </div>
+    <div class="py-1">
+      {#each keymap.hintEntries as entry (entry.keys)}
+        <div class="flex items-center gap-2 px-3 py-1 text-xs">
+          <kbd
+            class="min-w-5 rounded border border-line bg-surface px-1.5 py-0.5 text-center font-mono text-2xs text-default"
+            >{entry.keys}</kbd
+          >
+          <span class="truncate text-muted">{entry.description}</span>
+        </div>
+      {/each}
+    </div>
+  </div>
 {/if}

@@ -56,6 +56,9 @@ export interface KeybindingContribution {
   // Canonical sequence grammar, e.g. "leader space", "ctrl+k ctrl+s".
   keys: string
   context?: string
+  // Editor-style mode required for the binding (e.g. 'normal'); only fires
+  // while the focused pane reports that mode.
+  mode?: string
   group?: string
   description: string
   command: string

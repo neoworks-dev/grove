@@ -191,6 +191,14 @@ class LayoutStore {
   // Focus an existing pane of this type, swap it into its slot-mate's leaf,
   // or split the focused leaf as a last resort.
   ensurePane(paneTypeId: string): void {
+    // Prefer the invoking pane: when the focused leaf already has this type
+    // (e.g. the editor split that opened the file finder), stay in it instead
+    // of jumping to the first same-typed leaf in tree order.
+    const focused = this.focusedLeaf()
+    if (focused?.paneTypeId === paneTypeId) {
+      this.focusLeafSoon(focused.id)
+      return
+    }
     const existing = leaves(this.tree).find((leaf) => leaf.paneTypeId === paneTypeId)
     if (existing) {
       this.focusLeafSoon(existing.id)

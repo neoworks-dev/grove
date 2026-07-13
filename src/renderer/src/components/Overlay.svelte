@@ -105,7 +105,10 @@
                 ? 'bg-hover'
                 : ''} hover:bg-hover"
               onmousemove={() => index !== overlays.activeIndex && overlays.focusIndex(index)}
-              onclick={() => overlays.accept()}
+              onclick={() => {
+                overlays.focusIndex(index)
+                overlays.accept()
+              }}
             >
               {#if descriptor.multiSelect}
                 <Icon

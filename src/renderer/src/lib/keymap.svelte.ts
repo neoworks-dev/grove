@@ -18,6 +18,9 @@ export interface KeyBinding {
   keys: string
   // Where the binding is active: "global", a pane id, or a pane type.
   context?: string
+  // Editor-style mode the binding requires (e.g. 'normal'). Only meaningful
+  // for panes that declare modes; a mode-less binding fires in any mode.
+  mode?: string
   group?: string
   description: string
   when?: () => boolean
@@ -27,6 +30,12 @@ export interface KeyBinding {
 // A registered binding with its parsed sequence attached.
 export interface ResolvedBinding extends KeyBinding {
   sequence: ParsedSequence
+}
+
+// A static which-key hint entry (see keymap.showHints).
+export interface HintEntry {
+  keys: string
+  description: string
 }
 
 import { pickNeighbor } from './keymapCore'
@@ -74,8 +83,57 @@ class Keymap {
   pendingSteps = $state<KeyStep[]>([])
   whichKeyVisible = $state(false)
 
-  // Published by EditorPane so the leader never hijacks Vim insert-mode typing.
-  editorVimMode = $state<string>('normal')
+  // ── Modes ──────────────────────────────────────────────────────
+  // Panes declare the modes they support when they register (e.g. the editor
+  // declares the Vim modes, the terminal declares 'terminal') and report their
+  // current mode as it changes. Mode-less panes have mode null.
+  private supportedModes = $state<Record<PaneId, string[]>>({})
+  private reportedModes = $state<Record<PaneId, string>>({})
+
+  // Current mode of the active pane: its last report, clamped to its declared
+  // modes, defaulting to the first declared mode. Null for mode-less panes.
+  get mode(): string | null {
+    const id = this.activePane
+    if (!id) return null
+    const supported = this.supportedModes[id]
+    if (!supported || supported.length === 0) return null
+    const reported = this.reportedModes[id]
+    if (reported && supported.includes(reported)) return reported
+    return supported[0]
+  }
+
+  setPaneMode(id: PaneId, mode: string): void {
+    if (this.reportedModes[id] === mode) return
+    this.reportedModes = { ...this.reportedModes, [id]: mode }
+  }
+
+  // ── Transient hints ────────────────────────────────────────────
+  // Static which-key panels pushed by panes for key layers the registry does
+  // not own (e.g. Vim operator-pending motions after `d`). Shown after the
+  // which-key delay so fast sequences (dw) never flash the panel.
+  hintTitle = $state<string | null>(null)
+  hintEntries = $state<HintEntry[]>([])
+  hintVisible = $state(false)
+  private hintTimer: ReturnType<typeof setTimeout> | null = null
+
+  showHints(title: string, entries: HintEntry[]): void {
+    this.hintTitle = title
+    this.hintEntries = entries
+    if (this.hintTimer) clearTimeout(this.hintTimer)
+    this.hintTimer = setTimeout(() => {
+      if (this.hintTitle === title) this.hintVisible = true
+    }, whichKeyDelay())
+  }
+
+  hideHints(): void {
+    this.hintTitle = null
+    this.hintEntries = []
+    this.hintVisible = false
+    if (this.hintTimer) {
+      clearTimeout(this.hintTimer)
+      this.hintTimer = null
+    }
+  }
 
   // Set by the keybind-capture widget so global dispatch stands down while it
   // records a sequence.
@@ -136,16 +194,30 @@ class Keymap {
   }
 
   // ── Focus model ───────────────────────────────────────────────
-  registerPane(id: PaneId, el: HTMLElement, type?: string): void {
+  registerPane(id: PaneId, el: HTMLElement, type?: string, modes?: string[]): void {
     this.panes.set(id, el)
     if (type) this.paneTypes.set(id, type)
     else this.paneTypes.delete(id)
+    if (modes && modes.length > 0) {
+      this.supportedModes = { ...this.supportedModes, [id]: modes }
+    } else if (this.supportedModes[id]) {
+      const { [id]: _removed, ...rest } = this.supportedModes
+      this.supportedModes = rest
+    }
     if (this.activePane === id) this.refreshActive(id)
   }
 
   unregisterPane(id: PaneId): void {
     this.panes.delete(id)
     this.paneTypes.delete(id)
+    if (this.supportedModes[id]) {
+      const { [id]: _removedSupported, ...supported } = this.supportedModes
+      this.supportedModes = supported
+    }
+    if (this.reportedModes[id]) {
+      const { [id]: _removedReported, ...reported } = this.reportedModes
+      this.reportedModes = reported
+    }
   }
 
   setActive(id: PaneId): void {
@@ -225,7 +297,8 @@ class Keymap {
   }
 
   // Bindings reachable in the current context matching the typed step prefix.
-  // A binding context matches 'global', the active pane id, or its pane type.
+  // A binding context matches 'global', the active pane id, or its pane type;
+  // a binding mode must match the active pane's current mode.
   matching(prefix: KeyStep[], leader: boolean): ResolvedBinding[] {
     return this.effective.filter((binding) => {
       if (binding.sequence.leader !== leader) return false
@@ -233,6 +306,7 @@ class Keymap {
       const inContext =
         context === 'global' || context === this.activePane || context === this.activePaneType
       if (!inContext) return false
+      if (binding.mode && binding.mode !== this.mode) return false
       if (binding.when && !binding.when()) return false
       return sequenceStartsWith(binding.sequence.steps, prefix)
     })
@@ -243,8 +317,10 @@ class Keymap {
     const el = document.activeElement
     const tag = el?.tagName
     if (tag === 'INPUT' || tag === 'TEXTAREA') return false
-    // The editor is a contenteditable; only steal space in Vim normal mode.
-    if (this.activePaneType === 'editor') return this.editorVimMode === 'normal'
+    // Panes with modes only give up bare keys / the leader in normal mode, so
+    // e.g. Vim insert-mode typing (or the terminal) is never hijacked.
+    const mode = this.mode
+    if (mode !== null) return mode === 'normal'
     return true
   }
 
@@ -335,11 +411,15 @@ export const keymap = new Keymap()
 // Svelte action: register a DOM element as a focusable pane. Panes may nest
 // (e.g. the file tree inside the files leaf); only the innermost pane under the
 // event target claims focus, so a click in the tree doesn't also select the leaf.
-// Accepts a plain id or `{ id, type }` — the type feeds context matching and
-// the editor Vim guards.
-export type PaneAttachment = PaneId | { id: PaneId; type?: string }
+// Accepts a plain id or `{ id, type, modes }` — the type feeds context
+// matching, `modes` declares the editor-style modes the pane supports.
+export type PaneAttachment = PaneId | { id: PaneId; type?: string; modes?: string[] }
 
-function attachmentParts(attachment: PaneAttachment): { id: PaneId; type?: string } {
+function attachmentParts(attachment: PaneAttachment): {
+  id: PaneId
+  type?: string
+  modes?: string[]
+} {
   if (typeof attachment === 'string') return { id: attachment }
   return attachment
 }
@@ -349,7 +429,7 @@ export function pane(
   attachment: PaneAttachment
 ): { update: (next: PaneAttachment) => void; destroy: () => void } {
   let current = attachmentParts(attachment)
-  keymap.registerPane(current.id, node, current.type)
+  keymap.registerPane(current.id, node, current.type, current.modes)
   node.dataset.pane = current.id
   if (!node.hasAttribute('tabindex')) node.tabIndex = -1
   const activate = (event: Event): void => {
@@ -363,7 +443,7 @@ export function pane(
       const parts = attachmentParts(next)
       if (parts.id !== current.id) keymap.unregisterPane(current.id)
       current = parts
-      keymap.registerPane(current.id, node, current.type)
+      keymap.registerPane(current.id, node, current.type, current.modes)
       node.dataset.pane = current.id
     },
     destroy() {

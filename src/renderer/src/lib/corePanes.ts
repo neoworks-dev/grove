@@ -66,6 +66,8 @@ export function registerCorePanes(): void {
     component: EditorPane,
     slot: CENTER_SLOT,
     minWidth: 240,
+    // Vim modes, reported live by EditorPane; 'normal' first = default.
+    modes: ['normal', 'insert', 'visual', 'visual-line', 'visual-block', 'replace'],
     when: repoOpen
   })
   panes.register({
@@ -113,6 +115,9 @@ export function registerCorePanes(): void {
     component: TerminalPane,
     containerClass: 'bg-canvas',
     minHeight: 120,
+    // 'terminal' forwards every key to the shell; ctrl+\ ctrl+n drops to
+    // 'normal' so global chords (ctrl+hjkl, leader) work; 'i' returns.
+    modes: ['terminal', 'normal'],
     when: repoOpen
   })
   panes.register({

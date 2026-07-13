@@ -6,6 +6,11 @@
   import { FitAddon } from '@xterm/addon-fit'
   import '@xterm/xterm/css/xterm.css'
   import { store } from '../lib/store.svelte'
+  import { layout } from '../lib/layout.svelte'
+  import { keymap } from '../lib/keymap.svelte'
+  import { createTerminalEscapeHandler } from '../lib/terminalKeys'
+
+  let { leafId }: { leafId: string } = $props()
 
   let hostEl = $state<HTMLDivElement>()
   let term: Terminal | null = null
@@ -14,6 +19,20 @@
   let stopData: (() => void) | null = null
   let stopExit: (() => void) | null = null
   let observer: ResizeObserver | null = null
+  let unregisterBindings: (() => void) | null = null
+
+  // Vim-style mode escape: ctrl+\ ctrl+n leaves 'terminal' for 'normal' so
+  // global chords (ctrl+hjkl, leader) work again; 'i' re-enters.
+  function enterNormalMode(): void {
+    keymap.setPaneMode(leafId, 'normal')
+    // Blur xterm's hidden textarea so bare keys reach the global keymap.
+    keymap.focusPane(leafId)
+  }
+
+  function enterTerminalMode(): void {
+    keymap.setPaneMode(leafId, 'terminal')
+    term?.focus()
+  }
 
   // Fit only when the host's pixel size actually changes, coalesced to one
   // animation frame. Fitting on every ResizeObserver tick lets xterm's own
@@ -89,6 +108,21 @@
     fit = new FitAddon()
     term.loadAddon(fit)
     term.open(hostEl)
+    term.attachCustomKeyEventHandler(createTerminalEscapeHandler(enterNormalMode))
+    // Clicking back into the terminal resumes terminal mode.
+    term.textarea?.addEventListener('focus', () => keymap.setPaneMode(leafId, 'terminal'))
+
+    unregisterBindings = keymap.registerBindings([
+      {
+        id: `terminal.insert:${leafId}`,
+        keys: 'i',
+        context: leafId,
+        mode: 'normal',
+        group: 'Terminal',
+        description: 'Enter terminal mode',
+        run: () => enterTerminalMode()
+      }
+    ])
 
     // Start the pty once the view has a size, then wire the streams.
     requestAnimationFrame(() => void start())
@@ -121,8 +155,11 @@
     stopExit = window.workbench.on('event:terminal-exit', (payload) => {
       const event = payload as { id: string }
       if (event.id !== ptyId) return
-      term?.write('\r\n\x1b[90m[process exited]\x1b[0m\r\n')
       ptyId = null
+      // Close the pane with the shell; closeLeaf no-ops on the last leaf,
+      // so fall back to the exit notice there.
+      term?.write('\r\n\x1b[90m[process exited]\x1b[0m\r\n')
+      layout.closeLeaf(leafId)
     })
     term.focus()
   }
@@ -130,6 +167,7 @@
   onDestroy(() => {
     stopData?.()
     stopExit?.()
+    unregisterBindings?.()
     observer?.disconnect()
     if (ptyId) void window.workbench.terminal.kill(ptyId)
     term?.dispose()

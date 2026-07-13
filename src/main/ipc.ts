@@ -631,19 +631,19 @@ export function registerIpc(): void {
   // ── Embedded Neovim ───────────────────────────────────────────
   // A vendored `nvim --embed` per pane, spawned in the worktree with the same
   // WT_*/PORT_n vars as terminals. Redraw batches stream via event:nvim-redraw.
-  ipcMain.handle(
-    'nvim:create',
-    (_e, worktreeId: string | null, cols: number, rows: number, file?: string) => {
-      let cwd = context.repoPath ?? process.cwd()
-      let vars: Record<string, string> = {}
-      if (worktreeId) {
-        const worktree = findWorktree(worktreeId)
-        const cfg = requireRepo().config
-        vars = buildWorktreeEnv(worktree, worktrees.portsForWorktree(cfg, worktree.portSlot))
-        cwd = worktree.path
-      }
-      return nvims.create({ cwd, env: spawnEnv(vars), cols, rows, file })
+  ipcMain.handle('nvim:spawn', (_e, worktreeId: string | null) => {
+    let cwd = context.repoPath ?? process.cwd()
+    let vars: Record<string, string> = {}
+    if (worktreeId) {
+      const worktree = findWorktree(worktreeId)
+      const cfg = requireRepo().config
+      vars = buildWorktreeEnv(worktree, worktrees.portsForWorktree(cfg, worktree.portSlot))
+      cwd = worktree.path
     }
+    return nvims.spawn({ cwd, env: spawnEnv(vars) })
+  })
+  ipcMain.handle('nvim:attach', (_e, id: string, cols: number, rows: number, file?: string) =>
+    nvims.attach(id, cols, rows, file)
   )
   ipcMain.handle('nvim:input', (_e, id: string, keys: string) => nvims.input(id, keys))
   ipcMain.handle('nvim:resize', (_e, id: string, cols: number, rows: number) =>

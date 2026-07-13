@@ -246,7 +246,8 @@ export interface WorkbenchApi {
     kill: (id: string) => Promise<void>
   }
   nvim: {
-    create: (worktreeId: string | null, cols: number, rows: number, file?: string) => Promise<string>
+    spawn: (worktreeId: string | null) => Promise<string>
+    attach: (id: string, cols: number, rows: number, file?: string) => Promise<void>
     input: (id: string, keys: string) => Promise<void>
     resize: (id: string, cols: number, rows: number) => Promise<void>
     command: (id: string, command: string) => Promise<void>

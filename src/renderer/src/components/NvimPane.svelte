@@ -187,25 +187,24 @@
     lastWidth = hostEl.clientWidth
     lastHeight = hostEl.clientHeight
 
+    let spawnedId: string
     try {
-      nvimId = await window.workbench.nvim.create(
-        store.selectedWorktreeId,
-        cols,
-        rows,
-        store.activeTabPath ?? undefined
-      )
+      spawnedId = await window.workbench.nvim.spawn(store.selectedWorktreeId)
     } catch {
       unavailable = true
       return
     }
-    // The pane may have been closed while create was in flight.
+    // The pane may have been closed while spawn was in flight.
     if (destroyed) {
-      void window.workbench.nvim.kill(nvimId)
-      nvimId = null
+      void window.workbench.nvim.kill(spawnedId)
       return
     }
+    nvimId = spawnedId
     lastPushedPath = store.activeTabPath
 
+    // Subscribe before attaching: nvim emits its first redraw batch on
+    // ui_attach, and Electron drops events that have no listener, so the
+    // subscription must exist first or the canvas stays blank until a resize.
     stopRedraw = window.workbench.on('event:nvim-redraw', (payload) => {
       const event = payload as { id: string; events: unknown[] }
       if (event.id === nvimId) handleRedraw(event.events)
@@ -219,6 +218,7 @@
 
     observer = new ResizeObserver(scheduleFit)
     observer.observe(hostEl)
+    await window.workbench.nvim.attach(nvimId, cols, rows, store.activeTabPath ?? undefined)
     void pushTheme()
     inputEl?.focus()
   }

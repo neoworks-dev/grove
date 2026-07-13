@@ -215,6 +215,18 @@ export class NvimCanvasSession {
     }
   }
 
+  // Open a file in this session's window and resolve once nvim has loaded it, so
+  // callers can safely paint extmarks against the freshly-loaded buffer.
+  async openPath(path: string): Promise<void> {
+    const id = this.nvimId
+    if (!id) return
+    try {
+      await window.workbench.nvim.request(id, 'nvim_cmd', [{ cmd: 'edit', args: [path] }, {}])
+    } catch {
+      // session gone
+    }
+  }
+
   // Where to place the inline-edit prompt for a selection. Anchors it at the
   // selection's first row when the selection is visible and fits the viewport;
   // otherwise (scrolled off-screen or taller than the page) asks to be centered.

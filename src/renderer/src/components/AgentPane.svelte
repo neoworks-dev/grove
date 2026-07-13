@@ -16,11 +16,12 @@
     compactChat
   } from '../lib/store.svelte'
   import { parseQuestions, buildAnswerResult } from '../lib/agentDialog'
+  import { inlineEdit } from '../lib/inlineEdit.svelte'
   import WaveSpinner from './WaveSpinner.svelte'
   import { onMount, onDestroy } from 'svelte'
   import { keymap } from '../lib/keymap.svelte'
   import type { LogLine } from '../lib/store.svelte'
-  import type { AgentRuntime, AgentConfig, ChatMeta } from '../../../shared/types'
+  import type { AgentRuntime, AgentConfig, ChatMeta, DiffFile } from '../../../shared/types'
   import { parseAgentLines, parseAgentMeta, toolSummary, type OutputItem } from '../lib/agentStream'
   import { renderMarkdown } from '../lib/markdown'
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
@@ -1174,12 +1175,49 @@
     denyReason = ''
   }
   function showChange(): void {
-    // Prefer the proposed-change diff; fall back to opening the file.
-    if (store.proposedDiff) {
-      layout.showCenterPane('diff')
-    } else if (pendingPermission?.path && store.selectedWorktreeId) {
+    // The proposed change is rendered inline below; this opens the file on disk
+    // in the editor for surrounding context.
+    if (pendingPermission?.path && store.selectedWorktreeId) {
       openFileInEditor(store.selectedWorktreeId, pendingPermission.path)
     }
+  }
+
+  // Git-computed preview of a pending Write/Edit, rendered inline so review of a
+  // gated change isn't blind (replaces the old dedicated diff pane).
+  let proposedDiffText = $state('')
+  $effect(() => {
+    const proposed = store.proposedDiff
+    const worktreeId = store.selectedWorktreeId
+    if (!proposed || !worktreeId) {
+      proposedDiffText = ''
+      return
+    }
+    void window.workbench.git
+      .diffText(worktreeId, proposed.original, proposed.modified)
+      .then((text) => {
+        proposedDiffText = text
+      })
+      .catch(() => {
+        proposedDiffText = ''
+      })
+  })
+
+  // Drop git's file headers/noise; keep the hunk headers and +/-/context lines.
+  const proposedDiffLines = $derived.by(() => {
+    if (!proposedDiffText) return []
+    return proposedDiffText.split('\n').filter((line) => {
+      if (line.startsWith('diff ') || line.startsWith('index ')) return false
+      if (line.startsWith('--- ') || line.startsWith('+++ ')) return false
+      if (line.startsWith('\\ No newline')) return false
+      return line.length > 0
+    })
+  })
+
+  function proposedDiffLineClass(line: string): string {
+    if (line.startsWith('@@')) return 'text-dim'
+    if (line.startsWith('+')) return 'bg-green-soft text-green'
+    if (line.startsWith('-')) return 'bg-red-soft text-red'
+    return 'text-muted'
   }
 
   // Arrow-key-navigable choices for the permission prompt. "Show in diff editor"
@@ -1201,7 +1239,7 @@
     ]
     if (pendingPermission.path) {
       choices.push({
-        label: 'Show in diff editor',
+        label: 'Open file in editor',
         class: 'border border-line hover:bg-hover',
         run: showChange
       })
@@ -1351,13 +1389,17 @@
     return absPath.slice(root.length + 1)
   }
 
+  // Open a file-edit tool's target in the editor and review its uncommitted
+  // hunks with the floating accept/reject overlay.
   function openCardDiff(input: Record<string, unknown>): void {
     const path = filePath(input)
-    if (!path) return
+    const worktreeId = store.selectedWorktreeId
+    const root = store.selectedWorktree?.path
+    if (!path || !worktreeId || !root) return
     const relPath = path.startsWith('/') ? relativeToWorktree(path) : path
     if (!relPath) return
-    store.requestedDiffFile = relPath
-    layout.showCenterPane('diff')
+    const file: DiffFile = { path: relPath, changeType: 'modified', staged: false }
+    void inlineEdit.reviewWorkingTreeFile(worktreeId, file, `${root}/${relPath}`)
   }
 
   // Tool cards show a one-line summary; expand to see the full command / input.
@@ -1720,6 +1762,15 @@
           <div class="mb-2 text-xs text-default">{pendingPermission.title}</div>
           {#if pendingPermission.path}
             <div class="mb-2 truncate font-mono text-2xs text-muted">{pendingPermission.path}</div>
+          {/if}
+          {#if proposedDiffLines.length > 0}
+            <div
+              class="mb-2 max-h-56 overflow-auto rounded border border-line bg-canvas font-mono text-2xs leading-snug"
+            >
+              {#each proposedDiffLines as line, index (index)}
+                <div class="whitespace-pre px-2 {proposedDiffLineClass(line)}">{line}</div>
+              {/each}
+            </div>
           {/if}
           {#if denyReasonMode}
             <textarea

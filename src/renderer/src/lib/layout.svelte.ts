@@ -27,14 +27,13 @@ import {
   type SplitNode
 } from './layoutTree'
 
-// Sizes for panels nested INSIDE pane components (diff list, file tree rows) —
-// not part of the split tree, still persisted alongside it.
+// Sizes for panels nested INSIDE pane components (file tree rows) — not part of
+// the split tree, still persisted alongside it.
 const DEFAULT_PANEL_SIZES: Record<string, number> = {
-  tree: 224,
-  diffList: 256
+  tree: 224
 }
 
-const CENTER_TYPES = ['nvim', 'diff', 'preview', 'dashboard']
+const CENTER_TYPES = ['nvim', 'dashboard']
 
 // Center pane type shown when the last real center pane is closed, so the
 // center never collapses to nothing.

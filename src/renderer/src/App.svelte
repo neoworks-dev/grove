@@ -168,20 +168,21 @@
       event.stopPropagation()
       return
     }
-    // Shift+H / Shift+L: previous / next editor tab, but only in Vim-normal so
+    // Alt+H / Alt+L: previous / next editor tab, but only in Vim-normal so
     // insert typing is never hijacked. K and J are left to Vim (K = hover/type
     // info, J = join), so they are deliberately not mapped here.
     // The nvim editor reports its keymap context as 'editor' (shared with the
     // diff pane), so match the focused leaf's actual pane type instead.
+    // Match on event.code since Alt composes special characters on some layouts.
     if (
       layout.focusedLeaf()?.paneTypeId === 'nvim' &&
       keymap.mode === 'normal' &&
-      event.shiftKey &&
+      event.altKey &&
       !event.ctrlKey &&
-      !event.altKey &&
+      !event.shiftKey &&
       !event.metaKey
     ) {
-      const move = { H: 'prev', L: 'next' }[event.key] as 'prev' | 'next' | undefined
+      const move = { KeyH: 'prev', KeyL: 'next' }[event.code] as 'prev' | 'next' | undefined
       if (move) {
         switchTab(move)
         event.preventDefault()
@@ -244,18 +245,14 @@
   }
 </script>
 
-<div class="flex h-screen w-screen flex-col gap-2 overflow-hidden bg-canvas p-2 text-default">
+<div class="flex h-screen w-screen flex-col gap-1.5 overflow-hidden bg-canvas p-2 text-default">
   <!-- Top bar -->
   <header
-    class="flex h-9 shrink-0 items-center gap-3 rounded-xl border border-line-faint bg-surface px-3 text-sm"
+    class="flex h-6 shrink-0 items-center gap-3 rounded-xl border border-line-faint bg-surface px-3 text-sm"
   >
-    <img src={groveLogo} alt="Grove" class="h-6 w-auto" />
+    <img src={groveLogo} alt="Grove" class="h-4 w-auto" />
     <MenuBar />
-    {#if store.repo}
-      <span class="text-muted">{store.repo.name}</span>
-      <span class="text-dim">·</span>
-      <span class="font-mono text-xs text-dim">{store.repo.currentBranch}</span>
-    {:else}
+    {#if !store.repo}
       <button
         class="rounded-md border border-line bg-surface px-2 py-1 text-xs hover:bg-hover"
         onclick={pickRepo}
@@ -265,16 +262,6 @@
     {/if}
 
     <div class="ml-auto flex items-center gap-1">
-      {#each views.views as view (view.id)}
-        <button
-          class="rounded-md px-2.5 py-1 text-xs {layout.activeViewId === view.id
-            ? 'bg-surface text-default'
-            : 'text-dim hover:text-default'}"
-          onclick={() => layout.switchView(view.id)}
-        >
-          {view.label}
-        </button>
-      {/each}
       <button
         class="ml-2 rounded-md px-2 py-1 text-2xs {layout.docks.right.open
           ? 'text-default'

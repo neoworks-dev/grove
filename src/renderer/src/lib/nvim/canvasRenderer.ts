@@ -8,6 +8,13 @@ import type { GridRenderer } from './renderer'
 import { buildRuns } from './renderer'
 import { highlightAttrs, resolveColors } from './highlights'
 
+interface CellBounds {
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
 export class CanvasGridRenderer implements GridRenderer {
   private canvas: HTMLCanvasElement | null = null
   private ctx: CanvasRenderingContext2D | null = null
@@ -59,48 +66,59 @@ export class CanvasGridRenderer implements GridRenderer {
     return `${style}${weight}${this.font.sizePx * this.dpr}px ${this.font.family}`
   }
 
+  // Pixel bounds of a cell span, snapped to integer backing pixels so adjacent
+  // runs/rows tile without a gap and each rect fully contains the content drawn
+  // in it. Snapping the top with `round` (the old approach) could start the
+  // clear band below the cell's own top edge, leaving the cursor/glyph fringe
+  // for a neighbouring row to erase — a stale mark until the next full flush.
+  private cellBounds(col: number, width: number, row: number): CellBounds {
+    const { cellWidth, cellHeight } = this.metrics
+    const dpr = this.dpr
+    const left = Math.floor(col * cellWidth * dpr)
+    const right = Math.ceil((col + width) * cellWidth * dpr)
+    const top = Math.floor(row * cellHeight * dpr)
+    const bottom = Math.ceil((row + 1) * cellHeight * dpr)
+    return { left, top, width: right - left, height: bottom - top }
+  }
+
   private paintRow(state: GridState, row: number): void {
     const ctx = this.ctx
     const line = state.lines[row]
     if (!ctx || !line) return
     const { cellWidth, cellHeight, baseline } = this.metrics
     const dpr = this.dpr
-    const y = row * cellHeight * dpr
+    const baselineY = row * cellHeight * dpr + baseline * dpr
     const runs = buildRuns(line)
 
     for (const run of runs) {
       const colors = resolveColors(state, run.hlId)
+      const bounds = this.cellBounds(run.col, run.width, row)
       ctx.fillStyle = colors.bg
-      ctx.fillRect(
-        Math.round(run.col * cellWidth * dpr),
-        Math.round(y),
-        Math.ceil(run.width * cellWidth * dpr),
-        Math.ceil(cellHeight * dpr)
-      )
+      ctx.fillRect(bounds.left, bounds.top, bounds.width, bounds.height)
     }
 
     for (const run of runs) {
       if (run.text.trim() === '') continue
       const attrs = highlightAttrs(state, run.hlId)
       const colors = resolveColors(state, run.hlId)
+      const bounds = this.cellBounds(run.col, run.width, row)
       ctx.font = this.cellFont(attrs.bold === true, attrs.italic === true)
       ctx.fillStyle = colors.fg
       ctx.textBaseline = 'alphabetic'
-      const x = run.col * cellWidth * dpr
       ctx.save()
       ctx.beginPath()
-      ctx.rect(x, y, run.width * cellWidth * dpr, cellHeight * dpr)
+      ctx.rect(bounds.left, bounds.top, bounds.width, bounds.height)
       ctx.clip()
       // Draw per cell so glyph advance never drifts from the grid.
       let col = run.col
       for (const char of run.text) {
         if (char !== ' ' && char !== '') {
-          ctx.fillText(char, col * cellWidth * dpr, y + baseline * dpr)
+          ctx.fillText(char, col * cellWidth * dpr, baselineY)
         }
         col += char === '' ? 0 : 1
       }
       ctx.restore()
-      this.paintDecorations(run.col, run.width, y, attrs, colors.sp, colors.fg)
+      this.paintDecorations(run.col, run.width, row * cellHeight * dpr, attrs, colors.sp, colors.fg)
     }
   }
 
@@ -162,31 +180,36 @@ export class CanvasGridRenderer implements GridRenderer {
     const pct = (mode?.cellPercentage ?? 100) / 100
     const { cellWidth, cellHeight, baseline } = this.metrics
     const dpr = this.dpr
-    const x = col * cellWidth * dpr
-    const y = row * cellHeight * dpr
+    const bounds = this.cellBounds(col, 1, row)
+    const baselineY = row * cellHeight * dpr + baseline * dpr
     const cell = line[col]
     const cellColors = resolveColors(state, cell.hlId)
 
     if (shape === 'vertical') {
       ctx.fillStyle = cellColors.fg
-      ctx.fillRect(x, y, Math.max(1, cellWidth * pct * dpr), cellHeight * dpr)
+      ctx.fillRect(bounds.left, bounds.top, Math.max(1, cellWidth * pct * dpr), bounds.height)
       return
     }
     if (shape === 'horizontal') {
       ctx.fillStyle = cellColors.fg
       const barHeight = Math.max(1, cellHeight * pct * dpr)
-      ctx.fillRect(x, y + cellHeight * dpr - barHeight, cellWidth * dpr, barHeight)
+      ctx.fillRect(bounds.left, bounds.top + bounds.height - barHeight, bounds.width, barHeight)
       return
     }
     // Block: reverse video over the cell.
     ctx.fillStyle = cellColors.fg
-    ctx.fillRect(x, y, cellWidth * dpr, cellHeight * dpr)
+    ctx.fillRect(bounds.left, bounds.top, bounds.width, bounds.height)
     if (cell.text.trim() !== '') {
       const attrs = highlightAttrs(state, cell.hlId)
       ctx.font = this.cellFont(attrs.bold === true, attrs.italic === true)
       ctx.fillStyle = cellColors.bg
       ctx.textBaseline = 'alphabetic'
-      ctx.fillText(cell.text, x, y + baseline * dpr)
+      ctx.save()
+      ctx.beginPath()
+      ctx.rect(bounds.left, bounds.top, bounds.width, bounds.height)
+      ctx.clip()
+      ctx.fillText(cell.text, col * cellWidth * dpr, baselineY)
+      ctx.restore()
     }
   }
 }

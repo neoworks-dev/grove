@@ -338,8 +338,14 @@ class LayoutStore {
       this.openDock(side, paneTypeId)
       return
     }
-    const slot = panes.get(paneTypeId)?.slot
-    const slotMate = slot ? this.slotLeaf(slot) : null
+    // Aux panes that declare an orientation split the current pane rather than
+    // replacing it, so the editor stays open beside/below them.
+    const definition = panes.get(paneTypeId)
+    if (definition?.preferredOrientation) {
+      this.splitFocused(definition.preferredOrientation, paneTypeId)
+      return
+    }
+    const slotMate = definition?.slot ? this.slotLeaf(definition.slot) : null
     if (slotMate) {
       this.setActiveTree(replaceLeafType(this.tree, slotMate.id, paneTypeId))
       this.focusLeafSoon(slotMate.id)

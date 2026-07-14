@@ -731,8 +731,10 @@
 /* Sticky newest-user-message band: green-soft is translucent, so layer it over
    the base background to stay opaque while transcript content scrolls under. */
 .agent-sticky-user {
+  /* Orange bubble, layered over the base bg so it stays opaque while the sticky
+     message scrolls over the transcript below it. */
   background:
-    linear-gradient(var(--ctx-green-soft), var(--ctx-green-soft)),
+    linear-gradient(var(--ctx-amber-soft), var(--ctx-amber-soft)),
     var(--bg);
 }
 

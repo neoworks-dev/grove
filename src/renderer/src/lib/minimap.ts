@@ -12,7 +12,7 @@ export interface LineRun {
 }
 
 export const LINE_PITCH = 3
-export const GLYPH_HEIGHT = 2
+export const GLYPH_HEIGHT = 1
 export const COL_WIDTH = 0.6
 export const MAX_COLS = 120
 

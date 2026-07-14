@@ -13,6 +13,8 @@ import type {
   DiffFile,
   DiffSides,
   DiffHunks,
+  DiffStats,
+  CheckpointMeta,
   InlineHunk,
   AppliedRange,
   OpenPrOptions,
@@ -95,6 +97,7 @@ export interface WorkbenchApi {
     changedFiles: (worktreeId: string) => Promise<DiffFile[]>
     diffSides: (worktreeId: string, file: DiffFile) => Promise<DiffSides>
     diffHunks: (worktreeId: string, file: DiffFile) => Promise<DiffHunks>
+    diffStats: (worktreeId: string) => Promise<DiffStats>
     beginInlineReview: (
       worktreeId: string,
       relPath: string,
@@ -117,6 +120,14 @@ export interface WorkbenchApi {
   github: {
     openPr: (worktreeId: string, options: OpenPrOptions) => Promise<string>
     mergePr: (worktreeId: string, options: MergePrOptions) => Promise<string>
+  }
+  checkpoints: {
+    list: (worktreeId: string) => Promise<CheckpointMeta[]>
+    snapshot: (worktreeId: string, note?: string) => Promise<CheckpointMeta | null>
+    restore: (
+      worktreeId: string,
+      commit: string
+    ) => Promise<{ restoredTree: string; preRestore: CheckpointMeta | null }>
   }
   config: {
     load: () => Promise<WorkbenchConfig>

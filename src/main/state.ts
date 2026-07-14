@@ -9,6 +9,7 @@ import type {
   InstalledExtension,
   AgentChats,
   AgentSlashCommand,
+  CheckpointMeta,
   DockLayoutState
 } from '../shared/types'
 
@@ -25,6 +26,9 @@ export interface RepoState {
   // Last-known provider-discovered slash commands, so the menu is populated
   // before the first run of a session.
   agentCommands: Record<string, AgentSlashCommand[]>
+  // Local-only working-tree checkpoints, keyed by worktreeId (== worktree path).
+  // The git objects live under refs/workbench/** in the repo; this is metadata.
+  checkpoints: Record<string, CheckpointMeta[]>
   // Hashes of project-scope shell/ai keybind actions the user has approved
   // (project settings are repo-supplied — running them needs consent).
   trustedActionHashes: string[]
@@ -91,6 +95,7 @@ export function emptyRepoState(): RepoState {
     agentSessions: {},
     agentChats: {},
     agentCommands: {},
+    checkpoints: {},
     trustedActionHashes: [],
     viewLayouts: {},
     activeLayoutView: null,

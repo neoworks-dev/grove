@@ -3,10 +3,12 @@
   import { diffStatLabel } from '../lib/worktreeStatus'
   import CreateWorktreeDialog from './CreateWorktreeDialog.svelte'
   import MergeWorktreeDialog from './MergeWorktreeDialog.svelte'
+  import CheckpointsDialog from './CheckpointsDialog.svelte'
   import type { Worktree, ServiceRuntime, AgentRuntime } from '../../../shared/types'
 
   let showDialog = $state(false)
   let mergeSource = $state<Worktree | null>(null)
+  let checkpointsFor = $state<Worktree | null>(null)
 
   function serviceSummary(worktreeId: string): { running: number; total: number } {
     const list: ServiceRuntime[] = store.services[worktreeId] || []
@@ -104,6 +106,16 @@
             <span class="h-2 w-2 rounded-full bg-violet" title="agent running"></span>
           {/if}
           <button
+            class="hidden text-dim hover:text-default group-hover:block"
+            title="Checkpoints"
+            onclick={(event) => {
+              event.stopPropagation()
+              checkpointsFor = worktree
+            }}
+          >
+            ⟲
+          </button>
+          <button
             class="hidden text-dim hover:text-violet group-hover:block"
             title="Merge this worktree into another"
             onclick={(event) => {
@@ -140,5 +152,12 @@
   <MergeWorktreeDialog
     source={{ id: mergeSource.id, name: mergeSource.name, branch: mergeSource.branch }}
     onClose={() => (mergeSource = null)}
+  />
+{/if}
+
+{#if checkpointsFor}
+  <CheckpointsDialog
+    worktree={{ id: checkpointsFor.id, name: checkpointsFor.name }}
+    onClose={() => (checkpointsFor = null)}
   />
 {/if}

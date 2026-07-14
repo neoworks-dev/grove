@@ -4,9 +4,10 @@
   import { store } from '../lib/store.svelte'
   import { keymap, pane } from '../lib/keymap.svelte'
   import { fileIcon, folderIcon } from '../lib/icons'
+  import { diagnostics, SEVERITY } from '../lib/diagnostics.svelte'
   import ContextMenu, { type MenuItem } from './ContextMenu.svelte'
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
-  import type { FileNode } from '../../../shared/types'
+  import type { FileNode, DiffFile } from '../../../shared/types'
 
   let {
     worktreeId,
@@ -128,6 +129,76 @@
     store.iconPack
     return node.isDir ? folderIcon(node.name, !!expanded[node.relPath]) : fileIcon(node.name)
   }
+
+  // ── Git change status (vs HEAD) per worktree-relative path ─────
+  const changeBadge: Record<string, string> = {
+    added: 'text-green',
+    modified: 'text-amber',
+    deleted: 'text-red',
+    renamed: 'text-blue',
+    untracked: 'text-violet'
+  }
+  let changedByPath = $state<Record<string, string>>({})
+  $effect(() => {
+    const id = worktreeId
+    store.fsVersion[id]
+    void (async () => {
+      try {
+        const files: DiffFile[] = await window.workbench.git.changedFiles(id)
+        const map: Record<string, string> = {}
+        // Unstaged/staged duplicates collapse to a single mark per path.
+        for (const file of files) map[file.path] = file.changeType
+        changedByPath = map
+      } catch {
+        changedByPath = {}
+      }
+    })()
+  })
+
+  // For each changed file, the deepest ancestor folder currently VISIBLE in the
+  // tree (its whole ancestor chain expanded). Collapsing a folder moves the tint
+  // up to it, so the change stays findable without every ancestor lighting up.
+  const changedDirs = $derived.by(() => {
+    const dirs = new Set<string>()
+    for (const rel of Object.keys(changedByPath)) {
+      const parts = rel.split('/')
+      let ancestorsExpanded = true
+      let deepestVisible: string | null = null
+      let acc = ''
+      for (let depth = 0; depth < parts.length - 1; depth++) {
+        acc = acc ? `${acc}/${parts[depth]}` : parts[depth]
+        if (ancestorsExpanded) deepestVisible = acc
+        if (!expanded[acc]) ancestorsExpanded = false
+      }
+      if (deepestVisible) dirs.add(deepestVisible)
+    }
+    return dirs
+  })
+
+  // Color for a row's name: changed files by change type, folders that directly
+  // contain a change get a single "modified" tint.
+  function nameColor(node: FileNode): string {
+    if (!node.isDir) {
+      const change = changedByPath[node.relPath]
+      return change ? changeBadge[change] : ''
+    }
+    return changedDirs.has(node.relPath) ? 'text-amber' : ''
+  }
+
+  // ── Diagnostic counts per absolute file path ───────────────────
+  const diagByPath = $derived.by(() => {
+    const map = new Map<string, { errors: number; warnings: number }>()
+    for (const diagnostic of diagnostics.all) {
+      let entry = map.get(diagnostic.path)
+      if (!entry) {
+        entry = { errors: 0, warnings: 0 }
+        map.set(diagnostic.path, entry)
+      }
+      if (diagnostic.severity === SEVERITY.ERROR) entry.errors += 1
+      else if (diagnostic.severity === SEVERITY.WARN) entry.warnings += 1
+    }
+    return map
+  })
 
   function parentOf(rel: string): string {
     return rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : ''
@@ -315,7 +386,7 @@
 
     {#each rows as row, index (row.node.relPath)}
         <div
-          class="flex w-full items-center gap-1 px-2 py-[3px] text-left text-xs {index === selectedIndex
+          class="flex w-full cursor-pointer select-none items-center gap-1 px-2 py-[3px] text-left text-xs {index === selectedIndex
             ? 'bg-hover text-default'
             : store.activeTabPath === row.node.path
               ? 'text-default'
@@ -348,7 +419,19 @@
               onblur={() => (editing = null)}
             />
           {:else}
-            <span class="truncate">{row.node.name}</span>
+            {@const change = changedByPath[row.node.relPath]}
+            {@const diag = row.node.isDir ? undefined : diagByPath.get(row.node.path)}
+            <span class="min-w-0 flex-1 truncate {nameColor(row.node)}">{row.node.name}</span>
+            {#if diag && diag.errors > 0}
+              <span class="shrink-0 font-mono text-2xs text-red">{diag.errors}</span>
+            {:else if diag && diag.warnings > 0}
+              <span class="shrink-0 font-mono text-2xs text-amber">{diag.warnings}</span>
+            {/if}
+            {#if change && !row.node.isDir}
+              <span class="shrink-0 font-mono text-2xs {changeBadge[change]}"
+                >{change[0].toUpperCase()}</span
+              >
+            {/if}
           {/if}
         </div>
       {/each}

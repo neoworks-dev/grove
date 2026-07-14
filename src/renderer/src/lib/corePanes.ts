@@ -7,18 +7,20 @@ import GitBranch from 'phosphor-svelte/lib/GitBranch'
 import GitDiff from 'phosphor-svelte/lib/GitDiff'
 import PuzzlePiece from 'phosphor-svelte/lib/PuzzlePiece'
 import Warning from 'phosphor-svelte/lib/Warning'
+import Eye from 'phosphor-svelte/lib/Eye'
 import TerminalWindow from 'phosphor-svelte/lib/TerminalWindow'
 import Robot from 'phosphor-svelte/lib/Robot'
 import FilesView from '../components/FilesView.svelte'
 import WorktreeSidebar from '../components/WorktreeSidebar.svelte'
 import GitChangesView from '../components/GitChangesView.svelte'
 import DiagnosticsPane from '../components/DiagnosticsPane.svelte'
+import MarkdownPreviewPane from '../components/MarkdownPreviewPane.svelte'
 import ExtensionsView from '../components/ExtensionsView.svelte'
 import AgentsOverview from '../components/AgentsOverview.svelte'
 import NvimPane from '../components/NvimPane.svelte'
 import Dashboard from '../components/Dashboard.svelte'
 import EmptyCenter from '../components/EmptyCenter.svelte'
-import AgentPane from '../components/AgentPane.svelte'
+import AgentPane from '../components/agent/AgentPane.svelte'
 import LogsPane from '../components/LogsPane.svelte'
 import TerminalPane from '../components/TerminalPane.svelte'
 import PreferencesPane from '../components/PreferencesPane.svelte'
@@ -82,10 +84,20 @@ export function registerCorePanes(): void {
     title: 'Diagnostics',
     icon: Warning,
     component: DiagnosticsPane,
-    rail: { order: 6 },
-    slot: SIDEBAR_SLOT,
-    containerClass: 'bg-elevated',
-    minWidth: 200,
+    slot: CENTER_SLOT,
+    preferredOrientation: 'column',
+    minWidth: 320,
+    minHeight: 100,
+    when: repoOpen
+  })
+  panes.register({
+    id: 'markdown',
+    title: 'Markdown Preview',
+    icon: Eye,
+    component: MarkdownPreviewPane,
+    slot: CENTER_SLOT,
+    preferredOrientation: 'row',
+    minWidth: 320,
     when: repoOpen
   })
   panes.register({

@@ -27,6 +27,10 @@ export interface PaneType {
   // Types sharing a slot replace each other in the tree instead of opening a
   // second window (e.g. the sidebar family, or the editor/diff/preview group).
   slot?: string
+  // When set, revealing this pane (ensurePane) splits the focused leaf in this
+  // orientation instead of replacing the slot occupant — 'row' spawns it to the
+  // side, 'column' below. Used by aux center panes (diagnostics, markdown).
+  preferredOrientation?: 'row' | 'column'
   // Extra classes on the leaf container (e.g. 'bg-elevated' for chrome panes).
   containerClass?: string
   // Keymap context this pane reports, when it differs from `id`. Lets several

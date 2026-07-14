@@ -89,7 +89,12 @@ export function buildGroveApi(rpc: RpcEndpoint, pluginId: string): GroveApi {
   })
 
   // ── The API object ────────────────────────────────────────────
-  function registerAndTrack<T>(map: Map<string, T>, key: string, value: T, method: string): Disposable {
+  function registerAndTrack<T>(
+    map: Map<string, T>,
+    key: string,
+    value: T,
+    method: string
+  ): Disposable {
     map.set(key, value)
     void rpc.request(method, { id: key })
     return toDisposable(() => {
@@ -118,7 +123,9 @@ export function buildGroveApi(rpc: RpcEndpoint, pluginId: string): GroveApi {
     keybindings: {
       register(binding) {
         void rpc.request('host.registerKeybinding', binding)
-        return toDisposable(() => void rpc.request('host.registerKeybinding:dispose', { id: binding.id }))
+        return toDisposable(
+          () => void rpc.request('host.registerKeybinding:dispose', { id: binding.id })
+        )
       }
     },
 
@@ -142,7 +149,9 @@ export function buildGroveApi(rpc: RpcEndpoint, pluginId: string): GroveApi {
       statusBar: {
         addItem(item) {
           void rpc.request('host.addStatusBarItem', item)
-          return toDisposable(() => void rpc.request('host.addStatusBarItem:dispose', { id: item.id }))
+          return toDisposable(
+            () => void rpc.request('host.addStatusBarItem:dispose', { id: item.id })
+          )
         },
         update(id, patch) {
           void rpc.request('host.updateStatusBarItem', { id, patch })
@@ -151,7 +160,9 @@ export function buildGroveApi(rpc: RpcEndpoint, pluginId: string): GroveApi {
       sidebar: {
         addItem(item) {
           void rpc.request('host.addSidebarItem', item)
-          return toDisposable(() => void rpc.request('host.addSidebarItem:dispose', { id: item.id }))
+          return toDisposable(
+            () => void rpc.request('host.addSidebarItem:dispose', { id: item.id })
+          )
         }
       },
       menu: {
@@ -186,21 +197,31 @@ export function buildGroveApi(rpc: RpcEndpoint, pluginId: string): GroveApi {
 
     workspace: {
       getCurrentWorktree: () =>
-        rpc.request('host.getCurrentWorktree', {}) as ReturnType<GroveApi['workspace']['getCurrentWorktree']>,
+        rpc.request('host.getCurrentWorktree', {}) as ReturnType<
+          GroveApi['workspace']['getCurrentWorktree']
+        >,
       findFiles: (options) =>
         rpc.request('main.workspace.findFiles', options ?? {}) as Promise<string[]>,
       searchText(query, options) {
-        return streamIterable(rpc, 'main.workspace.searchText', {
-          query,
-          worktreeId: options?.worktreeId
-        }, options?.token)
+        return streamIterable(
+          rpc,
+          'main.workspace.searchText',
+          {
+            query,
+            worktreeId: options?.worktreeId
+          },
+          options?.token
+        )
       },
       readFile: (path, options) =>
         rpc.request('main.workspace.readFile', { path, ...options }) as Promise<string>,
       readExcerpt: (path, startLine, endLine, options) =>
-        rpc.request('main.workspace.readExcerpt', { path, startLine, endLine, ...options }) as Promise<
-          { n: number; text: string }[]
-        >,
+        rpc.request('main.workspace.readExcerpt', {
+          path,
+          startLine,
+          endLine,
+          ...options
+        }) as Promise<{ n: number; text: string }[]>,
       writeFile: (path, content, options) =>
         rpc.request('main.workspace.writeFile', { path, content, ...options }) as Promise<void>,
       openFile: (path, options) =>
@@ -209,11 +230,15 @@ export function buildGroveApi(rpc: RpcEndpoint, pluginId: string): GroveApi {
 
     ai: {
       prompt(request, token) {
-        return streamIterable(rpc, 'main.ai.prompt', request, token) as ReturnType<GroveApi['ai']['prompt']>
+        return streamIterable(rpc, 'main.ai.prompt', request, token) as ReturnType<
+          GroveApi['ai']['prompt']
+        >
       },
       registerSkill(skill) {
         void rpc.request('host.registerSkill', skill)
-        return toDisposable(() => void rpc.request('host.registerSkill:dispose', { id: skill.name }))
+        return toDisposable(
+          () => void rpc.request('host.registerSkill:dispose', { id: skill.name })
+        )
       },
       registerMcpServer(server) {
         for (const tool of server.tools) mcpTools.set(tool.name, tool)
@@ -237,7 +262,11 @@ export function buildGroveApi(rpc: RpcEndpoint, pluginId: string): GroveApi {
       get: <T>(key: string) =>
         rpc.request('host.getSetting', { key: `${pluginId}.${key}` }) as Promise<T | undefined>,
       set: (key, value, scope) =>
-        rpc.request('host.setSetting', { key: `${pluginId}.${key}`, value, scope }) as Promise<void>,
+        rpc.request('host.setSetting', {
+          key: `${pluginId}.${key}`,
+          value,
+          scope
+        }) as Promise<void>,
       onChange(key, callback) {
         const fullKey = `${pluginId}.${key}`
         const set = settingsSubscribers.get(fullKey) ?? new Set()

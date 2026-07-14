@@ -19,9 +19,15 @@ vim.opt.laststatus = 0
 vim.opt.showtabline = 0
 vim.opt.cmdheight = 1
 vim.opt.undofile = true
-vim.opt.swapfile = true
+-- No swapfiles: every grove pane is its own embedded nvim, so two panes editing
+-- the same file would collide on a swapfile and trigger a blocking E325 ATTENTION
+-- prompt on attach (which aborts the session). Grove owns buffer persistence.
+vim.opt.swapfile = false
 vim.opt.mouse = 'a'
-vim.opt.shortmess:append('I')
+-- Keep 4 context lines visible above/below the cursor when scrolling.
+vim.opt.scrolloff = 4
+-- Also suppress the swap/attention message class outright as a belt-and-suspenders.
+vim.opt.shortmess:append('IA')
 vim.opt.fillchars = { eob = ' ' }
 
 -- Plugin manager bootstrap. lazy.nvim clones itself and the declared plugins
@@ -51,25 +57,44 @@ if (vim.uv or vim.loop).fs_stat(lazyPath) then
         }
       },
 
-      -- Treesitter syntax + indentation. Parsers compile into the writable
-      -- lazy dir on first use; auto_install pulls any missing language.
+      -- Treesitter syntax highlighting. The `main` branch is the rewrite for
+      -- nvim 0.11+ (our runtime is 0.12); the legacy `master` branch crashes on
+      -- 0.12 (query-predicate handlers pass nil nodes → "call method 'range'").
+      -- The main branch dropped the configs/ensure_installed API: install parsers
+      -- explicitly and start the native highlighter per-buffer.
       {
         'nvim-treesitter/nvim-treesitter',
-        branch = 'master',
-        build = ':TSUpdate',
-        opts = {
-          ensure_installed = {
+        branch = 'main',
+        config = function()
+          local ok, ts = pcall(require, 'nvim-treesitter')
+          local parsers = {
             'typescript', 'tsx', 'javascript', 'json', 'jsonc',
-            'html', 'css', 'lua', 'vim', 'vimdoc', 'markdown'
-          },
-          auto_install = true,
-          highlight = { enable = true },
-          indent = { enable = true }
-        },
-        config = function(_, opts)
-          require('nvim-treesitter.configs').setup(opts)
+            'html', 'css', 'lua', 'vim', 'vimdoc', 'markdown', 'markdown_inline'
+          }
+          -- The main branch compiles parsers with the `tree-sitter` CLI (installed
+          -- via mason below). Skip when it's absent so init never errors; the CLI
+          -- lands async on first launch, so also retry when mason signals done.
+          local function try_install()
+            if ok and type(ts.install) == 'function' and vim.fn.executable('tree-sitter') == 1 then
+              pcall(ts.install, parsers)
+            end
+          end
+          try_install()
+          vim.api.nvim_create_autocmd('User', {
+            pattern = 'MasonToolsUpdateCompleted',
+            callback = try_install
+          })
+          vim.api.nvim_create_autocmd('FileType', {
+            callback = function(args)
+              pcall(vim.treesitter.start, args.buf)
+            end
+          })
         end
       },
+
+      -- Git gutter signs (added/changed/removed) in the sign column. Rendered
+      -- in-grid; hunk staging/preview available as keymaps.
+      { 'lewis6991/gitsigns.nvim', opts = {} },
 
       -- Completion engine. blink.cmp ships a prebuilt fuzzy-matcher binary via
       -- its release tag and falls back to a Lua matcher when the download is
@@ -133,7 +158,8 @@ if (vim.uv or vim.loop).fs_stat(lazyPath) then
         'WhoIsSethDaniel/mason-tool-installer.nvim',
         dependencies = { 'williamboman/mason.nvim' },
         opts = {
-          ensure_installed = { 'prettierd', 'eslint_d', 'stylua' }
+          -- tree-sitter-cli: required by nvim-treesitter (main) to build parsers.
+          ensure_installed = { 'prettierd', 'eslint_d', 'stylua', 'tree-sitter-cli' }
         }
       },
       {

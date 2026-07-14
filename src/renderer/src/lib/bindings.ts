@@ -9,6 +9,8 @@ import { commands } from './commands.svelte'
 import { layout } from './layout.svelte'
 import { bufferMenu } from './buffermenu.svelte'
 import { inlineEdit } from './inlineEdit.svelte'
+import { symbolsOutline } from './symbolsOutline.svelte'
+import { undoTree } from './undotree.svelte'
 import { dialogs } from './dialogs.svelte'
 import type { ReviewMode } from './inlineEditRef'
 
@@ -129,6 +131,30 @@ export function registerCoreBindings(): void {
       group: 'Help',
       description: 'Show all keybindings',
       run: () => keymap.toggleCheatsheet()
+    },
+    {
+      id: 'leader.diagnostics',
+      keys: '<Leader> d',
+      context: 'global',
+      group: 'Code',
+      description: 'Open diagnostics',
+      run: () => layout.ensurePane('diagnostics')
+    },
+    {
+      id: 'leader.symbols',
+      keys: '<Leader> s',
+      context: 'editor',
+      group: 'Code',
+      description: 'Symbol outline',
+      run: () => symbolsOutline.toggle()
+    },
+    {
+      id: 'leader.undotree',
+      keys: '<Leader> u',
+      context: 'editor',
+      group: 'Code',
+      description: 'Undo history',
+      run: () => undoTree.toggle()
     },
     {
       id: 'terminal.toggle',
@@ -335,6 +361,34 @@ export function registerCoreBindings(): void {
       group: 'Editor',
       keywords: 'neovim nvim vim editor embedded',
       run: () => layout.showCenterPane('nvim')
+    },
+    {
+      id: 'diagnostics.open',
+      title: 'Code: Open Diagnostics',
+      group: 'Code',
+      keywords: 'diagnostics errors warnings lsp lint problems trouble',
+      run: () => layout.ensurePane('diagnostics')
+    },
+    {
+      id: 'symbols.open',
+      title: 'Code: Symbol Outline',
+      group: 'Code',
+      keywords: 'symbols outline aerial functions classes methods navigate',
+      run: () => symbolsOutline.toggle()
+    },
+    {
+      id: 'undotree.open',
+      title: 'Code: Undo History',
+      group: 'Code',
+      keywords: 'undo history undotree redo states time travel',
+      run: () => undoTree.toggle()
+    },
+    {
+      id: 'markdown.preview',
+      title: 'Markdown: Preview',
+      group: 'Editor',
+      keywords: 'markdown preview render md html readme',
+      run: () => layout.showCenterPane('markdown')
     },
     {
       id: 'editor.inlineEdit',

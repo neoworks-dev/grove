@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { settings } from '../lib/settings.svelte'
-  import { agentPrompt } from '../lib/agentPrompt.svelte'
-  import { layout } from '../lib/layout.svelte'
+  import { settings } from '../../lib/settings.svelte'
+  import { agentPrompt } from '../../lib/agentPrompt.svelte'
   import {
     store,
     refreshRuntimes,
     openFileInEditor,
+    openFileAtLine,
     respondPermission,
     respondDialog,
     seedAgentTranscript,
@@ -14,16 +14,28 @@
     renameChat,
     resumeChat,
     compactChat
-  } from '../lib/store.svelte'
-  import { parseQuestions, buildAnswerResult } from '../lib/agentDialog'
-  import { inlineEdit } from '../lib/inlineEdit.svelte'
-  import WaveSpinner from './WaveSpinner.svelte'
+  } from '../../lib/store.svelte'
+  import { parseQuestions } from '../../lib/agentDialog'
+  import { inlineEdit } from '../../lib/inlineEdit.svelte'
   import { onMount, onDestroy } from 'svelte'
-  import { keymap } from '../lib/keymap.svelte'
-  import type { LogLine } from '../lib/store.svelte'
-  import type { AgentRuntime, AgentConfig, ChatMeta, DiffFile } from '../../../shared/types'
-  import { parseAgentLines, parseAgentMeta, toolSummary, type OutputItem } from '../lib/agentStream'
-  import { renderMarkdown } from '../lib/markdown'
+  import { keymap } from '../../lib/keymap.svelte'
+  import type { LogLine } from '../../lib/store.svelte'
+  import type { AgentRuntime, AgentConfig, ChatMeta, DiffFile } from '../../../../shared/types'
+  import {
+    parseAgentLines,
+    parseAgentMeta,
+    toolSummary,
+    type OutputItem
+  } from '../../lib/agentStream'
+  import { buildSubagents } from '../../lib/agent/subagents'
+  import { buildTaskList, taskResultKeys } from '../../lib/agent/tasks'
+  import AgentTranscript from './AgentTranscript.svelte'
+  import AgentQuestionDialog from './AgentQuestionDialog.svelte'
+  import AgentPermissionPrompt from './AgentPermissionPrompt.svelte'
+  import AgentTaskList from './AgentTaskList.svelte'
+  import AgentSubagentList from './AgentSubagentList.svelte'
+  import AgentWorkingBar from './AgentWorkingBar.svelte'
+  import AgentQueue from './AgentQueue.svelte'
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
 
   let prompt = $state('')
@@ -811,97 +823,12 @@
   const items = $derived(parseAgentLines(rawLines))
   const meta = $derived(parseAgentMeta(rawLines))
 
-  // ── Subagents (Task tool spawns) ───────────────────────────────
-  // Derived from the main stream: each Task tool call is a subagent, running
-  // until its tool-result arrives.
-  interface Subagent {
-    key: string
-    type: string
-    description: string
-    running: boolean
-  }
-  const subagents = $derived.by<Subagent[]>(() => {
-    const resultKeys = new Set(
-      items.filter((item) => item.kind === 'tool-result').map((item) => item.key)
-    )
-    const list: Subagent[] = []
-    for (const item of items) {
-      // Modern SDK names the subagent tool `Agent`; older builds used `Task`.
-      if (item.kind !== 'tool' || (item.tool !== 'Agent' && item.tool !== 'Task')) continue
-      const input = item.input
-      list.push({
-        key: item.key,
-        type: String(input.subagent_type || 'agent'),
-        description: String(input.description || input.prompt || ''),
-        running: !resultKeys.has(`result:${item.key}`)
-      })
-    }
-    return list
-  })
-
-  // ── Task list (TaskCreate/TaskUpdate folded into a live checklist) ──
-  const TASK_TOOLS = new Set(['TaskCreate', 'TaskUpdate'])
-
-  interface TaskItem {
-    id: string
-    subject: string
-    status: string
-    activeForm: string
-  }
-
-  // The assigned task id lives in the TaskCreate result text ("Task #3
-  // created…"); fall back to creation order if the format changes.
-  function taskIdFromResult(text: string | undefined): string | null {
-    const match = text?.match(/#(\d+)/)
-    if (match) return match[1]
-    return null
-  }
-
-  const taskList = $derived.by<TaskItem[]>(() => {
-    const resultsByKey = new Map(
-      items
-        .filter((item) => item.kind === 'tool-result')
-        .map((item) => [item.key, item.text] as const)
-    )
-    const tasks: TaskItem[] = []
-    const tasksById = new Map<string, TaskItem>()
-    for (const item of items) {
-      if (item.kind !== 'tool' || !TASK_TOOLS.has(item.tool)) continue
-      if (item.tool === 'TaskCreate') {
-        const fallbackId = String(tasks.length + 1)
-        const id = taskIdFromResult(resultsByKey.get(`result:${item.key}`)) || fallbackId
-        const task: TaskItem = {
-          id,
-          subject: String(item.input.subject || ''),
-          status: 'pending',
-          activeForm: String(item.input.activeForm || '')
-        }
-        tasks.push(task)
-        tasksById.set(id, task)
-        continue
-      }
-      const task = tasksById.get(String(item.input.taskId || ''))
-      if (!task) continue
-      if (typeof item.input.status === 'string') task.status = item.input.status
-      if (typeof item.input.subject === 'string') task.subject = item.input.subject
-      if (typeof item.input.activeForm === 'string') task.activeForm = item.input.activeForm
-    }
-    return tasks.filter((task) => task.status !== 'deleted')
-  })
+  // ── Subagents + task list (derived from the main stream) ───────
+  const subagents = $derived(buildSubagents(items))
+  const taskList = $derived(buildTaskList(items))
   let tasksOpen = $state(true)
-  const tasksDone = $derived(taskList.filter((task) => task.status === 'completed').length)
-  const activeTaskLabel = $derived(
-    taskList.find((task) => task.status === 'in_progress')?.activeForm || ''
-  )
-
   // Task tool-results are folded into the checklist; hide their raw rows.
-  const taskResultKeys = $derived.by(() => {
-    const keys = new Set<string>()
-    for (const item of items) {
-      if (item.kind === 'tool' && TASK_TOOLS.has(item.tool)) keys.add(`result:${item.key}`)
-    }
-    return keys
-  })
+  const taskResultKeySet = $derived(taskResultKeys(items))
 
   let agentNavActive = $state(false)
   // Row in the agents list: 0 is the main chat, 1..n are the subagents.
@@ -932,11 +859,8 @@
     // as the new top of the conversation (like Claude Code's compact view).
     const lastCompact = items.findLastIndex((item) => item.kind === 'compact')
     const base = lastCompact > 0 ? items.slice(lastCompact) : items
-    return base.filter(
-      (item) => !(item.kind === 'tool-result' && taskResultKeys.has(item.key))
-    )
+    return base.filter((item) => !(item.kind === 'tool-result' && taskResultKeySet.has(item.key)))
   })
-
 
   // ── Transcript auto-scroll ─────────────────────────────────────
   // Follow new output as it streams in, but yield to the user the moment they
@@ -1156,14 +1080,9 @@
         request.worktreeId === store.selectedWorktreeId && request.agent === selectedAgent
     ) || null
   )
-  let denyReasonMode = $state(false)
-  let denyReason = $state('')
-
   function approve(remember: boolean): void {
     if (!pendingPermission) return
     void respondPermission(pendingPermission.id, { behavior: 'allow', remember })
-    denyReasonMode = false
-    denyReason = ''
   }
   function deny(message: string): void {
     if (!pendingPermission) return
@@ -1171,8 +1090,6 @@
       behavior: 'deny',
       message: message.trim() || 'Denied by user'
     })
-    denyReasonMode = false
-    denyReason = ''
   }
   function showChange(): void {
     // The proposed change is rendered inline below; this opens the file on disk
@@ -1213,87 +1130,6 @@
     })
   })
 
-  function proposedDiffLineClass(line: string): string {
-    if (line.startsWith('@@')) return 'text-dim'
-    if (line.startsWith('+')) return 'bg-green-soft text-green'
-    if (line.startsWith('-')) return 'bg-red-soft text-red'
-    return 'text-muted'
-  }
-
-  // Arrow-key-navigable choices for the permission prompt. "Show in diff editor"
-  // only appears when the request carries a file path.
-  interface PermissionChoice {
-    label: string
-    class: string
-    run: () => void
-  }
-  const permissionChoices = $derived.by<PermissionChoice[]>(() => {
-    if (!pendingPermission) return []
-    const choices: PermissionChoice[] = [
-      { label: 'Yes', class: 'bg-green text-action-fg', run: () => approve(false) },
-      {
-        label: "Yes, don't ask again for this",
-        class: 'bg-violet text-action-fg',
-        run: () => approve(true)
-      }
-    ]
-    if (pendingPermission.path) {
-      choices.push({
-        label: 'Open file in editor',
-        class: 'border border-line hover:bg-hover',
-        run: showChange
-      })
-    }
-    choices.push({
-      label: 'No',
-      class: 'border border-line text-red hover:bg-hover',
-      run: () => deny('')
-    })
-    choices.push({
-      label: 'No, with reason…',
-      class: 'border border-line text-dim hover:bg-hover',
-      run: () => (denyReasonMode = true)
-    })
-    return choices
-  })
-
-  let permissionIndex = $state(0)
-  let permissionEl = $state<HTMLDivElement>()
-
-  // Reset the highlight for each new request.
-  $effect(() => {
-    pendingPermission?.id
-    permissionIndex = 0
-  })
-
-  // Focus the prompt so arrow keys and Enter reach it (nothing else is focused
-  // while the prompt replaces the input).
-  $effect(() => {
-    if (pendingPermission && !denyReasonMode) {
-      queueMicrotask(() => permissionEl?.focus())
-    }
-  })
-
-  function onPermissionKey(event: KeyboardEvent): void {
-    if (denyReasonMode) return
-    const count = permissionChoices.length
-    if (count === 0) return
-    if (event.key === 'ArrowDown') {
-      event.preventDefault()
-      permissionIndex = (permissionIndex + 1) % count
-      return
-    }
-    if (event.key === 'ArrowUp') {
-      event.preventDefault()
-      permissionIndex = (permissionIndex - 1 + count) % count
-      return
-    }
-    if (event.key === 'Enter') {
-      event.preventDefault()
-      permissionChoices[permissionIndex].run()
-    }
-  }
-
   // ── Agent question dialog ──────────────────────────────────────
   const pendingDialog = $derived(
     store.pendingDialogs.find(
@@ -1302,61 +1138,10 @@
     ) || null
   )
   const dialogQuestions = $derived(pendingDialog ? parseQuestions(pendingDialog.payload) : [])
-  let dialogSelections = $state<string[][]>([])
-  let dialogNotes = $state('')
-  let notesOpen = $state(false)
-  let notesEl = $state<HTMLTextAreaElement>()
 
-  // Reset per-dialog state whenever the pending dialog changes.
-  $effect(() => {
-    pendingDialog?.id
-    dialogSelections = dialogQuestions.map(() => [])
-    dialogNotes = ''
-    notesOpen = false
-  })
-
-  // Ready when every question has a pick, or the user wrote free-form notes.
-  const dialogReady = $derived(
-    dialogQuestions.length > 0 &&
-      (dialogNotes.trim().length > 0 ||
-        dialogQuestions.every((_question, index) => (dialogSelections[index]?.length || 0) > 0))
-  )
-
-  function openNotes(): void {
-    notesOpen = true
-    queueMicrotask(() => notesEl?.focus())
-  }
-
-  // Press "n" in the chooser to jot free-form notes (unless already typing).
-  function onDialogKey(event: KeyboardEvent): void {
-    const tag = (event.target as HTMLElement)?.tagName
-    if (event.key === 'n' && !notesOpen && tag !== 'TEXTAREA' && tag !== 'INPUT') {
-      event.preventDefault()
-      openNotes()
-    }
-  }
-
-  function toggleOption(questionIndex: number, label: string, multiSelect: boolean): void {
-    const current = dialogSelections[questionIndex] || []
-    let next: string[]
-    if (multiSelect) {
-      next = current.includes(label)
-        ? current.filter((item) => item !== label)
-        : [...current, label]
-    } else {
-      next = [label]
-    }
-    dialogSelections = dialogSelections.map((selection, index) =>
-      index === questionIndex ? next : selection
-    )
-  }
-
-  function submitDialog(): void {
+  function answerDialog(result: { answers: Record<string, string>; notes?: string }): void {
     if (!pendingDialog) return
-    void respondDialog(pendingDialog.id, {
-      behavior: 'completed',
-      result: buildAnswerResult(dialogQuestions, dialogSelections, dialogNotes)
-    })
+    void respondDialog(pendingDialog.id, { behavior: 'completed', result })
   }
 
   function cancelDialog(): void {
@@ -1376,9 +1161,19 @@
     if (path && store.selectedWorktreeId) openFileInEditor(store.selectedWorktreeId, path)
   }
 
-  // File-editing tools get a "diff" action that opens the file's full
-  // side-by-side diff in the editor's diff pane.
-  const FILE_EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
+  // Open a @file mention from a user message. A trailing :line(-range) reveals
+  // that line; mentions are worktree-relative, so resolve against the root.
+  function openMention(raw: string): void {
+    const worktreeId = store.selectedWorktreeId
+    if (!worktreeId) return
+    // Accept a trailing :line, :line-end range, or :line:col suffix.
+    const lineMatch = raw.match(/:(\d+)(?:[:-]\d+)?$/)
+    const path = raw.replace(/:(\d+)(?:[:-]\d+)?$/, '')
+    const root = store.selectedWorktree?.path
+    const target = path.startsWith('/') || !root ? path : `${root}/${path}`
+    if (lineMatch) openFileAtLine(worktreeId, target, Number(lineMatch[1]))
+    else openFileInEditor(worktreeId, target)
+  }
 
   // Tool inputs carry absolute paths; the diff pane and fs watcher speak
   // worktree-relative ones.
@@ -1402,16 +1197,10 @@
     void inlineEdit.reviewWorkingTreeFile(worktreeId, file, `${root}/${relPath}`)
   }
 
-  // Tool cards show a one-line summary; expand to see the full command / input.
+  // Tool lines show a one-line summary; expand to see the full command / input.
   let expandedTools = $state<Record<string, boolean>>({})
   function toggleTool(key: string): void {
     expandedTools = { ...expandedTools, [key]: !expandedTools[key] }
-  }
-
-  // Full, untruncated detail for a tool card (the whole command or input JSON).
-  function toolDetail(tool: string, input: Record<string, unknown>): string {
-    if (typeof input.command === 'string') return input.command
-    return JSON.stringify(input, null, 2)
   }
 
   // Tool results (e.g. a Read returning a whole file) are collapsed so the
@@ -1420,9 +1209,11 @@
   function toggleResult(key: string): void {
     expandedResults = { ...expandedResults, [key]: !expandedResults[key] }
   }
-  function resultLabel(text: string, isError: boolean): string {
-    if (isError) return text.split('\n')[0]
-    return `result · ${text.length} chars`
+
+  // Consecutive file edits collapse into one "edited N files" group.
+  let expandedGroups = $state<Record<string, boolean>>({})
+  function toggleGroup(key: string): void {
+    expandedGroups = { ...expandedGroups, [key]: !expandedGroups[key] }
   }
 </script>
 
@@ -1479,335 +1270,62 @@
       </div>
     {/if}
     <!-- Chat transcript -->
-    <FloatingScrollbar
-      class="min-h-0 flex-1"
+    <AgentTranscript
+      {items}
+      {visibleItems}
+      {highlightedKey}
+      {expandedTools}
+      {expandedResults}
+      {expandedGroups}
+      {toggleTool}
+      {toggleResult}
+      {toggleGroup}
+      {filePath}
+      relativePath={relativeToWorktree}
+      {openCard}
+      {openCardDiff}
+      {openMention}
       bind:viewport={transcriptViewport}
       onscroll={onTranscriptScroll}
-    >
-      <div class="px-3 py-3 text-xs leading-relaxed">
-        {#each visibleItems as item (item.key)}
-          <!-- Class-light wrapper: the find bar scrolls to it by key; margins
-               stay on the children so the -mx-3 full-bleed bands keep working.
-               Every user message is sticky (section-header style): it pins to
-               the top while its response scrolls, and the next one pushes it
-               out — so scrolling up swaps in the earlier question. -->
-          <div
-            data-item-key={item.key}
-            class="{item.key === highlightedKey ? 'rounded ring-1 ring-amber' : ''} {item.kind ===
-            'user'
-              ? 'sticky top-0 z-10'
-              : ''}"
-          >
-          {#if item.kind === 'user'}
-            <!-- User message: full-width band tinted like the logo leaves.
-                 Sticky bands scroll over content, so the tint is layered over
-                 the base background to stay opaque. -->
-            <div
-              class="agent-sticky-user -mx-3 mb-3 whitespace-pre-wrap border-y border-green/30 px-3 py-2 text-default"
-            >
-              {item.text}
-            </div>
-          {:else if item.kind === 'text'}
-            <!-- Assistant message: markdown-rendered. -->
-            <div class="agent-markdown prose mb-3 max-w-none text-xs text-default">
-              <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-              {@html renderMarkdown(item.text)}
-            </div>
-          {:else if item.kind === 'tool' && TASK_TOOLS.has(item.tool)}
-            <!-- Task tool calls fold into the pinned checklist; keep a one-line
-                 marker so the timeline shows when statuses changed. -->
-            <div class="mb-2 font-mono text-2xs text-dim">
-              ☑ {item.tool === 'TaskCreate'
-                ? `task: ${item.input.subject || ''}`
-                : `task #${item.input.taskId || '?'} → ${item.input.status || 'updated'}`}
-            </div>
-          {:else if item.kind === 'tool'}
-            {@const path = filePath(item.input)}
-            {@const summary = toolSummary(item.tool, item.input)}
-            <div class="mb-2 overflow-hidden rounded-md border border-line bg-surface">
-              <div class="flex w-full items-center gap-2 border-b border-line px-2 py-1">
-                <button
-                  class="flex min-w-0 flex-1 items-center gap-2 text-left"
-                  onclick={() => toggleTool(item.key)}
-                  title="Expand full command"
-                >
-                  <span class="shrink-0 text-2xs text-dim"
-                    >{expandedTools[item.key] ? '▾' : '▸'}</span
-                  >
-                  <span class="shrink-0 font-mono text-2xs font-semibold text-violet"
-                    >{item.tool}</span
-                  >
-                  {#if summary}
-                    <span class="truncate font-mono text-2xs text-muted">{summary}</span>
-                  {/if}
-                </button>
-                {#if path && FILE_EDIT_TOOLS.has(item.tool)}
-                  <button
-                    class="ml-auto shrink-0 text-2xs text-dim hover:text-default"
-                    title="Show side-by-side diff"
-                    onclick={() => openCardDiff(item.input)}>diff</button
-                  >
-                {/if}
-                {#if path}
-                  <button
-                    class="{FILE_EDIT_TOOLS.has(item.tool)
-                      ? ''
-                      : 'ml-auto'} shrink-0 text-2xs text-dim hover:text-default"
-                    onclick={() => openCard(item.input)}>open ↗</button
-                  >
-                {/if}
-              </div>
-              {#if expandedTools[item.key]}
-                <pre
-                  class="max-h-72 overflow-auto whitespace-pre-wrap px-2 py-1.5 font-mono text-2xs text-muted">{toolDetail(
-                    item.tool,
-                    item.input
-                  )}</pre>
-              {/if}
-            </div>
-          {:else if item.kind === 'tool-result'}
-            <button
-              class="mb-2 flex w-full items-center gap-2 rounded-md bg-canvas px-2 py-1 text-left font-mono text-2xs {item.isError
-                ? 'text-red'
-                : 'text-dim'}"
-              onclick={() => toggleResult(item.key)}
-            >
-              <span class="shrink-0">{expandedResults[item.key] ? '▾' : '▸'}</span>
-              <span class="truncate">{resultLabel(item.text, item.isError)}</span>
-            </button>
-            {#if expandedResults[item.key]}
-              <pre
-                class="mb-2 max-h-60 overflow-auto whitespace-pre-wrap rounded-md bg-canvas px-2 py-1 font-mono text-2xs text-dim">{item.text}</pre>
-            {/if}
-          {:else if item.kind === 'compact'}
-            <!-- Compaction boundary: earlier turns were summarized away. -->
-            <div
-              class="-mx-3 mb-3 flex items-center gap-2 border-y border-violet/30 bg-violet-soft px-3 py-1.5 text-2xs text-violet"
-            >
-              <span class="font-medium">✦ Conversation compacted</span>
-              {#if item.freedTokens > 0}
-                <span class="text-dim">· freed {formatTokens(item.freedTokens)} tokens</span>
-              {/if}
-            </div>
-          {:else}
-            <pre class="mb-1 whitespace-pre-wrap font-mono text-2xs text-muted">{item.text}</pre>
-          {/if}
-          </div>
-        {/each}
-        {#if items.length === 0}
-          <p class="text-dim">No agent output yet. Write a prompt below and run.</p>
-        {/if}
-      </div>
-    </FloatingScrollbar>
+    />
 
-    <!-- Working-state bar: live indicator, funny status, token count, state. -->
     {#if isRunning}
-      <div
-        class="flex shrink-0 items-center gap-2 border-t border-line bg-elevated px-3 py-1.5 text-2xs"
-      >
-        <span class="shrink-0 text-green"><WaveSpinner /></span>
-        <span class="truncate italic text-muted">{funnyMessage}</span>
-        <span
-          class="ml-auto shrink-0 font-mono text-muted"
-          title="context window fill + output of the latest turn"
-          >{formatTokens(meta.totalTokens)} tok</span
-        >
-      </div>
+      <AgentWorkingBar message={funnyMessage} tokensLabel={formatTokens(meta.totalTokens)} />
     {/if}
 
-    <!-- Messages waiting for the current run to finish; auto-submitted on a
-         clean exit, removable until then. -->
     {#if queuedMessages.length > 0}
-      <div
-        class="flex max-h-20 shrink-0 flex-wrap gap-1 overflow-auto border-t border-line bg-elevated px-3 py-1.5"
-      >
-        {#each queuedMessages as message (message.id)}
-          <span
-            class="flex max-w-full items-center gap-1 rounded-full border border-line px-2 py-0.5 text-2xs text-muted"
-          >
-            <span class="truncate" title={message.text}>{message.text}</span>
-            <button
-              class="shrink-0 text-dim hover:text-red"
-              title="Remove queued message"
-              onclick={() => cancelQueued(message.id)}>✕</button
-            >
-          </span>
-        {/each}
-      </div>
+      <AgentQueue messages={queuedMessages} onCancel={cancelQueued} />
     {/if}
 
-    <!-- Live task checklist folded from TaskCreate/TaskUpdate tool calls. -->
     {#if taskList.length > 0}
-      <div class="shrink-0 border-t border-line bg-elevated px-2 py-1.5">
-        <button
-          class="flex w-full items-center gap-2 px-1 text-2xs uppercase tracking-caps text-dim"
-          onclick={() => (tasksOpen = !tasksOpen)}
-        >
-          <span>{tasksOpen ? '▾' : '▸'} Tasks · {tasksDone}/{taskList.length}</span>
-          {#if !tasksOpen && activeTaskLabel}
-            <span class="truncate normal-case tracking-normal text-muted">{activeTaskLabel}</span>
-          {/if}
-        </button>
-        {#if tasksOpen}
-          <div class="mt-1 flex max-h-40 flex-col gap-0.5 overflow-auto">
-            {#each taskList as task (task.id)}
-              <div class="flex items-center gap-2 px-2 py-0.5 text-2xs">
-                {#if task.status === 'completed'}
-                  <span class="shrink-0 text-dim">✓</span>
-                {:else if task.status === 'in_progress'}
-                  <span class="shrink-0 text-green"><WaveSpinner /></span>
-                {:else}
-                  <span class="shrink-0 text-dim">○</span>
-                {/if}
-                <span
-                  class="truncate {task.status === 'completed'
-                    ? 'text-dim line-through'
-                    : 'text-muted'}"
-                >
-                  {task.status === 'in_progress' && task.activeForm
-                    ? task.activeForm
-                    : task.subject}
-                </span>
-              </div>
-            {/each}
-          </div>
-        {/if}
-      </div>
+      <AgentTaskList tasks={taskList} bind:open={tasksOpen} />
     {/if}
 
     <!-- Input + config status line pinned at the bottom -->
     <div class="relative shrink-0 border-t border-line p-3">
       {#if pendingDialog}
-        <!-- Agent question: render the questions + options and return the answer -->
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div
-          class="-mx-3 border-y border-green/40 bg-green-soft p-2"
-          tabindex="-1"
-          onkeydown={onDialogKey}
-        >
-          {#each dialogQuestions as question, questionIndex (questionIndex)}
-            <div class="mb-3 last:mb-1">
-              {#if question.header}
-                <div
-                  class="mb-0.5 flex items-center gap-2 text-2xs font-semibold uppercase tracking-caps text-green"
-                >
-                  <span>{question.header}</span>
-                  {#if question.multiSelect}<span class="normal-case tracking-normal text-dim"
-                      >· multi-select</span
-                    >{/if}
-                </div>
-              {/if}
-              <div class="mb-1.5 text-xs text-default">{question.question}</div>
-              <div class="flex flex-col gap-1">
-                {#each question.options as option (option.label)}
-                  {@const selected = (dialogSelections[questionIndex] || []).includes(option.label)}
-                  <button
-                    class="rounded-md border px-2 py-1.5 text-left text-xs {selected
-                      ? 'border-green bg-green/15 text-default'
-                      : 'border-line hover:bg-hover text-muted'}"
-                    onclick={() => toggleOption(questionIndex, option.label, question.multiSelect)}
-                  >
-                    <span class="font-medium">{option.label}</span>
-                    {#if option.description}
-                      <span class="block text-2xs text-dim">{option.description}</span>
-                    {/if}
-                  </button>
-                {/each}
-              </div>
-            </div>
-          {/each}
-
-          {#if notesOpen}
-            <textarea
-              bind:this={notesEl}
-              bind:value={dialogNotes}
-              class="mb-2 h-16 w-full resize-none rounded-md border border-line bg-input px-2 py-1.5 text-xs"
-              placeholder="Notes / free-form answer…"
-            ></textarea>
-          {/if}
-
-          <div class="flex items-center gap-2">
-            <button
-              class="rounded-md bg-action px-3 py-1 text-xs text-action-fg disabled:opacity-40"
-              disabled={!dialogReady}
-              onclick={submitDialog}
-            >
-              Answer
-            </button>
-            {#if !notesOpen}
-              <button
-                class="rounded-md border border-line px-3 py-1 text-xs text-dim hover:bg-hover"
-                title="Add free-form notes"
-                onclick={openNotes}
-              >
-                Notes (n)
-              </button>
-            {/if}
-            <button
-              class="ml-auto rounded-md border border-line px-3 py-1 text-xs text-dim hover:bg-hover"
-              onclick={cancelDialog}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
+        <!-- Agent question: render the questions + options and return the answer.
+             Keyed so per-dialog selection state resets for each new request. -->
+        {#key pendingDialog.id}
+          <AgentQuestionDialog
+            questions={dialogQuestions}
+            onAnswer={answerDialog}
+            onCancel={cancelDialog}
+          />
+        {/key}
       {:else if pendingPermission}
-        <!-- Permission prompt replaces the input until answered -->
-        <div
-          bind:this={permissionEl}
-          class="rounded-md border border-amber/40 bg-amber-soft p-2 outline-none"
-          tabindex="-1"
-          onkeydown={onPermissionKey}
-        >
-          <div class="mb-2 text-xs text-default">{pendingPermission.title}</div>
-          {#if pendingPermission.path}
-            <div class="mb-2 truncate font-mono text-2xs text-muted">{pendingPermission.path}</div>
-          {/if}
-          {#if proposedDiffLines.length > 0}
-            <div
-              class="mb-2 max-h-56 overflow-auto rounded border border-line bg-canvas font-mono text-2xs leading-snug"
-            >
-              {#each proposedDiffLines as line, index (index)}
-                <div class="whitespace-pre px-2 {proposedDiffLineClass(line)}">{line}</div>
-              {/each}
-            </div>
-          {/if}
-          {#if denyReasonMode}
-            <textarea
-              class="mb-2 h-16 w-full resize-none rounded-md border border-line bg-input px-2 py-1.5 text-xs"
-              placeholder="Reason for denying…"
-              bind:value={denyReason}
-            ></textarea>
-            <div class="flex gap-2">
-              <button
-                class="rounded-md bg-red px-3 py-1 text-xs text-action-fg"
-                onclick={() => deny(denyReason)}
-              >
-                Deny with reason
-              </button>
-              <button
-                class="rounded-md border border-line px-3 py-1 text-xs hover:bg-hover"
-                onclick={() => (denyReasonMode = false)}
-              >
-                Cancel
-              </button>
-            </div>
-          {:else}
-            <div class="flex flex-col gap-1.5">
-              {#each permissionChoices as choice, index (choice.label)}
-                <button
-                  class="rounded-md px-3 py-1.5 text-left text-xs outline-none {choice.class} {index ===
-                  permissionIndex
-                    ? 'ring-2 ring-default'
-                    : ''}"
-                  onclick={choice.run}
-                >
-                  {choice.label}
-                </button>
-              {/each}
-            </div>
-          {/if}
-        </div>
+        <!-- Permission prompt replaces the input until answered. Keyed so
+             highlight/deny-reason state resets for each new request. -->
+        {#key pendingPermission.id}
+          <AgentPermissionPrompt
+            title={pendingPermission.title}
+            path={pendingPermission.path}
+            diffLines={proposedDiffLines}
+            onApprove={approve}
+            onDeny={deny}
+            onShowChange={showChange}
+          />
+        {/key}
       {:else}
         {#if showCompactSuggestion && activeChatMeta}
           <!-- Idle chat: offer to compact before resuming a stale context. -->
@@ -1838,33 +1356,33 @@
             class="absolute bottom-full left-3 right-3 z-20 mb-1 overflow-hidden rounded-md border border-line bg-elevated shadow-lg"
           >
             <FloatingScrollbar class="max-h-56" bind:viewport={slashListEl}>
-            {#each slashEntries as entry, index (entry.label)}
-              <button
-                data-menu-index={index}
-                class="flex w-full items-center gap-3 px-2 py-1.5 text-left text-xs {index ===
-                slashIndex
-                  ? 'bg-action text-action-fg'
-                  : 'text-muted hover:bg-hover'}"
-                onmousedown={(event) => {
-                  event.preventDefault()
-                  entry.apply()
-                }}
-              >
-                <span class="font-mono font-medium">{entry.label}</span>
-                {#if entry.badge}
-                  <span class="rounded bg-violet/15 px-1 font-mono text-2xs text-violet"
-                    >{entry.badge}</span
-                  >
-                {/if}
-                {#if entry.description}
-                  <span
-                    class="ml-auto truncate font-mono text-2xs {index === slashIndex
-                      ? 'text-action-fg/70'
-                      : 'text-dim'}">{entry.description}</span
-                  >
-                {/if}
-              </button>
-            {/each}
+              {#each slashEntries as entry, index (entry.label)}
+                <button
+                  data-menu-index={index}
+                  class="flex w-full items-center gap-3 px-2 py-1.5 text-left text-xs {index ===
+                  slashIndex
+                    ? 'bg-action text-action-fg'
+                    : 'text-muted hover:bg-hover'}"
+                  onmousedown={(event) => {
+                    event.preventDefault()
+                    entry.apply()
+                  }}
+                >
+                  <span class="font-mono font-medium">{entry.label}</span>
+                  {#if entry.badge}
+                    <span class="rounded bg-violet/15 px-1 font-mono text-2xs text-violet"
+                      >{entry.badge}</span
+                    >
+                  {/if}
+                  {#if entry.description}
+                    <span
+                      class="ml-auto truncate font-mono text-2xs {index === slashIndex
+                        ? 'text-action-fg/70'
+                        : 'text-dim'}">{entry.description}</span
+                    >
+                  {/if}
+                </button>
+              {/each}
             </FloatingScrollbar>
           </div>
         {/if}
@@ -1875,26 +1393,26 @@
             class="absolute bottom-full left-3 right-3 z-20 mb-1 overflow-hidden rounded-md border border-line bg-elevated shadow-lg"
           >
             <FloatingScrollbar class="max-h-56" bind:viewport={mentionListEl}>
-            {#each mentionItems as file, index (file)}
-              <button
-                data-menu-index={index}
-                class="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs {index ===
-                mentionIndex
-                  ? 'bg-action text-action-fg'
-                  : 'text-muted hover:bg-hover'}"
-                onmousedown={(event) => {
-                  event.preventDefault()
-                  applyMention(file)
-                }}
-              >
-                <span class="font-mono font-medium">{baseName(file)}</span>
-                <span
-                  class="ml-auto truncate font-mono text-2xs {index === mentionIndex
-                    ? 'text-action-fg/70'
-                    : 'text-dim'}">{file}</span
+              {#each mentionItems as file, index (file)}
+                <button
+                  data-menu-index={index}
+                  class="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs {index ===
+                  mentionIndex
+                    ? 'bg-action text-action-fg'
+                    : 'text-muted hover:bg-hover'}"
+                  onmousedown={(event) => {
+                    event.preventDefault()
+                    applyMention(file)
+                  }}
                 >
-              </button>
-            {/each}
+                  <span class="font-mono font-medium">{baseName(file)}</span>
+                  <span
+                    class="ml-auto truncate font-mono text-2xs {index === mentionIndex
+                      ? 'text-action-fg/70'
+                      : 'text-dim'}">{file}</span
+                  >
+                </button>
+              {/each}
             </FloatingScrollbar>
           </div>
         {/if}
@@ -1954,53 +1472,16 @@
       {/if}
     </div>
 
-    <!-- Active agents: the main chat plus subagents spawned via the Task tool.
-         ↓ to navigate, Enter to open one's transcript. -->
     {#if subagents.length > 0}
-      <div class="shrink-0 border-t border-line bg-elevated px-2 py-1.5">
-        <div class="mb-1 px-1 text-2xs uppercase tracking-caps text-dim">
-          Agents · <span class="normal-case tracking-normal">↓ navigate · enter open</span>
-        </div>
-        <div class="flex flex-col gap-0.5">
-          <button
-            class="flex items-center gap-2 rounded px-2 py-1 text-left text-2xs {agentNavActive &&
-            agentIndex === 0
-              ? 'bg-action text-action-fg'
-              : 'text-muted hover:bg-hover'} {focusedSubagentKey === null
-              ? 'ring-1 ring-green'
-              : ''}"
-            onclick={() => (focusedSubagentKey = null)}
-          >
-            {#if isRunning}
-              <span class="shrink-0 text-green"><WaveSpinner /></span>
-            {:else}
-              <span class="shrink-0 text-dim">✓</span>
-            {/if}
-            <span class="shrink-0 font-mono font-semibold text-green">main</span>
-          </button>
-          {#each subagents as agent, index (agent.key)}
-            <button
-              class="flex items-center gap-2 rounded px-2 py-1 text-left text-2xs {agentNavActive &&
-              index + 1 === agentIndex
-                ? 'bg-action text-action-fg'
-                : 'text-muted hover:bg-hover'} {agent.key === focusedSubagentKey
-                ? 'ring-1 ring-green'
-                : ''}"
-              onclick={() => focusSubagent(agent.key)}
-            >
-              {#if agent.running}
-                <span class="shrink-0 text-green"><WaveSpinner /></span>
-              {:else}
-                <span class="shrink-0 text-dim">✓</span>
-              {/if}
-              <span class="shrink-0 font-mono font-semibold text-violet">{agent.type}</span>
-              {#if agent.description}
-                <span class="truncate text-muted">{agent.description}</span>
-              {/if}
-            </button>
-          {/each}
-        </div>
-      </div>
+      <AgentSubagentList
+        {subagents}
+        {isRunning}
+        focusedKey={focusedSubagentKey}
+        navActive={agentNavActive}
+        navIndex={agentIndex}
+        onSelectMain={() => (focusedSubagentKey = null)}
+        onSelect={focusSubagent}
+      />
     {/if}
   {/if}
 </div>

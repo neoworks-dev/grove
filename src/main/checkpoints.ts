@@ -107,7 +107,9 @@ export class CheckpointManager {
 
   // Load persisted metadata on repo open.
   hydrate(map: Record<string, CheckpointMeta[]>): void {
-    this.metadata = new Map(Object.entries(map).map(([key, list]) => [key, list.map((m) => ({ ...m }))]))
+    this.metadata = new Map(
+      Object.entries(map).map(([key, list]) => [key, list.map((m) => ({ ...m }))])
+    )
   }
 
   all(): Record<string, CheckpointMeta[]> {
@@ -126,9 +128,7 @@ export class CheckpointManager {
     ctx: SnapshotContext = {}
   ): Promise<CheckpointMeta | null> {
     const prior = this.chains.get(worktreePath) ?? Promise.resolve()
-    const next = prior
-      .catch(() => {})
-      .then(() => this.runSnapshot(worktreePath, trigger, ctx))
+    const next = prior.catch(() => {}).then(() => this.runSnapshot(worktreePath, trigger, ctx))
     this.chains.set(
       worktreePath,
       next.catch(() => {})

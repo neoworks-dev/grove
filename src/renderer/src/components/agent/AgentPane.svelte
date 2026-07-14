@@ -814,9 +814,11 @@
     agents.some((agent) => agent.name === selectedAgent && agent.status === 'running')
   )
 
+  // Only this agent's lines: several agents can run in one worktree, and their
+  // transcripts must not interleave in the pane.
   const agentLines = $derived<LogLine[]>(
     (store.selectedWorktreeId ? store.logs[store.selectedWorktreeId] || [] : []).filter(
-      (line) => line.source === 'agent'
+      (line) => line.source === 'agent' && line.name === selectedAgent
     )
   )
   const rawLines = $derived(agentLines.map((line) => line.line))

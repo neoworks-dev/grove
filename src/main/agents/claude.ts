@@ -5,6 +5,7 @@
 
 // The SDK is ESM-only; the Electron main is CommonJS with externalized deps, so
 // it must be loaded via dynamic import() (require() of an ESM package throws).
+import { isAbsolute, resolve } from 'path'
 import type { PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { AgentConfig, AgentSlashCommand } from '../../shared/types'
 import type { AdapterContext, AgentAdapter, RunHandle } from './types'
@@ -70,6 +71,21 @@ function filePathOf(input: Record<string, unknown>): string | null {
   if (typeof input.file_path === 'string') return input.file_path
   if (typeof input.path === 'string') return input.path
   return null
+}
+
+// File-mutating tools whose target must be locked before the edit runs.
+// MultiEdit targets a single file_path (with many edits); NotebookEdit uses
+// notebook_path.
+const fileWriteTools = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
+
+// Absolute, normalized target path(s) of a file-write tool, for locking.
+// Resolving relative paths against the worktree cwd collapses ./ and ../ so an
+// alternate spelling of the same file can't slip past the lock.
+function lockTargets(input: Record<string, unknown>, cwd: string): string[] {
+  const raw =
+    filePathOf(input) || (typeof input.notebook_path === 'string' ? input.notebook_path : null)
+  if (!raw) return []
+  return [isAbsolute(raw) ? raw : resolve(cwd, raw)]
 }
 
 // Render the user's dialog answer as readable text for the model. The dialog
@@ -154,9 +170,7 @@ function start(context: AdapterContext): RunHandle {
           cwd: context.worktree.path,
           abortController: abort,
           mcpServers:
-            Object.keys(pluginMcpServers).length > 0
-              ? (pluginMcpServers as never)
-              : undefined,
+            Object.keys(pluginMcpServers).length > 0 ? (pluginMcpServers as never) : undefined,
           // Use Claude Code's default system prompt so its dynamic auto-memory
           // section loads CLAUDE.md, and load project settings so that memory
           // (and .claude settings) is actually read from disk.
@@ -168,9 +182,11 @@ function start(context: AdapterContext): RunHandle {
           settingSources: ['user', 'project', 'local'],
           // Resume the prior conversation when we have its session id.
           resume: context.resume || undefined,
-          permissionMode: permissionMode as 'default' | 'plan' | 'acceptEdits' | 'bypassPermissions',
+          permissionMode: permissionMode as
+            'default' | 'plan' | 'acceptEdits' | 'bypassPermissions',
           model: context.options.model || undefined,
-          effort: (context.options.effort as 'low' | 'medium' | 'high' | 'xhigh' | 'max') || undefined,
+          effort:
+            (context.options.effort as 'low' | 'medium' | 'high' | 'xhigh' | 'max') || undefined,
           includePartialMessages: false,
           stderr: (data: string) => context.emit(textLine('stderr', data)),
           // MUST declare the dialog kinds we render, or the CLI emits none at
@@ -207,13 +223,33 @@ function start(context: AdapterContext): RunHandle {
                 payload: input
               })
               if (dialog.behavior === 'cancelled') {
-                return { behavior: 'deny', message: 'The user dismissed the question without answering.' }
+                return {
+                  behavior: 'deny',
+                  message: 'The user dismissed the question without answering.'
+                }
               }
               return { behavior: 'deny', message: formatDialogAnswer(dialog.result) }
             }
             // Read-only tools skip the prompt in every mode.
             if (isAutoAllowed(toolName, input)) {
               return { behavior: 'allow', updatedInput: input }
+            }
+            // Cross-agent edit coordination: claim the target file before a
+            // mutating edit. If another agent in this worktree holds it, deny
+            // with a message so the model works elsewhere and retries later.
+            if (context.tryAcquireLocks && fileWriteTools.has(toolName)) {
+              const targets = lockTargets(input, context.worktree.path)
+              if (targets.length > 0) {
+                const lock = context.tryAcquireLocks(targets)
+                if (!lock.ok) {
+                  return {
+                    behavior: 'deny',
+                    message: `${targets[0]} is currently being edited by another agent${
+                      lock.heldBy ? ` (${lock.heldBy})` : ''
+                    }. Do not edit it now — work on a different file, or wait and try this edit again later.`
+                  }
+                }
+              }
             }
             const decision = await context.requestPermission({
               worktreeId: context.worktree.id,
@@ -280,6 +316,11 @@ function start(context: AdapterContext): RunHandle {
         // `session_state_changed` with state 'idle'.)
         if (message.type === 'result' && input.pendingCount() === 0) {
           input.close()
+        }
+        // Release this run's file locks at each turn boundary so a paused
+        // collaborator can proceed once we're done editing.
+        if (message.type === 'result') {
+          context.releaseLocks?.()
         }
         context.emit(JSON.stringify(message))
       }

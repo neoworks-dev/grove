@@ -30,9 +30,7 @@ export interface AdapterContext {
   // Report the live session/thread id so the manager can resume it next turn.
   setSession: (token: string) => void
   // Ask the user to approve a tool call; resolves once they decide.
-  requestPermission: (
-    request: Omit<PermissionRequestEvent, 'id'>
-  ) => Promise<PermissionDecision>
+  requestPermission: (request: Omit<PermissionRequestEvent, 'id'>) => Promise<PermissionDecision>
   // Surface a blocking dialog (e.g. an agent question) and await the answer.
   requestDialog: (request: Omit<AgentDialogRequest, 'id'>) => Promise<AgentDialogDecision>
   // Plugin AI contributions (MCP servers proxied into plugin workers, skill
@@ -44,6 +42,12 @@ export interface AdapterContext {
   // Full slash-command list discovered from the provider (replace semantics —
   // each call supersedes the previous list).
   setCommands?: (commands: AgentSlashCommand[]) => void
+  // Try to lock file paths for this run before a mutating edit, so a second
+  // agent in the same worktree can't clobber them. Returns { ok: false, heldBy }
+  // when another agent holds one; the adapter then denies-with-message.
+  tryAcquireLocks?: (paths: string[]) => { ok: boolean; heldBy?: string }
+  // Release all of this run's file locks (called at each turn boundary).
+  releaseLocks?: () => void
 }
 
 export interface RunHandle {
@@ -73,14 +77,14 @@ export function textLine(id: string, text: string): string {
   })
 }
 
-export function toolLine(
-  id: string,
-  name: string,
-  input: Record<string, unknown>
-): string {
+export function toolLine(id: string, name: string, input: Record<string, unknown>): string {
   return JSON.stringify({
     type: 'assistant',
-    message: { id: `${id}-msg`, role: 'assistant', content: [{ type: 'tool_use', id, name, input }] }
+    message: {
+      id: `${id}-msg`,
+      role: 'assistant',
+      content: [{ type: 'tool_use', id, name, input }]
+    }
   })
 }
 

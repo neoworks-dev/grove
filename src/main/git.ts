@@ -10,6 +10,8 @@ import type {
   Worktree,
   BranchList,
   DiffFile,
+  DiffFileStat,
+  DiffStats,
   DiffSides,
   DiffChangeType,
   DiffHunk,
@@ -347,6 +349,68 @@ export function parseHunks(diff: string): DiffHunk[] {
     match = header.exec(diff)
   }
   return hunks
+}
+
+// ── Diff stats (added/removed line counts) ──────────────────────
+
+// Parse `git diff --numstat` output: `<added>\t<removed>\t<path>` per line.
+// Binary files report `-` for both counts (mapped to -1). Renames keep their
+// counts; the path field is informational for stats.
+export function parseNumstat(output: string): DiffFileStat[] {
+  const stats: DiffFileStat[] = []
+  for (const line of output.split('\n')) {
+    if (line.trim().length === 0) continue
+    const parts = line.split('\t')
+    if (parts.length < 3) continue
+    const added = parts[0] === '-' ? -1 : Number(parts[0])
+    const removed = parts[1] === '-' ? -1 : Number(parts[1])
+    const path = parts.slice(2).join('\t')
+    stats.push({ path, added, removed })
+  }
+  return stats
+}
+
+// Count added lines for an untracked file (every line is new). Binary/unreadable
+// files contribute 0 rather than a bogus count.
+async function untrackedAddedLines(worktreePath: string, relPath: string): Promise<number> {
+  try {
+    const text = await readFile(join(worktreePath, relPath), 'utf8')
+    if (text.length === 0) return 0
+    const newlines = text.split('\n').length - 1
+    return text.endsWith('\n') ? newlines : newlines + 1
+  } catch {
+    return 0
+  }
+}
+
+// Aggregate added/removed line counts for a worktree vs HEAD: tracked changes
+// (staged + unstaged together via `diff HEAD`) plus untracked files. Binary
+// files count as 0 lines in the totals.
+export async function diffStats(worktreePath: string): Promise<DiffStats> {
+  const git = gitFor(worktreePath)
+
+  const tracked = await git
+    .raw(['diff', 'HEAD', '--numstat'])
+    .then(parseNumstat)
+    .catch(() => [] as DiffFileStat[])
+
+  const untrackedPaths = await git
+    .raw(['ls-files', '--others', '--exclude-standard', '-z'])
+    .then((out) => out.split('\0').filter((path) => path.length > 0))
+    .catch(() => [] as string[])
+
+  const files: DiffFileStat[] = [...tracked]
+  for (const path of untrackedPaths) {
+    files.push({ path, added: await untrackedAddedLines(worktreePath, path), removed: 0 })
+  }
+
+  let added = 0
+  let removed = 0
+  for (const file of files) {
+    if (file.added > 0) added += file.added
+    if (file.removed > 0) removed += file.removed
+  }
+  return { added, removed, files }
 }
 
 export function detectLanguage(path: string): string {

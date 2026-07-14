@@ -51,6 +51,47 @@ export interface DiffHunks {
   hunks: DiffHunk[]
 }
 
+// ── Diff stats (added/removed line counts) ──────────────────────
+
+// Per-file added/removed line counts. `added`/`removed` are -1 for binary
+// files (git reports `-` in numstat).
+export interface DiffFileStat {
+  path: string
+  added: number
+  removed: number
+}
+
+// Aggregate diff stats for a worktree vs HEAD (staged + unstaged + untracked).
+export interface DiffStats {
+  added: number
+  removed: number
+  files: DiffFileStat[]
+}
+
+// ── Local-only checkpoints ──────────────────────────────────────
+
+// What caused a checkpoint to be taken.
+export type CheckpointTrigger =
+  | 'agent-turn-end'
+  | 'user-message'
+  | 'pre-restore'
+  | 'pre-merge'
+  | 'manual'
+
+// One working-tree snapshot. The tree/commit live in the repo object DB under a
+// private ref (refs/workbench/checkpoints/**, never pushed); this metadata is
+// persisted in RepoState. `n` is a monotonic per-worktree counter.
+export interface CheckpointMeta {
+  n: number
+  commit: string
+  tree: string
+  ts: number
+  trigger: CheckpointTrigger
+  agent?: string
+  chatId?: string
+  note?: string
+}
+
 // ── Inline agent edit (per-hunk accept/reject) ──────────────────
 
 // One hunk of an inline edit, with its line bodies. `beforeStart`/`afterStart`

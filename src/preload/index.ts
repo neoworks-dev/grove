@@ -26,6 +26,7 @@ const workbench = {
       ipcRenderer.invoke('git:diffSides', worktreeId, file),
     diffHunks: (worktreeId: string, file: unknown) =>
       ipcRenderer.invoke('git:diffHunks', worktreeId, file),
+    diffStats: (worktreeId: string) => ipcRenderer.invoke('git:diffStats', worktreeId),
     beginInlineReview: (worktreeId: string, relPath: string, snapshot: string) =>
       ipcRenderer.invoke('git:beginInlineReview', worktreeId, relPath, snapshot),
     applyInlineReview: (
@@ -52,6 +53,13 @@ const workbench = {
       ipcRenderer.invoke('github:openPr', worktreeId, options),
     mergePr: (worktreeId: string, options: unknown) =>
       ipcRenderer.invoke('github:mergePr', worktreeId, options)
+  },
+  checkpoints: {
+    list: (worktreeId: string) => ipcRenderer.invoke('checkpoints:list', worktreeId),
+    snapshot: (worktreeId: string, note?: string) =>
+      ipcRenderer.invoke('checkpoints:snapshot', worktreeId, note),
+    restore: (worktreeId: string, commit: string) =>
+      ipcRenderer.invoke('checkpoints:restore', worktreeId, commit)
   },
   config: {
     load: () => ipcRenderer.invoke('config:load'),

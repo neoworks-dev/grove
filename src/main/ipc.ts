@@ -12,6 +12,7 @@ import type {
   InlineHunk
 } from '../shared/types'
 import * as git from './git'
+import { CheckpointManager } from './checkpoints'
 import * as inlineDiff from './inlineDiff'
 import * as github from './github'
 import * as config from './config'
@@ -88,6 +89,16 @@ const agents = new AgentManager({
     if (context.repoPath) {
       void updateRepoState(context.repoPath, { agentCommands: agents.allCommands() })
     }
+  },
+  onCheckpoint: (worktreePath, trigger, ctx) => {
+    void checkpoints.snapshot(worktreePath, trigger, ctx).catch(() => {})
+  }
+})
+
+const checkpoints = new CheckpointManager({
+  onChange: (all) => {
+    send('event:checkpoints', all)
+    if (context.repoPath) void updateRepoState(context.repoPath, { checkpoints: all })
   }
 })
 
@@ -198,6 +209,7 @@ async function openRepo(repoPath: string): Promise<{
   agents.loadSessions(repoState.agentSessions || {})
   // Last-known slash commands populate the menu before the first run.
   agents.loadCommands(repoState.agentCommands || {})
+  checkpoints.hydrate(repoState.checkpoints || {})
   const list = await refreshWorktrees()
   return {
     info: {
@@ -266,6 +278,27 @@ export function registerIpc(): void {
   ipcMain.handle('git:diffHunks', (_e, worktreeId: string, file: DiffFile) => {
     const worktree = findWorktree(worktreeId)
     return git.diffHunks(worktree.path, file)
+  })
+
+  ipcMain.handle('git:diffStats', (_e, worktreeId: string) => {
+    const worktree = findWorktree(worktreeId)
+    return git.diffStats(worktree.path)
+  })
+
+  // ── Local-only checkpoints ──────────────────────────────────────
+  ipcMain.handle('checkpoints:list', (_e, worktreeId: string) => {
+    const worktree = findWorktree(worktreeId)
+    return checkpoints.list(worktree.path)
+  })
+
+  ipcMain.handle('checkpoints:snapshot', (_e, worktreeId: string, note?: string) => {
+    const worktree = findWorktree(worktreeId)
+    return checkpoints.snapshot(worktree.path, 'manual', { note })
+  })
+
+  ipcMain.handle('checkpoints:restore', (_e, worktreeId: string, commit: string) => {
+    const worktree = findWorktree(worktreeId)
+    return checkpoints.restore(worktree.path, commit)
   })
 
   // ── Inline agent edit (per-hunk accept/reject) ──────────────────

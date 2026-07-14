@@ -61,6 +61,13 @@ export interface AgentEvents {
   onQueue?: (event: AgentQueueEvent) => void
   // Provider-discovered slash commands changed.
   onCommands?: (event: AgentCommandsEvent) => void
+  // A checkpoint-worthy moment: the user sent a message / answered a question,
+  // or an agent turn ended. Fire-and-forget; the handler snapshots the worktree.
+  onCheckpoint?: (
+    worktreePath: string,
+    trigger: 'agent-turn-end' | 'user-message',
+    ctx: { name?: string; chatId?: string }
+  ) => void
   // Plugin AI contributions passed through to adapters (MCP servers + skills).
   pluginAi?: {
     mcpServers: () => Promise<Record<string, unknown>>
@@ -324,6 +331,9 @@ export class AgentManager {
   ): Promise<AgentSendResult> {
     const key = this.key(worktree.id, name)
     const trimmed = text.trim()
+    // Snapshot before the agent acts on the new message, so the pre-turn state
+    // is revertible.
+    this.events.onCheckpoint?.(worktree.path, 'user-message', { name })
     const entry = this.running.get(key)
     if (entry) {
       if (entry.handle.send?.(trimmed)) {
@@ -470,6 +480,11 @@ export class AgentManager {
     if (!resolve) return
     this.dialogResolvers.delete(id)
     for (const entry of this.running.values()) entry.pendingDialogs.delete(id)
+    // Answering a question is a user turn — snapshot before the agent resumes.
+    // The dialog id is `${worktreeId}::${name}::dlg<n>`, and worktreeId is the
+    // worktree path.
+    const [worktreeId, name] = id.split('::')
+    if (worktreeId) this.events.onCheckpoint?.(worktreeId, 'user-message', { name })
     resolve(decision)
   }
 
@@ -494,6 +509,12 @@ export class AgentManager {
     entry.logStream.end()
     this.events.onStatus({ ...entry.runtime })
     this.running.delete(this.key(worktreeId, name))
+    // Snapshot the worktree after the agent's turn so its edits are revertible.
+    const worktreePath = this.lastLaunch.get(this.key(worktreeId, name))?.worktree.path ?? worktreeId
+    this.events.onCheckpoint?.(worktreePath, 'agent-turn-end', {
+      name,
+      chatId: this.activeChat(this.key(worktreeId, name)).id
+    })
     this.settleQueue(worktreeId, name, status, entry.clearQueueOnStop)
   }
 

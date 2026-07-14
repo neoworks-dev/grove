@@ -46,7 +46,17 @@ const workbench = {
       ipcRenderer.invoke('git:commit', worktreeId, message),
     push: (worktreeId: string) => ipcRenderer.invoke('git:push', worktreeId),
     mergeLocal: (worktreeId: string, baseBranch: string) =>
-      ipcRenderer.invoke('git:mergeLocal', worktreeId, baseBranch)
+      ipcRenderer.invoke('git:mergeLocal', worktreeId, baseBranch),
+    mergePreview: (targetWorktreeId: string, sourceWorktreeId: string) =>
+      ipcRenderer.invoke('git:mergePreview', targetWorktreeId, sourceWorktreeId),
+    mergeWorktree: (targetWorktreeId: string, sourceWorktreeId: string, opts: unknown) =>
+      ipcRenderer.invoke('git:mergeWorktree', targetWorktreeId, sourceWorktreeId, opts),
+    mergeAbort: (targetWorktreeId: string) =>
+      ipcRenderer.invoke('git:mergeAbort', targetWorktreeId),
+    mergeContinue: (targetWorktreeId: string) =>
+      ipcRenderer.invoke('git:mergeContinue', targetWorktreeId),
+    mergeConflicts: (targetWorktreeId: string) =>
+      ipcRenderer.invoke('git:mergeConflicts', targetWorktreeId)
   },
   github: {
     openPr: (worktreeId: string, options: unknown) =>

@@ -2,9 +2,11 @@
   import { store, selectWorktree, refreshWorktrees } from '../lib/store.svelte'
   import { diffStatLabel } from '../lib/worktreeStatus'
   import CreateWorktreeDialog from './CreateWorktreeDialog.svelte'
+  import MergeWorktreeDialog from './MergeWorktreeDialog.svelte'
   import type { Worktree, ServiceRuntime, AgentRuntime } from '../../../shared/types'
 
   let showDialog = $state(false)
+  let mergeSource = $state<Worktree | null>(null)
 
   function serviceSummary(worktreeId: string): { running: number; total: number } {
     const list: ServiceRuntime[] = store.services[worktreeId] || []
@@ -101,6 +103,16 @@
           {#if hasActiveAgent(worktree.id)}
             <span class="h-2 w-2 rounded-full bg-violet" title="agent running"></span>
           {/if}
+          <button
+            class="hidden text-dim hover:text-violet group-hover:block"
+            title="Merge this worktree into another"
+            onclick={(event) => {
+              event.stopPropagation()
+              mergeSource = worktree
+            }}
+          >
+            ⤳
+          </button>
           {#if !worktree.isMain}
             <button
               class="hidden text-dim hover:text-red group-hover:block"
@@ -122,4 +134,11 @@
 
 {#if showDialog}
   <CreateWorktreeDialog onClose={() => (showDialog = false)} />
+{/if}
+
+{#if mergeSource}
+  <MergeWorktreeDialog
+    source={{ id: mergeSource.id, name: mergeSource.name, branch: mergeSource.branch }}
+    onClose={() => (mergeSource = null)}
+  />
 {/if}

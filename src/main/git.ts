@@ -15,7 +15,11 @@ import type {
   DiffSides,
   DiffChangeType,
   DiffHunk,
-  DiffHunks
+  DiffHunks,
+  MergeMode,
+  MergePreview,
+  MergeResult,
+  MergeCommitSummary
 } from '../shared/types'
 
 function gitFor(repoPath: string): SimpleGit {
@@ -214,6 +218,131 @@ export async function mergeToBase(
   return out.trim()
 }
 
+// ── Worktree-into-worktree merge ────────────────────────────────
+
+// True when `ancestor` is an ancestor of `descendant` (or they're equal).
+// `merge-base --is-ancestor` signals via exit code, which simple-git does not
+// surface reliably, so compare the merge base to the ancestor commit instead:
+// merge-base(A, B) === A exactly when A is an ancestor of B.
+async function isAncestor(git: SimpleGit, ancestor: string, descendant: string): Promise<boolean> {
+  try {
+    const ancestorSha = (await git.raw(['rev-parse', ancestor])).trim()
+    const base = (await git.raw(['merge-base', ancestor, descendant])).trim()
+    return base === ancestorSha
+  } catch {
+    return false
+  }
+}
+
+function parseCommitList(output: string): MergeCommitSummary[] {
+  const commits: MergeCommitSummary[] = []
+  for (const line of output.split('\n')) {
+    if (line.length === 0) continue
+    const [sha, subject] = line.split('\0')
+    if (sha) commits.push({ sha, subject: subject || '' })
+  }
+  return commits
+}
+
+// Files with merge conflicts, from `git status --porcelain` unmerged codes
+// (the authoritative source; covers both-added/deleted cases --diff-filter=U
+// can miss).
+export async function conflictedFiles(worktreePath: string): Promise<string[]> {
+  const out = await gitFor(worktreePath).raw(['status', '--porcelain'])
+  const unmerged = new Set(['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU'])
+  const files: string[] = []
+  for (const line of out.split('\n')) {
+    if (line.length < 4) continue
+    if (unmerged.has(line.slice(0, 2))) files.push(line.slice(3))
+  }
+  return files
+}
+
+// Preview merging `sourceBranch` into the target worktree's checked-out branch.
+// Runs in the target worktree. `sourceDirty` is filled by the caller (needs the
+// source worktree path).
+export async function mergePreview(
+  targetWorktreePath: string,
+  sourceBranch: string
+): Promise<Omit<MergePreview, 'sourceDirty'>> {
+  const git = gitFor(targetWorktreePath)
+  const sourceSha = (await git.raw(['rev-parse', sourceBranch])).trim()
+  const targetSha = (await git.raw(['rev-parse', 'HEAD'])).trim()
+
+  const alreadyMerged = await isAncestor(git, sourceSha, targetSha)
+  const canFastForward = await isAncestor(git, targetSha, sourceSha)
+
+  const commitsRaw = await git
+    .raw(['log', '--pretty=%H%x00%s', `HEAD..${sourceBranch}`])
+    .catch(() => '')
+  const stat = await git.raw(['diff', '--stat', `HEAD...${sourceBranch}`]).catch(() => '')
+
+  return { commits: parseCommitList(commitsRaw), stat: stat.trim(), canFastForward, alreadyMerged }
+}
+
+// Merge `sourceBranch` into the target worktree's branch, running in the target
+// worktree (its branch is already checked out there — no checkout). Returns a
+// structured result; conflicts are reported, not thrown.
+export async function mergeWorktree(
+  targetWorktreePath: string,
+  sourceBranch: string,
+  opts: { mode: MergeMode; message?: string }
+): Promise<MergeResult> {
+  const git = gitFor(targetWorktreePath)
+  const sourceSha = (await git.raw(['rev-parse', sourceBranch])).trim()
+  const targetSha = (await git.raw(['rev-parse', 'HEAD'])).trim()
+
+  if (await isAncestor(git, sourceSha, targetSha)) return { status: 'up-to-date' }
+
+  const args = ['merge']
+  if (opts.mode === 'no-ff') args.push('--no-ff')
+  else if (opts.mode === 'ff-only') args.push('--ff-only')
+  if (opts.message) args.push('-m', opts.message)
+  args.push(sourceBranch)
+
+  // simple-git does not reliably reject on `git merge`'s conflict exit code, so
+  // check for unmerged paths after the call whether it resolved or threw.
+  try {
+    const summary = (await git.raw(args)).trim()
+    const files = await conflictedFiles(targetWorktreePath)
+    if (files.length > 0) return { status: 'conflict', files, summary }
+    const head = (await git.raw(['rev-parse', 'HEAD'])).trim()
+    // A fast-forward moves HEAD exactly onto the source; a merge commit does not.
+    return { status: 'merged', summary, fastForward: head === sourceSha }
+  } catch (err) {
+    const files = await conflictedFiles(targetWorktreePath)
+    // Non-empty unmerged set → a real conflict; otherwise it's a hard failure
+    // (e.g. ff-only refused, dirty tree) that the caller must see.
+    if (files.length > 0) {
+      return { status: 'conflict', files, summary: (err as Error).message }
+    }
+    throw err
+  }
+}
+
+// Abort an in-progress merge, restoring the pre-merge state.
+export async function abortMerge(worktreePath: string): Promise<void> {
+  await gitFor(worktreePath).raw(['merge', '--abort'])
+}
+
+// Finish a merge after conflicts were resolved and staged. Uses `commit
+// --no-edit` (which completes the in-progress merge from MERGE_MSG) to avoid
+// launching an editor.
+export async function continueMerge(worktreePath: string): Promise<MergeResult> {
+  const remaining = await conflictedFiles(worktreePath)
+  if (remaining.length > 0) {
+    return { status: 'conflict', files: remaining, summary: 'unresolved conflicts remain' }
+  }
+  try {
+    const summary = (await gitFor(worktreePath).raw(['commit', '--no-edit'])).trim()
+    return { status: 'merged', summary, fastForward: false }
+  } catch (err) {
+    const files = await conflictedFiles(worktreePath)
+    if (files.length > 0) return { status: 'conflict', files, summary: (err as Error).message }
+    throw err
+  }
+}
+
 // ── Diff (all content sourced from Git) ─────────────────────────
 
 function mapStatusCode(code: string): DiffChangeType {
@@ -290,10 +419,7 @@ async function workingTreeFile(worktreePath: string, relPath: string): Promise<s
 
 // Build the two sides of a diff for the DiffEditor. Original comes from Git
 // (HEAD or index); modified comes from working tree or index. No JS diffing.
-export async function diffSides(
-  worktreePath: string,
-  file: DiffFile
-): Promise<DiffSides> {
+export async function diffSides(worktreePath: string, file: DiffFile): Promise<DiffSides> {
   const language = detectLanguage(file.path)
 
   if (file.changeType === 'untracked') {

@@ -68,15 +68,38 @@ export interface DiffStats {
   files: DiffFileStat[]
 }
 
+// ── Worktree-into-worktree merge ────────────────────────────────
+
+// no-ff always creates a merge commit; ff-only refuses anything but a
+// fast-forward; ff allows a fast-forward, falling back to a merge commit.
+export type MergeMode = 'no-ff' | 'ff-only' | 'ff'
+
+export interface MergeCommitSummary {
+  sha: string
+  subject: string
+}
+
+// What a merge of sourceBranch into the target worktree would do, shown before
+// the user confirms.
+export interface MergePreview {
+  commits: MergeCommitSummary[]
+  stat: string
+  canFastForward: boolean
+  alreadyMerged: boolean
+  // Uncommitted work in the source worktree that the merge would NOT include.
+  sourceDirty: boolean
+}
+
+export type MergeResult =
+  | { status: 'up-to-date' }
+  | { status: 'merged'; summary: string; fastForward: boolean }
+  | { status: 'conflict'; files: string[]; summary: string }
+
 // ── Local-only checkpoints ──────────────────────────────────────
 
 // What caused a checkpoint to be taken.
 export type CheckpointTrigger =
-  | 'agent-turn-end'
-  | 'user-message'
-  | 'pre-restore'
-  | 'pre-merge'
-  | 'manual'
+  'agent-turn-end' | 'user-message' | 'pre-restore' | 'pre-merge' | 'manual'
 
 // One working-tree snapshot. The tree/commit live in the repo object DB under a
 // private ref (refs/workbench/checkpoints/**, never pushed); this metadata is
@@ -262,8 +285,7 @@ export interface PermissionRequestEvent {
 }
 
 export type PermissionDecision =
-  | { behavior: 'allow'; remember: boolean }
-  | { behavior: 'deny'; message: string }
+  { behavior: 'allow'; remember: boolean } | { behavior: 'deny'; message: string }
 
 // ── Interactive dialogs (agent → user → agent) ──────────────────
 // The claude SDK surfaces questions (and other blocking dialogs) via its
@@ -280,8 +302,7 @@ export interface AgentDialogRequest {
 }
 
 export type AgentDialogDecision =
-  | { behavior: 'completed'; result: unknown }
-  | { behavior: 'cancelled' }
+  { behavior: 'completed'; result: unknown } | { behavior: 'cancelled' }
 
 // ── Runtime state ───────────────────────────────────────────────
 

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { store, selectWorktree, refreshWorktrees } from '../lib/store.svelte'
+  import { diffStatLabel } from '../lib/worktreeStatus'
   import CreateWorktreeDialog from './CreateWorktreeDialog.svelte'
   import type { Worktree, ServiceRuntime, AgentRuntime } from '../../../shared/types'
 
@@ -53,6 +54,7 @@
   <div class="flex-1 overflow-y-auto">
     {#each store.worktrees as worktree (worktree.id)}
       {@const summary = serviceSummary(worktree.id)}
+      {@const diff = diffStatLabel(worktree.id)}
       <div
         class="group flex cursor-pointer items-center gap-2 px-3 py-2 text-sm {store.selectedWorktreeId ===
         worktree.id
@@ -73,11 +75,21 @@
             {#if worktree.isMain}
               <span class="rounded bg-raised px-1 text-2xs text-dim">main</span>
             {/if}
+            {#if store.unread[worktree.id]}
+              <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber" title="Unread agent output"
+              ></span>
+            {/if}
           </div>
           <div class="truncate font-mono text-2xs text-dim">{worktree.branch}</div>
         </div>
 
         <div class="flex shrink-0 items-center gap-1.5">
+          {#if diff}
+            <span class="font-mono text-2xs" title="Lines changed vs HEAD">
+              <span class="text-green">+{diff.added}</span>
+              <span class="text-red">−{diff.removed}</span>
+            </span>
+          {/if}
           {#if summary.total > 0}
             <span
               class="text-2xs {summary.running > 0 ? 'text-green' : 'text-dim'}"

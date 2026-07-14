@@ -18,7 +18,8 @@ import type {
   AgentQueueEvent,
   AgentCommandsEvent,
   AgentSlashCommand,
-  QueuedMessage
+  QueuedMessage,
+  DiffStats
 } from '../../../shared/types'
 
 export interface LogLine {
@@ -77,6 +78,14 @@ class WorkbenchStore {
 
   // Bumped per worktree on any file change, so trees/diffs re-read reactively.
   fsVersion = $state<Record<string, number>>({})
+
+  // Added/removed line counts vs HEAD, keyed by worktreeId. Refreshed on
+  // worktree list load and on file changes, shown in the worktree overviews.
+  diffStats = $state<Record<string, DiffStats>>({})
+
+  // Worktrees with agent output the user hasn't looked at yet (agent produced
+  // output while that worktree wasn't selected). Cleared on selecting it.
+  unread = $state<Record<string, boolean>>({})
 
   // Set by the fs watcher when a running agent edits a file → the Git Changes
   // sidebar highlights it.
@@ -476,12 +485,40 @@ export function syncWatched(): void {
 
 export async function refreshWorktrees(): Promise<void> {
   store.worktrees = await window.workbench.worktrees.list()
+  for (const worktree of store.worktrees) void refreshDiffStats(worktree.id)
+}
+
+// Fetch +/- line counts vs HEAD for one worktree into the store.
+export async function refreshDiffStats(worktreeId: string): Promise<void> {
+  try {
+    const stats = await window.workbench.git.diffStats(worktreeId)
+    store.diffStats = { ...store.diffStats, [worktreeId]: stats }
+  } catch {
+    // A worktree may be mid-removal; ignore transient failures.
+  }
+}
+
+// Coalesce bursts of file changes into a single diff-stat refresh per worktree.
+const diffStatTimers = new Map<string, ReturnType<typeof setTimeout>>()
+function scheduleDiffStats(worktreeId: string): void {
+  const existing = diffStatTimers.get(worktreeId)
+  if (existing) clearTimeout(existing)
+  diffStatTimers.set(
+    worktreeId,
+    setTimeout(() => {
+      diffStatTimers.delete(worktreeId)
+      void refreshDiffStats(worktreeId)
+    }, 400)
+  )
 }
 
 export async function selectWorktree(worktreeId: string): Promise<void> {
   store.selectedWorktreeId = worktreeId
+  // Selecting a worktree marks its agent output as seen.
+  if (store.unread[worktreeId]) store.unread = { ...store.unread, [worktreeId]: false }
   await window.workbench.state.update({ selectedWorktreeId: worktreeId })
   await refreshRuntimes(worktreeId)
+  void refreshDiffStats(worktreeId)
   syncWatched()
 }
 
@@ -505,6 +542,10 @@ export function subscribeEvents(): void {
       line: string
     }
     store.appendLog(event.worktreeId, { source: event.source, name: event.name, line: event.line })
+    // Agent output in a worktree the user isn't looking at is unread.
+    if (event.source === 'agent' && event.worktreeId !== store.selectedWorktreeId) {
+      store.unread = { ...store.unread, [event.worktreeId]: true }
+    }
   })
   window.workbench.on('event:service-status', (payload) => {
     store.updateServiceRuntime(payload as ServiceRuntime)
@@ -573,6 +614,8 @@ export function subscribeEvents(): void {
       ...store.fsVersion,
       [event.worktreeId]: (store.fsVersion[event.worktreeId] || 0) + 1
     }
+    // Refresh the +/- line counts for the worktree overviews (debounced).
+    scheduleDiffStats(event.worktreeId)
     const isFile = event.type === 'add' || event.type === 'change' || event.type === 'unlink'
     // An inline edit under review keeps the change in the editor overlay, so it
     // claims its own writes instead of the changes view taking over.

@@ -6,7 +6,7 @@
   // the surface that makes the parallelism visible.
   import { store, selectWorktree } from '../lib/store.svelte'
   import { layout } from '../lib/layout.svelte'
-  import { attentionFor, lastAgentLine, agentStatusColor } from '../lib/worktreeStatus'
+  import { attentionFor, lastAgentLine, agentStatusColor, diffStatLabel } from '../lib/worktreeStatus'
   import type { AgentRuntime } from '../../../shared/types'
 
   function agentsFor(worktreeId: string): AgentRuntime[] {
@@ -35,6 +35,7 @@
       {@const agent = runningAgent(worktree.id)}
       {@const attention = attentionFor(worktree.id)}
       {@const line = lastAgentLine(worktree.id)}
+      {@const diff = diffStatLabel(worktree.id)}
       <button
         class="flex w-full flex-col gap-1 border-b border-line px-3 py-2 text-left hover:bg-hover {store.selectedWorktreeId ===
         worktree.id
@@ -51,14 +52,22 @@
             <span class="ml-auto text-2xs text-amber" title="Waiting on permission">⊘ perm</span>
           {:else if attention.waitingDialog}
             <span class="ml-auto text-2xs text-amber" title="Waiting on a question">❓ ask</span>
+          {:else if attention.unread}
+            <span class="ml-auto text-2xs text-amber" title="Unread agent output">✉ unread</span>
           {:else if attention.agentDone}
             <span class="ml-auto text-2xs text-green" title="Agent finished">✓ done</span>
           {:else if attention.serviceUnhealthy}
             <span class="ml-auto text-2xs text-red" title="A service is unhealthy">● svc</span>
           {/if}
         </div>
-        <div class="truncate font-mono text-2xs text-dim">
-          {worktree.branch}
+        <div class="flex items-center gap-2">
+          <span class="truncate font-mono text-2xs text-dim">{worktree.branch}</span>
+          {#if diff}
+            <span class="ml-auto shrink-0 font-mono text-2xs" title="Lines changed vs HEAD">
+              <span class="text-green">+{diff.added}</span>
+              <span class="text-red">−{diff.removed}</span>
+            </span>
+          {/if}
         </div>
         {#if agent}
           <div class="truncate text-2xs text-dim">

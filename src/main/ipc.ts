@@ -37,7 +37,10 @@ import { ActionRunner } from './actions'
 import { TerminalManager } from './terminals'
 import { NeovimManager } from './nvim'
 import { buildWorktreeEnv, spawnEnv } from './env'
-import { PermissionBroker, type PermissionDecision as PluginPermissionDecision } from './plugins/broker'
+import {
+  PermissionBroker,
+  type PermissionDecision as PluginPermissionDecision
+} from './plugins/broker'
 import { PluginRegistry } from './plugins/loader'
 import { PluginRouter } from './plugins/router'
 import { AiBridge } from './plugins/aiBridge'
@@ -333,13 +336,10 @@ export function registerIpc(): void {
 
   // Unified diff between two in-memory file versions, for previewing a pending
   // Write/Edit inline in the permission card.
-  ipcMain.handle(
-    'git:diffText',
-    (_e, worktreeId: string, before: string, after: string) => {
-      const worktree = findWorktree(worktreeId)
-      return inlineDiff.diffStrings(worktree.path, before, after)
-    }
-  )
+  ipcMain.handle('git:diffText', (_e, worktreeId: string, before: string, after: string) => {
+    const worktree = findWorktree(worktreeId)
+    return inlineDiff.diffStrings(worktree.path, before, after)
+  })
 
   // ── Git ship-it chain (stage → commit → push → merge → archive) ──
   ipcMain.handle('git:stage', (_e, worktreeId: string, paths: string[]) => {
@@ -368,6 +368,60 @@ export function registerIpc(): void {
     const { repoPath } = requireRepo()
     const worktree = findWorktree(worktreeId)
     return git.mergeToBase(repoPath, worktree.branch, baseBranch)
+  })
+
+  // ── Worktree-into-worktree merge ────────────────────────────────
+  ipcMain.handle(
+    'git:mergePreview',
+    async (_e, targetWorktreeId: string, sourceWorktreeId: string) => {
+      const target = findWorktree(targetWorktreeId)
+      const source = findWorktree(sourceWorktreeId)
+      const preview = await git.mergePreview(target.path, source.branch)
+      return { ...preview, sourceDirty: await git.isDirty(source.path) }
+    }
+  )
+
+  ipcMain.handle(
+    'git:mergeWorktree',
+    async (
+      _e,
+      targetWorktreeId: string,
+      sourceWorktreeId: string,
+      opts: { mode: import('../shared/types').MergeMode; message?: string }
+    ) => {
+      const target = findWorktree(targetWorktreeId)
+      const source = findWorktree(sourceWorktreeId)
+      if (target.isDetached) {
+        throw new Error(
+          `target worktree "${target.name}" is on a detached HEAD; cannot merge into it`
+        )
+      }
+      if (await git.isDirty(target.path)) {
+        throw new Error(
+          `target worktree "${target.name}" has uncommitted changes; commit or revert them before merging`
+        )
+      }
+      // Snapshot the target before the merge so a bad result is one restore away.
+      await checkpoints.snapshot(target.path, 'pre-merge', {
+        note: `merge ${source.branch} → ${target.branch}`
+      })
+      return git.mergeWorktree(target.path, source.branch, opts)
+    }
+  )
+
+  ipcMain.handle('git:mergeAbort', (_e, targetWorktreeId: string) => {
+    const target = findWorktree(targetWorktreeId)
+    return git.abortMerge(target.path)
+  })
+
+  ipcMain.handle('git:mergeContinue', (_e, targetWorktreeId: string) => {
+    const target = findWorktree(targetWorktreeId)
+    return git.continueMerge(target.path)
+  })
+
+  ipcMain.handle('git:mergeConflicts', (_e, targetWorktreeId: string) => {
+    const target = findWorktree(targetWorktreeId)
+    return git.conflictedFiles(target.path)
   })
 
   ipcMain.handle('github:openPr', (_e, worktreeId: string, options: OpenPrOptions) => {
@@ -750,20 +804,17 @@ export function registerIpc(): void {
   // ── Terminal ──────────────────────────────────────────────────
   // Spawn a shell in the worktree's directory with its WT_*/PORT_n vars, so a
   // terminal matches what services and keybind actions see.
-  ipcMain.handle(
-    'terminal:create',
-    (_e, worktreeId: string | null, cols: number, rows: number) => {
-      let cwd = context.repoPath ?? process.cwd()
-      let vars: Record<string, string> = {}
-      if (worktreeId) {
-        const worktree = findWorktree(worktreeId)
-        const cfg = requireRepo().config
-        vars = buildWorktreeEnv(worktree, worktrees.portsForWorktree(cfg, worktree.portSlot))
-        cwd = worktree.path
-      }
-      return terminals.create({ cwd, env: spawnEnv(vars), cols, rows })
+  ipcMain.handle('terminal:create', (_e, worktreeId: string | null, cols: number, rows: number) => {
+    let cwd = context.repoPath ?? process.cwd()
+    let vars: Record<string, string> = {}
+    if (worktreeId) {
+      const worktree = findWorktree(worktreeId)
+      const cfg = requireRepo().config
+      vars = buildWorktreeEnv(worktree, worktrees.portsForWorktree(cfg, worktree.portSlot))
+      cwd = worktree.path
     }
-  )
+    return terminals.create({ cwd, env: spawnEnv(vars), cols, rows })
+  })
   ipcMain.handle('terminal:write', (_e, id: string, data: string) => terminals.write(id, data))
   ipcMain.handle('terminal:resize', (_e, id: string, cols: number, rows: number) =>
     terminals.resize(id, cols, rows)
@@ -852,9 +903,8 @@ export function registerIpc(): void {
   ipcMain.handle('plugins:cancel', (_e: IpcMainInvokeEvent, pluginId: string, callId: string) =>
     pluginRouter.cancel(pluginId, callId)
   )
-  ipcMain.handle(
-    'plugins:cancelAll',
-    (_e: IpcMainInvokeEvent, pluginId: string) => pluginRouter.cancelAllForPlugin(pluginId)
+  ipcMain.handle('plugins:cancelAll', (_e: IpcMainInvokeEvent, pluginId: string) =>
+    pluginRouter.cancelAllForPlugin(pluginId)
   )
   ipcMain.handle(
     'plugins:respondPermission',

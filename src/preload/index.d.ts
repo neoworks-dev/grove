@@ -15,6 +15,9 @@ import type {
   DiffHunks,
   DiffStats,
   CheckpointMeta,
+  MergeMode,
+  MergePreview,
+  MergeResult,
   InlineHunk,
   AppliedRange,
   OpenPrOptions,
@@ -116,6 +119,15 @@ export interface WorkbenchApi {
     commit: (worktreeId: string, message: string) => Promise<string>
     push: (worktreeId: string) => Promise<string>
     mergeLocal: (worktreeId: string, baseBranch: string) => Promise<string>
+    mergePreview: (targetWorktreeId: string, sourceWorktreeId: string) => Promise<MergePreview>
+    mergeWorktree: (
+      targetWorktreeId: string,
+      sourceWorktreeId: string,
+      opts: { mode: MergeMode; message?: string }
+    ) => Promise<MergeResult>
+    mergeAbort: (targetWorktreeId: string) => Promise<void>
+    mergeContinue: (targetWorktreeId: string) => Promise<MergeResult>
+    mergeConflicts: (targetWorktreeId: string) => Promise<string[]>
   }
   github: {
     openPr: (worktreeId: string, options: OpenPrOptions) => Promise<string>

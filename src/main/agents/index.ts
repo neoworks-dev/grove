@@ -26,6 +26,7 @@ import type {
 } from '../../shared/types'
 import type { AgentAdapter, RunHandle } from './types'
 import { userPromptLine } from './types'
+import { FileLockManager } from './locks'
 import { claudeAdapter } from './claude'
 import { codexAdapter } from './codex'
 import { opencodeAdapter } from './opencode'
@@ -121,6 +122,8 @@ export class AgentManager {
   private commands = new Map<string, AgentSlashCommand[]>()
   private lastLaunch = new Map<string, LastLaunch>()
   private runSeq = 0
+  // Cross-agent file-edit locks, keyed by the running agent's worktreeId::name.
+  private locks = new FileLockManager()
 
   // `adapters` is injectable for tests; production uses the module registry.
   constructor(
@@ -311,7 +314,9 @@ export class AgentManager {
       setCommands: (commands) => {
         this.commands.set(key, commands)
         this.events.onCommands?.({ worktreeId: worktree.id, name, commands })
-      }
+      },
+      tryAcquireLocks: (paths) => this.locks.tryAcquire(key, name, paths),
+      releaseLocks: () => this.locks.releaseOwner(key)
     })
 
     this.events.onStatus({ ...runtime })
@@ -504,13 +509,16 @@ export class AgentManager {
       this.events.onStatus({ ...entry.runtime })
       return
     }
-    // Terminal: auto-deny any still-pending permission and clean up.
+    // Terminal: auto-deny any still-pending permission, drop file locks, and
+    // clean up.
     this.denyPending(entry)
+    this.locks.releaseOwner(this.key(worktreeId, name))
     entry.logStream.end()
     this.events.onStatus({ ...entry.runtime })
     this.running.delete(this.key(worktreeId, name))
     // Snapshot the worktree after the agent's turn so its edits are revertible.
-    const worktreePath = this.lastLaunch.get(this.key(worktreeId, name))?.worktree.path ?? worktreeId
+    const worktreePath =
+      this.lastLaunch.get(this.key(worktreeId, name))?.worktree.path ?? worktreeId
     this.events.onCheckpoint?.(worktreePath, 'agent-turn-end', {
       name,
       chatId: this.activeChat(this.key(worktreeId, name)).id
@@ -567,11 +575,7 @@ export class AgentManager {
     entry.pendingDialogs.clear()
   }
 
-  async stop(
-    worktreeId: string,
-    name: string,
-    opts?: { clearQueue?: boolean }
-  ): Promise<void> {
+  async stop(worktreeId: string, name: string, opts?: { clearQueue?: boolean }): Promise<void> {
     const entry = this.running.get(this.key(worktreeId, name))
     if (!entry) {
       // Nothing running, but a user stop still flushes any waiting messages.

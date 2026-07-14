@@ -22,11 +22,13 @@ import type {
   PermissionDecision,
   PermissionRequestEvent,
   QueuedMessage,
-  Worktree
+  Worktree,
+  WorktreeChatMessage
 } from '../../shared/types'
 import type { AgentAdapter, RunHandle } from './types'
 import { userPromptLine } from './types'
 import { FileLockManager } from './locks'
+import { WorktreeChannel } from './channel'
 import { claudeAdapter } from './claude'
 import { codexAdapter } from './codex'
 import { opencodeAdapter } from './opencode'
@@ -62,6 +64,8 @@ export interface AgentEvents {
   onQueue?: (event: AgentQueueEvent) => void
   // Provider-discovered slash commands changed.
   onCommands?: (event: AgentCommandsEvent) => void
+  // A new message on a worktree's shared chat channel (agent or user origin).
+  onChat?: (message: WorktreeChatMessage) => void
   // A checkpoint-worthy moment: the user sent a message / answered a question,
   // or an agent turn ended. Fire-and-forget; the handler snapshots the worktree.
   onCheckpoint?: (
@@ -124,6 +128,11 @@ export class AgentManager {
   private runSeq = 0
   // Cross-agent file-edit locks, keyed by the running agent's worktreeId::name.
   private locks = new FileLockManager()
+  // Shared per-worktree chat channel (agent↔agent + agent↔user).
+  private channel = new WorktreeChannel({ onMessage: (message) => this.onChatMessage(message) })
+  // Recent chat-injection timestamps per worktree, to rate-limit agent↔agent
+  // chatter so it can't loop into a runaway.
+  private chatInjectTimes = new Map<string, number[]>()
 
   // `adapters` is injectable for tests; production uses the module registry.
   constructor(
@@ -316,7 +325,13 @@ export class AgentManager {
         this.events.onCommands?.({ worktreeId: worktree.id, name, commands })
       },
       tryAcquireLocks: (paths) => this.locks.tryAcquire(key, name, paths),
-      releaseLocks: () => this.locks.releaseOwner(key)
+      releaseLocks: () => this.locks.releaseOwner(key),
+      chat: {
+        send: (text, to) => {
+          this.channel.post(worktree.id, { kind: 'agent', name }, text, to)
+        },
+        history: (since) => this.channel.list(worktree.id, since)
+      }
     })
 
     this.events.onStatus({ ...runtime })
@@ -585,6 +600,48 @@ export class AgentManager {
     if (opts?.clearQueue) entry.clearQueueOnStop = true
     this.denyPending(entry)
     await entry.handle.stop().catch(() => {})
+  }
+
+  // ── Shared worktree chat ───────────────────────────────────────
+  // A user message on the channel (from the composer / chat panel).
+  sendChat(worktreeId: string, text: string): WorktreeChatMessage {
+    return this.channel.post(worktreeId, { kind: 'user', name: 'you' }, text.trim())
+  }
+
+  chatHistory(worktreeId: string, since?: number): WorktreeChatMessage[] {
+    return this.channel.list(worktreeId, since)
+  }
+
+  // Broadcast every message to the UI, and inject it into other running agents
+  // in the worktree so they notice without polling. Rate-limited per worktree.
+  private onChatMessage(message: WorktreeChatMessage): void {
+    this.events.onChat?.(message)
+    const prefix = `${message.worktreeId}::`
+    for (const [key, entry] of this.running) {
+      if (!key.startsWith(prefix)) continue
+      const name = key.slice(prefix.length)
+      // Never echo a message back to its own sender.
+      if (message.from.kind === 'agent' && name === message.from.name) continue
+      // Respect a targeted message.
+      if (message.to && message.to !== name) continue
+      if (!this.allowChatInject(message.worktreeId)) continue
+      entry.handle.send?.(`[chat from ${message.from.name}]: ${message.text}`)
+    }
+  }
+
+  // Sliding-window limiter: at most 30 injected chat messages per worktree per
+  // minute, so agent↔agent replies can't spiral.
+  private allowChatInject(worktreeId: string): boolean {
+    const now = Date.now()
+    const window = 60_000
+    const times = (this.chatInjectTimes.get(worktreeId) ?? []).filter((ts) => now - ts < window)
+    if (times.length >= 30) {
+      this.chatInjectTimes.set(worktreeId, times)
+      return false
+    }
+    times.push(now)
+    this.chatInjectTimes.set(worktreeId, times)
+    return true
   }
 
   activeWorktreeIds(): string[] {

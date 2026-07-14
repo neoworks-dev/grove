@@ -4,11 +4,13 @@
   import CreateWorktreeDialog from './CreateWorktreeDialog.svelte'
   import MergeWorktreeDialog from './MergeWorktreeDialog.svelte'
   import CheckpointsDialog from './CheckpointsDialog.svelte'
+  import WorktreeChatDialog from './WorktreeChatDialog.svelte'
   import type { Worktree, ServiceRuntime, AgentRuntime } from '../../../shared/types'
 
   let showDialog = $state(false)
   let mergeSource = $state<Worktree | null>(null)
   let checkpointsFor = $state<Worktree | null>(null)
+  let chatFor = $state<Worktree | null>(null)
 
   function serviceSummary(worktreeId: string): { running: number; total: number } {
     const list: ServiceRuntime[] = store.services[worktreeId] || []
@@ -107,6 +109,16 @@
           {/if}
           <button
             class="hidden text-dim hover:text-default group-hover:block"
+            title="Worktree chat"
+            onclick={(event) => {
+              event.stopPropagation()
+              chatFor = worktree
+            }}
+          >
+            ✉
+          </button>
+          <button
+            class="hidden text-dim hover:text-default group-hover:block"
             title="Checkpoints"
             onclick={(event) => {
               event.stopPropagation()
@@ -159,5 +171,12 @@
   <CheckpointsDialog
     worktree={{ id: checkpointsFor.id, name: checkpointsFor.name }}
     onClose={() => (checkpointsFor = null)}
+  />
+{/if}
+
+{#if chatFor}
+  <WorktreeChatDialog
+    worktree={{ id: chatFor.id, name: chatFor.name }}
+    onClose={() => (chatFor = null)}
   />
 {/if}

@@ -10,6 +10,59 @@ import type { PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agen
 import type { AgentConfig, AgentSlashCommand } from '../../shared/types'
 import type { AdapterContext, AgentAdapter, RunHandle } from './types'
 import { textLine } from './types'
+import { zodShapeFromJsonSchema } from '../plugins/zodSchema'
+
+type SdkModule = typeof import('@anthropic-ai/claude-agent-sdk')
+
+// Build the in-process `grove-chat` MCP server exposing sendMessage/readMessages
+// so the model can talk to sibling agents and the user. Handlers close over this
+// run's channel binding, so the sender identity is set by the manager, not the
+// model.
+function buildChatServer(sdk: SdkModule, chat: NonNullable<AdapterContext['chat']>): unknown {
+  const text = (value: string): { content: { type: 'text'; text: string }[] } => ({
+    content: [{ type: 'text', text: value }]
+  })
+  return sdk.createSdkMcpServer({
+    name: 'grove-chat',
+    tools: [
+      sdk.tool(
+        'sendMessage',
+        'Send a chat message to the other agents and the user working in this worktree. Optionally target one agent by name via "to".',
+        zodShapeFromJsonSchema({
+          type: 'object',
+          properties: {
+            text: { type: 'string', description: 'The message to send.' },
+            to: { type: 'string', description: 'Optional agent name to address.' }
+          },
+          required: ['text']
+        }),
+        async (input: unknown) => {
+          const data = (input || {}) as { text?: string; to?: string }
+          if (data.text) chat.send(data.text, data.to)
+          return text('Message sent.')
+        }
+      ),
+      sdk.tool(
+        'readMessages',
+        'Read recent chat messages from the other agents and the user in this worktree.',
+        zodShapeFromJsonSchema({
+          type: 'object',
+          properties: {
+            since: { type: 'number', description: 'Only messages after this epoch-ms timestamp.' }
+          }
+        }),
+        async (input: unknown) => {
+          const data = (input || {}) as { since?: number }
+          const messages = chat.history(data.since)
+          if (messages.length === 0) return text('No messages yet.')
+          return text(
+            messages.map((message) => `[${message.from.name}] ${message.text}`).join('\n')
+          )
+        }
+      )
+    ]
+  })
+}
 
 const config: AgentConfig = {
   command: 'claude',
@@ -155,11 +208,15 @@ function start(context: AdapterContext): RunHandle {
 
   void (async () => {
     try {
-      const { query } = await import('@anthropic-ai/claude-agent-sdk')
+      const sdk = await import('@anthropic-ai/claude-agent-sdk')
+      const { query } = sdk
       // Plugin-contributed MCP servers (in-process, handlers proxied to the
       // plugin workers) and skill text.
       const pluginMcpServers = context.pluginAi ? await context.pluginAi.mcpServers() : {}
       const skillAppend = context.pluginAi ? context.pluginAi.systemAppend() : ''
+      // Built-in worktree chat channel, merged alongside plugin servers.
+      const mcpServers: Record<string, unknown> = { ...pluginMcpServers }
+      if (context.chat) mcpServers['grove-chat'] = buildChatServer(sdk, context.chat)
       // Streaming-input mode: the prompt rides in as the first queued message,
       // and later sends inject into the live conversation. It also unlocks the
       // SDK's control requests (interrupt, supportedCommands).
@@ -169,8 +226,7 @@ function start(context: AdapterContext): RunHandle {
         options: {
           cwd: context.worktree.path,
           abortController: abort,
-          mcpServers:
-            Object.keys(pluginMcpServers).length > 0 ? (pluginMcpServers as never) : undefined,
+          mcpServers: Object.keys(mcpServers).length > 0 ? (mcpServers as never) : undefined,
           // Use Claude Code's default system prompt so its dynamic auto-memory
           // section loads CLAUDE.md, and load project settings so that memory
           // (and .claude settings) is actually read from disk.

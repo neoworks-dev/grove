@@ -319,12 +319,15 @@ export class NvimCanvasSession {
   }
 
   // Spawn nvim, wire the redraw/exit stream, attach the UI, and run onAttached.
-  // Reused verbatim for the initial start and every restart.
-  private async connect(): Promise<void> {
+  // Reused verbatim for the initial start and every restart. `worktreeId`
+  // overrides the spawn cwd (used by rebind on a worktree switch); it defaults
+  // to the currently selected worktree.
+  private async connect(worktreeId?: string): Promise<void> {
     if (this.destroyed || !this.renderer) return
+    const target = worktreeId === undefined ? store.selectedWorktreeId : worktreeId
     let spawnedId: string
     try {
-      spawnedId = await window.workbench.nvim.spawn(store.selectedWorktreeId)
+      spawnedId = await window.workbench.nvim.spawn(target)
     } catch {
       this.callbacks.onUnavailable?.()
       return
@@ -355,10 +358,29 @@ export class NvimCanvasSession {
     const { cols, rows } = this.gridSize()
     // A fresh session repaints the whole grid on attach.
     this.pendingDirtyAll = true
-    await window.workbench.nvim.attach(this.nvimId, cols, rows, this.resolveInitialFile() ?? undefined)
+    await window.workbench.nvim.attach(
+      this.nvimId,
+      cols,
+      rows,
+      this.resolveInitialFile() ?? undefined
+    )
     void this.pushTheme()
     await this.callbacks.onAttached?.(this.nvimId)
     this.elements.input.focus()
+  }
+
+  // Re-point this session at a different worktree (the user switched worktrees).
+  // Kills the current nvim without tripping the crash-restart path, then
+  // reconnects against the new worktree so buffers/cwd/LSP match it. The fresh
+  // session opens that worktree's active tab via initialFile.
+  async rebind(worktreeId: string): Promise<void> {
+    if (this.destroyed || !this.renderer) return
+    const old = this.nvimId
+    // Null the id first so the killed nvim's exit event is ignored (the exit
+    // handler bails when the event id no longer matches this.nvimId).
+    this.nvimId = null
+    if (old) void window.workbench.nvim.kill(old)
+    await this.connect(worktreeId)
   }
 
   private resolveInitialFile(): string | null {
@@ -630,11 +652,25 @@ export class NvimCanvasSession {
     const modifier = this.mouseModifier(event)
     if (event.deltaY !== 0) {
       const action = event.deltaY > 0 ? 'down' : 'up'
-      void window.workbench.nvim.inputMouse(this.nvimId, 'wheel', action, modifier, cell.row, cell.col)
+      void window.workbench.nvim.inputMouse(
+        this.nvimId,
+        'wheel',
+        action,
+        modifier,
+        cell.row,
+        cell.col
+      )
     }
     if (event.deltaX !== 0) {
       const action = event.deltaX > 0 ? 'right' : 'left'
-      void window.workbench.nvim.inputMouse(this.nvimId, 'wheel', action, modifier, cell.row, cell.col)
+      void window.workbench.nvim.inputMouse(
+        this.nvimId,
+        'wheel',
+        action,
+        modifier,
+        cell.row,
+        cell.col
+      )
     }
   }
 }

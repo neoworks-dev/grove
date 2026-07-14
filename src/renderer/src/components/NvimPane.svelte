@@ -198,6 +198,19 @@
     if (keymap.activePane === leafId) session?.focus()
   })
 
+  // Follow the selected worktree: each worktree is its own editor (own buffers,
+  // own cwd), so on a switch the session rebinds nvim to the new worktree.
+  // Initialized to the spawn-time worktree so the first real switch rebinds.
+  let boundWorktreeId: string | null = store.selectedWorktreeId
+  $effect(() => {
+    const worktreeId = store.selectedWorktreeId
+    if (!session || !worktreeId || boundWorktreeId === worktreeId) return
+    boundWorktreeId = worktreeId
+    // Let the rebound session open the new worktree's active tab itself.
+    lastPushedPath = null
+    void session.rebind(worktreeId)
+  })
+
   // Follow grove's active tab into nvim (finder/tree opens).
   $effect(() => {
     const path = store.activeTabPath

@@ -57,6 +57,8 @@ interface RepoStateShape {
   portSlots: Record<string, number>
   openTabs: string[]
   activeTabPath: string | null
+  openTabsByWorktree: Record<string, string[]>
+  activeTabByWorktree: Record<string, string | null>
   selectedWorktreeId: string | null
   setupOnceDone: boolean
   agentSessions: Record<string, string>

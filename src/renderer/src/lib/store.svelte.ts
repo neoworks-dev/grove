@@ -19,7 +19,8 @@ import type {
   AgentCommandsEvent,
   AgentSlashCommand,
   QueuedMessage,
-  DiffStats
+  DiffStats,
+  WorktreeChatMessage
 } from '../../../shared/types'
 
 export interface LogLine {
@@ -86,6 +87,10 @@ class WorkbenchStore {
   // Worktrees with agent output the user hasn't looked at yet (agent produced
   // output while that worktree wasn't selected). Cleared on selecting it.
   unread = $state<Record<string, boolean>>({})
+
+  // Shared per-worktree chat messages (agent↔agent + agent↔user), keyed by
+  // worktreeId.
+  worktreeChat = $state<Record<string, WorktreeChatMessage[]>>({})
 
   // Set by the fs watcher when a running agent edits a file → the Git Changes
   // sidebar highlights it.
@@ -599,6 +604,16 @@ export function subscribeEvents(): void {
     store.agentCommands = {
       ...store.agentCommands,
       [`${event.worktreeId}::${event.name}`]: event.commands
+    }
+  })
+
+  window.workbench.on('event:worktree-chat', (payload) => {
+    const message = payload as WorktreeChatMessage
+    const list = store.worktreeChat[message.worktreeId] || []
+    store.worktreeChat = { ...store.worktreeChat, [message.worktreeId]: [...list, message] }
+    // A message from an agent in a non-selected worktree is unread.
+    if (message.from.kind === 'agent' && message.worktreeId !== store.selectedWorktreeId) {
+      store.unread = { ...store.unread, [message.worktreeId]: true }
     }
   })
 

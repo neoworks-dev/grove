@@ -13,7 +13,8 @@ import type {
   AgentStatus,
   PermissionDecision,
   PermissionRequestEvent,
-  Worktree
+  Worktree,
+  WorktreeChatMessage
 } from '../../shared/types'
 
 export interface AdapterContext {
@@ -48,6 +49,13 @@ export interface AdapterContext {
   tryAcquireLocks?: (paths: string[]) => { ok: boolean; heldBy?: string }
   // Release all of this run's file locks (called at each turn boundary).
   releaseLocks?: () => void
+  // The worktree's shared chat channel (agent↔agent + agent↔user). Absent if
+  // the adapter doesn't wire it. Exposed to the model as the grove-chat MCP
+  // tools; `send`'s `from` is set by the manager (unspoofable).
+  chat?: {
+    send: (text: string, to?: string) => void
+    history: (since?: number) => WorktreeChatMessage[]
+  }
 }
 
 export interface RunHandle {

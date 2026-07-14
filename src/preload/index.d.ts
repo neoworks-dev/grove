@@ -18,6 +18,7 @@ import type {
   MergeMode,
   MergePreview,
   MergeResult,
+  WorktreeChatMessage,
   InlineHunk,
   AppliedRange,
   OpenPrOptions,
@@ -140,6 +141,10 @@ export interface WorkbenchApi {
       worktreeId: string,
       commit: string
     ) => Promise<{ restoredTree: string; preRestore: CheckpointMeta | null }>
+  }
+  chat: {
+    send: (worktreeId: string, text: string) => Promise<WorktreeChatMessage>
+    history: (worktreeId: string, since?: number) => Promise<WorktreeChatMessage[]>
   }
   config: {
     load: () => Promise<WorkbenchConfig>

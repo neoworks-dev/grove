@@ -95,6 +95,19 @@ export type MergeResult =
   | { status: 'merged'; summary: string; fastForward: boolean }
   | { status: 'conflict'; files: string[]; summary: string }
 
+// ── Cross-agent + agent↔user chat ───────────────────────────────
+
+// One message on a worktree's shared channel. `from.kind` distinguishes the
+// user from an agent; `to` optionally targets one agent by name.
+export interface WorktreeChatMessage {
+  id: string
+  worktreeId: string
+  from: { kind: 'user' | 'agent'; name: string }
+  text: string
+  ts: number
+  to?: string
+}
+
 // ── Local-only checkpoints ──────────────────────────────────────
 
 // What caused a checkpoint to be taken.

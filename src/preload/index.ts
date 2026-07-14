@@ -71,6 +71,11 @@ const workbench = {
     restore: (worktreeId: string, commit: string) =>
       ipcRenderer.invoke('checkpoints:restore', worktreeId, commit)
   },
+  chat: {
+    send: (worktreeId: string, text: string) => ipcRenderer.invoke('chat:send', worktreeId, text),
+    history: (worktreeId: string, since?: number) =>
+      ipcRenderer.invoke('chat:history', worktreeId, since)
+  },
   config: {
     load: () => ipcRenderer.invoke('config:load'),
     exists: () => ipcRenderer.invoke('config:exists'),

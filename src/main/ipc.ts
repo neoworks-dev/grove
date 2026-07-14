@@ -93,6 +93,7 @@ const agents = new AgentManager({
       void updateRepoState(context.repoPath, { agentCommands: agents.allCommands() })
     }
   },
+  onChat: (message) => send('event:worktree-chat', message),
   onCheckpoint: (worktreePath, trigger, ctx) => {
     void checkpoints.snapshot(worktreePath, trigger, ctx).catch(() => {})
   }
@@ -642,6 +643,17 @@ export function registerIpc(): void {
   // Effective agent configs (adapter defaults + config) with modes/efforts,
   // for building the launch UI.
   ipcMain.handle('agents:configs', () => effectiveAgents())
+
+  // ── Shared worktree chat (agent↔agent + agent↔user) ─────────────
+  ipcMain.handle('chat:send', (_e, worktreeId: string, text: string) => {
+    findWorktree(worktreeId)
+    return agents.sendChat(worktreeId, text)
+  })
+
+  ipcMain.handle('chat:history', (_e, worktreeId: string, since?: number) => {
+    findWorktree(worktreeId)
+    return agents.chatHistory(worktreeId, since)
+  })
 
   // ── Files ─────────────────────────────────────────────────────
   ipcMain.handle('files:listDir', (_e, worktreeId: string, relPath: string) => {

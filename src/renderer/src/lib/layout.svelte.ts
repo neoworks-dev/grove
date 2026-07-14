@@ -504,8 +504,14 @@ class LayoutStore {
         paneSizes: $state.snapshot(this.paneSizes),
         docks: $state.snapshot(this.docks) as DockLayoutState,
         focusMode: this.focusMode,
-        openTabs: store.tabs.map((tab) => tab.path),
-        activeTabPath: store.activeTabPath
+        // Tabs are per worktree; persist the full maps (paths only).
+        openTabsByWorktree: Object.fromEntries(
+          Object.entries(store.tabsByWorktree).map(([worktreeId, tabs]) => [
+            worktreeId,
+            tabs.map((tab) => tab.path)
+          ])
+        ),
+        activeTabByWorktree: $state.snapshot(store.activeTabByWorktree)
       })
     } catch {
       // best-effort; layout is non-critical

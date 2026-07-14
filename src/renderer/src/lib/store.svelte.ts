@@ -118,8 +118,37 @@ class WorkbenchStore {
   // Streamed logs keyed by worktreeId.
   logs = $state<Record<string, LogLine[]>>({})
 
-  tabs = $state<EditorTab[]>([])
-  activeTabPath = $state<string | null>(null)
+  // Open editor tabs and the active tab are scoped per worktree, so each
+  // worktree keeps its own set of open buffers (not synced across worktrees).
+  // `tabs`/`activeTabPath` are accessors over the selected worktree's slice, so
+  // every existing call site keeps working unchanged.
+  tabsByWorktree = $state<Record<string, EditorTab[]>>({})
+  activeTabByWorktree = $state<Record<string, string | null>>({})
+
+  get tabs(): EditorTab[] {
+    const id = this.selectedWorktreeId
+    if (!id) return []
+    return this.tabsByWorktree[id] || []
+  }
+
+  set tabs(value: EditorTab[]) {
+    const id = this.selectedWorktreeId
+    if (!id) return
+    this.tabsByWorktree = { ...this.tabsByWorktree, [id]: value }
+  }
+
+  get activeTabPath(): string | null {
+    const id = this.selectedWorktreeId
+    if (!id) return null
+    const value = this.activeTabByWorktree[id]
+    return value === undefined ? null : value
+  }
+
+  set activeTabPath(value: string | null) {
+    const id = this.selectedWorktreeId
+    if (!id) return
+    this.activeTabByWorktree = { ...this.activeTabByWorktree, [id]: value }
+  }
 
   // Active icon pack name; reading this in a component makes icons re-render
   // reactively when the pack changes.
@@ -461,22 +490,50 @@ export async function openRepoResult(result: {
       : result.worktrees[0]?.id || null
   // Restore UI layout (split tree — or the legacy pane sizes — and open tabs).
   layout.apply(repoState)
-  if (store.selectedWorktreeId && repoState.openTabs && repoState.openTabs.length > 0) {
-    const worktreeId = store.selectedWorktreeId
-    store.tabs = repoState.openTabs.map((path) => ({
-      worktreeId,
-      path,
-      name: path.split('/').pop() || path
-    }))
-    store.activeTabPath =
-      repoState.activeTabPath && repoState.openTabs.includes(repoState.activeTabPath)
-        ? repoState.activeTabPath
-        : repoState.openTabs[repoState.openTabs.length - 1]
-  }
+  restoreTabs(repoState)
   if (store.selectedWorktreeId) {
     await refreshRuntimes(store.selectedWorktreeId)
   }
   syncWatched()
+}
+
+// Rebuild the per-worktree open-tab maps from persisted state, preferring the
+// per-worktree form and migrating the legacy flat openTabs (assigned to the
+// selected worktree, matching the old single-list behavior).
+function restoreTabs(repoState: {
+  openTabsByWorktree?: Record<string, string[]>
+  activeTabByWorktree?: Record<string, string | null>
+  openTabs?: string[]
+  activeTabPath?: string | null
+  selectedWorktreeId?: string | null
+}): void {
+  const toTab = (worktreeId: string, path: string): EditorTab => ({
+    worktreeId,
+    path,
+    name: path.split('/').pop() || path
+  })
+
+  if (repoState.openTabsByWorktree) {
+    const tabs: Record<string, EditorTab[]> = {}
+    for (const [worktreeId, paths] of Object.entries(repoState.openTabsByWorktree)) {
+      tabs[worktreeId] = paths.map((path) => toTab(worktreeId, path))
+    }
+    store.tabsByWorktree = tabs
+    store.activeTabByWorktree = { ...(repoState.activeTabByWorktree || {}) }
+    return
+  }
+
+  // Legacy: a single flat list belonged to the selected worktree.
+  const worktreeId = store.selectedWorktreeId
+  if (!worktreeId || !repoState.openTabs || repoState.openTabs.length === 0) return
+  store.tabsByWorktree = {
+    [worktreeId]: repoState.openTabs.map((path) => toTab(worktreeId, path))
+  }
+  const active =
+    repoState.activeTabPath && repoState.openTabs.includes(repoState.activeTabPath)
+      ? repoState.activeTabPath
+      : repoState.openTabs[repoState.openTabs.length - 1]
+  store.activeTabByWorktree = { [worktreeId]: active }
 }
 
 // Watch the selected worktree plus any worktree with a running agent, so file

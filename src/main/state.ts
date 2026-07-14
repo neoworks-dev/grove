@@ -17,8 +17,11 @@ export type { InstalledExtension }
 
 export interface RepoState {
   portSlots: Record<string, number> // worktreeId -> slot
-  openTabs: string[] // absolute file paths
-  activeTabPath: string | null
+  openTabs: string[] // legacy flat open tabs (pre per-worktree); migration input
+  activeTabPath: string | null // legacy flat active tab; migration input
+  // Open tabs + active tab scoped per worktree (worktreeId -> ...).
+  openTabsByWorktree: Record<string, string[]>
+  activeTabByWorktree: Record<string, string | null>
   selectedWorktreeId: string | null
   setupOnceDone: boolean
   agentSessions: Record<string, string> // legacy: "worktreeId::agent" -> token
@@ -90,6 +93,8 @@ export function emptyRepoState(): RepoState {
     portSlots: {},
     openTabs: [],
     activeTabPath: null,
+    openTabsByWorktree: {},
+    activeTabByWorktree: {},
     selectedWorktreeId: null,
     setupOnceDone: false,
     agentSessions: {},

@@ -331,7 +331,11 @@ export function seedAgentTranscript(worktreeId: string, name: string, lines: str
 export async function resetAgentChat(worktreeId: string, agent: string): Promise<void> {
   await window.workbench.agents.reset(worktreeId, agent)
   const current = store.logs[worktreeId] || []
-  store.logs = { ...store.logs, [worktreeId]: current.filter((line) => line.source !== 'agent') }
+  // Drop only this agent's lines; peer agents in the same worktree keep theirs.
+  store.logs = {
+    ...store.logs,
+    [worktreeId]: current.filter((line) => !(line.source === 'agent' && line.name === agent))
+  }
   store.pendingPermissions = store.pendingPermissions.filter(
     (request) => !(request.worktreeId === worktreeId && request.agent === agent)
   )
@@ -353,7 +357,10 @@ export async function compactChat(
 // Replace the visible agent transcript with a given set of lines (used when
 // switching to another chat). Non-agent log lines for the worktree are kept.
 function setAgentTranscript(worktreeId: string, name: string, lines: string[]): void {
-  const others = (store.logs[worktreeId] || []).filter((line) => line.source !== 'agent')
+  // Keep service lines and other agents' lines; replace only this agent's.
+  const others = (store.logs[worktreeId] || []).filter(
+    (line) => !(line.source === 'agent' && line.name === name)
+  )
   const entries: LogLine[] = lines.map((line) => ({ source: 'agent', name, line }))
   store.logs = { ...store.logs, [worktreeId]: [...entries, ...others] }
 }

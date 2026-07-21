@@ -7,7 +7,7 @@ import { app } from 'electron'
 import { readdir, readFile } from 'fs/promises'
 import { join } from 'path'
 import { validateManifest, type PluginManifest } from '../../shared/plugins'
-import type { PermissionBroker } from './broker'
+import type { PermissionBroker } from '../api/broker'
 
 export type PluginSource = 'builtin' | 'user' | 'project'
 

@@ -272,7 +272,17 @@ function validateContributionIds(contributes: PluginContributions, errors: strin
 
 export interface RpcError {
   message: string
-  code?: 'permission-denied' | 'cancelled' | 'invalid' | 'internal'
+  code?:
+    | 'permission-denied'
+    | 'cancelled'
+    | 'invalid'
+    | 'internal'
+    // Route exists but is not served on this transport (e.g. worker-only).
+    | 'unsupported'
+    // Optimistic-concurrency mismatch: caller's expected version is stale.
+    | 'conflict'
+    // Socket client has not completed the api.hello handshake.
+    | 'unauthenticated'
 }
 
 export type RpcMessage =

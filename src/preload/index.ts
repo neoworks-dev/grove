@@ -268,6 +268,12 @@ const workbench = {
       revokeAll: (clientId: string) => ipcRenderer.invoke('plugins:grants:revokeAll', clientId)
     }
   },
+  apps: {
+    list: () => ipcRenderer.invoke('apps:list'),
+    respondPairing: (id: string, approved: boolean) =>
+      ipcRenderer.invoke('apps:respondPairing', id, approved),
+    revoke: (appId: string) => ipcRenderer.invoke('apps:revoke', appId)
+  },
   settings: {
     read: () => ipcRenderer.invoke('settings:read'),
     set: (key: string, value: unknown, scope: 'user' | 'project') =>

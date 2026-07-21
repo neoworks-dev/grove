@@ -24,6 +24,8 @@ export interface RepoState {
   activeTabByWorktree: Record<string, string | null>
   selectedWorktreeId: string | null
   setupOnceDone: boolean
+  // AGENTS.md onboarding intro page was dismissed or completed for this repo.
+  introDismissed: boolean
   agentSessions: Record<string, string> // legacy: "worktreeId::agent" -> token
   agentChats: Record<string, AgentChats> // "worktreeId::agent" -> named chats
   // Last-known provider-discovered slash commands, so the menu is populated
@@ -99,6 +101,7 @@ export function emptyRepoState(): RepoState {
     activeTabByWorktree: {},
     selectedWorktreeId: null,
     setupOnceDone: false,
+    introDismissed: false,
     agentSessions: {},
     agentChats: {},
     agentCommands: {},

@@ -3,6 +3,8 @@
 // single source of truth for the API exposed via preload.
 
 import { ipcMain, dialog, shell, BrowserWindow, type IpcMainInvokeEvent } from 'electron'
+import { access } from 'fs/promises'
+import { join } from 'path'
 import type {
   WorkbenchConfig,
   Worktree,
@@ -95,6 +97,8 @@ const agents = new AgentManager({
     }
   },
   onChat: (message) => send('event:worktree-chat', message),
+  onIntroPhase: (worktreeId, chatId, phase) =>
+    send('event:intro-phase', { worktreeId, chatId, phase }),
   onCheckpoint: (worktreePath, trigger, ctx) => {
     void checkpoints.snapshot(worktreePath, trigger, ctx).catch(() => {})
   }
@@ -194,9 +198,24 @@ async function refreshWorktrees(): Promise<Worktree[]> {
   return context.worktrees
 }
 
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
+// Any agent-instruction file at the repo root suppresses the intro page.
+async function hasAgentsFile(root: string): Promise<boolean> {
+  if (await pathExists(join(root, 'AGENTS.md'))) return true
+  return pathExists(join(root, 'CLAUDE.md'))
+}
+
 // Open a repo: validate, load config, remember it, list worktrees.
 async function openRepo(repoPath: string): Promise<{
-  info: { path: string; name: string; currentBranch: string }
+  info: { path: string; name: string; currentBranch: string; hasAgentsFile: boolean }
   worktrees: Worktree[]
 }> {
   if (!(await git.isGitRepo(repoPath))) {
@@ -221,7 +240,8 @@ async function openRepo(repoPath: string): Promise<{
     info: {
       path: root,
       name: root.split('/').pop() || root,
-      currentBranch: await git.currentBranch(root)
+      currentBranch: await git.currentBranch(root),
+      hasAgentsFile: await hasAgentsFile(root)
     },
     worktrees: list
   }

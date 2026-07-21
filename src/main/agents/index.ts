@@ -67,6 +67,8 @@ export interface AgentEvents {
   onCommands?: (event: AgentCommandsEvent) => void
   // A new message on a worktree's shared chat channel (agent or user origin).
   onChat?: (message: WorktreeChatMessage) => void
+  // AGENTS.md onboarding run reported a protocol phase (grove-intro setPhase).
+  onIntroPhase?: (worktreeId: string, chatId: string, phase: string) => void
   // A checkpoint-worthy moment: the user sent a message / answered a question,
   // or an agent turn ended. Fire-and-forget; the handler snapshots the worktree.
   onCheckpoint?: (
@@ -468,7 +470,10 @@ export class AgentManager {
           this.channel.post(worktree.id, { kind: 'agent', name, instanceId: chat.id }, text, to)
         },
         history: (since) => this.channel.list(worktree.id, since)
-      }
+      },
+      intro: options.intro
+        ? { setPhase: (phase) => this.events.onIntroPhase?.(worktree.id, chat.id, phase) }
+        : undefined
     })
 
     this.events.onStatus({ ...runtime })

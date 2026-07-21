@@ -101,6 +101,13 @@
       run: pickRepo
     })
     commands.register({
+      id: 'intro.setup',
+      title: 'Set up AGENTS.md (Introduction)',
+      group: 'Repository',
+      keywords: 'onboarding agents claude config style intro',
+      run: () => layout.showCenterPane('intro')
+    })
+    commands.register({
       id: 'view.toggleLogs',
       title: 'Toggle Logs Panel',
       group: 'View',

@@ -62,6 +62,14 @@ export function registerCoreMenu(): void {
       accelerator: '␣ k'
     },
     {
+      id: 'file.introSetup',
+      menuId: 'file',
+      label: 'Set up AGENTS.md…',
+      group: '1-open',
+      order: 3,
+      commandId: 'intro.setup'
+    },
+    {
       id: 'view.togglePanel',
       menuId: 'view',
       label: 'Toggle Bottom Panel',

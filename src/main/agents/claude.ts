@@ -64,6 +64,38 @@ function buildChatServer(sdk: SdkModule, chat: NonNullable<AdapterContext['chat'
   })
 }
 
+export const INTRO_PHASES = ['explore', 'interview', 'example', 'feedback', 'config', 'done']
+
+// Build the in-process `grove-intro` MCP server for AGENTS.md onboarding runs.
+// One tool: setPhase, so the intro pane's stepper can follow the protocol.
+function buildIntroServer(sdk: SdkModule, intro: NonNullable<AdapterContext['intro']>): unknown {
+  return sdk.createSdkMcpServer({
+    name: 'grove-intro',
+    tools: [
+      sdk.tool(
+        'setPhase',
+        'Report the current onboarding phase so the introduction page can show progress.',
+        zodShapeFromJsonSchema({
+          type: 'object',
+          properties: {
+            phase: {
+              type: 'string',
+              enum: INTRO_PHASES,
+              description: 'The onboarding phase you are entering.'
+            }
+          },
+          required: ['phase']
+        }),
+        async (input: unknown) => {
+          const data = (input || {}) as { phase?: string }
+          if (data.phase && INTRO_PHASES.includes(data.phase)) intro.setPhase(data.phase)
+          return { content: [{ type: 'text' as const, text: 'Phase updated.' }] }
+        }
+      )
+    ]
+  })
+}
+
 const config: AgentConfig = {
   command: 'claude',
   interactive: true,
@@ -218,6 +250,9 @@ function start(context: AdapterContext): RunHandle {
       // Built-in worktree chat channel, merged alongside plugin servers.
       const mcpServers: Record<string, unknown> = { ...pluginMcpServers }
       if (context.chat) mcpServers['grove-chat'] = buildChatServer(sdk, context.chat)
+      if (context.intro) mcpServers['grove-intro'] = buildIntroServer(sdk, context.intro)
+      const launchAppend = context.options.appendSystemPrompt || ''
+      const systemAppend = [skillAppend, launchAppend].filter(Boolean).join('\n\n')
       // Streaming-input mode: the prompt rides in as the first queued message,
       // and later sends inject into the live conversation. It also unlocks the
       // SDK's control requests (interrupt, supportedCommands).
@@ -234,7 +269,7 @@ function start(context: AdapterContext): RunHandle {
           systemPrompt: {
             type: 'preset',
             preset: 'claude_code',
-            append: skillAppend || undefined
+            append: systemAppend || undefined
           },
           settingSources: ['user', 'project', 'local'],
           // Resume the prior conversation when we have its session id.

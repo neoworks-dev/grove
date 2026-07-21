@@ -397,6 +397,17 @@ export class AgentManager {
     await this.stop(worktree.id, name, chat.id)
 
     const runKey = this.runKey(worktree.id, name, chat.id)
+    // Session-scoped options (onboarding protocol, custom system prompt) stick
+    // to the chat instance: a later start from any caller (composer restart,
+    // queue drain) must not silently drop them mid-conversation.
+    const previous = this.lastLaunch.get(runKey)
+    if (previous) {
+      options = {
+        appendSystemPrompt: previous.options.appendSystemPrompt,
+        intro: previous.options.intro,
+        ...options
+      }
+    }
     this.lastLaunch.set(runKey, { worktree, agent, ports, options })
     const resume = chat.session || undefined
 

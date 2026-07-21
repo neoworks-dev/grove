@@ -5,7 +5,6 @@
 // one-time trust per id@version. App grants live in the pairing store and are
 // wired in via sectionKey (external-apps.json, socket transport milestone).
 
-import { app } from 'electron'
 import { readFile, writeFile, mkdir } from 'fs/promises'
 import { dirname, join, resolve, sep } from 'path'
 import type { PluginManifest, PluginPermission } from '../../shared/plugins'
@@ -24,6 +23,17 @@ export interface PluginPermissionRequest {
 }
 
 export type PermissionDecision = 'allow-once' | 'allow-always' | 'deny-once' | 'deny-always'
+
+export interface GrantSummary {
+  // Grant-store section key: bare plugin id, or 'app:<id>' for external apps.
+  clientId: string
+  clientName: string
+  kind: ClientKind
+  source?: string
+  declared: PluginPermission[]
+  permissions: Partial<Record<PluginPermission, 'granted' | 'denied'>>
+  fsScopes: string[]
+}
 
 interface ClientGrants {
   permissions: Partial<Record<PluginPermission, 'granted' | 'denied'>>
@@ -65,9 +75,13 @@ export class PermissionBroker {
     this.grantsFilePath = options.grantsPath ?? null
   }
 
-  private grantsPath(): string {
+  // Electron is imported lazily so tests (which always inject a path) can
+  // load this module under bun without an electron runtime.
+  private async grantsPath(): Promise<string> {
     if (this.grantsFilePath) return this.grantsFilePath
-    return join(app.getPath('userData'), 'plugin-grants.json')
+    const { app } = await import('electron')
+    this.grantsFilePath = join(app.getPath('userData'), 'plugin-grants.json')
+    return this.grantsFilePath
   }
 
   // Plugin grants stay keyed by bare plugin id (byte-compatible with existing
@@ -82,7 +96,7 @@ export class PermissionBroker {
     if (this.cache) return this.cache
     let loaded: GrantStore
     try {
-      const text = await readFile(this.grantsPath(), 'utf8')
+      const text = await readFile(await this.grantsPath(), 'utf8')
       loaded = { ...EMPTY_STORE, ...JSON.parse(text) }
     } catch {
       loaded = structuredClone(EMPTY_STORE)
@@ -93,8 +107,9 @@ export class PermissionBroker {
 
   private async save(): Promise<void> {
     if (!this.cache) return
-    await mkdir(dirname(this.grantsPath()), { recursive: true })
-    await writeFile(this.grantsPath(), JSON.stringify(this.cache, null, 2), 'utf8')
+    const path = await this.grantsPath()
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(path, JSON.stringify(this.cache, null, 2), 'utf8')
   }
 
   // Throws PermissionError unless the client may use the permission.
@@ -191,6 +206,68 @@ export class PermissionBroker {
     if (!resolver) return
     this.pending.delete(id)
     resolver(decision)
+  }
+
+  // ── Grants review (settings UI) ───────────────────────────────
+  // Known clients get their declared scopes merged with stored decisions;
+  // stored grants for clients that no longer exist still show up (as bare
+  // entries) so stale grants can be cleaned out.
+  async listGrants(clients: ClientRecord[]): Promise<GrantSummary[]> {
+    const store = await this.store()
+    const summaries: GrantSummary[] = []
+    const covered = new Set<string>()
+    for (const client of clients) {
+      const key = this.sectionKey(client)
+      covered.add(key)
+      const grants = store.plugins[key]
+      summaries.push({
+        clientId: key,
+        clientName: client.name,
+        kind: client.kind,
+        source: client.source,
+        declared: client.declaredScopes,
+        permissions: { ...(grants?.permissions ?? {}) },
+        fsScopes: [...(grants?.fsScopes ?? [])]
+      })
+    }
+    for (const [key, grants] of Object.entries(store.plugins)) {
+      if (covered.has(key)) continue
+      summaries.push({
+        clientId: key,
+        clientName: key,
+        kind: key.startsWith('app:') ? 'app' : 'plugin',
+        declared: [],
+        permissions: { ...grants.permissions },
+        fsScopes: [...grants.fsScopes]
+      })
+    }
+    return summaries
+  }
+
+  // Revoking deletes the stored decision (prompt again on next use) rather
+  // than flipping to denied — a hard deny stays reachable through the next
+  // prompt's deny-always.
+  async revoke(clientId: string, permission: PluginPermission): Promise<void> {
+    const store = await this.store()
+    const grants = store.plugins[clientId]
+    if (!grants) return
+    delete grants.permissions[permission]
+    await this.save()
+  }
+
+  async revokeFsScope(clientId: string, path: string): Promise<void> {
+    const store = await this.store()
+    const grants = store.plugins[clientId]
+    if (!grants) return
+    grants.fsScopes = grants.fsScopes.filter((scope) => scope !== path)
+    await this.save()
+  }
+
+  async revokeAll(clientId: string): Promise<void> {
+    const store = await this.store()
+    if (!store.plugins[clientId]) return
+    delete store.plugins[clientId]
+    await this.save()
   }
 
   // ── Project trust ─────────────────────────────────────────────

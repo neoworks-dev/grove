@@ -258,7 +258,15 @@ const workbench = {
     respondPermission: (id: string, decision: string) =>
       ipcRenderer.invoke('plugins:respondPermission', id, decision),
     respondToolCall: (id: string, result: unknown, errorMessage?: string) =>
-      ipcRenderer.invoke('plugins:respondToolCall', id, result, errorMessage)
+      ipcRenderer.invoke('plugins:respondToolCall', id, result, errorMessage),
+    grants: {
+      list: () => ipcRenderer.invoke('plugins:grants:list'),
+      revoke: (clientId: string, permission: string) =>
+        ipcRenderer.invoke('plugins:grants:revoke', clientId, permission),
+      revokeScope: (clientId: string, path: string) =>
+        ipcRenderer.invoke('plugins:grants:revokeScope', clientId, path),
+      revokeAll: (clientId: string) => ipcRenderer.invoke('plugins:grants:revokeAll', clientId)
+    }
   },
   settings: {
     read: () => ipcRenderer.invoke('settings:read'),

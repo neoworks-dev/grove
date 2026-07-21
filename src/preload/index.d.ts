@@ -89,6 +89,18 @@ interface PluginRecordShape {
   errors: string[]
 }
 
+interface GrantSummaryShape {
+  clientId: string
+  clientName: string
+  kind: 'plugin' | 'app'
+  source?: string
+  declared: import('../shared/plugins').PluginPermission[]
+  permissions: Partial<
+    Record<import('../shared/plugins').PluginPermission, 'granted' | 'denied'>
+  >
+  fsScopes: string[]
+}
+
 export interface WorkbenchApi {
   repo: {
     pick: () => Promise<OpenRepoResult | null>
@@ -368,6 +380,12 @@ export interface WorkbenchApi {
     cancelAll: (pluginId: string) => Promise<void>
     respondPermission: (id: string, decision: string) => Promise<void>
     respondToolCall: (id: string, result: unknown, errorMessage?: string) => Promise<void>
+    grants: {
+      list: () => Promise<GrantSummaryShape[]>
+      revoke: (clientId: string, permission: string) => Promise<GrantSummaryShape[]>
+      revokeScope: (clientId: string, path: string) => Promise<GrantSummaryShape[]>
+      revokeAll: (clientId: string) => Promise<GrantSummaryShape[]>
+    }
   }
   settings: {
     read: () => Promise<SettingsSnapshotShape>

@@ -89,6 +89,14 @@ interface PluginRecordShape {
   errors: string[]
 }
 
+interface ExternalAppShape {
+  appId: string
+  name: string
+  grantedScopes: import('../shared/plugins').PluginPermission[]
+  createdAt: string
+  lastSeenAt: string
+}
+
 interface GrantSummaryShape {
   clientId: string
   clientName: string
@@ -386,6 +394,11 @@ export interface WorkbenchApi {
       revokeScope: (clientId: string, path: string) => Promise<GrantSummaryShape[]>
       revokeAll: (clientId: string) => Promise<GrantSummaryShape[]>
     }
+  }
+  apps: {
+    list: () => Promise<ExternalAppShape[]>
+    respondPairing: (id: string, approved: boolean) => Promise<void>
+    revoke: (appId: string) => Promise<ExternalAppShape[]>
   }
   settings: {
     read: () => Promise<SettingsSnapshotShape>

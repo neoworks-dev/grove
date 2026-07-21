@@ -51,6 +51,9 @@ import { ApiDispatcher } from './api/dispatcher'
 import { registerWorkspaceRoutes } from './api/routes/workspace'
 import { registerAiRoutes } from './api/routes/ai'
 import { registerStorageRoutes } from './api/routes/storage'
+import { AppPairing } from './api/socket/pairing'
+import { ApiSocketServer } from './api/socket/server'
+import { createHash } from 'crypto'
 import { PluginRegistry } from './plugins/loader'
 import { AiBridge } from './plugins/aiBridge'
 import { registerPluginProtocol } from './plugins/protocol'
@@ -175,6 +178,41 @@ function pluginClient(pluginId: string): ClientRecord {
     throw new PermissionError(`plugin not available: ${pluginId}`)
   }
   return clientFromPlugin(record)
+}
+
+// ── External app socket ─────────────────────────────────────────
+const appPairing = new AppPairing({
+  onPairingRequest: (request) => send('event:app-pairing', request)
+})
+let apiSocketServer: ApiSocketServer | null = null
+let apiSocketPath: string | null = null
+
+// Per-profile socket location: unix socket in a 0700 dir under userData;
+// a hashed named pipe on Windows (pipes have no fs permissions there — the
+// pairing token is the boundary).
+function socketPathFor(userData: string): string {
+  if (process.platform === 'win32') {
+    const hash = createHash('sha256').update(userData).digest('hex').slice(0, 12)
+    return `\\\\.\\pipe\\grove-${hash}`
+  }
+  return join(userData, 'sock', 'grove.sock')
+}
+
+function startApiSocket(): void {
+  const userData = app.getPath('userData')
+  apiSocketPath = socketPathFor(userData)
+  apiSocketServer = new ApiSocketServer({
+    dispatcher: apiDispatcher,
+    pairing: appPairing,
+    socketPath: apiSocketPath,
+    discoveryPath: join(userData, 'grove-api.json'),
+    log: (line) => console.warn(line)
+  })
+  void apiSocketServer.listen().catch((error: Error) => {
+    apiSocketServer = null
+    apiSocketPath = null
+    console.error('api socket failed to start:', error.message)
+  })
 }
 
 const lsp = new LspManager({
@@ -896,6 +934,9 @@ export function registerIpc(): void {
       vars = buildWorktreeEnv(worktree, worktrees.portsForWorktree(cfg, worktree.portSlot))
       cwd = worktree.path
     }
+    // Tools launched inside Grove terminals discover the local API socket
+    // with zero config.
+    if (apiSocketPath) vars.GROVE_SOCK = apiSocketPath
     return terminals.create({ cwd, env: spawnEnv(vars), cols, rows })
   })
   ipcMain.handle('terminal:write', (_e, id: string, data: string) => terminals.write(id, data))
@@ -1013,25 +1054,56 @@ export function registerIpc(): void {
     (_e: IpcMainInvokeEvent, id: string, decision: PluginPermissionDecision) =>
       pluginBroker.respondPermission(id, decision)
   )
-  const grantClients = (): ClientRecord[] => pluginRegistry.list().map(clientFromPlugin)
-  ipcMain.handle('plugins:grants:list', () => pluginBroker.listGrants(grantClients()))
+  const grantClients = async (): Promise<ClientRecord[]> => {
+    const pluginClients = pluginRegistry.list().map(clientFromPlugin)
+    const apps = await appPairing.list()
+    const appClients: ClientRecord[] = apps.map((record) => ({
+      key: `app:${record.appId}`,
+      kind: 'app',
+      id: record.appId,
+      name: record.name,
+      source: 'external',
+      declaredScopes: record.grantedScopes
+    }))
+    return [...pluginClients, ...appClients]
+  }
+  ipcMain.handle('plugins:grants:list', async () => pluginBroker.listGrants(await grantClients()))
   ipcMain.handle(
     'plugins:grants:revoke',
     async (_e: IpcMainInvokeEvent, clientId: string, permission: PluginPermission) => {
       await pluginBroker.revoke(clientId, permission)
-      return pluginBroker.listGrants(grantClients())
+      return pluginBroker.listGrants(await grantClients())
     }
   )
   ipcMain.handle(
     'plugins:grants:revokeScope',
     async (_e: IpcMainInvokeEvent, clientId: string, path: string) => {
       await pluginBroker.revokeFsScope(clientId, path)
-      return pluginBroker.listGrants(grantClients())
+      return pluginBroker.listGrants(await grantClients())
     }
   )
   ipcMain.handle('plugins:grants:revokeAll', async (_e: IpcMainInvokeEvent, clientId: string) => {
     await pluginBroker.revokeAll(clientId)
-    return pluginBroker.listGrants(grantClients())
+    // Revoking everything for an external app also unpairs it.
+    if (clientId.startsWith('app:')) {
+      const appId = clientId.slice('app:'.length)
+      await appPairing.revoke(appId)
+      apiSocketServer?.dropClient(clientId)
+    }
+    return pluginBroker.listGrants(await grantClients())
+  })
+
+  // ── External apps ─────────────────────────────────────────────
+  startApiSocket()
+  ipcMain.handle('apps:list', () => appPairing.list())
+  ipcMain.handle('apps:respondPairing', (_e: IpcMainInvokeEvent, id: string, approved: boolean) =>
+    appPairing.respondPairing(id, approved)
+  )
+  ipcMain.handle('apps:revoke', async (_e: IpcMainInvokeEvent, appId: string) => {
+    await appPairing.revoke(appId)
+    await pluginBroker.revokeAll(`app:${appId}`)
+    apiSocketServer?.dropClient(`app:${appId}`)
+    return appPairing.list()
   })
   ipcMain.handle(
     'plugins:respondToolCall',
@@ -1076,6 +1148,7 @@ export function registerIpc(): void {
 
 // Clean shutdown: kill every child process.
 export async function shutdown(): Promise<void> {
+  await apiSocketServer?.close().catch(() => {})
   await supervisor.stopAll()
   await agents.stopAll()
   await watcher.closeAll()

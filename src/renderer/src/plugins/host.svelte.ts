@@ -5,7 +5,7 @@
 // never by the worker).
 
 import type { PluginManifest } from '../../../shared/plugins'
-import { GROVE_API_VERSION } from '../../../shared/plugins'
+import { GROVE_API_VERSION, PERMISSION_META } from '../../../shared/plugins'
 import { RpcEndpoint } from './rpc'
 import { commands } from '../lib/commands.svelte'
 import { keymap } from '../lib/keymap.svelte'
@@ -119,6 +119,7 @@ class PluginHost {
     window.workbench.on('event:plugin-stream', (payload) => this.onMainStream(payload))
     window.workbench.on('event:plugin-tool-call', (payload) => void this.onPluginToolCall(payload))
     window.workbench.on('event:plugin-permission', (payload) => void this.onPermissionRequest(payload))
+    window.workbench.on('event:app-pairing', (payload) => void this.onAppPairingRequest(payload))
     window.workbench.on('event:plugins-changed', (payload) =>
       this.applyRecords(payload as PluginRecordShape[])
     )
@@ -219,6 +220,38 @@ class PluginHost {
     })
     const decision = choice === 'cancel' ? 'deny-once' : choice
     await window.workbench.plugins.respondPermission(request.id, decision)
+  }
+
+  // External app pairing: an unpaired process on the local API socket asked
+  // to connect. Approval mints a bearer token scoped to the listed
+  // capabilities; the grants pane can review or unpair later.
+  private async onAppPairingRequest(payload: unknown): Promise<void> {
+    const request = payload as {
+      id: string
+      appId: string
+      appName: string
+      requestedScopes: string[]
+    }
+    const scopeLines = request.requestedScopes
+      .map((scope) => {
+        const meta = PERMISSION_META[scope as keyof typeof PERMISSION_META]
+        if (!meta) return scope
+        if (meta.risk === 'danger') return `${meta.label} (⚠ ${scope})`
+        return `${meta.label} (${scope})`
+      })
+      .join(', ')
+    const choice = await dialogs.confirm({
+      title: `Pair external app "${request.appName}"?`,
+      body:
+        `A local process identifying as "${request.appId}" wants to connect to Grove. ` +
+        'Only pair apps you started yourself.',
+      detail: `requested access: ${scopeLines || 'none'}`,
+      actions: [
+        { id: 'approve', label: 'Pair', kind: 'primary' },
+        { id: 'cancel', label: 'Deny' }
+      ]
+    })
+    await window.workbench.apps.respondPairing(request.id, choice === 'approve')
   }
 
   // ── Activation ────────────────────────────────────────────────

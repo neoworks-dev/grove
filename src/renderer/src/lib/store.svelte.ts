@@ -578,9 +578,9 @@ export async function openRepoResult(result: {
   }
   syncWatched()
   // New workspace (no agent-instruction file) and never dismissed: offer the
-  // AGENTS.md onboarding introduction page.
+  // AGENTS.md onboarding introduction in the left sidebar.
   if (!result.info.hasAgentsFile && !repoState.introDismissed) {
-    layout.showCenterPane('intro')
+    layout.ensurePane('intro')
   }
 }
 

@@ -262,6 +262,216 @@ export function buildGroveApi(rpc: RpcEndpoint, pluginId: string): GroveApi {
       }
     },
 
+    editor: {
+      listEditors: () =>
+        rpc.request('main.editor.listEditors', {}) as ReturnType<GroveApi['editor']['listEditors']>,
+      getActiveEditor: () =>
+        rpc.request('main.editor.getActiveEditor', {}) as ReturnType<
+          GroveApi['editor']['getActiveEditor']
+        >,
+      openDocument: (path, options) =>
+        rpc.request('main.editor.openDocument', { path, ...options }) as ReturnType<
+          GroveApi['editor']['openDocument']
+        >,
+      readDocument: (path, options) =>
+        rpc.request('main.editor.readDocument', { path, ...options }) as ReturnType<
+          GroveApi['editor']['readDocument']
+        >,
+      getSelections: (path, options) =>
+        rpc.request('main.editor.getSelections', { path, ...options }) as ReturnType<
+          GroveApi['editor']['getSelections']
+        >,
+      applyEdit: (edit) =>
+        rpc.request('main.editor.applyEdit', edit) as ReturnType<GroveApi['editor']['applyEdit']>,
+      save: (path, options) =>
+        rpc.request('main.editor.save', { path, ...options }) as ReturnType<
+          GroveApi['editor']['save']
+        >,
+      setSelections: (path, selections, options) =>
+        rpc.request('main.editor.setSelections', { path, selections, ...options }) as ReturnType<
+          GroveApi['editor']['setSelections']
+        >,
+      setDecorations: (key, path, decorations, options) =>
+        rpc.request('main.editor.setDecorations', {
+          key,
+          path,
+          decorations,
+          ...options
+        }) as Promise<void>,
+      show: (path, options) =>
+        rpc.request('main.editor.show', { path, ...options }) as Promise<void>
+    },
+
+    git: {
+      status: (options) =>
+        rpc.request('main.git.status', options ?? {}) as ReturnType<GroveApi['git']['status']>,
+      branches: (options) =>
+        rpc.request('main.git.branches', options ?? {}) as ReturnType<GroveApi['git']['branches']>,
+      diffFile: (path, options) =>
+        rpc.request('main.git.diffFile', { path, ...options }) as ReturnType<
+          GroveApi['git']['diffFile']
+        >,
+      fileAtRef: (path, ref, options) =>
+        rpc.request('main.git.fileAtRef', { path, ref, ...options }) as Promise<string>,
+      stage: (paths, options) =>
+        rpc.request('main.git.stage', { paths, ...options }) as ReturnType<GroveApi['git']['stage']>,
+      unstage: (paths, options) =>
+        rpc.request('main.git.unstage', { paths, ...options }) as ReturnType<
+          GroveApi['git']['unstage']
+        >,
+      commit: (message, options) =>
+        rpc.request('main.git.commit', { message, ...options }) as ReturnType<
+          GroveApi['git']['commit']
+        >,
+      push: (options) =>
+        rpc.request('main.git.push', options ?? {}) as ReturnType<GroveApi['git']['push']>,
+      worktrees: {
+        list: () =>
+          rpc.request('main.git.worktrees.list', {}) as ReturnType<
+            GroveApi['git']['worktrees']['list']
+          >,
+        create: (options) =>
+          rpc.request('main.git.worktrees.create', options) as ReturnType<
+            GroveApi['git']['worktrees']['create']
+          >,
+        remove: (worktreeId) =>
+          rpc.request('main.git.worktrees.remove', { worktreeId }) as Promise<void>,
+        archive: (worktreeId) =>
+          rpc.request('main.git.worktrees.archive', { worktreeId }) as Promise<void>
+      },
+      checkpoints: {
+        list: (options) =>
+          rpc.request('main.git.checkpoints.list', options ?? {}) as ReturnType<
+            GroveApi['git']['checkpoints']['list']
+          >,
+        snapshot: (options) =>
+          rpc.request('main.git.checkpoints.snapshot', options ?? {}) as ReturnType<
+            GroveApi['git']['checkpoints']['snapshot']
+          >,
+        restore: (checkpointId, options) =>
+          rpc.request('main.git.checkpoints.restore', { checkpointId, ...options }) as Promise<void>
+      }
+    },
+
+    agents: {
+      listChats: (options) =>
+        rpc.request('main.agents.listChats', options ?? {}) as ReturnType<
+          GroveApi['agents']['listChats']
+        >,
+      listModels: () =>
+        rpc.request('main.agents.listModels', {}) as ReturnType<GroveApi['agents']['listModels']>,
+      readTranscript: (chatId) =>
+        rpc.request('main.agents.readTranscript', { chatId }) as ReturnType<
+          GroveApi['agents']['readTranscript']
+        >,
+      isRunning: (chatId) =>
+        rpc.request('main.agents.isRunning', { chatId }) as Promise<boolean>,
+      observe(chatId, token) {
+        return streamIterable(rpc, 'main.agents.observe', { chatId }, token) as ReturnType<
+          GroveApi['agents']['observe']
+        >
+      },
+      channelHistory: (options) =>
+        rpc.request('main.agents.channelHistory', options ?? {}) as ReturnType<
+          GroveApi['agents']['channelHistory']
+        >,
+      createChat: (options) =>
+        rpc.request('main.agents.createChat', options ?? {}) as ReturnType<
+          GroveApi['agents']['createChat']
+        >,
+      send: (chatId, message) =>
+        rpc.request('main.agents.send', { chatId, message }) as Promise<void>,
+      stop: (chatId) => rpc.request('main.agents.stop', { chatId }) as Promise<void>,
+      cancelQueued: (chatId, queueId) =>
+        rpc.request('main.agents.cancelQueued', { chatId, queueId }) as Promise<void>,
+      sendChannelMessage: (text, options) =>
+        rpc.request('main.agents.sendChannelMessage', { text, ...options }) as Promise<void>
+    },
+
+    terminals: {
+      create: (options) =>
+        rpc.request('main.terminals.create', options ?? {}) as ReturnType<
+          GroveApi['terminals']['create']
+        >,
+      write: (terminalId, data) =>
+        rpc.request('main.terminals.write', { terminalId, data }) as Promise<void>,
+      resize: (terminalId, cols, rows) =>
+        rpc.request('main.terminals.resize', { terminalId, cols, rows }) as Promise<void>,
+      kill: (terminalId) => rpc.request('main.terminals.kill', { terminalId }) as Promise<void>,
+      read(terminalId, token) {
+        return streamIterable(rpc, 'main.terminals.read', { terminalId }, token) as ReturnType<
+          GroveApi['terminals']['read']
+        >
+      }
+    },
+
+    languages: {
+      hover: (path, position, options) =>
+        rpc.request('main.languages.hover', { path, position, ...options }) as ReturnType<
+          GroveApi['languages']['hover']
+        >,
+      definition: (path, position, options) =>
+        rpc.request('main.languages.definition', { path, position, ...options }) as ReturnType<
+          GroveApi['languages']['definition']
+        >,
+      references: (path, position, options) =>
+        rpc.request('main.languages.references', { path, position, ...options }) as ReturnType<
+          GroveApi['languages']['references']
+        >,
+      implementation: (path, position, options) =>
+        rpc.request('main.languages.implementation', { path, position, ...options }) as ReturnType<
+          GroveApi['languages']['implementation']
+        >,
+      typeDefinition: (path, position, options) =>
+        rpc.request('main.languages.typeDefinition', { path, position, ...options }) as ReturnType<
+          GroveApi['languages']['typeDefinition']
+        >,
+      completion: (path, position, options) =>
+        rpc.request('main.languages.completion', { path, position, ...options }) as ReturnType<
+          GroveApi['languages']['completion']
+        >,
+      inlayHints: (path, range, options) =>
+        rpc.request('main.languages.inlayHints', { path, range, ...options }) as ReturnType<
+          GroveApi['languages']['inlayHints']
+        >,
+      codeActions: (path, range, options) =>
+        rpc.request('main.languages.codeActions', { path, range, ...options }) as ReturnType<
+          GroveApi['languages']['codeActions']
+        >,
+      rename: (path, position, newName, options) =>
+        rpc.request('main.languages.rename', {
+          path,
+          position,
+          newName,
+          ...options
+        }) as ReturnType<GroveApi['languages']['rename']>,
+      format: (path, options) =>
+        rpc.request('main.languages.format', { path, ...options }) as ReturnType<
+          GroveApi['languages']['format']
+        >,
+      applyCodeAction: (actionId, options) =>
+        rpc.request('main.languages.applyCodeAction', { actionId, ...options }) as ReturnType<
+          GroveApi['languages']['applyCodeAction']
+        >
+    },
+
+    services: {
+      list: (options) =>
+        rpc.request('main.services.list', options ?? {}) as ReturnType<
+          GroveApi['services']['list']
+        >,
+      readLogs(serviceId, options, token) {
+        return streamIterable(
+          rpc,
+          'main.services.readLogs',
+          { serviceId, ...options },
+          token
+        ) as ReturnType<GroveApi['services']['readLogs']>
+      },
+      start: (serviceId) => rpc.request('main.services.start', { serviceId }) as Promise<void>,
+      stop: (serviceId) => rpc.request('main.services.stop', { serviceId }) as Promise<void>
+    },
+
     settings: {
       get: <T>(key: string) =>
         rpc.request('host.getSetting', { key: `${pluginId}.${key}` }) as Promise<T | undefined>,
@@ -287,6 +497,11 @@ export function buildGroveApi(rpc: RpcEndpoint, pluginId: string): GroveApi {
         rpc.onEvent(channel, callback)
         void rpc.request('host.subscribeEvent', { event })
         return toDisposable(() => rpc.onEvent(channel, () => {}))
+      },
+      subscribe(topics, token) {
+        return streamIterable(rpc, 'main.events.subscribe', { topics }, token) as ReturnType<
+          GroveApi['events']['subscribe']
+        >
       }
     }
   }

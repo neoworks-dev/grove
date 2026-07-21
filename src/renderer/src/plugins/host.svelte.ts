@@ -696,46 +696,42 @@ class PluginHost {
     })
   }
 
-  // Forward 'main.*' methods to the plugin router in the main process; the
-  // host stamps pluginId + worktreeId and bridges streaming chunks back.
+  // Forward every 'main.*' method to the api dispatcher in the main process;
+  // the host stamps pluginId + worktreeId and bridges streaming chunks back.
+  // Generic on purpose: the main-process route registry is the single
+  // authority on which methods exist, their scopes, and their transports.
   private registerMainForwarding(instance: PluginInstance, rpc: RpcEndpoint): void {
     const pluginId = instance.record.id
-    const forward = (method: string): void => {
-      rpc.handle(`main.${method}`, async (params, context) => {
-        const callId = `${pluginId}-${Math.random().toString(36).slice(2)}`
-        // Default the worktree to the active one. Spread can't set the default
-        // because callers pass an explicit `worktreeId: undefined`, which would
-        // override it — patch it in afterwards when absent.
-        const args = { ...(params as { worktreeId?: string | null }) }
-        if (args.worktreeId == null) args.worktreeId = store.selectedWorktreeId
-        const streaming = method === 'workspace.searchText' || method === 'ai.prompt'
-        if (!streaming) return window.workbench.plugins.invoke(pluginId, callId, method, args)
+    rpc.setFallbackHandler(async (fullMethod, params, context) => {
+      if (!fullMethod.startsWith('main.')) {
+        throw new Error(`unknown method: ${fullMethod}`)
+      }
+      const method = fullMethod.slice('main.'.length)
+      const callId = `${pluginId}-${Math.random().toString(36).slice(2)}`
+      // Default the worktree to the active one. Spread can't set the default
+      // because callers pass an explicit `worktreeId: undefined`, which would
+      // override it — patch it in afterwards when absent.
+      const args = { ...(params as { worktreeId?: string | null }) }
+      if (args.worktreeId == null) args.worktreeId = store.selectedWorktreeId
+      if (!context.streaming) {
+        return window.workbench.plugins.invoke(pluginId, callId, method, args)
+      }
 
-        const done = new Promise<void>((resolve, reject) => {
-          instance.mainStreams.set(callId, {
-            emit: context.emit,
-            finish: (error) => {
-              instance.mainStreams.delete(callId)
-              if (error) reject(error)
-              else resolve()
-            }
-          })
+      const done = new Promise<void>((resolve, reject) => {
+        instance.mainStreams.set(callId, {
+          emit: context.emit,
+          finish: (error) => {
+            instance.mainStreams.delete(callId)
+            if (error) reject(error)
+            else resolve()
+          }
         })
-        context.token.onCancel(() => void window.workbench.plugins.cancel(pluginId, callId))
-        await window.workbench.plugins.invoke(pluginId, callId, method, args)
-        await done
-        return undefined
       })
-    }
-    forward('workspace.findFiles')
-    forward('workspace.readFile')
-    forward('workspace.readExcerpt')
-    forward('workspace.writeFile')
-    forward('workspace.searchText')
-    forward('ai.prompt')
-    forward('storage.get')
-    forward('storage.set')
-    forward('storage.delete')
+      context.token.onCancel(() => void window.workbench.plugins.cancel(pluginId, callId))
+      await window.workbench.plugins.invoke(pluginId, callId, method, args)
+      await done
+      return undefined
+    })
   }
 
   private registerSettingsMethods(instance: PluginInstance, rpc: RpcEndpoint): void {

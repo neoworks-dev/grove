@@ -14,6 +14,13 @@
   const available = $derived(type !== null && (!type.when || type.when()))
   const dragged = $derived(paneDrag.draggedLeafId === leaf.id)
 
+  // Per-pane font zoom. Canvas panes (nvim, terminal) scale their own font, so
+  // only DOM panes get the generic CSS zoom on the container.
+  const fontScale = $derived(layout.fontScale(leaf.id))
+  const zoomStyle = $derived(
+    !type?.ownsFontScale && fontScale !== 1 ? `zoom: ${fontScale}` : ''
+  )
+
   function updateState(patch: Record<string, unknown>): void {
     layout.updateLeafState(leaf.id, patch)
   }
@@ -31,6 +38,8 @@
 <div
   use:pane={{ id: leaf.id, type: type?.contextType ?? leaf.paneTypeId, modes: type?.modes }}
   data-leaf={leaf.id}
+  data-zoom-container={leaf.id}
+  style={zoomStyle}
   onpointerdown={onPointerDown}
   class="flex h-full w-full min-w-0 min-h-0 flex-col overflow-hidden outline-none {type?.containerClass ??
     ''} {keymap.activePane === leaf.id ? 'pane-active' : ''} {dragged ? 'opacity-40' : ''}"

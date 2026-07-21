@@ -62,6 +62,13 @@ class InlineEdit {
   // The active in-buffer accept/reject review, if any.
   review = $state<ActiveReview | null>(null)
 
+  // A gated (not-yet-applied) edit currently previewed as a vimdiff split.
+  gatedDiff = $state<{ worktreeId: string; relPath: string; leafId: string } | null>(null)
+
+  // After an approved gated edit, the file whose next write should reload its
+  // editor buffer (the agent's write lands asynchronously via fs-change).
+  private pendingGatedReload: { worktreeId: string; relPath: string; leafId: string } | null = null
+
   private modeLoaded = false
 
   private ensureModeLoaded(): void {
@@ -222,6 +229,38 @@ class InlineEdit {
     })
   }
 
+  // ── Gated edit preview: show a pending edit in the editor ─────────
+  // A gated Write/Edit is intercepted before it touches disk, so there is
+  // nothing to paint an accept/reject overlay over. Instead preview it as a
+  // vimdiff split (real file vs. proposed content) so review happens in the
+  // real editor. The real buffer stays untouched, so on approval the agent's
+  // own write applies cleanly against unchanged disk.
+  async previewGatedEdit(worktreeId: string, absPath: string, modified: string): Promise<void> {
+    const relPath = relFromRoot(store.selectedWorktree?.path, absPath)
+    openFileInEditor(worktreeId, absPath)
+    const session = activeNvimSession()
+    if (!session) return
+    await session.openGatedDiff(absPath, modified)
+    this.gatedDiff = { worktreeId, relPath, leafId: session.leafId }
+  }
+
+  // Tear down the preview split without reloading anything. Used on deny and as
+  // a general cleanup when the pending permission clears.
+  async discardGatedPreview(): Promise<void> {
+    const gated = this.gatedDiff
+    this.gatedDiff = null
+    if (!gated) return
+    await nvimSessionFor(gated.leafId)?.closeGatedDiff()
+  }
+
+  // Approving a gated edit: close the preview now, and arm a one-shot buffer
+  // reload for when the agent's write actually lands (claimFsChange picks it up).
+  async approveGatedPreview(): Promise<void> {
+    const gated = this.gatedDiff
+    if (gated) this.pendingGatedReload = gated
+    await this.discardGatedPreview()
+  }
+
   // ── Phase C: in-buffer accept/reject review ───────────────────────
   // Called from the fs-change handler. Claims a change when it is our own
   // review write (ignore) or the first write of a pending inline edit (begin the
@@ -231,6 +270,12 @@ class InlineEdit {
   private beginning: { worktreeId: string; relPath: string } | null = null
 
   claimFsChange(worktreeId: string, relPath: string): boolean {
+    const armed = this.pendingGatedReload
+    if (armed && armed.worktreeId === worktreeId && armed.relPath === relPath) {
+      this.pendingGatedReload = null
+      void nvimSessionFor(armed.leafId)?.reloadBuffer()
+      return true
+    }
     const active = this.review
     if (active && active.worktreeId === worktreeId && active.relPath === relPath) return true
     if (this.beginning && this.beginning.worktreeId === worktreeId && this.beginning.relPath === relPath) {

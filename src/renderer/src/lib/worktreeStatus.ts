@@ -24,6 +24,7 @@ export interface WorktreeAttention {
   waitingDialog: boolean
   agentDone: boolean
   serviceUnhealthy: boolean
+  unread: boolean
   dirty: boolean
   needsAttention: boolean
 }
@@ -41,6 +42,7 @@ export function attentionFor(worktreeId: string): WorktreeAttention {
   const waitingDialog = store.pendingDialogs.some((request) => request.worktreeId === worktreeId)
   const agentDone = agents.some((agent) => agent.status === 'exited' || agent.status === 'error')
   const serviceUnhealthy = services.some((service) => service.status === 'unhealthy')
+  const unread = store.unread[worktreeId] === true
   const dirty = worktree?.dirty === true
 
   return {
@@ -48,14 +50,36 @@ export function attentionFor(worktreeId: string): WorktreeAttention {
     waitingDialog,
     agentDone,
     serviceUnhealthy,
+    unread,
     dirty,
-    needsAttention: waitingPermission || waitingDialog || serviceUnhealthy
+    needsAttention: waitingPermission || waitingDialog || serviceUnhealthy || unread
   }
+}
+
+// Compact "+A −R" diff-stat label for a worktree, or null when there are no
+// uncommitted changes. Binary-only changes count as 0 lines.
+export function diffStatLabel(worktreeId: string): { added: number; removed: number } | null {
+  const stats = store.diffStats[worktreeId]
+  if (!stats) return null
+  if (stats.added === 0 && stats.removed === 0) return null
+  return { added: stats.added, removed: stats.removed }
 }
 
 // Last agent output line for a worktree, for a one-line activity preview.
 export function lastAgentLine(worktreeId: string): string {
   const lines = (store.logs[worktreeId] || []).filter((line) => line.source === 'agent')
+  const last = lines[lines.length - 1]
+  return last ? last.line : ''
+}
+
+// Last output line for a specific instance in a worktree, for a per-row preview.
+export function lastAgentLineFor(worktreeId: string, name: string, chatId?: string): string {
+  const lines = (store.logs[worktreeId] || []).filter(
+    (line) =>
+      line.source === 'agent' &&
+      line.name === name &&
+      (chatId === undefined || line.chatId === chatId)
+  )
   const last = lines[lines.length - 1]
   return last ? last.line : ''
 }

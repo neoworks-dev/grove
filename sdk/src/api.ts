@@ -117,7 +117,13 @@ export interface StatusBarApi {
 }
 
 export interface SidebarApi {
-  addItem(item: { id: string; label: string; icon: string; order?: number; command: string }): Disposable
+  addItem(item: {
+    id: string
+    label: string
+    icon: string
+    order?: number
+    command: string
+  }): Disposable
 }
 
 export interface MenuApi {
@@ -141,7 +147,12 @@ export interface DialogAction {
 
 export interface DialogsApi {
   // Resolves with the picked action id (or 'cancel' on dismiss).
-  confirm(options: { title: string; body: string; detail?: string; actions: DialogAction[] }): Promise<string>
+  confirm(options: {
+    title: string
+    body: string
+    detail?: string
+    actions: DialogAction[]
+  }): Promise<string>
 }
 
 export interface UiApi {
@@ -167,7 +178,10 @@ export type SurfaceNode =
   | { type: 'button'; label: string; command: string }
 
 export interface PanesApi {
-  registerPaneType(id: string, render: (token: CancellationToken) => Promise<SurfaceNode>): Disposable
+  registerPaneType(
+    id: string,
+    render: (token: CancellationToken) => Promise<SurfaceNode>
+  ): Disposable
   // Asks the host to re-invoke render for all leaves showing this pane type.
   update(id: string): void
 }
@@ -212,6 +226,9 @@ export interface WorkspaceApi {
   writeFile(path: string, content: string, options?: { worktreeId?: string }): Promise<void>
   // UI-only (opens an editor tab); not permission-gated.
   openFile(path: string, options?: { worktreeId?: string; line?: number }): Promise<void>
+  // The file open in the active editor, as a worktree-relative path plus the
+  // 1-based cursor line. Null when no editor is focused or the buffer is unnamed.
+  getActiveFile(): Promise<{ path: string; line: number } | null>
 }
 
 // ── ai ──────────────────────────────────────────────────────────

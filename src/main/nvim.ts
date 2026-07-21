@@ -123,14 +123,32 @@ export class NeovimManager {
   }
 
   async command(id: string, command: string): Promise<void> {
-    const session = this.requireSession(id)
-    await session.rpc.request('nvim_command', [command])
+    // A command racing a dying/gone session (rebind, crash-restart, quit) is
+    // expected; treat "session gone" as a no-op rather than a handler error.
+    const session = this.sessions.get(id)
+    if (!session) return
+    try {
+      await session.rpc.request('nvim_command', [command])
+    } catch (error) {
+      if (this.isSessionGone(id)) return
+      throw error
+    }
   }
 
   async request(id: string, method: string, args: unknown[]): Promise<unknown> {
     if (!/^nvim_/.test(method)) throw new Error(`blocked non-api method: ${method}`)
-    const session = this.requireSession(id)
-    return toPlain(await session.rpc.request(method, args))
+    const session = this.sessions.get(id)
+    // A request racing a dying/gone session is expected by design; the renderer
+    // already treats it as "session gone". Return null instead of throwing so
+    // Electron doesn't log it as a handler error. Real nvim API errors from a
+    // still-live session (session stays in the map) still propagate.
+    if (!session) return null
+    try {
+      return toPlain(await session.rpc.request(method, args))
+    } catch (error) {
+      if (this.isSessionGone(id)) return null
+      throw error
+    }
   }
 
   kill(id: string): void {
@@ -158,6 +176,13 @@ export class NeovimManager {
     const session = this.sessions.get(id)
     if (!session) throw new Error(`unknown nvim session: ${id}`)
     return session
+  }
+
+  // The exit/error handlers delete a session from the map when its nvim dies.
+  // So an absent session after an RPC rejection means the child exited mid-flight
+  // (a benign teardown race), not a genuine nvim API error.
+  private isSessionGone(id: string): boolean {
+    return !this.sessions.has(id)
   }
 
   private queueRedraw(id: string, session: NvimSession, batch: unknown[]): void {

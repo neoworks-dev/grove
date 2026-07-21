@@ -14,17 +14,22 @@ export interface StreamRequestHandle {
   cancel: () => void
 }
 
-type RequestHandler = (
-  params: unknown,
-  context: { emit: (chunk: unknown) => void; token: RpcToken }
-) => Promise<unknown>
+export interface RequestContext {
+  emit: (chunk: unknown) => void
+  token: RpcToken
+  // True when the caller opened this request with requestStream.
+  streaming: boolean
+}
+
+type RequestHandler = (params: unknown, context: RequestContext) => Promise<unknown>
 
 // Consulted when no named handler matches — lets a transport binding route
-// every unknown method through a shared dispatcher (socket server).
+// every unknown method through a shared dispatcher (renderer host, socket
+// server).
 type FallbackHandler = (
   method: string,
   params: unknown,
-  context: { emit: (chunk: unknown) => void; token: RpcToken }
+  context: RequestContext
 ) => Promise<unknown>
 
 interface PendingCall {
@@ -159,7 +164,11 @@ export class RpcEndpoint {
       if (!token.isCancelled) this.post({ kind: 'stream', id: message.id, chunk })
     }
     try {
-      const result = await handler(message.params, { emit, token })
+      const result = await handler(message.params, {
+        emit,
+        token,
+        streaming: message.streaming === true
+      })
       this.replyDone(message, token, result)
     } catch (error) {
       this.replyError(message, error as Error)

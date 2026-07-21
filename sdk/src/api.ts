@@ -261,6 +261,330 @@ export interface AiApi {
   registerMcpServer(server: { name: string; tools: McpToolSpec[] }): Disposable
 }
 
+// ── shared position/range primitives ────────────────────────────
+// 1-based lines and columns, matching getActiveFile/readExcerpt.
+
+export interface Position {
+  line: number
+  column: number
+}
+
+export interface Range {
+  start: Position
+  end: Position
+}
+
+export interface WorktreeScoped {
+  // Defaults to the active worktree when omitted.
+  worktreeId?: string
+}
+
+// ── editor (nvim-backed documents) ──────────────────────────────
+// Documents are identified by worktree-relative path; version is a
+// host-minted revision (bridged from nvim's changedtick — the tick itself
+// never crosses the boundary as an nvim handle, only as this number).
+// Mutations carry the version the caller read and come back 'stale' instead
+// of applying blind when the buffer moved underneath them.
+
+export interface TextDocumentInfo {
+  worktreeId: string
+  path: string
+  version: number
+  lineCount: number
+  // Open string ('typescript', 'rust', …) — discovered, not a closed union.
+  languageId: string
+  dirty: boolean
+}
+
+export interface EditorInfo {
+  document: TextDocumentInfo
+  active: boolean
+  // A cursor is an empty range.
+  selections: Range[]
+}
+
+export type EditResult =
+  | { status: 'applied'; version: number }
+  | { status: 'stale'; currentVersion: number }
+
+export interface TextEdit {
+  range: Range
+  newText: string
+}
+
+export interface DecorationSpec {
+  range: Range
+  // Semantic style name ('info', 'warning', 'error', 'hint', 'added',
+  // 'removed', …) — never raw colors or highlight groups.
+  style: string
+  hoverMessage?: string
+}
+
+export interface EditorApi {
+  // 'editor.read'
+  listEditors(): Promise<EditorInfo[]>
+  getActiveEditor(): Promise<EditorInfo | null>
+  // Loads the buffer without stealing focus; returns the snapshot version.
+  openDocument(path: string, options?: WorktreeScoped): Promise<TextDocumentInfo>
+  readDocument(
+    path: string,
+    options?: WorktreeScoped
+  ): Promise<{ document: TextDocumentInfo; lines: string[] }>
+  getSelections(path: string, options?: WorktreeScoped): Promise<Range[]>
+
+  // 'editor.edit' — ranged replacements, all-or-nothing.
+  applyEdit(edit: {
+    path: string
+    worktreeId?: string
+    expectedVersion: number
+    edits: TextEdit[]
+  }): Promise<EditResult>
+  save(path: string, options?: WorktreeScoped & { expectedVersion?: number }): Promise<EditResult>
+  setSelections(
+    path: string,
+    selections: Range[],
+    options?: WorktreeScoped & { expectedVersion?: number }
+  ): Promise<EditResult>
+  // Keyed with replace semantics: the same (plugin, key, path) fully
+  // replaces earlier decorations; an empty array clears them.
+  setDecorations(
+    key: string,
+    path: string,
+    decorations: DecorationSpec[],
+    options?: WorktreeScoped
+  ): Promise<void>
+  // UI-only focus/reveal.
+  show(path: string, options?: WorktreeScoped & { line?: number }): Promise<void>
+}
+
+// ── git ─────────────────────────────────────────────────────────
+// statusVersion is a per-worktree generation counter bumped on every index/
+// HEAD change; commit requires the version the caller saw so a plugin can
+// never commit a staged set it didn't read.
+
+export interface GitFileChange {
+  path: string
+  // Open string: 'modified', 'added', 'deleted', 'renamed', …
+  status: string
+  staged: boolean
+}
+
+export interface GitStatus {
+  worktreeId: string
+  branch: string
+  dirty: boolean
+  version: number
+  files: GitFileChange[]
+}
+
+export interface DiffHunkLine {
+  kind: 'context' | 'add' | 'del'
+  text: string
+}
+
+export interface DiffHunk {
+  header: string
+  oldStart: number
+  oldLines: number
+  newStart: number
+  newLines: number
+  lines: DiffHunkLine[]
+}
+
+export type GitMutationResult<T = undefined> =
+  | { status: 'ok'; version: number; result?: T }
+  | { status: 'stale'; currentVersion: number }
+
+export interface CheckpointInfo {
+  id: string
+  label: string
+  createdAt: number
+}
+
+export interface GitApi {
+  // 'git.read'
+  status(options?: WorktreeScoped): Promise<GitStatus>
+  branches(options?: WorktreeScoped): Promise<{ current: string; all: string[] }>
+  diffFile(
+    path: string,
+    options?: WorktreeScoped & { staged?: boolean }
+  ): Promise<{ hunks: DiffHunk[]; stats: { additions: number; deletions: number } }>
+  fileAtRef(path: string, ref: string, options?: WorktreeScoped): Promise<string>
+
+  // 'git.write'
+  stage(
+    paths: string[],
+    options?: WorktreeScoped & { expectedStatusVersion?: number }
+  ): Promise<GitMutationResult>
+  unstage(
+    paths: string[],
+    options?: WorktreeScoped & { expectedStatusVersion?: number }
+  ): Promise<GitMutationResult>
+  commit(
+    message: string,
+    options: WorktreeScoped & { expectedStatusVersion: number }
+  ): Promise<GitMutationResult<{ sha: string }>>
+  // No version token: the remote rejects non-fast-forward pushes natively.
+  push(options?: WorktreeScoped): Promise<{ status: 'ok' } | { status: 'rejected'; reason: string }>
+
+  worktrees: {
+    // 'git.read'
+    list(): Promise<WorktreeInfo[]>
+    // 'worktrees.manage'
+    create(options: { branch: string; base?: string }): Promise<WorktreeInfo>
+    remove(worktreeId: string): Promise<void>
+    archive(worktreeId: string): Promise<void>
+  }
+
+  checkpoints: {
+    // 'git.read'
+    list(options?: WorktreeScoped): Promise<CheckpointInfo[]>
+    // 'git.write'; restore additionally requires the user to confirm a
+    // non-bypassable dialog per invocation (it destroys uncommitted work).
+    snapshot(options?: WorktreeScoped & { label?: string }): Promise<{ id: string }>
+    restore(checkpointId: string, options?: WorktreeScoped): Promise<void>
+  }
+}
+
+// ── agents ──────────────────────────────────────────────────────
+// Everything a client sends into a chat or channel is host-stamped with the
+// client identity; permission/dialog responses are deliberately not exposed.
+
+export interface AgentChatInfo {
+  id: string
+  worktreeId: string
+  title: string
+  model?: string
+  running: boolean
+}
+
+export interface AgentTranscriptEvent {
+  // Open string: 'text', 'tool-call', 'status', …
+  type: string
+  payload: unknown
+}
+
+export interface AgentsApi {
+  // 'agents.read'
+  listChats(options?: WorktreeScoped): Promise<AgentChatInfo[]>
+  listModels(): Promise<{ id: string; label: string }[]>
+  readTranscript(chatId: string): Promise<AgentTranscriptEvent[]>
+  isRunning(chatId: string): Promise<boolean>
+  // Streams a live run; ends when the run ends.
+  observe(chatId: string, token?: CancellationToken): AsyncIterable<AgentTranscriptEvent>
+  channelHistory(options?: WorktreeScoped): Promise<AgentTranscriptEvent[]>
+
+  // 'agents.run'
+  createChat(options?: WorktreeScoped & { title?: string; model?: string }): Promise<{ chatId: string }>
+  send(chatId: string, message: string): Promise<void>
+  stop(chatId: string): Promise<void>
+  cancelQueued(chatId: string, queueId: string): Promise<void>
+  sendChannelMessage(text: string, options?: WorktreeScoped): Promise<void>
+}
+
+// ── terminals ───────────────────────────────────────────────────
+// 'terminal.exec' throughout. Clients only ever touch terminals they
+// created; those terminals surface in the terminal panel labeled with the
+// client identity, and cwd is confined to the worktree.
+
+export interface TerminalsApi {
+  create(
+    options?: WorktreeScoped & { name?: string; command?: string; cols?: number; rows?: number }
+  ): Promise<{ terminalId: string }>
+  write(terminalId: string, data: string): Promise<void>
+  resize(terminalId: string, cols: number, rows: number): Promise<void>
+  kill(terminalId: string): Promise<void>
+  // Streams output of an owned terminal; ends when it exits.
+  read(terminalId: string, token?: CancellationToken): AsyncIterable<{ data: string }>
+}
+
+// ── languages (LSP-backed) ──────────────────────────────────────
+// Queries need 'languages.read'. Mutating verbs (rename/format/code action)
+// additionally need 'editor.edit': results are applied through the editor
+// pipeline all-or-nothing, never handed to the client as raw workspace
+// edits. actionIds are short-lived host handles bound to the document
+// version they were queried at.
+
+export interface LocationResult {
+  path: string
+  worktreeId: string
+  range: Range
+}
+
+export interface CompletionItem {
+  label: string
+  kind: string
+  detail?: string
+  insertText?: string
+}
+
+export interface CodeActionInfo {
+  actionId: string
+  title: string
+  kind: string
+}
+
+export interface LanguagesApi {
+  hover(
+    path: string,
+    position: Position,
+    options?: WorktreeScoped
+  ): Promise<{ contents: string } | null>
+  definition(path: string, position: Position, options?: WorktreeScoped): Promise<LocationResult[]>
+  references(path: string, position: Position, options?: WorktreeScoped): Promise<LocationResult[]>
+  implementation(
+    path: string,
+    position: Position,
+    options?: WorktreeScoped
+  ): Promise<LocationResult[]>
+  typeDefinition(
+    path: string,
+    position: Position,
+    options?: WorktreeScoped
+  ): Promise<LocationResult[]>
+  completion(path: string, position: Position, options?: WorktreeScoped): Promise<CompletionItem[]>
+  inlayHints(
+    path: string,
+    range: Range,
+    options?: WorktreeScoped
+  ): Promise<{ position: Position; label: string }[]>
+  codeActions(path: string, range: Range, options?: WorktreeScoped): Promise<CodeActionInfo[]>
+
+  rename(
+    path: string,
+    position: Position,
+    newName: string,
+    options: WorktreeScoped & { expectedVersion: number }
+  ): Promise<EditResult & { changedFiles?: string[] }>
+  format(path: string, options: WorktreeScoped & { expectedVersion: number }): Promise<EditResult>
+  applyCodeAction(actionId: string, options: { expectedVersion: number }): Promise<EditResult>
+}
+
+// ── services (dev services) ─────────────────────────────────────
+
+export interface ServiceInfo {
+  serviceId: string
+  worktreeId: string
+  name: string
+  // Open string: 'running', 'stopped', 'starting', 'unhealthy', …
+  status: string
+  ports: number[]
+  health?: { ok: boolean; detail?: string }
+}
+
+export interface ServicesApi {
+  // 'services.read'
+  list(options?: WorktreeScoped): Promise<ServiceInfo[]>
+  readLogs(
+    serviceId: string,
+    options?: { follow?: boolean },
+    token?: CancellationToken
+  ): AsyncIterable<{ line: string }>
+  // 'services.manage'
+  start(serviceId: string): Promise<void>
+  stop(serviceId: string): Promise<void>
+}
+
 // ── settings ────────────────────────────────────────────────────
 
 export interface SettingsApi {
@@ -272,10 +596,37 @@ export interface SettingsApi {
 
 // ── events ──────────────────────────────────────────────────────
 
-export type GroveEvent = 'workspace.didChangeWorktree' | 'files.didChange' | 'theme.didChange'
+// Known event names get autocompletion; the union stays open (string & {})
+// because topics are discovered, and delivery is scope-filtered per client
+// (no 'editor.*' events without 'editor.read', etc.).
+export type KnownGroveEvent =
+  | 'workspace.didChangeWorktree'
+  | 'files.didChange'
+  | 'theme.didChange'
+  | 'editor.didOpenDocument'
+  | 'editor.didCloseDocument'
+  | 'editor.didChangeDocument'
+  | 'editor.didChangeSelection'
+  | 'editor.didSaveDocument'
+  | 'git.didChangeStatus'
+  | 'worktrees.didChange'
+  | 'checkpoints.didChange'
+  | 'agents.didStartRun'
+  | 'agents.didEndRun'
+  | 'agents.didChangeChats'
+  | 'terminal.didExit'
+  | 'services.didChangeStatus'
+
+export type GroveEvent = KnownGroveEvent | (string & {})
 
 export interface EventsApi {
   on(event: GroveEvent, callback: (payload: unknown) => void): Disposable
+  // Streamed subscription over the shared event hub; topics are prefixes
+  // ('git.', 'editor.didChangeDocument'). Ends on dispose/cancel.
+  subscribe(
+    topics: GroveEvent[],
+    token?: CancellationToken
+  ): AsyncIterable<{ topic: string; payload: unknown; worktreeId?: string }>
 }
 
 // ── root ────────────────────────────────────────────────────────
@@ -289,6 +640,12 @@ export interface GroveApi {
   views: ViewsApi
   workspace: WorkspaceApi
   ai: AiApi
+  editor: EditorApi
+  git: GitApi
+  agents: AgentsApi
+  terminals: TerminalsApi
+  languages: LanguagesApi
+  services: ServicesApi
   settings: SettingsApi
   events: EventsApi
 }

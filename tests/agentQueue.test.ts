@@ -77,7 +77,7 @@ describe('AgentManager mid-run send + queue', () => {
     const { adapter, runs } = makeFakeAdapter({ acceptSends: true })
     const logged: string[] = []
     const manager = makeManager(adapter, {
-      onLog: (_wt, _name, line) => logged.push(line)
+      onLog: (_wt, _name, _chatId, line) => logged.push(line)
     })
     const worktree = makeWorktree(dir)
 
@@ -130,7 +130,8 @@ describe('AgentManager mid-run send + queue', () => {
     const queued = await manager.send(worktree, 'fake', adapter.config, [], 'to cancel')
     if (queued.delivered !== 'queued') throw new Error('expected queued')
 
-    manager.cancelQueued('wt1', 'fake', queued.id)
+    const chatId = manager.listChats('wt1', 'fake').activeId
+    manager.cancelQueued('wt1', 'fake', chatId, queued.id)
     expect(manager.getQueue('wt1', 'fake')).toHaveLength(0)
   })
 
@@ -146,7 +147,8 @@ describe('AgentManager mid-run send + queue', () => {
     await manager.start(worktree, 'fake', adapter.config, [], { prompt: 'first' })
     await manager.send(worktree, 'fake', adapter.config, [], 'never run me')
 
-    await manager.stop('wt1', 'fake', { clearQueue: true })
+    const chatId = manager.listChats('wt1', 'fake').activeId
+    await manager.stop('wt1', 'fake', chatId, { clearQueue: true })
     await new Promise((resolve) => setTimeout(resolve, 20))
 
     expect(manager.getQueue('wt1', 'fake')).toHaveLength(0)

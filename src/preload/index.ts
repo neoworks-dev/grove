@@ -95,15 +95,23 @@ const workbench = {
   agents: {
     list: (worktreeId: string) => ipcRenderer.invoke('agents:list', worktreeId),
     configs: () => ipcRenderer.invoke('agents:configs'),
-    start: (worktreeId: string, name: string, options: unknown) =>
-      ipcRenderer.invoke('agents:start', worktreeId, name, options),
-    stop: (worktreeId: string, name: string) => ipcRenderer.invoke('agents:stop', worktreeId, name),
-    compact: (worktreeId: string, name: string, instructions?: string) =>
-      ipcRenderer.invoke('agents:compact', worktreeId, name, instructions),
-    reset: (worktreeId: string, name: string) =>
-      ipcRenderer.invoke('agents:reset', worktreeId, name),
-    transcript: (worktreeId: string, name: string) =>
-      ipcRenderer.invoke('agents:transcript', worktreeId, name),
+    models: (name: string) => ipcRenderer.invoke('agents:models', name),
+    createInstance: (worktreeId: string, name: string, label?: string) =>
+      ipcRenderer.invoke('agents:createInstance', worktreeId, name, label),
+    convertInstance: (worktreeId: string, fromName: string, toName: string, chatId: string) =>
+      ipcRenderer.invoke('agents:convertInstance', worktreeId, fromName, toName, chatId),
+    deleteChat: (worktreeId: string, name: string, chatId: string) =>
+      ipcRenderer.invoke('agents:deleteChat', worktreeId, name, chatId),
+    start: (worktreeId: string, name: string, options: unknown, chatId?: string) =>
+      ipcRenderer.invoke('agents:start', worktreeId, name, options, chatId),
+    stop: (worktreeId: string, name: string, chatId: string) =>
+      ipcRenderer.invoke('agents:stop', worktreeId, name, chatId),
+    compact: (worktreeId: string, name: string, instructions?: string, chatId?: string) =>
+      ipcRenderer.invoke('agents:compact', worktreeId, name, instructions, chatId),
+    reset: (worktreeId: string, name: string, chatId?: string) =>
+      ipcRenderer.invoke('agents:reset', worktreeId, name, chatId),
+    transcript: (worktreeId: string, name: string, chatId?: string) =>
+      ipcRenderer.invoke('agents:transcript', worktreeId, name, chatId),
     chats: (worktreeId: string, name: string) =>
       ipcRenderer.invoke('agents:chats', worktreeId, name),
     renameChat: (worktreeId: string, name: string, chatId: string, chatName: string) =>
@@ -115,12 +123,12 @@ const workbench = {
     respondDialog: (id: string, decision: unknown) =>
       ipcRenderer.invoke('agents:respondDialog', id, decision),
     active: () => ipcRenderer.invoke('agents:active'),
-    send: (worktreeId: string, name: string, text: string) =>
-      ipcRenderer.invoke('agents:send', worktreeId, name, text),
-    queue: (worktreeId: string, name: string) =>
-      ipcRenderer.invoke('agents:queue', worktreeId, name),
-    cancelQueued: (worktreeId: string, name: string, id: string) =>
-      ipcRenderer.invoke('agents:cancelQueued', worktreeId, name, id),
+    send: (worktreeId: string, name: string, text: string, chatId?: string) =>
+      ipcRenderer.invoke('agents:send', worktreeId, name, text, chatId),
+    queue: (worktreeId: string, name: string, chatId: string) =>
+      ipcRenderer.invoke('agents:queue', worktreeId, name, chatId),
+    cancelQueued: (worktreeId: string, name: string, chatId: string, id: string) =>
+      ipcRenderer.invoke('agents:cancelQueued', worktreeId, name, chatId, id),
     commands: (worktreeId: string, name: string) =>
       ipcRenderer.invoke('agents:commands', worktreeId, name)
   },

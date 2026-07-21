@@ -18,31 +18,34 @@ process.on('unhandledRejection', (reason) => {
   console.error('Unhandled promise rejection:', reason)
 })
 
-// Scale the whole UI with Ctrl/Cmd +, Ctrl/Cmd -, and Ctrl/Cmd 0 to reset.
-// Electron performs no zoom on its own (no zoom-role menu), so drive it here.
-function registerZoomShortcuts(window: BrowserWindow): void {
+// Ctrl/Cmd +/-/0 are Chromium accelerators that zoom the whole page before the
+// renderer's keydown ever fires. Intercept them here, cancel that built-in zoom,
+// and forward the intent so the renderer can zoom only the focused pane. Matched
+// by physical code and produced key so every keyboard layout and the numpad work.
+function registerPaneZoomForwarding(window: BrowserWindow): void {
   const { webContents } = window
-  const ZOOM_STEP = 0.5
-  const ZOOM_MIN = -3
-  const ZOOM_MAX = 3
-
   webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown') return
     if (!input.control && !input.meta) return
+    if (input.alt) return
 
-    const zoomIn = input.code === 'Equal' || input.code === 'NumpadAdd'
-    const zoomOut = input.code === 'Minus' || input.code === 'NumpadSubtract'
-    const reset = input.code === 'Digit0' || input.code === 'Numpad0'
-    if (!zoomIn && !zoomOut && !reset) return
+    const zoomIn =
+      input.code === 'Equal' ||
+      input.code === 'NumpadAdd' ||
+      input.key === '=' ||
+      input.key === '+'
+    const zoomOut =
+      input.code === 'Minus' || input.code === 'NumpadSubtract' || input.key === '-'
+    const reset = input.code === 'Digit0' || input.code === 'Numpad0' || input.key === '0'
+
+    let direction: 'in' | 'out' | 'reset' | null = null
+    if (zoomIn) direction = 'in'
+    else if (zoomOut) direction = 'out'
+    else if (reset) direction = 'reset'
+    if (!direction) return
 
     event.preventDefault()
-    if (reset) {
-      webContents.setZoomLevel(0)
-      return
-    }
-    const delta = zoomIn ? ZOOM_STEP : -ZOOM_STEP
-    const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, webContents.getZoomLevel() + delta))
-    webContents.setZoomLevel(next)
+    webContents.send('event:pane-zoom', direction)
   })
 }
 
@@ -66,7 +69,7 @@ function createWindow(): void {
     mainWindow.show()
   })
 
-  registerZoomShortcuts(mainWindow)
+  registerPaneZoomForwarding(mainWindow)
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)

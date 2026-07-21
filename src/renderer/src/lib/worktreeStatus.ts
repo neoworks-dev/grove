@@ -71,3 +71,15 @@ export function lastAgentLine(worktreeId: string): string {
   const last = lines[lines.length - 1]
   return last ? last.line : ''
 }
+
+// Last output line for a specific instance in a worktree, for a per-row preview.
+export function lastAgentLineFor(worktreeId: string, name: string, chatId?: string): string {
+  const lines = (store.logs[worktreeId] || []).filter(
+    (line) =>
+      line.source === 'agent' &&
+      line.name === name &&
+      (chatId === undefined || line.chatId === chatId)
+  )
+  const last = lines[lines.length - 1]
+  return last ? last.line : ''
+}

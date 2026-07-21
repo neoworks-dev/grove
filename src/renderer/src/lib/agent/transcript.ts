@@ -81,6 +81,85 @@ export function changedFileCount(
   return files.size
 }
 
+// Distinct tool names used in a group, in first-seen order.
+export function toolNames(tools: RenderTool[]): string[] {
+  const seen: string[] = []
+  for (const tool of tools) {
+    if (!seen.includes(tool.item.tool)) seen.push(tool.item.tool)
+  }
+  return seen
+}
+
+function lineCount(text: unknown): number {
+  if (typeof text !== 'string' || text.length === 0) return 0
+  return text.split('\n').length
+}
+
+// Approximate +/- line counts for one file-edit tool, from its input. Write
+// counts its content as additions (no prior content is available here); Edit and
+// MultiEdit count the replaced vs. inserted blocks.
+export function editStats(
+  tool: string,
+  input: Record<string, unknown>
+): { added: number; removed: number } {
+  if (tool === 'Write') {
+    return { added: lineCount(input.content), removed: 0 }
+  }
+  if (tool === 'Edit') {
+    return { added: lineCount(input.new_string), removed: lineCount(input.old_string) }
+  }
+  if (tool === 'MultiEdit' && Array.isArray(input.edits)) {
+    return (input.edits as Record<string, unknown>[]).reduce<{ added: number; removed: number }>(
+      (acc, edit) => ({
+        added: acc.added + lineCount(edit.new_string),
+        removed: acc.removed + lineCount(edit.old_string)
+      }),
+      { added: 0, removed: 0 }
+    )
+  }
+  return { added: 0, removed: 0 }
+}
+
+// One changed file in a group: its display label, an input for opening its diff,
+// and aggregated +/- counts across every edit tool that touched it.
+export interface ChangedFile {
+  path: string
+  label: string
+  input: Record<string, unknown>
+  added: number
+  removed: number
+}
+
+// Distinct file-edit targets in a group, with aggregated +/- counts.
+export function changedFiles(
+  tools: RenderTool[],
+  filePath: (input: Record<string, unknown>) => string | null,
+  relativePath: (absPath: string) => string | null
+): ChangedFile[] {
+  const byPath = new Map<string, ChangedFile>()
+  for (const tool of tools) {
+    if (!FILE_EDIT_TOOLS.has(tool.item.tool)) continue
+    const path = filePath(tool.item.input)
+    if (!path) continue
+    const stats = editStats(tool.item.tool, tool.item.input)
+    const existing = byPath.get(path)
+    if (existing) {
+      existing.added += stats.added
+      existing.removed += stats.removed
+      existing.input = tool.item.input
+      continue
+    }
+    byPath.set(path, {
+      path,
+      label: relativePath(path) || path,
+      input: tool.item.input,
+      added: stats.added,
+      removed: stats.removed
+    })
+  }
+  return [...byPath.values()]
+}
+
 // The stable key for a row (used as the {#each} key and data-item-key anchor).
 export function rowKey(row: TranscriptRow): string {
   if (row.kind === 'edit-group') return row.key

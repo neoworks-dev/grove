@@ -1,16 +1,38 @@
 <script lang="ts">
-  import { store, selectWorktree, refreshWorktrees } from '../lib/store.svelte'
+  import { store, selectWorktree, refreshWorktrees, focusAgentInPane } from '../lib/store.svelte'
+  import { layout } from '../lib/layout.svelte'
   import { diffStatLabel } from '../lib/worktreeStatus'
   import CreateWorktreeDialog from './CreateWorktreeDialog.svelte'
   import MergeWorktreeDialog from './MergeWorktreeDialog.svelte'
-  import CheckpointsDialog from './CheckpointsDialog.svelte'
-  import WorktreeChatDialog from './WorktreeChatDialog.svelte'
+  import WaveSpinner from './WaveSpinner.svelte'
+  import AgentLogo from './AgentLogo.svelte'
   import type { Worktree, ServiceRuntime, AgentRuntime } from '../../../shared/types'
 
   let showDialog = $state(false)
   let mergeSource = $state<Worktree | null>(null)
-  let checkpointsFor = $state<Worktree | null>(null)
-  let chatFor = $state<Worktree | null>(null)
+
+  function agentsFor(worktreeId: string): AgentRuntime[] {
+    return store.agents[worktreeId] || []
+  }
+
+  // Select the worktree, focus the Agent pane, and switch it to this instance.
+  function openAgent(worktreeId: string, name: string, chatId: string, event: MouseEvent): void {
+    event.stopPropagation()
+    void focusAgentInPane(worktreeId, name, chatId)
+    layout.ensurePane('agent')
+  }
+
+  // Open the worktree's shared chat in the right dock (like the agent pane).
+  function openChat(worktree: Worktree): void {
+    selectWorktree(worktree.id)
+    layout.openDock('right', 'worktree-chat')
+  }
+
+  // Reveal the checkpoints timeline in the left sidebar for this worktree.
+  function openCheckpoints(worktree: Worktree): void {
+    selectWorktree(worktree.id)
+    layout.showInDock('left', 'checkpoints')
+  }
 
   function serviceSummary(worktreeId: string): { running: number; total: number } {
     const list: ServiceRuntime[] = store.services[worktreeId] || []
@@ -61,6 +83,7 @@
     {#each store.worktrees as worktree (worktree.id)}
       {@const summary = serviceSummary(worktree.id)}
       {@const diff = diffStatLabel(worktree.id)}
+      {@const agents = agentsFor(worktree.id)}
       <div
         class="group flex cursor-pointer items-center gap-2 px-3 py-2 text-sm {store.selectedWorktreeId ===
         worktree.id
@@ -112,7 +135,7 @@
             title="Worktree chat"
             onclick={(event) => {
               event.stopPropagation()
-              chatFor = worktree
+              openChat(worktree)
             }}
           >
             ✉
@@ -122,7 +145,7 @@
             title="Checkpoints"
             onclick={(event) => {
               event.stopPropagation()
-              checkpointsFor = worktree
+              openCheckpoints(worktree)
             }}
           >
             ⟲
@@ -148,6 +171,28 @@
           {/if}
         </div>
       </div>
+
+      <!-- One row per spawned instance in this worktree, running or not. -->
+      {#each agents as agent (agent.name + '::' + agent.chatId)}
+        <button
+          class="flex w-full items-center gap-2 py-1 pl-7 pr-3 text-left text-2xs hover:bg-hover {store.selectedWorktreeId ===
+          worktree.id
+            ? 'bg-surface'
+            : ''}"
+          title="{agent.name} · {agent.label} — {agent.status}"
+          onclick={(event) => openAgent(worktree.id, agent.name, agent.chatId, event)}
+        >
+          <AgentLogo name={agent.name} size={14} active={agent.status === 'running'} />
+          <span class="truncate {agent.status === 'running' ? 'text-default' : 'text-muted'}"
+            >{agent.label}</span
+          >
+          {#if agent.status === 'running'}
+            <span class="ml-auto text-green"><WaveSpinner count={3} /></span>
+          {:else}
+            <span class="ml-auto text-dim">{agent.status}</span>
+          {/if}
+        </button>
+      {/each}
     {/each}
 
     {#if store.repo && store.worktrees.length === 0}
@@ -164,19 +209,5 @@
   <MergeWorktreeDialog
     source={{ id: mergeSource.id, name: mergeSource.name, branch: mergeSource.branch }}
     onClose={() => (mergeSource = null)}
-  />
-{/if}
-
-{#if checkpointsFor}
-  <CheckpointsDialog
-    worktree={{ id: checkpointsFor.id, name: checkpointsFor.name }}
-    onClose={() => (checkpointsFor = null)}
-  />
-{/if}
-
-{#if chatFor}
-  <WorktreeChatDialog
-    worktree={{ id: chatFor.id, name: chatFor.name }}
-    onClose={() => (chatFor = null)}
   />
 {/if}

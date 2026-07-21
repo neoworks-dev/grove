@@ -43,6 +43,10 @@ export interface PaneType {
   modes?: string[]
   // When false the leaf shows the "open a repository" placeholder.
   when?: () => boolean
+  // Canvas-backed panes (nvim, terminal) scale their own font from the pane's
+  // font zoom instead of the generic CSS `zoom` the container applies — CSS zoom
+  // would rescale their bitmap and blur the text.
+  ownsFontScale?: boolean
 }
 
 class PaneRegistry {

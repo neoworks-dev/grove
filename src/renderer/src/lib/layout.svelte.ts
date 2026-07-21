@@ -6,6 +6,7 @@ import { store } from './store.svelte'
 import { keymap } from './keymap.svelte'
 import { panes } from './panes.svelte'
 import { views } from './views.svelte'
+import { clampFontScale, steppedFontScale, FONT_SCALE_DEFAULT } from './fontScale'
 import type { DockLayoutState, DockPaneState, DockSide } from '../../../shared/types'
 import {
   createLeaf,
@@ -87,13 +88,18 @@ const SIDEBAR_SLOT_ID = 'sidebar'
 // center tree: sidebar panes dock left, the agent panel docks right.
 function dockSideFor(paneTypeId: string): DockSide | null {
   if (panes.get(paneTypeId)?.slot === SIDEBAR_SLOT_ID) return 'left'
-  if (paneTypeId === 'agent') return 'right'
+  if (paneTypeId === 'agent' || paneTypeId === 'worktree-chat') return 'right'
   return null
 }
 
 class LayoutStore {
   activeViewId = $state<string>('code')
   paneSizes = $state<Record<string, number>>({ ...DEFAULT_PANEL_SIZES })
+
+  // Per-pane font zoom, keyed by split-tree leaf id or dock id ('dock:left' /
+  // 'dock:right'). Absent key means unscaled (1). Panes read this to size their
+  // content (CSS zoom for DOM panes, own font for canvas panes).
+  paneFontScale = $state<Record<string, number>>({})
 
   // Docked side panels, shared across all views (they stay attached; only the
   // center split tree is per-view and freely splittable).
@@ -128,6 +134,46 @@ class LayoutStore {
 
   size(key: string): number {
     return this.paneSizes[key] ?? DEFAULT_PANEL_SIZES[key] ?? 256
+  }
+
+  // ── Per-pane font zoom ────────────────────────────────────────
+  fontScale(containerId: string): number {
+    return this.paneFontScale[containerId] ?? FONT_SCALE_DEFAULT
+  }
+
+  private setFontScale(containerId: string, value: number): void {
+    const clamped = clampFontScale(value)
+    // Default scale carries no state, so a reset drops the key entirely.
+    if (clamped === FONT_SCALE_DEFAULT) {
+      const { [containerId]: _removed, ...rest } = this.paneFontScale
+      this.paneFontScale = rest
+    } else {
+      this.paneFontScale = { ...this.paneFontScale, [containerId]: clamped }
+    }
+    this.schedule()
+  }
+
+  // Container (split leaf or dock) whose font zoom the Ctrl +/-/0 keys target:
+  // the box around the focused element, resolved via the DOM so a nested inner
+  // pane (e.g. the file tree) still maps to its enclosing zoom container.
+  private focusedZoomContainerId(): string | null {
+    const active = document.activeElement as HTMLElement | null
+    const container = active?.closest('[data-zoom-container]') as HTMLElement | null
+    if (container?.dataset.zoomContainer) return container.dataset.zoomContainer
+    if (keymap.activeLeafId) return keymap.activeLeafId
+    return keymap.activePane
+  }
+
+  adjustFocusedFontScale(deltaSteps: number): void {
+    const containerId = this.focusedZoomContainerId()
+    if (!containerId) return
+    this.setFontScale(containerId, steppedFontScale(this.fontScale(containerId), deltaSteps))
+  }
+
+  resetFocusedFontScale(): void {
+    const containerId = this.focusedZoomContainerId()
+    if (!containerId) return
+    this.setFontScale(containerId, FONT_SCALE_DEFAULT)
   }
 
   // ── Docks ─────────────────────────────────────────────────────
@@ -411,6 +457,7 @@ class LayoutStore {
     viewLayouts?: Record<string, unknown>
     activeLayoutView?: string | null
     paneSizes?: Record<string, number>
+    paneFontScale?: Record<string, number>
     panelsOpen?: Record<string, boolean>
     centerView?: string | null
     docks?: DockLayoutState | null
@@ -418,6 +465,7 @@ class LayoutStore {
   }): void {
     this.ready = false
     this.paneSizes = { ...DEFAULT_PANEL_SIZES, ...(state.paneSizes || {}) }
+    this.paneFontScale = { ...(state.paneFontScale || {}) }
     this.docks = this.restoreDocks(state)
     this.focusMode = state.focusMode === true
     this.storedTrees = restoreViewTrees(state.viewLayouts)
@@ -502,16 +550,27 @@ class LayoutStore {
         },
         activeLayoutView: this.activeViewId,
         paneSizes: $state.snapshot(this.paneSizes),
+        paneFontScale: $state.snapshot(this.paneFontScale),
         docks: $state.snapshot(this.docks) as DockLayoutState,
         focusMode: this.focusMode,
-        // Tabs are per worktree; persist the full maps (paths only).
+        // Tabs are per worktree; persist the full maps (paths only). Scratch
+        // buffers are ephemeral (backed by a live nvim buffer) — never persist
+        // them, and don't leave a scratch key as the persisted active tab.
         openTabsByWorktree: Object.fromEntries(
           Object.entries(store.tabsByWorktree).map(([worktreeId, tabs]) => [
             worktreeId,
-            tabs.map((tab) => tab.path)
+            tabs.filter((tab) => !tab.scratch).map((tab) => tab.path)
           ])
         ),
-        activeTabByWorktree: $state.snapshot(store.activeTabByWorktree)
+        activeTabByWorktree: Object.fromEntries(
+          Object.entries(store.tabsByWorktree).map(([worktreeId, tabs]) => {
+            const files = tabs.filter((tab) => !tab.scratch)
+            const active = store.activeTabByWorktree[worktreeId]
+            const activeIsFile = active && files.some((tab) => tab.path === active)
+            const fallback = files.length > 0 ? files[files.length - 1].path : null
+            return [worktreeId, activeIsFile ? active : fallback]
+          })
+        )
       })
     } catch {
       // best-effort; layout is non-critical

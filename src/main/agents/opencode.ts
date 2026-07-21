@@ -7,14 +7,22 @@
 
 // ESM-only SDK — loaded via dynamic import() from the CommonJS main process.
 import type { createOpencode as CreateOpencode } from '@opencode-ai/sdk'
-import type { AgentConfig } from '../../shared/types'
+import type { AgentConfig, AgentOption } from '../../shared/types'
 import type { AdapterContext, AgentAdapter, RunHandle } from './types'
 import { textLine, toolLine, toolResultLine } from './types'
 
 const config: AgentConfig = {
   command: 'opencode',
   interactive: true
-  // Models are provider-scoped ({providerID, modelID}); left as server default.
+}
+
+// OpenCode models are provider-scoped. We encode a picker value as
+// "providerID/modelID" and split it back apart when prompting.
+function parseModel(value: string | undefined): { providerID: string; modelID: string } | undefined {
+  if (!value) return undefined
+  const slash = value.indexOf('/')
+  if (slash <= 0) return undefined
+  return { providerID: value.slice(0, slash), modelID: value.slice(slash + 1) }
 }
 
 // Emit the final parts of an assistant message.
@@ -92,7 +100,10 @@ function start(context: AdapterContext): RunHandle {
       const result = await client.session.prompt({
         path: { id: sessionId },
         query: { directory },
-        body: { parts: [{ type: 'text', text: context.options.prompt || '' }] }
+        body: {
+          parts: [{ type: 'text', text: context.options.prompt || '' }],
+          model: parseModel(context.options.model)
+        }
       })
 
       emitParts(context, result.data?.parts || [])
@@ -119,4 +130,27 @@ function start(context: AdapterContext): RunHandle {
   }
 }
 
-export const opencodeAdapter: AgentAdapter = { name: 'opencode', config, start }
+// Fetch the available provider+model list from a throwaway OpenCode server.
+async function listModels(): Promise<AgentOption[]> {
+  const { createOpencode } = await import('@opencode-ai/sdk')
+  const { client, server } = await createOpencode()
+  try {
+    const response = await client.config.providers()
+    const providers = response.data?.providers || []
+    const options: AgentOption[] = []
+    for (const provider of providers) {
+      for (const model of Object.values(provider.models || {})) {
+        if (model.status === 'deprecated') continue
+        options.push({
+          label: `${provider.name} · ${model.name}`,
+          value: `${provider.id}/${model.id}`
+        })
+      }
+    }
+    return options
+  } finally {
+    server?.close()
+  }
+}
+
+export const opencodeAdapter: AgentAdapter = { name: 'opencode', config, start, listModels }

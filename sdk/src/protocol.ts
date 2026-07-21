@@ -103,6 +103,12 @@ export interface StatusBarContribution {
 export interface PaneContribution {
   id: string
   title: string
+  // When set, the pane is also offered as a tab in the bottom panel (alongside
+  // the built-in Terminal and Problems tabs).
+  panel?: {
+    title?: string
+    order?: number
+  }
 }
 
 export interface ViewContribution {

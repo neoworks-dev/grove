@@ -1,12 +1,11 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte'
   import { cubicOut } from 'svelte/easing'
-  import groveLogo from './assets/grove-icon.svg'
   import ActivityBar from './components/ActivityBar.svelte'
   import Dock from './components/Dock.svelte'
   import PanelResizer from './components/PanelResizer.svelte'
   import SplitTree from './components/SplitTree.svelte'
-  import MenuBar from './components/MenuBar.svelte'
+  import TopBar from './components/TopBar.svelte'
   import Overlay from './components/Overlay.svelte'
   import WhichKey from './components/WhichKey.svelte'
   import PaneDragOverlay from './components/PaneDragOverlay.svelte'
@@ -141,6 +140,14 @@
     })
   }
 
+  // Per-pane font zoom is driven from main (event:pane-zoom) because Chromium
+  // eats Ctrl/Cmd +/-/0 as page-zoom accelerators before the renderer keydown.
+  function applyPaneZoom(direction: unknown): void {
+    if (direction === 'in') layout.adjustFocusedFontScale(1)
+    else if (direction === 'out') layout.adjustFocusedFontScale(-1)
+    else if (direction === 'reset') layout.resetFocusedFontScale()
+  }
+
   function onGlobalKey(event: KeyboardEvent): void {
     // The keybind-capture widget owns the keyboard entirely while recording.
     if (keymap.captureMode) return
@@ -153,11 +160,15 @@
     // the global capture-phase handlers must stand down.
     if (overlays.active) return
     // The terminal owns every key while focused (so Ctrl+C/L/hjkl reach the
-    // shell), except the toggle chord that hides it again.
-    if (keymap.activePaneType === 'terminal') {
+    // shell), except the toggle chord that hides it again. This holds for the
+    // standalone terminal pane and for the bottom panel while its Terminal tab
+    // is active (the 'panel' pane then reports 'terminal' mode). The mode check
+    // is scoped to 'panel' so nvim's own :terminal mode is unaffected.
+    const inPanelTerminal = keymap.activePaneType === 'panel' && keymap.mode === 'terminal'
+    if (keymap.activePaneType === 'terminal' || inPanelTerminal) {
       if (event.ctrlKey && event.key === '`' && !event.altKey && !event.metaKey) {
         event.preventDefault()
-        layout.togglePane('terminal')
+        layout.togglePane(keymap.activePaneType ?? 'terminal')
       }
       return
     }
@@ -203,6 +214,7 @@
     registerCoreBindings()
     void loadInstalledExtensions()
     window.addEventListener('keydown', onGlobalKey, true)
+    const stopPaneZoom = window.workbench.on('event:pane-zoom', applyPaneZoom)
 
     void (async () => {
       await settings.init()
@@ -219,7 +231,10 @@
       }
     })()
 
-    return () => window.removeEventListener('keydown', onGlobalKey, true)
+    return () => {
+      window.removeEventListener('keydown', onGlobalKey, true)
+      stopPaneZoom()
+    }
   })
 
   // Collapse a side panel's width to zero on enter/leave. Because the node keeps
@@ -247,47 +262,8 @@
 
 <div class="flex h-screen w-screen flex-col gap-1.5 overflow-hidden bg-canvas p-2 text-default">
   <!-- Top bar -->
-  <header
-    class="flex h-6 shrink-0 items-center gap-3 rounded-xl border border-line-faint bg-surface px-3 text-sm"
-  >
-    <img src={groveLogo} alt="Grove" class="h-4 w-auto" />
-    <MenuBar />
-    {#if !store.repo}
-      <button
-        class="rounded-md border border-line bg-surface px-2 py-1 text-xs hover:bg-hover"
-        onclick={pickRepo}
-      >
-        Open Repo
-      </button>
-    {/if}
-
-    <div class="ml-auto flex items-center gap-1">
-      <button
-        class="ml-2 rounded-md px-2 py-1 text-2xs {layout.docks.right.open
-          ? 'text-default'
-          : 'text-dim hover:text-default'}"
-        title="Toggle right panel"
-        onclick={() => layout.toggleDock('right')}
-      >
-        ▤
-      </button>
-      <button
-        class="rounded-md px-2 py-1 text-2xs {layout.focusMode
-          ? 'text-default'
-          : 'text-dim hover:text-default'}"
-        title="Focus mode"
-        onclick={() => layout.toggleFocusMode()}
-      >
-        ⛶
-      </button>
-      <button
-        class="rounded-md border border-line px-2 py-1 text-2xs text-dim hover:text-default"
-        title="Command palette (F1)"
-        onclick={() => commands.open()}
-      >
-        ⌘ F1
-      </button>
-    </div>
+  <header class="h-7 shrink-0 px-1">
+    <TopBar />
   </header>
 
   {#if store.error}

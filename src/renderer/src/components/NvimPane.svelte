@@ -14,6 +14,7 @@
   import { settings } from '../lib/settings.svelte'
   import { NvimCanvasSession } from '../lib/nvim/session'
   import { registerNvimSession, unregisterNvimSession } from '../lib/nvim/registry'
+  import { scratchFor, closeScratch } from '../lib/nvim/scratch.svelte'
   import { nvimKeymapBindings, type NvimMapping } from '../lib/nvimKeymap'
   import { operatorHintEntries, operatorTitle } from '../lib/nvimOperatorHints'
 
@@ -89,6 +90,10 @@
 
   function closeTab(path: string, event: MouseEvent): void {
     event.stopPropagation()
+    if (scratchFor(path)) {
+      closeScratch(path)
+      return
+    }
     store.closeTab(path)
   }
 
@@ -157,7 +162,10 @@
   onMount(() => {
     keymap.setPaneMode(leafId, 'normal')
     if (!hostEl || !canvasEl || !inputEl) return
-    const font = { family: cssVar('--font-mono', 'monospace'), sizePx: fontSize() }
+    const font = {
+      family: cssVar('--font-mono', 'monospace'),
+      sizePx: fontSize() * layout.fontScale(leafId)
+    }
     session = new NvimCanvasSession(
       { host: hostEl, canvas: canvasEl, input: inputEl },
       { leafId, font, initialFile: () => store.activeTabPath },
@@ -198,6 +206,12 @@
     if (keymap.activePane === leafId) session?.focus()
   })
 
+  // Per-pane font zoom: re-measure nvim's cell when this pane's scale changes.
+  $effect(() => {
+    const scale = layout.fontScale(leafId)
+    session?.setFontSize(fontSize() * scale)
+  })
+
   // Follow the selected worktree: each worktree is its own editor (own buffers,
   // own cwd), so on a switch the session rebinds nvim to the new worktree.
   // Initialized to the spawn-time worktree so the first real switch rebinds.
@@ -217,6 +231,15 @@
     const id = session?.id
     if (!id || !path || path === lastPushedPath) return
     lastPushedPath = path
+    // Scratch tabs map to a live nvim buffer, not a file: switch the window to
+    // it (only in the pane that owns the buffer) rather than :edit-ing a path.
+    const scratch = scratchFor(path)
+    if (scratch) {
+      if (scratch.nvimId === id) {
+        void window.workbench.nvim.request(id, 'nvim_set_current_buf', [scratch.bufnr]).catch(() => {})
+      }
+      return
+    }
     void window.workbench.nvim
       .request(id, 'nvim_cmd', [{ cmd: 'edit', args: [path] }, {}])
       .then(() => syncNvimKeymap())

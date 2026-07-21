@@ -24,6 +24,41 @@
   themes: neoworks --default;
 }
 
+/* ── Bundled Nerd Font ─────────────────────────────────────────────
+   JetBrains Mono, Nerd Font "Mono" patch (icons forced to single-cell
+   width so they align on the terminal grid). Bundled so glyphs render
+   regardless of what the host has installed; appended to --font-mono as
+   a fallback, so it only fills codepoints the primary mono font lacks
+   (the Nerd icon Private Use Area). */
+@font-face {
+  font-family: 'JetBrainsMono Nerd Font Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./fonts/JetBrainsMonoNerdFontMono-Regular.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrainsMono Nerd Font Mono';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./fonts/JetBrainsMonoNerdFontMono-Bold.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrainsMono Nerd Font Mono';
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./fonts/JetBrainsMonoNerdFontMono-Italic.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrainsMono Nerd Font Mono';
+  font-style: italic;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./fonts/JetBrainsMonoNerdFontMono-BoldItalic.woff2') format('woff2');
+}
+
 /* ── NeoWorks DaisyUI Theme ────────────────────────────────────── */
 @plugin "daisyui/theme" {
   name: 'neoworks';
@@ -262,7 +297,7 @@
 /* ── Typography ─────────────────────────────────────────────── */
 :root {
   --font-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --font-mono: 'Geist Mono', ui-monospace, 'SF Mono', 'Roboto Mono', monospace;
+  --font-mono: 'Geist Mono', 'JetBrainsMono Nerd Font Mono', ui-monospace, 'SF Mono', 'Roboto Mono', monospace;
 
   --text-2xs: 11px;
   --text-xs: 12px;
@@ -617,10 +652,10 @@
     font-family: var(--font-mono);
   }
 
-  /* Active-pane marker (keyboard focus model). No white ring; kept as a no-op
-     hook in case a subtler indicator is wired later. */
+  /* Active-pane marker (keyboard focus model): a subtle inset border on the
+     focused pane. Inset so it never shifts layout or overlaps neighbor gutters. */
   .pane-active {
-    box-shadow: none;
+    box-shadow: inset 0 0 0 1px var(--border-strong);
   }
 
   /* Shadows */

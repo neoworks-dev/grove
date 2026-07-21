@@ -225,7 +225,11 @@ export function buildGroveApi(rpc: RpcEndpoint, pluginId: string): GroveApi {
       writeFile: (path, content, options) =>
         rpc.request('main.workspace.writeFile', { path, content, ...options }) as Promise<void>,
       openFile: (path, options) =>
-        rpc.request('host.openFile', { path, ...options }) as Promise<void>
+        rpc.request('host.openFile', { path, ...options }) as Promise<void>,
+      getActiveFile: () =>
+        rpc.request('host.getActiveFile', {}) as ReturnType<
+          GroveApi['workspace']['getActiveFile']
+        >
     },
 
     ai: {

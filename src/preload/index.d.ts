@@ -29,6 +29,7 @@ import type {
   ServiceRuntime,
   AgentRuntime,
   AgentConfig,
+  AgentOption,
   AgentLaunchOptions,
   AgentDialogDecision,
   AgentChats,
@@ -66,6 +67,7 @@ interface RepoStateShape {
   viewLayouts: Record<string, unknown>
   activeLayoutView: string | null
   paneSizes: Record<string, number>
+  paneFontScale: Record<string, number>
   panelsOpen: Record<string, boolean>
   centerView: string | null
   activeView: string | null
@@ -164,11 +166,30 @@ export interface WorkbenchApi {
   agents: {
     list: (worktreeId: string) => Promise<AgentRuntime[]>
     configs: () => Promise<Record<string, AgentConfig>>
-    start: (worktreeId: string, name: string, options: AgentLaunchOptions) => Promise<AgentRuntime>
-    stop: (worktreeId: string, name: string) => Promise<void>
-    compact: (worktreeId: string, name: string, instructions?: string) => Promise<AgentRuntime>
-    reset: (worktreeId: string, name: string) => Promise<ChatMeta>
-    transcript: (worktreeId: string, name: string) => Promise<string[]>
+    models: (name: string) => Promise<AgentOption[]>
+    createInstance: (worktreeId: string, name: string, label?: string) => Promise<ChatMeta>
+    convertInstance: (
+      worktreeId: string,
+      fromName: string,
+      toName: string,
+      chatId: string
+    ) => Promise<ChatMeta | null>
+    deleteChat: (worktreeId: string, name: string, chatId: string) => Promise<void>
+    start: (
+      worktreeId: string,
+      name: string,
+      options: AgentLaunchOptions,
+      chatId?: string
+    ) => Promise<AgentRuntime>
+    stop: (worktreeId: string, name: string, chatId: string) => Promise<void>
+    compact: (
+      worktreeId: string,
+      name: string,
+      instructions?: string,
+      chatId?: string
+    ) => Promise<AgentRuntime>
+    reset: (worktreeId: string, name: string, chatId?: string) => Promise<ChatMeta>
+    transcript: (worktreeId: string, name: string, chatId?: string) => Promise<string[]>
     chats: (worktreeId: string, name: string) => Promise<AgentChats>
     renameChat: (
       worktreeId: string,
@@ -180,9 +201,14 @@ export interface WorkbenchApi {
     respondPermission: (id: string, decision: PermissionDecision) => Promise<void>
     respondDialog: (id: string, decision: AgentDialogDecision) => Promise<void>
     active: () => Promise<string[]>
-    send: (worktreeId: string, name: string, text: string) => Promise<AgentSendResult>
-    queue: (worktreeId: string, name: string) => Promise<QueuedMessage[]>
-    cancelQueued: (worktreeId: string, name: string, id: string) => Promise<void>
+    send: (
+      worktreeId: string,
+      name: string,
+      text: string,
+      chatId?: string
+    ) => Promise<AgentSendResult>
+    queue: (worktreeId: string, name: string, chatId: string) => Promise<QueuedMessage[]>
+    cancelQueued: (worktreeId: string, name: string, chatId: string, id: string) => Promise<void>
     commands: (worktreeId: string, name: string) => Promise<AgentSlashCommand[]>
   }
   fs: {

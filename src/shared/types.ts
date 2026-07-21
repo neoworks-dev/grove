@@ -102,7 +102,8 @@ export type MergeResult =
 export interface WorktreeChatMessage {
   id: string
   worktreeId: string
-  from: { kind: 'user' | 'agent'; name: string }
+  // instanceId distinguishes two runs of the same adapter (e.g. two "claude").
+  from: { kind: 'user' | 'agent'; name: string; instanceId?: string }
   text: string
   ts: number
   to?: string
@@ -250,6 +251,7 @@ export type AgentSendResult =
 export interface AgentQueueEvent {
   worktreeId: string
   name: string
+  chatId: string
   queue: QueuedMessage[]
   // Present when an explicit user stop flushed pending items, so the
   // renderer can restore their text into the composer.
@@ -291,6 +293,7 @@ export interface PermissionRequestEvent {
   id: string // resolve target
   worktreeId: string
   agent: string
+  chatId: string
   toolName: string
   title: string
   path: string | null
@@ -310,6 +313,7 @@ export interface AgentDialogRequest {
   id: string
   worktreeId: string
   agent: string
+  chatId: string
   dialogKind: string
   payload: Record<string, unknown>
 }
@@ -337,6 +341,11 @@ export type AgentStatus = 'stopped' | 'running' | 'exited' | 'error'
 export interface AgentRuntime {
   worktreeId: string
   name: string
+  // Concurrency unit: multiple instances of the same adapter can run at once in
+  // one worktree, each identified by its chatId (its conversation).
+  chatId: string
+  // Human label for the instance (the chat name, e.g. "Claude #2").
+  label: string
   status: AgentStatus
   pid: number | null
   command: string

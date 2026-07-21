@@ -4,6 +4,7 @@
   // binding registry, so plugin-contributed shortcuts appear automatically.
   import { keymap } from '../lib/keymap.svelte'
   import { formatStep, type KeyStep } from '../lib/keySequence'
+  import Kbd from './Kbd.svelte'
 
   interface Entry {
     token: string
@@ -56,10 +57,7 @@
     <div class="py-1">
       {#each entries as entry (entry.token)}
         <div class="flex items-center gap-2 px-3 py-1 text-xs">
-          <kbd
-            class="min-w-5 rounded border border-line bg-surface px-1.5 py-0.5 text-center font-mono text-2xs text-default"
-            >{entry.token}</kbd
-          >
+          <Kbd>{entry.token}</Kbd>
           <span class="truncate {entry.leaf ? 'text-muted' : 'text-violet'}">{entry.label}</span>
         </div>
       {/each}
@@ -78,10 +76,7 @@
     <div class="py-1">
       {#each keymap.hintEntries as entry (entry.keys)}
         <div class="flex items-center gap-2 px-3 py-1 text-xs">
-          <kbd
-            class="min-w-5 rounded border border-line bg-surface px-1.5 py-0.5 text-center font-mono text-2xs text-default"
-            >{entry.keys}</kbd
-          >
+          <Kbd>{entry.keys}</Kbd>
           <span class="truncate text-muted">{entry.description}</span>
         </div>
       {/each}

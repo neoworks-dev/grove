@@ -8,7 +8,12 @@ import { spawn as spawnPty, type IPty } from 'node-pty'
 export interface TerminalEvents {
   onData: (id: string, data: string) => void
   onExit: (id: string, exitCode: number) => void
+  // Foreground process name (e.g. 'zsh', 'vim', 'node'), emitted on change.
+  onTitle: (id: string, title: string) => void
 }
+
+// How often to sample the pty's foreground process name.
+const TITLE_POLL_MS = 1000
 
 export interface CreateTerminalOptions {
   cwd: string
@@ -24,6 +29,8 @@ function defaultShell(): string {
 
 export class TerminalManager {
   private sessions = new Map<string, IPty>()
+  private titlePolls = new Map<string, ReturnType<typeof setInterval>>()
+  private lastTitles = new Map<string, string>()
   private counter = 0
 
   constructor(private events: TerminalEvents) {}
@@ -40,11 +47,33 @@ export class TerminalManager {
     })
     pty.onData((data) => this.events.onData(id, data))
     pty.onExit(({ exitCode }) => {
+      this.stopTitlePoll(id)
       this.sessions.delete(id)
       this.events.onExit(id, exitCode)
     })
     this.sessions.set(id, pty)
+    this.startTitlePoll(id, pty)
     return id
+  }
+
+  // node-pty exposes the pty's foreground process name via `.process`. There is
+  // no change event on POSIX, so sample it and emit only when it changes.
+  private startTitlePoll(id: string, pty: IPty): void {
+    const sample = (): void => {
+      const title = pty.process
+      if (!title || this.lastTitles.get(id) === title) return
+      this.lastTitles.set(id, title)
+      this.events.onTitle(id, title)
+    }
+    sample()
+    this.titlePolls.set(id, setInterval(sample, TITLE_POLL_MS))
+  }
+
+  private stopTitlePoll(id: string): void {
+    const timer = this.titlePolls.get(id)
+    if (timer) clearInterval(timer)
+    this.titlePolls.delete(id)
+    this.lastTitles.delete(id)
   }
 
   write(id: string, data: string): void {
@@ -64,6 +93,7 @@ export class TerminalManager {
   kill(id: string): void {
     const pty = this.sessions.get(id)
     if (!pty) return
+    this.stopTitlePoll(id)
     this.sessions.delete(id)
     try {
       pty.kill()

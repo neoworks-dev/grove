@@ -1,0 +1,41 @@
+{
+  "id": "grove.harpoon",
+  "name": "Harpoon",
+  "version": "1.0.0",
+  "description": "Pin a handful of files per project and jump between them instantly.",
+  "entry": "dist/extension.js",
+  "engines": { "grove": "^0.1.0" },
+  "permissions": ["workspace.read", "state"],
+  "activation": ["onStartup", "onOverlay:harpoonMenu"],
+  "contributes": {
+    "commands": [
+      { "id": "harpoon.add", "title": "Harpoon: Pin Current File", "group": "Harpoon", "keywords": "mark pin harpoon bookmark file" },
+      { "id": "harpoon.remove", "title": "Harpoon: Unpin Current File", "group": "Harpoon", "keywords": "unpin remove harpoon" },
+      { "id": "harpoon.menu", "title": "Harpoon: Toggle Menu", "group": "Harpoon", "keywords": "harpoon list menu marks" },
+      { "id": "harpoon.next", "title": "Harpoon: Next Mark", "group": "Harpoon" },
+      { "id": "harpoon.prev", "title": "Harpoon: Previous Mark", "group": "Harpoon" },
+      { "id": "harpoon.clear", "title": "Harpoon: Clear All Marks", "group": "Harpoon" },
+      { "id": "harpoon.goto1", "title": "Harpoon: Go to 1", "group": "Harpoon" },
+      { "id": "harpoon.goto2", "title": "Harpoon: Go to 2", "group": "Harpoon" },
+      { "id": "harpoon.goto3", "title": "Harpoon: Go to 3", "group": "Harpoon" },
+      { "id": "harpoon.goto4", "title": "Harpoon: Go to 4", "group": "Harpoon" }
+    ],
+    "keybindings": [
+      { "id": "harpoon.add", "keys": "<Leader> a", "context": "global", "group": "Harpoon", "description": "Pin current file", "command": "harpoon.add" },
+      { "id": "harpoon.menu", "keys": "ctrl+e", "context": "global", "group": "Harpoon", "description": "Toggle Harpoon menu", "command": "harpoon.menu" },
+      { "id": "harpoon.g1", "keys": "ctrl+h", "context": "global", "group": "Harpoon", "description": "Go to mark 1", "command": "harpoon.goto1" },
+      { "id": "harpoon.g2", "keys": "ctrl+t", "context": "global", "group": "Harpoon", "description": "Go to mark 2", "command": "harpoon.goto2" },
+      { "id": "harpoon.g3", "keys": "ctrl+n", "context": "global", "group": "Harpoon", "description": "Go to mark 3", "command": "harpoon.goto3" },
+      { "id": "harpoon.g4", "keys": "ctrl+s", "context": "global", "group": "Harpoon", "description": "Go to mark 4", "command": "harpoon.goto4" }
+    ],
+    "overlays": [
+      {
+        "id": "harpoonMenu",
+        "title": "Harpoon",
+        "placeholder": "Filter pinned files…",
+        "preview": true,
+        "debounceMs": 0
+      }
+    ]
+  }
+}

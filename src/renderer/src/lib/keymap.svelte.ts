@@ -253,6 +253,24 @@ class Keymap {
     this.activePane = target.id
   }
 
+  // ── Focus follows mouse ────────────────────────────────────────
+  // Last cursor position seen by pointerFocus, to reject move events that
+  // don't actually relocate the cursor (scrolling under a stationary pointer
+  // still fires mousemove with unchanged coordinates).
+  private lastPointerX = Number.NaN
+  private lastPointerY = Number.NaN
+
+  // Focus the pane the mouse is over. Called from the pane action's mousemove.
+  // Because it only acts on real motion, a keyboard focus change persists until
+  // the user moves the mouse — a parked cursor emits no mousemove.
+  pointerFocus(id: PaneId, clientX: number, clientY: number): void {
+    if (clientX === this.lastPointerX && clientY === this.lastPointerY) return
+    this.lastPointerX = clientX
+    this.lastPointerY = clientY
+    if (this.activePane === id) return
+    this.focusPane(id)
+  }
+
   private innermostPane(id: PaneId, el: HTMLElement): { id: PaneId; el: HTMLElement } {
     let best = { id, el }
     for (const [candidateId, candidateEl] of this.panes) {
@@ -479,8 +497,18 @@ export function pane(
     const target = event.target as HTMLElement | null
     if (target?.closest('[data-pane]') === node) keymap.setActive(current.id)
   }
+  // Focus follows mouse: hovering a pane focuses it. Only the innermost pane
+  // under the cursor claims the move (same guard as activate), and a held
+  // button (drag/selection) is left alone so it never yanks focus mid-drag.
+  const follow = (event: MouseEvent): void => {
+    if (event.buttons !== 0) return
+    const target = event.target as HTMLElement | null
+    if (target?.closest('[data-pane]') !== node) return
+    keymap.pointerFocus(current.id, event.clientX, event.clientY)
+  }
   node.addEventListener('focusin', activate)
   node.addEventListener('mousedown', activate)
+  node.addEventListener('mousemove', follow)
   return {
     update(next: PaneAttachment) {
       const parts = attachmentParts(next)
@@ -492,6 +520,7 @@ export function pane(
     destroy() {
       node.removeEventListener('focusin', activate)
       node.removeEventListener('mousedown', activate)
+      node.removeEventListener('mousemove', follow)
       keymap.unregisterPane(current.id)
     }
   }

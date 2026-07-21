@@ -3,6 +3,8 @@
   // the overlay controller: input + streamed list, optional preview column,
   // multi-select marks, and footer action hints.
   import Icon from '@iconify/svelte'
+  import { fade, scale } from 'svelte/transition'
+  import { cubicOut } from 'svelte/easing'
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
   import { overlays } from '../lib/overlays.svelte'
   import { stepFromEvent, formatStep } from '../lib/keySequence'
@@ -85,6 +87,7 @@
     class="fixed inset-0 z-modal flex items-start justify-center bg-black/50 pt-[12vh]"
     role="button"
     tabindex="0"
+    transition:fade={{ duration: 120 }}
     onclick={() => overlays.cancel()}
     onkeydown={(event) => event.key === 'Escape' && overlays.cancel()}
   >
@@ -94,6 +97,7 @@
         : 'w-[560px]'} max-w-[92vw] flex-col overflow-hidden rounded-lg border border-line bg-surface shadow-overlay"
       role="dialog"
       tabindex="-1"
+      transition:scale={{ duration: 140, start: 0.97, opacity: 0, easing: cubicOut }}
       onclick={(event) => event.stopPropagation()}
       onkeydown={onKeyDown}
     >

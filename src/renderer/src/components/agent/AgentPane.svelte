@@ -1,33 +1,55 @@
 <script lang="ts">
-  import { settings } from '../lib/settings.svelte'
-  import { agentPrompt } from '../lib/agentPrompt.svelte'
-  import { layout } from '../lib/layout.svelte'
+  import { settings } from '../../lib/settings.svelte'
+  import { agentPrompt } from '../../lib/agentPrompt.svelte'
   import {
     store,
     refreshRuntimes,
     openFileInEditor,
+    openFileAtLine,
     respondPermission,
     respondDialog,
     seedAgentTranscript,
     resetAgentChat,
+    deleteAgentChat,
     refreshChats,
     renameChat,
     resumeChat,
-    compactChat
-  } from '../lib/store.svelte'
-  import { parseQuestions, buildAnswerResult } from '../lib/agentDialog'
-  import { inlineEdit } from '../lib/inlineEdit.svelte'
-  import WaveSpinner from './WaveSpinner.svelte'
+    compactChat,
+    ensureAgentModels
+  } from '../../lib/store.svelte'
+  import { parseQuestions } from '../../lib/agentDialog'
+  import { inlineEdit } from '../../lib/inlineEdit.svelte'
   import { onMount, onDestroy } from 'svelte'
-  import { keymap } from '../lib/keymap.svelte'
-  import type { LogLine } from '../lib/store.svelte'
-  import type { AgentRuntime, AgentConfig, ChatMeta, DiffFile } from '../../../shared/types'
-  import { parseAgentLines, parseAgentMeta, toolSummary, type OutputItem } from '../lib/agentStream'
-  import { renderMarkdown } from '../lib/markdown'
+  import { keymap } from '../../lib/keymap.svelte'
+  import type { LogLine } from '../../lib/store.svelte'
+  import type { AgentRuntime, AgentConfig, ChatMeta, DiffFile } from '../../../../shared/types'
+  import {
+    parseAgentLines,
+    parseAgentMeta,
+    toolSummary,
+    type OutputItem
+  } from '../../lib/agentStream'
+  import { buildSubagents } from '../../lib/agent/subagents'
+  import { buildTaskList, taskResultKeys } from '../../lib/agent/tasks'
+  import AgentTranscript from './AgentTranscript.svelte'
+  import AgentQuestionDialog from './AgentQuestionDialog.svelte'
+  import AgentPermissionPrompt from './AgentPermissionPrompt.svelte'
+  import AgentTaskList from './AgentTaskList.svelte'
+  import AgentSubagentList from './AgentSubagentList.svelte'
+  import AgentWorkingBar from './AgentWorkingBar.svelte'
+  import AgentQueue from './AgentQueue.svelte'
+  import WaveSpinner from '../WaveSpinner.svelte'
+  import AgentLogo from '../AgentLogo.svelte'
+  import Kbd from '../Kbd.svelte'
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
+
+  let { leafId }: { leafId: string } = $props()
 
   let prompt = $state('')
   let promptEl = $state<HTMLTextAreaElement>()
+  // Whether the composer holds focus — drives the "press i to focus" hint shown
+  // while in normal mode.
+  let composerFocused = $state(false)
 
   // Keybind 'ai-prompt' actions prefill the composer and focus it.
   $effect(() => {
@@ -37,7 +59,15 @@
     prompt = text
     promptEl?.focus()
   })
+  // The viewed tab's adapter (drives the transcript, tabs, permissions).
   let selectedAgent = $state<string>(settings.get<string>('workbench.defaultAgent') || '')
+  // The selected instance (chat) of the selected adapter. Empty = fall back to
+  // that adapter's active chat. Multiple instances of one adapter run at once.
+  let selectedChatId = $state<string>('')
+  // The adapter used for the NEXT run of this tab (the agent/model dropdown).
+  // Defaults to the viewed tab's adapter; picking a different one converts the
+  // tab on send. mode/model/effort are configured against this adapter.
+  let launchAgent = $state<string>('')
   let modeIndex = $state(0)
   let effortIndex = $state(0)
   let selectedModel = $state('')
@@ -56,7 +86,8 @@
   let draft = $state('') // in-progress text stashed while navigating
 
   const agentNames = $derived(Object.keys(store.agentConfigs))
-  const config = $derived<AgentConfig | undefined>(store.agentConfigs[selectedAgent])
+  // Config/modes/models/efforts follow the launch adapter (what runs next).
+  const config = $derived<AgentConfig | undefined>(store.agentConfigs[launchAgent])
   const modes = $derived(config?.modes || [])
   const efforts = $derived(config?.efforts || [])
 
@@ -68,18 +99,99 @@
     }
   })
 
-  // Reset per-agent selections when the agent changes.
+  // Honor a focus request from the agents overview: select that agent once the
+  // pane is showing the same worktree, then clear the request.
+  $effect(() => {
+    const request = store.requestedAgent
+    if (!request || request.worktreeId !== store.selectedWorktreeId) return
+    if (agentNames.includes(request.name)) {
+      selectedAgent = request.name
+      selectedChatId = request.chatId || ''
+    }
+    store.requestedAgent = null
+  })
+
+  // Default the effort selection to 'high' for an adapter, falling back to the
+  // first level when the adapter has no 'high'.
+  function defaultEffortIndex(agent: string): number {
+    const list = store.agentConfigs[agent]?.efforts || []
+    const index = list.findIndex((effort) => effort.value === 'high')
+    return index >= 0 ? index : 0
+  }
+
+  // When the viewed tab's adapter changes, default the launch config to it and
+  // reset the per-agent selections (mode/model/effort differ per adapter).
   let lastAgent = ''
   $effect(() => {
     if (selectedAgent && selectedAgent !== lastAgent) {
       lastAgent = selectedAgent
+      launchAgent = selectedAgent
       modeIndex = 0
-      effortIndex = 0
+      effortIndex = defaultEffortIndex(selectedAgent)
       selectedModel = ''
       agentNavActive = false
       focusedSubagentKey = null
       void settings.set('workbench.defaultAgent', selectedAgent, 'user')
     }
+  })
+
+  // Switch the launch provider (adapter). Resets the model + per-adapter config
+  // when it actually changes, and lazily fetches that provider's models (which
+  // populate its flyout submenu).
+  function selectProvider(agent: string): void {
+    if (agent !== launchAgent) {
+      modeIndex = 0
+      effortIndex = defaultEffortIndex(agent)
+      selectedModel = ''
+    }
+    launchAgent = agent
+    submenuProvider = agent
+    void ensureAgentModels(agent)
+  }
+
+  // Hovering a provider row opens its model submenu.
+  function openSubmenu(agent: string): void {
+    submenuProvider = agent
+    void ensureAgentModels(agent)
+  }
+
+  // Pick a concrete model from a provider's submenu — finalizes both.
+  function pickProviderModel(agent: string, value: string): void {
+    selectProvider(agent)
+    selectedModel = value
+    agentMenuOpen = false
+    submenuProvider = null
+    promptEl?.focus()
+  }
+
+  // Fetch the current provider's models on load so its label resolves.
+  $effect(() => {
+    void ensureAgentModels(launchAgent)
+  })
+
+  // ── Bottom-bar dropdowns (provider→model cascade, mode, effort) ─
+  let agentMenuOpen = $state(false)
+  // Which provider row's model submenu is currently open.
+  let submenuProvider = $state<string | null>(null)
+  let modeMenuOpen = $state(false)
+  let effortMenuOpen = $state(false)
+
+  function closeMenus(): void {
+    agentMenuOpen = false
+    submenuProvider = null
+    modeMenuOpen = false
+    effortMenuOpen = false
+  }
+
+  // Models offered by the launch adapter.
+  const launchModels = $derived(store.agentModels[launchAgent] || [])
+
+  // Label for the agent button. Falls back to the provider's default (first
+  // listed) when the user hasn't explicitly picked one.
+  const currentModelLabel = $derived.by(() => {
+    const match = launchModels.find((model) => model.value === selectedModel)
+    if (match) return match.label
+    return launchModels[0]?.label || 'model'
   })
 
   // ── Selected config values passed to the adapter ───────────────
@@ -108,26 +220,11 @@
 
   const modeLabel = $derived(modes[modeIndex]?.label || 'default')
   const effortLabel = $derived(efforts[effortIndex]?.label || 'default')
-  const modelLabel = $derived(selectedModel || 'default')
 
-  function cycleAgent(): void {
-    if (agentNames.length < 2) return
-    const next = (agentNames.indexOf(selectedAgent) + 1) % agentNames.length
-    selectedAgent = agentNames[next]
-  }
+  // Shift+Tab cycles the mode without opening the dropdown.
   function cycleMode(): void {
     if (modes.length === 0) return
     modeIndex = (modeIndex + 1) % modes.length
-  }
-  function cycleEffort(): void {
-    if (efforts.length === 0) return
-    effortIndex = (effortIndex + 1) % efforts.length
-  }
-  function cycleModel(): void {
-    const options = ['', ...(config?.models?.map((model) => model.value) || [])]
-    if (options.length < 2) return
-    const next = (options.indexOf(selectedModel) + 1) % options.length
-    selectedModel = options[next]
   }
 
   // ── Slash command menu (type "/" in the prompt) ────────────────
@@ -214,14 +311,11 @@
     commands.push({
       name: 'model',
       description: 'Model to use (free text allowed)',
-      args: [
-        { value: 'default', description: 'server default', apply: () => (selectedModel = '') },
-        ...(config?.models || []).map((model) => ({
-          value: model.label,
-          description: model.value,
-          apply: () => (selectedModel = model.value)
-        }))
-      ],
+      args: launchModels.map((model) => ({
+        value: model.label,
+        description: model.value,
+        apply: () => (selectedModel = model.value)
+      })),
       freeText: (raw) => (selectedModel = raw),
       freeTextHint: 'custom model'
     })
@@ -247,6 +341,12 @@
       freeText: renameCurrentChat,
       freeTextHint: 'chat name'
     })
+    commands.push({
+      name: 'delete',
+      description: 'Delete this chat',
+      args: [],
+      run: deleteCurrentChat
+    })
     if (currentChats && currentChats.chats.length > 0) {
       commands.push({
         name: 'resume',
@@ -263,6 +363,11 @@
 
   const chatsKey = $derived(`${store.selectedWorktreeId}::${selectedAgent}`)
   const currentChats = $derived(store.agentChats[chatsKey])
+  // The effective instance: the explicitly-picked one, else the adapter's
+  // active chat. Everything instance-scoped (transcript, queue, run) keys on it.
+  const currentChatId = $derived(selectedChatId || currentChats?.activeId || '')
+  // Per-instance queue key (matches the store's event:agent-queue bucketing).
+  const queueKey = $derived(`${store.selectedWorktreeId}::${selectedAgent}::${currentChatId}`)
 
   // Keep the chat list current for /resume and /rename.
   $effect(() => {
@@ -272,36 +377,41 @@
   })
 
   // ── Mid-run queue + discovered slash commands ──────────────────
-  const queuedMessages = $derived(store.agentQueues[chatsKey] || [])
+  const queuedMessages = $derived(store.agentQueues[queueKey] || [])
   const discoveredCommands = $derived(store.agentCommands[chatsKey] || [])
 
   // Events only push changes; pull the current queue + command list when the
-  // worktree/agent selection changes (e.g. after a pane reload).
+  // worktree/instance selection changes (e.g. after a pane reload).
   $effect(() => {
     const worktreeId = store.selectedWorktreeId
     const agent = selectedAgent
-    if (!worktreeId || !agent) return
-    const key = `${worktreeId}::${agent}`
-    void window.workbench.agents.queue(worktreeId, agent).then((queue) => {
-      store.agentQueues = { ...store.agentQueues, [key]: queue }
+    const chatId = currentChatId
+    if (!worktreeId || !agent || !chatId) return
+    void window.workbench.agents.queue(worktreeId, agent, chatId).then((queue) => {
+      store.agentQueues = { ...store.agentQueues, [`${worktreeId}::${agent}::${chatId}`]: queue }
     })
     void window.workbench.agents.commands(worktreeId, agent).then((commands) => {
-      store.agentCommands = { ...store.agentCommands, [key]: commands }
+      store.agentCommands = { ...store.agentCommands, [`${worktreeId}::${agent}`]: commands }
     })
   })
 
   // A user stop flushed queued messages — restore their text into the composer.
   $effect(() => {
-    const restored = store.restoredQueueText[chatsKey]
+    const restored = store.restoredQueueText[queueKey]
     if (!restored) return
-    const { [chatsKey]: _consumed, ...rest } = store.restoredQueueText
+    const { [queueKey]: _consumed, ...rest } = store.restoredQueueText
     store.restoredQueueText = rest
     prompt = prompt.trim() ? `${prompt}\n\n${restored}` : restored
   })
 
   function cancelQueued(id: string): void {
-    if (!store.selectedWorktreeId) return
-    void window.workbench.agents.cancelQueued(store.selectedWorktreeId, selectedAgent, id)
+    if (!store.selectedWorktreeId || !currentChatId) return
+    void window.workbench.agents.cancelQueued(
+      store.selectedWorktreeId,
+      selectedAgent,
+      currentChatId,
+      id
+    )
   }
 
   // ── Stale-chat compact suggestion ──────────────────────────────
@@ -350,22 +460,68 @@
   }
 
   function clearChat(): void {
-    if (!store.selectedWorktreeId) return
-    void resetAgentChat(store.selectedWorktreeId, selectedAgent)
+    if (!store.selectedWorktreeId || !currentChatId) return
+    void resetAgentChat(store.selectedWorktreeId, selectedAgent, currentChatId)
   }
   function compactCurrentChat(instructions: string): void {
-    if (!store.selectedWorktreeId) return
+    if (!store.selectedWorktreeId || !currentChatId) return
     // A compact turn is fresh output — re-pin the view to follow it.
     stuckToBottom = true
-    void compactChat(store.selectedWorktreeId, selectedAgent, instructions.trim() || undefined)
+    void compactChat(
+      store.selectedWorktreeId,
+      selectedAgent,
+      currentChatId,
+      instructions.trim() || undefined
+    )
   }
-  function renameCurrentChat(name: string): void {
-    if (!store.selectedWorktreeId || !currentChats || !name.trim()) return
-    void renameChat(store.selectedWorktreeId, selectedAgent, currentChats.activeId, name.trim())
+  async function renameCurrentChat(name: string): Promise<void> {
+    const worktreeId = store.selectedWorktreeId
+    if (!worktreeId || !currentChatId || !name.trim()) return
+    await renameChat(worktreeId, selectedAgent, currentChatId, name.trim())
+    await refreshChats(worktreeId, selectedAgent)
+    // Tab labels come from the runtimes — reload so the new name shows.
+    await refreshRuntimes(worktreeId)
+  }
+  async function deleteCurrentChat(): Promise<void> {
+    const worktreeId = store.selectedWorktreeId
+    if (!worktreeId || !currentChatId) return
+    if (!confirm('Delete this chat? Its conversation and transcript are removed.')) return
+    const agent = selectedAgent
+    const chatId = currentChatId
+    await deleteAgentChat(worktreeId, agent, chatId)
+    replayed.delete(`${worktreeId}::${agent}::${chatId}`)
+    await refreshChats(worktreeId, agent)
+    // Switch to another instance, or fall back to the adapter's active chat.
+    const next = (store.agents[worktreeId] || []).find(
+      (instance) => !(instance.name === agent && instance.chatId === chatId)
+    )
+    if (next) selectInstance(next.name, next.chatId)
+    else selectedChatId = ''
   }
   function resumeCurrentChat(chatId: string): void {
     if (!store.selectedWorktreeId) return
     void resumeChat(store.selectedWorktreeId, selectedAgent, chatId)
+  }
+
+  // Close a specific instance tab (its own delete button). Same teardown as
+  // deleteCurrentChat, but targets the clicked instance rather than the viewed
+  // one, and switches away only when the closed tab was the active one.
+  async function closeInstance(name: string, chatId: string, event: MouseEvent): Promise<void> {
+    event.stopPropagation()
+    const worktreeId = store.selectedWorktreeId
+    if (!worktreeId) return
+    if (!confirm('Delete this chat? Its conversation and transcript are removed.')) return
+    const wasActive = name === selectedAgent && chatId === currentChatId
+    await deleteAgentChat(worktreeId, name, chatId)
+    replayed.delete(`${worktreeId}::${name}::${chatId}`)
+    await refreshChats(worktreeId, name)
+    if (!wasActive) return
+    // Switch to another instance, or fall back to the adapter's active chat.
+    const next = (store.agents[worktreeId] || []).find(
+      (instance) => !(instance.name === name && instance.chatId === chatId)
+    )
+    if (next) selectInstance(next.name, next.chatId)
+    else selectedChatId = ''
   }
 
   function finishSlash(action: () => void): void {
@@ -648,6 +804,15 @@
         return
       }
     }
+    // Alt+H / Alt+L step through the instance tabs, like editor buffer tabs.
+    if (event.altKey && !event.ctrlKey && !event.metaKey) {
+      const key = event.key.toLowerCase()
+      if (key === 'h' || key === 'l') {
+        event.preventDefault()
+        cycleInstance(key === 'l' ? 1 : -1)
+        return
+      }
+    }
     // Shift+Tab cycles the mode regardless of menu state.
     if (event.key === 'Tab' && event.shiftKey) {
       event.preventDefault()
@@ -736,6 +901,13 @@
         return
       }
     }
+    // Escape leaves insert mode: blur the composer and hand the keyboard back to
+    // the pane so normal-mode Vim bindings (jk scroll, alt+h/l) take over.
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      enterNormal()
+      return
+    }
     // Prompt history: Arrow Up recalls older entries (from the caret start),
     // Arrow Down walks back toward the in-progress draft.
     if (history.length > 0) {
@@ -799,109 +971,30 @@
     store.selectedWorktreeId ? store.agents[store.selectedWorktreeId] || [] : []
   )
   const isRunning = $derived(
-    agents.some((agent) => agent.name === selectedAgent && agent.status === 'running')
+    agents.some(
+      (agent) =>
+        agent.name === selectedAgent && agent.chatId === currentChatId && agent.status === 'running'
+    )
   )
 
+  // Only this instance's lines: several instances can run in one worktree, and
+  // their transcripts must not interleave in the pane.
   const agentLines = $derived<LogLine[]>(
     (store.selectedWorktreeId ? store.logs[store.selectedWorktreeId] || [] : []).filter(
-      (line) => line.source === 'agent'
+      (line) =>
+        line.source === 'agent' && line.name === selectedAgent && line.chatId === currentChatId
     )
   )
   const rawLines = $derived(agentLines.map((line) => line.line))
   const items = $derived(parseAgentLines(rawLines))
   const meta = $derived(parseAgentMeta(rawLines))
 
-  // ── Subagents (Task tool spawns) ───────────────────────────────
-  // Derived from the main stream: each Task tool call is a subagent, running
-  // until its tool-result arrives.
-  interface Subagent {
-    key: string
-    type: string
-    description: string
-    running: boolean
-  }
-  const subagents = $derived.by<Subagent[]>(() => {
-    const resultKeys = new Set(
-      items.filter((item) => item.kind === 'tool-result').map((item) => item.key)
-    )
-    const list: Subagent[] = []
-    for (const item of items) {
-      // Modern SDK names the subagent tool `Agent`; older builds used `Task`.
-      if (item.kind !== 'tool' || (item.tool !== 'Agent' && item.tool !== 'Task')) continue
-      const input = item.input
-      list.push({
-        key: item.key,
-        type: String(input.subagent_type || 'agent'),
-        description: String(input.description || input.prompt || ''),
-        running: !resultKeys.has(`result:${item.key}`)
-      })
-    }
-    return list
-  })
-
-  // ── Task list (TaskCreate/TaskUpdate folded into a live checklist) ──
-  const TASK_TOOLS = new Set(['TaskCreate', 'TaskUpdate'])
-
-  interface TaskItem {
-    id: string
-    subject: string
-    status: string
-    activeForm: string
-  }
-
-  // The assigned task id lives in the TaskCreate result text ("Task #3
-  // created…"); fall back to creation order if the format changes.
-  function taskIdFromResult(text: string | undefined): string | null {
-    const match = text?.match(/#(\d+)/)
-    if (match) return match[1]
-    return null
-  }
-
-  const taskList = $derived.by<TaskItem[]>(() => {
-    const resultsByKey = new Map(
-      items
-        .filter((item) => item.kind === 'tool-result')
-        .map((item) => [item.key, item.text] as const)
-    )
-    const tasks: TaskItem[] = []
-    const tasksById = new Map<string, TaskItem>()
-    for (const item of items) {
-      if (item.kind !== 'tool' || !TASK_TOOLS.has(item.tool)) continue
-      if (item.tool === 'TaskCreate') {
-        const fallbackId = String(tasks.length + 1)
-        const id = taskIdFromResult(resultsByKey.get(`result:${item.key}`)) || fallbackId
-        const task: TaskItem = {
-          id,
-          subject: String(item.input.subject || ''),
-          status: 'pending',
-          activeForm: String(item.input.activeForm || '')
-        }
-        tasks.push(task)
-        tasksById.set(id, task)
-        continue
-      }
-      const task = tasksById.get(String(item.input.taskId || ''))
-      if (!task) continue
-      if (typeof item.input.status === 'string') task.status = item.input.status
-      if (typeof item.input.subject === 'string') task.subject = item.input.subject
-      if (typeof item.input.activeForm === 'string') task.activeForm = item.input.activeForm
-    }
-    return tasks.filter((task) => task.status !== 'deleted')
-  })
+  // ── Subagents + task list (derived from the main stream) ───────
+  const subagents = $derived(buildSubagents(items))
+  const taskList = $derived(buildTaskList(items))
   let tasksOpen = $state(true)
-  const tasksDone = $derived(taskList.filter((task) => task.status === 'completed').length)
-  const activeTaskLabel = $derived(
-    taskList.find((task) => task.status === 'in_progress')?.activeForm || ''
-  )
-
   // Task tool-results are folded into the checklist; hide their raw rows.
-  const taskResultKeys = $derived.by(() => {
-    const keys = new Set<string>()
-    for (const item of items) {
-      if (item.kind === 'tool' && TASK_TOOLS.has(item.tool)) keys.add(`result:${item.key}`)
-    }
-    return keys
-  })
+  const taskResultKeySet = $derived(taskResultKeys(items))
 
   let agentNavActive = $state(false)
   // Row in the agents list: 0 is the main chat, 1..n are the subagents.
@@ -932,11 +1025,8 @@
     // as the new top of the conversation (like Claude Code's compact view).
     const lastCompact = items.findLastIndex((item) => item.kind === 'compact')
     const base = lastCompact > 0 ? items.slice(lastCompact) : items
-    return base.filter(
-      (item) => !(item.kind === 'tool-result' && taskResultKeys.has(item.key))
-    )
+    return base.filter((item) => !(item.kind === 'tool-result' && taskResultKeySet.has(item.key)))
   })
-
 
   // ── Transcript auto-scroll ─────────────────────────────────────
   // Follow new output as it streams in, but yield to the user the moment they
@@ -952,6 +1042,77 @@
       transcriptViewport.scrollTop -
       transcriptViewport.clientHeight
     stuckToBottom = distanceFromBottom < AUTO_SCROLL_THRESHOLD
+  }
+
+  // ── Vim-style pane modes ───────────────────────────────────────
+  // 'insert' focuses the composer; 'normal' scrolls the transcript and
+  // navigates instances. The textarea's own focus/blur keep the mode honest
+  // when the user clicks in and out.
+  function enterInsert(): void {
+    keymap.setPaneMode(leafId, 'insert')
+    promptEl?.focus()
+  }
+
+  function enterNormal(): void {
+    keymap.setPaneMode(leafId, 'normal')
+    promptEl?.blur()
+    keymap.focusPane(leafId)
+  }
+
+  function scrollTranscript(delta: number): void {
+    const viewport = transcriptViewport
+    if (!viewport) return
+    stuckToBottom = false
+    viewport.scrollTop += delta
+  }
+
+  function scrollTranscriptPage(fraction: number): void {
+    if (!transcriptViewport) return
+    scrollTranscript(transcriptViewport.clientHeight * fraction)
+  }
+
+  // ── Composer syntax highlight ──────────────────────────────────
+  // A textarea can't color parts of its text, so an overlay behind the
+  // (transparent-text) textarea renders the same string with /commands and
+  // @mentions tinted. Tokens are recognized at a word boundary, anywhere in the
+  // text — not just the one being typed at the caret.
+  interface HighlightSegment {
+    text: string
+    kind: 'plain' | 'command' | 'mention'
+  }
+
+  let highlightEl = $state<HTMLDivElement>()
+
+  const promptSegments = $derived.by<HighlightSegment[]>(() => {
+    const segments: HighlightSegment[] = []
+    const tokenPattern = /(?<=^|\s)([/@][^\s]*)/g
+    let lastIndex = 0
+    let match: RegExpExecArray | null
+    while ((match = tokenPattern.exec(prompt)) !== null) {
+      if (match.index > lastIndex) {
+        segments.push({ text: prompt.slice(lastIndex, match.index), kind: 'plain' })
+      }
+      const token = match[1]
+      segments.push({ text: token, kind: token[0] === '/' ? 'command' : 'mention' })
+      lastIndex = match.index + token.length
+    }
+    if (lastIndex < prompt.length) {
+      segments.push({ text: prompt.slice(lastIndex), kind: 'plain' })
+    }
+    return segments
+  })
+
+  function segmentClass(kind: HighlightSegment['kind']): string {
+    if (kind === 'command') return 'text-blue'
+    if (kind === 'mention') return 'text-green'
+    return ''
+  }
+
+  // Keep the overlay aligned with the textarea as it scrolls its own content.
+  function syncHighlightScroll(): void {
+    if (!highlightEl || !promptEl) return
+    highlightEl.scrollTop = promptEl.scrollTop
+    highlightEl.scrollLeft = promptEl.scrollLeft
   }
 
   $effect(() => {
@@ -1050,9 +1211,9 @@
     }
   }
 
-  let disposeFindBinding: (() => void) | null = null
+  let disposeBindings: (() => void) | null = null
   onMount(() => {
-    disposeFindBinding = keymap.registerBindings([
+    disposeBindings = keymap.registerBindings([
       {
         id: 'agent.findTranscript',
         keys: 'ctrl+f',
@@ -1060,11 +1221,95 @@
         group: 'Agent',
         description: 'Find in transcript',
         run: openFind
+      },
+      // Normal-mode Vim bindings, scoped to this pane's leaf. They only fire
+      // while the composer is unfocused (the keymap's typing gate) and the pane
+      // reports 'normal'.
+      {
+        id: `agent.insert:${leafId}`,
+        keys: 'i',
+        context: leafId,
+        mode: 'normal',
+        group: 'Agent',
+        description: 'Insert mode (focus composer)',
+        run: enterInsert
+      },
+      {
+        id: `agent.scrollDown:${leafId}`,
+        keys: 'j',
+        context: leafId,
+        mode: 'normal',
+        group: 'Agent',
+        description: 'Scroll transcript down',
+        run: () => scrollTranscript(60)
+      },
+      {
+        id: `agent.scrollUp:${leafId}`,
+        keys: 'k',
+        context: leafId,
+        mode: 'normal',
+        group: 'Agent',
+        description: 'Scroll transcript up',
+        run: () => scrollTranscript(-60)
+      },
+      {
+        id: `agent.halfDown:${leafId}`,
+        keys: 'ctrl+d',
+        context: leafId,
+        mode: 'normal',
+        group: 'Agent',
+        description: 'Scroll half page down',
+        run: () => scrollTranscriptPage(0.5)
+      },
+      {
+        id: `agent.halfUp:${leafId}`,
+        keys: 'ctrl+u',
+        context: leafId,
+        mode: 'normal',
+        group: 'Agent',
+        description: 'Scroll half page up',
+        run: () => scrollTranscriptPage(-0.5)
+      },
+      {
+        id: `agent.pageDown:${leafId}`,
+        keys: 'pagedown',
+        context: leafId,
+        mode: 'normal',
+        group: 'Agent',
+        description: 'Scroll page down',
+        run: () => scrollTranscriptPage(0.9)
+      },
+      {
+        id: `agent.pageUp:${leafId}`,
+        keys: 'pageup',
+        context: leafId,
+        mode: 'normal',
+        group: 'Agent',
+        description: 'Scroll page up',
+        run: () => scrollTranscriptPage(-0.9)
+      },
+      {
+        id: `agent.prevInstance:${leafId}`,
+        keys: 'alt+h',
+        context: leafId,
+        mode: 'normal',
+        group: 'Agent',
+        description: 'Previous instance',
+        run: () => cycleInstance(-1)
+      },
+      {
+        id: `agent.nextInstance:${leafId}`,
+        keys: 'alt+l',
+        context: leafId,
+        mode: 'normal',
+        group: 'Agent',
+        description: 'Next instance',
+        run: () => cycleInstance(1)
       }
     ])
   })
   onDestroy(() => {
-    disposeFindBinding?.()
+    disposeBindings?.()
     clearTimeout(highlightTimer)
   })
 
@@ -1091,20 +1336,41 @@
 
   async function launch(): Promise<void> {
     if (!store.selectedWorktreeId || !selectedAgent) return
+    const worktreeId = store.selectedWorktreeId
     try {
       if (isRunning) {
         // A run is active: inject the message live (or queue it) instead of
-        // tearing the run down.
+        // tearing the run down. Provider can't change mid-run.
         const text = prompt.trim()
         if (!text) return
-        await window.workbench.agents.send(store.selectedWorktreeId, selectedAgent, text)
-      } else {
-        await window.workbench.agents.start(
-          store.selectedWorktreeId,
+        await window.workbench.agents.send(
+          worktreeId,
           selectedAgent,
-          launchOptions()
+          text,
+          currentChatId || undefined
         )
-        await refreshRuntimes(store.selectedWorktreeId)
+      } else {
+        // If the user picked a different provider for this tab, convert it first
+        // (fresh session, kept title), then run under the new adapter.
+        if (launchAgent && launchAgent !== selectedAgent && currentChatId) {
+          const moved = await window.workbench.agents.convertInstance(
+            worktreeId,
+            selectedAgent,
+            launchAgent,
+            currentChatId
+          )
+          if (moved) selectedAgent = launchAgent
+        }
+        const runtime = await window.workbench.agents.start(
+          worktreeId,
+          launchAgent || selectedAgent,
+          launchOptions(),
+          currentChatId || undefined
+        )
+        // Pin to the instance that was just started (fresh chat gets a new id).
+        selectedAgent = runtime.name
+        selectedChatId = runtime.chatId
+        await refreshRuntimes(worktreeId)
       }
       // Sending a new prompt re-pins the view to the newest output.
       stuckToBottom = true
@@ -1116,54 +1382,77 @@
   }
 
   async function stop(): Promise<void> {
-    if (!store.selectedWorktreeId || !selectedAgent) return
-    await window.workbench.agents.stop(store.selectedWorktreeId, selectedAgent)
+    if (!store.selectedWorktreeId || !selectedAgent || !currentChatId) return
+    await window.workbench.agents.stop(store.selectedWorktreeId, selectedAgent, currentChatId)
     await refreshRuntimes(store.selectedWorktreeId)
   }
 
+  // Spawn a fresh idle instance of the selected adapter and switch to it.
+  async function spawnInstance(): Promise<void> {
+    if (!store.selectedWorktreeId || !selectedAgent) return
+    const chat = await window.workbench.agents.createInstance(
+      store.selectedWorktreeId,
+      selectedAgent
+    )
+    selectedChatId = chat.id
+    await refreshChats(store.selectedWorktreeId, selectedAgent)
+    await refreshRuntimes(store.selectedWorktreeId)
+    promptEl?.focus()
+  }
+
+  // Switch the pane to a specific instance (adapter + chat).
+  function selectInstance(name: string, chatId: string): void {
+    selectedAgent = name
+    selectedChatId = chatId
+  }
+
+  // Alt+H / Alt+L step through the instance tabs, like editor buffer tabs.
+  function cycleInstance(delta: number): void {
+    if (agents.length === 0) return
+    const index = agents.findIndex(
+      (instance) => instance.name === selectedAgent && instance.chatId === currentChatId
+    )
+    const base = index === -1 ? 0 : index
+    const next = agents[(base + delta + agents.length) % agents.length]
+    if (next) selectInstance(next.name, next.chatId)
+  }
+
   // ── Transcript replay + New chat ───────────────────────────────
-  // Restore a chat after a restart: when a (worktree, agent) has no in-memory
-  // history yet, load its persisted transcript from disk once.
+  // Restore an instance after a restart: when it has no in-memory history yet,
+  // load its persisted transcript from disk once.
   const replayed = new Set<string>()
   $effect(() => {
     const worktreeId = store.selectedWorktreeId
     const agent = selectedAgent
-    if (!worktreeId || !agent) return
-    const replayKey = `${worktreeId}::${agent}`
+    const chatId = currentChatId
+    if (!worktreeId || !agent || !chatId) return
+    const replayKey = `${worktreeId}::${agent}::${chatId}`
     if (replayed.has(replayKey)) return
-    const hasAgentLines = (store.logs[worktreeId] || []).some((line) => line.source === 'agent')
+    const hasLines = (store.logs[worktreeId] || []).some(
+      (line) => line.source === 'agent' && line.name === agent && line.chatId === chatId
+    )
     replayed.add(replayKey)
-    if (hasAgentLines) return
+    if (hasLines) return
     void window.workbench.agents
-      .transcript(worktreeId, agent)
-      .then((lines) => seedAgentTranscript(worktreeId, agent, lines))
+      .transcript(worktreeId, agent, chatId)
+      .then((lines) => seedAgentTranscript(worktreeId, agent, chatId, lines))
       .catch(() => {})
   })
-
-  async function newChat(): Promise<void> {
-    if (!store.selectedWorktreeId || !selectedAgent) return
-    if (!confirm('Start a new chat? This clears the current conversation and its memory.')) return
-    const worktreeId = store.selectedWorktreeId
-    await resetAgentChat(worktreeId, selectedAgent)
-    replayed.delete(`${worktreeId}::${selectedAgent}`)
-    await refreshRuntimes(worktreeId)
-  }
 
   // ── Interactive permission prompt ──────────────────────────────
   const pendingPermission = $derived(
     store.pendingPermissions.find(
       (request) =>
-        request.worktreeId === store.selectedWorktreeId && request.agent === selectedAgent
+        request.worktreeId === store.selectedWorktreeId &&
+        request.agent === selectedAgent &&
+        request.chatId === currentChatId
     ) || null
   )
-  let denyReasonMode = $state(false)
-  let denyReason = $state('')
-
   function approve(remember: boolean): void {
     if (!pendingPermission) return
+    // Close the editor preview and reload the buffer once the write lands.
+    void inlineEdit.approveGatedPreview()
     void respondPermission(pendingPermission.id, { behavior: 'allow', remember })
-    denyReasonMode = false
-    denyReason = ''
   }
   function deny(message: string): void {
     if (!pendingPermission) return
@@ -1171,126 +1460,12 @@
       behavior: 'deny',
       message: message.trim() || 'Denied by user'
     })
-    denyReasonMode = false
-    denyReason = ''
   }
   function showChange(): void {
-    // The proposed change is rendered inline below; this opens the file on disk
-    // in the editor for surrounding context.
+    // The proposed change is previewed as a vimdiff split in the editor; this
+    // refocuses the file there.
     if (pendingPermission?.path && store.selectedWorktreeId) {
       openFileInEditor(store.selectedWorktreeId, pendingPermission.path)
-    }
-  }
-
-  // Git-computed preview of a pending Write/Edit, rendered inline so review of a
-  // gated change isn't blind (replaces the old dedicated diff pane).
-  let proposedDiffText = $state('')
-  $effect(() => {
-    const proposed = store.proposedDiff
-    const worktreeId = store.selectedWorktreeId
-    if (!proposed || !worktreeId) {
-      proposedDiffText = ''
-      return
-    }
-    void window.workbench.git
-      .diffText(worktreeId, proposed.original, proposed.modified)
-      .then((text) => {
-        proposedDiffText = text
-      })
-      .catch(() => {
-        proposedDiffText = ''
-      })
-  })
-
-  // Drop git's file headers/noise; keep the hunk headers and +/-/context lines.
-  const proposedDiffLines = $derived.by(() => {
-    if (!proposedDiffText) return []
-    return proposedDiffText.split('\n').filter((line) => {
-      if (line.startsWith('diff ') || line.startsWith('index ')) return false
-      if (line.startsWith('--- ') || line.startsWith('+++ ')) return false
-      if (line.startsWith('\\ No newline')) return false
-      return line.length > 0
-    })
-  })
-
-  function proposedDiffLineClass(line: string): string {
-    if (line.startsWith('@@')) return 'text-dim'
-    if (line.startsWith('+')) return 'bg-green-soft text-green'
-    if (line.startsWith('-')) return 'bg-red-soft text-red'
-    return 'text-muted'
-  }
-
-  // Arrow-key-navigable choices for the permission prompt. "Show in diff editor"
-  // only appears when the request carries a file path.
-  interface PermissionChoice {
-    label: string
-    class: string
-    run: () => void
-  }
-  const permissionChoices = $derived.by<PermissionChoice[]>(() => {
-    if (!pendingPermission) return []
-    const choices: PermissionChoice[] = [
-      { label: 'Yes', class: 'bg-green text-action-fg', run: () => approve(false) },
-      {
-        label: "Yes, don't ask again for this",
-        class: 'bg-violet text-action-fg',
-        run: () => approve(true)
-      }
-    ]
-    if (pendingPermission.path) {
-      choices.push({
-        label: 'Open file in editor',
-        class: 'border border-line hover:bg-hover',
-        run: showChange
-      })
-    }
-    choices.push({
-      label: 'No',
-      class: 'border border-line text-red hover:bg-hover',
-      run: () => deny('')
-    })
-    choices.push({
-      label: 'No, with reason…',
-      class: 'border border-line text-dim hover:bg-hover',
-      run: () => (denyReasonMode = true)
-    })
-    return choices
-  })
-
-  let permissionIndex = $state(0)
-  let permissionEl = $state<HTMLDivElement>()
-
-  // Reset the highlight for each new request.
-  $effect(() => {
-    pendingPermission?.id
-    permissionIndex = 0
-  })
-
-  // Focus the prompt so arrow keys and Enter reach it (nothing else is focused
-  // while the prompt replaces the input).
-  $effect(() => {
-    if (pendingPermission && !denyReasonMode) {
-      queueMicrotask(() => permissionEl?.focus())
-    }
-  })
-
-  function onPermissionKey(event: KeyboardEvent): void {
-    if (denyReasonMode) return
-    const count = permissionChoices.length
-    if (count === 0) return
-    if (event.key === 'ArrowDown') {
-      event.preventDefault()
-      permissionIndex = (permissionIndex + 1) % count
-      return
-    }
-    if (event.key === 'ArrowUp') {
-      event.preventDefault()
-      permissionIndex = (permissionIndex - 1 + count) % count
-      return
-    }
-    if (event.key === 'Enter') {
-      event.preventDefault()
-      permissionChoices[permissionIndex].run()
     }
   }
 
@@ -1298,65 +1473,16 @@
   const pendingDialog = $derived(
     store.pendingDialogs.find(
       (request) =>
-        request.worktreeId === store.selectedWorktreeId && request.agent === selectedAgent
+        request.worktreeId === store.selectedWorktreeId &&
+        request.agent === selectedAgent &&
+        request.chatId === currentChatId
     ) || null
   )
   const dialogQuestions = $derived(pendingDialog ? parseQuestions(pendingDialog.payload) : [])
-  let dialogSelections = $state<string[][]>([])
-  let dialogNotes = $state('')
-  let notesOpen = $state(false)
-  let notesEl = $state<HTMLTextAreaElement>()
 
-  // Reset per-dialog state whenever the pending dialog changes.
-  $effect(() => {
-    pendingDialog?.id
-    dialogSelections = dialogQuestions.map(() => [])
-    dialogNotes = ''
-    notesOpen = false
-  })
-
-  // Ready when every question has a pick, or the user wrote free-form notes.
-  const dialogReady = $derived(
-    dialogQuestions.length > 0 &&
-      (dialogNotes.trim().length > 0 ||
-        dialogQuestions.every((_question, index) => (dialogSelections[index]?.length || 0) > 0))
-  )
-
-  function openNotes(): void {
-    notesOpen = true
-    queueMicrotask(() => notesEl?.focus())
-  }
-
-  // Press "n" in the chooser to jot free-form notes (unless already typing).
-  function onDialogKey(event: KeyboardEvent): void {
-    const tag = (event.target as HTMLElement)?.tagName
-    if (event.key === 'n' && !notesOpen && tag !== 'TEXTAREA' && tag !== 'INPUT') {
-      event.preventDefault()
-      openNotes()
-    }
-  }
-
-  function toggleOption(questionIndex: number, label: string, multiSelect: boolean): void {
-    const current = dialogSelections[questionIndex] || []
-    let next: string[]
-    if (multiSelect) {
-      next = current.includes(label)
-        ? current.filter((item) => item !== label)
-        : [...current, label]
-    } else {
-      next = [label]
-    }
-    dialogSelections = dialogSelections.map((selection, index) =>
-      index === questionIndex ? next : selection
-    )
-  }
-
-  function submitDialog(): void {
+  function answerDialog(result: { answers: Record<string, string>; notes?: string }): void {
     if (!pendingDialog) return
-    void respondDialog(pendingDialog.id, {
-      behavior: 'completed',
-      result: buildAnswerResult(dialogQuestions, dialogSelections, dialogNotes)
-    })
+    void respondDialog(pendingDialog.id, { behavior: 'completed', result })
   }
 
   function cancelDialog(): void {
@@ -1376,9 +1502,19 @@
     if (path && store.selectedWorktreeId) openFileInEditor(store.selectedWorktreeId, path)
   }
 
-  // File-editing tools get a "diff" action that opens the file's full
-  // side-by-side diff in the editor's diff pane.
-  const FILE_EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
+  // Open a @file mention from a user message. A trailing :line(-range) reveals
+  // that line; mentions are worktree-relative, so resolve against the root.
+  function openMention(raw: string): void {
+    const worktreeId = store.selectedWorktreeId
+    if (!worktreeId) return
+    // Accept a trailing :line, :line-end range, or :line:col suffix.
+    const lineMatch = raw.match(/:(\d+)(?:[:-]\d+)?$/)
+    const path = raw.replace(/:(\d+)(?:[:-]\d+)?$/, '')
+    const root = store.selectedWorktree?.path
+    const target = path.startsWith('/') || !root ? path : `${root}/${path}`
+    if (lineMatch) openFileAtLine(worktreeId, target, Number(lineMatch[1]))
+    else openFileInEditor(worktreeId, target)
+  }
 
   // Tool inputs carry absolute paths; the diff pane and fs watcher speak
   // worktree-relative ones.
@@ -1402,16 +1538,10 @@
     void inlineEdit.reviewWorkingTreeFile(worktreeId, file, `${root}/${relPath}`)
   }
 
-  // Tool cards show a one-line summary; expand to see the full command / input.
+  // Tool lines show a one-line summary; expand to see the full command / input.
   let expandedTools = $state<Record<string, boolean>>({})
   function toggleTool(key: string): void {
     expandedTools = { ...expandedTools, [key]: !expandedTools[key] }
-  }
-
-  // Full, untruncated detail for a tool card (the whole command or input JSON).
-  function toolDetail(tool: string, input: Record<string, unknown>): string {
-    if (typeof input.command === 'string') return input.command
-    return JSON.stringify(input, null, 2)
   }
 
   // Tool results (e.g. a Read returning a whole file) are collapsed so the
@@ -1420,34 +1550,58 @@
   function toggleResult(key: string): void {
     expandedResults = { ...expandedResults, [key]: !expandedResults[key] }
   }
-  function resultLabel(text: string, isError: boolean): string {
-    if (isError) return text.split('\n')[0]
-    return `result · ${text.length} chars`
+
+  // Consecutive file edits collapse into one "edited N files" group.
+  let expandedGroups = $state<Record<string, boolean>>({})
+  function toggleGroup(key: string): void {
+    expandedGroups = { ...expandedGroups, [key]: !expandedGroups[key] }
   }
 </script>
 
 <div class="flex h-full flex-col">
-  <div
-    class="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2 text-2xs font-semibold uppercase tracking-caps text-dim"
-  >
-    <span>Agent</span>
-    {#if store.selectedWorktree}
-      <span class="normal-case text-muted">· {store.selectedWorktree.name}</span>
-    {/if}
-    {#if store.selectedWorktreeId && items.length > 0}
-      <button
-        class="ml-auto rounded border border-line px-2 py-0.5 text-2xs normal-case tracking-normal text-dim hover:text-default"
-        title="New chat (clears conversation memory)"
-        onclick={newChat}
-      >
-        ＋ New chat
-      </button>
-    {/if}
-  </div>
-
   {#if !store.selectedWorktreeId}
     <p class="px-3 py-3 text-xs text-dim">Select a worktree.</p>
   {:else}
+    <!-- Instance switcher (Alt+H/L to step): one tab per instance, plus spawn.
+         Each tab shows the adapter logo and the chat title. -->
+    <div
+      class="no-scrollbar flex shrink-0 items-center gap-1 overflow-x-auto border-b border-line px-2 py-1"
+    >
+      {#each agents as instance (instance.name + '::' + instance.chatId)}
+        {@const active = instance.name === selectedAgent && instance.chatId === currentChatId}
+        <div
+          class="group/tab flex shrink-0 items-center rounded px-2 py-1 text-xs {active
+            ? 'bg-raised text-default'
+            : 'text-dim hover:bg-hover hover:text-default'}"
+          title="{instance.name} · {instance.label} ({instance.status})"
+        >
+          <button
+            class="flex cursor-pointer items-center gap-1.5"
+            onclick={() => selectInstance(instance.name, instance.chatId)}
+          >
+            <AgentLogo name={instance.name} size={15} {active} />
+            <span class="max-w-[12rem] truncate">{instance.label}</span>
+            {#if instance.status === 'running'}
+              <span class="text-green"><WaveSpinner count={3} /></span>
+            {/if}
+          </button>
+          <button
+            class="inline-flex w-0 shrink-0 cursor-pointer items-center overflow-hidden text-dim opacity-0 transition-all duration-150 ease-out hover:text-red group-hover/tab:ml-1 group-hover/tab:w-3.5 group-hover/tab:opacity-100"
+            title="Close chat"
+            onclick={(event) => closeInstance(instance.name, instance.chatId, event)}>✕</button
+          >
+        </div>
+      {/each}
+      <button
+        class="shrink-0 rounded px-2 py-1 text-2xs text-dim hover:bg-hover hover:text-default"
+        title="New instance of {selectedAgent || 'the selected adapter'}"
+        disabled={!selectedAgent}
+        onclick={spawnInstance}
+      >
+        ＋
+      </button>
+    </div>
+
     {#if findOpen}
       <!-- Transcript find bar (Ctrl+F): pinned below the pane header. -->
       <div class="flex shrink-0 items-center gap-2 border-b border-line bg-elevated px-3 py-1.5">
@@ -1479,335 +1633,62 @@
       </div>
     {/if}
     <!-- Chat transcript -->
-    <FloatingScrollbar
-      class="min-h-0 flex-1"
+    <AgentTranscript
+      {items}
+      {visibleItems}
+      {highlightedKey}
+      {expandedTools}
+      {expandedResults}
+      {expandedGroups}
+      {toggleTool}
+      {toggleResult}
+      {toggleGroup}
+      {filePath}
+      relativePath={relativeToWorktree}
+      {openCard}
+      {openCardDiff}
+      {openMention}
       bind:viewport={transcriptViewport}
       onscroll={onTranscriptScroll}
-    >
-      <div class="px-3 py-3 text-xs leading-relaxed">
-        {#each visibleItems as item (item.key)}
-          <!-- Class-light wrapper: the find bar scrolls to it by key; margins
-               stay on the children so the -mx-3 full-bleed bands keep working.
-               Every user message is sticky (section-header style): it pins to
-               the top while its response scrolls, and the next one pushes it
-               out — so scrolling up swaps in the earlier question. -->
-          <div
-            data-item-key={item.key}
-            class="{item.key === highlightedKey ? 'rounded ring-1 ring-amber' : ''} {item.kind ===
-            'user'
-              ? 'sticky top-0 z-10'
-              : ''}"
-          >
-          {#if item.kind === 'user'}
-            <!-- User message: full-width band tinted like the logo leaves.
-                 Sticky bands scroll over content, so the tint is layered over
-                 the base background to stay opaque. -->
-            <div
-              class="agent-sticky-user -mx-3 mb-3 whitespace-pre-wrap border-y border-green/30 px-3 py-2 text-default"
-            >
-              {item.text}
-            </div>
-          {:else if item.kind === 'text'}
-            <!-- Assistant message: markdown-rendered. -->
-            <div class="agent-markdown prose mb-3 max-w-none text-xs text-default">
-              <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-              {@html renderMarkdown(item.text)}
-            </div>
-          {:else if item.kind === 'tool' && TASK_TOOLS.has(item.tool)}
-            <!-- Task tool calls fold into the pinned checklist; keep a one-line
-                 marker so the timeline shows when statuses changed. -->
-            <div class="mb-2 font-mono text-2xs text-dim">
-              ☑ {item.tool === 'TaskCreate'
-                ? `task: ${item.input.subject || ''}`
-                : `task #${item.input.taskId || '?'} → ${item.input.status || 'updated'}`}
-            </div>
-          {:else if item.kind === 'tool'}
-            {@const path = filePath(item.input)}
-            {@const summary = toolSummary(item.tool, item.input)}
-            <div class="mb-2 overflow-hidden rounded-md border border-line bg-surface">
-              <div class="flex w-full items-center gap-2 border-b border-line px-2 py-1">
-                <button
-                  class="flex min-w-0 flex-1 items-center gap-2 text-left"
-                  onclick={() => toggleTool(item.key)}
-                  title="Expand full command"
-                >
-                  <span class="shrink-0 text-2xs text-dim"
-                    >{expandedTools[item.key] ? '▾' : '▸'}</span
-                  >
-                  <span class="shrink-0 font-mono text-2xs font-semibold text-violet"
-                    >{item.tool}</span
-                  >
-                  {#if summary}
-                    <span class="truncate font-mono text-2xs text-muted">{summary}</span>
-                  {/if}
-                </button>
-                {#if path && FILE_EDIT_TOOLS.has(item.tool)}
-                  <button
-                    class="ml-auto shrink-0 text-2xs text-dim hover:text-default"
-                    title="Show side-by-side diff"
-                    onclick={() => openCardDiff(item.input)}>diff</button
-                  >
-                {/if}
-                {#if path}
-                  <button
-                    class="{FILE_EDIT_TOOLS.has(item.tool)
-                      ? ''
-                      : 'ml-auto'} shrink-0 text-2xs text-dim hover:text-default"
-                    onclick={() => openCard(item.input)}>open ↗</button
-                  >
-                {/if}
-              </div>
-              {#if expandedTools[item.key]}
-                <pre
-                  class="max-h-72 overflow-auto whitespace-pre-wrap px-2 py-1.5 font-mono text-2xs text-muted">{toolDetail(
-                    item.tool,
-                    item.input
-                  )}</pre>
-              {/if}
-            </div>
-          {:else if item.kind === 'tool-result'}
-            <button
-              class="mb-2 flex w-full items-center gap-2 rounded-md bg-canvas px-2 py-1 text-left font-mono text-2xs {item.isError
-                ? 'text-red'
-                : 'text-dim'}"
-              onclick={() => toggleResult(item.key)}
-            >
-              <span class="shrink-0">{expandedResults[item.key] ? '▾' : '▸'}</span>
-              <span class="truncate">{resultLabel(item.text, item.isError)}</span>
-            </button>
-            {#if expandedResults[item.key]}
-              <pre
-                class="mb-2 max-h-60 overflow-auto whitespace-pre-wrap rounded-md bg-canvas px-2 py-1 font-mono text-2xs text-dim">{item.text}</pre>
-            {/if}
-          {:else if item.kind === 'compact'}
-            <!-- Compaction boundary: earlier turns were summarized away. -->
-            <div
-              class="-mx-3 mb-3 flex items-center gap-2 border-y border-violet/30 bg-violet-soft px-3 py-1.5 text-2xs text-violet"
-            >
-              <span class="font-medium">✦ Conversation compacted</span>
-              {#if item.freedTokens > 0}
-                <span class="text-dim">· freed {formatTokens(item.freedTokens)} tokens</span>
-              {/if}
-            </div>
-          {:else}
-            <pre class="mb-1 whitespace-pre-wrap font-mono text-2xs text-muted">{item.text}</pre>
-          {/if}
-          </div>
-        {/each}
-        {#if items.length === 0}
-          <p class="text-dim">No agent output yet. Write a prompt below and run.</p>
-        {/if}
-      </div>
-    </FloatingScrollbar>
+    />
 
-    <!-- Working-state bar: live indicator, funny status, token count, state. -->
     {#if isRunning}
-      <div
-        class="flex shrink-0 items-center gap-2 border-t border-line bg-elevated px-3 py-1.5 text-2xs"
-      >
-        <span class="shrink-0 text-green"><WaveSpinner /></span>
-        <span class="truncate italic text-muted">{funnyMessage}</span>
-        <span
-          class="ml-auto shrink-0 font-mono text-muted"
-          title="context window fill + output of the latest turn"
-          >{formatTokens(meta.totalTokens)} tok</span
-        >
-      </div>
+      <AgentWorkingBar message={funnyMessage} tokensLabel={formatTokens(meta.totalTokens)} />
     {/if}
 
-    <!-- Messages waiting for the current run to finish; auto-submitted on a
-         clean exit, removable until then. -->
     {#if queuedMessages.length > 0}
-      <div
-        class="flex max-h-20 shrink-0 flex-wrap gap-1 overflow-auto border-t border-line bg-elevated px-3 py-1.5"
-      >
-        {#each queuedMessages as message (message.id)}
-          <span
-            class="flex max-w-full items-center gap-1 rounded-full border border-line px-2 py-0.5 text-2xs text-muted"
-          >
-            <span class="truncate" title={message.text}>{message.text}</span>
-            <button
-              class="shrink-0 text-dim hover:text-red"
-              title="Remove queued message"
-              onclick={() => cancelQueued(message.id)}>✕</button
-            >
-          </span>
-        {/each}
-      </div>
+      <AgentQueue messages={queuedMessages} onCancel={cancelQueued} />
     {/if}
 
-    <!-- Live task checklist folded from TaskCreate/TaskUpdate tool calls. -->
     {#if taskList.length > 0}
-      <div class="shrink-0 border-t border-line bg-elevated px-2 py-1.5">
-        <button
-          class="flex w-full items-center gap-2 px-1 text-2xs uppercase tracking-caps text-dim"
-          onclick={() => (tasksOpen = !tasksOpen)}
-        >
-          <span>{tasksOpen ? '▾' : '▸'} Tasks · {tasksDone}/{taskList.length}</span>
-          {#if !tasksOpen && activeTaskLabel}
-            <span class="truncate normal-case tracking-normal text-muted">{activeTaskLabel}</span>
-          {/if}
-        </button>
-        {#if tasksOpen}
-          <div class="mt-1 flex max-h-40 flex-col gap-0.5 overflow-auto">
-            {#each taskList as task (task.id)}
-              <div class="flex items-center gap-2 px-2 py-0.5 text-2xs">
-                {#if task.status === 'completed'}
-                  <span class="shrink-0 text-dim">✓</span>
-                {:else if task.status === 'in_progress'}
-                  <span class="shrink-0 text-green"><WaveSpinner /></span>
-                {:else}
-                  <span class="shrink-0 text-dim">○</span>
-                {/if}
-                <span
-                  class="truncate {task.status === 'completed'
-                    ? 'text-dim line-through'
-                    : 'text-muted'}"
-                >
-                  {task.status === 'in_progress' && task.activeForm
-                    ? task.activeForm
-                    : task.subject}
-                </span>
-              </div>
-            {/each}
-          </div>
-        {/if}
-      </div>
+      <AgentTaskList tasks={taskList} bind:open={tasksOpen} />
     {/if}
 
     <!-- Input + config status line pinned at the bottom -->
     <div class="relative shrink-0 border-t border-line p-3">
       {#if pendingDialog}
-        <!-- Agent question: render the questions + options and return the answer -->
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div
-          class="-mx-3 border-y border-green/40 bg-green-soft p-2"
-          tabindex="-1"
-          onkeydown={onDialogKey}
-        >
-          {#each dialogQuestions as question, questionIndex (questionIndex)}
-            <div class="mb-3 last:mb-1">
-              {#if question.header}
-                <div
-                  class="mb-0.5 flex items-center gap-2 text-2xs font-semibold uppercase tracking-caps text-green"
-                >
-                  <span>{question.header}</span>
-                  {#if question.multiSelect}<span class="normal-case tracking-normal text-dim"
-                      >· multi-select</span
-                    >{/if}
-                </div>
-              {/if}
-              <div class="mb-1.5 text-xs text-default">{question.question}</div>
-              <div class="flex flex-col gap-1">
-                {#each question.options as option (option.label)}
-                  {@const selected = (dialogSelections[questionIndex] || []).includes(option.label)}
-                  <button
-                    class="rounded-md border px-2 py-1.5 text-left text-xs {selected
-                      ? 'border-green bg-green/15 text-default'
-                      : 'border-line hover:bg-hover text-muted'}"
-                    onclick={() => toggleOption(questionIndex, option.label, question.multiSelect)}
-                  >
-                    <span class="font-medium">{option.label}</span>
-                    {#if option.description}
-                      <span class="block text-2xs text-dim">{option.description}</span>
-                    {/if}
-                  </button>
-                {/each}
-              </div>
-            </div>
-          {/each}
-
-          {#if notesOpen}
-            <textarea
-              bind:this={notesEl}
-              bind:value={dialogNotes}
-              class="mb-2 h-16 w-full resize-none rounded-md border border-line bg-input px-2 py-1.5 text-xs"
-              placeholder="Notes / free-form answer…"
-            ></textarea>
-          {/if}
-
-          <div class="flex items-center gap-2">
-            <button
-              class="rounded-md bg-action px-3 py-1 text-xs text-action-fg disabled:opacity-40"
-              disabled={!dialogReady}
-              onclick={submitDialog}
-            >
-              Answer
-            </button>
-            {#if !notesOpen}
-              <button
-                class="rounded-md border border-line px-3 py-1 text-xs text-dim hover:bg-hover"
-                title="Add free-form notes"
-                onclick={openNotes}
-              >
-                Notes (n)
-              </button>
-            {/if}
-            <button
-              class="ml-auto rounded-md border border-line px-3 py-1 text-xs text-dim hover:bg-hover"
-              onclick={cancelDialog}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
+        <!-- Agent question: render the questions + options and return the answer.
+             Keyed so per-dialog selection state resets for each new request. -->
+        {#key pendingDialog.id}
+          <AgentQuestionDialog
+            questions={dialogQuestions}
+            onAnswer={answerDialog}
+            onCancel={cancelDialog}
+          />
+        {/key}
       {:else if pendingPermission}
-        <!-- Permission prompt replaces the input until answered -->
-        <div
-          bind:this={permissionEl}
-          class="rounded-md border border-amber/40 bg-amber-soft p-2 outline-none"
-          tabindex="-1"
-          onkeydown={onPermissionKey}
-        >
-          <div class="mb-2 text-xs text-default">{pendingPermission.title}</div>
-          {#if pendingPermission.path}
-            <div class="mb-2 truncate font-mono text-2xs text-muted">{pendingPermission.path}</div>
-          {/if}
-          {#if proposedDiffLines.length > 0}
-            <div
-              class="mb-2 max-h-56 overflow-auto rounded border border-line bg-canvas font-mono text-2xs leading-snug"
-            >
-              {#each proposedDiffLines as line, index (index)}
-                <div class="whitespace-pre px-2 {proposedDiffLineClass(line)}">{line}</div>
-              {/each}
-            </div>
-          {/if}
-          {#if denyReasonMode}
-            <textarea
-              class="mb-2 h-16 w-full resize-none rounded-md border border-line bg-input px-2 py-1.5 text-xs"
-              placeholder="Reason for denying…"
-              bind:value={denyReason}
-            ></textarea>
-            <div class="flex gap-2">
-              <button
-                class="rounded-md bg-red px-3 py-1 text-xs text-action-fg"
-                onclick={() => deny(denyReason)}
-              >
-                Deny with reason
-              </button>
-              <button
-                class="rounded-md border border-line px-3 py-1 text-xs hover:bg-hover"
-                onclick={() => (denyReasonMode = false)}
-              >
-                Cancel
-              </button>
-            </div>
-          {:else}
-            <div class="flex flex-col gap-1.5">
-              {#each permissionChoices as choice, index (choice.label)}
-                <button
-                  class="rounded-md px-3 py-1.5 text-left text-xs outline-none {choice.class} {index ===
-                  permissionIndex
-                    ? 'ring-2 ring-default'
-                    : ''}"
-                  onclick={choice.run}
-                >
-                  {choice.label}
-                </button>
-              {/each}
-            </div>
-          {/if}
-        </div>
+        <!-- Permission prompt replaces the input until answered. Keyed so
+             highlight/deny-reason state resets for each new request. -->
+        {#key pendingPermission.id}
+          <AgentPermissionPrompt
+            title={pendingPermission.title}
+            path={pendingPermission.path}
+            hasDiff={store.proposedDiff !== null}
+            onApprove={approve}
+            onDeny={deny}
+            onShowChange={showChange}
+          />
+        {/key}
       {:else}
         {#if showCompactSuggestion && activeChatMeta}
           <!-- Idle chat: offer to compact before resuming a stale context. -->
@@ -1838,33 +1719,33 @@
             class="absolute bottom-full left-3 right-3 z-20 mb-1 overflow-hidden rounded-md border border-line bg-elevated shadow-lg"
           >
             <FloatingScrollbar class="max-h-56" bind:viewport={slashListEl}>
-            {#each slashEntries as entry, index (entry.label)}
-              <button
-                data-menu-index={index}
-                class="flex w-full items-center gap-3 px-2 py-1.5 text-left text-xs {index ===
-                slashIndex
-                  ? 'bg-action text-action-fg'
-                  : 'text-muted hover:bg-hover'}"
-                onmousedown={(event) => {
-                  event.preventDefault()
-                  entry.apply()
-                }}
-              >
-                <span class="font-mono font-medium">{entry.label}</span>
-                {#if entry.badge}
-                  <span class="rounded bg-violet/15 px-1 font-mono text-2xs text-violet"
-                    >{entry.badge}</span
-                  >
-                {/if}
-                {#if entry.description}
-                  <span
-                    class="ml-auto truncate font-mono text-2xs {index === slashIndex
-                      ? 'text-action-fg/70'
-                      : 'text-dim'}">{entry.description}</span
-                  >
-                {/if}
-              </button>
-            {/each}
+              {#each slashEntries as entry, index (entry.label)}
+                <button
+                  data-menu-index={index}
+                  class="flex w-full items-center gap-3 px-2 py-1.5 text-left text-xs {index ===
+                  slashIndex
+                    ? 'bg-action text-action-fg'
+                    : 'text-muted hover:bg-hover'}"
+                  onmousedown={(event) => {
+                    event.preventDefault()
+                    entry.apply()
+                  }}
+                >
+                  <span class="font-mono font-medium">{entry.label}</span>
+                  {#if entry.badge}
+                    <span class="rounded bg-violet/15 px-1 font-mono text-2xs text-violet"
+                      >{entry.badge}</span
+                    >
+                  {/if}
+                  {#if entry.description}
+                    <span
+                      class="ml-auto truncate font-mono text-2xs {index === slashIndex
+                        ? 'text-action-fg/70'
+                        : 'text-dim'}">{entry.description}</span
+                    >
+                  {/if}
+                </button>
+              {/each}
             </FloatingScrollbar>
           </div>
         {/if}
@@ -1875,76 +1756,240 @@
             class="absolute bottom-full left-3 right-3 z-20 mb-1 overflow-hidden rounded-md border border-line bg-elevated shadow-lg"
           >
             <FloatingScrollbar class="max-h-56" bind:viewport={mentionListEl}>
-            {#each mentionItems as file, index (file)}
-              <button
-                data-menu-index={index}
-                class="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs {index ===
-                mentionIndex
-                  ? 'bg-action text-action-fg'
-                  : 'text-muted hover:bg-hover'}"
-                onmousedown={(event) => {
-                  event.preventDefault()
-                  applyMention(file)
-                }}
-              >
-                <span class="font-mono font-medium">{baseName(file)}</span>
-                <span
-                  class="ml-auto truncate font-mono text-2xs {index === mentionIndex
-                    ? 'text-action-fg/70'
-                    : 'text-dim'}">{file}</span
+              {#each mentionItems as file, index (file)}
+                <button
+                  data-menu-index={index}
+                  class="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs {index ===
+                  mentionIndex
+                    ? 'bg-action text-action-fg'
+                    : 'text-muted hover:bg-hover'}"
+                  onmousedown={(event) => {
+                    event.preventDefault()
+                    applyMention(file)
+                  }}
                 >
-              </button>
-            {/each}
+                  <span class="font-mono font-medium">{baseName(file)}</span>
+                  <span
+                    class="ml-auto truncate font-mono text-2xs {index === mentionIndex
+                      ? 'text-action-fg/70'
+                      : 'text-dim'}">{file}</span
+                  >
+                </button>
+              {/each}
             </FloatingScrollbar>
           </div>
         {/if}
 
-        <textarea
-          bind:this={promptEl}
-          class="mb-2 h-20 w-full resize-none rounded-md border border-line bg-input px-2 py-1.5 text-xs"
-          placeholder={isRunning
-            ? 'Message the running agent…  ( Enter send · Ctrl+C stop )'
-            : 'Prompt…  ( / options · @ files · ↑↓ history · Shift+Tab mode · Enter run )'}
-          bind:value={prompt}
-          onkeydown={onPromptKey}
-          oninput={() => (historyIndex = -1)}
-          onpaste={onPromptPaste}
-          ondrop={onPromptDrop}
-          ondragover={(event) => event.preventDefault()}
-        ></textarea>
+        <!-- Composer: a transparent-text textarea over a highlight overlay that
+             tints /commands and @mentions. Both share the same box metrics so
+             the rendered text lines up exactly. -->
+        <div class="relative mb-2 rounded-md border border-line bg-input">
+          <div
+            bind:this={highlightEl}
+            aria-hidden="true"
+            class="pointer-events-none absolute inset-0 h-20 overflow-hidden whitespace-pre-wrap break-words px-2 py-1.5 text-xs text-default"
+          >{#each promptSegments as segment, index (index)}<span class={segmentClass(segment.kind)}
+              >{segment.text}</span
+            >{/each}</div>
+          <textarea
+            bind:this={promptEl}
+            class="relative h-20 w-full resize-none border-0 bg-transparent px-2 py-1.5 text-xs text-transparent caret-[var(--text)] outline-none placeholder:text-dim"
+            placeholder={isRunning
+              ? 'Message the running agent…  ( Enter send · Ctrl+C stop )'
+              : 'Prompt…  ( / options · @ files · ↑↓ history · Shift+Tab mode · Enter run )'}
+            bind:value={prompt}
+            onkeydown={onPromptKey}
+            oninput={() => (historyIndex = -1)}
+            onscroll={syncHighlightScroll}
+            onfocus={() => {
+              composerFocused = true
+              keymap.setPaneMode(leafId, 'insert')
+            }}
+            onblur={() => {
+              composerFocused = false
+              keymap.setPaneMode(leafId, 'normal')
+            }}
+            onpaste={onPromptPaste}
+            ondrop={onPromptDrop}
+            ondragover={(event) => event.preventDefault()}
+          ></textarea>
 
-        <div class="flex items-center gap-3 text-2xs">
-          <button class="flex items-center gap-1" title="Cycle agent" onclick={cycleAgent}>
-            <span class="text-dim">agent</span>
-            <span class="font-medium text-default">{selectedAgent || '—'}</span>
-          </button>
-          <button
-            class="flex items-center gap-1"
-            title="Cycle mode (Shift+Tab)"
-            onclick={cycleMode}
-            disabled={modes.length === 0}
-          >
-            <span class="text-dim">mode</span>
-            <span class="font-medium {modeColor(modeLabel)}">{modeLabel}</span>
-          </button>
+          {#if !composerFocused}
+            <!-- Normal-mode hint: press i (or click) to focus the composer. -->
+            <button
+              class="absolute right-2 top-2 flex items-center gap-1.5 rounded-full border border-line bg-raised px-2 py-0.5 text-2xs text-dim transition hover:text-default"
+              title="Focus composer"
+              onclick={enterInsert}
+            >
+              <Kbd>i</Kbd>
+              <span>to focus</span>
+            </button>
+          {/if}
+        </div>
 
-          <button class="ml-auto flex items-center gap-1" title="Cycle model" onclick={cycleModel}>
-            <span class="text-dim">model</span>
-            <span class="font-medium text-default">{modelLabel}</span>
-          </button>
-          <button
-            class="flex items-center gap-1"
-            title="Cycle effort"
-            onclick={cycleEffort}
-            disabled={efforts.length === 0}
-          >
-            <span class="text-dim">effort</span>
-            <span class="font-medium text-default">{effortLabel}</span>
-          </button>
+        <div class="relative flex items-center gap-2 text-2xs">
+          <!-- Backdrop closes any open menu on outside click. -->
+          {#if agentMenuOpen || modeMenuOpen || effortMenuOpen}
+            <button
+              class="fixed inset-0 z-10 cursor-default"
+              tabindex="-1"
+              aria-label="Close menu"
+              onclick={closeMenus}
+            ></button>
+          {/if}
+
+          <!-- Provider → model cascade: one button; each provider row flies out
+               a submenu of that provider's models. -->
+          <div class="relative z-20">
+            <button
+              class="flex items-center gap-1.5 rounded border border-line px-2 py-1 hover:bg-hover"
+              title="Provider & model for the next run"
+              onclick={() => {
+                modeMenuOpen = false
+                effortMenuOpen = false
+                agentMenuOpen = !agentMenuOpen
+                if (!agentMenuOpen) submenuProvider = null
+              }}
+            >
+              <AgentLogo name={launchAgent} size={14} />
+              <span class="font-medium text-default">{launchAgent}</span>
+              <span class="text-dim">·</span>
+              <span class="text-muted">{currentModelLabel}</span>
+              <span class="text-dim">▾</span>
+            </button>
+            {#if agentMenuOpen}
+              <div
+                class="absolute bottom-full left-0 z-30 mb-1 w-44 rounded-md border border-line bg-elevated py-1 shadow-lg"
+              >
+                {#each agentNames as name (name)}
+                  {@const models = store.agentModels[name] || []}
+                  <div class="relative" role="presentation" onmouseenter={() => openSubmenu(name)}>
+                    <button
+                      class="flex w-full items-center gap-2 px-2 py-1 text-left hover:bg-hover {name ===
+                      launchAgent
+                        ? 'text-default'
+                        : 'text-dim'}"
+                      onclick={() => selectProvider(name)}
+                    >
+                      <AgentLogo name={name} size={13} />
+                      <span class="truncate">{name}</span>
+                      <span class="ml-auto text-dim">›</span>
+                    </button>
+                    {#if submenuProvider === name}
+                      <!-- Model submenu, flown out to the right of the row. -->
+                      <div
+                        class="absolute bottom-0 left-full z-40 ml-1 w-56 overflow-hidden rounded-md border border-line bg-elevated shadow-lg"
+                      >
+                        <FloatingScrollbar class="max-h-72">
+                          <div class="py-1">
+                            {#each models as model (model.value)}
+                              <button
+                                class="flex w-full items-center px-2 py-1 text-left hover:bg-hover {name ===
+                                  launchAgent && model.value === selectedModel
+                                  ? 'text-default'
+                                  : 'text-dim'}"
+                                onclick={() => pickProviderModel(name, model.value)}
+                              >
+                                <span class="truncate">{model.label}</span>
+                              </button>
+                            {/each}
+                            {#if models.length === 0}
+                              <div class="px-2 py-1 text-2xs text-dim">
+                                No models — type <span class="font-mono">/model</span>
+                              </div>
+                            {/if}
+                          </div>
+                        </FloatingScrollbar>
+                      </div>
+                    {/if}
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </div>
+
+          <!-- Mode -->
+          {#if modes.length > 0}
+            <div class="relative z-20">
+              <button
+                class="flex items-center gap-1 rounded border border-line px-2 py-1 hover:bg-hover"
+                title="Mode"
+                onclick={() => {
+                  agentMenuOpen = false
+                  effortMenuOpen = false
+                  modeMenuOpen = !modeMenuOpen
+                }}
+              >
+                <span class="font-medium {modeColor(modeLabel)}">{modeLabel}</span>
+                <span class="text-dim">▾</span>
+              </button>
+              {#if modeMenuOpen}
+                <div
+                  class="absolute bottom-full left-0 z-30 mb-1 w-44 overflow-auto rounded-md border border-line bg-elevated py-1 shadow-lg"
+                >
+                  {#each modes as mode, index (mode.value)}
+                    <button
+                      class="flex w-full items-center px-2 py-1 text-left hover:bg-hover {index ===
+                      modeIndex
+                        ? 'text-default'
+                        : 'text-dim'}"
+                      onclick={() => {
+                        modeIndex = index
+                        closeMenus()
+                      }}
+                    >
+                      <span class={modeColor(mode.label)}>{mode.label}</span>
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          {/if}
+
+          <!-- Effort -->
+          {#if efforts.length > 0}
+            <div class="relative z-20 ml-auto">
+              <button
+                class="flex items-center gap-1 rounded border border-line px-2 py-1 hover:bg-hover"
+                title="Effort"
+                onclick={() => {
+                  agentMenuOpen = false
+                  modeMenuOpen = false
+                  effortMenuOpen = !effortMenuOpen
+                }}
+              >
+                <span class="font-medium text-default">{effortLabel}</span>
+                <span class="text-dim">▾</span>
+              </button>
+              {#if effortMenuOpen}
+                <div
+                  class="absolute bottom-full right-0 z-30 mb-1 w-40 overflow-auto rounded-md border border-line bg-elevated py-1 shadow-lg"
+                >
+                  {#each efforts as effort, index (effort.value)}
+                    <button
+                      class="flex w-full items-center px-2 py-1 text-left hover:bg-hover {index ===
+                      effortIndex
+                        ? 'text-default'
+                        : 'text-dim'}"
+                      onclick={() => {
+                        effortIndex = index
+                        closeMenus()
+                      }}
+                    >
+                      {effort.label}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          {/if}
 
           {#if isRunning}
             <button
-              class="rounded-md border border-line px-3 py-1 text-xs hover:bg-hover"
+              class="rounded-md border border-line px-3 py-1 text-xs hover:bg-hover {efforts.length >
+              0
+                ? ''
+                : 'ml-auto'}"
               onclick={stop}
             >
               ■ Stop
@@ -1954,53 +1999,16 @@
       {/if}
     </div>
 
-    <!-- Active agents: the main chat plus subagents spawned via the Task tool.
-         ↓ to navigate, Enter to open one's transcript. -->
     {#if subagents.length > 0}
-      <div class="shrink-0 border-t border-line bg-elevated px-2 py-1.5">
-        <div class="mb-1 px-1 text-2xs uppercase tracking-caps text-dim">
-          Agents · <span class="normal-case tracking-normal">↓ navigate · enter open</span>
-        </div>
-        <div class="flex flex-col gap-0.5">
-          <button
-            class="flex items-center gap-2 rounded px-2 py-1 text-left text-2xs {agentNavActive &&
-            agentIndex === 0
-              ? 'bg-action text-action-fg'
-              : 'text-muted hover:bg-hover'} {focusedSubagentKey === null
-              ? 'ring-1 ring-green'
-              : ''}"
-            onclick={() => (focusedSubagentKey = null)}
-          >
-            {#if isRunning}
-              <span class="shrink-0 text-green"><WaveSpinner /></span>
-            {:else}
-              <span class="shrink-0 text-dim">✓</span>
-            {/if}
-            <span class="shrink-0 font-mono font-semibold text-green">main</span>
-          </button>
-          {#each subagents as agent, index (agent.key)}
-            <button
-              class="flex items-center gap-2 rounded px-2 py-1 text-left text-2xs {agentNavActive &&
-              index + 1 === agentIndex
-                ? 'bg-action text-action-fg'
-                : 'text-muted hover:bg-hover'} {agent.key === focusedSubagentKey
-                ? 'ring-1 ring-green'
-                : ''}"
-              onclick={() => focusSubagent(agent.key)}
-            >
-              {#if agent.running}
-                <span class="shrink-0 text-green"><WaveSpinner /></span>
-              {:else}
-                <span class="shrink-0 text-dim">✓</span>
-              {/if}
-              <span class="shrink-0 font-mono font-semibold text-violet">{agent.type}</span>
-              {#if agent.description}
-                <span class="truncate text-muted">{agent.description}</span>
-              {/if}
-            </button>
-          {/each}
-        </div>
-      </div>
+      <AgentSubagentList
+        {subagents}
+        {isRunning}
+        focusedKey={focusedSubagentKey}
+        navActive={agentNavActive}
+        navIndex={agentIndex}
+        onSelectMain={() => (focusedSubagentKey = null)}
+        onSelect={focusSubagent}
+      />
     {/if}
   {/if}
 </div>

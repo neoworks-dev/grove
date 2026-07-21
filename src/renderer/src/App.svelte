@@ -1,12 +1,11 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte'
   import { cubicOut } from 'svelte/easing'
-  import groveLogo from './assets/grove-icon.svg'
   import ActivityBar from './components/ActivityBar.svelte'
   import Dock from './components/Dock.svelte'
   import PanelResizer from './components/PanelResizer.svelte'
   import SplitTree from './components/SplitTree.svelte'
-  import MenuBar from './components/MenuBar.svelte'
+  import TopBar from './components/TopBar.svelte'
   import Overlay from './components/Overlay.svelte'
   import WhichKey from './components/WhichKey.svelte'
   import PaneDragOverlay from './components/PaneDragOverlay.svelte'
@@ -17,6 +16,7 @@
   import StatusBranch from './components/StatusBranch.svelte'
   import StatusClock from './components/StatusClock.svelte'
   import StatusMode from './components/StatusMode.svelte'
+  import StatusIntro from './components/StatusIntro.svelte'
   import { store, subscribeEvents, openRepoResult, applyIconPack, switchTab } from './lib/store.svelte'
   import { commands } from './lib/commands.svelte'
   import { keymap } from './lib/keymap.svelte'
@@ -48,6 +48,9 @@
   statusBar.register({ id: 'mode', align: 'left', order: 0, component: StatusMode })
   statusBar.register({ id: 'git.branch', align: 'left', order: 1, component: StatusBranch })
   statusBar.register({ id: 'clock', align: 'right', order: 100, component: StatusClock })
+  // Visible only while an AGENTS.md onboarding session runs but its pane is
+  // hidden — one click returns to the flow.
+  statusBar.register({ id: 'intro.active', align: 'right', order: 50, component: StatusIntro })
 
   // Persist layout (split tree, nested panel sizes, open tabs) whenever any of
   // these change; layout.schedule() debounces the write to per-repo state.
@@ -102,6 +105,13 @@
       run: pickRepo
     })
     commands.register({
+      id: 'intro.setup',
+      title: 'Set up AGENTS.md (Introduction)',
+      group: 'Repository',
+      keywords: 'onboarding agents claude config style intro',
+      run: () => layout.ensurePane('intro')
+    })
+    commands.register({
       id: 'view.toggleLogs',
       title: 'Toggle Logs Panel',
       group: 'View',
@@ -141,6 +151,14 @@
     })
   }
 
+  // Per-pane font zoom is driven from main (event:pane-zoom) because Chromium
+  // eats Ctrl/Cmd +/-/0 as page-zoom accelerators before the renderer keydown.
+  function applyPaneZoom(direction: unknown): void {
+    if (direction === 'in') layout.adjustFocusedFontScale(1)
+    else if (direction === 'out') layout.adjustFocusedFontScale(-1)
+    else if (direction === 'reset') layout.resetFocusedFontScale()
+  }
+
   function onGlobalKey(event: KeyboardEvent): void {
     // The keybind-capture widget owns the keyboard entirely while recording.
     if (keymap.captureMode) return
@@ -153,11 +171,15 @@
     // the global capture-phase handlers must stand down.
     if (overlays.active) return
     // The terminal owns every key while focused (so Ctrl+C/L/hjkl reach the
-    // shell), except the toggle chord that hides it again.
-    if (keymap.activePaneType === 'terminal') {
+    // shell), except the toggle chord that hides it again. This holds for the
+    // standalone terminal pane and for the bottom panel while its Terminal tab
+    // is active (the 'panel' pane then reports 'terminal' mode). The mode check
+    // is scoped to 'panel' so nvim's own :terminal mode is unaffected.
+    const inPanelTerminal = keymap.activePaneType === 'panel' && keymap.mode === 'terminal'
+    if (keymap.activePaneType === 'terminal' || inPanelTerminal) {
       if (event.ctrlKey && event.key === '`' && !event.altKey && !event.metaKey) {
         event.preventDefault()
-        layout.togglePane('terminal')
+        layout.togglePane(keymap.activePaneType ?? 'terminal')
       }
       return
     }
@@ -168,20 +190,21 @@
       event.stopPropagation()
       return
     }
-    // Shift+H / Shift+L: previous / next editor tab, but only in Vim-normal so
+    // Alt+H / Alt+L: previous / next editor tab, but only in Vim-normal so
     // insert typing is never hijacked. K and J are left to Vim (K = hover/type
     // info, J = join), so they are deliberately not mapped here.
     // The nvim editor reports its keymap context as 'editor' (shared with the
     // diff pane), so match the focused leaf's actual pane type instead.
+    // Match on event.code since Alt composes special characters on some layouts.
     if (
       layout.focusedLeaf()?.paneTypeId === 'nvim' &&
       keymap.mode === 'normal' &&
-      event.shiftKey &&
+      event.altKey &&
       !event.ctrlKey &&
-      !event.altKey &&
+      !event.shiftKey &&
       !event.metaKey
     ) {
-      const move = { H: 'prev', L: 'next' }[event.key] as 'prev' | 'next' | undefined
+      const move = { KeyH: 'prev', KeyL: 'next' }[event.code] as 'prev' | 'next' | undefined
       if (move) {
         switchTab(move)
         event.preventDefault()
@@ -202,6 +225,7 @@
     registerCoreBindings()
     void loadInstalledExtensions()
     window.addEventListener('keydown', onGlobalKey, true)
+    const stopPaneZoom = window.workbench.on('event:pane-zoom', applyPaneZoom)
 
     void (async () => {
       await settings.init()
@@ -218,7 +242,10 @@
       }
     })()
 
-    return () => window.removeEventListener('keydown', onGlobalKey, true)
+    return () => {
+      window.removeEventListener('keydown', onGlobalKey, true)
+      stopPaneZoom()
+    }
   })
 
   // Collapse a side panel's width to zero on enter/leave. Because the node keeps
@@ -244,63 +271,10 @@
   }
 </script>
 
-<div class="flex h-screen w-screen flex-col gap-2 overflow-hidden bg-canvas p-2 text-default">
+<div class="flex h-screen w-screen flex-col gap-1.5 overflow-hidden bg-canvas p-2 text-default">
   <!-- Top bar -->
-  <header
-    class="flex h-9 shrink-0 items-center gap-3 rounded-xl border border-line-faint bg-surface px-3 text-sm"
-  >
-    <img src={groveLogo} alt="Grove" class="h-6 w-auto" />
-    <MenuBar />
-    {#if store.repo}
-      <span class="text-muted">{store.repo.name}</span>
-      <span class="text-dim">·</span>
-      <span class="font-mono text-xs text-dim">{store.repo.currentBranch}</span>
-    {:else}
-      <button
-        class="rounded-md border border-line bg-surface px-2 py-1 text-xs hover:bg-hover"
-        onclick={pickRepo}
-      >
-        Open Repo
-      </button>
-    {/if}
-
-    <div class="ml-auto flex items-center gap-1">
-      {#each views.views as view (view.id)}
-        <button
-          class="rounded-md px-2.5 py-1 text-xs {layout.activeViewId === view.id
-            ? 'bg-surface text-default'
-            : 'text-dim hover:text-default'}"
-          onclick={() => layout.switchView(view.id)}
-        >
-          {view.label}
-        </button>
-      {/each}
-      <button
-        class="ml-2 rounded-md px-2 py-1 text-2xs {layout.docks.right.open
-          ? 'text-default'
-          : 'text-dim hover:text-default'}"
-        title="Toggle right panel"
-        onclick={() => layout.toggleDock('right')}
-      >
-        ▤
-      </button>
-      <button
-        class="rounded-md px-2 py-1 text-2xs {layout.focusMode
-          ? 'text-default'
-          : 'text-dim hover:text-default'}"
-        title="Focus mode"
-        onclick={() => layout.toggleFocusMode()}
-      >
-        ⛶
-      </button>
-      <button
-        class="rounded-md border border-line px-2 py-1 text-2xs text-dim hover:text-default"
-        title="Command palette (F1)"
-        onclick={() => commands.open()}
-      >
-        ⌘ F1
-      </button>
-    </div>
+  <header class="h-7 shrink-0 px-1">
+    <TopBar />
   </header>
 
   {#if store.error}

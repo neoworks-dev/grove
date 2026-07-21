@@ -8,6 +8,7 @@ import type {
   ServiceRuntime,
   AgentRuntime,
   AgentConfig,
+  AgentOption,
   RepoInfo,
   BranchList,
   PermissionRequestEvent,
@@ -18,12 +19,17 @@ import type {
   AgentQueueEvent,
   AgentCommandsEvent,
   AgentSlashCommand,
-  QueuedMessage
+  QueuedMessage,
+  DiffStats,
+  WorktreeChatMessage
 } from '../../../shared/types'
 
 export interface LogLine {
   source: 'service' | 'agent'
   name: string
+  // Present for agent lines: which instance (chat) produced it, so two runs of
+  // the same adapter don't interleave in a transcript.
+  chatId?: string
   line: string
 }
 
@@ -33,12 +39,16 @@ import type { ColorTheme } from './themes'
 import { layout } from './layout.svelte'
 import { settings } from './settings.svelte'
 import { inlineEdit } from './inlineEdit.svelte'
+import { intro } from './intro.svelte'
 
 export interface EditorTab {
   worktreeId: string
-  path: string // absolute
+  path: string // absolute file path, or a synthetic `scratch://…` key
   name: string
   pinned?: boolean
+  // A non-file scratch buffer (batch rename, etc.), backed by an nvim buffer
+  // rather than a path on disk. Not persisted across sessions.
+  scratch?: boolean
 }
 
 const MAX_LOG_LINES = 2000
@@ -60,6 +70,9 @@ class WorkbenchStore {
   // Effective agent configs (detected + config) keyed by agent name.
   agentConfigs = $state<Record<string, AgentConfig>>({})
 
+  // Provider-discovered model lists keyed by agent name (populated at runtime).
+  agentModels = $state<Record<string, AgentOption[]>>({})
+
   // Messages queued while a run was active, keyed by "worktreeId::agent".
   agentQueues = $state<Record<string, QueuedMessage[]>>({})
 
@@ -77,6 +90,23 @@ class WorkbenchStore {
 
   // Bumped per worktree on any file change, so trees/diffs re-read reactively.
   fsVersion = $state<Record<string, number>>({})
+
+  // Added/removed line counts vs HEAD, keyed by worktreeId. Refreshed on
+  // worktree list load and on file changes, shown in the worktree overviews.
+  diffStats = $state<Record<string, DiffStats>>({})
+
+  // Worktrees with agent output the user hasn't looked at yet (agent produced
+  // output while that worktree wasn't selected). Cleared on selecting it.
+  unread = $state<Record<string, boolean>>({})
+
+  // Shared per-worktree chat messages (agent↔agent + agent↔user), keyed by
+  // worktreeId.
+  worktreeChat = $state<Record<string, WorktreeChatMessage[]>>({})
+
+  // A request from the agents overview/sidebar to focus a specific agent
+  // instance in the Agent pane. The pane consumes it once its worktree matches,
+  // then clears it. chatId targets one instance of the adapter.
+  requestedAgent = $state<{ worktreeId: string; name: string; chatId?: string } | null>(null)
 
   // Set by the fs watcher when a running agent edits a file → the Git Changes
   // sidebar highlights it.
@@ -104,8 +134,37 @@ class WorkbenchStore {
   // Streamed logs keyed by worktreeId.
   logs = $state<Record<string, LogLine[]>>({})
 
-  tabs = $state<EditorTab[]>([])
-  activeTabPath = $state<string | null>(null)
+  // Open editor tabs and the active tab are scoped per worktree, so each
+  // worktree keeps its own set of open buffers (not synced across worktrees).
+  // `tabs`/`activeTabPath` are accessors over the selected worktree's slice, so
+  // every existing call site keeps working unchanged.
+  tabsByWorktree = $state<Record<string, EditorTab[]>>({})
+  activeTabByWorktree = $state<Record<string, string | null>>({})
+
+  get tabs(): EditorTab[] {
+    const id = this.selectedWorktreeId
+    if (!id) return []
+    return this.tabsByWorktree[id] || []
+  }
+
+  set tabs(value: EditorTab[]) {
+    const id = this.selectedWorktreeId
+    if (!id) return
+    this.tabsByWorktree = { ...this.tabsByWorktree, [id]: value }
+  }
+
+  get activeTabPath(): string | null {
+    const id = this.selectedWorktreeId
+    if (!id) return null
+    const value = this.activeTabByWorktree[id]
+    return value === undefined ? null : value
+  }
+
+  set activeTabPath(value: string | null) {
+    const id = this.selectedWorktreeId
+    if (!id) return
+    this.activeTabByWorktree = { ...this.activeTabByWorktree, [id]: value }
+  }
 
   // Active icon pack name; reading this in a component makes icons re-render
   // reactively when the pack changes.
@@ -154,8 +213,12 @@ class WorkbenchStore {
 
   updateAgentRuntime(runtime: AgentRuntime): void {
     const list = this.agents[runtime.worktreeId] || []
-    const next = list.some((agent) => agent.name === runtime.name)
-      ? list.map((agent) => (agent.name === runtime.name ? runtime : agent))
+    // Instances are identified by (name, chatId): two runs of one adapter differ
+    // only by chatId, so upsert on the pair.
+    const matches = (agent: AgentRuntime): boolean =>
+      agent.name === runtime.name && agent.chatId === runtime.chatId
+    const next = list.some(matches)
+      ? list.map((agent) => (matches(agent) ? runtime : agent))
       : [...list, runtime]
     this.agents = { ...this.agents, [runtime.worktreeId]: next }
   }
@@ -276,23 +339,60 @@ export function switchTab(direction: 'prev' | 'next' | 'first' | 'last'): void {
 // Seed the in-memory transcript from the persisted on-disk log so a chat
 // reappears after an app restart. Caller only invokes this when no agent lines
 // exist yet for the worktree.
-export function seedAgentTranscript(worktreeId: string, name: string, lines: string[]): void {
+export function seedAgentTranscript(
+  worktreeId: string,
+  name: string,
+  chatId: string,
+  lines: string[]
+): void {
   if (lines.length === 0) return
-  const entries: LogLine[] = lines.map((line) => ({ source: 'agent', name, line }))
+  const entries: LogLine[] = lines.map((line) => ({ source: 'agent', name, chatId, line }))
   const current = store.logs[worktreeId] || []
   store.logs = { ...store.logs, [worktreeId]: [...entries, ...current] }
 }
 
-// "New chat": reset the agent's continuation server-side and clear its
+// "New chat": reset the instance's continuation server-side and clear its
 // transcript + any pending review state from the UI.
-export async function resetAgentChat(worktreeId: string, agent: string): Promise<void> {
-  await window.workbench.agents.reset(worktreeId, agent)
+export async function resetAgentChat(
+  worktreeId: string,
+  agent: string,
+  chatId: string
+): Promise<void> {
+  await window.workbench.agents.reset(worktreeId, agent, chatId)
   const current = store.logs[worktreeId] || []
-  store.logs = { ...store.logs, [worktreeId]: current.filter((line) => line.source !== 'agent') }
+  // Drop only this instance's lines; peer instances keep theirs.
+  store.logs = {
+    ...store.logs,
+    [worktreeId]: current.filter(
+      (line) => !(line.source === 'agent' && line.name === agent && line.chatId === chatId)
+    )
+  }
   store.pendingPermissions = store.pendingPermissions.filter(
-    (request) => !(request.worktreeId === worktreeId && request.agent === agent)
+    (request) =>
+      !(request.worktreeId === worktreeId && request.agent === agent && request.chatId === chatId)
   )
   store.proposedDiff = null
+}
+
+// "/delete": remove an instance (chat) and drop its transcript from the UI.
+export async function deleteAgentChat(
+  worktreeId: string,
+  agent: string,
+  chatId: string
+): Promise<void> {
+  await window.workbench.agents.deleteChat(worktreeId, agent, chatId)
+  const current = store.logs[worktreeId] || []
+  store.logs = {
+    ...store.logs,
+    [worktreeId]: current.filter(
+      (line) => !(line.source === 'agent' && line.name === agent && line.chatId === chatId)
+    )
+  }
+  store.pendingPermissions = store.pendingPermissions.filter(
+    (request) =>
+      !(request.worktreeId === worktreeId && request.agent === agent && request.chatId === chatId)
+  )
+  await refreshRuntimes(worktreeId)
 }
 
 // "/compact": summarize the conversation and continue with a compacted
@@ -301,17 +401,25 @@ export async function resetAgentChat(worktreeId: string, agent: string): Promise
 export async function compactChat(
   worktreeId: string,
   agent: string,
+  chatId: string,
   instructions?: string
 ): Promise<void> {
-  await window.workbench.agents.compact(worktreeId, agent, instructions)
+  await window.workbench.agents.compact(worktreeId, agent, instructions, chatId)
   await refreshRuntimes(worktreeId)
 }
 
-// Replace the visible agent transcript with a given set of lines (used when
-// switching to another chat). Non-agent log lines for the worktree are kept.
-function setAgentTranscript(worktreeId: string, name: string, lines: string[]): void {
-  const others = (store.logs[worktreeId] || []).filter((line) => line.source !== 'agent')
-  const entries: LogLine[] = lines.map((line) => ({ source: 'agent', name, line }))
+// Replace one instance's visible transcript with a given set of lines (used when
+// switching instances). Other instances' and service lines are kept.
+function setAgentTranscript(
+  worktreeId: string,
+  name: string,
+  chatId: string,
+  lines: string[]
+): void {
+  const others = (store.logs[worktreeId] || []).filter(
+    (line) => !(line.source === 'agent' && line.name === name && line.chatId === chatId)
+  )
+  const entries: LogLine[] = lines.map((line) => ({ source: 'agent', name, chatId, line }))
   store.logs = { ...store.logs, [worktreeId]: [...entries, ...others] }
 }
 
@@ -319,6 +427,22 @@ function setAgentTranscript(worktreeId: string, name: string, lines: string[]): 
 export async function refreshChats(worktreeId: string, agent: string): Promise<void> {
   const chats = await window.workbench.agents.chats(worktreeId, agent)
   store.agentChats = { ...store.agentChats, [`${worktreeId}::${agent}`]: chats }
+}
+
+// Lazily fetch an adapter's model list (probes the provider SDK on first use),
+// so we never spin up a provider the user hasn't selected.
+const modelsInFlight = new Set<string>()
+export async function ensureAgentModels(agent: string): Promise<void> {
+  if (!agent || store.agentModels[agent] || modelsInFlight.has(agent)) return
+  modelsInFlight.add(agent)
+  try {
+    const models = await window.workbench.agents.models(agent)
+    store.agentModels = { ...store.agentModels, [agent]: models }
+  } catch {
+    // Leave empty — the picker falls back to free-text via /model.
+  } finally {
+    modelsInFlight.delete(agent)
+  }
 }
 
 // Rename a chat so it's easy to find when resuming.
@@ -331,13 +455,11 @@ export async function renameChat(
   await window.workbench.agents.renameChat(worktreeId, agent, chatId, chatName)
 }
 
-// Resume a previous chat: activate it server-side and swap its transcript in.
+// Switch to an instance (chat): activate it server-side and swap its transcript
+// in. Runs concurrently, so this never stops anything.
 export async function resumeChat(worktreeId: string, agent: string, chatId: string): Promise<void> {
   const lines = await window.workbench.agents.activateChat(worktreeId, agent, chatId)
-  setAgentTranscript(worktreeId, agent, lines)
-  store.pendingPermissions = store.pendingPermissions.filter(
-    (request) => !(request.worktreeId === worktreeId && request.agent === agent)
-  )
+  setAgentTranscript(worktreeId, agent, chatId, lines)
   store.proposedDiff = null
 }
 
@@ -426,6 +548,9 @@ export async function openProposedDiff(request: PermissionRequestEvent): Promise
   }
 
   store.proposedDiff = { path, original, modified, language: languageForPath(path) }
+  // Preview the pending edit as a vimdiff split in the real editor, so review
+  // happens there rather than inline in the chat.
+  void inlineEdit.previewGatedEdit(store.selectedWorktreeId, path, modified)
 }
 
 // ── Actions ───────────────────────────────────────────────────
@@ -447,22 +572,55 @@ export async function openRepoResult(result: {
       : result.worktrees[0]?.id || null
   // Restore UI layout (split tree — or the legacy pane sizes — and open tabs).
   layout.apply(repoState)
-  if (store.selectedWorktreeId && repoState.openTabs && repoState.openTabs.length > 0) {
-    const worktreeId = store.selectedWorktreeId
-    store.tabs = repoState.openTabs.map((path) => ({
-      worktreeId,
-      path,
-      name: path.split('/').pop() || path
-    }))
-    store.activeTabPath =
-      repoState.activeTabPath && repoState.openTabs.includes(repoState.activeTabPath)
-        ? repoState.activeTabPath
-        : repoState.openTabs[repoState.openTabs.length - 1]
-  }
+  restoreTabs(repoState)
   if (store.selectedWorktreeId) {
     await refreshRuntimes(store.selectedWorktreeId)
   }
   syncWatched()
+  // New workspace (no agent-instruction file) and never dismissed: offer the
+  // AGENTS.md onboarding introduction in the left sidebar.
+  if (!result.info.hasAgentsFile && !repoState.introDismissed) {
+    layout.ensurePane('intro')
+  }
+}
+
+// Rebuild the per-worktree open-tab maps from persisted state, preferring the
+// per-worktree form and migrating the legacy flat openTabs (assigned to the
+// selected worktree, matching the old single-list behavior).
+function restoreTabs(repoState: {
+  openTabsByWorktree?: Record<string, string[]>
+  activeTabByWorktree?: Record<string, string | null>
+  openTabs?: string[]
+  activeTabPath?: string | null
+  selectedWorktreeId?: string | null
+}): void {
+  const toTab = (worktreeId: string, path: string): EditorTab => ({
+    worktreeId,
+    path,
+    name: path.split('/').pop() || path
+  })
+
+  if (repoState.openTabsByWorktree) {
+    const tabs: Record<string, EditorTab[]> = {}
+    for (const [worktreeId, paths] of Object.entries(repoState.openTabsByWorktree)) {
+      tabs[worktreeId] = paths.map((path) => toTab(worktreeId, path))
+    }
+    store.tabsByWorktree = tabs
+    store.activeTabByWorktree = { ...(repoState.activeTabByWorktree || {}) }
+    return
+  }
+
+  // Legacy: a single flat list belonged to the selected worktree.
+  const worktreeId = store.selectedWorktreeId
+  if (!worktreeId || !repoState.openTabs || repoState.openTabs.length === 0) return
+  store.tabsByWorktree = {
+    [worktreeId]: repoState.openTabs.map((path) => toTab(worktreeId, path))
+  }
+  const active =
+    repoState.activeTabPath && repoState.openTabs.includes(repoState.activeTabPath)
+      ? repoState.activeTabPath
+      : repoState.openTabs[repoState.openTabs.length - 1]
+  store.activeTabByWorktree = { [worktreeId]: active }
 }
 
 // Watch the selected worktree plus any worktree with a running agent, so file
@@ -476,13 +634,51 @@ export function syncWatched(): void {
 
 export async function refreshWorktrees(): Promise<void> {
   store.worktrees = await window.workbench.worktrees.list()
+  for (const worktree of store.worktrees) void refreshDiffStats(worktree.id)
+}
+
+// Fetch +/- line counts vs HEAD for one worktree into the store.
+export async function refreshDiffStats(worktreeId: string): Promise<void> {
+  try {
+    const stats = await window.workbench.git.diffStats(worktreeId)
+    store.diffStats = { ...store.diffStats, [worktreeId]: stats }
+  } catch {
+    // A worktree may be mid-removal; ignore transient failures.
+  }
+}
+
+// Coalesce bursts of file changes into a single diff-stat refresh per worktree.
+const diffStatTimers = new Map<string, ReturnType<typeof setTimeout>>()
+function scheduleDiffStats(worktreeId: string): void {
+  const existing = diffStatTimers.get(worktreeId)
+  if (existing) clearTimeout(existing)
+  diffStatTimers.set(
+    worktreeId,
+    setTimeout(() => {
+      diffStatTimers.delete(worktreeId)
+      void refreshDiffStats(worktreeId)
+    }, 400)
+  )
 }
 
 export async function selectWorktree(worktreeId: string): Promise<void> {
   store.selectedWorktreeId = worktreeId
+  // Selecting a worktree marks its agent output as seen.
+  if (store.unread[worktreeId]) store.unread = { ...store.unread, [worktreeId]: false }
   await window.workbench.state.update({ selectedWorktreeId: worktreeId })
   await refreshRuntimes(worktreeId)
+  void refreshDiffStats(worktreeId)
   syncWatched()
+}
+
+// Select a worktree and request the Agent pane focus a specific agent instance.
+export async function focusAgentInPane(
+  worktreeId: string,
+  name: string,
+  chatId?: string
+): Promise<void> {
+  await selectWorktree(worktreeId)
+  store.requestedAgent = { worktreeId, name, chatId }
 }
 
 export async function refreshRuntimes(worktreeId: string): Promise<void> {
@@ -502,9 +698,19 @@ export function subscribeEvents(): void {
       worktreeId: string
       source: 'service' | 'agent'
       name: string
+      chatId?: string
       line: string
     }
-    store.appendLog(event.worktreeId, { source: event.source, name: event.name, line: event.line })
+    store.appendLog(event.worktreeId, {
+      source: event.source,
+      name: event.name,
+      chatId: event.chatId,
+      line: event.line
+    })
+    // Agent output in a worktree the user isn't looking at is unread.
+    if (event.source === 'agent' && event.worktreeId !== store.selectedWorktreeId) {
+      store.unread = { ...store.unread, [event.worktreeId]: true }
+    }
   })
   window.workbench.on('event:service-status', (payload) => {
     store.updateServiceRuntime(payload as ServiceRuntime)
@@ -514,13 +720,24 @@ export function subscribeEvents(): void {
     store.updateAgentRuntime(runtime)
     // Drop any stale permission prompts once an agent is no longer running.
     if (runtime.status !== 'running') {
+      // Drop pending prompts for just this instance (name + chatId); other
+      // instances of the same adapter keep theirs.
+      const isThisInstance = (request: {
+        worktreeId: string
+        agent: string
+        chatId: string
+      }): boolean =>
+        request.worktreeId === runtime.worktreeId &&
+        request.agent === runtime.name &&
+        request.chatId === runtime.chatId
       store.pendingPermissions = store.pendingPermissions.filter(
-        (request) => !(request.worktreeId === runtime.worktreeId && request.agent === runtime.name)
+        (request) => !isThisInstance(request)
       )
-      store.pendingDialogs = store.pendingDialogs.filter(
-        (request) => !(request.worktreeId === runtime.worktreeId && request.agent === runtime.name)
-      )
-      if (store.pendingPermissions.length === 0) store.proposedDiff = null
+      store.pendingDialogs = store.pendingDialogs.filter((request) => !isThisInstance(request))
+      if (store.pendingPermissions.length === 0) {
+        store.proposedDiff = null
+        void inlineEdit.discardGatedPreview()
+      }
     }
     void window.workbench.agents.active().then((ids) => {
       store.activeAgentWorktrees = ids
@@ -545,7 +762,9 @@ export function subscribeEvents(): void {
   })
   window.workbench.on('event:agent-queue', (payload) => {
     const event = payload as AgentQueueEvent
-    const key = `${event.worktreeId}::${event.name}`
+    // Queue is per instance (name + chatId), so two runs of one adapter don't
+    // share a queue.
+    const key = `${event.worktreeId}::${event.name}::${event.chatId}`
     store.agentQueues = { ...store.agentQueues, [key]: event.queue }
     // A user stop flushed these messages — hand their text back to the composer.
     if (event.cleared && event.cleared.length > 0) {
@@ -561,6 +780,21 @@ export function subscribeEvents(): void {
     }
   })
 
+  window.workbench.on('event:worktree-chat', (payload) => {
+    const message = payload as WorktreeChatMessage
+    const list = store.worktreeChat[message.worktreeId] || []
+    store.worktreeChat = { ...store.worktreeChat, [message.worktreeId]: [...list, message] }
+    // A message from an agent in a non-selected worktree is unread.
+    if (message.from.kind === 'agent' && message.worktreeId !== store.selectedWorktreeId) {
+      store.unread = { ...store.unread, [message.worktreeId]: true }
+    }
+  })
+
+  window.workbench.on('event:intro-phase', (payload) => {
+    const event = payload as { worktreeId: string; chatId: string; phase: string }
+    intro.setPhase(event.worktreeId, event.chatId, event.phase)
+  })
+
   window.workbench.on('event:fs-change', (payload) => {
     const event = payload as {
       worktreeId: string
@@ -573,10 +807,15 @@ export function subscribeEvents(): void {
       ...store.fsVersion,
       [event.worktreeId]: (store.fsVersion[event.worktreeId] || 0) + 1
     }
+    // Refresh the +/- line counts for the worktree overviews (debounced).
+    scheduleDiffStats(event.worktreeId)
     const isFile = event.type === 'add' || event.type === 'change' || event.type === 'unlink'
     // An inline edit under review keeps the change in the editor overlay, so it
     // claims its own writes instead of the changes view taking over.
     if (isFile && inlineEdit.claimFsChange(event.worktreeId, event.relPath)) return
+    // An onboarding session shows AGENTS.md / example changes in the intro
+    // pane, so the git-changes sidebar must not hijack focus for them.
+    if (isFile && intro.claimFsChange(event.worktreeId, event.relPath)) return
     // Otherwise, if a running agent touched a file, reveal the Git Changes
     // sidebar and highlight the file so the change is one click from review.
     if (isFile && store.activeAgentWorktrees.includes(event.worktreeId)) {

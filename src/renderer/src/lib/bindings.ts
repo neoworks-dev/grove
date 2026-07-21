@@ -9,6 +9,8 @@ import { commands } from './commands.svelte'
 import { layout } from './layout.svelte'
 import { bufferMenu } from './buffermenu.svelte'
 import { inlineEdit } from './inlineEdit.svelte'
+import { symbolsOutline } from './symbolsOutline.svelte'
+import { undoTree } from './undotree.svelte'
 import { dialogs } from './dialogs.svelte'
 import type { ReviewMode } from './inlineEditRef'
 
@@ -131,12 +133,44 @@ export function registerCoreBindings(): void {
       run: () => keymap.toggleCheatsheet()
     },
     {
+      id: 'leader.diagnostics',
+      keys: '<Leader> d',
+      context: 'global',
+      group: 'Code',
+      description: 'Open diagnostics',
+      run: () => layout.ensurePane('diagnostics')
+    },
+    {
+      id: 'leader.symbols',
+      keys: '<Leader> s',
+      context: 'editor',
+      group: 'Code',
+      description: 'Symbol outline',
+      run: () => symbolsOutline.toggle()
+    },
+    {
+      id: 'leader.undotree',
+      keys: '<Leader> u',
+      context: 'editor',
+      group: 'Code',
+      description: 'Undo history',
+      run: () => undoTree.toggle()
+    },
+    {
       id: 'terminal.toggle',
       keys: '<Ctrl-`>',
       context: 'global',
       group: 'Terminal',
       description: 'Toggle terminal',
       run: () => layout.togglePane('terminal')
+    },
+    {
+      id: 'panel.toggle',
+      keys: '<Leader> j',
+      context: 'global',
+      group: 'View',
+      description: 'Toggle bottom panel',
+      run: () => layout.togglePane('panel')
     },
     // Spatial pane navigation — ordinary bindings now, so they show up in
     // which-key listings and stay rebindable.
@@ -188,6 +222,9 @@ export function registerCoreBindings(): void {
       description: 'Shrink pane',
       run: () => layout.resizeFocused(-10)
     },
+    // Per-pane font zoom (Ctrl +/-/0) is handled layout-independently by
+    // event.code in App.onGlobalKey, not here — the key-based binding grammar
+    // can't reliably match +/-/= across keyboard layouts.
     {
       id: 'leader.pane.h',
       keys: '<Leader> w h',
@@ -330,11 +367,46 @@ export function registerCoreBindings(): void {
       run: () => layout.togglePane('terminal')
     },
     {
+      id: 'panel.toggle',
+      title: 'View: Toggle Bottom Panel',
+      group: 'View',
+      keywords: 'panel bottom terminal problems diagnostics output tabs',
+      run: () => layout.togglePane('panel')
+    },
+    {
       id: 'nvim.open',
       title: 'Editor: Open Neovim Pane',
       group: 'Editor',
       keywords: 'neovim nvim vim editor embedded',
       run: () => layout.showCenterPane('nvim')
+    },
+    {
+      id: 'diagnostics.open',
+      title: 'Code: Open Diagnostics',
+      group: 'Code',
+      keywords: 'diagnostics errors warnings lsp lint problems trouble',
+      run: () => layout.ensurePane('diagnostics')
+    },
+    {
+      id: 'symbols.open',
+      title: 'Code: Symbol Outline',
+      group: 'Code',
+      keywords: 'symbols outline aerial functions classes methods navigate',
+      run: () => symbolsOutline.toggle()
+    },
+    {
+      id: 'undotree.open',
+      title: 'Code: Undo History',
+      group: 'Code',
+      keywords: 'undo history undotree redo states time travel',
+      run: () => undoTree.toggle()
+    },
+    {
+      id: 'markdown.preview',
+      title: 'Markdown: Preview',
+      group: 'Editor',
+      keywords: 'markdown preview render md html readme',
+      run: () => layout.showCenterPane('markdown')
     },
     {
       id: 'editor.inlineEdit',

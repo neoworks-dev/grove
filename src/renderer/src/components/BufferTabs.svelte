@@ -10,6 +10,21 @@
     name: string
     pinned?: boolean
     worktreeId: string
+    scratch?: boolean
+  }
+
+  // Ephemeral scratch buffers (batch rename, etc.) get an amber tint so they
+  // read as distinct from real file tabs.
+  function tabClass(tab: Tab): string {
+    const active = store.activeTabPath === tab.path
+    if (tab.scratch) {
+      return active
+        ? 'border-x border-amber/40 bg-amber-soft text-amber'
+        : 'border-y border-line bg-amber-soft/40 text-amber hover:bg-amber-soft'
+    }
+    return active
+      ? 'border-x border-line bg-elevated text-default'
+      : 'border-y border-line text-dim hover:bg-hover hover:text-default'
   }
 
   let {
@@ -45,21 +60,20 @@
       {#each tabs as tab (tab.path)}
         <div
           data-tab={tab.path}
-          class="group/tab flex h-7 shrink-0 cursor-pointer items-center px-3 text-xs {store.activeTabPath ===
-          tab.path
-            ? 'border-x border-line bg-elevated text-default'
-            : 'border-y border-line text-dim hover:bg-hover hover:text-default'}"
+          class="group/tab flex h-7 shrink-0 cursor-pointer items-center px-3 text-xs {tabClass(
+            tab
+          )}"
         >
-          <button
-            class="inline-flex w-0 shrink-0 cursor-pointer items-center overflow-hidden text-dim opacity-0 transition-all duration-150 ease-out hover:text-red group-hover/tab:mr-1 group-hover/tab:w-3.5 group-hover/tab:opacity-100"
-            title="Close tab"
-            onclick={(event) => onClose(tab.path, event)}>✕</button
-          >
           <button class="flex cursor-pointer items-center gap-1" onclick={() => onSelect(tab.path)}>
             {#if tab.pinned}<Icon icon="ph:push-pin-fill" width="11" height="11" class="text-amber" />{/if}
             <span>{tab.name}</span>
             {#if dirtyPaths[tab.path]}<span class="text-amber">●</span>{/if}
           </button>
+          <button
+            class="inline-flex w-0 shrink-0 cursor-pointer items-center overflow-hidden text-dim opacity-0 transition-all duration-150 ease-out hover:text-red group-hover/tab:ml-1 group-hover/tab:w-3.5 group-hover/tab:opacity-100"
+            title="Close tab"
+            onclick={(event) => onClose(tab.path, event)}>✕</button
+          >
         </div>
       {/each}
     </div>

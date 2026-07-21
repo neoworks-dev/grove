@@ -9,11 +9,13 @@ import type {
   AgentDialogDecision,
   AgentDialogRequest,
   AgentLaunchOptions,
+  AgentOption,
   AgentSlashCommand,
   AgentStatus,
   PermissionDecision,
   PermissionRequestEvent,
-  Worktree
+  Worktree,
+  WorktreeChatMessage
 } from '../../shared/types'
 
 export interface AdapterContext {
@@ -29,12 +31,15 @@ export interface AdapterContext {
   setStatus: (status: AgentStatus, exitCode?: number | null) => void
   // Report the live session/thread id so the manager can resume it next turn.
   setSession: (token: string) => void
-  // Ask the user to approve a tool call; resolves once they decide.
+  // Ask the user to approve a tool call; resolves once they decide. The manager
+  // injects chatId (the running instance), so the adapter never supplies it.
   requestPermission: (
-    request: Omit<PermissionRequestEvent, 'id'>
+    request: Omit<PermissionRequestEvent, 'id' | 'chatId'>
   ) => Promise<PermissionDecision>
   // Surface a blocking dialog (e.g. an agent question) and await the answer.
-  requestDialog: (request: Omit<AgentDialogRequest, 'id'>) => Promise<AgentDialogDecision>
+  requestDialog: (
+    request: Omit<AgentDialogRequest, 'id' | 'chatId'>
+  ) => Promise<AgentDialogDecision>
   // Plugin AI contributions (MCP servers proxied into plugin workers, skill
   // text appended to the system prompt). Absent when no plugins register any.
   pluginAi?: {
@@ -44,6 +49,24 @@ export interface AdapterContext {
   // Full slash-command list discovered from the provider (replace semantics —
   // each call supersedes the previous list).
   setCommands?: (commands: AgentSlashCommand[]) => void
+  // Try to lock file paths for this run before a mutating edit, so a second
+  // agent in the same worktree can't clobber them. Returns { ok: false, heldBy }
+  // when another agent holds one; the adapter then denies-with-message.
+  tryAcquireLocks?: (paths: string[]) => { ok: boolean; heldBy?: string }
+  // Release all of this run's file locks (called at each turn boundary).
+  releaseLocks?: () => void
+  // The worktree's shared chat channel (agent↔agent + agent↔user). Absent if
+  // the adapter doesn't wire it. Exposed to the model as the grove-chat MCP
+  // tools; `send`'s `from` is set by the manager (unspoofable).
+  chat?: {
+    send: (text: string, to?: string) => void
+    history: (since?: number) => WorktreeChatMessage[]
+  }
+  // AGENTS.md onboarding run: lets the model report its protocol phase so the
+  // intro pane's stepper can follow along. Exposed as the grove-intro MCP tool.
+  intro?: {
+    setPhase: (phase: string) => void
+  }
 }
 
 export interface RunHandle {
@@ -57,6 +80,8 @@ export interface AgentAdapter {
   name: string
   config: AgentConfig
   start: (context: AdapterContext) => RunHandle
+  // Live model list fetched directly from the provider SDK, if it exposes one.
+  listModels?: (cwd: string) => Promise<AgentOption[]>
 }
 
 // Helpers to build normalized stream lines so every adapter renders uniformly.
@@ -73,14 +98,14 @@ export function textLine(id: string, text: string): string {
   })
 }
 
-export function toolLine(
-  id: string,
-  name: string,
-  input: Record<string, unknown>
-): string {
+export function toolLine(id: string, name: string, input: Record<string, unknown>): string {
   return JSON.stringify({
     type: 'assistant',
-    message: { id: `${id}-msg`, role: 'assistant', content: [{ type: 'tool_use', id, name, input }] }
+    message: {
+      id: `${id}-msg`,
+      role: 'assistant',
+      content: [{ type: 'tool_use', id, name, input }]
+    }
   })
 }
 

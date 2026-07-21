@@ -55,6 +55,70 @@ export interface NvimSessionConfig {
 
 const MOUSE_BUTTONS = ['left', 'middle', 'right']
 
+// Preview a gated (not-yet-applied) file edit as a vimdiff split: the real file
+// buffer on the left (untouched, still matching disk so the agent's Edit can
+// re-apply cleanly on approval), a throwaway scratch buffer holding the proposed
+// content on the right. Any previous gated diff is closed first.
+const GATED_DIFF_OPEN_LUA = `
+local path, modified = ...
+local prev = vim.g.grove_gated_diff_win
+if prev and vim.api.nvim_win_is_valid(prev) then
+  pcall(vim.api.nvim_win_close, prev, true)
+end
+vim.g.grove_gated_diff_win = nil
+vim.cmd('diffoff!')
+
+-- Left window: the real file, untouched.
+vim.cmd('edit ' .. vim.fn.fnameescape(path))
+local ft = vim.bo.filetype
+local left = vim.api.nvim_get_current_win()
+
+-- Scratch buffer holding the proposed content.
+local buf = vim.api.nvim_create_buf(false, true)
+vim.api.nvim_buf_set_lines(buf, 0, -1, false, vim.split(modified, '\\n', { plain = true }))
+vim.bo[buf].buftype = 'nofile'
+vim.bo[buf].bufhidden = 'wipe'
+vim.bo[buf].swapfile = false
+vim.bo[buf].filetype = ft
+pcall(vim.api.nvim_buf_set_name, buf, '[proposed] ' .. vim.fn.fnamemodify(path, ':t'))
+
+-- Right window: show the scratch buffer explicitly (no split/option inheritance).
+vim.cmd('rightbelow vsplit')
+local right = vim.api.nvim_get_current_win()
+vim.api.nvim_win_set_buf(right, buf)
+
+-- Diff both windows explicitly, with synced scroll/cursor and folds open so the
+-- changed regions stay visible.
+for _, w in ipairs({ left, right }) do
+  vim.api.nvim_win_call(w, function()
+    vim.cmd('diffthis')
+    vim.wo.scrollbind = true
+    vim.wo.cursorbind = true
+    vim.wo.foldenable = false
+  end)
+end
+vim.cmd('diffupdate')
+
+-- Jump both windows to the first change.
+vim.api.nvim_win_call(right, function()
+  vim.cmd('normal! gg')
+  vim.cmd('silent! normal! ]c')
+  vim.cmd('normal! zz')
+  vim.cmd('syncbind')
+end)
+vim.api.nvim_set_current_win(right)
+vim.g.grove_gated_diff_win = right
+`
+
+const GATED_DIFF_CLOSE_LUA = `
+local win = vim.g.grove_gated_diff_win
+if win and vim.api.nvim_win_is_valid(win) then
+  pcall(vim.api.nvim_win_close, win, true)
+end
+vim.g.grove_gated_diff_win = nil
+vim.cmd('diffoff!')
+`
+
 // Tint the given 1-based line ranges as additions in the live buffer, replacing
 // any previous inline-review highlight. Used by the accept/reject overlay.
 const INLINE_PAINT_LUA = `
@@ -102,6 +166,12 @@ if startLine == 0 or endLine == 0 then
 end
 if startLine > endLine then startLine, endLine = endLine, startLine end
 return { path = vim.api.nvim_buf_get_name(0), startLine = startLine, endLine = endLine }
+`
+// Buffer path plus the 1-based cursor line of the active window. Used to pin the
+// file the user is currently editing (Harpoon-style marks).
+const ACTIVE_FILE_LUA = `
+local cur = vim.api.nvim_win_get_cursor(0)
+return { path = vim.api.nvim_buf_get_name(0), line = cur[1] }
 `
 // A pane that dies more than this many times inside the window is fatal — most
 // likely a config/runtime fault a respawn won't fix.
@@ -162,6 +232,29 @@ export class NvimCanvasSession {
     return this.config.leafId
   }
 
+  // Re-measure the cell for a new font size and repaint. Called when the pane's
+  // font zoom changes; before start() it only records the size so start() picks
+  // it up. Cell metrics change even at the same px, so this always forces a
+  // grid re-fit (the resize guard would otherwise skip an unchanged host box).
+  setFontSize(sizePx: number): void {
+    if (this.config.font.sizePx === sizePx) return
+    this.config.font = { ...this.config.font, sizePx }
+    if (!this.renderer || this.destroyed) return
+    this.metrics = measureCell(this.config.font)
+    this.renderer.setFont(this.config.font, this.metrics)
+    const { host } = this.elements
+    const width = host.clientWidth
+    const height = host.clientHeight
+    if (!this.nvimId || width < 2 || height < 2) return
+    this.lastWidth = width
+    this.lastHeight = height
+    const { cols, rows } = this.gridSize()
+    this.renderer.resize(cols, rows, window.devicePixelRatio, width, height)
+    this.pendingDirtyAll = true
+    this.scheduleRender()
+    void window.workbench.nvim.resize(this.nvimId, cols, rows)
+  }
+
   get cellHeight(): number {
     return this.metrics?.cellHeight ?? 0
   }
@@ -198,6 +291,31 @@ export class NvimCanvasSession {
     if (!id) return
     try {
       await window.workbench.nvim.request(id, 'nvim_exec_lua', [INLINE_CLEAR_LUA, []])
+    } catch {
+      // session gone
+    }
+  }
+
+  // Show a gated file edit as a vimdiff split (real file vs. proposed content).
+  async openGatedDiff(path: string, modified: string): Promise<void> {
+    const id = this.nvimId
+    if (!id) return
+    try {
+      await window.workbench.nvim.request(id, 'nvim_exec_lua', [
+        GATED_DIFF_OPEN_LUA,
+        [path, modified]
+      ])
+    } catch {
+      // session gone
+    }
+  }
+
+  // Tear down the gated diff split and leave the real file buffer intact.
+  async closeGatedDiff(): Promise<void> {
+    const id = this.nvimId
+    if (!id) return
+    try {
+      await window.workbench.nvim.request(id, 'nvim_exec_lua', [GATED_DIFF_CLOSE_LUA, []])
     } catch {
       // session gone
     }
@@ -284,6 +402,22 @@ export class NvimCanvasSession {
     }
   }
 
+  // The active buffer's file path and 1-based cursor line. Returns null when no
+  // session is live or the buffer is unnamed (scratch/no file on disk).
+  async getActiveFile(): Promise<{ path: string; line: number } | null> {
+    const id = this.nvimId
+    if (!id) return null
+    try {
+      const result = await window.workbench.nvim.request(id, 'nvim_exec_lua', [ACTIVE_FILE_LUA, []])
+      if (!result || typeof result !== 'object') return null
+      const active = result as { path?: string; line?: number }
+      if (!active.path || !active.line) return null
+      return { path: active.path, line: active.line }
+    } catch {
+      return null
+    }
+  }
+
   // ── Lifecycle ──────────────────────────────────────────────────
 
   // One-time setup (renderer, metrics, DOM listeners, resize observer) followed
@@ -300,7 +434,7 @@ export class NvimCanvasSession {
     this.renderer.setFont(this.config.font, this.metrics)
 
     const { cols, rows } = this.gridSize()
-    this.renderer.resize(cols, rows, window.devicePixelRatio)
+    this.renderer.resize(cols, rows, window.devicePixelRatio, host.clientWidth, host.clientHeight)
     this.lastWidth = host.clientWidth
     this.lastHeight = host.clientHeight
 
@@ -319,12 +453,15 @@ export class NvimCanvasSession {
   }
 
   // Spawn nvim, wire the redraw/exit stream, attach the UI, and run onAttached.
-  // Reused verbatim for the initial start and every restart.
-  private async connect(): Promise<void> {
+  // Reused verbatim for the initial start and every restart. `worktreeId`
+  // overrides the spawn cwd (used by rebind on a worktree switch); it defaults
+  // to the currently selected worktree.
+  private async connect(worktreeId?: string): Promise<void> {
     if (this.destroyed || !this.renderer) return
+    const target = worktreeId === undefined ? store.selectedWorktreeId : worktreeId
     let spawnedId: string
     try {
-      spawnedId = await window.workbench.nvim.spawn(store.selectedWorktreeId)
+      spawnedId = await window.workbench.nvim.spawn(target)
     } catch {
       this.callbacks.onUnavailable?.()
       return
@@ -355,10 +492,29 @@ export class NvimCanvasSession {
     const { cols, rows } = this.gridSize()
     // A fresh session repaints the whole grid on attach.
     this.pendingDirtyAll = true
-    await window.workbench.nvim.attach(this.nvimId, cols, rows, this.resolveInitialFile() ?? undefined)
+    await window.workbench.nvim.attach(
+      this.nvimId,
+      cols,
+      rows,
+      this.resolveInitialFile() ?? undefined
+    )
     void this.pushTheme()
     await this.callbacks.onAttached?.(this.nvimId)
     this.elements.input.focus()
+  }
+
+  // Re-point this session at a different worktree (the user switched worktrees).
+  // Kills the current nvim without tripping the crash-restart path, then
+  // reconnects against the new worktree so buffers/cwd/LSP match it. The fresh
+  // session opens that worktree's active tab via initialFile.
+  async rebind(worktreeId: string): Promise<void> {
+    if (this.destroyed || !this.renderer) return
+    const old = this.nvimId
+    // Null the id first so the killed nvim's exit event is ignored (the exit
+    // handler bails when the event id no longer matches this.nvimId).
+    this.nvimId = null
+    if (old) void window.workbench.nvim.kill(old)
+    await this.connect(worktreeId)
   }
 
   private resolveInitialFile(): string | null {
@@ -426,6 +582,9 @@ export class NvimCanvasSession {
   private gridSize(): { cols: number; rows: number } {
     const { host } = this.elements
     if (!this.metrics) return { cols: 80, rows: 24 }
+    // Floor so the grid fits inside the pane; the renderer then spreads the
+    // sub-cell remainder across the cells (distributed edges) to reach every
+    // edge, so there's no gap and no row is clipped.
     return {
       cols: Math.max(2, Math.floor(host.clientWidth / this.metrics.cellWidth)),
       rows: Math.max(2, Math.floor(host.clientHeight / this.metrics.cellHeight))
@@ -487,7 +646,7 @@ export class NvimCanvasSession {
       // Changing canvas dimensions clears it; repaint the current grid at once
       // so the pane never shows a half-blank buffer while waiting for nvim's
       // grid_resize redraw.
-      this.renderer.resize(cols, rows, window.devicePixelRatio)
+      this.renderer.resize(cols, rows, window.devicePixelRatio, width, height)
       this.pendingDirtyAll = true
       this.scheduleRender()
       void window.workbench.nvim.resize(this.nvimId, cols, rows)
@@ -630,11 +789,25 @@ export class NvimCanvasSession {
     const modifier = this.mouseModifier(event)
     if (event.deltaY !== 0) {
       const action = event.deltaY > 0 ? 'down' : 'up'
-      void window.workbench.nvim.inputMouse(this.nvimId, 'wheel', action, modifier, cell.row, cell.col)
+      void window.workbench.nvim.inputMouse(
+        this.nvimId,
+        'wheel',
+        action,
+        modifier,
+        cell.row,
+        cell.col
+      )
     }
     if (event.deltaX !== 0) {
       const action = event.deltaX > 0 ? 'right' : 'left'
-      void window.workbench.nvim.inputMouse(this.nvimId, 'wheel', action, modifier, cell.row, cell.col)
+      void window.workbench.nvim.inputMouse(
+        this.nvimId,
+        'wheel',
+        action,
+        modifier,
+        cell.row,
+        cell.col
+      )
     }
   }
 }

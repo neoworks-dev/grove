@@ -9,6 +9,7 @@ import type {
   InstalledExtension,
   AgentChats,
   AgentSlashCommand,
+  CheckpointMeta,
   DockLayoutState
 } from '../shared/types'
 
@@ -16,15 +17,23 @@ export type { InstalledExtension }
 
 export interface RepoState {
   portSlots: Record<string, number> // worktreeId -> slot
-  openTabs: string[] // absolute file paths
-  activeTabPath: string | null
+  openTabs: string[] // legacy flat open tabs (pre per-worktree); migration input
+  activeTabPath: string | null // legacy flat active tab; migration input
+  // Open tabs + active tab scoped per worktree (worktreeId -> ...).
+  openTabsByWorktree: Record<string, string[]>
+  activeTabByWorktree: Record<string, string | null>
   selectedWorktreeId: string | null
   setupOnceDone: boolean
+  // AGENTS.md onboarding intro page was dismissed or completed for this repo.
+  introDismissed: boolean
   agentSessions: Record<string, string> // legacy: "worktreeId::agent" -> token
   agentChats: Record<string, AgentChats> // "worktreeId::agent" -> named chats
   // Last-known provider-discovered slash commands, so the menu is populated
   // before the first run of a session.
   agentCommands: Record<string, AgentSlashCommand[]>
+  // Local-only working-tree checkpoints, keyed by worktreeId (== worktree path).
+  // The git objects live under refs/workbench/** in the repo; this is metadata.
+  checkpoints: Record<string, CheckpointMeta[]>
   // Hashes of project-scope shell/ai keybind actions the user has approved
   // (project settings are repo-supplied — running them needs consent).
   trustedActionHashes: string[]
@@ -34,6 +43,8 @@ export interface RepoState {
   // Legacy pre-tree layout fields, kept as migration input. paneSizes still
   // carries sizes for panels nested inside panes (tree, diffList).
   paneSizes: Record<string, number> // pane key -> px
+  // Per-pane font zoom multiplier, keyed by split-tree leaf id or dock id.
+  paneFontScale: Record<string, number>
   panelsOpen: Record<string, boolean> // panel key -> open
   centerView: string | null
   activeView: string | null // active sidebar view (activity bar)
@@ -86,15 +97,20 @@ export function emptyRepoState(): RepoState {
     portSlots: {},
     openTabs: [],
     activeTabPath: null,
+    openTabsByWorktree: {},
+    activeTabByWorktree: {},
     selectedWorktreeId: null,
     setupOnceDone: false,
+    introDismissed: false,
     agentSessions: {},
     agentChats: {},
     agentCommands: {},
+    checkpoints: {},
     trustedActionHashes: [],
     viewLayouts: {},
     activeLayoutView: null,
     paneSizes: {},
+    paneFontScale: {},
     panelsOpen: {},
     centerView: null,
     activeView: null,

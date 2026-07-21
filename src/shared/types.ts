@@ -51,6 +51,84 @@ export interface DiffHunks {
   hunks: DiffHunk[]
 }
 
+// ── Diff stats (added/removed line counts) ──────────────────────
+
+// Per-file added/removed line counts. `added`/`removed` are -1 for binary
+// files (git reports `-` in numstat).
+export interface DiffFileStat {
+  path: string
+  added: number
+  removed: number
+}
+
+// Aggregate diff stats for a worktree vs HEAD (staged + unstaged + untracked).
+export interface DiffStats {
+  added: number
+  removed: number
+  files: DiffFileStat[]
+}
+
+// ── Worktree-into-worktree merge ────────────────────────────────
+
+// no-ff always creates a merge commit; ff-only refuses anything but a
+// fast-forward; ff allows a fast-forward, falling back to a merge commit.
+export type MergeMode = 'no-ff' | 'ff-only' | 'ff'
+
+export interface MergeCommitSummary {
+  sha: string
+  subject: string
+}
+
+// What a merge of sourceBranch into the target worktree would do, shown before
+// the user confirms.
+export interface MergePreview {
+  commits: MergeCommitSummary[]
+  stat: string
+  canFastForward: boolean
+  alreadyMerged: boolean
+  // Uncommitted work in the source worktree that the merge would NOT include.
+  sourceDirty: boolean
+}
+
+export type MergeResult =
+  | { status: 'up-to-date' }
+  | { status: 'merged'; summary: string; fastForward: boolean }
+  | { status: 'conflict'; files: string[]; summary: string }
+
+// ── Cross-agent + agent↔user chat ───────────────────────────────
+
+// One message on a worktree's shared channel. `from.kind` distinguishes the
+// user from an agent; `to` optionally targets one agent by name.
+export interface WorktreeChatMessage {
+  id: string
+  worktreeId: string
+  // instanceId distinguishes two runs of the same adapter (e.g. two "claude").
+  from: { kind: 'user' | 'agent'; name: string; instanceId?: string }
+  text: string
+  ts: number
+  to?: string
+}
+
+// ── Local-only checkpoints ──────────────────────────────────────
+
+// What caused a checkpoint to be taken.
+export type CheckpointTrigger =
+  'agent-turn-end' | 'user-message' | 'pre-restore' | 'pre-merge' | 'manual'
+
+// One working-tree snapshot. The tree/commit live in the repo object DB under a
+// private ref (refs/workbench/checkpoints/**, never pushed); this metadata is
+// persisted in RepoState. `n` is a monotonic per-worktree counter.
+export interface CheckpointMeta {
+  n: number
+  commit: string
+  tree: string
+  ts: number
+  trigger: CheckpointTrigger
+  agent?: string
+  chatId?: string
+  note?: string
+}
+
 // ── Inline agent edit (per-hunk accept/reject) ──────────────────
 
 // One hunk of an inline edit, with its line bodies. `beforeStart`/`afterStart`
@@ -154,6 +232,10 @@ export interface AgentLaunchOptions {
   mode?: string
   model?: string
   effort?: string
+  // Extra text appended to the adapter's system prompt (claude only today).
+  appendSystemPrompt?: string
+  // Marks an AGENTS.md onboarding run; claude mounts the grove-intro tools.
+  intro?: boolean
 }
 
 // ── Mid-run message queue ────────────────────────────────────────
@@ -173,6 +255,7 @@ export type AgentSendResult =
 export interface AgentQueueEvent {
   worktreeId: string
   name: string
+  chatId: string
   queue: QueuedMessage[]
   // Present when an explicit user stop flushed pending items, so the
   // renderer can restore their text into the composer.
@@ -214,6 +297,7 @@ export interface PermissionRequestEvent {
   id: string // resolve target
   worktreeId: string
   agent: string
+  chatId: string
   toolName: string
   title: string
   path: string | null
@@ -221,8 +305,7 @@ export interface PermissionRequestEvent {
 }
 
 export type PermissionDecision =
-  | { behavior: 'allow'; remember: boolean }
-  | { behavior: 'deny'; message: string }
+  { behavior: 'allow'; remember: boolean } | { behavior: 'deny'; message: string }
 
 // ── Interactive dialogs (agent → user → agent) ──────────────────
 // The claude SDK surfaces questions (and other blocking dialogs) via its
@@ -234,13 +317,13 @@ export interface AgentDialogRequest {
   id: string
   worktreeId: string
   agent: string
+  chatId: string
   dialogKind: string
   payload: Record<string, unknown>
 }
 
 export type AgentDialogDecision =
-  | { behavior: 'completed'; result: unknown }
-  | { behavior: 'cancelled' }
+  { behavior: 'completed'; result: unknown } | { behavior: 'cancelled' }
 
 // ── Runtime state ───────────────────────────────────────────────
 
@@ -262,6 +345,11 @@ export type AgentStatus = 'stopped' | 'running' | 'exited' | 'error'
 export interface AgentRuntime {
   worktreeId: string
   name: string
+  // Concurrency unit: multiple instances of the same adapter can run at once in
+  // one worktree, each identified by its chatId (its conversation).
+  chatId: string
+  // Human label for the instance (the chat name, e.g. "Claude #2").
+  label: string
   status: AgentStatus
   pid: number | null
   command: string
@@ -363,4 +451,6 @@ export interface RepoInfo {
   path: string
   name: string
   currentBranch: string
+  // No AGENTS.md/CLAUDE.md at the repo root -> offer the intro onboarding page.
+  hasAgentsFile: boolean
 }

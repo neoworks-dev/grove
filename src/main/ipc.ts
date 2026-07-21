@@ -3,6 +3,8 @@
 // single source of truth for the API exposed via preload.
 
 import { ipcMain, dialog, shell, BrowserWindow, type IpcMainInvokeEvent } from 'electron'
+import { access } from 'fs/promises'
+import { join } from 'path'
 import type {
   WorkbenchConfig,
   Worktree,
@@ -12,6 +14,7 @@ import type {
   InlineHunk
 } from '../shared/types'
 import * as git from './git'
+import { CheckpointManager } from './checkpoints'
 import * as inlineDiff from './inlineDiff'
 import * as github from './github'
 import * as config from './config'
@@ -36,7 +39,10 @@ import { ActionRunner } from './actions'
 import { TerminalManager } from './terminals'
 import { NeovimManager } from './nvim'
 import { buildWorktreeEnv, spawnEnv } from './env'
-import { PermissionBroker, type PermissionDecision as PluginPermissionDecision } from './plugins/broker'
+import {
+  PermissionBroker,
+  type PermissionDecision as PluginPermissionDecision
+} from './plugins/broker'
 import { PluginRegistry } from './plugins/loader'
 import { PluginRouter } from './plugins/router'
 import { AiBridge } from './plugins/aiBridge'
@@ -71,7 +77,8 @@ const agents = new AgentManager({
     systemAppend: () => aiBridge.systemAppend()
   },
   onStatus: (runtime) => send('event:agent-status', runtime),
-  onLog: (worktreeId, name, line) => send('event:log', { worktreeId, source: 'agent', name, line }),
+  onLog: (worktreeId, name, chatId, line) =>
+    send('event:log', { worktreeId, source: 'agent', name, chatId, line }),
   onPermission: (request) => send('event:agent-permission', request),
   onDialog: (request) => send('event:agent-dialog', request),
   // Any session/chat change re-persists the whole named-chat map and notifies
@@ -88,6 +95,19 @@ const agents = new AgentManager({
     if (context.repoPath) {
       void updateRepoState(context.repoPath, { agentCommands: agents.allCommands() })
     }
+  },
+  onChat: (message) => send('event:worktree-chat', message),
+  onIntroPhase: (worktreeId, chatId, phase) =>
+    send('event:intro-phase', { worktreeId, chatId, phase }),
+  onCheckpoint: (worktreePath, trigger, ctx) => {
+    void checkpoints.snapshot(worktreePath, trigger, ctx).catch(() => {})
+  }
+})
+
+const checkpoints = new CheckpointManager({
+  onChange: (all) => {
+    send('event:checkpoints', all)
+    if (context.repoPath) void updateRepoState(context.repoPath, { checkpoints: all })
   }
 })
 
@@ -110,7 +130,8 @@ const actionRunner = new ActionRunner({
 
 const terminals = new TerminalManager({
   onData: (id, data) => send('event:terminal-data', { id, data }),
-  onExit: (id, exitCode) => send('event:terminal-exit', { id, exitCode })
+  onExit: (id, exitCode) => send('event:terminal-exit', { id, exitCode }),
+  onTitle: (id, title) => send('event:terminal-title', { id, title })
 })
 
 const nvims = new NeovimManager({
@@ -177,9 +198,24 @@ async function refreshWorktrees(): Promise<Worktree[]> {
   return context.worktrees
 }
 
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
+// Any agent-instruction file at the repo root suppresses the intro page.
+async function hasAgentsFile(root: string): Promise<boolean> {
+  if (await pathExists(join(root, 'AGENTS.md'))) return true
+  return pathExists(join(root, 'CLAUDE.md'))
+}
+
 // Open a repo: validate, load config, remember it, list worktrees.
 async function openRepo(repoPath: string): Promise<{
-  info: { path: string; name: string; currentBranch: string }
+  info: { path: string; name: string; currentBranch: string; hasAgentsFile: boolean }
   worktrees: Worktree[]
 }> {
   if (!(await git.isGitRepo(repoPath))) {
@@ -198,12 +234,14 @@ async function openRepo(repoPath: string): Promise<{
   agents.loadSessions(repoState.agentSessions || {})
   // Last-known slash commands populate the menu before the first run.
   agents.loadCommands(repoState.agentCommands || {})
+  checkpoints.hydrate(repoState.checkpoints || {})
   const list = await refreshWorktrees()
   return {
     info: {
       path: root,
       name: root.split('/').pop() || root,
-      currentBranch: await git.currentBranch(root)
+      currentBranch: await git.currentBranch(root),
+      hasAgentsFile: await hasAgentsFile(root)
     },
     worktrees: list
   }
@@ -268,6 +306,27 @@ export function registerIpc(): void {
     return git.diffHunks(worktree.path, file)
   })
 
+  ipcMain.handle('git:diffStats', (_e, worktreeId: string) => {
+    const worktree = findWorktree(worktreeId)
+    return git.diffStats(worktree.path)
+  })
+
+  // ── Local-only checkpoints ──────────────────────────────────────
+  ipcMain.handle('checkpoints:list', (_e, worktreeId: string) => {
+    const worktree = findWorktree(worktreeId)
+    return checkpoints.list(worktree.path)
+  })
+
+  ipcMain.handle('checkpoints:snapshot', (_e, worktreeId: string, note?: string) => {
+    const worktree = findWorktree(worktreeId)
+    return checkpoints.snapshot(worktree.path, 'manual', { note })
+  })
+
+  ipcMain.handle('checkpoints:restore', (_e, worktreeId: string, commit: string) => {
+    const worktree = findWorktree(worktreeId)
+    return checkpoints.restore(worktree.path, commit)
+  })
+
   // ── Inline agent edit (per-hunk accept/reject) ──────────────────
   ipcMain.handle(
     'git:beginInlineReview',
@@ -300,13 +359,10 @@ export function registerIpc(): void {
 
   // Unified diff between two in-memory file versions, for previewing a pending
   // Write/Edit inline in the permission card.
-  ipcMain.handle(
-    'git:diffText',
-    (_e, worktreeId: string, before: string, after: string) => {
-      const worktree = findWorktree(worktreeId)
-      return inlineDiff.diffStrings(worktree.path, before, after)
-    }
-  )
+  ipcMain.handle('git:diffText', (_e, worktreeId: string, before: string, after: string) => {
+    const worktree = findWorktree(worktreeId)
+    return inlineDiff.diffStrings(worktree.path, before, after)
+  })
 
   // ── Git ship-it chain (stage → commit → push → merge → archive) ──
   ipcMain.handle('git:stage', (_e, worktreeId: string, paths: string[]) => {
@@ -335,6 +391,60 @@ export function registerIpc(): void {
     const { repoPath } = requireRepo()
     const worktree = findWorktree(worktreeId)
     return git.mergeToBase(repoPath, worktree.branch, baseBranch)
+  })
+
+  // ── Worktree-into-worktree merge ────────────────────────────────
+  ipcMain.handle(
+    'git:mergePreview',
+    async (_e, targetWorktreeId: string, sourceWorktreeId: string) => {
+      const target = findWorktree(targetWorktreeId)
+      const source = findWorktree(sourceWorktreeId)
+      const preview = await git.mergePreview(target.path, source.branch)
+      return { ...preview, sourceDirty: await git.isDirty(source.path) }
+    }
+  )
+
+  ipcMain.handle(
+    'git:mergeWorktree',
+    async (
+      _e,
+      targetWorktreeId: string,
+      sourceWorktreeId: string,
+      opts: { mode: import('../shared/types').MergeMode; message?: string }
+    ) => {
+      const target = findWorktree(targetWorktreeId)
+      const source = findWorktree(sourceWorktreeId)
+      if (target.isDetached) {
+        throw new Error(
+          `target worktree "${target.name}" is on a detached HEAD; cannot merge into it`
+        )
+      }
+      if (await git.isDirty(target.path)) {
+        throw new Error(
+          `target worktree "${target.name}" has uncommitted changes; commit or revert them before merging`
+        )
+      }
+      // Snapshot the target before the merge so a bad result is one restore away.
+      await checkpoints.snapshot(target.path, 'pre-merge', {
+        note: `merge ${source.branch} → ${target.branch}`
+      })
+      return git.mergeWorktree(target.path, source.branch, opts)
+    }
+  )
+
+  ipcMain.handle('git:mergeAbort', (_e, targetWorktreeId: string) => {
+    const target = findWorktree(targetWorktreeId)
+    return git.abortMerge(target.path)
+  })
+
+  ipcMain.handle('git:mergeContinue', (_e, targetWorktreeId: string) => {
+    const target = findWorktree(targetWorktreeId)
+    return git.continueMerge(target.path)
+  })
+
+  ipcMain.handle('git:mergeConflicts', (_e, targetWorktreeId: string) => {
+    const target = findWorktree(targetWorktreeId)
+    return git.conflictedFiles(target.path)
   })
 
   ipcMain.handle('github:openPr', (_e, worktreeId: string, options: OpenPrOptions) => {
@@ -428,57 +538,81 @@ export function registerIpc(): void {
   })
 
   // ── Agents ────────────────────────────────────────────────────
-  ipcMain.handle('agents:list', (_e, worktreeId: string) => {
-    const all = effectiveAgents()
-    return Object.entries(all).map(([name, agent]) => {
-      const live = agents.getRuntime(worktreeId, name)
-      if (live) return live
-      return {
-        worktreeId,
-        name,
-        status: 'stopped' as const,
-        pid: null,
-        command: agent.command,
-        exitCode: null,
-        logPath: ''
+  // Every spawned instance in a worktree (running + idle chats), each keyed by
+  // its chatId. The adapter picker uses agents:configs, not this list.
+  ipcMain.handle('agents:list', (_e, worktreeId: string) => agents.listInstances(worktreeId))
+
+  // Spawn a fresh idle instance (chat) of an adapter without touching siblings.
+  ipcMain.handle(
+    'agents:createInstance',
+    (_e, worktreeId: string, name: string, label?: string) => {
+      const chat = agents.createInstance(worktreeId, name, label)
+      persistChats(worktreeId, name)
+      return chat
+    }
+  )
+
+  // Move a tab to a different adapter (fresh session, kept title).
+  ipcMain.handle(
+    'agents:convertInstance',
+    (_e, worktreeId: string, fromName: string, toName: string, chatId: string) => {
+      const moved = agents.convertInstance(worktreeId, fromName, toName, chatId)
+      if (moved) {
+        persistChats(worktreeId, fromName)
+        persistChats(worktreeId, toName)
       }
-    })
-  })
+      return moved
+    }
+  )
+
+  // Delete an instance (chat) and its transcript.
+  ipcMain.handle(
+    'agents:deleteChat',
+    async (_e, worktreeId: string, name: string, chatId: string) => {
+      await agents.deleteChat(worktreeId, name, chatId)
+      persistChats(worktreeId, name)
+    }
+  )
 
   ipcMain.handle(
     'agents:start',
-    (_e, worktreeId: string, name: string, options: AgentLaunchOptions) => {
+    (_e, worktreeId: string, name: string, options: AgentLaunchOptions, chatId?: string) => {
       const { config: cfg } = requireRepo()
       const worktree = findWorktree(worktreeId)
       const agent = effectiveAgents()[name]
       if (!agent) throw new Error(`unknown agent: ${name}`)
       const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
-      return agents.start(worktree, name, agent, ports, options || {})
+      return agents.start(worktree, name, agent, ports, options || {}, true, chatId)
     }
   )
 
   // User-initiated stop: also flushes queued messages back to the composer.
-  ipcMain.handle('agents:stop', (_e, worktreeId: string, name: string) =>
-    agents.stop(worktreeId, name, { clearQueue: true })
+  ipcMain.handle('agents:stop', (_e, worktreeId: string, name: string, chatId: string) =>
+    agents.stop(worktreeId, name, chatId, { clearQueue: true })
   )
 
   // Message typed while a run is active: inject live, queue, or start a
   // resumed run when idle.
-  ipcMain.handle('agents:send', (_e, worktreeId: string, name: string, text: string) => {
-    const { config: cfg } = requireRepo()
-    const worktree = findWorktree(worktreeId)
-    const agent = effectiveAgents()[name]
-    if (!agent) throw new Error(`unknown agent: ${name}`)
-    const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
-    return agents.send(worktree, name, agent, ports, text)
-  })
-
-  ipcMain.handle('agents:queue', (_e, worktreeId: string, name: string) =>
-    agents.getQueue(worktreeId, name)
+  ipcMain.handle(
+    'agents:send',
+    (_e, worktreeId: string, name: string, text: string, chatId?: string) => {
+      const { config: cfg } = requireRepo()
+      const worktree = findWorktree(worktreeId)
+      const agent = effectiveAgents()[name]
+      if (!agent) throw new Error(`unknown agent: ${name}`)
+      const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
+      return agents.send(worktree, name, agent, ports, text, chatId)
+    }
   )
 
-  ipcMain.handle('agents:cancelQueued', (_e, worktreeId: string, name: string, id: string) =>
-    agents.cancelQueued(worktreeId, name, id)
+  ipcMain.handle('agents:queue', (_e, worktreeId: string, name: string, chatId: string) =>
+    agents.getQueue(worktreeId, name, chatId)
+  )
+
+  ipcMain.handle(
+    'agents:cancelQueued',
+    (_e, worktreeId: string, name: string, chatId: string, id: string) =>
+      agents.cancelQueued(worktreeId, name, chatId, id)
   )
 
   // Provider-discovered slash commands (claude); [] for other adapters.
@@ -486,31 +620,37 @@ export function registerIpc(): void {
     agents.getCommands(worktreeId, name)
   )
 
-  // Compact the active chat (summarize + continue with less context).
+  // Model list for one adapter, fetched from its SDK (claude/opencode); [] when
+  // the adapter has no model-list API (codex).
+  ipcMain.handle('agents:models', (_e, name: string) =>
+    agents.listModels(name, context.repoPath || process.cwd())
+  )
+
+  // Compact an instance (summarize + continue with less context).
   ipcMain.handle(
     'agents:compact',
-    (_e, worktreeId: string, name: string, instructions?: string) => {
+    (_e, worktreeId: string, name: string, instructions?: string, chatId?: string) => {
       const { config: cfg } = requireRepo()
       const worktree = findWorktree(worktreeId)
       const agent = effectiveAgents()[name]
       if (!agent) throw new Error(`unknown agent: ${name}`)
       const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
-      return agents.compact(worktree, name, agent, ports, instructions)
+      return agents.compact(worktree, name, agent, ports, instructions, chatId)
     }
   )
 
   // New chat: start a fresh active chat (prior chats stay resumable).
-  ipcMain.handle('agents:reset', async (_e, worktreeId: string, name: string) => {
+  ipcMain.handle('agents:reset', async (_e, worktreeId: string, name: string, chatId?: string) => {
     const worktree = findWorktree(worktreeId)
-    const chat = await agents.resetSession(worktree, name)
+    const chat = await agents.resetSession(worktree, name, chatId)
     return chat
   })
 
-  // Replay the active chat's transcript (restore after restart).
-  ipcMain.handle('agents:transcript', (_e, worktreeId: string, name: string) => {
+  // Replay an instance's transcript (restore after restart / switch instance).
+  ipcMain.handle('agents:transcript', (_e, worktreeId: string, name: string, chatId?: string) => {
     const worktree = findWorktree(worktreeId)
-    const active = agents.listChats(worktreeId, name).activeId
-    return agents.readTranscript(worktree.path, name, active)
+    const target = chatId || agents.listChats(worktreeId, name).activeId
+    return agents.readTranscript(worktree.path, name, target)
   })
 
   // List the named chats for a worktree+agent.
@@ -527,12 +667,11 @@ export function registerIpc(): void {
     }
   )
 
-  // Switch to a previous chat: stop the current run, activate the target, and
-  // return its transcript so the renderer can swap the conversation.
+  // Switch the active/default instance and return its transcript. Instances run
+  // concurrently, so switching no longer stops any run.
   ipcMain.handle(
     'agents:activateChat',
     async (_e, worktreeId: string, name: string, chatId: string) => {
-      await agents.stop(worktreeId, name)
       agents.activateChat(worktreeId, name, chatId)
       persistChats(worktreeId, name)
       const worktree = findWorktree(worktreeId)
@@ -555,6 +694,17 @@ export function registerIpc(): void {
   // Effective agent configs (adapter defaults + config) with modes/efforts,
   // for building the launch UI.
   ipcMain.handle('agents:configs', () => effectiveAgents())
+
+  // ── Shared worktree chat (agent↔agent + agent↔user) ─────────────
+  ipcMain.handle('chat:send', (_e, worktreeId: string, text: string) => {
+    findWorktree(worktreeId)
+    return agents.sendChat(worktreeId, text)
+  })
+
+  ipcMain.handle('chat:history', (_e, worktreeId: string, since?: number) => {
+    findWorktree(worktreeId)
+    return agents.chatHistory(worktreeId, since)
+  })
 
   // ── Files ─────────────────────────────────────────────────────
   ipcMain.handle('files:listDir', (_e, worktreeId: string, relPath: string) => {
@@ -717,20 +867,17 @@ export function registerIpc(): void {
   // ── Terminal ──────────────────────────────────────────────────
   // Spawn a shell in the worktree's directory with its WT_*/PORT_n vars, so a
   // terminal matches what services and keybind actions see.
-  ipcMain.handle(
-    'terminal:create',
-    (_e, worktreeId: string | null, cols: number, rows: number) => {
-      let cwd = context.repoPath ?? process.cwd()
-      let vars: Record<string, string> = {}
-      if (worktreeId) {
-        const worktree = findWorktree(worktreeId)
-        const cfg = requireRepo().config
-        vars = buildWorktreeEnv(worktree, worktrees.portsForWorktree(cfg, worktree.portSlot))
-        cwd = worktree.path
-      }
-      return terminals.create({ cwd, env: spawnEnv(vars), cols, rows })
+  ipcMain.handle('terminal:create', (_e, worktreeId: string | null, cols: number, rows: number) => {
+    let cwd = context.repoPath ?? process.cwd()
+    let vars: Record<string, string> = {}
+    if (worktreeId) {
+      const worktree = findWorktree(worktreeId)
+      const cfg = requireRepo().config
+      vars = buildWorktreeEnv(worktree, worktrees.portsForWorktree(cfg, worktree.portSlot))
+      cwd = worktree.path
     }
-  )
+    return terminals.create({ cwd, env: spawnEnv(vars), cols, rows })
+  })
   ipcMain.handle('terminal:write', (_e, id: string, data: string) => terminals.write(id, data))
   ipcMain.handle('terminal:resize', (_e, id: string, cols: number, rows: number) =>
     terminals.resize(id, cols, rows)
@@ -819,9 +966,8 @@ export function registerIpc(): void {
   ipcMain.handle('plugins:cancel', (_e: IpcMainInvokeEvent, pluginId: string, callId: string) =>
     pluginRouter.cancel(pluginId, callId)
   )
-  ipcMain.handle(
-    'plugins:cancelAll',
-    (_e: IpcMainInvokeEvent, pluginId: string) => pluginRouter.cancelAllForPlugin(pluginId)
+  ipcMain.handle('plugins:cancelAll', (_e: IpcMainInvokeEvent, pluginId: string) =>
+    pluginRouter.cancelAllForPlugin(pluginId)
   )
   ipcMain.handle(
     'plugins:respondPermission',

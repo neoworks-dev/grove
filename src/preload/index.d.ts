@@ -13,6 +13,12 @@ import type {
   DiffFile,
   DiffSides,
   DiffHunks,
+  DiffStats,
+  CheckpointMeta,
+  MergeMode,
+  MergePreview,
+  MergeResult,
+  WorktreeChatMessage,
   InlineHunk,
   AppliedRange,
   OpenPrOptions,
@@ -23,6 +29,7 @@ import type {
   ServiceRuntime,
   AgentRuntime,
   AgentConfig,
+  AgentOption,
   AgentLaunchOptions,
   AgentDialogDecision,
   AgentChats,
@@ -51,13 +58,17 @@ interface RepoStateShape {
   portSlots: Record<string, number>
   openTabs: string[]
   activeTabPath: string | null
+  openTabsByWorktree: Record<string, string[]>
+  activeTabByWorktree: Record<string, string | null>
   selectedWorktreeId: string | null
   setupOnceDone: boolean
+  introDismissed: boolean
   agentSessions: Record<string, string>
   trustedActionHashes: string[]
   viewLayouts: Record<string, unknown>
   activeLayoutView: string | null
   paneSizes: Record<string, number>
+  paneFontScale: Record<string, number>
   panelsOpen: Record<string, boolean>
   centerView: string | null
   activeView: string | null
@@ -95,6 +106,7 @@ export interface WorkbenchApi {
     changedFiles: (worktreeId: string) => Promise<DiffFile[]>
     diffSides: (worktreeId: string, file: DiffFile) => Promise<DiffSides>
     diffHunks: (worktreeId: string, file: DiffFile) => Promise<DiffHunks>
+    diffStats: (worktreeId: string) => Promise<DiffStats>
     beginInlineReview: (
       worktreeId: string,
       relPath: string,
@@ -113,10 +125,31 @@ export interface WorkbenchApi {
     commit: (worktreeId: string, message: string) => Promise<string>
     push: (worktreeId: string) => Promise<string>
     mergeLocal: (worktreeId: string, baseBranch: string) => Promise<string>
+    mergePreview: (targetWorktreeId: string, sourceWorktreeId: string) => Promise<MergePreview>
+    mergeWorktree: (
+      targetWorktreeId: string,
+      sourceWorktreeId: string,
+      opts: { mode: MergeMode; message?: string }
+    ) => Promise<MergeResult>
+    mergeAbort: (targetWorktreeId: string) => Promise<void>
+    mergeContinue: (targetWorktreeId: string) => Promise<MergeResult>
+    mergeConflicts: (targetWorktreeId: string) => Promise<string[]>
   }
   github: {
     openPr: (worktreeId: string, options: OpenPrOptions) => Promise<string>
     mergePr: (worktreeId: string, options: MergePrOptions) => Promise<string>
+  }
+  checkpoints: {
+    list: (worktreeId: string) => Promise<CheckpointMeta[]>
+    snapshot: (worktreeId: string, note?: string) => Promise<CheckpointMeta | null>
+    restore: (
+      worktreeId: string,
+      commit: string
+    ) => Promise<{ restoredTree: string; preRestore: CheckpointMeta | null }>
+  }
+  chat: {
+    send: (worktreeId: string, text: string) => Promise<WorktreeChatMessage>
+    history: (worktreeId: string, since?: number) => Promise<WorktreeChatMessage[]>
   }
   config: {
     load: () => Promise<WorkbenchConfig>
@@ -134,11 +167,30 @@ export interface WorkbenchApi {
   agents: {
     list: (worktreeId: string) => Promise<AgentRuntime[]>
     configs: () => Promise<Record<string, AgentConfig>>
-    start: (worktreeId: string, name: string, options: AgentLaunchOptions) => Promise<AgentRuntime>
-    stop: (worktreeId: string, name: string) => Promise<void>
-    compact: (worktreeId: string, name: string, instructions?: string) => Promise<AgentRuntime>
-    reset: (worktreeId: string, name: string) => Promise<ChatMeta>
-    transcript: (worktreeId: string, name: string) => Promise<string[]>
+    models: (name: string) => Promise<AgentOption[]>
+    createInstance: (worktreeId: string, name: string, label?: string) => Promise<ChatMeta>
+    convertInstance: (
+      worktreeId: string,
+      fromName: string,
+      toName: string,
+      chatId: string
+    ) => Promise<ChatMeta | null>
+    deleteChat: (worktreeId: string, name: string, chatId: string) => Promise<void>
+    start: (
+      worktreeId: string,
+      name: string,
+      options: AgentLaunchOptions,
+      chatId?: string
+    ) => Promise<AgentRuntime>
+    stop: (worktreeId: string, name: string, chatId: string) => Promise<void>
+    compact: (
+      worktreeId: string,
+      name: string,
+      instructions?: string,
+      chatId?: string
+    ) => Promise<AgentRuntime>
+    reset: (worktreeId: string, name: string, chatId?: string) => Promise<ChatMeta>
+    transcript: (worktreeId: string, name: string, chatId?: string) => Promise<string[]>
     chats: (worktreeId: string, name: string) => Promise<AgentChats>
     renameChat: (
       worktreeId: string,
@@ -150,9 +202,14 @@ export interface WorkbenchApi {
     respondPermission: (id: string, decision: PermissionDecision) => Promise<void>
     respondDialog: (id: string, decision: AgentDialogDecision) => Promise<void>
     active: () => Promise<string[]>
-    send: (worktreeId: string, name: string, text: string) => Promise<AgentSendResult>
-    queue: (worktreeId: string, name: string) => Promise<QueuedMessage[]>
-    cancelQueued: (worktreeId: string, name: string, id: string) => Promise<void>
+    send: (
+      worktreeId: string,
+      name: string,
+      text: string,
+      chatId?: string
+    ) => Promise<AgentSendResult>
+    queue: (worktreeId: string, name: string, chatId: string) => Promise<QueuedMessage[]>
+    cancelQueued: (worktreeId: string, name: string, chatId: string, id: string) => Promise<void>
     commands: (worktreeId: string, name: string) => Promise<AgentSlashCommand[]>
   }
   fs: {

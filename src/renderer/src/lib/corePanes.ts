@@ -12,6 +12,7 @@ import TerminalWindow from 'phosphor-svelte/lib/TerminalWindow'
 import Robot from 'phosphor-svelte/lib/Robot'
 import ClockCounterClockwise from 'phosphor-svelte/lib/ClockCounterClockwise'
 import ChatCircle from 'phosphor-svelte/lib/ChatCircle'
+import Sparkle from 'phosphor-svelte/lib/Sparkle'
 import FilesView from '../components/FilesView.svelte'
 import WorktreeSidebar from '../components/WorktreeSidebar.svelte'
 import GitChangesView from '../components/GitChangesView.svelte'
@@ -170,13 +171,17 @@ export function registerCorePanes(): void {
     minWidth: 240,
     when: repoOpen
   })
-  // AGENTS.md onboarding introduction page (auto-opens for new workspaces).
+  // AGENTS.md onboarding introduction (auto-opens for new workspaces). Lives in
+  // the left sidebar so the flow stays visible while files open in the center.
   panes.register({
     id: 'intro',
     title: 'Introduction',
+    icon: Sparkle,
     component: IntroPane,
-    slot: CENTER_SLOT,
-    minWidth: 320,
+    rail: { order: 7 },
+    slot: SIDEBAR_SLOT,
+    containerClass: 'bg-elevated',
+    minWidth: 220,
     when: repoOpen
   })
   panes.register({

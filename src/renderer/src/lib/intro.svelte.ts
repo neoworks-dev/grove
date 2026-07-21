@@ -138,7 +138,10 @@ class IntroSession {
   async dismiss(): Promise<void> {
     await window.workbench.state.update({ introDismissed: true })
     this.active = false
-    layout.showCenterPane('dashboard')
+    // Hand the left dock back to the explorer when the intro still occupies it.
+    if (layout.docks.left.paneType === 'intro') {
+      layout.openDock('left', 'files')
+    }
   }
 
   async finish(discardExamples: boolean): Promise<void> {

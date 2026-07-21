@@ -16,6 +16,7 @@
   import StatusBranch from './components/StatusBranch.svelte'
   import StatusClock from './components/StatusClock.svelte'
   import StatusMode from './components/StatusMode.svelte'
+  import StatusIntro from './components/StatusIntro.svelte'
   import { store, subscribeEvents, openRepoResult, applyIconPack, switchTab } from './lib/store.svelte'
   import { commands } from './lib/commands.svelte'
   import { keymap } from './lib/keymap.svelte'
@@ -47,6 +48,9 @@
   statusBar.register({ id: 'mode', align: 'left', order: 0, component: StatusMode })
   statusBar.register({ id: 'git.branch', align: 'left', order: 1, component: StatusBranch })
   statusBar.register({ id: 'clock', align: 'right', order: 100, component: StatusClock })
+  // Visible only while an AGENTS.md onboarding session runs but its pane is
+  // hidden — one click returns to the flow.
+  statusBar.register({ id: 'intro.active', align: 'right', order: 50, component: StatusIntro })
 
   // Persist layout (split tree, nested panel sizes, open tabs) whenever any of
   // these change; layout.schedule() debounces the write to per-repo state.
@@ -105,7 +109,7 @@
       title: 'Set up AGENTS.md (Introduction)',
       group: 'Repository',
       keywords: 'onboarding agents claude config style intro',
-      run: () => layout.showCenterPane('intro')
+      run: () => layout.ensurePane('intro')
     })
     commands.register({
       id: 'view.toggleLogs',

@@ -45,6 +45,7 @@ import {
   type PermissionDecision as PluginPermissionDecision
 } from './api/broker'
 import { clientFromPlugin, type ClientRecord } from './api/clients'
+import type { PluginPermission } from '../shared/plugins'
 import { RouteRegistry } from './api/registry'
 import { ApiDispatcher } from './api/dispatcher'
 import { registerWorkspaceRoutes } from './api/routes/workspace'
@@ -1012,6 +1013,26 @@ export function registerIpc(): void {
     (_e: IpcMainInvokeEvent, id: string, decision: PluginPermissionDecision) =>
       pluginBroker.respondPermission(id, decision)
   )
+  const grantClients = (): ClientRecord[] => pluginRegistry.list().map(clientFromPlugin)
+  ipcMain.handle('plugins:grants:list', () => pluginBroker.listGrants(grantClients()))
+  ipcMain.handle(
+    'plugins:grants:revoke',
+    async (_e: IpcMainInvokeEvent, clientId: string, permission: PluginPermission) => {
+      await pluginBroker.revoke(clientId, permission)
+      return pluginBroker.listGrants(grantClients())
+    }
+  )
+  ipcMain.handle(
+    'plugins:grants:revokeScope',
+    async (_e: IpcMainInvokeEvent, clientId: string, path: string) => {
+      await pluginBroker.revokeFsScope(clientId, path)
+      return pluginBroker.listGrants(grantClients())
+    }
+  )
+  ipcMain.handle('plugins:grants:revokeAll', async (_e: IpcMainInvokeEvent, clientId: string) => {
+    await pluginBroker.revokeAll(clientId)
+    return pluginBroker.listGrants(grantClients())
+  })
   ipcMain.handle(
     'plugins:respondToolCall',
     (_e: IpcMainInvokeEvent, id: string, result: unknown, errorMessage?: string) =>

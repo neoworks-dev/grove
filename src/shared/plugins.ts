@@ -5,6 +5,10 @@
 export type {
   PluginManifest,
   PluginPermission,
+  PermissionMeta,
+  PermissionRisk,
+  HelloParams,
+  HelloResult,
   PluginContributions,
   CommandContribution,
   KeybindingContribution,
@@ -23,6 +27,7 @@ export type {
 export {
   GROVE_API_VERSION,
   PLUGIN_PERMISSIONS,
+  PERMISSION_META,
   PLUGIN_ID_PATTERN,
   validateManifest,
   isValidActivationEvent

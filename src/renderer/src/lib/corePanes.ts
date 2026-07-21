@@ -32,6 +32,7 @@ import TerminalPane from '../components/TerminalPane.svelte'
 import BottomPanel from '../components/BottomPanel.svelte'
 import PreferencesPane from '../components/PreferencesPane.svelte'
 import KeyboardPane from '../components/KeyboardPane.svelte'
+import GrantsPane from '../components/GrantsPane.svelte'
 import { panes } from './panes.svelte'
 import { panels } from './panels.svelte'
 import { store } from './store.svelte'
@@ -256,6 +257,13 @@ export function registerCorePanes(): void {
     id: 'keybindings',
     title: 'Keyboard Shortcuts',
     component: KeyboardPane,
+    slot: CENTER_SLOT,
+    minWidth: 320
+  })
+  panes.register({
+    id: 'permissions',
+    title: 'Permissions & Access',
+    component: GrantsPane,
     slot: CENTER_SLOT,
     minWidth: 320
   })

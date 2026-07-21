@@ -51,6 +51,8 @@ import { ApiDispatcher } from './api/dispatcher'
 import { registerWorkspaceRoutes } from './api/routes/workspace'
 import { registerAiRoutes } from './api/routes/ai'
 import { registerStorageRoutes } from './api/routes/storage'
+import { registerEventRoutes } from './api/routes/events'
+import { EventHub } from './api/events'
 import { AppPairing } from './api/socket/pairing'
 import { ApiSocketServer } from './api/socket/server'
 import { createHash } from 'crypto'
@@ -127,7 +129,10 @@ function persistChats(worktreeId: string, name: string): void {
   if (context.repoPath) void updateRepoState(context.repoPath, { agentChats: agents.allChats() })
 }
 
-const watcher = new WorktreeWatcher((change) => send('event:fs-change', change))
+const watcher = new WorktreeWatcher((change) => {
+  send('event:fs-change', change)
+  eventHub.publish({ topic: 'files.didChange', payload: change })
+})
 
 const settings = new SettingsService({
   onChange: (snapshot) => send('event:settings-changed', snapshot)
@@ -159,12 +164,22 @@ const aiBridge = new AiBridge({
   registry: pluginRegistry,
   send
 })
+const eventHub = new EventHub()
+eventHub.registerTopicScope('editor.', 'editor.read')
+eventHub.registerTopicScope('git.', 'git.read')
+eventHub.registerTopicScope('worktrees.', 'git.read')
+eventHub.registerTopicScope('checkpoints.', 'git.read')
+eventHub.registerTopicScope('agents.', 'agents.read')
+eventHub.registerTopicScope('terminal.', 'terminal.exec')
+eventHub.registerTopicScope('services.', 'services.read')
+
 const apiRegistry = new RouteRegistry()
 registerWorkspaceRoutes(apiRegistry)
 registerAiRoutes(apiRegistry, { aiBridge })
 registerStorageRoutes(apiRegistry, {
   storagePath: () => join(app.getPath('userData'), 'plugin-storage.json')
 })
+registerEventRoutes(apiRegistry, { hub: eventHub })
 const apiDispatcher = new ApiDispatcher({
   registry: apiRegistry,
   broker: pluginBroker,

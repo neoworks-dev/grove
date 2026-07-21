@@ -7,7 +7,7 @@ import type { CellMetrics, FontSpec } from './metrics'
 export interface GridRenderer {
   attach(canvas: HTMLCanvasElement): void
   setFont(font: FontSpec, metrics: CellMetrics): void
-  resize(cols: number, rows: number, dpr: number): void
+  resize(cols: number, rows: number, dpr: number, pxWidth: number, pxHeight: number): void
   render(state: GridState, dirty: DirtyState): void
   dispose(): void
 }

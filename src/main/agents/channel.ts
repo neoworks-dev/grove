@@ -24,7 +24,7 @@ export class WorktreeChannel {
 
   post(
     worktreeId: string,
-    from: { kind: 'user' | 'agent'; name: string },
+    from: { kind: 'user' | 'agent'; name: string; instanceId?: string },
     text: string,
     to?: string
   ): WorktreeChatMessage {

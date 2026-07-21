@@ -9,6 +9,7 @@ import type {
   AgentDialogDecision,
   AgentDialogRequest,
   AgentLaunchOptions,
+  AgentOption,
   AgentSlashCommand,
   AgentStatus,
   PermissionDecision,
@@ -30,10 +31,15 @@ export interface AdapterContext {
   setStatus: (status: AgentStatus, exitCode?: number | null) => void
   // Report the live session/thread id so the manager can resume it next turn.
   setSession: (token: string) => void
-  // Ask the user to approve a tool call; resolves once they decide.
-  requestPermission: (request: Omit<PermissionRequestEvent, 'id'>) => Promise<PermissionDecision>
+  // Ask the user to approve a tool call; resolves once they decide. The manager
+  // injects chatId (the running instance), so the adapter never supplies it.
+  requestPermission: (
+    request: Omit<PermissionRequestEvent, 'id' | 'chatId'>
+  ) => Promise<PermissionDecision>
   // Surface a blocking dialog (e.g. an agent question) and await the answer.
-  requestDialog: (request: Omit<AgentDialogRequest, 'id'>) => Promise<AgentDialogDecision>
+  requestDialog: (
+    request: Omit<AgentDialogRequest, 'id' | 'chatId'>
+  ) => Promise<AgentDialogDecision>
   // Plugin AI contributions (MCP servers proxied into plugin workers, skill
   // text appended to the system prompt). Absent when no plugins register any.
   pluginAi?: {
@@ -69,6 +75,8 @@ export interface AgentAdapter {
   name: string
   config: AgentConfig
   start: (context: AdapterContext) => RunHandle
+  // Live model list fetched directly from the provider SDK, if it exposes one.
+  listModels?: (cwd: string) => Promise<AgentOption[]>
 }
 
 // Helpers to build normalized stream lines so every adapter renders uniformly.

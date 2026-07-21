@@ -1,24 +1,25 @@
 <script lang="ts">
-  // Shared chat for a worktree: the user and every agent running there exchange
-  // messages. Agents post/read via the grove-chat MCP tools; here the user
-  // reads the live feed and posts. History loads on open; new messages arrive
-  // via the store's event:worktree-chat subscription.
+  // Shared chat for the selected worktree, docked on the right like the agent
+  // pane. The user and every agent running in that worktree exchange messages;
+  // agents post/read via the grove-chat MCP tools. History loads when a worktree
+  // is first shown; live messages arrive via the store's event:worktree-chat
+  // subscription. Follows the selected worktree — no per-instance dialog.
   import { store } from '../lib/store.svelte'
   import type { WorktreeChatMessage } from '../../../shared/types'
 
-  let { worktree, onClose }: { worktree: { id: string; name: string }; onClose: () => void } =
-    $props()
+  const worktree = $derived(store.selectedWorktree)
+  const messages = $derived<WorktreeChatMessage[]>(
+    worktree ? store.worktreeChat[worktree.id] || [] : []
+  )
 
   let draft = $state('')
   let sending = $state(false)
 
-  const messages = $derived<WorktreeChatMessage[]>(store.worktreeChat[worktree.id] || [])
-
-  // Seed the store with history the first time the dialog opens (the live
-  // subscription only carries messages sent while listening).
+  // Seed history the first time a worktree is shown (the live subscription only
+  // carries messages sent while listening).
   $effect(() => {
-    const id = worktree.id
-    if (store.worktreeChat[id]) return
+    const id = worktree?.id
+    if (!id || store.worktreeChat[id]) return
     void window.workbench.chat.history(id).then((history) => {
       store.worktreeChat = { ...store.worktreeChat, [id]: history }
     })
@@ -26,7 +27,7 @@
 
   async function send(): Promise<void> {
     const text = draft.trim()
-    if (!text) return
+    if (!text || !worktree) return
     sending = true
     try {
       await window.workbench.chat.send(worktree.id, text)
@@ -46,26 +47,16 @@
   }
 </script>
 
-<div
-  class="fixed inset-0 z-modal flex items-center justify-center bg-black/60"
-  role="button"
-  tabindex="0"
-  onclick={onClose}
-  onkeydown={(event) => event.key === 'Escape' && onClose()}
->
-  <div
-    class="flex h-[70vh] w-[32rem] flex-col rounded-lg border border-line bg-surface p-4 shadow-lg"
-    role="dialog"
-    tabindex="0"
-    onclick={(event) => event.stopPropagation()}
-    onkeydown={() => {}}
-  >
-    <h2 class="mb-1 text-sm font-semibold">Chat — {worktree.name}</h2>
-    <p class="mb-3 text-2xs text-dim">
-      Shared with every agent running in this worktree. They can message you and each other.
+<div class="flex h-full min-h-0 flex-col">
+  {#if !worktree}
+    <p class="px-3 py-4 text-xs text-dim">Select a worktree to chat with its agents.</p>
+  {:else}
+    <p class="border-b border-line px-3 py-2 text-2xs text-dim">
+      Shared with every agent running in <span class="text-default">{worktree.name}</span>. They can
+      message you and each other.
     </p>
 
-    <div class="mb-3 min-h-0 flex-1 space-y-2 overflow-auto">
+    <div class="min-h-0 flex-1 space-y-2 overflow-auto px-3 py-2">
       {#if messages.length === 0}
         <p class="py-6 text-center text-xs text-dim">No messages yet.</p>
       {:else}
@@ -76,7 +67,7 @@
               {#if message.to}<span class="text-violet"> → {message.to}</span>{/if}
             </div>
             <div
-              class="max-w-[80%] whitespace-pre-wrap rounded-xl px-3 py-1.5 text-xs {message.from
+              class="max-w-[85%] whitespace-pre-wrap rounded-xl px-3 py-1.5 text-xs {message.from
                 .kind === 'user'
                 ? 'bg-amber-soft text-default'
                 : 'bg-raised text-default'}"
@@ -88,7 +79,7 @@
       {/if}
     </div>
 
-    <div class="flex gap-2">
+    <div class="flex gap-2 border-t border-line p-2">
       <textarea
         class="h-10 flex-1 resize-none rounded-md border border-line bg-input px-2 py-1.5 text-xs"
         placeholder="Message the agents…"
@@ -96,12 +87,12 @@
         onkeydown={onKeydown}
       ></textarea>
       <button
-        class="shrink-0 rounded-md bg-action px-3 py-1.5 text-xs text-action-fg disabled:opacity-50"
+        class="shrink-0 self-end rounded-md bg-action px-3 py-1.5 text-xs text-action-fg disabled:opacity-50"
         disabled={sending || !draft.trim()}
         onclick={send}
       >
         Send
       </button>
     </div>
-  </div>
+  {/if}
 </div>

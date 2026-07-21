@@ -67,8 +67,11 @@ if (vim.uv or vim.loop).fs_stat(lazyPath) then
         branch = 'main',
         config = function()
           local ok, ts = pcall(require, 'nvim-treesitter')
+          -- No 'jsonc': the main branch has no separate jsonc grammar (the json
+          -- parser serves the jsonc filetype), so listing it warns "skipping
+          -- unsupported language: jsonc".
           local parsers = {
-            'typescript', 'tsx', 'javascript', 'json', 'jsonc',
+            'typescript', 'tsx', 'javascript', 'json',
             'html', 'css', 'lua', 'vim', 'vimdoc', 'markdown', 'markdown_inline'
           }
           -- The main branch compiles parsers with the `tree-sitter` CLI (installed

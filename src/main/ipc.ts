@@ -75,7 +75,8 @@ const agents = new AgentManager({
     systemAppend: () => aiBridge.systemAppend()
   },
   onStatus: (runtime) => send('event:agent-status', runtime),
-  onLog: (worktreeId, name, line) => send('event:log', { worktreeId, source: 'agent', name, line }),
+  onLog: (worktreeId, name, chatId, line) =>
+    send('event:log', { worktreeId, source: 'agent', name, chatId, line }),
   onPermission: (request) => send('event:agent-permission', request),
   onDialog: (request) => send('event:agent-dialog', request),
   // Any session/chat change re-persists the whole named-chat map and notifies
@@ -125,7 +126,8 @@ const actionRunner = new ActionRunner({
 
 const terminals = new TerminalManager({
   onData: (id, data) => send('event:terminal-data', { id, data }),
-  onExit: (id, exitCode) => send('event:terminal-exit', { id, exitCode })
+  onExit: (id, exitCode) => send('event:terminal-exit', { id, exitCode }),
+  onTitle: (id, title) => send('event:terminal-title', { id, title })
 })
 
 const nvims = new NeovimManager({
@@ -516,57 +518,81 @@ export function registerIpc(): void {
   })
 
   // ── Agents ────────────────────────────────────────────────────
-  ipcMain.handle('agents:list', (_e, worktreeId: string) => {
-    const all = effectiveAgents()
-    return Object.entries(all).map(([name, agent]) => {
-      const live = agents.getRuntime(worktreeId, name)
-      if (live) return live
-      return {
-        worktreeId,
-        name,
-        status: 'stopped' as const,
-        pid: null,
-        command: agent.command,
-        exitCode: null,
-        logPath: ''
+  // Every spawned instance in a worktree (running + idle chats), each keyed by
+  // its chatId. The adapter picker uses agents:configs, not this list.
+  ipcMain.handle('agents:list', (_e, worktreeId: string) => agents.listInstances(worktreeId))
+
+  // Spawn a fresh idle instance (chat) of an adapter without touching siblings.
+  ipcMain.handle(
+    'agents:createInstance',
+    (_e, worktreeId: string, name: string, label?: string) => {
+      const chat = agents.createInstance(worktreeId, name, label)
+      persistChats(worktreeId, name)
+      return chat
+    }
+  )
+
+  // Move a tab to a different adapter (fresh session, kept title).
+  ipcMain.handle(
+    'agents:convertInstance',
+    (_e, worktreeId: string, fromName: string, toName: string, chatId: string) => {
+      const moved = agents.convertInstance(worktreeId, fromName, toName, chatId)
+      if (moved) {
+        persistChats(worktreeId, fromName)
+        persistChats(worktreeId, toName)
       }
-    })
-  })
+      return moved
+    }
+  )
+
+  // Delete an instance (chat) and its transcript.
+  ipcMain.handle(
+    'agents:deleteChat',
+    async (_e, worktreeId: string, name: string, chatId: string) => {
+      await agents.deleteChat(worktreeId, name, chatId)
+      persistChats(worktreeId, name)
+    }
+  )
 
   ipcMain.handle(
     'agents:start',
-    (_e, worktreeId: string, name: string, options: AgentLaunchOptions) => {
+    (_e, worktreeId: string, name: string, options: AgentLaunchOptions, chatId?: string) => {
       const { config: cfg } = requireRepo()
       const worktree = findWorktree(worktreeId)
       const agent = effectiveAgents()[name]
       if (!agent) throw new Error(`unknown agent: ${name}`)
       const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
-      return agents.start(worktree, name, agent, ports, options || {})
+      return agents.start(worktree, name, agent, ports, options || {}, true, chatId)
     }
   )
 
   // User-initiated stop: also flushes queued messages back to the composer.
-  ipcMain.handle('agents:stop', (_e, worktreeId: string, name: string) =>
-    agents.stop(worktreeId, name, { clearQueue: true })
+  ipcMain.handle('agents:stop', (_e, worktreeId: string, name: string, chatId: string) =>
+    agents.stop(worktreeId, name, chatId, { clearQueue: true })
   )
 
   // Message typed while a run is active: inject live, queue, or start a
   // resumed run when idle.
-  ipcMain.handle('agents:send', (_e, worktreeId: string, name: string, text: string) => {
-    const { config: cfg } = requireRepo()
-    const worktree = findWorktree(worktreeId)
-    const agent = effectiveAgents()[name]
-    if (!agent) throw new Error(`unknown agent: ${name}`)
-    const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
-    return agents.send(worktree, name, agent, ports, text)
-  })
-
-  ipcMain.handle('agents:queue', (_e, worktreeId: string, name: string) =>
-    agents.getQueue(worktreeId, name)
+  ipcMain.handle(
+    'agents:send',
+    (_e, worktreeId: string, name: string, text: string, chatId?: string) => {
+      const { config: cfg } = requireRepo()
+      const worktree = findWorktree(worktreeId)
+      const agent = effectiveAgents()[name]
+      if (!agent) throw new Error(`unknown agent: ${name}`)
+      const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
+      return agents.send(worktree, name, agent, ports, text, chatId)
+    }
   )
 
-  ipcMain.handle('agents:cancelQueued', (_e, worktreeId: string, name: string, id: string) =>
-    agents.cancelQueued(worktreeId, name, id)
+  ipcMain.handle('agents:queue', (_e, worktreeId: string, name: string, chatId: string) =>
+    agents.getQueue(worktreeId, name, chatId)
+  )
+
+  ipcMain.handle(
+    'agents:cancelQueued',
+    (_e, worktreeId: string, name: string, chatId: string, id: string) =>
+      agents.cancelQueued(worktreeId, name, chatId, id)
   )
 
   // Provider-discovered slash commands (claude); [] for other adapters.
@@ -574,31 +600,37 @@ export function registerIpc(): void {
     agents.getCommands(worktreeId, name)
   )
 
-  // Compact the active chat (summarize + continue with less context).
+  // Model list for one adapter, fetched from its SDK (claude/opencode); [] when
+  // the adapter has no model-list API (codex).
+  ipcMain.handle('agents:models', (_e, name: string) =>
+    agents.listModels(name, context.repoPath || process.cwd())
+  )
+
+  // Compact an instance (summarize + continue with less context).
   ipcMain.handle(
     'agents:compact',
-    (_e, worktreeId: string, name: string, instructions?: string) => {
+    (_e, worktreeId: string, name: string, instructions?: string, chatId?: string) => {
       const { config: cfg } = requireRepo()
       const worktree = findWorktree(worktreeId)
       const agent = effectiveAgents()[name]
       if (!agent) throw new Error(`unknown agent: ${name}`)
       const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
-      return agents.compact(worktree, name, agent, ports, instructions)
+      return agents.compact(worktree, name, agent, ports, instructions, chatId)
     }
   )
 
   // New chat: start a fresh active chat (prior chats stay resumable).
-  ipcMain.handle('agents:reset', async (_e, worktreeId: string, name: string) => {
+  ipcMain.handle('agents:reset', async (_e, worktreeId: string, name: string, chatId?: string) => {
     const worktree = findWorktree(worktreeId)
-    const chat = await agents.resetSession(worktree, name)
+    const chat = await agents.resetSession(worktree, name, chatId)
     return chat
   })
 
-  // Replay the active chat's transcript (restore after restart).
-  ipcMain.handle('agents:transcript', (_e, worktreeId: string, name: string) => {
+  // Replay an instance's transcript (restore after restart / switch instance).
+  ipcMain.handle('agents:transcript', (_e, worktreeId: string, name: string, chatId?: string) => {
     const worktree = findWorktree(worktreeId)
-    const active = agents.listChats(worktreeId, name).activeId
-    return agents.readTranscript(worktree.path, name, active)
+    const target = chatId || agents.listChats(worktreeId, name).activeId
+    return agents.readTranscript(worktree.path, name, target)
   })
 
   // List the named chats for a worktree+agent.
@@ -615,12 +647,11 @@ export function registerIpc(): void {
     }
   )
 
-  // Switch to a previous chat: stop the current run, activate the target, and
-  // return its transcript so the renderer can swap the conversation.
+  // Switch the active/default instance and return its transcript. Instances run
+  // concurrently, so switching no longer stops any run.
   ipcMain.handle(
     'agents:activateChat',
     async (_e, worktreeId: string, name: string, chatId: string) => {
-      await agents.stop(worktreeId, name)
       agents.activateChat(worktreeId, name, chatId)
       persistChats(worktreeId, name)
       const worktree = findWorktree(worktreeId)

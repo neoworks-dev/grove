@@ -3,7 +3,7 @@
 // bridges interactive tool-permission requests between adapters and the user.
 
 import { createWriteStream, type WriteStream } from 'fs'
-import { mkdir, writeFile, readFile } from 'fs/promises'
+import { mkdir, writeFile, readFile, unlink } from 'fs/promises'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import type {
@@ -13,6 +13,7 @@ import type {
   AgentDialogDecision,
   AgentDialogRequest,
   AgentLaunchOptions,
+  AgentOption,
   AgentQueueEvent,
   AgentRuntime,
   AgentSendResult,
@@ -53,7 +54,7 @@ export function mergeAgents(
 
 export interface AgentEvents {
   onStatus: (runtime: AgentRuntime) => void
-  onLog: (worktreeId: string, name: string, line: string) => void
+  onLog: (worktreeId: string, name: string, chatId: string, line: string) => void
   onPermission: (request: PermissionRequestEvent) => void
   // A blocking dialog (e.g. an agent question) awaiting the user's answer.
   onDialog?: (request: AgentDialogRequest) => void
@@ -124,6 +125,9 @@ export class AgentManager {
   private queues = new Map<string, QueuedMessage[]>()
   // Provider-discovered slash commands per (worktree, agent).
   private commands = new Map<string, AgentSlashCommand[]>()
+  // Cached model-list probes per adapter, fetched lazily from each adapter's SDK
+  // (adapter.listModels) the first time that adapter's list is requested.
+  private models = new Map<string, Promise<AgentOption[]>>()
   private lastLaunch = new Map<string, LastLaunch>()
   private runSeq = 0
   // Cross-agent file-edit locks, keyed by the running agent's worktreeId::name.
@@ -140,8 +144,16 @@ export class AgentManager {
     private adapters: Map<string, AgentAdapter> = registry
   ) {}
 
+  // Container key: the AgentChats list + discovered commands for an adapter in a
+  // worktree. One container holds every instance (chat) of that adapter.
   private key(worktreeId: string, name: string): string {
     return `${worktreeId}::${name}`
+  }
+
+  // Run key: one concurrently-running instance. Multiple instances of the same
+  // adapter run at once, each keyed by its chatId.
+  private runKey(worktreeId: string, name: string, chatId: string): string {
+    return `${worktreeId}::${name}::${chatId}`
   }
 
   // ── Named chats ────────────────────────────────────────────────
@@ -183,6 +195,21 @@ export class AgentManager {
     return Object.fromEntries(this.commands.entries())
   }
 
+  // Model list for one adapter, fetched straight from its SDK (adapter.listModels)
+  // the first time it's asked for and cached thereafter. Adapters without a
+  // model-list API (e.g. codex) return []. Probing is lazy so we don't spin up
+  // an unused provider (e.g. the opencode server) until it's actually selected.
+  listModels(name: string, cwd: string): Promise<AgentOption[]> {
+    const existing = this.models.get(name)
+    if (existing) return existing
+    const adapter = registry.get(name)
+    const probe = adapter?.listModels
+      ? adapter.listModels(cwd).catch(() => [])
+      : Promise.resolve<AgentOption[]>([])
+    this.models.set(name, probe)
+    return probe
+  }
+
   private ensureChats(key: string): AgentChats {
     let entry = this.chats.get(key)
     if (!entry || entry.chats.length === 0) {
@@ -222,12 +249,37 @@ export class AgentManager {
     if (!chat) return
     chat.name = chatName
     chat.updatedAt = Date.now()
+    // Live-update the tab label of a running instance.
+    const run = this.running.get(this.runKey(worktreeId, name, chatId))
+    if (run) {
+      run.runtime.label = chatName
+      this.events.onStatus({ ...run.runtime })
+    }
+  }
+
+  // Delete an instance (chat): stop its run, drop it from the container, clear
+  // its per-instance state, and remove its transcript file.
+  async deleteChat(worktreeId: string, name: string, chatId: string): Promise<void> {
+    await this.stop(worktreeId, name, chatId)
+    const containerKey = this.key(worktreeId, name)
+    const container = this.chats.get(containerKey)
+    if (container) {
+      container.chats = container.chats.filter((chat) => chat.id !== chatId)
+      if (container.activeId === chatId) container.activeId = container.chats[0]?.id ?? ''
+      if (container.chats.length === 0) this.chats.delete(containerKey)
+    }
+    const runKey = this.runKey(worktreeId, name, chatId)
+    this.queues.delete(runKey)
+    this.lastLaunch.delete(runKey)
+    // worktreeId is the worktree path.
+    await unlink(this.transcriptPath(worktreeId, name, chatId)).catch(() => {})
   }
 
   activateChat(worktreeId: string, name: string, chatId: string): void {
     const entry = this.ensureChats(this.key(worktreeId, name))
     if (!entry.chats.some((chat) => chat.id === chatId)) return
-    if (entry.activeId !== chatId) this.clearQueue(worktreeId, name, false)
+    // Queues are per instance (runKey), so selecting a different instance no
+    // longer needs to flush anything.
     entry.activeId = chatId
   }
 
@@ -236,12 +288,87 @@ export class AgentManager {
     return join(logsDir(worktreePath), file)
   }
 
-  getRuntime(worktreeId: string, name: string): AgentRuntime | null {
-    return this.running.get(this.key(worktreeId, name))?.runtime ?? null
+  // Resolve to an explicit instance, or the container's active chat by default.
+  private resolveChatId(worktreeId: string, name: string, chatId?: string): string {
+    if (chatId) return chatId
+    return this.chats.get(this.key(worktreeId, name))?.activeId ?? ''
   }
 
-  isRunning(worktreeId: string, name: string): boolean {
-    return this.running.has(this.key(worktreeId, name))
+  getRuntime(worktreeId: string, name: string, chatId?: string): AgentRuntime | null {
+    const id = this.resolveChatId(worktreeId, name, chatId)
+    return this.running.get(this.runKey(worktreeId, name, id))?.runtime ?? null
+  }
+
+  isRunning(worktreeId: string, name: string, chatId?: string): boolean {
+    const id = this.resolveChatId(worktreeId, name, chatId)
+    return this.running.has(this.runKey(worktreeId, name, id))
+  }
+
+  // Create a new instance (chat) of an adapter without stopping any running
+  // sibling — the "+" spawn. Returns the new chat so the caller can select it.
+  createInstance(worktreeId: string, name: string, label?: string): ChatMeta {
+    return this.createChat(worktreeId, name, label)
+  }
+
+  // Move a tab (chatId) to a different adapter, keeping its title but starting a
+  // fresh session (SDK sessions can't resume across providers). Used when the
+  // user picks a different provider for the current chat. Returns null if the
+  // chat isn't found or is running under the old adapter.
+  convertInstance(
+    worktreeId: string,
+    fromName: string,
+    toName: string,
+    chatId: string
+  ): ChatMeta | null {
+    if (fromName === toName) return null
+    if (this.running.has(this.runKey(worktreeId, fromName, chatId))) return null
+    const from = this.chats.get(this.key(worktreeId, fromName))
+    const chat = from?.chats.find((entry) => entry.id === chatId)
+    if (!from || !chat) return null
+    from.chats = from.chats.filter((entry) => entry.id !== chatId)
+    if (from.activeId === chatId) from.activeId = from.chats[0]?.id ?? ''
+    const moved: ChatMeta = { ...chat, session: '', updatedAt: Date.now() }
+    const to = this.ensureChats(this.key(worktreeId, toName))
+    to.chats.push(moved)
+    to.activeId = chatId
+    return moved
+  }
+
+  // Every spawned instance in a worktree: live runs plus idle chats. Drives the
+  // sidebar/overview rows and the Agent pane's instance switcher.
+  listInstances(worktreeId: string): AgentRuntime[] {
+    const prefix = `${worktreeId}::`
+    const result: AgentRuntime[] = []
+    const seen = new Set<string>()
+    for (const [key, entry] of this.running) {
+      if (!key.startsWith(prefix)) continue
+      // Prefer the current chat name so a rename is reflected on the tab.
+      const container = this.chats.get(this.key(entry.runtime.worktreeId, entry.runtime.name))
+      const chat = container?.chats.find((candidate) => candidate.id === entry.runtime.chatId)
+      result.push({ ...entry.runtime, label: chat?.name ?? entry.runtime.label })
+      seen.add(`${entry.runtime.name}::${entry.runtime.chatId}`)
+    }
+    for (const [containerKey, container] of this.chats) {
+      if (!containerKey.startsWith(prefix)) continue
+      const name = containerKey.slice(prefix.length)
+      const adapter = this.adapters.get(name)
+      if (!adapter) continue
+      for (const chat of container.chats) {
+        if (seen.has(`${name}::${chat.id}`)) continue
+        result.push({
+          worktreeId,
+          name,
+          chatId: chat.id,
+          label: chat.name,
+          status: 'stopped',
+          pid: null,
+          command: adapter.config.command,
+          exitCode: null,
+          logPath: this.transcriptPath(worktreeId, name, chat.id)
+        })
+      }
+    }
+    return result
   }
 
   async start(
@@ -252,15 +379,23 @@ export class AgentManager {
     options: AgentLaunchOptions,
     // Internal turns (e.g. /compact) suppress the prompt echo so the command
     // doesn't show up as a chat message in the transcript.
-    echoPrompt = true
+    echoPrompt = true,
+    // The instance to run. Defaults to the container's active chat.
+    chatId?: string
   ): Promise<AgentRuntime> {
-    await this.stop(worktree.id, name)
     const adapter = this.adapters.get(name)
     if (!adapter) throw new Error(`unknown agent: ${name}`)
 
-    const key = this.key(worktree.id, name)
-    this.lastLaunch.set(key, { worktree, agent, ports, options })
-    const chat = this.activeChat(key)
+    const containerKey = this.key(worktree.id, name)
+    const chat = chatId
+      ? this.ensureChats(containerKey).chats.find((entry) => entry.id === chatId) ||
+        this.activeChat(containerKey)
+      : this.activeChat(containerKey)
+    // Only stop the same instance's prior run; sibling instances keep running.
+    await this.stop(worktree.id, name, chat.id)
+
+    const runKey = this.runKey(worktree.id, name, chat.id)
+    this.lastLaunch.set(runKey, { worktree, agent, ports, options })
     const resume = chat.session || undefined
 
     const dir = logsDir(worktree.path)
@@ -273,6 +408,8 @@ export class AgentManager {
     const runtime: AgentRuntime = {
       worktreeId: worktree.id,
       name,
+      chatId: chat.id,
+      label: chat.name,
       status: 'running',
       pid: null,
       command: adapter.config.command,
@@ -290,16 +427,16 @@ export class AgentManager {
       runId,
       clearQueueOnStop: false
     }
-    this.running.set(key, entry)
+    this.running.set(runKey, entry)
 
     // Drop callbacks from a replaced run: its async teardown can fire after the
     // successor registered, and must not write into the new run's entry/stream.
-    const isCurrentRun = (): boolean => this.running.get(key)?.runId === runId
+    const isCurrentRun = (): boolean => this.running.get(runKey)?.runId === runId
 
     const emit = (line: string): void => {
       if (!isCurrentRun()) return
       logStream.write(line + '\n')
-      this.events.onLog(worktree.id, name, line)
+      this.events.onLog(worktree.id, name, chat.id, line)
     }
     // Echo the user's prompt first so it opens the transcript as a chat message.
     if (echoPrompt && options.prompt && options.prompt.trim()) {
@@ -314,21 +451,21 @@ export class AgentManager {
       emit,
       setStatus: (status, exitCode) => {
         if (!isCurrentRun()) return
-        this.handleStatus(worktree.id, name, status, exitCode ?? null)
+        this.handleStatus(worktree.id, name, chat.id, status, exitCode ?? null)
       },
-      setSession: (token) => this.rememberSession(worktree.id, name, token),
-      requestPermission: (request) => this.requestPermission(worktree.id, name, request),
-      requestDialog: (request) => this.requestDialog(worktree.id, name, request),
+      setSession: (token) => this.rememberSession(worktree.id, name, chat.id, token),
+      requestPermission: (request) => this.requestPermission(worktree.id, name, chat.id, request),
+      requestDialog: (request) => this.requestDialog(worktree.id, name, chat.id, request),
       pluginAi: this.events.pluginAi,
       setCommands: (commands) => {
-        this.commands.set(key, commands)
+        this.commands.set(containerKey, commands)
         this.events.onCommands?.({ worktreeId: worktree.id, name, commands })
       },
-      tryAcquireLocks: (paths) => this.locks.tryAcquire(key, name, paths),
-      releaseLocks: () => this.locks.releaseOwner(key),
+      tryAcquireLocks: (paths) => this.locks.tryAcquire(runKey, chat.name, paths),
+      releaseLocks: () => this.locks.releaseOwner(runKey),
       chat: {
         send: (text, to) => {
-          this.channel.post(worktree.id, { kind: 'agent', name }, text, to)
+          this.channel.post(worktree.id, { kind: 'agent', name, instanceId: chat.id }, text, to)
         },
         history: (since) => this.channel.list(worktree.id, since)
       }
@@ -347,72 +484,95 @@ export class AgentManager {
     name: string,
     agent: AgentConfig,
     ports: number[],
-    text: string
+    text: string,
+    chatId?: string
   ): Promise<AgentSendResult> {
-    const key = this.key(worktree.id, name)
+    const containerKey = this.key(worktree.id, name)
+    const chat = chatId
+      ? this.ensureChats(containerKey).chats.find((entry) => entry.id === chatId) ||
+        this.activeChat(containerKey)
+      : this.activeChat(containerKey)
+    const runKey = this.runKey(worktree.id, name, chat.id)
     const trimmed = text.trim()
     // Snapshot before the agent acts on the new message, so the pre-turn state
     // is revertible.
-    this.events.onCheckpoint?.(worktree.path, 'user-message', { name })
-    const entry = this.running.get(key)
+    this.events.onCheckpoint?.(worktree.path, 'user-message', { name, chatId: chat.id })
+    const entry = this.running.get(runKey)
     if (entry) {
       if (entry.handle.send?.(trimmed)) {
         // Echo like start() does so the injection shows as a chat message.
         const line = userPromptLine(trimmed)
         entry.logStream.write(line + '\n')
-        this.events.onLog(worktree.id, name, line)
+        this.events.onLog(worktree.id, name, chat.id, line)
         return { delivered: 'injected' }
       }
       const item: QueuedMessage = { id: randomUUID(), text: trimmed, createdAt: Date.now() }
-      const queue = this.queues.get(key) ?? []
+      const queue = this.queues.get(runKey) ?? []
       queue.push(item)
-      this.queues.set(key, queue)
-      this.emitQueue(worktree.id, name)
+      this.queues.set(runKey, queue)
+      this.emitQueue(worktree.id, name, chat.id)
       return { delivered: 'queued', id: item.id }
     }
-    const launch = this.lastLaunch.get(key)
-    await this.start(worktree, name, agent, ports, {
-      ...(launch?.options ?? {}),
-      prompt: trimmed
-    })
+    const launch = this.lastLaunch.get(runKey)
+    await this.start(
+      worktree,
+      name,
+      agent,
+      ports,
+      { ...(launch?.options ?? {}), prompt: trimmed },
+      true,
+      chat.id
+    )
     return { delivered: 'started' }
   }
 
-  getQueue(worktreeId: string, name: string): QueuedMessage[] {
-    return [...(this.queues.get(this.key(worktreeId, name)) ?? [])]
+  getQueue(worktreeId: string, name: string, chatId?: string): QueuedMessage[] {
+    const id = this.resolveChatId(worktreeId, name, chatId)
+    return [...(this.queues.get(this.runKey(worktreeId, name, id)) ?? [])]
   }
 
-  cancelQueued(worktreeId: string, name: string, id: string): void {
-    const key = this.key(worktreeId, name)
-    const queue = this.queues.get(key)
+  cancelQueued(worktreeId: string, name: string, chatId: string, id: string): void {
+    const runKey = this.runKey(worktreeId, name, chatId)
+    const queue = this.queues.get(runKey)
     if (!queue) return
     const index = queue.findIndex((item) => item.id === id)
     if (index === -1) return
     queue.splice(index, 1)
-    this.emitQueue(worktreeId, name)
+    this.emitQueue(worktreeId, name, chatId)
   }
 
   getCommands(worktreeId: string, name: string): AgentSlashCommand[] {
     return [...(this.commands.get(this.key(worktreeId, name)) ?? [])]
   }
 
-  private emitQueue(worktreeId: string, name: string, cleared?: QueuedMessage[]): void {
-    const queue = [...(this.queues.get(this.key(worktreeId, name)) ?? [])]
-    this.events.onQueue?.({ worktreeId, name, queue, cleared })
+  private emitQueue(
+    worktreeId: string,
+    name: string,
+    chatId: string,
+    cleared?: QueuedMessage[]
+  ): void {
+    const queue = [...(this.queues.get(this.runKey(worktreeId, name, chatId)) ?? [])]
+    this.events.onQueue?.({ worktreeId, name, chatId, queue, cleared })
   }
 
-  private clearQueue(worktreeId: string, name: string, restoreToUser: boolean): void {
-    const key = this.key(worktreeId, name)
-    const queue = this.queues.get(key) ?? []
+  private clearQueue(
+    worktreeId: string,
+    name: string,
+    chatId: string,
+    restoreToUser: boolean
+  ): void {
+    const runKey = this.runKey(worktreeId, name, chatId)
+    const queue = this.queues.get(runKey) ?? []
     if (queue.length === 0) return
-    this.queues.set(key, [])
-    this.emitQueue(worktreeId, name, restoreToUser ? queue : undefined)
+    this.queues.set(runKey, [])
+    this.emitQueue(worktreeId, name, chatId, restoreToUser ? queue : undefined)
   }
 
-  private rememberSession(worktreeId: string, name: string, token: string): void {
+  private rememberSession(worktreeId: string, name: string, chatId: string, token: string): void {
     if (!token) return
-    const chat = this.activeChat(this.key(worktreeId, name))
-    if (chat.session === token) return
+    const container = this.ensureChats(this.key(worktreeId, name))
+    const chat = container.chats.find((entry) => entry.id === chatId)
+    if (!chat || chat.session === token) return
     chat.session = token
     chat.updatedAt = Date.now()
     this.events.onSession?.(worktreeId, name, token)
@@ -428,19 +588,23 @@ export class AgentManager {
     name: string,
     agent: AgentConfig,
     ports: number[],
-    instructions?: string
+    instructions?: string,
+    chatId?: string
   ): Promise<AgentRuntime> {
     const focus = (instructions || '').trim()
     const prompt = focus ? `/compact ${focus}` : '/compact'
-    return this.start(worktree, name, agent, ports, { prompt }, false)
+    return this.start(worktree, name, agent, ports, { prompt }, false, chatId)
   }
 
-  // "New chat": start a fresh active chat, leaving prior chats resumable.
-  async resetSession(worktree: Worktree, name: string): Promise<ChatMeta> {
-    await this.stop(worktree.id, name)
-    // The conversation context changes — queued messages must not auto-submit
-    // into a chat they weren't written for.
-    this.clearQueue(worktree.id, name, false)
+  // "New chat": start a fresh active chat, leaving prior chats resumable. When
+  // chatId is given, only that instance's run is stopped first.
+  async resetSession(worktree: Worktree, name: string, chatId?: string): Promise<ChatMeta> {
+    if (chatId) {
+      await this.stop(worktree.id, name, chatId)
+      // The conversation context changes — queued messages must not auto-submit
+      // into a chat they weren't written for.
+      this.clearQueue(worktree.id, name, chatId, false)
+    }
     const chat = this.createChat(worktree.id, name)
     // Reuse the onSession event as the persistence trigger.
     this.events.onSession?.(worktree.id, name, '')
@@ -462,12 +626,14 @@ export class AgentManager {
   private requestPermission(
     worktreeId: string,
     name: string,
-    request: Omit<PermissionRequestEvent, 'id'>
+    chatId: string,
+    request: Omit<PermissionRequestEvent, 'id' | 'chatId'>
   ): Promise<PermissionDecision> {
-    const id = `${this.key(worktreeId, name)}::perm${++this.permissionSeq}`
-    const entry = this.running.get(this.key(worktreeId, name))
+    const runKey = this.runKey(worktreeId, name, chatId)
+    const id = `${runKey}::perm${++this.permissionSeq}`
+    const entry = this.running.get(runKey)
     entry?.pendingPermissions.add(id)
-    this.events.onPermission({ id, ...request })
+    this.events.onPermission({ id, chatId, ...request })
     return new Promise((resolve) => {
       this.permissionResolvers.set(id, resolve)
     })
@@ -484,12 +650,14 @@ export class AgentManager {
   private requestDialog(
     worktreeId: string,
     name: string,
-    request: Omit<AgentDialogRequest, 'id'>
+    chatId: string,
+    request: Omit<AgentDialogRequest, 'id' | 'chatId'>
   ): Promise<AgentDialogDecision> {
-    const id = `${this.key(worktreeId, name)}::dlg${++this.dialogSeq}`
-    const entry = this.running.get(this.key(worktreeId, name))
+    const runKey = this.runKey(worktreeId, name, chatId)
+    const id = `${runKey}::dlg${++this.dialogSeq}`
+    const entry = this.running.get(runKey)
     entry?.pendingDialogs.add(id)
-    this.events.onDialog?.({ id, ...request })
+    this.events.onDialog?.({ id, chatId, ...request })
     return new Promise((resolve) => {
       this.dialogResolvers.set(id, resolve)
     })
@@ -501,20 +669,22 @@ export class AgentManager {
     this.dialogResolvers.delete(id)
     for (const entry of this.running.values()) entry.pendingDialogs.delete(id)
     // Answering a question is a user turn — snapshot before the agent resumes.
-    // The dialog id is `${worktreeId}::${name}::dlg<n>`, and worktreeId is the
-    // worktree path.
-    const [worktreeId, name] = id.split('::')
-    if (worktreeId) this.events.onCheckpoint?.(worktreeId, 'user-message', { name })
+    // The dialog id is `${worktreeId}::${name}::${chatId}::dlg<n>`, and
+    // worktreeId is the worktree path.
+    const [worktreeId, name, chatId] = id.split('::')
+    if (worktreeId) this.events.onCheckpoint?.(worktreeId, 'user-message', { name, chatId })
     resolve(decision)
   }
 
   private handleStatus(
     worktreeId: string,
     name: string,
+    chatId: string,
     status: AgentStatus,
     exitCode: number | null
   ): void {
-    const entry = this.running.get(this.key(worktreeId, name))
+    const runKey = this.runKey(worktreeId, name, chatId)
+    const entry = this.running.get(runKey)
     if (!entry) return
     entry.runtime.status = status
     entry.runtime.exitCode = exitCode
@@ -527,18 +697,14 @@ export class AgentManager {
     // Terminal: auto-deny any still-pending permission, drop file locks, and
     // clean up.
     this.denyPending(entry)
-    this.locks.releaseOwner(this.key(worktreeId, name))
+    this.locks.releaseOwner(runKey)
     entry.logStream.end()
     this.events.onStatus({ ...entry.runtime })
-    this.running.delete(this.key(worktreeId, name))
+    this.running.delete(runKey)
     // Snapshot the worktree after the agent's turn so its edits are revertible.
-    const worktreePath =
-      this.lastLaunch.get(this.key(worktreeId, name))?.worktree.path ?? worktreeId
-    this.events.onCheckpoint?.(worktreePath, 'agent-turn-end', {
-      name,
-      chatId: this.activeChat(this.key(worktreeId, name)).id
-    })
-    this.settleQueue(worktreeId, name, status, entry.clearQueueOnStop)
+    const worktreePath = this.lastLaunch.get(runKey)?.worktree.path ?? worktreeId
+    this.events.onCheckpoint?.(worktreePath, 'agent-turn-end', { name, chatId })
+    this.settleQueue(worktreeId, name, chatId, status, entry.clearQueueOnStop)
   }
 
   // What happens to queued messages when a run reaches a terminal state:
@@ -547,28 +713,34 @@ export class AgentManager {
   private settleQueue(
     worktreeId: string,
     name: string,
+    chatId: string,
     status: AgentStatus,
     clearQueueOnStop: boolean
   ): void {
-    const key = this.key(worktreeId, name)
-    const queue = this.queues.get(key) ?? []
+    const runKey = this.runKey(worktreeId, name, chatId)
+    const queue = this.queues.get(runKey) ?? []
     if (queue.length === 0) return
 
     if (status === 'stopped') {
-      if (clearQueueOnStop) this.clearQueue(worktreeId, name, true)
+      if (clearQueueOnStop) this.clearQueue(worktreeId, name, chatId, true)
       return
     }
     if (status !== 'exited') return
 
-    const launch = this.lastLaunch.get(key)
+    const launch = this.lastLaunch.get(runKey)
     if (!launch) return
-    this.queues.set(key, [])
-    this.emitQueue(worktreeId, name)
+    this.queues.set(runKey, [])
+    this.emitQueue(worktreeId, name, chatId)
     const prompt = queue.map((item) => item.text).join('\n\n')
-    void this.start(launch.worktree, name, launch.agent, launch.ports, {
-      ...launch.options,
-      prompt
-    }).catch(() => {})
+    void this.start(
+      launch.worktree,
+      name,
+      launch.agent,
+      launch.ports,
+      { ...launch.options, prompt },
+      true,
+      chatId
+    ).catch(() => {})
   }
 
   private denyPending(entry: RunningAgent): void {
@@ -590,11 +762,16 @@ export class AgentManager {
     entry.pendingDialogs.clear()
   }
 
-  async stop(worktreeId: string, name: string, opts?: { clearQueue?: boolean }): Promise<void> {
-    const entry = this.running.get(this.key(worktreeId, name))
+  async stop(
+    worktreeId: string,
+    name: string,
+    chatId: string,
+    opts?: { clearQueue?: boolean }
+  ): Promise<void> {
+    const entry = this.running.get(this.runKey(worktreeId, name, chatId))
     if (!entry) {
       // Nothing running, but a user stop still flushes any waiting messages.
-      if (opts?.clearQueue) this.clearQueue(worktreeId, name, true)
+      if (opts?.clearQueue) this.clearQueue(worktreeId, name, chatId, true)
       return
     }
     if (opts?.clearQueue) entry.clearQueueOnStop = true
@@ -619,10 +796,11 @@ export class AgentManager {
     const prefix = `${message.worktreeId}::`
     for (const [key, entry] of this.running) {
       if (!key.startsWith(prefix)) continue
-      const name = key.slice(prefix.length)
-      // Never echo a message back to its own sender.
-      if (message.from.kind === 'agent' && name === message.from.name) continue
-      // Respect a targeted message.
+      const name = entry.runtime.name
+      // Never echo a message back to the exact instance that sent it.
+      if (message.from.kind === 'agent' && message.from.instanceId === entry.runtime.chatId)
+        continue
+      // Respect a targeted message (addressed by adapter name).
       if (message.to && message.to !== name) continue
       if (!this.allowChatInject(message.worktreeId)) continue
       entry.handle.send?.(`[chat from ${message.from.name}]: ${message.text}`)
@@ -651,9 +829,9 @@ export class AgentManager {
   }
 
   async stopAll(): Promise<void> {
-    for (const key of [...this.running.keys()]) {
-      const [worktreeId, name] = key.split('::')
-      await this.stop(worktreeId, name)
+    for (const entry of [...this.running.values()]) {
+      const { worktreeId, name, chatId } = entry.runtime
+      await this.stop(worktreeId, name, chatId)
     }
   }
 }

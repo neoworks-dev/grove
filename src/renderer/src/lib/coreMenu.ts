@@ -62,6 +62,15 @@ export function registerCoreMenu(): void {
       accelerator: '␣ k'
     },
     {
+      id: 'view.togglePanel',
+      menuId: 'view',
+      label: 'Toggle Bottom Panel',
+      group: '3-panels',
+      order: 0,
+      commandId: 'panel.toggle',
+      accelerator: '␣ j'
+    },
+    {
       id: 'view.toggleLogs',
       menuId: 'view',
       label: 'Toggle Logs Panel',

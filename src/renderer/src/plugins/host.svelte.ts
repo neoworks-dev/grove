@@ -14,13 +14,15 @@ import { statusBar } from '../lib/statusbar.svelte'
 import { sidebar } from '../lib/sidebar.svelte'
 import { menu } from '../lib/menu.svelte'
 import { panes } from '../lib/panes.svelte'
+import { panels } from '../lib/panels.svelte'
 import { views } from '../lib/views.svelte'
 import { settings } from '../lib/settings.svelte'
 import { dialogs } from '../lib/dialogs.svelte'
 import { layout } from '../lib/layout.svelte'
 import { store, openFileInEditor, openFileAtLine } from '../lib/store.svelte'
 import { sanitize, createLeaf } from '../lib/layoutTree'
-import { isAbsolutePath, joinPath } from '../lib/paths'
+import { isAbsolutePath, joinPath, relativePath } from '../lib/paths'
+import { activeNvimSession } from '../lib/nvim/registry'
 import type { SettingDefinition } from '../../../shared/settings'
 import DeclarativeSurface from '../components/DeclarativeSurface.svelte'
 import DeclarativeStatusItem from '../components/DeclarativeStatusItem.svelte'
@@ -375,6 +377,16 @@ class PluginHost {
         })
       )
       add(() => this.paneOwners.delete(pane.id))
+      if (pane.panel) {
+        add(
+          panels.register({
+            id: pane.id,
+            title: pane.panel.title ?? pane.title,
+            paneTypeId: pane.id,
+            order: pane.panel.order
+          })
+        )
+      }
     }
 
     for (const view of contributes.views ?? []) {
@@ -655,6 +667,17 @@ class PluginHost {
       const worktree = store.selectedWorktree
       if (!worktree) return null
       return { id: worktree.id, path: worktree.path, branch: worktree.branch }
+    })
+
+    rpc.handle('host.getActiveFile', async () => {
+      const session = activeNvimSession()
+      if (!session) return null
+      const active = await session.getActiveFile()
+      if (!active) return null
+      // Return a worktree-relative path so it composes with readExcerpt/openFile,
+      // which resolve relative paths against the active worktree base.
+      const base = store.selectedWorktree?.path ?? ''
+      return { path: relativePath(base, active.path), line: active.line }
     })
 
     rpc.handle('host.openFile', async (params) => {

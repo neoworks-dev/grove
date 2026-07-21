@@ -226,6 +226,9 @@ export interface WorkspaceApi {
   writeFile(path: string, content: string, options?: { worktreeId?: string }): Promise<void>
   // UI-only (opens an editor tab); not permission-gated.
   openFile(path: string, options?: { worktreeId?: string; line?: number }): Promise<void>
+  // The file open in the active editor, as a worktree-relative path plus the
+  // 1-based cursor line. Null when no editor is focused or the buffer is unnamed.
+  getActiveFile(): Promise<{ path: string; line: number } | null>
 }
 
 // ── ai ──────────────────────────────────────────────────────────

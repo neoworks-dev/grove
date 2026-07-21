@@ -2,14 +2,14 @@
   let {
     title,
     path,
-    diffLines,
+    hasDiff,
     onApprove,
     onDeny,
     onShowChange
   }: {
     title: string
     path?: string | null
-    diffLines: string[]
+    hasDiff: boolean
     onApprove: (remember: boolean) => void
     onDeny: (message: string) => void
     onShowChange: () => void
@@ -37,7 +37,7 @@
     ]
     if (path) {
       list.push({
-        label: 'Open file in editor',
+        label: hasDiff ? 'Show diff in editor' : 'Open file in editor',
         class: 'border border-line hover:bg-hover',
         run: onShowChange
       })
@@ -79,13 +79,6 @@
       choices[index].run()
     }
   }
-
-  function lineClass(line: string): string {
-    if (line.startsWith('@@')) return 'text-dim'
-    if (line.startsWith('+')) return 'bg-green-soft text-green'
-    if (line.startsWith('-')) return 'bg-red-soft text-red'
-    return 'text-muted'
-  }
 </script>
 
 <div
@@ -98,14 +91,8 @@
   {#if path}
     <div class="mb-2 truncate font-mono text-2xs text-muted">{path}</div>
   {/if}
-  {#if diffLines.length > 0}
-    <div
-      class="mb-2 max-h-56 overflow-auto rounded border border-line bg-canvas font-mono text-2xs leading-snug"
-    >
-      {#each diffLines as line, lineIndex (lineIndex)}
-        <div class="whitespace-pre px-2 {lineClass(line)}">{line}</div>
-      {/each}
-    </div>
+  {#if hasDiff}
+    <div class="mb-2 text-2xs text-muted">Proposed change shown as a diff in the editor →</div>
   {/if}
   {#if denyReasonMode}
     <textarea

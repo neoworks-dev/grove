@@ -41,6 +41,8 @@ export interface RepoState {
   // Legacy pre-tree layout fields, kept as migration input. paneSizes still
   // carries sizes for panels nested inside panes (tree, diffList).
   paneSizes: Record<string, number> // pane key -> px
+  // Per-pane font zoom multiplier, keyed by split-tree leaf id or dock id.
+  paneFontScale: Record<string, number>
   panelsOpen: Record<string, boolean> // panel key -> open
   centerView: string | null
   activeView: string | null // active sidebar view (activity bar)
@@ -105,6 +107,7 @@ export function emptyRepoState(): RepoState {
     viewLayouts: {},
     activeLayoutView: null,
     paneSizes: {},
+    paneFontScale: {},
     panelsOpen: {},
     centerView: null,
     activeView: null,

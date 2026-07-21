@@ -164,6 +164,14 @@ export function registerCoreBindings(): void {
       description: 'Toggle terminal',
       run: () => layout.togglePane('terminal')
     },
+    {
+      id: 'panel.toggle',
+      keys: '<Leader> j',
+      context: 'global',
+      group: 'View',
+      description: 'Toggle bottom panel',
+      run: () => layout.togglePane('panel')
+    },
     // Spatial pane navigation — ordinary bindings now, so they show up in
     // which-key listings and stay rebindable.
     {
@@ -214,6 +222,9 @@ export function registerCoreBindings(): void {
       description: 'Shrink pane',
       run: () => layout.resizeFocused(-10)
     },
+    // Per-pane font zoom (Ctrl +/-/0) is handled layout-independently by
+    // event.code in App.onGlobalKey, not here — the key-based binding grammar
+    // can't reliably match +/-/= across keyboard layouts.
     {
       id: 'leader.pane.h',
       keys: '<Leader> w h',
@@ -354,6 +365,13 @@ export function registerCoreBindings(): void {
       group: 'Terminal',
       keywords: 'terminal shell console pty command line',
       run: () => layout.togglePane('terminal')
+    },
+    {
+      id: 'panel.toggle',
+      title: 'View: Toggle Bottom Panel',
+      group: 'View',
+      keywords: 'panel bottom terminal problems diagnostics output tabs',
+      run: () => layout.togglePane('panel')
     },
     {
       id: 'nvim.open',

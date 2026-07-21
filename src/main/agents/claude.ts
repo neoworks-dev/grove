@@ -7,7 +7,7 @@
 // it must be loaded via dynamic import() (require() of an ESM package throws).
 import { isAbsolute, resolve } from 'path'
 import type { PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
-import type { AgentConfig, AgentSlashCommand } from '../../shared/types'
+import type { AgentConfig, AgentOption, AgentSlashCommand } from '../../shared/types'
 import type { AdapterContext, AgentAdapter, RunHandle } from './types'
 import { textLine } from './types'
 import { zodShapeFromJsonSchema } from '../plugins/zodSchema'
@@ -74,17 +74,18 @@ const config: AgentConfig = {
     { label: 'accept edits', value: 'acceptEdits' },
     { label: 'auto', value: 'bypassPermissions' }
   ],
-  // Reasoning effort levels (SDK `effort` option). Empty value = SDK default.
-  // `xhigh`/`max` only apply on models that support them; others silently downgrade.
+  // Reasoning effort levels (SDK `effort` option). The picker defaults to 'high'
+  // (see defaultEffortIndex in the renderer). `xhigh`/`max` only apply on models
+  // that support them; others silently downgrade.
   efforts: [
-    { label: 'default', value: '' },
     { label: 'low', value: 'low' },
     { label: 'medium', value: 'medium' },
     { label: 'high', value: 'high' },
     { label: 'xhigh', value: 'xhigh' },
     { label: 'max', value: 'max' }
   ]
-  // Models are free-text (no runtime model-list API).
+  // Models are discovered at runtime via the SDK's supportedModels() control
+  // request (see reportModels in start), so no static list is declared here.
 }
 
 // Read-only tools auto-approved in every mode — they cannot mutate the
@@ -345,6 +346,7 @@ function start(context: AdapterContext): RunHandle {
           .catch(() => {})
       }
 
+
       for await (const message of iterator) {
         // Capture the session id (carried on system/init and result messages)
         // so the next turn resumes this conversation.
@@ -405,4 +407,61 @@ function start(context: AdapterContext): RunHandle {
   }
 }
 
-export const claudeAdapter: AgentAdapter = { name: 'claude', config, start }
+// The available model list is fetched straight from the Agent SDK via a
+// short-lived probe query that only issues the `supportedModels()` control
+// request (no user turn, so no tokens spent). Cached for the process lifetime —
+// the list is per Claude Code build, not per worktree.
+let modelsProbe: Promise<AgentOption[]> | null = null
+
+async function listModels(cwd: string): Promise<AgentOption[]> {
+  if (!modelsProbe) modelsProbe = probeModels(cwd).catch(() => [])
+  return modelsProbe
+}
+
+async function probeModels(cwd: string): Promise<AgentOption[]> {
+  const { query } = await import('@anthropic-ai/claude-agent-sdk')
+  const abort = new AbortController()
+  const input = createInputQueue()
+  try {
+    const iterator = query({
+      // Streaming-input mode (an open prompt stream) is what unlocks control
+      // requests like supportedModels(); we never push a turn.
+      prompt: input.stream(),
+      options: { cwd, abortController: abort }
+    })
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('supportedModels timed out')), 15000)
+    )
+    const models = await Promise.race([iterator.supportedModels(), timeout])
+    const options: AgentOption[] = []
+    const seen = new Set<string>()
+    for (const model of models) {
+      // Skip Claude Code's "Default"/recommended pseudo-rows — the picker lists
+      // concrete, versioned models only.
+      if (!model.value || /default|recommended/i.test(model.displayName)) continue
+      const label = modelLabel(model)
+      // Collapse duplicates (e.g. an alias row and its explicit wire-id row that
+      // resolve to the same model) by their display label.
+      if (seen.has(label)) continue
+      seen.add(label)
+      options.push({ label, value: model.value })
+    }
+    return options
+  } finally {
+    input.close()
+    abort.abort()
+  }
+}
+
+// Build a versioned label. Claude Code's displayName is often just the family
+// ("Opus"); the version lives on resolvedModel ("claude-opus-4-8" → "Opus 4.8").
+function modelLabel(model: { displayName: string; value: string; resolvedModel?: string }): string {
+  if (/\d/.test(model.displayName)) return model.displayName
+  const wire = model.resolvedModel || model.value
+  const [family, ...version] = wire.replace(/^claude-/, '').split('-')
+  const title = family.charAt(0).toUpperCase() + family.slice(1)
+  if (version.length === 0) return model.displayName || title
+  return `${title} ${version.join('.')}`
+}
+
+export const claudeAdapter: AgentAdapter = { name: 'claude', config, start, listModels }

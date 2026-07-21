@@ -5,7 +5,8 @@
   import { toolSummary, type OutputItem } from '../../lib/agentStream'
   import {
     buildTranscriptRows,
-    changedFileCount,
+    toolNames,
+    changedFiles,
     resultsByToolKey,
     rowKey,
     userSegments,
@@ -13,7 +14,8 @@
     resultLabel,
     FILE_EDIT_TOOLS,
     TASK_TOOLS,
-    type RenderTool
+    type RenderTool,
+    type TranscriptRow
   } from '../../lib/agent/transcript'
 
   let {
@@ -53,6 +55,37 @@
   } = $props()
 
   const rows = $derived(buildTranscriptRows(visibleItems, resultsByToolKey(items)))
+
+  // Group rows into sections, one per user message. Each section owns its user
+  // bubble as a sticky header: because the sticky element's containing block is
+  // the section box (not the whole transcript), the header pins only while its
+  // own turn is on screen and scrolls away with the section — the next section's
+  // header then takes over. A leading section (no header) holds any rows before
+  // the first user message.
+  interface Section {
+    key: string
+    header: TranscriptRow | null
+    body: TranscriptRow[]
+  }
+
+  function isUserRow(row: TranscriptRow): boolean {
+    return row.kind === 'item' && row.item.kind === 'user'
+  }
+
+  const sections = $derived.by<Section[]>(() => {
+    const result: Section[] = []
+    let current: Section = { key: 'lead', header: null, body: [] }
+    for (const row of rows) {
+      if (!isUserRow(row)) {
+        current.body.push(row)
+        continue
+      }
+      if (current.header || current.body.length > 0) result.push(current)
+      current = { key: rowKey(row), header: row, body: [] }
+    }
+    if (current.header || current.body.length > 0) result.push(current)
+    return result
+  })
 </script>
 
 <!-- One tool call: a plain (card-less) line that expands to its full input and
@@ -117,10 +150,9 @@
   </div>
 {/snippet}
 
-<FloatingScrollbar class="min-h-0 flex-1" bind:viewport {onscroll}>
-  <div class="px-3 py-3 text-xs leading-relaxed">
-    {#each rows as row (rowKey(row))}
-      {#if row.kind === 'tool'}
+<!-- One transcript row: a tool line, a collapsed edit group, or a message. -->
+{#snippet renderRow(row: TranscriptRow)}
+  {#if row.kind === 'tool'}
         <div
           data-item-key={row.tool.item.key}
           class={row.tool.item.key === highlightedKey ? 'rounded ring-1 ring-amber' : ''}
@@ -128,14 +160,15 @@
           {@render toolLine(row.tool)}
         </div>
       {:else if row.kind === 'edit-group'}
-        {@const fileCount = changedFileCount(row.tools, filePath)}
+        {@const names = toolNames(row.tools)}
+        {@const files = changedFiles(row.tools, filePath, relativePath)}
         <div
           data-item-key={row.key}
           class={row.key === highlightedKey ? 'rounded ring-1 ring-amber' : ''}
         >
           <div class="mb-1">
             <button
-              class="flex items-center gap-2 text-left font-mono text-2xs"
+              class="flex w-full items-center gap-2 text-left font-mono text-2xs"
               onclick={() => toggleGroup(row.key)}
             >
               <span
@@ -144,12 +177,24 @@
               >
                 <CaretRight width="10" height="10" weight="bold" />
               </span>
-              <span class="shrink-0 font-semibold text-amber"
-                >{row.tools.length} tool uses{fileCount > 0
-                  ? `, ${fileCount} ${fileCount === 1 ? 'file' : 'files'} changed`
-                  : ''}</span
-              >
+              <span class="min-w-0 truncate font-semibold text-amber">{names.join(' · ')}</span>
             </button>
+            {#if files.length > 0}
+              <!-- File badges: relative path with approximate +/- line counts. -->
+              <div class="ml-4 mt-1 flex flex-wrap gap-1.5">
+                {#each files as file (file.path)}
+                  <button
+                    class="flex items-center gap-1.5 rounded border border-line bg-canvas px-1.5 py-0.5 font-mono text-2xs hover:bg-hover"
+                    title="Show side-by-side diff"
+                    onclick={() => openCardDiff(file.input)}
+                  >
+                    <span class="min-w-0 truncate text-muted">{file.label}</span>
+                    {#if file.added > 0}<span class="text-green">+{file.added}</span>{/if}
+                    {#if file.removed > 0}<span class="text-red">−{file.removed}</span>{/if}
+                  </button>
+                {/each}
+              </div>
+            {/if}
             {#if expandedGroups[row.key]}
               <div class="ml-1 mt-1 border-l border-line pl-3">
                 {#each row.tools as tool (tool.item.key)}
@@ -163,10 +208,7 @@
         {@const item = row.item}
         <div
           data-item-key={item.key}
-          class="{item.key === highlightedKey ? 'rounded ring-1 ring-amber' : ''} {item.kind ===
-          'user'
-            ? 'sticky top-0 z-10'
-            : ''}"
+          class={item.key === highlightedKey ? 'rounded ring-1 ring-amber' : ''}
         >
           {#if item.kind === 'user'}
             <!-- User message: a right-aligned orange bubble; @file mentions are
@@ -213,6 +255,23 @@
           {/if}
         </div>
       {/if}
+{/snippet}
+
+<FloatingScrollbar class="min-h-0 flex-1" bind:viewport {onscroll}>
+  <div class="px-3 py-3 text-xs leading-relaxed">
+    {#each sections as section (section.key)}
+      <!-- The section box is the sticky header's containing block, so the pinned
+           user bubble scrolls away with its own turn instead of stacking. -->
+      <div>
+        {#if section.header}
+          <div class="sticky top-0 z-10">
+            {@render renderRow(section.header)}
+          </div>
+        {/if}
+        {#each section.body as row (rowKey(row))}
+          {@render renderRow(row)}
+        {/each}
+      </div>
     {/each}
     {#if items.length === 0}
       <p class="text-dim">No agent output yet. Write a prompt below and run.</p>

@@ -17,6 +17,14 @@
   const leafId = $derived(dockLeafId(side))
   const active = $derived(keymap.activePane === leafId)
 
+  // Per-pane font zoom. Canvas panes (e.g. a terminal picked into the right
+  // dock) scale their own font; DOM panes get CSS zoom on the content area,
+  // leaving the dock header at native size.
+  const fontScale = $derived(layout.fontScale(leafId))
+  const zoomStyle = $derived(
+    !type?.ownsFontScale && fontScale !== 1 ? `zoom: ${fontScale}` : ''
+  )
+
   let pickerOpen = $state(false)
 
   // Right dock is a utility slot: the user can swap the agent panel for a
@@ -47,6 +55,7 @@
   <div
     use:pane={{ id: leafId, type: type?.contextType ?? dock.paneType, modes: type?.modes }}
     data-pane={leafId}
+    data-zoom-container={leafId}
     class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden outline-none {type?.containerClass ??
       ''} {active ? 'pane-active' : ''}"
   >
@@ -92,7 +101,7 @@
       </button>
     </div>
 
-    <div class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+    <div class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" style={zoomStyle}>
       {#if !type}
         <MissingPane paneTypeId={dock.paneType} />
       {:else}

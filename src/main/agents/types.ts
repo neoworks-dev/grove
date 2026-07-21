@@ -62,6 +62,11 @@ export interface AdapterContext {
     send: (text: string, to?: string) => void
     history: (since?: number) => WorktreeChatMessage[]
   }
+  // AGENTS.md onboarding run: lets the model report its protocol phase so the
+  // intro pane's stepper can follow along. Exposed as the grove-intro MCP tool.
+  intro?: {
+    setPhase: (phase: string) => void
+  }
 }
 
 export interface RunHandle {

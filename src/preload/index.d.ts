@@ -62,6 +62,7 @@ interface RepoStateShape {
   activeTabByWorktree: Record<string, string | null>
   selectedWorktreeId: string | null
   setupOnceDone: boolean
+  introDismissed: boolean
   agentSessions: Record<string, string>
   trustedActionHashes: string[]
   viewLayouts: Record<string, unknown>

@@ -39,6 +39,7 @@ import type { ColorTheme } from './themes'
 import { layout } from './layout.svelte'
 import { settings } from './settings.svelte'
 import { inlineEdit } from './inlineEdit.svelte'
+import { intro } from './intro.svelte'
 
 export interface EditorTab {
   worktreeId: string
@@ -576,6 +577,11 @@ export async function openRepoResult(result: {
     await refreshRuntimes(store.selectedWorktreeId)
   }
   syncWatched()
+  // New workspace (no agent-instruction file) and never dismissed: offer the
+  // AGENTS.md onboarding introduction page.
+  if (!result.info.hasAgentsFile && !repoState.introDismissed) {
+    layout.showCenterPane('intro')
+  }
 }
 
 // Rebuild the per-worktree open-tab maps from persisted state, preferring the
@@ -784,6 +790,11 @@ export function subscribeEvents(): void {
     }
   })
 
+  window.workbench.on('event:intro-phase', (payload) => {
+    const event = payload as { worktreeId: string; chatId: string; phase: string }
+    intro.setPhase(event.worktreeId, event.chatId, event.phase)
+  })
+
   window.workbench.on('event:fs-change', (payload) => {
     const event = payload as {
       worktreeId: string
@@ -802,6 +813,9 @@ export function subscribeEvents(): void {
     // An inline edit under review keeps the change in the editor overlay, so it
     // claims its own writes instead of the changes view taking over.
     if (isFile && inlineEdit.claimFsChange(event.worktreeId, event.relPath)) return
+    // An onboarding session shows AGENTS.md / example changes in the intro
+    // pane, so the git-changes sidebar must not hijack focus for them.
+    if (isFile && intro.claimFsChange(event.worktreeId, event.relPath)) return
     // Otherwise, if a running agent touched a file, reveal the Git Changes
     // sidebar and highlight the file so the change is one click from review.
     if (isFile && store.activeAgentWorktrees.includes(event.worktreeId)) {

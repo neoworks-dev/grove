@@ -23,6 +23,7 @@ import CheckpointsView from '../components/CheckpointsView.svelte'
 import WorktreeChatPane from '../components/WorktreeChatPane.svelte'
 import NvimPane from '../components/NvimPane.svelte'
 import Dashboard from '../components/Dashboard.svelte'
+import IntroPane from '../components/IntroPane.svelte'
 import EmptyCenter from '../components/EmptyCenter.svelte'
 import AgentPane from '../components/agent/AgentPane.svelte'
 import LogsPane from '../components/LogsPane.svelte'
@@ -167,6 +168,15 @@ export function registerCorePanes(): void {
     component: Dashboard,
     slot: CENTER_SLOT,
     minWidth: 240,
+    when: repoOpen
+  })
+  // AGENTS.md onboarding introduction page (auto-opens for new workspaces).
+  panes.register({
+    id: 'intro',
+    title: 'Introduction',
+    component: IntroPane,
+    slot: CENTER_SLOT,
+    minWidth: 320,
     when: repoOpen
   })
   panes.register({

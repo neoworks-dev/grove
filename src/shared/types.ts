@@ -232,6 +232,10 @@ export interface AgentLaunchOptions {
   mode?: string
   model?: string
   effort?: string
+  // Extra text appended to the adapter's system prompt (claude only today).
+  appendSystemPrompt?: string
+  // Marks an AGENTS.md onboarding run; claude mounts the grove-intro tools.
+  intro?: boolean
 }
 
 // ── Mid-run message queue ────────────────────────────────────────
@@ -447,4 +451,6 @@ export interface RepoInfo {
   path: string
   name: string
   currentBranch: string
+  // No AGENTS.md/CLAUDE.md at the repo root -> offer the intro onboarding page.
+  hasAgentsFile: boolean
 }

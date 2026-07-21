@@ -5,7 +5,7 @@
 import { protocol } from 'electron'
 import { readFile } from 'fs/promises'
 import { extname, join } from 'path'
-import { isInside } from './broker'
+import { isInside } from '../api/broker'
 import type { PluginRegistry } from './loader'
 
 const CONTENT_TYPES: Record<string, string> = {

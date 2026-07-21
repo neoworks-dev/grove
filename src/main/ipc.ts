@@ -2,7 +2,7 @@
 // streamed events (logs, service/agent status) to the renderer. This is the
 // single source of truth for the API exposed via preload.
 
-import { ipcMain, dialog, shell, BrowserWindow, type IpcMainInvokeEvent } from 'electron'
+import { app, ipcMain, dialog, shell, BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { access } from 'fs/promises'
 import { join } from 'path'
 import type {
@@ -41,10 +41,16 @@ import { NeovimManager } from './nvim'
 import { buildWorktreeEnv, spawnEnv } from './env'
 import {
   PermissionBroker,
+  PermissionError,
   type PermissionDecision as PluginPermissionDecision
-} from './plugins/broker'
+} from './api/broker'
+import { clientFromPlugin, type ClientRecord } from './api/clients'
+import { RouteRegistry } from './api/registry'
+import { ApiDispatcher } from './api/dispatcher'
+import { registerWorkspaceRoutes } from './api/routes/workspace'
+import { registerAiRoutes } from './api/routes/ai'
+import { registerStorageRoutes } from './api/routes/storage'
 import { PluginRegistry } from './plugins/loader'
-import { PluginRouter } from './plugins/router'
 import { AiBridge } from './plugins/aiBridge'
 import { registerPluginProtocol } from './plugins/protocol'
 import type { SettingScope } from '../shared/settings'
@@ -149,13 +155,26 @@ const aiBridge = new AiBridge({
   registry: pluginRegistry,
   send
 })
-const pluginRouter = new PluginRouter({
-  broker: pluginBroker,
-  registry: pluginRegistry,
-  aiBridge,
-  findWorktree: (worktreeId) => findWorktree(worktreeId),
-  send
+const apiRegistry = new RouteRegistry()
+registerWorkspaceRoutes(apiRegistry)
+registerAiRoutes(apiRegistry, { aiBridge })
+registerStorageRoutes(apiRegistry, {
+  storagePath: () => join(app.getPath('userData'), 'plugin-storage.json')
 })
+const apiDispatcher = new ApiDispatcher({
+  registry: apiRegistry,
+  broker: pluginBroker,
+  findWorktree: (worktreeId) => findWorktree(worktreeId)
+})
+
+// Host-stamped identity for a worker-transport call; refuses non-ready plugins.
+function pluginClient(pluginId: string): ClientRecord {
+  const record = pluginRegistry.get(pluginId)
+  if (!record || record.status !== 'ready') {
+    throw new PermissionError(`plugin not available: ${pluginId}`)
+  }
+  return clientFromPlugin(record)
+}
 
 const lsp = new LspManager({
   onDiagnostics: (uri, diagnostics) => send('event:lsp-diagnostics', { uri, diagnostics })
@@ -953,22 +972,41 @@ export function registerIpc(): void {
     async (_e: IpcMainInvokeEvent, pluginId: string, enabled: boolean) => {
       await pluginBroker.setEnabled(pluginId, enabled)
       await pluginRegistry.refresh(pluginId)
-      if (!enabled) pluginRouter.cancelAllForPlugin(pluginId)
+      if (!enabled) {
+        aiBridge.clearPlugin(pluginId)
+        apiDispatcher.cancelAllForClient(`plugin:${pluginId}`)
+      }
       send('event:plugins-changed', pluginList())
       return pluginList()
     }
   )
   ipcMain.handle(
     'plugins:invoke',
-    (_e: IpcMainInvokeEvent, pluginId: string, callId: string, method: string, params: unknown) =>
-      pluginRouter.invoke(pluginId, callId, method, params)
+    (_e: IpcMainInvokeEvent, pluginId: string, callId: string, method: string, params: unknown) => {
+      const client = pluginClient(pluginId)
+      const emit = (chunk: unknown): void =>
+        send('event:plugin-stream', { pluginId, callId, chunk })
+      const invoke = (): Promise<unknown> =>
+        apiDispatcher.invoke(client, callId, method, params, { transport: 'worker', emit })
+      if (!apiRegistry.get(method)?.streaming) return invoke()
+      // Streaming wire contract: the invoke promise resolves immediately and
+      // completion/errors travel as an end event, matching what the renderer
+      // host awaits (mainStreams finish).
+      void invoke()
+        .then(() => send('event:plugin-stream', { pluginId, callId, end: true }))
+        .catch((error: Error) =>
+          send('event:plugin-stream', { pluginId, callId, end: true, error: { message: error.message } })
+        )
+      return null
+    }
   )
   ipcMain.handle('plugins:cancel', (_e: IpcMainInvokeEvent, pluginId: string, callId: string) =>
-    pluginRouter.cancel(pluginId, callId)
+    apiDispatcher.cancel(`plugin:${pluginId}`, callId)
   )
-  ipcMain.handle('plugins:cancelAll', (_e: IpcMainInvokeEvent, pluginId: string) =>
-    pluginRouter.cancelAllForPlugin(pluginId)
-  )
+  ipcMain.handle('plugins:cancelAll', (_e: IpcMainInvokeEvent, pluginId: string) => {
+    aiBridge.clearPlugin(pluginId)
+    apiDispatcher.cancelAllForClient(`plugin:${pluginId}`)
+  })
   ipcMain.handle(
     'plugins:respondPermission',
     (_e: IpcMainInvokeEvent, id: string, decision: PluginPermissionDecision) =>

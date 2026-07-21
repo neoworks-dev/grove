@@ -5,9 +5,10 @@
 // that never touches the user's chat slots.
 
 import type { Worktree } from '../../shared/types'
-import type { PermissionBroker } from './broker'
-import type { PluginRegistry, PluginRecord } from './loader'
-import { PermissionError } from './broker'
+import type { PermissionBroker } from '../api/broker'
+import type { ClientRecord } from '../api/clients'
+import type { PluginRegistry } from './loader'
+import { PermissionError } from '../api/broker'
 import { zodShapeFromJsonSchema, type JsonSchemaObject } from './zodSchema'
 
 export interface McpToolDeclaration {
@@ -47,30 +48,29 @@ export class AiBridge {
   private servers = new Map<string, Map<string, McpServerDeclaration>>()
   private skills = new Map<string, Map<string, SkillDeclaration>>()
   private pendingToolCalls = new Map<string, PendingToolCall>()
-  private prompts = new Map<string, AbortController>()
   private requestCounter = 0
 
   constructor(deps: BridgeDeps) {
     this.deps = deps
   }
 
-  // ── Registration (from the plugin router) ─────────────────────
-  async registerMcpServer(record: PluginRecord, declaration: McpServerDeclaration): Promise<void> {
-    await this.deps.broker.ensure(record, 'ai.mcp', `MCP server "${declaration.name}"`)
-    const byName = this.servers.get(record.id) ?? new Map()
+  // ── Registration (from the api routes) ────────────────────────
+  async registerMcpServer(client: ClientRecord, declaration: McpServerDeclaration): Promise<void> {
+    await this.deps.broker.ensure(client, 'ai.mcp', `MCP server "${declaration.name}"`)
+    const byName = this.servers.get(client.id) ?? new Map()
     byName.set(declaration.name, declaration)
-    this.servers.set(record.id, byName)
+    this.servers.set(client.id, byName)
   }
 
   disposeMcpServer(pluginId: string, name: string): void {
     this.servers.get(pluginId)?.delete(name)
   }
 
-  async registerSkill(record: PluginRecord, skill: SkillDeclaration): Promise<void> {
-    await this.deps.broker.ensure(record, 'ai.skills', `skill "${skill.name}"`)
-    const byName = this.skills.get(record.id) ?? new Map()
+  async registerSkill(client: ClientRecord, skill: SkillDeclaration): Promise<void> {
+    await this.deps.broker.ensure(client, 'ai.skills', `skill "${skill.name}"`)
+    const byName = this.skills.get(client.id) ?? new Map()
     byName.set(skill.name, skill)
-    this.skills.set(record.id, byName)
+    this.skills.set(client.id, byName)
   }
 
   disposeSkill(pluginId: string, name: string): void {
@@ -153,65 +153,49 @@ export class AiBridge {
   }
 
   // ── ai.prompt: standalone one-shot runs ───────────────────────
-  // Streams SDK messages to event:plugin-stream under the given callId.
-  // Write/exec tools route through the plugin consent dialog; read-only tools
-  // are auto-allowed like agent runs.
+  // Streams SDK messages through io.emit; resolves when the run ends and
+  // aborts on io.signal (the dispatcher owns cancellation). Write/exec tools
+  // route through the plugin consent dialog; read-only tools are
+  // auto-allowed like agent runs.
   async runPrompt(
-    record: PluginRecord,
-    callId: string,
+    client: ClientRecord,
     params: { prompt: string; model?: string; systemAppend?: string },
-    worktree: Worktree
+    worktree: Worktree,
+    io: { emit: (chunk: unknown) => void; signal: AbortSignal }
   ): Promise<null> {
-    await this.deps.broker.ensure(record, 'ai.prompt', truncate(params.prompt))
+    await this.deps.broker.ensure(client, 'ai.prompt', truncate(params.prompt))
     const abort = new AbortController()
-    this.prompts.set(callId, abort)
+    if (io.signal.aborted) abort.abort()
+    io.signal.addEventListener('abort', () => abort.abort())
 
-    void (async () => {
-      try {
-        const { query } = await import('@anthropic-ai/claude-agent-sdk')
-        const iterator = query({
-          prompt: params.prompt,
-          options: {
-            cwd: worktree.path,
-            abortController: abort,
-            systemPrompt: {
-              type: 'preset',
-              preset: 'claude_code',
-              append: params.systemAppend || undefined
-            },
-            model: params.model || undefined,
-            includePartialMessages: false,
-            canUseTool: async (toolName, input) => {
-              const allowed = await this.allowPromptTool(record, toolName, input)
-              if (allowed) return { behavior: 'allow', updatedInput: input }
-              return { behavior: 'deny', message: 'denied by the user' }
-            }
-          }
-        })
-        for await (const message of iterator) {
-          this.deps.send('event:plugin-stream', {
-            pluginId: record.id,
-            callId,
-            chunk: [{ type: (message as { type?: string }).type ?? 'message', payload: message }]
-          })
+    const { query } = await import('@anthropic-ai/claude-agent-sdk')
+    const iterator = query({
+      prompt: params.prompt,
+      options: {
+        cwd: worktree.path,
+        abortController: abort,
+        systemPrompt: {
+          type: 'preset',
+          preset: 'claude_code',
+          append: params.systemAppend || undefined
+        },
+        model: params.model || undefined,
+        includePartialMessages: false,
+        canUseTool: async (toolName, input) => {
+          const allowed = await this.allowPromptTool(client, toolName, input)
+          if (allowed) return { behavior: 'allow', updatedInput: input }
+          return { behavior: 'deny', message: 'denied by the user' }
         }
-        this.deps.send('event:plugin-stream', { pluginId: record.id, callId, end: true })
-      } catch (error) {
-        this.deps.send('event:plugin-stream', {
-          pluginId: record.id,
-          callId,
-          end: true,
-          error: { message: (error as Error).message }
-        })
-      } finally {
-        this.prompts.delete(callId)
       }
-    })()
+    })
+    for await (const message of iterator) {
+      io.emit([{ type: (message as { type?: string }).type ?? 'message', payload: message }])
+    }
     return null
   }
 
   private async allowPromptTool(
-    record: PluginRecord,
+    client: ClientRecord,
     toolName: string,
     input: Record<string, unknown>
   ): Promise<boolean> {
@@ -219,17 +203,12 @@ export class AiBridge {
     if (readOnly.has(toolName)) return true
     const detail = `${toolName}: ${truncate(JSON.stringify(input))}`
     try {
-      await this.deps.broker.ensure(record, 'ai.prompt', detail)
+      await this.deps.broker.ensure(client, 'ai.prompt', detail)
       return true
     } catch (error) {
       if (error instanceof PermissionError) return false
       throw error
     }
-  }
-
-  cancelPrompt(callId: string): void {
-    this.prompts.get(callId)?.abort()
-    this.prompts.delete(callId)
   }
 }
 

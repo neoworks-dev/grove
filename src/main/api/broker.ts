@@ -1,12 +1,15 @@
-// PermissionBroker: the single gate between plugins and privileged
-// capabilities. Grants persist in plugin-grants.json (separate from workbench
-// state); undeclared permissions hard-fail; builtins are auto-granted; project
-// plugins additionally need one-time trust per id@version.
+// PermissionBroker: the single gate between API clients (plugins + external
+// apps) and privileged capabilities. Plugin grants persist in
+// plugin-grants.json (separate from workbench state); undeclared scopes
+// hard-fail; builtins are auto-granted; project plugins additionally need
+// one-time trust per id@version. App grants live in the pairing store and are
+// wired in via sectionKey (external-apps.json, socket transport milestone).
 
 import { app } from 'electron'
 import { readFile, writeFile, mkdir } from 'fs/promises'
 import { dirname, join, resolve, sep } from 'path'
 import type { PluginManifest, PluginPermission } from '../../shared/plugins'
+import type { ClientRecord, ClientKind } from './clients'
 
 export interface PluginPermissionRequest {
   id: string
@@ -14,26 +17,26 @@ export interface PluginPermissionRequest {
   pluginName: string
   permission: PluginPermission
   detail: string
+  // Additive: lets the renderer dialog distinguish "Plugin X" from
+  // "External app X". Absent in payloads persisted before this field existed.
+  clientKind?: ClientKind
+  clientKey?: string
 }
 
 export type PermissionDecision = 'allow-once' | 'allow-always' | 'deny-once' | 'deny-always'
 
-interface PluginGrants {
+interface ClientGrants {
   permissions: Partial<Record<PluginPermission, 'granted' | 'denied'>>
   fsScopes: string[]
 }
 
 interface GrantStore {
-  plugins: Record<string, PluginGrants>
+  plugins: Record<string, ClientGrants>
   trustedProjectPlugins: Record<string, string[]> // repoPath -> ["id@version"]
   disabledPlugins: string[]
 }
 
 const EMPTY_STORE: GrantStore = { plugins: {}, trustedProjectPlugins: {}, disabledPlugins: [] }
-
-function grantsPath(): string {
-  return join(app.getPath('userData'), 'plugin-grants.json')
-}
 
 export class PermissionError extends Error {
   code = 'permission-denied' as const
@@ -43,28 +46,43 @@ interface BrokerEvents {
   onPermissionRequest: (request: PluginPermissionRequest) => void
 }
 
-interface BrokerPlugin {
-  manifest: PluginManifest
-  source: 'builtin' | 'user' | 'project'
+interface BrokerOptions {
+  // Overridable for tests; defaults to <userData>/plugin-grants.json.
+  grantsPath?: string
 }
 
 export class PermissionBroker {
   private events: BrokerEvents
+  private grantsFilePath: string | null
   private cache: GrantStore | null = null
   private pending = new Map<string, (decision: PermissionDecision) => void>()
   // Coalesce identical concurrent requests so one dialog answers them all.
   private inFlight = new Map<string, Promise<boolean>>()
   private requestCounter = 0
 
-  constructor(events: BrokerEvents) {
+  constructor(events: BrokerEvents, options: BrokerOptions = {}) {
     this.events = events
+    this.grantsFilePath = options.grantsPath ?? null
+  }
+
+  private grantsPath(): string {
+    if (this.grantsFilePath) return this.grantsFilePath
+    return join(app.getPath('userData'), 'plugin-grants.json')
+  }
+
+  // Plugin grants stay keyed by bare plugin id (byte-compatible with existing
+  // plugin-grants.json); app grants get the prefixed key so kinds can't
+  // collide once the pairing store delegates here.
+  private sectionKey(client: ClientRecord): string {
+    if (client.kind === 'plugin') return client.id
+    return client.key
   }
 
   private async store(): Promise<GrantStore> {
     if (this.cache) return this.cache
     let loaded: GrantStore
     try {
-      const text = await readFile(grantsPath(), 'utf8')
+      const text = await readFile(this.grantsPath(), 'utf8')
       loaded = { ...EMPTY_STORE, ...JSON.parse(text) }
     } catch {
       loaded = structuredClone(EMPTY_STORE)
@@ -75,56 +93,55 @@ export class PermissionBroker {
 
   private async save(): Promise<void> {
     if (!this.cache) return
-    await mkdir(dirname(grantsPath()), { recursive: true })
-    await writeFile(grantsPath(), JSON.stringify(this.cache, null, 2), 'utf8')
+    await mkdir(dirname(this.grantsPath()), { recursive: true })
+    await writeFile(this.grantsPath(), JSON.stringify(this.cache, null, 2), 'utf8')
   }
 
-  // Throws PermissionError unless the plugin may use the permission.
-  async ensure(plugin: BrokerPlugin, permission: PluginPermission, detail: string): Promise<void> {
-    const declared = plugin.manifest.permissions ?? []
-    if (!declared.includes(permission)) {
-      throw new PermissionError(`${plugin.manifest.id} does not declare "${permission}"`)
+  // Throws PermissionError unless the client may use the permission.
+  async ensure(client: ClientRecord, permission: PluginPermission, detail: string): Promise<void> {
+    if (!client.declaredScopes.includes(permission)) {
+      throw new PermissionError(`${client.id} does not declare "${permission}"`)
     }
-    if (plugin.source === 'builtin') return
+    if (client.source === 'builtin') return
     const store = await this.store()
-    const stored = store.plugins[plugin.manifest.id]?.permissions[permission]
+    const stored = store.plugins[this.sectionKey(client)]?.permissions[permission]
     if (stored === 'granted') return
     if (stored === 'denied') {
-      throw new PermissionError(`"${permission}" denied for ${plugin.manifest.id}`)
+      throw new PermissionError(`"${permission}" denied for ${client.id}`)
     }
-    const allowed = await this.prompt(plugin, permission, detail)
-    if (!allowed) throw new PermissionError(`"${permission}" denied for ${plugin.manifest.id}`)
+    const allowed = await this.prompt(client, permission, detail)
+    if (!allowed) throw new PermissionError(`"${permission}" denied for ${client.id}`)
   }
 
   // Path-scoped file access: paths inside the active worktree ride the blanket
   // workspace grant; anything outside every granted scope prompts per request.
   async ensurePath(
-    plugin: BrokerPlugin,
+    client: ClientRecord,
     mode: 'read' | 'write',
     absPath: string,
     worktreeRoot: string
   ): Promise<void> {
     const permission: PluginPermission = mode === 'read' ? 'workspace.read' : 'workspace.write'
-    await this.ensure(plugin, permission, absPath)
+    await this.ensure(client, permission, absPath)
     const target = resolve(absPath)
     if (isInside(worktreeRoot, target)) return
     const store = await this.store()
-    const scopes = store.plugins[plugin.manifest.id]?.fsScopes ?? []
+    const scopes = store.plugins[this.sectionKey(client)]?.fsScopes ?? []
     if (scopes.some((scope) => isInside(scope, target))) return
-    if (plugin.source === 'builtin') return
-    const allowed = await this.prompt(plugin, permission, `${mode} outside workspace: ${target}`)
+    if (client.source === 'builtin') return
+    const allowed = await this.prompt(client, permission, `${mode} outside workspace: ${target}`)
     if (!allowed) throw new PermissionError(`path access denied: ${target}`)
   }
 
   private prompt(
-    plugin: BrokerPlugin,
+    client: ClientRecord,
     permission: PluginPermission,
     detail: string
   ): Promise<boolean> {
-    const coalesceKey = `${plugin.manifest.id}:${permission}:${detail}`
+    const coalesceKey = `${client.key}:${permission}:${detail}`
     const existing = this.inFlight.get(coalesceKey)
     if (existing) return existing
-    const promise = this.promptOnce(plugin, permission, detail).finally(() => {
+    const promise = this.promptOnce(client, permission, detail).finally(() => {
       this.inFlight.delete(coalesceKey)
     })
     this.inFlight.set(coalesceKey, promise)
@@ -132,7 +149,7 @@ export class PermissionBroker {
   }
 
   private async promptOnce(
-    plugin: BrokerPlugin,
+    client: ClientRecord,
     permission: PluginPermission,
     detail: string
   ): Promise<boolean> {
@@ -142,27 +159,30 @@ export class PermissionBroker {
       this.pending.set(id, resolvePromise)
       this.events.onPermissionRequest({
         id,
-        pluginId: plugin.manifest.id,
-        pluginName: plugin.manifest.name,
+        pluginId: client.id,
+        pluginName: client.name,
         permission,
-        detail
+        detail,
+        clientKind: client.kind,
+        clientKey: client.key
       })
     })
     if (decision === 'allow-always' || decision === 'deny-always') {
-      await this.persistDecision(plugin.manifest.id, permission, decision)
+      await this.persistDecision(client, permission, decision)
     }
     return decision === 'allow-once' || decision === 'allow-always'
   }
 
   private async persistDecision(
-    pluginId: string,
+    client: ClientRecord,
     permission: PluginPermission,
     decision: 'allow-always' | 'deny-always'
   ): Promise<void> {
     const store = await this.store()
-    const grants = store.plugins[pluginId] ?? { permissions: {}, fsScopes: [] }
+    const key = this.sectionKey(client)
+    const grants = store.plugins[key] ?? { permissions: {}, fsScopes: [] }
     grants.permissions[permission] = decision === 'allow-always' ? 'granted' : 'denied'
-    store.plugins[pluginId] = grants
+    store.plugins[key] = grants
     await this.save()
   }
 

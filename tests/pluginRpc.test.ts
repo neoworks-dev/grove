@@ -86,4 +86,19 @@ describe('RpcEndpoint', () => {
     await new Promise((resolve) => setTimeout(resolve, 5))
     expect(seen).toEqual([{ a: 1 }])
   })
+
+  it('routes unknown methods through the fallback handler', async () => {
+    const { host, worker } = pair()
+    worker.setFallbackHandler(async (method, params) => ({ method, params }))
+    const result = await host.request('anything.goes', { x: 1 })
+    expect(result).toEqual({ method: 'anything.goes', params: { x: 1 } })
+  })
+
+  it('named handlers take precedence over the fallback', async () => {
+    const { host, worker } = pair()
+    worker.setFallbackHandler(async () => 'fallback')
+    worker.handle('named', async () => 'named')
+    expect(await host.request('named', {})).toBe('named')
+    expect(await host.request('other', {})).toBe('fallback')
+  })
 })

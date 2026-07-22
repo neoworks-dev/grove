@@ -52,7 +52,9 @@ import { registerWorkspaceRoutes } from './api/routes/workspace'
 import { registerAiRoutes } from './api/routes/ai'
 import { registerStorageRoutes } from './api/routes/storage'
 import { registerEventRoutes } from './api/routes/events'
+import { registerGitRoutes } from './api/routes/git'
 import { EventHub } from './api/events'
+import { VersionCounter } from './api/versions'
 import { AppPairing } from './api/socket/pairing'
 import { ApiSocketServer } from './api/socket/server'
 import { createHash } from 'crypto'
@@ -132,6 +134,9 @@ function persistChats(worktreeId: string, name: string): void {
 const watcher = new WorktreeWatcher((change) => {
   send('event:fs-change', change)
   eventHub.publish({ topic: 'files.didChange', payload: change })
+  // Any working-tree change can flip git status: advance the generation the
+  // git routes hand out as statusVersion.
+  gitStatusVersions.bump(change.worktreeId)
 })
 
 const settings = new SettingsService({
@@ -165,6 +170,7 @@ const aiBridge = new AiBridge({
   send
 })
 const eventHub = new EventHub()
+const gitStatusVersions = new VersionCounter()
 eventHub.registerTopicScope('editor.', 'editor.read')
 eventHub.registerTopicScope('git.', 'git.read')
 eventHub.registerTopicScope('worktrees.', 'git.read')
@@ -180,6 +186,57 @@ registerStorageRoutes(apiRegistry, {
   storagePath: () => join(app.getPath('userData'), 'plugin-storage.json')
 })
 registerEventRoutes(apiRegistry, { hub: eventHub })
+registerGitRoutes(apiRegistry, {
+  versions: gitStatusVersions,
+  hub: eventHub,
+  checkpoints,
+  repo: () => requireRepo(),
+  listWorktrees: () => refreshWorktrees(),
+  createWorktree: async (options) => {
+    const { repoPath, config: cfg } = requireRepo()
+    const created = await worktrees.createWorktree(
+      repoPath,
+      cfg,
+      {
+        name: options.branch,
+        baseBranch: options.base ?? (await git.currentBranch(repoPath)),
+        newBranch: options.branch
+      },
+      (worktreeId, line) => send('event:log', { worktreeId, source: 'service', name: 'setup', line })
+    )
+    await refreshWorktrees()
+    return created
+  },
+  removeWorktree: async (worktree) => {
+    const { repoPath } = requireRepo()
+    await supervisor.stopAllForWorktree(worktree.id)
+    await worktrees.removeWorktree(repoPath, worktree.path, false)
+    await refreshWorktrees()
+  },
+  archiveWorktree: async (worktree) => {
+    const { repoPath } = requireRepo()
+    await supervisor.stopAllForWorktree(worktree.id)
+    await worktrees.archiveWorktree(repoPath, worktree.path, {
+      branch: worktree.branch,
+      deleteBranch: true,
+      force: false
+    })
+    await refreshWorktrees()
+  },
+  // Native dialog: the calling client cannot see or answer it.
+  confirmDangerous: async (title, detail) => {
+    const result = await dialog.showMessageBox({
+      type: 'warning',
+      title,
+      message: title,
+      detail,
+      buttons: ['Cancel', 'Proceed'],
+      defaultId: 0,
+      cancelId: 0
+    })
+    return result.response === 1
+  }
+})
 const apiDispatcher = new ApiDispatcher({
   registry: apiRegistry,
   broker: pluginBroker,

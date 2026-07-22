@@ -377,18 +377,14 @@ export interface GitStatus {
   files: GitFileChange[]
 }
 
-export interface DiffHunkLine {
-  kind: 'context' | 'add' | 'del'
-  text: string
-}
-
+// Changed line ranges (1-based) as parsed from `git diff -U0` headers. A
+// count of 0 marks a pure insertion/deletion; the start then points at the
+// line the change sits after.
 export interface DiffHunk {
-  header: string
-  oldStart: number
-  oldLines: number
-  newStart: number
-  newLines: number
-  lines: DiffHunkLine[]
+  originalStart: number
+  originalCount: number
+  modifiedStart: number
+  modifiedCount: number
 }
 
 export type GitMutationResult<T = undefined> =
@@ -405,10 +401,12 @@ export interface GitApi {
   // 'git.read'
   status(options?: WorktreeScoped): Promise<GitStatus>
   branches(options?: WorktreeScoped): Promise<{ current: string; all: string[] }>
+  // Both content sides plus changed ranges; hunks are empty for untracked
+  // files (every line is new, inferable from the empty original).
   diffFile(
     path: string,
     options?: WorktreeScoped & { staged?: boolean }
-  ): Promise<{ hunks: DiffHunk[]; stats: { additions: number; deletions: number } }>
+  ): Promise<{ original: string; modified: string; language: string; hunks: DiffHunk[] }>
   fileAtRef(path: string, ref: string, options?: WorktreeScoped): Promise<string>
 
   // 'git.write'

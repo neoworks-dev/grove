@@ -52,7 +52,9 @@ import { registerWorkspaceRoutes } from './api/routes/workspace'
 import { registerAiRoutes } from './api/routes/ai'
 import { registerStorageRoutes } from './api/routes/storage'
 import { registerEventRoutes } from './api/routes/events'
+import { registerEditorRoutes } from './api/routes/editor'
 import { registerGitRoutes } from './api/routes/git'
+import { DocumentRegistry } from './editorDocs'
 import { EventHub } from './api/events'
 import { VersionCounter } from './api/versions'
 import { AppPairing } from './api/socket/pairing'
@@ -154,10 +156,35 @@ const terminals = new TerminalManager({
   onTitle: (id, title) => send('event:terminal-title', { id, title })
 })
 
+// Session → worktree tracking so the editor API can pick the canonical
+// (most recently active) nvim session for a worktree.
+const nvimSessionWorktrees = new Map<string, string | null>()
+const lastActiveNvimByWorktree = new Map<string, string>()
+
+function trackNvimActivity(sessionId: string): void {
+  const worktreeId = nvimSessionWorktrees.get(sessionId)
+  if (worktreeId) lastActiveNvimByWorktree.set(worktreeId, sessionId)
+}
+
+function nvimSessionFor(worktreeId: string): string | null {
+  const preferred = lastActiveNvimByWorktree.get(worktreeId)
+  if (preferred && nvimSessionWorktrees.get(preferred) === worktreeId) return preferred
+  for (const [sessionId, sessionWorktree] of nvimSessionWorktrees) {
+    if (sessionWorktree === worktreeId) return sessionId
+  }
+  return null
+}
+
 const nvims = new NeovimManager({
   onRedraw: (id, events) => send('event:nvim-redraw', { id, events }),
-  onExit: (id, exitCode) => send('event:nvim-exit', { id, exitCode }),
-  onNotify: (id, method, args) => send('event:nvim-notify', { id, method, args })
+  onExit: (id, exitCode) => {
+    nvimSessionWorktrees.delete(id)
+    send('event:nvim-exit', { id, exitCode })
+  },
+  onNotify: (id, method, args) => {
+    editorDocs.handleNotify(nvimSessionWorktrees.get(id) ?? null, method, args)
+    send('event:nvim-notify', { id, method, args })
+  }
 })
 
 const pluginBroker = new PermissionBroker({
@@ -185,7 +212,34 @@ registerAiRoutes(apiRegistry, { aiBridge })
 registerStorageRoutes(apiRegistry, {
   storagePath: () => join(app.getPath('userData'), 'plugin-storage.json')
 })
+const editorDocs = new DocumentRegistry({
+  nvim: { request: (id, method, args) => nvims.request(id, method, args) },
+  sessionFor: (worktreeId) => nvimSessionFor(worktreeId),
+  allSessions: () => {
+    const sessions: { sessionId: string; worktreeId: string }[] = []
+    for (const [sessionId, worktreeId] of nvimSessionWorktrees) {
+      if (worktreeId) sessions.push({ sessionId, worktreeId })
+    }
+    return sessions
+  },
+  activeSession: () => {
+    for (const [worktreeId, sessionId] of lastActiveNvimByWorktree) {
+      if (nvimSessionWorktrees.get(sessionId) === worktreeId) {
+        return { sessionId, worktreeId }
+      }
+    }
+    return null
+  },
+  worktreePathOf: (worktreeId) => findWorktree(worktreeId).path,
+  publish: (topic, payload, worktreeId) => eventHub.publish({ topic, payload, worktreeId })
+})
+
 registerEventRoutes(apiRegistry, { hub: eventHub })
+registerEditorRoutes(apiRegistry, {
+  documents: editorDocs,
+  openInEditor: (worktreeId, path, line) =>
+    send('event:api-open-file', { worktreeId, path, line })
+})
 registerGitRoutes(apiRegistry, {
   versions: gitStatusVersions,
   hub: eventHub,
@@ -1020,7 +1074,7 @@ export function registerIpc(): void {
   // ── Embedded Neovim ───────────────────────────────────────────
   // A vendored `nvim --embed` per pane, spawned in the worktree with the same
   // WT_*/PORT_n vars as terminals. Redraw batches stream via event:nvim-redraw.
-  ipcMain.handle('nvim:spawn', (_e, worktreeId: string | null) => {
+  ipcMain.handle('nvim:spawn', async (_e, worktreeId: string | null) => {
     let cwd = context.repoPath ?? process.cwd()
     let vars: Record<string, string> = {}
     if (worktreeId) {
@@ -1029,16 +1083,26 @@ export function registerIpc(): void {
       vars = buildWorktreeEnv(worktree, worktrees.portsForWorktree(cfg, worktree.portSlot))
       cwd = worktree.path
     }
-    return nvims.spawn({ cwd, env: spawnEnv(vars) })
+    const sessionId = await nvims.spawn({ cwd, env: spawnEnv(vars) })
+    nvimSessionWorktrees.set(sessionId, worktreeId)
+    if (worktreeId && !lastActiveNvimByWorktree.has(worktreeId)) {
+      lastActiveNvimByWorktree.set(worktreeId, sessionId)
+    }
+    return sessionId
   })
   ipcMain.handle('nvim:attach', (_e, id: string, cols: number, rows: number, file?: string) =>
     nvims.attach(id, cols, rows, file)
   )
-  ipcMain.handle('nvim:input', (_e, id: string, keys: string) => nvims.input(id, keys))
+  ipcMain.handle('nvim:input', (_e, id: string, keys: string) => {
+    trackNvimActivity(id)
+    nvims.input(id, keys)
+  })
   ipcMain.handle(
     'nvim:inputMouse',
-    (_e, id: string, button: string, action: string, modifier: string, row: number, col: number) =>
+    (_e, id: string, button: string, action: string, modifier: string, row: number, col: number) => {
+      trackNvimActivity(id)
       nvims.inputMouse(id, button, action, modifier, row, col)
+    }
   )
   ipcMain.handle('nvim:resize', (_e, id: string, cols: number, rows: number) =>
     nvims.resize(id, cols, rows)

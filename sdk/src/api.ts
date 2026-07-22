@@ -472,8 +472,11 @@ export interface AgentsApi {
   observe(chatId: string, token?: CancellationToken): AsyncIterable<AgentTranscriptEvent>
   channelHistory(options?: WorktreeScoped): Promise<AgentTranscriptEvent[]>
 
-  // 'agents.run'
-  createChat(options?: WorktreeScoped & { title?: string; model?: string }): Promise<{ chatId: string }>
+  // 'agents.run'. Chat ids are '<agentName>/<chatId>' — the agent adapter is
+  // part of the reference. agent defaults to the first configured adapter.
+  createChat(
+    options?: WorktreeScoped & { agent?: string; title?: string; model?: string }
+  ): Promise<{ chatId: string }>
   send(chatId: string, message: string): Promise<void>
   stop(chatId: string): Promise<void>
   cancelQueued(chatId: string, queueId: string): Promise<void>

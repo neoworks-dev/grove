@@ -5,19 +5,33 @@
 // Compatibility seam: keep this file small and additive. Breaking changes
 // require bumping GROVE_API_VERSION's major.
 
-export const GROVE_API_VERSION = '0.1.0'
+export const GROVE_API_VERSION = '0.2.0'
 
 // ── Permissions ─────────────────────────────────────────────────
+// Split by blast radius: read/observe scopes are cheap to grant, write and
+// interact scopes gate separately, danger scopes (arbitrary execution, spends
+// money, destroys worktrees) get amplified prompt copy via PERMISSION_META.
 
 export type PluginPermission =
-  | 'workspace.read' // findFiles, readFile, readExcerpt, searchText
-  | 'workspace.write' // writeFile, create/rename/delete
+  | 'workspace.read' // findFiles, readFile, readExcerpt, searchText (disk)
+  | 'workspace.write' // writeFile, create/rename/delete (disk)
   | 'ai.prompt' // one-shot mediated agent prompts
   | 'ai.skills' // register skills injected into agent runs
   | 'ai.mcp' // register in-worker MCP tools bridged into agents
-  | 'state' // plugin-scoped persisted storage
-  | 'shell' // reserved, denied in v1
-  | 'net' // reserved, denied in v1
+  | 'state' // client-scoped persisted storage
+  | 'shell' // reserved, denied
+  | 'net' // reserved, denied
+  | 'editor.read' // open editors, live buffer contents, cursor/selections
+  | 'editor.edit' // buffer edits, selections, decorations, save
+  | 'git.read' // status, branches, diffs, worktree + checkpoint listing
+  | 'git.write' // stage/unstage, commit, push, checkpoint snapshot/restore
+  | 'worktrees.manage' // create/remove/archive worktrees
+  | 'agents.read' // chats, transcripts, run observation, channel history
+  | 'agents.run' // start/steer/stop agent runs, post channel messages
+  | 'terminal.exec' // own PTYs: create/write/read/kill
+  | 'languages.read' // LSP queries; mutations additionally need editor.edit
+  | 'services.read' // dev-service status + logs
+  | 'services.manage' // start/stop dev services
 
 export const PLUGIN_PERMISSIONS: PluginPermission[] = [
   'workspace.read',
@@ -27,8 +41,130 @@ export const PLUGIN_PERMISSIONS: PluginPermission[] = [
   'ai.mcp',
   'state',
   'shell',
-  'net'
+  'net',
+  'editor.read',
+  'editor.edit',
+  'git.read',
+  'git.write',
+  'worktrees.manage',
+  'agents.read',
+  'agents.run',
+  'terminal.exec',
+  'languages.read',
+  'services.read',
+  'services.manage'
 ]
+
+export type PermissionRisk = 'read' | 'write' | 'danger'
+
+export interface PermissionMeta {
+  label: string
+  description: string
+  risk: PermissionRisk
+  // Reserved scopes are always denied and never prompt.
+  reserved?: boolean
+}
+
+// Single source for prompt copy, dialog styling, and the grants review pane.
+export const PERMISSION_META: Record<PluginPermission, PermissionMeta> = {
+  'workspace.read': {
+    label: 'Read workspace files',
+    description: 'List, read, and search files inside the worktree on disk',
+    risk: 'read'
+  },
+  'workspace.write': {
+    label: 'Write workspace files',
+    description: 'Create and modify files inside the worktree on disk',
+    risk: 'write'
+  },
+  'ai.prompt': {
+    label: 'Run AI prompts',
+    description: 'Start mediated one-shot agent runs (uses your AI provider quota)',
+    risk: 'write'
+  },
+  'ai.skills': {
+    label: 'Register AI skills',
+    description: 'Inject skill instructions into your agent runs',
+    risk: 'write'
+  },
+  'ai.mcp': {
+    label: 'Provide AI tools',
+    description: 'Expose tools your agents can call during runs',
+    risk: 'write'
+  },
+  state: {
+    label: 'Persistent storage',
+    description: 'Store its own data across sessions',
+    risk: 'read'
+  },
+  shell: {
+    label: 'Shell access',
+    description: 'Reserved: arbitrary shell execution is always denied',
+    risk: 'danger',
+    reserved: true
+  },
+  net: {
+    label: 'Network access',
+    description: 'Reserved: direct network access is always denied',
+    risk: 'danger',
+    reserved: true
+  },
+  'editor.read': {
+    label: 'Observe the editor',
+    description: 'See open files, live buffer contents, cursor and selections',
+    risk: 'read'
+  },
+  'editor.edit': {
+    label: 'Edit open buffers',
+    description: 'Apply edits, move selections, add decorations, and save buffers',
+    risk: 'write'
+  },
+  'git.read': {
+    label: 'Read git state',
+    description: 'See status, branches, diffs, worktrees, and checkpoints',
+    risk: 'read'
+  },
+  'git.write': {
+    label: 'Modify git state',
+    description: 'Stage, commit, push, and snapshot/restore checkpoints',
+    risk: 'write'
+  },
+  'worktrees.manage': {
+    label: 'Manage worktrees',
+    description: 'Create, remove, and archive worktrees — removal is destructive',
+    risk: 'danger'
+  },
+  'agents.read': {
+    label: 'Observe agents',
+    description: 'Read chats, transcripts, and live run output',
+    risk: 'read'
+  },
+  'agents.run': {
+    label: 'Drive agents',
+    description: 'Start, steer, and stop agent runs (spends money; agents can edit files)',
+    risk: 'danger'
+  },
+  'terminal.exec': {
+    label: 'Run terminals',
+    description: 'Open terminals and run arbitrary commands in the worktree',
+    risk: 'danger'
+  },
+  'languages.read': {
+    label: 'Language intelligence',
+    description: 'Query hover, definitions, references, and completions',
+    risk: 'read'
+  },
+  'services.read': {
+    label: 'Observe dev services',
+    description: 'See dev-service status, ports, and logs',
+    risk: 'read'
+  },
+  'services.manage': {
+    label: 'Control dev services',
+    description: 'Start and stop configured dev services',
+    risk: 'write'
+  }
+}
 
 // ── Activation ──────────────────────────────────────────────────
 
@@ -272,7 +408,17 @@ function validateContributionIds(contributes: PluginContributions, errors: strin
 
 export interface RpcError {
   message: string
-  code?: 'permission-denied' | 'cancelled' | 'invalid' | 'internal'
+  code?:
+    | 'permission-denied'
+    | 'cancelled'
+    | 'invalid'
+    | 'internal'
+    // Route exists but is not served on this transport (e.g. worker-only).
+    | 'unsupported'
+    // Optimistic-concurrency mismatch: caller's expected version is stale.
+    | 'conflict'
+    // Socket client has not completed the api.hello handshake.
+    | 'unauthenticated'
 }
 
 export type RpcMessage =
@@ -286,3 +432,25 @@ export type RpcMessage =
   | { kind: 'cancel'; id: number }
   // Fire-and-forget notification.
   | { kind: 'event'; channel: string; payload: unknown }
+
+// ── External app handshake (socket transport) ───────────────────
+// api.hello must be the first request on a socket connection. Without a
+// valid token the host prompts the user to pair and returns a fresh token;
+// requesting scopes beyond the granted set triggers re-approval of the delta.
+
+export interface HelloParams {
+  // Same grammar as plugin ids (PLUGIN_ID_PATTERN).
+  appId: string
+  name: string
+  version: string
+  requestedScopes: PluginPermission[]
+  token?: string
+}
+
+export interface HelloResult {
+  apiVersion: string
+  grantedScopes: PluginPermission[]
+  // Present when this connection paired (or re-paired); persist it for
+  // subsequent connections.
+  token?: string
+}

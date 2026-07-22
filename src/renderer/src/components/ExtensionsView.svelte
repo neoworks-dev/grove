@@ -3,6 +3,7 @@
   import { store, applyColorTheme } from '../lib/store.svelte'
   import { loadInstalledExtensions } from '../lib/extensions'
   import { pluginHost } from '../plugins/host.svelte'
+  import { layout } from '../lib/layout.svelte'
   import type { CatalogEntry, InstalledExtension } from '../../../shared/types'
 
   let catalog = $state<CatalogEntry[]>([])
@@ -151,6 +152,12 @@
                 Enable
               </button>
             {/if}
+            <button
+              class="rounded-md border border-line px-2 py-0.5 text-2xs hover:bg-hover"
+              onclick={() => layout.ensurePane('permissions')}
+            >
+              Permissions…
+            </button>
           </div>
         </div>
       {/each}

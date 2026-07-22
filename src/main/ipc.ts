@@ -2,7 +2,7 @@
 // streamed events (logs, service/agent status) to the renderer. This is the
 // single source of truth for the API exposed via preload.
 
-import { ipcMain, dialog, shell, BrowserWindow, type IpcMainInvokeEvent } from 'electron'
+import { app, ipcMain, dialog, shell, BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { access } from 'fs/promises'
 import { join } from 'path'
 import type {
@@ -41,10 +41,30 @@ import { NeovimManager } from './nvim'
 import { buildWorktreeEnv, spawnEnv } from './env'
 import {
   PermissionBroker,
+  PermissionError,
   type PermissionDecision as PluginPermissionDecision
-} from './plugins/broker'
+} from './api/broker'
+import { clientFromPlugin, type ClientRecord } from './api/clients'
+import type { PluginPermission } from '../shared/plugins'
+import { RouteRegistry } from './api/registry'
+import { ApiDispatcher } from './api/dispatcher'
+import { registerWorkspaceRoutes } from './api/routes/workspace'
+import { registerAiRoutes } from './api/routes/ai'
+import { registerStorageRoutes } from './api/routes/storage'
+import { registerEventRoutes } from './api/routes/events'
+import { registerEditorRoutes } from './api/routes/editor'
+import { registerGitRoutes } from './api/routes/git'
+import { registerLanguagesRoutes } from './api/routes/languages'
+import { registerServicesRoutes } from './api/routes/services'
+import { registerAgentsRoutes } from './api/routes/agents'
+import { registerTerminalsRoutes, type TerminalsTap } from './api/routes/terminals'
+import { DocumentRegistry } from './editorDocs'
+import { EventHub } from './api/events'
+import { VersionCounter } from './api/versions'
+import { AppPairing } from './api/socket/pairing'
+import { ApiSocketServer } from './api/socket/server'
+import { createHash } from 'crypto'
 import { PluginRegistry } from './plugins/loader'
-import { PluginRouter } from './plugins/router'
 import { AiBridge } from './plugins/aiBridge'
 import { registerPluginProtocol } from './plugins/protocol'
 import type { SettingScope } from '../shared/settings'
@@ -76,9 +96,18 @@ const agents = new AgentManager({
     mcpServers: () => aiBridge.buildMcpServers(),
     systemAppend: () => aiBridge.systemAppend()
   },
-  onStatus: (runtime) => send('event:agent-status', runtime),
-  onLog: (worktreeId, name, chatId, line) =>
-    send('event:log', { worktreeId, source: 'agent', name, chatId, line }),
+  onStatus: (runtime) => {
+    send('event:agent-status', runtime)
+    eventHub.publish({
+      topic: 'agents.didChangeStatus',
+      payload: runtime,
+      worktreeId: runtime.worktreeId
+    })
+  },
+  onLog: (worktreeId, name, chatId, line) => {
+    send('event:log', { worktreeId, source: 'agent', name, chatId, line })
+    eventHub.publish({ topic: 'agents.log', payload: { worktreeId, name, chatId, line }, worktreeId })
+  },
   onPermission: (request) => send('event:agent-permission', request),
   onDialog: (request) => send('event:agent-dialog', request),
   // Any session/chat change re-persists the whole named-chat map and notifies
@@ -117,7 +146,13 @@ function persistChats(worktreeId: string, name: string): void {
   if (context.repoPath) void updateRepoState(context.repoPath, { agentChats: agents.allChats() })
 }
 
-const watcher = new WorktreeWatcher((change) => send('event:fs-change', change))
+const watcher = new WorktreeWatcher((change) => {
+  send('event:fs-change', change)
+  eventHub.publish({ topic: 'files.didChange', payload: change })
+  // Any working-tree change can flip git status: advance the generation the
+  // git routes hand out as statusVersion.
+  gitStatusVersions.bump(change.worktreeId)
+})
 
 const settings = new SettingsService({
   onChange: (snapshot) => send('event:settings-changed', snapshot)
@@ -128,16 +163,51 @@ const actionRunner = new ActionRunner({
     send('event:log', { worktreeId, source: 'service', name: 'keybind', line })
 })
 
+// API-owned terminals also feed the terminals route module (assigned when
+// routes register below).
+let terminalsTap: TerminalsTap | null = null
+
 const terminals = new TerminalManager({
-  onData: (id, data) => send('event:terminal-data', { id, data }),
-  onExit: (id, exitCode) => send('event:terminal-exit', { id, exitCode }),
+  onData: (id, data) => {
+    send('event:terminal-data', { id, data })
+    terminalsTap?.onData(id, data)
+  },
+  onExit: (id, exitCode) => {
+    send('event:terminal-exit', { id, exitCode })
+    terminalsTap?.onExit(id, exitCode)
+  },
   onTitle: (id, title) => send('event:terminal-title', { id, title })
 })
 
+// Session → worktree tracking so the editor API can pick the canonical
+// (most recently active) nvim session for a worktree.
+const nvimSessionWorktrees = new Map<string, string | null>()
+const lastActiveNvimByWorktree = new Map<string, string>()
+
+function trackNvimActivity(sessionId: string): void {
+  const worktreeId = nvimSessionWorktrees.get(sessionId)
+  if (worktreeId) lastActiveNvimByWorktree.set(worktreeId, sessionId)
+}
+
+function nvimSessionFor(worktreeId: string): string | null {
+  const preferred = lastActiveNvimByWorktree.get(worktreeId)
+  if (preferred && nvimSessionWorktrees.get(preferred) === worktreeId) return preferred
+  for (const [sessionId, sessionWorktree] of nvimSessionWorktrees) {
+    if (sessionWorktree === worktreeId) return sessionId
+  }
+  return null
+}
+
 const nvims = new NeovimManager({
   onRedraw: (id, events) => send('event:nvim-redraw', { id, events }),
-  onExit: (id, exitCode) => send('event:nvim-exit', { id, exitCode }),
-  onNotify: (id, method, args) => send('event:nvim-notify', { id, method, args })
+  onExit: (id, exitCode) => {
+    nvimSessionWorktrees.delete(id)
+    send('event:nvim-exit', { id, exitCode })
+  },
+  onNotify: (id, method, args) => {
+    editorDocs.handleNotify(nvimSessionWorktrees.get(id) ?? null, method, args)
+    send('event:nvim-notify', { id, method, args })
+  }
 })
 
 const pluginBroker = new PermissionBroker({
@@ -149,17 +219,221 @@ const aiBridge = new AiBridge({
   registry: pluginRegistry,
   send
 })
-const pluginRouter = new PluginRouter({
-  broker: pluginBroker,
-  registry: pluginRegistry,
-  aiBridge,
-  findWorktree: (worktreeId) => findWorktree(worktreeId),
-  send
+const eventHub = new EventHub()
+const gitStatusVersions = new VersionCounter()
+eventHub.registerTopicScope('editor.', 'editor.read')
+eventHub.registerTopicScope('git.', 'git.read')
+eventHub.registerTopicScope('worktrees.', 'git.read')
+eventHub.registerTopicScope('checkpoints.', 'git.read')
+eventHub.registerTopicScope('agents.', 'agents.read')
+eventHub.registerTopicScope('terminal.', 'terminal.exec')
+eventHub.registerTopicScope('services.', 'services.read')
+
+const apiRegistry = new RouteRegistry()
+registerWorkspaceRoutes(apiRegistry)
+registerAiRoutes(apiRegistry, { aiBridge })
+registerStorageRoutes(apiRegistry, {
+  storagePath: () => join(app.getPath('userData'), 'plugin-storage.json')
 })
+const editorDocs = new DocumentRegistry({
+  nvim: { request: (id, method, args) => nvims.request(id, method, args) },
+  sessionFor: (worktreeId) => nvimSessionFor(worktreeId),
+  allSessions: () => {
+    const sessions: { sessionId: string; worktreeId: string }[] = []
+    for (const [sessionId, worktreeId] of nvimSessionWorktrees) {
+      if (worktreeId) sessions.push({ sessionId, worktreeId })
+    }
+    return sessions
+  },
+  activeSession: () => {
+    for (const [worktreeId, sessionId] of lastActiveNvimByWorktree) {
+      if (nvimSessionWorktrees.get(sessionId) === worktreeId) {
+        return { sessionId, worktreeId }
+      }
+    }
+    return null
+  },
+  worktreePathOf: (worktreeId) => findWorktree(worktreeId).path,
+  publish: (topic, payload, worktreeId) => eventHub.publish({ topic, payload, worktreeId })
+})
+
+registerEventRoutes(apiRegistry, { hub: eventHub })
+registerEditorRoutes(apiRegistry, {
+  documents: editorDocs,
+  openInEditor: (worktreeId, path, line) =>
+    send('event:api-open-file', { worktreeId, path, line })
+})
+registerGitRoutes(apiRegistry, {
+  versions: gitStatusVersions,
+  hub: eventHub,
+  checkpoints,
+  repo: () => requireRepo(),
+  listWorktrees: () => refreshWorktrees(),
+  createWorktree: async (options) => {
+    const { repoPath, config: cfg } = requireRepo()
+    const created = await worktrees.createWorktree(
+      repoPath,
+      cfg,
+      {
+        name: options.branch,
+        baseBranch: options.base ?? (await git.currentBranch(repoPath)),
+        newBranch: options.branch
+      },
+      (worktreeId, line) => send('event:log', { worktreeId, source: 'service', name: 'setup', line })
+    )
+    await refreshWorktrees()
+    return created
+  },
+  removeWorktree: async (worktree) => {
+    const { repoPath } = requireRepo()
+    await supervisor.stopAllForWorktree(worktree.id)
+    await worktrees.removeWorktree(repoPath, worktree.path, false)
+    await refreshWorktrees()
+  },
+  archiveWorktree: async (worktree) => {
+    const { repoPath } = requireRepo()
+    await supervisor.stopAllForWorktree(worktree.id)
+    await worktrees.archiveWorktree(repoPath, worktree.path, {
+      branch: worktree.branch,
+      deleteBranch: true,
+      force: false
+    })
+    await refreshWorktrees()
+  },
+  // Native dialog: the calling client cannot see or answer it.
+  confirmDangerous: async (title, detail) => {
+    const result = await dialog.showMessageBox({
+      type: 'warning',
+      title,
+      message: title,
+      detail,
+      buttons: ['Cancel', 'Proceed'],
+      defaultId: 0,
+      cancelId: 0
+    })
+    return result.response === 1
+  }
+})
+registerServicesRoutes(apiRegistry, {
+  listServices: (worktreeId) => {
+    const { config: cfg } = requireRepo()
+    const worktree = findWorktree(worktreeId)
+    const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
+    return Object.entries(cfg.services).map(([name, service]) => {
+      const live = supervisor.getRuntime(worktreeId, name)
+      return live || supervisor.buildIdleRuntime(worktree, name, service, ports)
+    })
+  },
+  startService: (worktreeId, name) => {
+    const { config: cfg } = requireRepo()
+    const worktree = findWorktree(worktreeId)
+    const service = cfg.services[name]
+    if (!service) throw new Error(`unknown service: ${name}`)
+    const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
+    return supervisor.start(worktree, name, service, ports)
+  },
+  stopService: async (worktreeId, name) => supervisor.stop(worktreeId, name)
+})
+registerAgentsRoutes(apiRegistry, {
+  hub: eventHub,
+  agentNames: () => Object.keys(effectiveAgents()),
+  listChats: (worktreeId, name) => agents.listChats(worktreeId, name),
+  listInstances: (worktreeId) => agents.listInstances(worktreeId),
+  listModels: (name) => agents.listModels(name, context.repoPath || process.cwd()),
+  isRunning: (worktreeId, name, chatId) => agents.isRunning(worktreeId, name, chatId),
+  createInstance: (worktreeId, name, label) => agents.createInstance(worktreeId, name, label),
+  send: (worktreeId, name, text, chatId) => {
+    const { config: cfg } = requireRepo()
+    const worktree = findWorktree(worktreeId)
+    const agent = effectiveAgents()[name]
+    if (!agent) throw new Error(`unknown agent: ${name}`)
+    const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
+    return agents.send(worktree, name, agent, ports, text, chatId)
+  },
+  stop: (worktreeId, name, chatId) => agents.stop(worktreeId, name, chatId, { clearQueue: true }),
+  cancelQueued: (worktreeId, name, chatId, queueId) =>
+    agents.cancelQueued(worktreeId, name, chatId, queueId),
+  readTranscript: (worktree, name, chatId) => agents.readTranscript(worktree.path, name, chatId),
+  sendChatAs: (worktreeId, from, text) => agents.sendChatAs(worktreeId, from, text),
+  chatHistory: (worktreeId, since) => agents.chatHistory(worktreeId, since)
+})
+terminalsTap = registerTerminalsRoutes(apiRegistry, {
+  create: ({ worktreeId, cols, rows }) => {
+    const { config: cfg } = requireRepo()
+    const worktree = findWorktree(worktreeId)
+    const vars = buildWorktreeEnv(worktree, worktrees.portsForWorktree(cfg, worktree.portSlot))
+    if (apiSocketPath) vars.GROVE_SOCK = apiSocketPath
+    return terminals.create({ cwd: worktree.path, env: spawnEnv(vars), cols, rows })
+  },
+  write: (terminalId, data) => terminals.write(terminalId, data),
+  resize: (terminalId, cols, rows) => terminals.resize(terminalId, cols, rows),
+  kill: (terminalId) => terminals.kill(terminalId),
+  announce: (worktreeId, terminalId, clientName) => {
+    send('event:log', {
+      worktreeId,
+      source: 'service',
+      name: 'api',
+      line: `${clientName} opened terminal ${terminalId}`
+    })
+    send('event:api-terminal-created', { worktreeId, terminalId, clientName })
+  }
+})
+const apiDispatcher = new ApiDispatcher({
+  registry: apiRegistry,
+  broker: pluginBroker,
+  findWorktree: (worktreeId) => findWorktree(worktreeId)
+})
+
+// Host-stamped identity for a worker-transport call; refuses non-ready plugins.
+function pluginClient(pluginId: string): ClientRecord {
+  const record = pluginRegistry.get(pluginId)
+  if (!record || record.status !== 'ready') {
+    throw new PermissionError(`plugin not available: ${pluginId}`)
+  }
+  return clientFromPlugin(record)
+}
+
+// ── External app socket ─────────────────────────────────────────
+const appPairing = new AppPairing({
+  onPairingRequest: (request) => send('event:app-pairing', request)
+})
+let apiSocketServer: ApiSocketServer | null = null
+let apiSocketPath: string | null = null
+
+// Per-profile socket location: unix socket in a 0700 dir under userData;
+// a hashed named pipe on Windows (pipes have no fs permissions there — the
+// pairing token is the boundary).
+function socketPathFor(userData: string): string {
+  if (process.platform === 'win32') {
+    const hash = createHash('sha256').update(userData).digest('hex').slice(0, 12)
+    return `\\\\.\\pipe\\grove-${hash}`
+  }
+  return join(userData, 'sock', 'grove.sock')
+}
+
+function startApiSocket(): void {
+  const userData = app.getPath('userData')
+  apiSocketPath = socketPathFor(userData)
+  apiSocketServer = new ApiSocketServer({
+    dispatcher: apiDispatcher,
+    pairing: appPairing,
+    socketPath: apiSocketPath,
+    discoveryPath: join(userData, 'grove-api.json'),
+    log: (line) => console.warn(line)
+  })
+  void apiSocketServer.listen().catch((error: Error) => {
+    apiSocketServer = null
+    apiSocketPath = null
+    console.error('api socket failed to start:', error.message)
+  })
+}
 
 const lsp = new LspManager({
   onDiagnostics: (uri, diagnostics) => send('event:lsp-diagnostics', { uri, diagnostics })
 })
+// Registered here (not with the other route modules) because it needs the
+// LspManager instance above.
+registerLanguagesRoutes(apiRegistry, { lsp, documents: editorDocs })
 
 function findWorktree(worktreeId: string): Worktree {
   const worktree = context.worktrees.find((entry) => entry.id === worktreeId)
@@ -876,6 +1150,9 @@ export function registerIpc(): void {
       vars = buildWorktreeEnv(worktree, worktrees.portsForWorktree(cfg, worktree.portSlot))
       cwd = worktree.path
     }
+    // Tools launched inside Grove terminals discover the local API socket
+    // with zero config.
+    if (apiSocketPath) vars.GROVE_SOCK = apiSocketPath
     return terminals.create({ cwd, env: spawnEnv(vars), cols, rows })
   })
   ipcMain.handle('terminal:write', (_e, id: string, data: string) => terminals.write(id, data))
@@ -887,7 +1164,7 @@ export function registerIpc(): void {
   // ── Embedded Neovim ───────────────────────────────────────────
   // A vendored `nvim --embed` per pane, spawned in the worktree with the same
   // WT_*/PORT_n vars as terminals. Redraw batches stream via event:nvim-redraw.
-  ipcMain.handle('nvim:spawn', (_e, worktreeId: string | null) => {
+  ipcMain.handle('nvim:spawn', async (_e, worktreeId: string | null) => {
     let cwd = context.repoPath ?? process.cwd()
     let vars: Record<string, string> = {}
     if (worktreeId) {
@@ -896,16 +1173,26 @@ export function registerIpc(): void {
       vars = buildWorktreeEnv(worktree, worktrees.portsForWorktree(cfg, worktree.portSlot))
       cwd = worktree.path
     }
-    return nvims.spawn({ cwd, env: spawnEnv(vars) })
+    const sessionId = await nvims.spawn({ cwd, env: spawnEnv(vars) })
+    nvimSessionWorktrees.set(sessionId, worktreeId)
+    if (worktreeId && !lastActiveNvimByWorktree.has(worktreeId)) {
+      lastActiveNvimByWorktree.set(worktreeId, sessionId)
+    }
+    return sessionId
   })
   ipcMain.handle('nvim:attach', (_e, id: string, cols: number, rows: number, file?: string) =>
     nvims.attach(id, cols, rows, file)
   )
-  ipcMain.handle('nvim:input', (_e, id: string, keys: string) => nvims.input(id, keys))
+  ipcMain.handle('nvim:input', (_e, id: string, keys: string) => {
+    trackNvimActivity(id)
+    nvims.input(id, keys)
+  })
   ipcMain.handle(
     'nvim:inputMouse',
-    (_e, id: string, button: string, action: string, modifier: string, row: number, col: number) =>
+    (_e, id: string, button: string, action: string, modifier: string, row: number, col: number) => {
+      trackNvimActivity(id)
       nvims.inputMouse(id, button, action, modifier, row, col)
+    }
   )
   ipcMain.handle('nvim:resize', (_e, id: string, cols: number, rows: number) =>
     nvims.resize(id, cols, rows)
@@ -953,27 +1240,97 @@ export function registerIpc(): void {
     async (_e: IpcMainInvokeEvent, pluginId: string, enabled: boolean) => {
       await pluginBroker.setEnabled(pluginId, enabled)
       await pluginRegistry.refresh(pluginId)
-      if (!enabled) pluginRouter.cancelAllForPlugin(pluginId)
+      if (!enabled) {
+        aiBridge.clearPlugin(pluginId)
+        apiDispatcher.cancelAllForClient(`plugin:${pluginId}`)
+      }
       send('event:plugins-changed', pluginList())
       return pluginList()
     }
   )
   ipcMain.handle(
     'plugins:invoke',
-    (_e: IpcMainInvokeEvent, pluginId: string, callId: string, method: string, params: unknown) =>
-      pluginRouter.invoke(pluginId, callId, method, params)
+    (_e: IpcMainInvokeEvent, pluginId: string, callId: string, method: string, params: unknown) => {
+      const client = pluginClient(pluginId)
+      const emit = (chunk: unknown): void =>
+        send('event:plugin-stream', { pluginId, callId, chunk })
+      const invoke = (): Promise<unknown> =>
+        apiDispatcher.invoke(client, callId, method, params, { transport: 'worker', emit })
+      if (!apiRegistry.get(method)?.streaming) return invoke()
+      // Streaming wire contract: the invoke promise resolves immediately and
+      // completion/errors travel as an end event, matching what the renderer
+      // host awaits (mainStreams finish).
+      void invoke()
+        .then(() => send('event:plugin-stream', { pluginId, callId, end: true }))
+        .catch((error: Error) =>
+          send('event:plugin-stream', { pluginId, callId, end: true, error: { message: error.message } })
+        )
+      return null
+    }
   )
   ipcMain.handle('plugins:cancel', (_e: IpcMainInvokeEvent, pluginId: string, callId: string) =>
-    pluginRouter.cancel(pluginId, callId)
+    apiDispatcher.cancel(`plugin:${pluginId}`, callId)
   )
-  ipcMain.handle('plugins:cancelAll', (_e: IpcMainInvokeEvent, pluginId: string) =>
-    pluginRouter.cancelAllForPlugin(pluginId)
-  )
+  ipcMain.handle('plugins:cancelAll', (_e: IpcMainInvokeEvent, pluginId: string) => {
+    aiBridge.clearPlugin(pluginId)
+    apiDispatcher.cancelAllForClient(`plugin:${pluginId}`)
+  })
   ipcMain.handle(
     'plugins:respondPermission',
     (_e: IpcMainInvokeEvent, id: string, decision: PluginPermissionDecision) =>
       pluginBroker.respondPermission(id, decision)
   )
+  const grantClients = async (): Promise<ClientRecord[]> => {
+    const pluginClients = pluginRegistry.list().map(clientFromPlugin)
+    const apps = await appPairing.list()
+    const appClients: ClientRecord[] = apps.map((record) => ({
+      key: `app:${record.appId}`,
+      kind: 'app',
+      id: record.appId,
+      name: record.name,
+      source: 'external',
+      declaredScopes: record.grantedScopes
+    }))
+    return [...pluginClients, ...appClients]
+  }
+  ipcMain.handle('plugins:grants:list', async () => pluginBroker.listGrants(await grantClients()))
+  ipcMain.handle(
+    'plugins:grants:revoke',
+    async (_e: IpcMainInvokeEvent, clientId: string, permission: PluginPermission) => {
+      await pluginBroker.revoke(clientId, permission)
+      return pluginBroker.listGrants(await grantClients())
+    }
+  )
+  ipcMain.handle(
+    'plugins:grants:revokeScope',
+    async (_e: IpcMainInvokeEvent, clientId: string, path: string) => {
+      await pluginBroker.revokeFsScope(clientId, path)
+      return pluginBroker.listGrants(await grantClients())
+    }
+  )
+  ipcMain.handle('plugins:grants:revokeAll', async (_e: IpcMainInvokeEvent, clientId: string) => {
+    await pluginBroker.revokeAll(clientId)
+    // Revoking everything for an external app also unpairs it.
+    if (clientId.startsWith('app:')) {
+      const appId = clientId.slice('app:'.length)
+      await appPairing.revoke(appId)
+      apiSocketServer?.dropClient(clientId)
+    }
+    return pluginBroker.listGrants(await grantClients())
+  })
+
+  // ── External apps ─────────────────────────────────────────────
+  startApiSocket()
+  ipcMain.handle('apps:list', () => appPairing.list())
+  ipcMain.handle('apps:respondPairing', (_e: IpcMainInvokeEvent, id: string, approved: boolean) =>
+    appPairing.respondPairing(id, approved)
+  )
+  ipcMain.handle('apps:revoke', async (_e: IpcMainInvokeEvent, appId: string) => {
+    await appPairing.revoke(appId)
+    await pluginBroker.revokeAll(`app:${appId}`)
+    apiSocketServer?.dropClient(`app:${appId}`)
+    return appPairing.list()
+  })
   ipcMain.handle(
     'plugins:respondToolCall',
     (_e: IpcMainInvokeEvent, id: string, result: unknown, errorMessage?: string) =>
@@ -1017,6 +1374,7 @@ export function registerIpc(): void {
 
 // Clean shutdown: kill every child process.
 export async function shutdown(): Promise<void> {
+  await apiSocketServer?.close().catch(() => {})
   await supervisor.stopAll()
   await agents.stopAll()
   await watcher.closeAll()

@@ -5,7 +5,7 @@
 // never by the worker).
 
 import type { PluginManifest } from '../../../shared/plugins'
-import { GROVE_API_VERSION } from '../../../shared/plugins'
+import { GROVE_API_VERSION, PERMISSION_META } from '../../../shared/plugins'
 import { RpcEndpoint } from './rpc'
 import { commands } from '../lib/commands.svelte'
 import { keymap } from '../lib/keymap.svelte'
@@ -119,6 +119,14 @@ class PluginHost {
     window.workbench.on('event:plugin-stream', (payload) => this.onMainStream(payload))
     window.workbench.on('event:plugin-tool-call', (payload) => void this.onPluginToolCall(payload))
     window.workbench.on('event:plugin-permission', (payload) => void this.onPermissionRequest(payload))
+    window.workbench.on('event:app-pairing', (payload) => void this.onAppPairingRequest(payload))
+    window.workbench.on('event:api-open-file', (payload) => this.onApiOpenFile(payload))
+    // Visibility mitigation for terminal.exec: the user always learns when an
+    // API client opens a terminal.
+    window.workbench.on('event:api-terminal-created', (payload) => {
+      const { clientName } = payload as { clientName: string }
+      dialogs.notify({ level: 'info', message: `${clientName} opened a terminal` })
+    })
     window.workbench.on('event:plugins-changed', (payload) =>
       this.applyRecords(payload as PluginRecordShape[])
     )
@@ -219,6 +227,51 @@ class PluginHost {
     })
     const decision = choice === 'cancel' ? 'deny-once' : choice
     await window.workbench.plugins.respondPermission(request.id, decision)
+  }
+
+  // External app pairing: an unpaired process on the local API socket asked
+  // to connect. Approval mints a bearer token scoped to the listed
+  // capabilities; the grants pane can review or unpair later.
+  private async onAppPairingRequest(payload: unknown): Promise<void> {
+    const request = payload as {
+      id: string
+      appId: string
+      appName: string
+      requestedScopes: string[]
+    }
+    const scopeLines = request.requestedScopes
+      .map((scope) => {
+        const meta = PERMISSION_META[scope as keyof typeof PERMISSION_META]
+        if (!meta) return scope
+        if (meta.risk === 'danger') return `${meta.label} (⚠ ${scope})`
+        return `${meta.label} (${scope})`
+      })
+      .join(', ')
+    const choice = await dialogs.confirm({
+      title: `Pair external app "${request.appName}"?`,
+      body:
+        `A local process identifying as "${request.appId}" wants to connect to Grove. ` +
+        'Only pair apps you started yourself.',
+      detail: `requested access: ${scopeLines || 'none'}`,
+      actions: [
+        { id: 'approve', label: 'Pair', kind: 'primary' },
+        { id: 'cancel', label: 'Deny' }
+      ]
+    })
+    await window.workbench.apps.respondPairing(request.id, choice === 'approve')
+  }
+
+  // editor.show route: main asks the renderer to reveal a file.
+  private onApiOpenFile(payload: unknown): void {
+    const { worktreeId, path, line } = payload as {
+      worktreeId: string
+      path: string
+      line?: number
+    }
+    const worktree = store.worktrees.find((entry) => entry.id === worktreeId)
+    const absPath = isAbsolutePath(path) ? path : joinPath(worktree?.path ?? '', path)
+    if (typeof line === 'number') openFileAtLine(worktreeId, absPath, line)
+    else openFileInEditor(worktreeId, absPath)
   }
 
   // ── Activation ────────────────────────────────────────────────
@@ -696,46 +749,42 @@ class PluginHost {
     })
   }
 
-  // Forward 'main.*' methods to the plugin router in the main process; the
-  // host stamps pluginId + worktreeId and bridges streaming chunks back.
+  // Forward every 'main.*' method to the api dispatcher in the main process;
+  // the host stamps pluginId + worktreeId and bridges streaming chunks back.
+  // Generic on purpose: the main-process route registry is the single
+  // authority on which methods exist, their scopes, and their transports.
   private registerMainForwarding(instance: PluginInstance, rpc: RpcEndpoint): void {
     const pluginId = instance.record.id
-    const forward = (method: string): void => {
-      rpc.handle(`main.${method}`, async (params, context) => {
-        const callId = `${pluginId}-${Math.random().toString(36).slice(2)}`
-        // Default the worktree to the active one. Spread can't set the default
-        // because callers pass an explicit `worktreeId: undefined`, which would
-        // override it — patch it in afterwards when absent.
-        const args = { ...(params as { worktreeId?: string | null }) }
-        if (args.worktreeId == null) args.worktreeId = store.selectedWorktreeId
-        const streaming = method === 'workspace.searchText' || method === 'ai.prompt'
-        if (!streaming) return window.workbench.plugins.invoke(pluginId, callId, method, args)
+    rpc.setFallbackHandler(async (fullMethod, params, context) => {
+      if (!fullMethod.startsWith('main.')) {
+        throw new Error(`unknown method: ${fullMethod}`)
+      }
+      const method = fullMethod.slice('main.'.length)
+      const callId = `${pluginId}-${Math.random().toString(36).slice(2)}`
+      // Default the worktree to the active one. Spread can't set the default
+      // because callers pass an explicit `worktreeId: undefined`, which would
+      // override it — patch it in afterwards when absent.
+      const args = { ...(params as { worktreeId?: string | null }) }
+      if (args.worktreeId == null) args.worktreeId = store.selectedWorktreeId
+      if (!context.streaming) {
+        return window.workbench.plugins.invoke(pluginId, callId, method, args)
+      }
 
-        const done = new Promise<void>((resolve, reject) => {
-          instance.mainStreams.set(callId, {
-            emit: context.emit,
-            finish: (error) => {
-              instance.mainStreams.delete(callId)
-              if (error) reject(error)
-              else resolve()
-            }
-          })
+      const done = new Promise<void>((resolve, reject) => {
+        instance.mainStreams.set(callId, {
+          emit: context.emit,
+          finish: (error) => {
+            instance.mainStreams.delete(callId)
+            if (error) reject(error)
+            else resolve()
+          }
         })
-        context.token.onCancel(() => void window.workbench.plugins.cancel(pluginId, callId))
-        await window.workbench.plugins.invoke(pluginId, callId, method, args)
-        await done
-        return undefined
       })
-    }
-    forward('workspace.findFiles')
-    forward('workspace.readFile')
-    forward('workspace.readExcerpt')
-    forward('workspace.writeFile')
-    forward('workspace.searchText')
-    forward('ai.prompt')
-    forward('storage.get')
-    forward('storage.set')
-    forward('storage.delete')
+      context.token.onCancel(() => void window.workbench.plugins.cancel(pluginId, callId))
+      await window.workbench.plugins.invoke(pluginId, callId, method, args)
+      await done
+      return undefined
+    })
   }
 
   private registerSettingsMethods(instance: PluginInstance, rpc: RpcEndpoint): void {

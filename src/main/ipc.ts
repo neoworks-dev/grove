@@ -56,6 +56,8 @@ import { registerEditorRoutes } from './api/routes/editor'
 import { registerGitRoutes } from './api/routes/git'
 import { registerLanguagesRoutes } from './api/routes/languages'
 import { registerServicesRoutes } from './api/routes/services'
+import { registerAgentsRoutes } from './api/routes/agents'
+import { registerTerminalsRoutes, type TerminalsTap } from './api/routes/terminals'
 import { DocumentRegistry } from './editorDocs'
 import { EventHub } from './api/events'
 import { VersionCounter } from './api/versions'
@@ -94,9 +96,18 @@ const agents = new AgentManager({
     mcpServers: () => aiBridge.buildMcpServers(),
     systemAppend: () => aiBridge.systemAppend()
   },
-  onStatus: (runtime) => send('event:agent-status', runtime),
-  onLog: (worktreeId, name, chatId, line) =>
-    send('event:log', { worktreeId, source: 'agent', name, chatId, line }),
+  onStatus: (runtime) => {
+    send('event:agent-status', runtime)
+    eventHub.publish({
+      topic: 'agents.didChangeStatus',
+      payload: runtime,
+      worktreeId: runtime.worktreeId
+    })
+  },
+  onLog: (worktreeId, name, chatId, line) => {
+    send('event:log', { worktreeId, source: 'agent', name, chatId, line })
+    eventHub.publish({ topic: 'agents.log', payload: { worktreeId, name, chatId, line }, worktreeId })
+  },
   onPermission: (request) => send('event:agent-permission', request),
   onDialog: (request) => send('event:agent-dialog', request),
   // Any session/chat change re-persists the whole named-chat map and notifies
@@ -152,9 +163,19 @@ const actionRunner = new ActionRunner({
     send('event:log', { worktreeId, source: 'service', name: 'keybind', line })
 })
 
+// API-owned terminals also feed the terminals route module (assigned when
+// routes register below).
+let terminalsTap: TerminalsTap | null = null
+
 const terminals = new TerminalManager({
-  onData: (id, data) => send('event:terminal-data', { id, data }),
-  onExit: (id, exitCode) => send('event:terminal-exit', { id, exitCode }),
+  onData: (id, data) => {
+    send('event:terminal-data', { id, data })
+    terminalsTap?.onData(id, data)
+  },
+  onExit: (id, exitCode) => {
+    send('event:terminal-exit', { id, exitCode })
+    terminalsTap?.onExit(id, exitCode)
+  },
   onTitle: (id, title) => send('event:terminal-title', { id, title })
 })
 
@@ -312,6 +333,50 @@ registerServicesRoutes(apiRegistry, {
     return supervisor.start(worktree, name, service, ports)
   },
   stopService: async (worktreeId, name) => supervisor.stop(worktreeId, name)
+})
+registerAgentsRoutes(apiRegistry, {
+  hub: eventHub,
+  agentNames: () => Object.keys(effectiveAgents()),
+  listChats: (worktreeId, name) => agents.listChats(worktreeId, name),
+  listInstances: (worktreeId) => agents.listInstances(worktreeId),
+  listModels: (name) => agents.listModels(name, context.repoPath || process.cwd()),
+  isRunning: (worktreeId, name, chatId) => agents.isRunning(worktreeId, name, chatId),
+  createInstance: (worktreeId, name, label) => agents.createInstance(worktreeId, name, label),
+  send: (worktreeId, name, text, chatId) => {
+    const { config: cfg } = requireRepo()
+    const worktree = findWorktree(worktreeId)
+    const agent = effectiveAgents()[name]
+    if (!agent) throw new Error(`unknown agent: ${name}`)
+    const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
+    return agents.send(worktree, name, agent, ports, text, chatId)
+  },
+  stop: (worktreeId, name, chatId) => agents.stop(worktreeId, name, chatId, { clearQueue: true }),
+  cancelQueued: (worktreeId, name, chatId, queueId) =>
+    agents.cancelQueued(worktreeId, name, chatId, queueId),
+  readTranscript: (worktree, name, chatId) => agents.readTranscript(worktree.path, name, chatId),
+  sendChatAs: (worktreeId, from, text) => agents.sendChatAs(worktreeId, from, text),
+  chatHistory: (worktreeId, since) => agents.chatHistory(worktreeId, since)
+})
+terminalsTap = registerTerminalsRoutes(apiRegistry, {
+  create: ({ worktreeId, cols, rows }) => {
+    const { config: cfg } = requireRepo()
+    const worktree = findWorktree(worktreeId)
+    const vars = buildWorktreeEnv(worktree, worktrees.portsForWorktree(cfg, worktree.portSlot))
+    if (apiSocketPath) vars.GROVE_SOCK = apiSocketPath
+    return terminals.create({ cwd: worktree.path, env: spawnEnv(vars), cols, rows })
+  },
+  write: (terminalId, data) => terminals.write(terminalId, data),
+  resize: (terminalId, cols, rows) => terminals.resize(terminalId, cols, rows),
+  kill: (terminalId) => terminals.kill(terminalId),
+  announce: (worktreeId, terminalId, clientName) => {
+    send('event:log', {
+      worktreeId,
+      source: 'service',
+      name: 'api',
+      line: `${clientName} opened terminal ${terminalId}`
+    })
+    send('event:api-terminal-created', { worktreeId, terminalId, clientName })
+  }
 })
 const apiDispatcher = new ApiDispatcher({
   registry: apiRegistry,

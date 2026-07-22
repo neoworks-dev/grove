@@ -121,6 +121,12 @@ class PluginHost {
     window.workbench.on('event:plugin-permission', (payload) => void this.onPermissionRequest(payload))
     window.workbench.on('event:app-pairing', (payload) => void this.onAppPairingRequest(payload))
     window.workbench.on('event:api-open-file', (payload) => this.onApiOpenFile(payload))
+    // Visibility mitigation for terminal.exec: the user always learns when an
+    // API client opens a terminal.
+    window.workbench.on('event:api-terminal-created', (payload) => {
+      const { clientName } = payload as { clientName: string }
+      dialogs.notify({ level: 'info', message: `${clientName} opened a terminal` })
+    })
     window.workbench.on('event:plugins-changed', (payload) =>
       this.applyRecords(payload as PluginRecordShape[])
     )

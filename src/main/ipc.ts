@@ -54,6 +54,8 @@ import { registerStorageRoutes } from './api/routes/storage'
 import { registerEventRoutes } from './api/routes/events'
 import { registerEditorRoutes } from './api/routes/editor'
 import { registerGitRoutes } from './api/routes/git'
+import { registerLanguagesRoutes } from './api/routes/languages'
+import { registerServicesRoutes } from './api/routes/services'
 import { DocumentRegistry } from './editorDocs'
 import { EventHub } from './api/events'
 import { VersionCounter } from './api/versions'
@@ -291,6 +293,26 @@ registerGitRoutes(apiRegistry, {
     return result.response === 1
   }
 })
+registerServicesRoutes(apiRegistry, {
+  listServices: (worktreeId) => {
+    const { config: cfg } = requireRepo()
+    const worktree = findWorktree(worktreeId)
+    const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
+    return Object.entries(cfg.services).map(([name, service]) => {
+      const live = supervisor.getRuntime(worktreeId, name)
+      return live || supervisor.buildIdleRuntime(worktree, name, service, ports)
+    })
+  },
+  startService: (worktreeId, name) => {
+    const { config: cfg } = requireRepo()
+    const worktree = findWorktree(worktreeId)
+    const service = cfg.services[name]
+    if (!service) throw new Error(`unknown service: ${name}`)
+    const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
+    return supervisor.start(worktree, name, service, ports)
+  },
+  stopService: async (worktreeId, name) => supervisor.stop(worktreeId, name)
+})
 const apiDispatcher = new ApiDispatcher({
   registry: apiRegistry,
   broker: pluginBroker,
@@ -344,6 +366,9 @@ function startApiSocket(): void {
 const lsp = new LspManager({
   onDiagnostics: (uri, diagnostics) => send('event:lsp-diagnostics', { uri, diagnostics })
 })
+// Registered here (not with the other route modules) because it needs the
+// LspManager instance above.
+registerLanguagesRoutes(apiRegistry, { lsp, documents: editorDocs })
 
 function findWorktree(worktreeId: string): Worktree {
   const worktree = context.worktrees.find((entry) => entry.id === worktreeId)

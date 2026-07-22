@@ -1,12 +1,15 @@
 {
   "name": "@grove/plugin-sdk",
-  "version": "0.1.0",
-  "description": "SDK for building Grove plugins",
+  "version": "0.2.0",
+  "description": "SDK for building Grove plugins and external apps",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./protocol": "./src/protocol.ts"
+    "./protocol": "./src/protocol.ts",
+    "./frames": "./src/frames.ts",
+    "./rpc": "./src/rpc.ts",
+    "./client": "./src/client/node.ts"
   }
 }

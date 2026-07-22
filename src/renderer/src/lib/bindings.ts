@@ -353,6 +353,13 @@ export function registerCoreBindings(): void {
       run: () => layout.ensurePane('keybindings')
     },
     {
+      id: 'permissions.open',
+      title: 'Preferences: Permissions & Access',
+      group: 'Settings',
+      keywords: 'permissions grants plugins apps access revoke security',
+      run: () => layout.ensurePane('permissions')
+    },
+    {
       id: 'help.keybindings',
       title: 'Help: Keybindings Cheatsheet',
       group: 'Help',

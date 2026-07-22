@@ -801,6 +801,16 @@ export class AgentManager {
     return this.channel.post(worktreeId, { kind: 'user', name: 'you' }, text.trim())
   }
 
+  // A message posted by an API client (plugin/external app). The identity is
+  // supplied by the host route layer, never by the client itself.
+  sendChatAs(
+    worktreeId: string,
+    from: { kind: 'agent'; name: string },
+    text: string
+  ): WorktreeChatMessage {
+    return this.channel.post(worktreeId, from, text.trim())
+  }
+
   chatHistory(worktreeId: string, since?: number): WorktreeChatMessage[] {
     return this.channel.list(worktreeId, since)
   }

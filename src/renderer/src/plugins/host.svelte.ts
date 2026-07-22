@@ -120,6 +120,7 @@ class PluginHost {
     window.workbench.on('event:plugin-tool-call', (payload) => void this.onPluginToolCall(payload))
     window.workbench.on('event:plugin-permission', (payload) => void this.onPermissionRequest(payload))
     window.workbench.on('event:app-pairing', (payload) => void this.onAppPairingRequest(payload))
+    window.workbench.on('event:api-open-file', (payload) => this.onApiOpenFile(payload))
     window.workbench.on('event:plugins-changed', (payload) =>
       this.applyRecords(payload as PluginRecordShape[])
     )
@@ -252,6 +253,19 @@ class PluginHost {
       ]
     })
     await window.workbench.apps.respondPairing(request.id, choice === 'approve')
+  }
+
+  // editor.show route: main asks the renderer to reveal a file.
+  private onApiOpenFile(payload: unknown): void {
+    const { worktreeId, path, line } = payload as {
+      worktreeId: string
+      path: string
+      line?: number
+    }
+    const worktree = store.worktrees.find((entry) => entry.id === worktreeId)
+    const absPath = isAbsolutePath(path) ? path : joinPath(worktree?.path ?? '', path)
+    if (typeof line === 'number') openFileAtLine(worktreeId, absPath, line)
+    else openFileInEditor(worktreeId, absPath)
   }
 
   // ── Activation ────────────────────────────────────────────────

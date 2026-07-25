@@ -4,7 +4,7 @@
 
 import { app } from 'electron'
 import { existsSync } from 'node:fs'
-import { mkdir, symlink, lstat } from 'node:fs/promises'
+import { mkdir, symlink, lstat, realpath, rename } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -43,20 +43,49 @@ export function nvimUserConfigDir(): string {
   return join(nvimConfigHome(), 'nvim')
 }
 
-// Ensure ~/.config/grove/nvim exists. For now it's a symlink to the bundled
-// grove config so repo edits show up live; if something is already there (a
-// link or a real dir the user owns), it's left untouched.
+// Ensure ~/.config/grove/nvim is a symlink to the bundled grove config, so repo
+// edits show up live. Anything else at that path (a broken link, a link to an
+// older app install, a leftover real directory) shadows the bundled config: nvim
+// then starts without `swapfile = false` and without the SwapExists answerer, and
+// two panes on one file hit a blocking E325 prompt that stalls the RPC. So repair
+// the path rather than leaving whatever is there untouched. Displaced entries are
+// renamed, never deleted.
 export async function ensureNvimUserConfig(): Promise<void> {
   const target = nvimUserConfigDir()
   await mkdir(nvimConfigHome(), { recursive: true })
-  try {
-    await lstat(target)
+
+  const existing = await lstat(target).catch(() => null)
+  if (!existing) {
+    await linkBundledNvimConfig(target)
     return
-  } catch {
-    // Not present — create the link below.
   }
+  if (existing.isSymbolicLink() && (await pointsAtBundledNvimConfig(target))) return
+
+  await moveNvimConfigAside(target)
+  await linkBundledNvimConfig(target)
+}
+
+async function linkBundledNvimConfig(target: string): Promise<void> {
   const linkType = process.platform === 'win32' ? 'junction' : 'dir'
   await symlink(bundledNvimConfigDir(), target, linkType)
+}
+
+// Resolves both sides, so a link written with a different but equivalent path
+// (or through a symlinked home) still counts as correct.
+async function pointsAtBundledNvimConfig(target: string): Promise<boolean> {
+  const linked = await realpath(target).catch(() => null)
+  if (!linked) return false
+  const bundled = await realpath(bundledNvimConfigDir()).catch(() => bundledNvimConfigDir())
+  return linked === bundled
+}
+
+async function moveNvimConfigAside(target: string): Promise<void> {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const backup = `${target}.replaced-${stamp}`
+  await rename(target, backup)
+  console.warn(
+    `[nvim] ${target} did not point at the bundled grove config; moved to ${backup} and relinked`
+  )
 }
 
 export function nvimAvailable(): boolean {

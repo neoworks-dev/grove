@@ -30,6 +30,18 @@ vim.opt.scrolloff = 4
 vim.opt.shortmess:append('IA')
 vim.opt.fillchars = { eob = ' ' }
 
+-- Second line of defence: even with 'swapfile' off above, a plugin or the user
+-- extension hook at the bottom of this file can turn it back on, and a leftover
+-- swapfile from an older session would then raise the blocking E325 prompt
+-- ("[O]pen Read-Only, (E)dit anyway, …"). That prompt has no answerer in grove:
+-- it stalls the msgpack request that opened the file. Answer it as "edit anyway"
+-- — grove owns buffer persistence, so a stale swapfile carries nothing to keep.
+vim.api.nvim_create_autocmd('SwapExists', {
+  callback = function()
+    vim.v.swapchoice = 'e'
+  end
+})
+
 -- Plugin manager bootstrap. lazy.nvim clones itself and the declared plugins
 -- into the writable data dir (XDG_DATA_HOME → grove userData) on first launch;
 -- the user's own nvim install is untouched. Offline-tolerant: a failed clone

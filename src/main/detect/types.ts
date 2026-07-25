@@ -6,22 +6,11 @@
 // unit-testable from a string fixture and keeps all I/O and path validation in
 // one place.
 
-import type { ServiceConfig } from '../../shared/types'
-
-// A service entry a detector believes belongs in workbench.yaml. The user
-// reviews and edits these before anything is written.
-export interface ServiceProposal extends ServiceConfig {
-  // Proposed key under `services:` in workbench.yaml. The runner makes these
-  // unique across detectors; a detector may propose a name another one already used.
-  name: string
-  // Detector id, surfaced in the wizard so the user can see where a proposal
-  // came from and judge it.
-  source: string
-  // True when `command` was rewritten to consume a Grove-allocated port. False
-  // means the command carries whatever port it always did, which may collide
-  // between worktrees.
-  usesPort: boolean
-}
+// ServiceProposal lives in shared/types because it crosses IPC to the wizard.
+// The runner makes `name` unique across detectors, so a detector may freely
+// propose a name another one already used.
+export type { ServiceProposal } from '../../shared/types'
+import type { ServiceProposal } from '../../shared/types'
 
 // Repo-relative path -> file contents. Files that do not exist are absent, so a
 // detector must treat a missing key as "not this kind of project".

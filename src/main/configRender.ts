@@ -64,7 +64,9 @@ function renderCommandList(key: string, commands: string[]): string[] {
 function renderServices(config: WorkbenchConfig): string {
   const names = Object.keys(config.services)
   if (names.length === 0) {
-    return ['# Long-running processes Grove supervises per worktree.', 'services: {}', ''].join('\n')
+    return ['# Long-running processes Grove supervises per worktree.', 'services: {}', ''].join(
+      '\n'
+    )
   }
 
   const lines = ['# Long-running processes Grove supervises per worktree.', 'services:']

@@ -24,7 +24,7 @@ import CheckpointsView from '../components/CheckpointsView.svelte'
 import WorktreeChatPane from '../components/WorktreeChatPane.svelte'
 import NvimPane from '../components/NvimPane.svelte'
 import Dashboard from '../components/Dashboard.svelte'
-import IntroPane from '../components/IntroPane.svelte'
+import SetupPane from '../components/SetupPane.svelte'
 import EmptyCenter from '../components/EmptyCenter.svelte'
 import AgentPane from '../components/agent/AgentPane.svelte'
 import LogsPane from '../components/LogsPane.svelte'
@@ -172,13 +172,14 @@ export function registerCorePanes(): void {
     minWidth: 240,
     when: repoOpen
   })
-  // AGENTS.md onboarding introduction (auto-opens for new workspaces). Lives in
-  // the left sidebar so the flow stays visible while files open in the center.
+  // First-run setup wizard: workbench.yaml, default agent, then AGENTS.md
+  // (auto-opens for new workspaces). Lives in the left sidebar so the flow stays
+  // visible while files open in the center.
   panes.register({
-    id: 'intro',
-    title: 'Introduction',
+    id: 'setup',
+    title: 'Setup',
     icon: Sparkle,
-    component: IntroPane,
+    component: SetupPane,
     rail: { order: 7 },
     slot: SIDEBAR_SLOT,
     containerClass: 'bg-elevated',

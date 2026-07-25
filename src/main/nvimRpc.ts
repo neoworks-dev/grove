@@ -10,7 +10,15 @@ import type { Readable, Writable } from 'node:stream'
 type PendingRequest = {
   resolve: (value: unknown) => void
   reject: (error: Error) => void
+  timer: NodeJS.Timeout
 }
+
+// nvim answers UI-driven API calls in milliseconds. A request outstanding this
+// long means nvim is not reading the channel at all — typically a modal prompt
+// on the cmdline (E325 swap, hit-enter, W11 file-changed) waiting for a keypress
+// nobody will send. Rejecting frees the caller instead of leaving it awaiting
+// forever, and surfaces the stall in the log.
+const REQUEST_TIMEOUT_MS = 20_000
 
 export type NotificationHandler = (method: string, args: unknown[]) => void
 
@@ -37,7 +45,8 @@ export class NvimRpc {
 
   constructor(
     private stdin: Writable,
-    stdout: Readable
+    stdout: Readable,
+    private requestTimeoutMs = REQUEST_TIMEOUT_MS
   ) {
     void this.readLoop(stdout)
   }
@@ -51,7 +60,9 @@ export class NvimRpc {
     const msgId = this.nextMsgId
     this.nextMsgId += 1
     return new Promise((resolve, reject) => {
-      this.pending.set(msgId, { resolve, reject })
+      const timer = setTimeout(() => this.timeOut(msgId, method), this.requestTimeoutMs)
+      timer.unref()
+      this.pending.set(msgId, { resolve, reject, timer })
       this.write([0, msgId, method, args])
     })
   }
@@ -66,9 +77,20 @@ export class NvimRpc {
     if (this.closed) return
     this.closed = true
     for (const request of this.pending.values()) {
+      clearTimeout(request.timer)
       request.reject(new Error('nvim exited'))
     }
     this.pending.clear()
+  }
+
+  private timeOut(msgId: number, method: string): void {
+    const request = this.pending.get(msgId)
+    if (!request) return
+    this.pending.delete(msgId)
+    console.warn(
+      `[nvim] ${method} unanswered after ${this.requestTimeoutMs}ms — nvim may be prompting`
+    )
+    request.reject(new Error(`nvim request timed out: ${method}`))
   }
 
   private write(message: unknown): void {
@@ -109,6 +131,7 @@ export class NvimRpc {
     const request = this.pending.get(msgId)
     if (!request) return
     this.pending.delete(msgId)
+    clearTimeout(request.timer)
     if (error) {
       request.reject(new Error(formatRpcError(error)))
       return

@@ -46,6 +46,28 @@ describe('NvimRpc', () => {
     expect(received).toEqual([['redraw', [['flush']]]])
   })
 
+  // A modal cmdline prompt (E325 swap, hit-enter, W11) stops nvim reading the
+  // channel; without a timeout the caller awaits forever and the pane wedges.
+  test('request rejects when nvim never answers', async () => {
+    const stdin = new PassThrough()
+    const rpc = new NvimRpc(stdin, new PassThrough(), 20)
+    await expect(rpc.request('nvim_cmd', [{ cmd: 'edit' }, {}])).rejects.toThrow(
+      'nvim request timed out: nvim_cmd'
+    )
+  })
+
+  test('a timed-out request does not reject a later answered one', async () => {
+    const stdin = new PassThrough()
+    const stdout = new PassThrough()
+    const rpc = new NvimRpc(stdin, stdout, 20)
+    await expect(rpc.request('nvim_eval', ['1'])).rejects.toThrow('timed out')
+    // msgids are sequential, so the second request is msgid 2; answering it must
+    // work even though msgid 1 was abandoned.
+    const pending = rpc.request('nvim_eval', ['2'])
+    stdout.write(encode([1, 2, null, 'ok']))
+    expect(await pending).toBe('ok')
+  })
+
   test('close rejects in-flight requests', async () => {
     const { rpc } = makeSession()
     const pending = rpc.request('nvim_eval', ['1'])

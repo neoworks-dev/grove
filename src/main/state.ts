@@ -26,6 +26,10 @@ export interface RepoState {
   setupOnceDone: boolean
   // AGENTS.md onboarding intro page was dismissed or completed for this repo.
   introDismissed: boolean
+  // First-run setup wizard was dismissed or completed for this repo. Separate
+  // from introDismissed so a repo that finished the AGENTS.md stage before the
+  // wizard existed is still offered the config stage.
+  setupDismissed: boolean
   agentSessions: Record<string, string> // legacy: "worktreeId::agent" -> token
   agentChats: Record<string, AgentChats> // "worktreeId::agent" -> named chats
   // Last-known provider-discovered slash commands, so the menu is populated
@@ -102,6 +106,7 @@ export function emptyRepoState(): RepoState {
     selectedWorktreeId: null,
     setupOnceDone: false,
     introDismissed: false,
+    setupDismissed: false,
     agentSessions: {},
     agentChats: {},
     agentCommands: {},

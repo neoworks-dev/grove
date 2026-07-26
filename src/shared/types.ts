@@ -113,7 +113,15 @@ export interface WorktreeChatMessage {
 
 // What caused a checkpoint to be taken.
 export type CheckpointTrigger =
-  'agent-turn-end' | 'user-message' | 'pre-restore' | 'pre-merge' | 'manual'
+  | 'agent-turn-end'
+  | 'user-message'
+  | 'pre-restore'
+  | 'pre-merge'
+  | 'manual'
+  // Taken when a review batch opens. Its tree is the baseline every staged file
+  // in that batch is diffed against, and the checkpoint ref keeps it reachable
+  // until the review is resolved.
+  | 'review-baseline'
 
 // One working-tree snapshot. The tree/commit live in the repo object DB under a
 // private ref (refs/workbench/checkpoints/**, never pushed); this metadata is
@@ -146,6 +154,56 @@ export interface AppliedRange {
   hunkIndex: number
   start: number
   count: number
+}
+
+// ── Agent write review ──────────────────────────────────────────
+
+// How a review was raised. 'gated' is a single not-yet-applied write held at the
+// permission prompt; 'agent' is a batch the agent itself closed by calling
+// request_review; 'turn-end' is the backstop that closes whatever is still
+// staged when the agent goes idle.
+export type ReviewOrigin = 'gated' | 'agent' | 'turn-end'
+
+// One file in a review. `baseline` is its content before the batch (empty for a
+// file the agent created), `current` is what it holds now — or, for a gated
+// review, what the agent proposes to write.
+export interface ReviewFile {
+  relPath: string
+  baseline: string
+  current: string
+  hunks: InlineHunk[]
+  // The agent removed the file. Distinguishes a deletion from a write that
+  // emptied the file, so accepting it deletes rather than leaving an empty file.
+  deleted?: boolean
+}
+
+// A set of agent writes awaiting review, raised to the user as one request.
+export interface ReviewBatch {
+  id: string
+  worktreeId: string
+  agent: string
+  chatId: string
+  origin: ReviewOrigin
+  // The agent's own description of the unit of work, when it closed the batch.
+  summary?: string
+  files: ReviewFile[]
+  // Present only for 'gated': the permission request to resolve on decision.
+  permissionId?: string
+  toolName?: string
+}
+
+// The user's verdict on one hunk, with an optional note for the agent.
+export interface HunkDecision {
+  relPath: string
+  hunkIndex: number
+  accepted: boolean
+  comment?: string
+}
+
+// A finished review, applied to disk and reported back to the agent.
+export interface ReviewResolution {
+  batchId: string
+  decisions: HunkDecision[]
 }
 
 // ── Docked side panels ──────────────────────────────────────────

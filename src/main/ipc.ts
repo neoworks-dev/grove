@@ -4,7 +4,7 @@
 
 import { app, ipcMain, dialog, shell, BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { access } from 'fs/promises'
-import { join } from 'path'
+import { join, relative } from 'path'
 import type {
   WorkbenchConfig,
   Worktree,
@@ -30,11 +30,15 @@ import * as worktrees from './worktrees'
 import { ServiceSupervisor } from './services'
 import { AgentManager, detectAgents, mergeAgents } from './agents'
 import { WorktreeWatcher } from './watcher'
+import { ReviewService, describeResolution } from './review'
+import { FILE_WRITE_TOOLS, proposedContent } from './proposedEdit'
 import type {
   AgentConfig,
   AgentDialogDecision,
   AgentLaunchOptions,
-  PermissionDecision
+  HunkDecision,
+  PermissionDecision,
+  PermissionRequestEvent
 } from '../shared/types'
 import { getRepoState, updateRepoState, setLastRepo, loadState } from './state'
 import { SettingsService } from './settings'
@@ -115,8 +119,21 @@ const agents = new AgentManager({
       worktreeId
     })
   },
-  onPermission: (request) => send('event:agent-permission', request),
+  onPermission: (request) => {
+    send('event:agent-permission', request)
+    // A gated file write is reviewable before it touches disk — raise it so the
+    // permission card can offer a real diff instead of a blind allow/deny.
+    void raiseGatedReview(request)
+  },
   onDialog: (request) => send('event:agent-dialog', request),
+  onReviewBatchOpen: (worktreePath, name, chatId) => {
+    review.openBatch(worktreePath, name, chatId)
+  },
+  onReviewRequest: (worktreePath, name, chatId, summary) =>
+    review.requestReview(worktreePath, name, chatId, summary),
+  onReviewTurnEnd: (worktreePath, name, chatId) => {
+    void review.closeTurn(worktreePath, name, chatId).catch(() => {})
+  },
   // Any session/chat change re-persists the whole named-chat map and notifies
   // the renderer so its chat list stays in sync.
   onSession: (worktreeId, name) => {
@@ -159,7 +176,72 @@ const watcher = new WorktreeWatcher((change) => {
   // Any working-tree change can flip git status: advance the generation the
   // git routes hand out as statusVersion.
   gitStatusVersions.bump(change.worktreeId)
+  // Stage file writes made while an agent turn is open, so they can be reviewed
+  // as a batch. Directory events carry no content to review.
+  if (change.type === 'addDir' || change.type === 'unlinkDir') return
+  review.noteWrite(change.worktreeId, change.relPath)
 })
+
+// Review is watcher-keyed: the watcher says which files changed, and a
+// checkpoint taken when the batch opened supplies their pre-batch content.
+const review = new ReviewService(
+  {
+    open: (worktreePath) => checkpoints.baselineTree(worktreePath, { note: 'review baseline' }),
+    read: (worktreePath, tree, relPath) => checkpoints.readFromTree(worktreePath, tree, relPath)
+  },
+  {
+    onReview: (batch) => {
+      review.track(batch)
+      send('event:agent-review', batch)
+    },
+    onStaged: (worktreeId, count) => send('event:agent-review-staged', { worktreeId, count }),
+    onFeedback: (worktreeId, agent, chatId, text) => {
+      void sendToAgent(worktreeId, agent, text, chatId).catch(() => {})
+    }
+  },
+  { pause: () => settings.get<boolean>('workbench.reviewPause') === true }
+)
+
+// Deliver text to an agent as a user message, resolving the launch config the
+// same way the agents:send handler does.
+async function sendToAgent(
+  worktreeId: string,
+  name: string,
+  text: string,
+  chatId: string
+): Promise<void> {
+  const { config: cfg } = requireRepo()
+  const worktree = findWorktree(worktreeId)
+  const agent = effectiveAgents()[name]
+  if (!agent) return
+  const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
+  await agents.send(worktree, name, agent, ports, text, chatId)
+}
+
+// Build a gated review for a pending file-write permission: the file is still
+// untouched on disk, so the "current" side is what the agent proposes to write.
+async function raiseGatedReview(request: PermissionRequestEvent): Promise<void> {
+  if (settings.get<string>('workbench.reviewMode') === 'post') return
+  if (!FILE_WRITE_TOOLS.has(request.toolName) || !request.path) return
+  const worktree = context.worktrees.find((entry) => entry.id === request.worktreeId)
+  if (!worktree) return
+
+  const original = await files
+    .readFileContent(worktree.path, request.path)
+    .catch(() => '') // a file the agent is creating
+  const proposed = proposedContent(request.toolName, request.input, original)
+  if (proposed === null || proposed === original) return
+
+  const relPath = relative(worktree.path, request.path)
+  const hunks = await inlineDiff.hunksBetween(worktree.path, original, proposed)
+  if (hunks.length === 0) return
+  await review.raiseGated(worktree.path, request.agent, request.chatId, request.id, request.toolName, {
+    relPath,
+    baseline: original,
+    current: proposed,
+    hunks
+  })
+}
 
 const settings = new SettingsService({
   onChange: (snapshot) => send('event:settings-changed', snapshot)
@@ -990,6 +1072,27 @@ export function registerIpc(): void {
   ipcMain.handle('agents:respondDialog', (_e, id: string, decision: AgentDialogDecision) =>
     agents.respondDialog(id, decision)
   )
+
+  // Finish a review: apply the per-hunk decisions to disk and report back. For a
+  // gated review this also settles the permission the agent is blocked on —
+  // accepting everything lets its own write run, while any rejection means we
+  // have already written the accepted subset, so the tool must be denied.
+  ipcMain.handle('agents:resolveReview', async (_e, batchId: string, decisions: HunkDecision[]) => {
+    const batch = await review.resolve(batchId, decisions)
+    if (!batch || batch.origin !== 'gated' || !batch.permissionId) return
+    const rejected = decisions.some((decision) => !decision.accepted)
+    if (!rejected) {
+      agents.respondPermission(batch.permissionId, { behavior: 'allow', remember: false })
+      return
+    }
+    const feedback = describeResolution(batch, { batchId, decisions })
+    agents.respondPermission(batch.permissionId, {
+      behavior: 'deny',
+      message:
+        feedback ||
+        'The user rejected this edit. The accepted parts, if any, have already been written for you.'
+    })
+  })
 
   ipcMain.handle('agents:active', () => agents.activeWorktreeIds())
 

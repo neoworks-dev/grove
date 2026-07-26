@@ -66,6 +66,13 @@ export interface AdapterContext {
   intro?: {
     setPhase: (phase: string) => void
   }
+  // Post-approve review: the model closes a batch of its own writes once they
+  // form a coherent unit, so the user can review earlier than turn end. Exposed
+  // as the grove-review MCP tool. Resolves to the user's verdict when the run is
+  // configured to pause for review, or immediately when reviews are queued.
+  review?: {
+    request: (summary: string) => Promise<string>
+  }
 }
 
 export interface RunHandle {

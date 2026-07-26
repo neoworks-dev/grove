@@ -56,61 +56,6 @@ export interface NvimSessionConfig {
 
 const MOUSE_BUTTONS = ['left', 'middle', 'right']
 
-// Preview a gated (not-yet-applied) file edit as a vimdiff split: the real file
-// buffer on the left (untouched, still matching disk so the agent's Edit can
-// re-apply cleanly on approval), a throwaway scratch buffer holding the proposed
-// content on the right. Any previous gated diff is closed first.
-const GATED_DIFF_OPEN_LUA = `
-local path, modified = ...
-local prev = vim.g.grove_gated_diff_win
-if prev and vim.api.nvim_win_is_valid(prev) then
-  pcall(vim.api.nvim_win_close, prev, true)
-end
-vim.g.grove_gated_diff_win = nil
-vim.cmd('diffoff!')
-
--- Left window: the real file, untouched.
-vim.cmd('edit ' .. vim.fn.fnameescape(path))
-local ft = vim.bo.filetype
-local left = vim.api.nvim_get_current_win()
-
--- Scratch buffer holding the proposed content.
-local buf = vim.api.nvim_create_buf(false, true)
-vim.api.nvim_buf_set_lines(buf, 0, -1, false, vim.split(modified, '\\n', { plain = true }))
-vim.bo[buf].buftype = 'nofile'
-vim.bo[buf].bufhidden = 'wipe'
-vim.bo[buf].swapfile = false
-vim.bo[buf].filetype = ft
-pcall(vim.api.nvim_buf_set_name, buf, '[proposed] ' .. vim.fn.fnamemodify(path, ':t'))
-
--- Right window: show the scratch buffer explicitly (no split/option inheritance).
-vim.cmd('rightbelow vsplit')
-local right = vim.api.nvim_get_current_win()
-vim.api.nvim_win_set_buf(right, buf)
-
--- Diff both windows explicitly, with synced scroll/cursor and folds open so the
--- changed regions stay visible.
-for _, w in ipairs({ left, right }) do
-  vim.api.nvim_win_call(w, function()
-    vim.cmd('diffthis')
-    vim.wo.scrollbind = true
-    vim.wo.cursorbind = true
-    vim.wo.foldenable = false
-  end)
-end
-vim.cmd('diffupdate')
-
--- Jump both windows to the first change.
-vim.api.nvim_win_call(right, function()
-  vim.cmd('normal! gg')
-  vim.cmd('silent! normal! ]c')
-  vim.cmd('normal! zz')
-  vim.cmd('syncbind')
-end)
-vim.api.nvim_set_current_win(right)
-vim.g.grove_gated_diff_win = right
-`
-
 // Render a review diff. nvim's job here is display only: both buffers are
 // scratch and non-modifiable, so the user reads the change (and the whole file
 // around it) but every accept/reject/comment goes through the Svelte overlay.
@@ -220,15 +165,6 @@ return vim.api.nvim_win_call(win, function()
   end
   return rows
 end)
-`
-
-const GATED_DIFF_CLOSE_LUA = `
-local win = vim.g.grove_gated_diff_win
-if win and vim.api.nvim_win_is_valid(win) then
-  pcall(vim.api.nvim_win_close, win, true)
-end
-vim.g.grove_gated_diff_win = nil
-vim.cmd('diffoff!')
 `
 
 // Tint the given 1-based line ranges as additions in the live buffer, replacing
@@ -409,20 +345,6 @@ export class NvimCanvasSession {
     }
   }
 
-  // Show a gated file edit as a vimdiff split (real file vs. proposed content).
-  async openGatedDiff(path: string, modified: string): Promise<void> {
-    const id = this.nvimId
-    if (!id) return
-    try {
-      await window.workbench.nvim.request(id, 'nvim_exec_lua', [
-        GATED_DIFF_OPEN_LUA,
-        [path, modified]
-      ])
-    } catch {
-      // session gone
-    }
-  }
-
   // Show a review diff: the file's baseline against what the agent produced,
   // read-only, with the whole file scrollable so decisions are made in context.
   async openReviewDiff(options: {
@@ -471,17 +393,6 @@ export class NvimCanvasSession {
       return result.map((row) => (typeof row === 'number' && row >= 0 ? row * cellHeight : null))
     } catch {
       return lines.map(() => null)
-    }
-  }
-
-  // Tear down the gated diff split and leave the real file buffer intact.
-  async closeGatedDiff(): Promise<void> {
-    const id = this.nvimId
-    if (!id) return
-    try {
-      await window.workbench.nvim.request(id, 'nvim_exec_lua', [GATED_DIFF_CLOSE_LUA, []])
-    } catch {
-      // session gone
     }
   }
 

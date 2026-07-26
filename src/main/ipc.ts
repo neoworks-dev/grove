@@ -199,7 +199,10 @@ const review = new ReviewService(
       void sendToAgent(worktreeId, agent, text, chatId).catch(() => {})
     }
   },
-  { pause: () => settings.get<boolean>('workbench.reviewPause') === true }
+  {
+    pause: () => settings.get<boolean>('workbench.reviewPause') === true,
+    postApprove: () => settings.get<string>('workbench.reviewMode') === 'post'
+  }
 )
 
 // Deliver text to an agent as a user message, resolving the launch config the

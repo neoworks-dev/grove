@@ -39,14 +39,34 @@
   let menu = $state<{ x: number; y: number; node: FileNode | null } | null>(null)
 
   // ── Loading ────────────────────────────────────────────────────
-  async function loadDir(rel: string): Promise<void> {
+  // Returns false when the directory could not be listed. A directory that is
+  // simply not on disk is not an error: reveal() walks the ancestors of paths
+  // that may not exist yet (an agent's proposed new file), and a cached dir can
+  // be deleted underneath us. Those are dropped from the cache silently; any
+  // other failure is surfaced.
+  async function loadDir(rel: string): Promise<boolean> {
     try {
       const nodes = await window.workbench.files.listDir(worktreeId, rel)
       loadedDirs.add(rel)
       nodesCache = { ...nodesCache, [rel]: nodes }
+      return true
     } catch (err) {
-      store.setError((err as Error).message)
+      const message = (err as Error).message
+      if (message.includes('ENOENT') || message.includes('ENOTDIR')) {
+        forgetDir(rel)
+        return false
+      }
+      store.setError(message)
+      return false
     }
+  }
+
+  function forgetDir(rel: string): void {
+    loadedDirs.delete(rel)
+    if (!(rel in nodesCache)) return
+    const remaining = { ...nodesCache }
+    delete remaining[rel]
+    nodesCache = remaining
   }
 
   async function reloadCached(): Promise<void> {
@@ -135,7 +155,9 @@
     let rel = ''
     for (let depth = 0; depth < parts.length - 1; depth++) {
       rel = rel ? `${rel}/${parts[depth]}` : parts[depth]
-      if (!loadedDirs.has(rel)) await loadDir(rel)
+      // The path may not exist on disk yet (a proposed new file opened in a
+      // buffer); stop at the first ancestor the tree cannot list.
+      if (!loadedDirs.has(rel) && !(await loadDir(rel))) return
       expanded = { ...expanded, [rel]: true }
     }
     await tick()

@@ -43,6 +43,29 @@ export function activeNvimSession(): NvimCanvasSession | undefined {
   return undefined
 }
 
+// Resolve an attached editor session, waiting for one to spawn. A session
+// registers on mount but only gets its nvim id once the process has attached,
+// so callers that just mounted the editor pane must wait for both. Resolves
+// undefined if nothing attaches within `timeoutMs`.
+export function waitForNvimSession(timeoutMs = 5000): Promise<NvimCanvasSession | undefined> {
+  const deadline = performance.now() + timeoutMs
+  return new Promise((resolve) => {
+    const poll = (): void => {
+      const session = anyNvimSession()
+      if (session && session.id) {
+        resolve(session)
+        return
+      }
+      if (performance.now() >= deadline) {
+        resolve(undefined)
+        return
+      }
+      setTimeout(poll, 50)
+    }
+    poll()
+  })
+}
+
 // An editor session to host a scratch buffer (e.g. batch rename), for callers
 // that need *some* editor rather than the exact focused pane. Prefers the
 // focused editor, then the most recently focused, then any open one — so it

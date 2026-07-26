@@ -8,10 +8,28 @@ import type { InlineHunk, AppliedRange, DiffFile } from '../../../shared/types'
 import { store, insertIntoComposer, openFileInEditor } from './store.svelte'
 import { layout } from './layout.svelte'
 import { settings } from './settings.svelte'
-import { activeNvimSession, nvimSessionFor } from './nvim/registry'
+import {
+  activeNvimSession,
+  anyNvimSession,
+  nvimSessionFor,
+  waitForNvimSession
+} from './nvim/registry'
+import type { NvimCanvasSession } from './nvim/session'
 import { relFromRoot, selectionRef, pickAgentMode, REVIEW_MODES, type ReviewMode } from './inlineEditRef'
 
 const MODE_SETTING = 'workbench.inlineEditMode'
+const EDITOR_PANE = 'nvim'
+
+// The editor session a diff preview should land in. A proposed edit arrives
+// while focus usually sits in the agent pane, so `activeNvimSession()` (focused
+// leaf only) is the wrong lookup: fall back to any open editor, and mount one
+// when none is open.
+async function editorSessionForDiff(): Promise<NvimCanvasSession | undefined> {
+  const open = anyNvimSession()
+  if (open && open.id) return open
+  layout.ensurePane(EDITOR_PANE)
+  return waitForNvimSession()
+}
 
 type HunkStatus = 'pending' | 'accepted' | 'rejected'
 
@@ -200,7 +218,7 @@ class InlineEdit {
   // change): rejecting a hunk reverts it to HEAD, accepting keeps it.
   async reviewWorkingTreeFile(worktreeId: string, file: DiffFile, absPath: string): Promise<void> {
     openFileInEditor(worktreeId, absPath)
-    const session = activeNvimSession()
+    const session = await editorSessionForDiff()
     if (!session) return
     await session.openPath(absPath)
     session.focus()
@@ -238,8 +256,11 @@ class InlineEdit {
   async previewGatedEdit(worktreeId: string, absPath: string, modified: string): Promise<void> {
     const relPath = relFromRoot(store.selectedWorktree?.path, absPath)
     openFileInEditor(worktreeId, absPath)
-    const session = activeNvimSession()
-    if (!session) return
+    const session = await editorSessionForDiff()
+    if (!session) {
+      store.setError('No editor pane available to preview the proposed edit.')
+      return
+    }
     await session.openGatedDiff(absPath, modified)
     this.gatedDiff = { worktreeId, relPath, leafId: session.leafId }
   }

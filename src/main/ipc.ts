@@ -922,8 +922,8 @@ export function registerIpc(): void {
     agents.getCommands(worktreeId, name)
   )
 
-  // Model list for one adapter, fetched from its SDK (claude/opencode); [] when
-  // the adapter has no model-list API (codex).
+  // Model list for one adapter, fetched from its SDK; [] when the adapter has
+  // no model-list API.
   ipcMain.handle('agents:models', (_e, name: string) =>
     agents.listModels(name, context.repoPath || process.cwd())
   )

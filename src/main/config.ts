@@ -93,8 +93,7 @@ services:
     health: http://localhost:\${PORT_0}
     log: web.log
 
-# Agents are auto-detected from PATH (claude, codex, opencode, gemini, aider,
-# cursor-agent). List entries here only to override a command or add an unknown CLI.
+# Grove runs Claude Code. List an entry here only to override its command.
 agents: {}
 `
 

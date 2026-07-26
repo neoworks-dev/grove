@@ -1,6 +1,6 @@
-// Agent manager. Owns the adapter registry (claude/codex/opencode), runs one
-// agent per (worktree, name), streams normalized output + status to IPC, and
-// bridges interactive tool-permission requests between adapters and the user.
+// Agent manager. Owns the adapter registry, runs one agent per (worktree, name),
+// streams normalized output + status to IPC, and bridges interactive
+// tool-permission requests between adapters and the user.
 
 import { createWriteStream, type WriteStream } from 'fs'
 import { mkdir, writeFile, readFile, unlink } from 'fs/promises'
@@ -31,10 +31,8 @@ import { userPromptLine } from './types'
 import { FileLockManager } from './locks'
 import { WorktreeChannel } from './channel'
 import { claudeAdapter } from './claude'
-import { codexAdapter } from './codex'
-import { opencodeAdapter } from './opencode'
 
-const ADAPTERS: AgentAdapter[] = [claudeAdapter, codexAdapter, opencodeAdapter]
+const ADAPTERS: AgentAdapter[] = [claudeAdapter]
 const registry = new Map<string, AgentAdapter>(ADAPTERS.map((adapter) => [adapter.name, adapter]))
 
 // All adapters are available (SDKs are bundled); each declares its own config.
@@ -199,8 +197,8 @@ export class AgentManager {
 
   // Model list for one adapter, fetched straight from its SDK (adapter.listModels)
   // the first time it's asked for and cached thereafter. Adapters without a
-  // model-list API (e.g. codex) return []. Probing is lazy so we don't spin up
-  // an unused provider (e.g. the opencode server) until it's actually selected.
+  // model-list API return []. Probing is lazy so an unused provider is not spun
+  // up until it is actually selected.
   listModels(name: string, cwd: string): Promise<AgentOption[]> {
     const existing = this.models.get(name)
     if (existing) return existing

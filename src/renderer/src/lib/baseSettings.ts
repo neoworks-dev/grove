@@ -39,6 +39,40 @@ export function registerBaseSettings(): void {
         category: 'Agents'
       },
       {
+        key: 'workbench.reviewMode',
+        type: 'enum',
+        default: 'pre',
+        title: 'Agent Edit Review',
+        description:
+          'When to review the agent\'s file changes. "Before writing" holds each edit at the permission prompt so it never reaches disk unapproved. "After writing" lets the agent work freely and reviews its changes in batches.',
+        category: 'Agents',
+        enumValues: [
+          { value: 'pre', label: 'Before writing' },
+          { value: 'post', label: 'After writing' }
+        ]
+      },
+      {
+        key: 'workbench.reviewPause',
+        type: 'boolean',
+        default: false,
+        title: 'Pause For Review',
+        description:
+          'Hold the agent when it submits a batch for review, instead of letting it carry on while reviews queue up. Only applies after writing.',
+        category: 'Agents'
+      },
+      {
+        key: 'workbench.reviewDiffLayout',
+        type: 'enum',
+        default: 'side-by-side',
+        title: 'Review Diff Layout',
+        description: 'How a review diff is laid out in the editor.',
+        category: 'Agents',
+        enumValues: [
+          { value: 'side-by-side', label: 'Side by side' },
+          { value: 'inline', label: 'Inline' }
+        ]
+      },
+      {
         key: 'workbench.whichKeyDelay',
         type: 'number',
         default: 300,

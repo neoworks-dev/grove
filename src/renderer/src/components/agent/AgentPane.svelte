@@ -176,12 +176,36 @@
   let submenuProvider = $state<string | null>(null)
   let modeMenuOpen = $state(false)
   let effortMenuOpen = $state(false)
+  let reviewMenuOpen = $state(false)
 
   function closeMenus(): void {
     agentMenuOpen = false
     submenuProvider = null
     modeMenuOpen = false
     effortMenuOpen = false
+    reviewMenuOpen = false
+  }
+
+  // ── Review settings (mirrored from the settings provider) ──────
+  const REVIEW_MODE_OPTIONS = [
+    { value: 'pre', label: 'Before writing' },
+    { value: 'post', label: 'After writing' }
+  ]
+  const REVIEW_LAYOUT_OPTIONS = [
+    { value: 'side-by-side', label: 'Side by side' },
+    { value: 'inline', label: 'Inline' }
+  ]
+
+  const reviewMode = $derived(settings.get<string>('workbench.reviewMode') || 'pre')
+  const reviewPause = $derived(settings.get<boolean>('workbench.reviewPause') === true)
+  const reviewDiffLayout = $derived(
+    settings.get<string>('workbench.reviewDiffLayout') || 'side-by-side'
+  )
+  const reviewLabel = $derived(reviewMode === 'post' ? 'review after' : 'review before')
+
+  function setReviewSetting(key: string, value: string): void {
+    void settings.set(key, value, 'user')
+    reviewMenuOpen = false
   }
 
   // Models offered by the launch adapter.
@@ -1469,6 +1493,14 @@
   // answered blind. Answering the card directly bypasses that review.
   const gatedReview = $derived(pendingPermission ? review.gatedFor(pendingPermission.id) : null)
 
+  // Once that review is open in the editor, the floating per-hunk controls are
+  // the prompt — a second allow/deny card here would just be a blunter copy of
+  // it. The card stays up until the review is actually on screen, so a failure
+  // to open the diff can never leave the agent waiting with no way to answer.
+  const reviewIsOpen = $derived(
+    gatedReview !== null && review.active?.id === gatedReview.id && review.leafOwner !== null
+  )
+
   function approve(remember: boolean): void {
     if (!pendingPermission) return
     review.discardFor(pendingPermission.id)
@@ -1735,6 +1767,21 @@
             </button>
           </div>
         {/each}
+      {:else if pendingPermission && reviewIsOpen}
+        <!-- The review's own controls are answering this prompt in the editor. -->
+        <div
+          class="mb-2 flex items-center gap-2 rounded-md border border-line bg-elevated px-2 py-1.5 text-2xs text-muted"
+        >
+          <span class="min-w-0 flex-1 truncate">
+            Reviewing {gatedReview?.files[0]?.relPath} in the editor
+          </span>
+          <button
+            class="shrink-0 rounded border border-line px-2 py-0.5 text-default hover:bg-hover"
+            onclick={() => void review.open(gatedReview!.id)}
+          >
+            Go to diff
+          </button>
+        </div>
       {:else if pendingPermission}
         <!-- Permission prompt replaces the input until answered. Keyed so
              highlight/deny-reason state resets for each new request. -->
@@ -1888,7 +1935,7 @@
 
         <div class="relative flex items-center gap-2 text-2xs">
           <!-- Backdrop closes any open menu on outside click. -->
-          {#if agentMenuOpen || modeMenuOpen || effortMenuOpen}
+          {#if agentMenuOpen || modeMenuOpen || effortMenuOpen || reviewMenuOpen}
             <button
               class="fixed inset-0 z-10 cursor-default"
               tabindex="-1"
@@ -1906,6 +1953,7 @@
               onclick={() => {
                 modeMenuOpen = false
                 effortMenuOpen = false
+                reviewMenuOpen = false
                 agentMenuOpen = !agentMenuOpen
                 if (!agentMenuOpen) submenuProvider = null
               }}
@@ -1976,6 +2024,7 @@
                 onclick={() => {
                   agentMenuOpen = false
                   effortMenuOpen = false
+                  reviewMenuOpen = false
                   modeMenuOpen = !modeMenuOpen
                 }}
               >
@@ -2005,6 +2054,70 @@
             </div>
           {/if}
 
+          <!-- Review: when the agent's edits are reviewed, and how they're shown -->
+          <div class="relative z-20">
+            <button
+              class="flex items-center gap-1 rounded border border-line px-2 py-1 hover:bg-hover"
+              title="How the agent's file changes are reviewed"
+              onclick={() => {
+                agentMenuOpen = false
+                effortMenuOpen = false
+                modeMenuOpen = false
+                reviewMenuOpen = !reviewMenuOpen
+              }}
+            >
+              <span class="font-medium text-muted">{reviewLabel}</span>
+              <span class="text-dim">▾</span>
+            </button>
+            {#if reviewMenuOpen}
+              <div
+                class="absolute bottom-full left-0 z-30 mb-1 w-56 overflow-auto rounded-md border border-line bg-elevated py-1 shadow-lg"
+              >
+                <div class="px-2 py-1 text-2xs text-dim">Review changes</div>
+                {#each REVIEW_MODE_OPTIONS as option (option.value)}
+                  <button
+                    class="flex w-full items-center px-2 py-1 text-left hover:bg-hover {reviewMode ===
+                    option.value
+                      ? 'text-default'
+                      : 'text-dim'}"
+                    onclick={() => setReviewSetting('workbench.reviewMode', option.value)}
+                  >
+                    {option.label}
+                  </button>
+                {/each}
+
+                <div class="mt-1 border-t border-line px-2 pb-1 pt-1.5 text-2xs text-dim">
+                  Diff layout
+                </div>
+                {#each REVIEW_LAYOUT_OPTIONS as option (option.value)}
+                  <button
+                    class="flex w-full items-center px-2 py-1 text-left hover:bg-hover {reviewDiffLayout ===
+                    option.value
+                      ? 'text-default'
+                      : 'text-dim'}"
+                    onclick={() => setReviewSetting('workbench.reviewDiffLayout', option.value)}
+                  >
+                    {option.label}
+                  </button>
+                {/each}
+
+                <div class="mt-1 border-t border-line pt-1">
+                  <button
+                    class="flex w-full items-center gap-2 px-2 py-1 text-left hover:bg-hover {reviewPause
+                      ? 'text-default'
+                      : 'text-dim'}"
+                    title="Hold the agent when it submits a batch, instead of letting it carry on"
+                    onclick={() =>
+                      void settings.set('workbench.reviewPause', !reviewPause, 'user')}
+                  >
+                    <span class="w-3">{reviewPause ? '✓' : ''}</span>
+                    Pause agent for review
+                  </button>
+                </div>
+              </div>
+            {/if}
+          </div>
+
           <!-- Effort -->
           {#if efforts.length > 0}
             <div class="relative z-20 ml-auto">
@@ -2014,6 +2127,7 @@
                 onclick={() => {
                   agentMenuOpen = false
                   modeMenuOpen = false
+                  reviewMenuOpen = false
                   effortMenuOpen = !effortMenuOpen
                 }}
               >

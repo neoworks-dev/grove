@@ -1077,6 +1077,9 @@ export function registerIpc(): void {
   // gated review this also settles the permission the agent is blocked on —
   // accepting everything lets its own write run, while any rejection means we
   // have already written the accepted subset, so the tool must be denied.
+  // Drop a review the user bypassed (answered its permission card directly).
+  ipcMain.handle('agents:discardReview', (_e, batchId: string) => review.drop(batchId))
+
   ipcMain.handle('agents:resolveReview', async (_e, batchId: string, decisions: HunkDecision[]) => {
     const batch = await review.resolve(batchId, decisions)
     if (!batch || batch.origin !== 'gated' || !batch.permissionId) return

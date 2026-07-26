@@ -11,6 +11,7 @@
   import Minimap from './Minimap.svelte'
   import InlineEditPrompt from './InlineEditPrompt.svelte'
   import InlineReviewOverlay from './InlineReviewOverlay.svelte'
+  import ReviewOverlay from './ReviewOverlay.svelte'
   import { settings } from '../lib/settings.svelte'
   import { NvimCanvasSession } from '../lib/nvim/session'
   import { registerNvimSession, unregisterNvimSession } from '../lib/nvim/registry'
@@ -317,6 +318,7 @@
       ></div>
       <InlineEditPrompt {leafId} />
       <InlineReviewOverlay {leafId} tick={minimapTick} />
+      <ReviewOverlay {leafId} tick={minimapTick} />
     {/if}
   </div>
 </div>

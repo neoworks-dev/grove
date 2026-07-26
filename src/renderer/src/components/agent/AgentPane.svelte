@@ -19,6 +19,7 @@
   } from '../../lib/store.svelte'
   import { parseQuestions } from '../../lib/agentDialog'
   import { inlineEdit } from '../../lib/inlineEdit.svelte'
+  import { review } from '../../lib/review.svelte'
   import { onMount, onDestroy } from 'svelte'
   import { keymap } from '../../lib/keymap.svelte'
   import type { LogLine } from '../../lib/store.svelte'
@@ -1334,15 +1335,29 @@
     return String(count)
   }
 
+  // True while a send/start round-trip is in flight. Without it a second Enter
+  // arriving before the first resolves sees the same stale `isRunning` and
+  // starts a second run, which echoes the prompt into the transcript twice.
+  let sending = $state(false)
+
   async function launch(): Promise<void> {
+    if (sending) return
     if (!store.selectedWorktreeId || !selectedAgent) return
     const worktreeId = store.selectedWorktreeId
+    const text = prompt.trim()
+    // An empty composer can still start a fresh run, but has nothing to inject
+    // into a live one.
+    if (!text && isRunning) return
+    // Snapshot the launch config and clear the composer before awaiting, so a
+    // repeated Enter has no text left to resubmit. Restored if the send fails.
+    const options = launchOptions()
+    const submitted = prompt
+    sending = true
+    prompt = ''
     try {
       if (isRunning) {
         // A run is active: inject the message live (or queue it) instead of
         // tearing the run down. Provider can't change mid-run.
-        const text = prompt.trim()
-        if (!text) return
         await window.workbench.agents.send(
           worktreeId,
           selectedAgent,
@@ -1364,7 +1379,7 @@
         const runtime = await window.workbench.agents.start(
           worktreeId,
           launchAgent || selectedAgent,
-          launchOptions(),
+          options,
           currentChatId || undefined
         )
         // Pin to the instance that was just started (fresh chat gets a new id).
@@ -1374,10 +1389,12 @@
       }
       // Sending a new prompt re-pins the view to the newest output.
       stuckToBottom = true
-      pushHistory(prompt)
-      prompt = ''
+      pushHistory(submitted)
     } catch (err) {
+      prompt = submitted
       store.setError((err as Error).message)
+    } finally {
+      sending = false
     }
   }
 
@@ -1448,26 +1465,47 @@
         request.chatId === currentChatId
     ) || null
   )
+  // A gated write also raises a review, so its diff can be opened instead of
+  // answered blind. Answering the card directly bypasses that review.
+  const gatedReview = $derived(pendingPermission ? review.gatedFor(pendingPermission.id) : null)
+
   function approve(remember: boolean): void {
     if (!pendingPermission) return
+    review.discardFor(pendingPermission.id)
     // Close the editor preview and reload the buffer once the write lands.
     void inlineEdit.approveGatedPreview()
     void respondPermission(pendingPermission.id, { behavior: 'allow', remember })
   }
   function deny(message: string): void {
     if (!pendingPermission) return
+    review.discardFor(pendingPermission.id)
     void respondPermission(pendingPermission.id, {
       behavior: 'deny',
       message: message.trim() || 'Denied by user'
     })
   }
   function showChange(): void {
-    // The proposed change is previewed as a vimdiff split in the editor; this
-    // refocuses the file there.
+    // Open the proposed change as a reviewable diff, so individual hunks can be
+    // kept or reverted rather than the whole write being taken or dropped.
+    if (gatedReview) {
+      void review.open(gatedReview.id)
+      return
+    }
     if (pendingPermission?.path && store.selectedWorktreeId) {
       openFileInEditor(store.selectedWorktreeId, pendingPermission.path)
     }
   }
+
+  // ── Post-approve review requests ───────────────────────────────
+  // Batches the agent already wrote to disk, waiting to be looked at. Gated
+  // reviews are excluded: those ride on the permission prompt instead.
+  const postReviews = $derived(
+    store.selectedWorktreeId && selectedAgent && currentChatId
+      ? review
+          .queueFor(store.selectedWorktreeId, selectedAgent, currentChatId)
+          .filter((batch) => batch.origin !== 'gated')
+      : []
+  )
 
   // ── Agent question dialog ──────────────────────────────────────
   const pendingDialog = $derived(
@@ -1676,6 +1714,27 @@
             onCancel={cancelDialog}
           />
         {/key}
+      {:else if postReviews.length > 0}
+        <!-- Post-approve reviews: the writes are already on disk, so nothing is
+             blocked on this. Opening one shows its diff in the editor. -->
+        {#each postReviews as batch (batch.id)}
+          <div
+            class="mb-2 flex items-center gap-2 rounded-md border border-amber/30 bg-amber-soft px-2 py-1.5 text-2xs text-amber"
+          >
+            <span class="min-w-0 flex-1 truncate">
+              {batch.summary || 'Changes ready for review'}
+              <span class="text-dim">
+                · {batch.files.length} file{batch.files.length === 1 ? '' : 's'}
+              </span>
+            </span>
+            <button
+              class="shrink-0 rounded bg-amber px-2 py-0.5 text-action-fg"
+              onclick={() => void review.open(batch.id)}
+            >
+              Review
+            </button>
+          </div>
+        {/each}
       {:else if pendingPermission}
         <!-- Permission prompt replaces the input until answered. Keyed so
              highlight/deny-reason state resets for each new request. -->

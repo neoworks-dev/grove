@@ -125,6 +125,9 @@ const workbench = {
       ipcRenderer.invoke('agents:respondPermission', id, decision),
     respondDialog: (id: string, decision: unknown) =>
       ipcRenderer.invoke('agents:respondDialog', id, decision),
+    resolveReview: (batchId: string, decisions: unknown) =>
+      ipcRenderer.invoke('agents:resolveReview', batchId, decisions),
+    discardReview: (batchId: string) => ipcRenderer.invoke('agents:discardReview', batchId),
     active: () => ipcRenderer.invoke('agents:active'),
     send: (worktreeId: string, name: string, text: string, chatId?: string) =>
       ipcRenderer.invoke('agents:send', worktreeId, name, text, chatId),

@@ -111,6 +111,117 @@ vim.api.nvim_set_current_win(right)
 vim.g.grove_gated_diff_win = right
 `
 
+// Render a review diff. nvim's job here is display only: both buffers are
+// scratch and non-modifiable, so the user reads the change (and the whole file
+// around it) but every accept/reject/comment goes through the Svelte overlay.
+//
+// Side-by-side puts the baseline left and the result right as a vimdiff pair.
+// Inline shows a single buffer of the result with the baseline diffed against it
+// in a hidden-width window, so removals still register as diff highlights.
+const REVIEW_DIFF_OPEN_LUA = `
+local path, baseline, current, sideBySide = ...
+
+-- Tear down any previous review before building the next one.
+for _, win in ipairs(vim.g.grove_review_wins or {}) do
+  if vim.api.nvim_win_is_valid(win) then pcall(vim.api.nvim_win_close, win, true) end
+end
+vim.g.grove_review_wins = nil
+vim.cmd('diffoff!')
+
+local name = vim.fn.fnamemodify(path, ':t')
+local ft = vim.filetype.match({ filename = path }) or ''
+
+local function scratch(label, text)
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, vim.split(text, '\\n', { plain = true }))
+  vim.bo[buf].buftype = 'nofile'
+  vim.bo[buf].bufhidden = 'wipe'
+  vim.bo[buf].swapfile = false
+  vim.bo[buf].filetype = ft
+  vim.bo[buf].modifiable = false
+  pcall(vim.api.nvim_buf_set_name, buf, label)
+  return buf
+end
+
+local resultBuf = scratch(name .. ' [reviewing]', current)
+local baseBuf = scratch(name .. ' [before]', baseline)
+
+local wins = {}
+if sideBySide then
+  vim.cmd('enew')
+  local left = vim.api.nvim_get_current_win()
+  vim.api.nvim_win_set_buf(left, baseBuf)
+  vim.cmd('rightbelow vsplit')
+  local right = vim.api.nvim_get_current_win()
+  vim.api.nvim_win_set_buf(right, resultBuf)
+  wins = { left, right }
+  vim.g.grove_review_win = right
+else
+  -- Inline: the result fills the pane and the baseline sits in a zero-width
+  -- neighbour, which is enough for nvim to compute and paint the diff.
+  vim.cmd('enew')
+  local main = vim.api.nvim_get_current_win()
+  vim.api.nvim_win_set_buf(main, resultBuf)
+  vim.cmd('leftabove vsplit')
+  local hidden = vim.api.nvim_get_current_win()
+  vim.api.nvim_win_set_buf(hidden, baseBuf)
+  vim.api.nvim_win_set_width(hidden, 1)
+  wins = { hidden, main }
+  vim.g.grove_review_win = main
+end
+
+for _, w in ipairs(wins) do
+  vim.api.nvim_win_call(w, function()
+    vim.cmd('diffthis')
+    vim.wo.scrollbind = true
+    vim.wo.cursorbind = true
+    vim.wo.foldenable = false
+  end)
+end
+vim.cmd('diffupdate')
+
+local focus = vim.g.grove_review_win
+vim.api.nvim_win_call(focus, function()
+  vim.cmd('normal! gg')
+  vim.cmd('silent! normal! ]c')
+  vim.cmd('normal! zz')
+  vim.cmd('syncbind')
+end)
+vim.api.nvim_set_current_win(focus)
+vim.g.grove_review_wins = wins
+`
+
+const REVIEW_DIFF_CLOSE_LUA = `
+for _, win in ipairs(vim.g.grove_review_wins or {}) do
+  if vim.api.nvim_win_is_valid(win) then pcall(vim.api.nvim_win_close, win, true) end
+end
+vim.g.grove_review_wins = nil
+vim.g.grove_review_win = nil
+vim.cmd('diffoff!')
+`
+
+// Screen row of each given buffer line in the review window, as an offset from
+// the window's first visible line. Lines scrolled out of view report -1 so the
+// overlay can hide their controls instead of pinning them to an edge.
+const REVIEW_ROWS_LUA = `
+local lines = ...
+local win = vim.g.grove_review_win
+if not win or not vim.api.nvim_win_is_valid(win) then return nil end
+return vim.api.nvim_win_call(win, function()
+  local top = vim.fn.line('w0')
+  local bottom = vim.fn.line('w$')
+  local rows = {}
+  for i, line in ipairs(lines) do
+    if line >= top and line <= bottom then
+      rows[i] = line - top
+    else
+      rows[i] = -1
+    end
+  end
+  return rows
+end)
+`
+
 const GATED_DIFF_CLOSE_LUA = `
 local win = vim.g.grove_gated_diff_win
 if win and vim.api.nvim_win_is_valid(win) then
@@ -309,6 +420,57 @@ export class NvimCanvasSession {
       ])
     } catch {
       // session gone
+    }
+  }
+
+  // Show a review diff: the file's baseline against what the agent produced,
+  // read-only, with the whole file scrollable so decisions are made in context.
+  async openReviewDiff(options: {
+    path: string
+    baseline: string
+    current: string
+    sideBySide: boolean
+  }): Promise<void> {
+    const id = this.nvimId
+    if (!id) return
+    try {
+      await window.workbench.nvim.request(id, 'nvim_exec_lua', [
+        REVIEW_DIFF_OPEN_LUA,
+        [options.path, options.baseline, options.current, options.sideBySide]
+      ])
+    } catch {
+      // session gone
+    }
+  }
+
+  async closeReviewDiff(): Promise<void> {
+    const id = this.nvimId
+    if (!id) return
+    try {
+      await window.workbench.nvim.request(id, 'nvim_exec_lua', [REVIEW_DIFF_CLOSE_LUA, []])
+    } catch {
+      // session gone
+    }
+  }
+
+  /**
+   * Pixel y offset of each given 1-based buffer line inside the review window,
+   * for anchoring the overlay's per-hunk controls. Lines scrolled out of view
+   * come back as null.
+   */
+  async reviewRowOffsets(lines: number[]): Promise<(number | null)[]> {
+    const id = this.nvimId
+    if (!id || !this.metrics || lines.length === 0) return lines.map(() => null)
+    try {
+      const result = await window.workbench.nvim.request(id, 'nvim_exec_lua', [
+        REVIEW_ROWS_LUA,
+        [lines]
+      ])
+      if (!Array.isArray(result)) return lines.map(() => null)
+      const cellHeight = this.metrics.cellHeight
+      return result.map((row) => (typeof row === 'number' && row >= 0 ? row * cellHeight : null))
+    } catch {
+      return lines.map(() => null)
     }
   }
 

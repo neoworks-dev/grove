@@ -40,6 +40,7 @@ import type {
   QueuedMessage,
   ChatMeta,
   PermissionDecision,
+  HunkDecision,
   FileNode,
   RepoInfo,
   CatalogEntry,
@@ -224,6 +225,8 @@ export interface WorkbenchApi {
     activateChat: (worktreeId: string, name: string, chatId: string) => Promise<string[]>
     respondPermission: (id: string, decision: PermissionDecision) => Promise<void>
     respondDialog: (id: string, decision: AgentDialogDecision) => Promise<void>
+    resolveReview: (batchId: string, decisions: HunkDecision[]) => Promise<void>
+    discardReview: (batchId: string) => Promise<void>
     active: () => Promise<string[]>
     send: (
       worktreeId: string,

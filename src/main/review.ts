@@ -189,6 +189,19 @@ export class ReviewService {
     return this.pending.get(batchId)?.batch ?? null
   }
 
+  /**
+   * Drop a raised review without applying anything. Used when the user answers a
+   * gated write straight from the permission card instead of opening its diff —
+   * the tool call decides the outcome, so the batch has nothing left to do.
+   */
+  drop(batchId: string): void {
+    const entry = this.pending.get(batchId)
+    if (!entry) return
+    this.pending.delete(batchId)
+    this.awaited.delete(batchId)
+    entry.resolve({ batchId, decisions: [] })
+  }
+
   private async applyDecisions(batch: ReviewBatch, decisions: HunkDecision[]): Promise<void> {
     for (const file of batch.files) {
       await this.applyFile(batch, file, decisions)

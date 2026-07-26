@@ -21,6 +21,7 @@ import type {
   AgentSlashCommand,
   QueuedMessage,
   DiffStats,
+  ReviewBatch,
   WorktreeChatMessage
 } from '../../../shared/types'
 
@@ -39,6 +40,7 @@ import type { ColorTheme } from './themes'
 import { layout } from './layout.svelte'
 import { settings } from './settings.svelte'
 import { inlineEdit } from './inlineEdit.svelte'
+import { review } from './review.svelte'
 import { intro } from './intro.svelte'
 import { setup } from './setup.svelte'
 
@@ -347,8 +349,15 @@ export function seedAgentTranscript(
   lines: string[]
 ): void {
   if (lines.length === 0) return
-  const entries: LogLine[] = lines.map((line) => ({ source: 'agent', name, chatId, line }))
   const current = store.logs[worktreeId] || []
+  // The caller checks for existing lines before reading the file, but the read
+  // is async: a run started meanwhile already streamed its lines in live, and
+  // the file now holds those same lines. Seeding then would show them twice.
+  const alreadyLive = current.some(
+    (line) => line.source === 'agent' && line.name === name && line.chatId === chatId
+  )
+  if (alreadyLive) return
+  const entries: LogLine[] = lines.map((line) => ({ source: 'agent', name, chatId, line }))
   store.logs = { ...store.logs, [worktreeId]: [...entries, ...current] }
 }
 
@@ -757,6 +766,13 @@ export function subscribeEvents(): void {
   })
   window.workbench.on('event:agent-dialog', (payload) => {
     store.pendingDialogs = [...store.pendingDialogs, payload as AgentDialogRequest]
+  })
+  window.workbench.on('event:agent-review', (payload) => {
+    review.receive(payload as ReviewBatch)
+  })
+  window.workbench.on('event:agent-review-staged', (payload) => {
+    const event = payload as { worktreeId: string; count: number }
+    review.setStaged(event.worktreeId, event.count)
   })
   window.workbench.on('event:agent-chats', (payload) => {
     const event = payload as { worktreeId: string; name: string; chats: AgentChats }

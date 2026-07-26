@@ -2,20 +2,22 @@
   // Renders the active modal confirm dialog. Escape or a backdrop click
   // resolves with 'cancel'.
   import { dialogs } from '../lib/dialogs.svelte'
+  import { keyDispatch, KeyPriority } from '../lib/keyDispatch'
 
   const active = $derived(dialogs.active)
 
-  function onKeyDown(event: KeyboardEvent): void {
-    if (event.key !== 'Escape') return
+  /** Escape cancels the dialog before any binding can claim the key. */
+  function onKeyDown(event: KeyboardEvent): boolean {
+    if (event.key !== 'Escape') return false
     event.preventDefault()
     event.stopPropagation()
     dialogs.resolveActive('cancel')
+    return true
   }
 
   $effect(() => {
     if (!active) return
-    window.addEventListener('keydown', onKeyDown, true)
-    return () => window.removeEventListener('keydown', onKeyDown, true)
+    return keyDispatch.subscribe(KeyPriority.dialog, onKeyDown)
   })
 
   const buttonClass: Record<string, string> = {

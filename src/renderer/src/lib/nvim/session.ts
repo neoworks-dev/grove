@@ -10,6 +10,7 @@
 // fatal and handed to onFatal.
 
 import { keymap } from '../keymap.svelte'
+import { keyDispatch } from '../keyDispatch'
 import { store } from '../store.svelte'
 import { createGridState } from './types'
 import { applyRedraw } from './grid'
@@ -190,6 +191,7 @@ export class NvimCanvasSession {
   private leafEl: HTMLElement | null = null
   private stopRedraw: (() => void) | null = null
   private stopExit: (() => void) | null = null
+  private stopKeySink: (() => void) | null = null
   private observer: ResizeObserver | null = null
   private renderer: GridRenderer | null = null
   private metrics: CellMetrics | null = null
@@ -444,7 +446,7 @@ export class NvimCanvasSession {
     this.leafEl?.addEventListener('focusin', this.onLeafFocus)
     host.addEventListener('mousedown', this.onMouseDown)
     host.addEventListener('wheel', this.onWheel, { passive: false })
-    input.addEventListener('keydown', this.onKeydown)
+    this.stopKeySink = keyDispatch.registerPaneSink(this.config.leafId, this.onKeydown)
     input.addEventListener('compositionstart', this.onComposition)
     input.addEventListener('compositionend', this.onComposition)
     input.addEventListener('focus', this.onInputFocus)
@@ -554,7 +556,8 @@ export class NvimCanvasSession {
     this.leafEl?.removeEventListener('focusin', this.onLeafFocus)
     host.removeEventListener('mousedown', this.onMouseDown)
     host.removeEventListener('wheel', this.onWheel)
-    input.removeEventListener('keydown', this.onKeydown)
+    this.stopKeySink?.()
+    this.stopKeySink = null
     input.removeEventListener('compositionstart', this.onComposition)
     input.removeEventListener('compositionend', this.onComposition)
     input.removeEventListener('focus', this.onInputFocus)
@@ -666,21 +669,25 @@ export class NvimCanvasSession {
 
   // ── Input forwarding ───────────────────────────────────────────
 
-  private onKeydown = (event: KeyboardEvent): void => {
-    if (!this.nvimId || this.composing) return
-    // Grove's keybinds overlay nvim: give the keymap first refusal (it gates
-    // itself by the reported mode, so leader/bare keys only fire in normal
-    // mode). Whatever it doesn't claim falls through to nvim.
-    if (keymap.handleKeyFromModePane(event)) {
-      event.preventDefault()
-      event.stopPropagation()
-      return
-    }
+  /**
+   * Fallthrough sink for this pane: whatever grove's global key chain did not
+   * claim becomes nvim input. Registered with the dispatcher rather than as a
+   * listener on the hidden input, so overlay, dialog and keybind-capture
+   * ownership apply to the editor too.
+   *
+   * Returns false without consuming when the key is not ours to forward — an
+   * unencodable key (a lone modifier, or a dead key mid-composition) or focus
+   * sitting on another widget inside this leaf, such as the inline edit prompt.
+   */
+  private onKeydown = (event: KeyboardEvent): boolean => {
+    if (!this.nvimId || this.composing) return false
+    if (document.activeElement !== this.elements.input) return false
     const keys = encodeKeyEvent(event)
-    if (!keys) return
+    if (!keys) return false
     event.preventDefault()
     event.stopPropagation()
     void window.workbench.nvim.input(this.nvimId, keys)
+    return true
   }
 
   private onComposition = (event: CompositionEvent): void => {

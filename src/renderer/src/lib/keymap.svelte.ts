@@ -2,9 +2,10 @@
 //  - a focus model over named panes (spatial Ctrl+hjkl navigation),
 //  - a plugin-extensible binding registry (same pattern as `commands`),
 //  - a Vim-style leader engine (space) with a which-key overlay.
-// The single window-level dispatch lives in App.svelte and delegates to
-// `keymap.handleKey`. Pane-local motions (tree hjkl, editor Shift+hjkl) are
-// handled by their components; this module owns cross-pane keys + the leader.
+// The single window-level listener lives in keyDispatch.ts; App.svelte
+// subscribes `keymap.handleKey` to it at the bindings tier. Pane-local motions
+// (tree hjkl, editor Shift+hjkl) are handled by their components; this module
+// owns cross-pane keys + the leader.
 
 // Pane ids are free-form strings assigned by whoever registers the pane (core
 // panes use "sidebar"/"tree"/"center"/"agent"/"logs"; plugins can add their
@@ -139,10 +140,6 @@ class Keymap {
       this.hintTimer = null
     }
   }
-
-  // Set by the keybind-capture widget so global dispatch stands down while it
-  // records a sequence.
-  captureMode = $state(false)
 
   // Full keybinding cheatsheet (leader ?) — a glanceable list of everything.
   cheatsheetOpen = $state(false)
@@ -342,8 +339,10 @@ class Keymap {
   }
 
   // ── Sequence engine ───────────────────────────────────────────
+  // Plain text fields swallow bare keys. Mode-aware panes are not covered by
+  // this check — the embedded editor's input is a contenteditable div, and it
+  // gates itself by the mode it reports instead.
   private notTyping(): boolean {
-    if (this.trustModeEligibility) return true
     const tag = document.activeElement?.tagName
     return tag !== 'INPUT' && tag !== 'TEXTAREA'
   }
@@ -386,25 +385,6 @@ class Keymap {
     if (this.leaderTimer) {
       clearTimeout(this.leaderTimer)
       this.leaderTimer = null
-    }
-  }
-
-  // Set while dispatching a key that came from a mode-aware pane's own input
-  // element (nvim's hidden contenteditable). Such panes decide typing vs.
-  // command by their reported mode, so eligibility skips the INPUT/TEXTAREA
-  // tag gate meant for plain text fields.
-  private trustModeEligibility = false
-
-  // Dispatch a key originating inside a mode-aware pane. Grove's leader and
-  // chords overlay the pane: this consumes them (self-gated by the pane's
-  // reported mode) and returns true; anything it doesn't claim returns false
-  // so the pane can forward the key to its editor (e.g. nvim_input).
-  handleKeyFromModePane(event: KeyboardEvent): boolean {
-    this.trustModeEligibility = true
-    try {
-      return this.handleKey(event)
-    } finally {
-      this.trustModeEligibility = false
     }
   }
 

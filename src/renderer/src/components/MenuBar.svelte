@@ -2,6 +2,7 @@
   // Header app menu (File, View, …). Renders the menu registry; items are
   // grouped with separators and delegate to commands where possible.
   import { menu, type MenuItem } from '../lib/menu.svelte'
+  import { keyDispatch, KeyPriority } from '../lib/keyDispatch'
 
   let openMenuId = $state<string | null>(null)
 
@@ -25,17 +26,22 @@
     if (!target?.closest('[data-menubar]')) openMenuId = null
   }
 
-  function onWindowKeyDown(event: KeyboardEvent): void {
-    if (event.key === 'Escape') openMenuId = null
+  /** Escape closes the open menu and is swallowed, so it never reaches a pane. */
+  function onMenuKeyDown(event: KeyboardEvent): boolean {
+    if (event.key !== 'Escape') return false
+    openMenuId = null
+    event.preventDefault()
+    event.stopPropagation()
+    return true
   }
 
   $effect(() => {
     if (!openMenuId) return
     window.addEventListener('pointerdown', onWindowPointerDown, true)
-    window.addEventListener('keydown', onWindowKeyDown, true)
+    const stopMenuKeys = keyDispatch.subscribe(KeyPriority.menu, onMenuKeyDown)
     return () => {
       window.removeEventListener('pointerdown', onWindowPointerDown, true)
-      window.removeEventListener('keydown', onWindowKeyDown, true)
+      stopMenuKeys()
     }
   })
 

@@ -192,6 +192,30 @@ export class CheckpointManager {
     return meta
   }
 
+  // Tree hash of the worktree as it stands right now, for use as a review
+  // batch's baseline. Prefers a fresh checkpoint so the tree is held by a ref;
+  // when the snapshot is skipped (debounced, or nothing changed) the last
+  // checkpoint already describes the same state, and HEAD's tree covers a
+  // worktree that has never been checkpointed.
+  async baselineTree(worktreePath: string, ctx: SnapshotContext = {}): Promise<string | null> {
+    const meta = await this.snapshot(worktreePath, 'review-baseline', ctx)
+    if (meta) return meta.tree
+    const list = this.metadata.get(worktreePath) ?? []
+    const previous = list[list.length - 1]
+    if (previous) return previous.tree
+    return headTree(gitFor(worktreePath))
+  }
+
+  // Content of one worktree-relative path inside a checkpoint tree. Returns ''
+  // for a path absent from the tree — a file the agent newly created.
+  async readFromTree(worktreePath: string, tree: string, relPath: string): Promise<string> {
+    try {
+      return await gitFor(worktreePath).raw(['show', `${tree}:${relPath}`])
+    } catch {
+      return ''
+    }
+  }
+
   // Restore the working tree to a checkpoint's tree without moving HEAD or the
   // branch. Auto-checkpoints first so the restore is itself reversible.
   async restore(

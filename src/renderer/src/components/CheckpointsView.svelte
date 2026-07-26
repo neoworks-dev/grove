@@ -18,7 +18,8 @@
     'user-message': 'your message',
     'pre-restore': 'before restore',
     'pre-merge': 'before merge',
-    manual: 'manual'
+    manual: 'manual',
+    'review-baseline': 'before agent edits'
   }
 
   async function load(id: string): Promise<void> {

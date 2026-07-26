@@ -79,6 +79,21 @@ export interface AgentEvents {
     mcpServers: () => Promise<Record<string, unknown>>
     systemAppend: () => string
   }
+  // ── Post-approve review ──────────────────────────────────────
+  // A turn started: open a staging batch so the agent's writes accumulate
+  // against a baseline captured now.
+  onReviewBatchOpen?: (worktreePath: string, name: string, chatId: string) => void
+  // The agent called request_review. The handler closes the batch, raises it to
+  // the user, and resolves with the text the model should read back — either the
+  // user's decisions (when the run pauses for review) or an acknowledgement.
+  onReviewRequest?: (
+    worktreePath: string,
+    name: string,
+    chatId: string,
+    summary: string
+  ) => Promise<string>
+  // The turn ended: close whatever is still staged as the backstop review.
+  onReviewTurnEnd?: (worktreePath: string, name: string, chatId: string) => void
 }
 
 // Cap transcript replay so a very long conversation can't flood the renderer.
@@ -482,9 +497,18 @@ export class AgentManager {
       },
       intro: options.intro
         ? { setPhase: (phase) => this.events.onIntroPhase?.(worktree.id, chat.id, phase) }
+        : undefined,
+      review: this.events.onReviewRequest
+        ? {
+            request: (summary) =>
+              this.events.onReviewRequest!(worktree.path, name, chat.id, summary)
+          }
         : undefined
     })
 
+    // Stage this turn's writes from here on: the baseline must be captured
+    // before the agent's first edit lands.
+    this.events.onReviewBatchOpen?.(worktree.path, name, chat.id)
     this.events.onStatus({ ...runtime })
     return { ...runtime }
   }
@@ -718,6 +742,9 @@ export class AgentManager {
     // Snapshot the worktree after the agent's turn so its edits are revertible.
     const worktreePath = this.lastLaunch.get(runKey)?.worktree.path ?? worktreeId
     this.events.onCheckpoint?.(worktreePath, 'agent-turn-end', { name, chatId })
+    // Backstop: an agent that never called request_review still gets its writes
+    // reviewed, rather than leaving them staged forever.
+    this.events.onReviewTurnEnd?.(worktreePath, name, chatId)
     this.settleQueue(worktreeId, name, chatId, status, entry.clearQueueOnStop)
   }
 

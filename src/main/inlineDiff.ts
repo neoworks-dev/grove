@@ -89,6 +89,25 @@ function gitDiffNoIndex(cwd: string, beforePath: string, afterPath: string): Pro
   })
 }
 
+// Write both versions to a scratch directory and hand their paths to `run`, so
+// two in-memory strings can be diffed by git rather than in JS.
+async function withVersionPair<T>(
+  before: string,
+  after: string,
+  run: (beforePath: string, afterPath: string) => Promise<T>
+): Promise<T> {
+  const dir = await mkdtemp(join(tmpdir(), 'grove-proposed-'))
+  try {
+    const beforePath = join(dir, 'before')
+    const afterPath = join(dir, 'after')
+    await writeFile(beforePath, before)
+    await writeFile(afterPath, after)
+    return await run(beforePath, afterPath)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+}
+
 // Unified diff (with context) between two in-memory versions of a file, used to
 // preview a pending Write/Edit before it is applied to disk. Produced by git so
 // the diff isn't computed in JS.
@@ -97,16 +116,23 @@ export async function diffStrings(
   before: string,
   after: string
 ): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'grove-proposed-'))
-  try {
-    const beforePath = join(dir, 'before')
-    const afterPath = join(dir, 'after')
-    await writeFile(beforePath, before)
-    await writeFile(afterPath, after)
-    return await gitDiffWithContext(worktreePath, beforePath, afterPath)
-  } finally {
-    await rm(dir, { recursive: true, force: true })
-  }
+  return withVersionPair(before, after, (beforePath, afterPath) =>
+    gitDiffWithContext(worktreePath, beforePath, afterPath)
+  )
+}
+
+// Zero-context hunks between two in-memory versions of a file. Unlike
+// diffStrings this uses -U0, because rebuildWithAccepted reads each hunk's body
+// as pure removed/added lines — context lines would be replayed as content.
+export async function hunksBetween(
+  worktreePath: string,
+  before: string,
+  after: string
+): Promise<InlineHunk[]> {
+  const diff = await withVersionPair(before, after, (beforePath, afterPath) =>
+    gitDiffNoIndex(worktreePath, beforePath, afterPath)
+  )
+  return parseInlineHunks(diff)
 }
 
 function gitDiffWithContext(cwd: string, beforePath: string, afterPath: string): Promise<string> {

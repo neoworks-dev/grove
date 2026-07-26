@@ -96,6 +96,37 @@ function buildIntroServer(sdk: SdkModule, intro: NonNullable<AdapterContext['int
   })
 }
 
+// Build the in-process `grove-review` MCP server. One tool: request_review, which
+// closes the batch of writes the agent has made so far and hands it to the user.
+// Whether the call blocks until the user decides is the manager's choice, not the
+// model's — the returned text is simply whatever comes back.
+function buildReviewServer(sdk: SdkModule, review: NonNullable<AdapterContext['review']>): unknown {
+  return sdk.createSdkMcpServer({
+    name: 'grove-review',
+    tools: [
+      sdk.tool(
+        'request_review',
+        'Ask the user to review the file changes you have made since your last review request. Call this whenever your edits reach a coherent, self-consistent state — not after every single file. Depending on the user\'s settings this may block until they respond, in which case the result contains their decisions and comments.',
+        zodShapeFromJsonSchema({
+          type: 'object',
+          properties: {
+            summary: {
+              type: 'string',
+              description: 'One line describing the unit of work you are submitting for review.'
+            }
+          },
+          required: ['summary']
+        }),
+        async (input: unknown) => {
+          const data = (input || {}) as { summary?: string }
+          const result = await review.request(data.summary || '')
+          return { content: [{ type: 'text' as const, text: result }] }
+        }
+      )
+    ]
+  })
+}
+
 const config: AgentConfig = {
   command: 'claude',
   interactive: true,
@@ -251,6 +282,7 @@ function start(context: AdapterContext): RunHandle {
       const mcpServers: Record<string, unknown> = { ...pluginMcpServers }
       if (context.chat) mcpServers['grove-chat'] = buildChatServer(sdk, context.chat)
       if (context.intro) mcpServers['grove-intro'] = buildIntroServer(sdk, context.intro)
+      if (context.review) mcpServers['grove-review'] = buildReviewServer(sdk, context.review)
       const launchAppend = context.options.appendSystemPrompt || ''
       const systemAppend = [skillAppend, launchAppend].filter(Boolean).join('\n\n')
       // Streaming-input mode: the prompt rides in as the first queued message,

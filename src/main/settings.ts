@@ -76,6 +76,16 @@ export class SettingsService {
     return { user: { ...this.userValues }, project: { ...this.projectValues } }
   }
 
+  // Effective value for one key, project scope winning over user scope — the
+  // same precedence the renderer applies. Returns undefined when unset in both;
+  // main-side callers supply their own default, since the setting definitions
+  // (and their defaults) live in the renderer.
+  get<T>(key: string): T | undefined {
+    if (key in this.projectValues) return this.projectValues[key] as T
+    if (key in this.userValues) return this.userValues[key] as T
+    return undefined
+  }
+
   // Read-modify-write preserving unknown keys; `undefined` deletes the key.
   async set(key: string, value: unknown, scope: SettingScope): Promise<SettingsSnapshot> {
     const path = this.pathFor(scope)

@@ -2,27 +2,38 @@ workbench:
   worktrees_dir: ../.worktrees
   default_base_branch: main
 
+# Each worktree gets a contiguous block of ports starting at
+# `start + slot * count_per_worktree`, exposed to commands as ${PORT_0}, ${PORT_1}, …
 ports:
   start: 3100
   count_per_worktree: 10
 
+# `once` runs the first time this repo is opened; `per_worktree` runs when a
+# worktree is created.
 setup:
   once:
     - echo "one-time setup"
   per_worktree:
     - echo "per-worktree setup for ${WT_NAME}"
 
+# Long-running processes Grove supervises per worktree.
 services:
-  # Simple static server so previews work out of the box (no project deps needed).
   web:
     command: python3 -m http.server ${PORT_0}
     preview: http://localhost:${PORT_0}
     health: http://localhost:${PORT_0}
     log: web.log
+  start:
+    command: PORT=${PORT_0} bun run start
+    preview: http://localhost:${PORT_0}
+    health: http://localhost:${PORT_0}
+  dev:
+    command: PORT=${PORT_0} bun run dev
+    preview: http://localhost:${PORT_0}
+    health: http://localhost:${PORT_0}
 
-# Agents auto-detected from PATH (claude, codex, opencode, gemini, aider,
-# cursor-agent). Entries here override a command or add an unknown CLI.
-# `echo` is a stub for testing the pane without a real agent installed.
+# Grove bundles adapters for claude, codex and opencode. List entries here
+# only to override an adapter command or add an unknown CLI.
 agents:
   echo:
     command: echo '{"role":"assistant","content":"stub agent output"}'

@@ -27,6 +27,8 @@ import type {
   DockLayoutState,
   WorkbenchConfig,
   ServiceRuntime,
+  ServiceConfig,
+  ServiceProposal,
   AgentRuntime,
   AgentConfig,
   AgentOption,
@@ -63,6 +65,7 @@ interface RepoStateShape {
   selectedWorktreeId: string | null
   setupOnceDone: boolean
   introDismissed: boolean
+  setupDismissed: boolean
   agentSessions: Record<string, string>
   trustedActionHashes: string[]
   viewLayouts: Record<string, unknown>
@@ -103,9 +106,7 @@ interface GrantSummaryShape {
   kind: 'plugin' | 'app'
   source?: string
   declared: import('../shared/plugins').PluginPermission[]
-  permissions: Partial<
-    Record<import('../shared/plugins').PluginPermission, 'granted' | 'denied'>
-  >
+  permissions: Partial<Record<import('../shared/plugins').PluginPermission, 'granted' | 'denied'>>
   fsScopes: string[]
 }
 
@@ -175,6 +176,8 @@ export interface WorkbenchApi {
     load: () => Promise<WorkbenchConfig>
     exists: () => Promise<boolean>
     writeSample: () => Promise<boolean>
+    detect: () => Promise<ServiceProposal[]>
+    writeServices: (services: Record<string, ServiceConfig>) => Promise<WorkbenchConfig>
   }
   services: {
     list: (worktreeId: string) => Promise<ServiceRuntime[]>

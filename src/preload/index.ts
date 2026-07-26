@@ -79,7 +79,10 @@ const workbench = {
   config: {
     load: () => ipcRenderer.invoke('config:load'),
     exists: () => ipcRenderer.invoke('config:exists'),
-    writeSample: () => ipcRenderer.invoke('config:writeSample')
+    writeSample: () => ipcRenderer.invoke('config:writeSample'),
+    detect: () => ipcRenderer.invoke('config:detect'),
+    writeServices: (services: Record<string, unknown>) =>
+      ipcRenderer.invoke('config:writeServices', services)
   },
   services: {
     list: (worktreeId: string) => ipcRenderer.invoke('services:list', worktreeId),

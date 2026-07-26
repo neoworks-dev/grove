@@ -92,8 +92,8 @@ function renderService(name: string, service: ServiceConfig): string[] {
 function renderAgents(config: WorkbenchConfig): string {
   const names = Object.keys(config.agents)
   const header = [
-    '# Grove bundles adapters for claude, codex and opencode. List entries here',
-    '# only to override an adapter command or add an unknown CLI.'
+    '# Grove bundles the claude adapter. List an entry here only to override',
+    '# its command.'
   ]
 
   if (names.length === 0) return [...header, 'agents: {}'].join('\n')

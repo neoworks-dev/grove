@@ -1,8 +1,7 @@
-// Adapter contract. Each agent SDK (claude, codex, opencode) implements an
-// AgentAdapter that streams normalized "stream-json-like" lines (parsed by the
-// renderer's agentStream) and, where supported, routes tool permission requests
-// back to the user. Adapters never touch Electron/IPC directly — they only use
-// the AdapterContext callbacks.
+// Adapter contract. An agent SDK implements an AgentAdapter that streams
+// normalized "stream-json-like" lines (parsed by the renderer's agentStream) and
+// routes tool permission requests back to the user. Adapters never touch
+// Electron/IPC directly — they only use the AdapterContext callbacks.
 
 import type {
   AgentConfig,

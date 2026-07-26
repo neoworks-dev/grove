@@ -2,13 +2,13 @@ import { describe, it, expect } from 'bun:test'
 import { FileLockManager } from '../src/main/agents/locks'
 
 const A = 'wt1::claude'
-const B = 'wt1::codex'
+const B = 'wt1::claude-b'
 
 describe('FileLockManager', () => {
   it('grants a free file and blocks a second owner', () => {
     const locks = new FileLockManager()
     expect(locks.tryAcquire(A, 'claude', ['/wt/a.ts'])).toEqual({ ok: true })
-    const blocked = locks.tryAcquire(B, 'codex', ['/wt/a.ts'])
+    const blocked = locks.tryAcquire(B, 'claude-b', ['/wt/a.ts'])
     expect(blocked.ok).toBe(false)
     expect(blocked.heldBy).toBe('claude')
   })
@@ -22,7 +22,7 @@ describe('FileLockManager', () => {
   it('is all-or-nothing: a partial conflict acquires nothing', () => {
     const locks = new FileLockManager()
     locks.tryAcquire(A, 'claude', ['/wt/a.ts'])
-    const result = locks.tryAcquire(B, 'codex', ['/wt/b.ts', '/wt/a.ts'])
+    const result = locks.tryAcquire(B, 'claude-b', ['/wt/b.ts', '/wt/a.ts'])
     expect(result.ok).toBe(false)
     // b.ts must remain free since the batch failed.
     expect(locks.tryAcquire('wt1::third', 'third', ['/wt/b.ts'])).toEqual({ ok: true })
@@ -32,7 +32,7 @@ describe('FileLockManager', () => {
     const locks = new FileLockManager()
     locks.tryAcquire(A, 'claude', ['/wt/a.ts', '/wt/b.ts'])
     locks.releaseOwner(A)
-    expect(locks.tryAcquire(B, 'codex', ['/wt/a.ts'])).toEqual({ ok: true })
+    expect(locks.tryAcquire(B, 'claude-b', ['/wt/a.ts'])).toEqual({ ok: true })
   })
 
   it('reclaims a stale lock after the timeout', () => {
@@ -41,10 +41,10 @@ describe('FileLockManager', () => {
     locks.tryAcquire(A, 'claude', ['/wt/a.ts'])
     // Just under 5 minutes: still held.
     clock += 5 * 60 * 1000 - 1
-    expect(locks.tryAcquire(B, 'codex', ['/wt/a.ts']).ok).toBe(false)
+    expect(locks.tryAcquire(B, 'claude-b', ['/wt/a.ts']).ok).toBe(false)
     // Past the timeout: reclaimable.
     clock += 2
-    expect(locks.tryAcquire(B, 'codex', ['/wt/a.ts']).ok).toBe(true)
+    expect(locks.tryAcquire(B, 'claude-b', ['/wt/a.ts']).ok).toBe(true)
   })
 
   it('reports held paths, excluding stale ones', () => {

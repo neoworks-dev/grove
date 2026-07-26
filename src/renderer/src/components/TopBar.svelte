@@ -6,6 +6,7 @@
   import { layout } from '../lib/layout.svelte'
   import { commands } from '../lib/commands.svelte'
   import { menu, type MenuItem } from '../lib/menu.svelte'
+  import { keyDispatch, KeyPriority } from '../lib/keyDispatch'
 
   let menuOpen = $state(false)
 
@@ -74,17 +75,22 @@
     if (!target?.closest('[data-app-menu]')) menuOpen = false
   }
 
-  function onWindowKeyDown(event: KeyboardEvent): void {
-    if (event.key === 'Escape') menuOpen = false
+  /** Escape closes the app menu and is swallowed, so it never reaches a pane. */
+  function onMenuKeyDown(event: KeyboardEvent): boolean {
+    if (event.key !== 'Escape') return false
+    menuOpen = false
+    event.preventDefault()
+    event.stopPropagation()
+    return true
   }
 
   $effect(() => {
     if (!menuOpen) return
     window.addEventListener('pointerdown', onWindowPointerDown, true)
-    window.addEventListener('keydown', onWindowKeyDown, true)
+    const stopMenuKeys = keyDispatch.subscribe(KeyPriority.menu, onMenuKeyDown)
     return () => {
       window.removeEventListener('pointerdown', onWindowPointerDown, true)
-      window.removeEventListener('keydown', onWindowKeyDown, true)
+      stopMenuKeys()
     }
   })
 </script>

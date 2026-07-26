@@ -4,7 +4,7 @@
   // the FIRST key inserts the leader; Escape cancels (and is therefore not
   // capturable here — hand-edit settings.json for that); accept via button or
   // ~1s of inactivity.
-  import { keymap } from '../../lib/keymap.svelte'
+  import { keyDispatch, KeyPriority } from '../../lib/keyDispatch'
   import {
     stepFromEvent,
     formatSequence,
@@ -23,6 +23,7 @@
   let leader = $state(false)
   let steps = $state<KeyStep[]>([])
   let idleTimer: ReturnType<typeof setTimeout> | null = null
+  let stopCapture: (() => void) | null = null
 
   const draft = $derived<ParsedSequence>({ leader, steps })
   const draftText = $derived(steps.length > 0 || leader ? formatSequence(draft) : '')
@@ -32,14 +33,14 @@
     capturing = true
     leader = false
     steps = []
-    keymap.captureMode = true
-    window.addEventListener('keydown', onCaptureKey, true)
+    // Top priority: while recording, nothing else may act on a keystroke.
+    stopCapture = keyDispatch.subscribe(KeyPriority.capture, onCaptureKey)
   }
 
   function finish(save: boolean): void {
     capturing = false
-    keymap.captureMode = false
-    window.removeEventListener('keydown', onCaptureKey, true)
+    stopCapture?.()
+    stopCapture = null
     if (idleTimer) clearTimeout(idleTimer)
     idleTimer = null
     if (save && draftText) onchange(draftText)
@@ -50,23 +51,25 @@
     idleTimer = setTimeout(() => finish(true), 1000)
   }
 
-  function onCaptureKey(event: KeyboardEvent): void {
+  /** Records one keystroke into the draft sequence. Always claims the key. */
+  function onCaptureKey(event: KeyboardEvent): boolean {
     event.preventDefault()
     event.stopPropagation()
     if (event.key === 'Escape') {
       finish(false)
-      return
+      return true
     }
-    if (isModifierKey(event.key)) return
+    if (isModifierKey(event.key)) return true
     const step = stepFromEvent(event)
     // Unmodified Space as the first key means "leader".
     if (steps.length === 0 && !leader && step.key === 'space' && !step.ctrl && !step.alt && !step.meta) {
       leader = true
       scheduleAutoAccept()
-      return
+      return true
     }
     steps = [...steps, step]
     scheduleAutoAccept()
+    return true
   }
 
   function toggleLeader(): void {

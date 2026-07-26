@@ -222,9 +222,10 @@ export function registerCoreBindings(): void {
       description: 'Shrink pane',
       run: () => layout.resizeFocused(-10)
     },
-    // Per-pane font zoom (Ctrl +/-/0) is handled layout-independently by
-    // event.code in App.onGlobalKey, not here — the key-based binding grammar
-    // can't reliably match +/-/= across keyboard layouts.
+    // Per-pane font zoom (Ctrl +/-/0) is not bound here: the main process eats
+    // those accelerators before the renderer sees a keydown, and routes them
+    // back through the 'event:pane-zoom' IPC event. The key-based binding
+    // grammar also can't reliably match +/-/= across keyboard layouts.
     {
       id: 'leader.pane.h',
       keys: '<Leader> w h',

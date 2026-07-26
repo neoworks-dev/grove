@@ -26,6 +26,7 @@
   } from './lib/store.svelte'
   import { commands } from './lib/commands.svelte'
   import { keymap } from './lib/keymap.svelte'
+  import { keyDispatch, KeyPriority, startGlobalKeyDispatch } from './lib/keyDispatch'
   import { layout } from './lib/layout.svelte'
   import { setup } from './lib/setup.svelte'
   import { statusBar } from './lib/statusbar.svelte'
@@ -169,58 +170,72 @@
     else if (direction === 'reset') layout.resetFocusedFontScale()
   }
 
-  function onGlobalKey(event: KeyboardEvent): void {
-    // The keybind-capture widget owns the keyboard entirely while recording.
-    if (keymap.captureMode) return
-    if (event.key === 'F1') {
-      event.preventDefault()
-      commands.toggle()
-      return
-    }
-    // While an overlay is open it owns the keyboard (its own ctrl+j/k etc.);
-    // the global capture-phase handlers must stand down.
-    if (overlays.active) return
-    // The terminal owns every key while focused (so Ctrl+C/L/hjkl reach the
-    // shell), except the toggle chord that hides it again. This holds for the
-    // standalone terminal pane and for the bottom panel while its Terminal tab
-    // is active (the 'panel' pane then reports 'terminal' mode). The mode check
-    // is scoped to 'panel' so nvim's own :terminal mode is unaffected.
+  /** F1 opens the command palette from any context, including under an overlay. */
+  function handleCommandPaletteKey(event: KeyboardEvent): boolean {
+    if (event.key !== 'F1') return false
+    event.preventDefault()
+    commands.toggle()
+    return true
+  }
+
+  /**
+   * While an overlay is open it owns the keyboard (its own ctrl+j/k etc.), so
+   * the chain stands down. Deliberately does not stop propagation: the
+   * overlay's input still has to receive the keystroke.
+   */
+  function handleOverlayOwnership(): boolean {
+    if (!overlays.active) return false
+    return true
+  }
+
+  /**
+   * The terminal owns every key while focused (so Ctrl+C/L/hjkl reach the
+   * shell), except the toggle chord that hides it again. This holds for the
+   * standalone terminal pane and for the bottom panel while its Terminal tab is
+   * active (the 'panel' pane then reports 'terminal' mode). The mode check is
+   * scoped to 'panel' so nvim's own :terminal mode is unaffected.
+   *
+   * Claims the key without stopping propagation so xterm's own handler still
+   * sees it; only the toggle chord is swallowed outright.
+   */
+  function handleTerminalOwnership(event: KeyboardEvent): boolean {
     const inPanelTerminal = keymap.activePaneType === 'panel' && keymap.mode === 'terminal'
-    if (keymap.activePaneType === 'terminal' || inPanelTerminal) {
-      if (event.ctrlKey && event.key === '`' && !event.altKey && !event.metaKey) {
-        event.preventDefault()
-        layout.togglePane(keymap.activePaneType ?? 'terminal')
-      }
-      return
-    }
-    // Delegate to the keymap core (pane nav, leader). Capture phase so Ctrl+hjkl
-    // and the leader beat Neovim's own handlers.
-    if (keymap.handleKey(event)) {
+    if (keymap.activePaneType !== 'terminal' && !inPanelTerminal) return false
+    if (event.ctrlKey && event.key === '`' && !event.altKey && !event.metaKey) {
       event.preventDefault()
       event.stopPropagation()
-      return
+      layout.togglePane(keymap.activePaneType ?? 'terminal')
     }
-    // Alt+H / Alt+L: previous / next editor tab, but only in Vim-normal so
-    // insert typing is never hijacked. K and J are left to Vim (K = hover/type
-    // info, J = join), so they are deliberately not mapped here.
-    // The nvim editor reports its keymap context as 'editor' (shared with the
-    // diff pane), so match the focused leaf's actual pane type instead.
-    // Match on event.code since Alt composes special characters on some layouts.
-    if (
-      layout.focusedLeaf()?.paneTypeId === 'nvim' &&
-      keymap.mode === 'normal' &&
-      event.altKey &&
-      !event.ctrlKey &&
-      !event.shiftKey &&
-      !event.metaKey
-    ) {
-      const move = { KeyH: 'prev', KeyL: 'next' }[event.code] as 'prev' | 'next' | undefined
-      if (move) {
-        switchTab(move)
-        event.preventDefault()
-        event.stopPropagation()
-      }
-    }
+    return true
+  }
+
+  /** Pane navigation, leader sequences and chords, resolved by the keymap core. */
+  function handleBindings(event: KeyboardEvent): boolean {
+    if (!keymap.handleKey(event)) return false
+    event.preventDefault()
+    event.stopPropagation()
+    return true
+  }
+
+  /**
+   * Alt+H / Alt+L: previous / next editor tab, but only in Vim-normal so insert
+   * typing is never hijacked. K and J are left to Vim (K = hover/type info,
+   * J = join), so they are deliberately not mapped here.
+   *
+   * The nvim editor reports its keymap context as 'editor' (shared with the
+   * diff pane), so this matches the focused leaf's actual pane type instead.
+   * Matches on event.code since Alt composes special characters on some layouts.
+   */
+  function handleEditorTabSwitch(event: KeyboardEvent): boolean {
+    if (layout.focusedLeaf()?.paneTypeId !== 'nvim') return false
+    if (keymap.mode !== 'normal') return false
+    if (!event.altKey || event.ctrlKey || event.shiftKey || event.metaKey) return false
+    const move = { KeyH: 'prev', KeyL: 'next' }[event.code] as 'prev' | 'next' | undefined
+    if (!move) return false
+    switchTab(move)
+    event.preventDefault()
+    event.stopPropagation()
+    return true
   }
 
   onMount(() => {
@@ -234,7 +249,14 @@
     registerCoreCommands()
     registerCoreBindings()
     void loadInstalledExtensions()
-    window.addEventListener('keydown', onGlobalKey, true)
+    const stopKeyDispatch = startGlobalKeyDispatch()
+    const unsubscribeKeys = [
+      keyDispatch.subscribe(KeyPriority.hardKey, handleCommandPaletteKey),
+      keyDispatch.subscribe(KeyPriority.overlay, handleOverlayOwnership),
+      keyDispatch.subscribe(KeyPriority.terminal, handleTerminalOwnership),
+      keyDispatch.subscribe(KeyPriority.bindings, handleBindings),
+      keyDispatch.subscribe(KeyPriority.app, handleEditorTabSwitch)
+    ]
     const stopPaneZoom = window.workbench.on('event:pane-zoom', applyPaneZoom)
 
     void (async () => {
@@ -253,7 +275,8 @@
     })()
 
     return () => {
-      window.removeEventListener('keydown', onGlobalKey, true)
+      for (const unsubscribe of unsubscribeKeys) unsubscribe()
+      stopKeyDispatch()
       stopPaneZoom()
     }
   })

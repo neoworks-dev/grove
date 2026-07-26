@@ -35,6 +35,10 @@ export interface ReviewEvents {
 export interface ReviewSettings {
   // Hold the agent at request_review until the user has decided.
   pause: () => boolean
+  // Review writes after they land rather than gating them at the permission
+  // prompt. When false, nothing is staged: the gated review already covered the
+  // write, and staging it again would raise a second review for the same edit.
+  postApprove: () => boolean
 }
 
 interface PendingReview {
@@ -60,6 +64,7 @@ export class ReviewService {
   // ── Staging ─────────────────────────────────────────────────────
 
   openBatch(worktreePath: string, agent: string, chatId: string): void {
+    if (!this.settings.postApprove()) return
     void this.staging.open(worktreePath, agent, chatId)
   }
 

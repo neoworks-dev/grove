@@ -125,15 +125,6 @@ class WorkbenchStore {
   // Pending blocking dialogs (e.g. agent questions) awaiting an answer.
   pendingDialogs = $state<AgentDialogRequest[]>([])
 
-  // A proposed (not-yet-applied) file change from a pending Write/Edit, shown in
-  // the diff editor so the user reviews before approving.
-  proposedDiff = $state<{
-    path: string
-    original: string
-    modified: string
-    language: string
-  } | null>(null)
-
   // Streamed logs keyed by worktreeId.
   logs = $state<Record<string, LogLine[]>>({})
 
@@ -381,7 +372,6 @@ export async function resetAgentChat(
     (request) =>
       !(request.worktreeId === worktreeId && request.agent === agent && request.chatId === chatId)
   )
-  store.proposedDiff = null
 }
 
 // "/delete": remove an instance (chat) and drop its transcript from the UI.
@@ -470,13 +460,11 @@ export async function renameChat(
 export async function resumeChat(worktreeId: string, agent: string, chatId: string): Promise<void> {
   const lines = await window.workbench.agents.activateChat(worktreeId, agent, chatId)
   setAgentTranscript(worktreeId, agent, chatId, lines)
-  store.proposedDiff = null
 }
 
 // Answer a pending permission request and drop it from the queue.
 export async function respondPermission(id: string, decision: PermissionDecision): Promise<void> {
   store.pendingPermissions = store.pendingPermissions.filter((request) => request.id !== id)
-  store.proposedDiff = null
   await window.workbench.agents.respondPermission(id, decision)
 }
 
@@ -484,83 +472,6 @@ export async function respondPermission(id: string, decision: PermissionDecision
 export async function respondDialog(id: string, decision: AgentDialogDecision): Promise<void> {
   store.pendingDialogs = store.pendingDialogs.filter((request) => request.id !== id)
   await window.workbench.agents.respondDialog(id, decision)
-}
-
-const LANGUAGE_BY_EXT: Record<string, string> = {
-  ts: 'typescript',
-  tsx: 'typescript',
-  js: 'javascript',
-  jsx: 'javascript',
-  json: 'json',
-  md: 'markdown',
-  css: 'css',
-  scss: 'scss',
-  html: 'html',
-  svelte: 'html',
-  yml: 'yaml',
-  yaml: 'yaml',
-  py: 'python',
-  rs: 'rust',
-  go: 'go',
-  sh: 'shell',
-  toml: 'ini'
-}
-
-function languageForPath(path: string): string {
-  const ext = path.split('.').pop()?.toLowerCase() || ''
-  return LANGUAGE_BY_EXT[ext] || 'plaintext'
-}
-
-// Apply an Edit-style string replacement the way the agent tools do.
-function applyStringEdit(text: string, oldString: string, newString: string, all: boolean): string {
-  if (typeof oldString !== 'string' || oldString.length === 0) return text
-  return all ? text.split(oldString).join(newString) : text.replace(oldString, newString)
-}
-
-// Build a diff of the current file vs. what a pending Write/Edit would produce.
-// The permission card renders it inline so review isn't blind. No-op for
-// non-file-editing tools.
-export async function openProposedDiff(request: PermissionRequestEvent): Promise<void> {
-  const path = request.path
-  if (!path || !store.selectedWorktreeId) return
-  const input = request.input as Record<string, unknown>
-
-  let original = ''
-  try {
-    original = await window.workbench.files.read(store.selectedWorktreeId, path)
-  } catch {
-    original = '' // new file
-  }
-
-  let modified: string
-  if (request.toolName === 'Write' && typeof input.content === 'string') {
-    modified = input.content
-  } else if (request.toolName === 'Edit') {
-    modified = applyStringEdit(
-      original,
-      input.old_string as string,
-      input.new_string as string,
-      input.replace_all === true
-    )
-  } else if (request.toolName === 'MultiEdit' && Array.isArray(input.edits)) {
-    modified = (input.edits as Record<string, unknown>[]).reduce(
-      (acc, edit) =>
-        applyStringEdit(
-          acc,
-          edit.old_string as string,
-          edit.new_string as string,
-          edit.replace_all === true
-        ),
-      original
-    )
-  } else {
-    return // not a file-editing tool
-  }
-
-  store.proposedDiff = { path, original, modified, language: languageForPath(path) }
-  // Preview the pending edit as a vimdiff split in the real editor, so review
-  // happens there rather than inline in the chat.
-  void inlineEdit.previewGatedEdit(store.selectedWorktreeId, path, modified)
 }
 
 // ── Actions ───────────────────────────────────────────────────
@@ -744,14 +655,13 @@ export function subscribeEvents(): void {
         request.worktreeId === runtime.worktreeId &&
         request.agent === runtime.name &&
         request.chatId === runtime.chatId
+      const stale = store.pendingPermissions.filter(isThisInstance)
       store.pendingPermissions = store.pendingPermissions.filter(
         (request) => !isThisInstance(request)
       )
       store.pendingDialogs = store.pendingDialogs.filter((request) => !isThisInstance(request))
-      if (store.pendingPermissions.length === 0) {
-        store.proposedDiff = null
-        void inlineEdit.discardGatedPreview()
-      }
+      // Drop any review raised for a permission this run will never answer.
+      for (const request of stale) review.discardFor(request.id)
     }
     void window.workbench.agents.active().then((ids) => {
       store.activeAgentWorktrees = ids
@@ -759,10 +669,9 @@ export function subscribeEvents(): void {
     })
   })
   window.workbench.on('event:agent-permission', (payload) => {
-    const request = payload as PermissionRequestEvent
-    store.pendingPermissions = [...store.pendingPermissions, request]
-    // Show a proposed-change diff for file-editing tools so review isn't blind.
-    void openProposedDiff(request)
+    // The reviewable diff for a file-editing tool is built in the main process
+    // and arrives separately as event:agent-review.
+    store.pendingPermissions = [...store.pendingPermissions, payload as PermissionRequestEvent]
   })
   window.workbench.on('event:agent-dialog', (payload) => {
     store.pendingDialogs = [...store.pendingDialogs, payload as AgentDialogRequest]
@@ -837,12 +746,11 @@ export function subscribeEvents(): void {
     // An onboarding session shows AGENTS.md / example changes in the intro
     // pane, so the git-changes sidebar must not hijack focus for them.
     if (isFile && intro.claimFsChange(event.worktreeId, event.relPath)) return
-    // Otherwise, if a running agent touched a file, reveal the Git Changes
-    // sidebar and highlight the file so the change is one click from review.
+    // Otherwise just mark the file in the Git Changes sidebar. Agent writes are
+    // staged into a review batch and surfaced as one request when that batch
+    // closes, so stealing focus on every individual write would fight it.
     if (isFile && store.activeAgentWorktrees.includes(event.worktreeId)) {
-      store.selectedWorktreeId = event.worktreeId
       store.requestedDiffFile = event.relPath
-      layout.ensurePane('changes')
     }
   })
 }

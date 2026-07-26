@@ -11,13 +11,16 @@ import type {
   DiffFile,
   OpenPrOptions,
   MergePrOptions,
-  InlineHunk
+  InlineHunk,
+  RepoInfo,
+  ServiceConfig
 } from '../shared/types'
 import * as git from './git'
 import { CheckpointManager } from './checkpoints'
 import * as inlineDiff from './inlineDiff'
 import * as github from './github'
 import * as config from './config'
+import { detectServices } from './detect'
 import * as files from './files'
 import * as extensions from './extensions'
 import { LspManager } from './lsp'
@@ -106,7 +109,11 @@ const agents = new AgentManager({
   },
   onLog: (worktreeId, name, chatId, line) => {
     send('event:log', { worktreeId, source: 'agent', name, chatId, line })
-    eventHub.publish({ topic: 'agents.log', payload: { worktreeId, name, chatId, line }, worktreeId })
+    eventHub.publish({
+      topic: 'agents.log',
+      payload: { worktreeId, name, chatId, line },
+      worktreeId
+    })
   },
   onPermission: (request) => send('event:agent-permission', request),
   onDialog: (request) => send('event:agent-dialog', request),
@@ -260,8 +267,7 @@ const editorDocs = new DocumentRegistry({
 registerEventRoutes(apiRegistry, { hub: eventHub })
 registerEditorRoutes(apiRegistry, {
   documents: editorDocs,
-  openInEditor: (worktreeId, path, line) =>
-    send('event:api-open-file', { worktreeId, path, line })
+  openInEditor: (worktreeId, path, line) => send('event:api-open-file', { worktreeId, path, line })
 })
 registerGitRoutes(apiRegistry, {
   versions: gitStatusVersions,
@@ -279,7 +285,8 @@ registerGitRoutes(apiRegistry, {
         baseBranch: options.base ?? (await git.currentBranch(repoPath)),
         newBranch: options.branch
       },
-      (worktreeId, line) => send('event:log', { worktreeId, source: 'service', name: 'setup', line })
+      (worktreeId, line) =>
+        send('event:log', { worktreeId, source: 'service', name: 'setup', line })
     )
     await refreshWorktrees()
     return created
@@ -489,7 +496,7 @@ async function hasAgentsFile(root: string): Promise<boolean> {
 
 // Open a repo: validate, load config, remember it, list worktrees.
 async function openRepo(repoPath: string): Promise<{
-  info: { path: string; name: string; currentBranch: string; hasAgentsFile: boolean }
+  info: RepoInfo
   worktrees: Worktree[]
 }> {
   if (!(await git.isGitRepo(repoPath))) {
@@ -515,7 +522,8 @@ async function openRepo(repoPath: string): Promise<{
       path: root,
       name: root.split('/').pop() || root,
       currentBranch: await git.currentBranch(root),
-      hasAgentsFile: await hasAgentsFile(root)
+      hasAgentsFile: await hasAgentsFile(root),
+      hasConfig: await config.configExists(root)
     },
     worktrees: list
   }
@@ -763,6 +771,26 @@ export function registerIpc(): void {
     const written = await config.writeSampleConfig(repoPath)
     context.config = await config.loadConfig(repoPath)
     return written
+  })
+
+  // Setup wizard: propose service entries from what the repo looks like.
+  ipcMain.handle('config:detect', () => {
+    const { repoPath } = requireRepo()
+    return detectServices(repoPath)
+  })
+
+  // Setup wizard: write the reviewed services into workbench.yaml, merged over
+  // whatever is already there so a partially configured repo is not clobbered.
+  ipcMain.handle('config:writeServices', async (_e, services: Record<string, ServiceConfig>) => {
+    const { repoPath } = requireRepo()
+    const current = await config.loadConfig(repoPath)
+    const merged: WorkbenchConfig = {
+      ...current,
+      services: { ...current.services, ...services }
+    }
+    await config.saveConfig(repoPath, merged)
+    context.config = await config.loadConfig(repoPath)
+    return context.config
   })
 
   // ── Services ──────────────────────────────────────────────────
@@ -1189,7 +1217,15 @@ export function registerIpc(): void {
   })
   ipcMain.handle(
     'nvim:inputMouse',
-    (_e, id: string, button: string, action: string, modifier: string, row: number, col: number) => {
+    (
+      _e,
+      id: string,
+      button: string,
+      action: string,
+      modifier: string,
+      row: number,
+      col: number
+    ) => {
       trackNvimActivity(id)
       nvims.inputMouse(id, button, action, modifier, row, col)
     }
@@ -1263,7 +1299,12 @@ export function registerIpc(): void {
       void invoke()
         .then(() => send('event:plugin-stream', { pluginId, callId, end: true }))
         .catch((error: Error) =>
-          send('event:plugin-stream', { pluginId, callId, end: true, error: { message: error.message } })
+          send('event:plugin-stream', {
+            pluginId,
+            callId,
+            end: true,
+            error: { message: error.message }
+          })
         )
       return null
     }

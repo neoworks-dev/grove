@@ -17,10 +17,17 @@
   import StatusClock from './components/StatusClock.svelte'
   import StatusMode from './components/StatusMode.svelte'
   import StatusIntro from './components/StatusIntro.svelte'
-  import { store, subscribeEvents, openRepoResult, applyIconPack, switchTab } from './lib/store.svelte'
+  import {
+    store,
+    subscribeEvents,
+    openRepoResult,
+    applyIconPack,
+    switchTab
+  } from './lib/store.svelte'
   import { commands } from './lib/commands.svelte'
   import { keymap } from './lib/keymap.svelte'
   import { layout } from './lib/layout.svelte'
+  import { setup } from './lib/setup.svelte'
   import { statusBar } from './lib/statusbar.svelte'
   import { registerCoreBindings } from './lib/bindings'
   import { registerCorePanes } from './lib/corePanes'
@@ -105,11 +112,14 @@
       run: pickRepo
     })
     commands.register({
-      id: 'intro.setup',
-      title: 'Set up AGENTS.md (Introduction)',
+      id: 'workspace.setup',
+      title: 'Set Up This Workspace…',
       group: 'Repository',
-      keywords: 'onboarding agents claude config style intro',
-      run: () => layout.ensurePane('intro')
+      keywords: 'onboarding wizard services config workbench.yaml agents claude style intro',
+      run: async () => {
+        await setup.begin()
+        layout.ensurePane('setup')
+      }
     })
     commands.register({
       id: 'view.toggleLogs',

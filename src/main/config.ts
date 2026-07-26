@@ -1,9 +1,10 @@
 // Repo-root YAML config: load, validate, apply defaults, write a sample.
 
-import { load, dump } from 'js-yaml'
+import { load } from 'js-yaml'
 import { readFile, writeFile, access } from 'fs/promises'
 import { join } from 'path'
 import type { WorkbenchConfig } from '../shared/types'
+import { renderConfig } from './configRender'
 
 export const CONFIG_FILENAME = 'workbench.yaml'
 
@@ -104,6 +105,9 @@ export async function writeSampleConfig(repoPath: string): Promise<boolean> {
   return true
 }
 
+// Writes through the annotated renderer rather than js-yaml's dump: workbench.yaml
+// is meant to stay hand-editable, and dump would strip every explanatory comment
+// and reorder the sections.
 export async function saveConfig(repoPath: string, config: WorkbenchConfig): Promise<void> {
-  await writeFile(configPath(repoPath), dump(config), 'utf8')
+  await writeFile(configPath(repoPath), renderConfig(config), 'utf8')
 }

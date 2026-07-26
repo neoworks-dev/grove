@@ -40,6 +40,7 @@ import { layout } from './layout.svelte'
 import { settings } from './settings.svelte'
 import { inlineEdit } from './inlineEdit.svelte'
 import { intro } from './intro.svelte'
+import { setup } from './setup.svelte'
 
 export interface EditorTab {
   worktreeId: string
@@ -577,10 +578,14 @@ export async function openRepoResult(result: {
     await refreshRuntimes(store.selectedWorktreeId)
   }
   syncWatched()
-  // New workspace (no agent-instruction file) and never dismissed: offer the
-  // AGENTS.md onboarding introduction in the left sidebar.
-  if (!result.info.hasAgentsFile && !repoState.introDismissed) {
-    layout.ensurePane('intro')
+  // Unconfigured workspace and never dismissed: offer the setup wizard in the
+  // left sidebar. introDismissed is honoured too, so a repo that finished the
+  // AGENTS.md flow before the wizard existed is not nagged about it again.
+  const needsSetup = !result.info.hasConfig || !result.info.hasAgentsFile
+  const dismissed = repoState.setupDismissed || repoState.introDismissed
+  if (needsSetup && !dismissed) {
+    await setup.begin()
+    layout.ensurePane('setup')
   }
 }
 

@@ -451,6 +451,19 @@ export interface RepoInfo {
   path: string
   name: string
   currentBranch: string
-  // No AGENTS.md/CLAUDE.md at the repo root -> offer the intro onboarding page.
+  // No AGENTS.md/CLAUDE.md at the repo root -> offer the AGENTS.md setup stage.
   hasAgentsFile: boolean
+  // No workbench.yaml at the repo root -> offer the config setup stage.
+  hasConfig: boolean
+}
+
+// A service entry a detector proposes for workbench.yaml. Crosses IPC so the
+// setup wizard can render proposals for the user to review and edit.
+export interface ServiceProposal extends ServiceConfig {
+  name: string
+  // Detector id, so the wizard can show where a proposal came from.
+  source: string
+  // False when the command keeps a port Grove does not control, meaning two
+  // worktrees running this service will collide.
+  usesPort: boolean
 }

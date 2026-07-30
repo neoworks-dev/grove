@@ -253,20 +253,23 @@ local function blend(base, tint, ratio)
   return string.format('#%02x%02x%02x', mix(br, tr), mix(bg, tg), mix(bb, tb))
 end
 
+-- The editor sits in a pane next to grove's own panes, so it paints on the
+-- elevated pane background rather than the canvas underneath them; floats and
+-- menus step up one more level so they still read as raised.
 _G.grove_apply_theme = function(palette)
   local set = vim.api.nvim_set_hl
-  set(0, 'Normal', { fg = palette.text, bg = palette.bg })
-  set(0, 'NormalNC', { fg = palette.text, bg = palette.bg })
-  set(0, 'NormalFloat', { fg = palette.text, bg = palette.bgElevated })
-  set(0, 'FloatBorder', { fg = palette.border, bg = palette.bgElevated })
+  set(0, 'Normal', { fg = palette.text, bg = palette.bgElevated })
+  set(0, 'NormalNC', { fg = palette.text, bg = palette.bgElevated })
+  set(0, 'NormalFloat', { fg = palette.text, bg = palette.surface })
+  set(0, 'FloatBorder', { fg = palette.border, bg = palette.surface })
   set(0, 'Visual', { bg = palette.surfaceHover })
   set(0, 'LineNr', { fg = palette.textDim })
   set(0, 'CursorLine', { bg = palette.surface })
   set(0, 'CursorLineNr', { fg = palette.textMuted })
-  set(0, 'SignColumn', { bg = palette.bg })
-  set(0, 'EndOfBuffer', { fg = palette.bg })
+  set(0, 'SignColumn', { bg = palette.bgElevated })
+  set(0, 'EndOfBuffer', { fg = palette.bgElevated })
   set(0, 'WinSeparator', { fg = palette.border })
-  set(0, 'Pmenu', { fg = palette.text, bg = palette.bgElevated })
+  set(0, 'Pmenu', { fg = palette.text, bg = palette.surface })
   set(0, 'PmenuSel', { fg = palette.textInverse, bg = palette.primary })
   set(0, 'PmenuSbar', { bg = palette.surface })
   set(0, 'PmenuThumb', { bg = palette.borderStrong })
@@ -276,7 +279,7 @@ _G.grove_apply_theme = function(palette)
   set(0, 'MatchParen', { fg = palette.ctxAmber, bold = true })
   set(0, 'ErrorMsg', { fg = palette.ctxRed })
   set(0, 'WarningMsg', { fg = palette.ctxAmber })
-  set(0, 'MsgArea', { fg = palette.textMuted, bg = palette.bg })
+  set(0, 'MsgArea', { fg = palette.textMuted, bg = palette.bgElevated })
   set(0, 'Question', { fg = palette.ctxGreen })
   set(0, 'Directory', { fg = palette.ctxBlue })
   set(0, 'Title', { fg = palette.ctxViolet, bold = true })
@@ -299,9 +302,9 @@ _G.grove_apply_theme = function(palette)
   set(0, 'Delimiter', { fg = palette.textMuted })
   -- Full-line diff fills: tint the base bg toward green/red so changed lines
   -- read at a glance without washing out the syntax-colored text on top.
-  set(0, 'DiffAdd', { bg = blend(palette.bg, palette.ctxGreen, 0.22) })
-  set(0, 'DiffDelete', { bg = blend(palette.bg, palette.ctxRed, 0.22) })
-  set(0, 'DiffChange', { bg = blend(palette.bg, palette.ctxAmber, 0.22) })
+  set(0, 'DiffAdd', { bg = blend(palette.bgElevated, palette.ctxGreen, 0.22) })
+  set(0, 'DiffDelete', { bg = blend(palette.bgElevated, palette.ctxRed, 0.22) })
+  set(0, 'DiffChange', { bg = blend(palette.bgElevated, palette.ctxAmber, 0.22) })
 end
 
 -- Sanctioned user-extension hook (Phase C): a writable init in nvim's data

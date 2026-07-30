@@ -63,15 +63,24 @@ const MOUSE_BUTTONS = ['left', 'middle', 'right']
 // Side-by-side puts the baseline left and the result right as a vimdiff pair.
 // Inline shows a single buffer of the result with the baseline diffed against it
 // in a hidden-width window, so removals still register as diff highlights.
+//
+// The whole thing lives in its own tab page. Building it in the current window
+// meant `:enew`, which fails outright on a modified buffer (E37) and otherwise
+// evicts whatever the user was editing; a tab leaves their layout untouched and
+// is torn down in one call.
 const REVIEW_DIFF_OPEN_LUA = `
 local path, baseline, current, sideBySide = ...
 
 -- Tear down any previous review before building the next one.
-for _, win in ipairs(vim.g.grove_review_wins or {}) do
-  if vim.api.nvim_win_is_valid(win) then pcall(vim.api.nvim_win_close, win, true) end
+local previous = vim.g.grove_review_tab
+if previous and vim.api.nvim_tabpage_is_valid(previous) then
+  local count = #vim.api.nvim_list_tabpages()
+  if count > 1 then
+    pcall(vim.cmd, 'tabclose! ' .. vim.api.nvim_tabpage_get_number(previous))
+  end
 end
+vim.g.grove_review_tab = nil
 vim.g.grove_review_wins = nil
-vim.cmd('diffoff!')
 
 local name = vim.fn.fnamemodify(path, ':t')
 local ft = vim.filetype.match({ filename = path }) or ''
@@ -91,9 +100,13 @@ end
 local resultBuf = scratch(name .. ' [reviewing]', current)
 local baseBuf = scratch(name .. ' [before]', baseline)
 
+-- A fresh tab to build in. tabnew opens an empty scratch window, so no existing
+-- buffer is disturbed and nothing can refuse to be replaced.
+vim.cmd('tabnew')
+local tab = vim.api.nvim_get_current_tabpage()
+
 local wins = {}
 if sideBySide then
-  vim.cmd('enew')
   local left = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_buf(left, baseBuf)
   vim.cmd('rightbelow vsplit')
@@ -104,7 +117,6 @@ if sideBySide then
 else
   -- Inline: the result fills the pane and the baseline sits in a zero-width
   -- neighbour, which is enough for nvim to compute and paint the diff.
-  vim.cmd('enew')
   local main = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_buf(main, resultBuf)
   vim.cmd('leftabove vsplit')
@@ -134,15 +146,20 @@ vim.api.nvim_win_call(focus, function()
 end)
 vim.api.nvim_set_current_win(focus)
 vim.g.grove_review_wins = wins
+vim.g.grove_review_tab = tab
 `
 
+// Close the review tab. `tabclose!` discards the scratch buffers without
+// prompting; the guard keeps it from closing the last remaining tab, which nvim
+// refuses anyway.
 const REVIEW_DIFF_CLOSE_LUA = `
-for _, win in ipairs(vim.g.grove_review_wins or {}) do
-  if vim.api.nvim_win_is_valid(win) then pcall(vim.api.nvim_win_close, win, true) end
+local tab = vim.g.grove_review_tab
+if tab and vim.api.nvim_tabpage_is_valid(tab) and #vim.api.nvim_list_tabpages() > 1 then
+  pcall(vim.cmd, 'tabclose! ' .. vim.api.nvim_tabpage_get_number(tab))
 end
+vim.g.grove_review_tab = nil
 vim.g.grove_review_wins = nil
 vim.g.grove_review_win = nil
-vim.cmd('diffoff!')
 `
 
 // Screen row of each given buffer line in the review window, as an offset from
@@ -281,6 +298,20 @@ export class NvimCanvasSession {
     return this.config.leafId
   }
 
+  // The layout reuses a mounted pane under a new leaf id when it rebuilds its
+  // tree. The session outlives that, so it has to be told, or everything keyed
+  // by leafId (the registry, overlays comparing against it) silently stops
+  // matching the pane the user is actually looking at.
+  setLeafId(leafId: string): void {
+    this.config.leafId = leafId
+    // The dispatcher keys pane sinks by leaf id, so the sink has to move with
+    // the rename. Left behind under the old id it is never looked up again and
+    // every unclaimed key is dropped instead of reaching nvim.
+    if (!this.stopKeySink) return
+    this.stopKeySink()
+    this.stopKeySink = keyDispatch.registerPaneSink(leafId, this.onKeydown)
+  }
+
   // Re-measure the cell for a new font size and repaint. Called when the pane's
   // font zoom changes; before start() it only records the size so start() picks
   // it up. Cell metrics change even at the same px, so this always forces a
@@ -347,6 +378,9 @@ export class NvimCanvasSession {
 
   // Show a review diff: the file's baseline against what the agent produced,
   // read-only, with the whole file scrollable so decisions are made in context.
+  // Throws if nvim rejects the request. Unlike the fire-and-forget helpers here,
+  // a review that fails to render leaves the user with a prompt they cannot
+  // answer, so the caller has to know rather than silently show nothing.
   async openReviewDiff(options: {
     path: string
     baseline: string
@@ -354,15 +388,11 @@ export class NvimCanvasSession {
     sideBySide: boolean
   }): Promise<void> {
     const id = this.nvimId
-    if (!id) return
-    try {
-      await window.workbench.nvim.request(id, 'nvim_exec_lua', [
-        REVIEW_DIFF_OPEN_LUA,
-        [options.path, options.baseline, options.current, options.sideBySide]
-      ])
-    } catch {
-      // session gone
-    }
+    if (!id) throw new Error('no editor session attached')
+    await window.workbench.nvim.request(id, 'nvim_exec_lua', [
+      REVIEW_DIFF_OPEN_LUA,
+      [options.path, options.baseline, options.current, options.sideBySide]
+    ])
   }
 
   async closeReviewDiff(): Promise<void> {

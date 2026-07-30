@@ -146,6 +146,7 @@ export function registerCorePanes(): void {
     title: 'Neovim',
     component: NvimPane,
     slot: CENTER_SLOT,
+    containerClass: 'bg-elevated',
     minWidth: 240,
     // Reports the 'editor' keymap context so editor-scoped bindings (file
     // finder, etc.) match here.

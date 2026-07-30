@@ -25,6 +25,15 @@ export function nvimSessionFor(leafId: string): NvimCanvasSession | undefined {
   return sessions.get(leafId)
 }
 
+// Look a session up by the nvim process it drives. Callers that must survive a
+// leaf being renamed key on this instead of the leaf id.
+export function sessionByNvimId(nvimId: string): NvimCanvasSession | undefined {
+  for (const session of sessions.values()) {
+    if (session.id === nvimId) return session
+  }
+  return undefined
+}
+
 // The editor session the user is currently in. Prefers the keymap's active
 // leaf; falls back to the sole session when only one editor is open (a common
 // case where focus may sit in another pane).

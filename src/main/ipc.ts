@@ -60,6 +60,7 @@ import { registerAiRoutes } from './api/routes/ai'
 import { registerStorageRoutes } from './api/routes/storage'
 import { registerEventRoutes } from './api/routes/events'
 import { registerEditorRoutes } from './api/routes/editor'
+import { registerDebugRoutes } from './api/routes/debug'
 import { registerGitRoutes } from './api/routes/git'
 import { registerLanguagesRoutes } from './api/routes/languages'
 import { registerServicesRoutes } from './api/routes/services'
@@ -218,7 +219,7 @@ async function sendToAgent(
   const agent = effectiveAgents()[name]
   if (!agent) return
   const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
-  await agents.send(worktree, name, agent, ports, text, chatId)
+  await agents.send(worktree, name, agent, ports, text, chatId, 'review')
 }
 
 // Build a gated review for a pending file-write permission: the file is still
@@ -348,6 +349,21 @@ const editorDocs = new DocumentRegistry({
   worktreePathOf: (worktreeId) => findWorktree(worktreeId).path,
   publish: (topic, payload, worktreeId) => eventHub.publish({ topic, payload, worktreeId })
 })
+
+// Debug harness: arbitrary Lua in the editor and arbitrary JS in the renderer.
+// Only registered under GROVE_DEBUG, so a normal build never carries it.
+if (process.env.GROVE_DEBUG === '1') {
+  registerDebugRoutes(apiRegistry, {
+    nvimSessionIds: () => nvims.sessionIds(),
+    nvimRequest: (id, method, args) => nvims.request(id, method, args),
+    rendererEval: async (expression) => {
+      const window = BrowserWindow.getAllWindows()[0]
+      if (!window) throw new Error('no renderer window is open')
+      return window.webContents.executeJavaScript(expression, true)
+    }
+  })
+  console.warn('[grove] GROVE_DEBUG=1 — debug.* API routes are registered')
+}
 
 registerEventRoutes(apiRegistry, { hub: eventHub })
 registerEditorRoutes(apiRegistry, {

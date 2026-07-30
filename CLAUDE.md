@@ -4,7 +4,30 @@ You're allowed to use git. Every time you make a big change, commit the current 
 
 ## Validation
 
-If you need to verify the UI is working as intended ask me instead of trying to inspect it yourself using tmux.
+Never launch the app yourself. I run it, and I run it with `GROVE_DEBUG=1`.
+
+Once it's running you can attach to it and drive it yourself instead of asking me what I see. Don't inspect the UI via tmux, and don't guess at UI behaviour from reading code — attach and look.
+
+```
+bun scripts/grove-debug.ts ping                  # is it reachable
+bun scripts/grove-debug.ts state                 # review + editor state
+bun scripts/grove-debug.ts windows               # nvim tabs/windows/buffers/diff flags
+bun scripts/grove-debug.ts eval '<js>'           # anything in the renderer
+bun scripts/grove-debug.ts lua '<lua>'           # anything in the editor
+
+bun scripts/grove-debug.ts agent start '<prompt>'
+bun scripts/grove-debug.ts agent permissions | allow | deny '<why>'
+bun scripts/grove-debug.ts review list | open | decide | comment | finish
+
+bun scripts/grove-debug.ts scenarios             # replayable end-to-end flows
+bun scripts/grove-debug.ts scenario review-e2e   # drives a whole gated review
+```
+
+`debug.renderer.eval` reaches `window.__grove_debug` (store, review, keymap, layout, inlineEdit, nvimRegistry) and `window.workbench.*`, so you can read any app state and call any IPC the UI calls.
+
+Ask me to restart the app after changing main-process code; the renderer hot-reloads on its own.
+
+If a UI bug is reported, reproduce it through the harness and confirm the mechanism before proposing a fix. Guessing from source has been wrong more often than right.
 
 ## Style
 
@@ -15,6 +38,10 @@ Neoworks uses a shared design system defined in the /home/moritz/Documents/neowo
 When editing or generating code, prioritize readability and maintainability over cleverness.
 
 Rules:
+
+- Comments are important, when writing a function add a JSDoc style comment to it so people know what the function does even without having to open the file it's in.
+
+- When you are writing comments assume they will be read in the future when your changes are done. If you remove a feature entirely there's no point adding a comment about something that won't be there anymore in the future.
 
 - Preserve descriptive names. Do not shorten identifiers.
   - Good: `recordId`, `customerAccount`, `paymentMethod`

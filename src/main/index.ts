@@ -4,9 +4,11 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { registerIpc, shutdown } from './ipc'
 import { registerPluginScheme } from './plugins/protocol'
+import { registerNibScheme } from './nib/protocol'
 
 // Custom scheme privileges must be declared before app ready.
 registerPluginScheme()
+registerNibScheme()
 
 // LSP servers speak over stdio; when a server process dies mid-exchange,
 // vscode-jsonrpc can still try to flush an internal reply to the destroyed

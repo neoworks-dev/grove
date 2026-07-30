@@ -138,6 +138,12 @@ const workbench = {
     commands: (worktreeId: string, name: string) =>
       ipcRenderer.invoke('agents:commands', worktreeId, name)
   },
+  // The embedded agent server. Sessions, events and everything else go straight
+  // over grove-nib://; this is only the process itself.
+  nib: {
+    status: () => ipcRenderer.invoke('nib:status'),
+    start: () => ipcRenderer.invoke('nib:start')
+  },
   fs: {
     watch: (worktreeIds: string[]) => ipcRenderer.invoke('fs:watch', worktreeIds)
   },

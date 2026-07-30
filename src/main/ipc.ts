@@ -75,6 +75,8 @@ import { createHash } from 'crypto'
 import { PluginRegistry } from './plugins/loader'
 import { AiBridge } from './plugins/aiBridge'
 import { registerPluginProtocol } from './plugins/protocol'
+import { NibServer } from './nib/server'
+import { registerNibProtocol } from './nib/protocol'
 import type { SettingScope } from '../shared/settings'
 
 interface Context {
@@ -249,6 +251,16 @@ async function raiseGatedReview(request: PermissionRequestEvent): Promise<void> 
 
 const settings = new SettingsService({
   onChange: (snapshot) => send('event:settings-changed', snapshot)
+})
+
+// The embedded agent server. Started lazily — the first grove-nib:// request
+// brings it up — so a grove that never opens the agent pane never pays for it.
+const nib = new NibServer({
+  configuredPath: () => settings.get<string>('workbench.nibPath'),
+  events: {
+    onReady: () => send('event:nib-status', nib.status()),
+    onExit: () => send('event:nib-status', nib.status())
+  }
 })
 
 const actionRunner = new ActionRunner({
@@ -1384,6 +1396,14 @@ export function registerIpc(): void {
     watcher.setWatched(paths)
   })
 
+  // ── Agent server ──────────────────────────────────────────────
+  registerNibProtocol(nib)
+  ipcMain.handle('nib:status', () => nib.status())
+  ipcMain.handle('nib:start', async () => {
+    await nib.start()
+    return nib.status()
+  })
+
   // ── Plugins ───────────────────────────────────────────────────
   registerPluginProtocol(pluginRegistry)
   void pluginRegistry.loadAll(null)
@@ -1541,6 +1561,7 @@ export function registerIpc(): void {
 // Clean shutdown: kill every child process.
 export async function shutdown(): Promise<void> {
   await apiSocketServer?.close().catch(() => {})
+  await nib.stop().catch(() => {})
   await supervisor.stopAll()
   await agents.stopAll()
   await watcher.closeAll()

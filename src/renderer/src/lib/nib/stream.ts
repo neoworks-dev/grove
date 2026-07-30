@@ -16,9 +16,7 @@ export function openStream(
   afterSeq: number,
   onEvent: (event: SessionEvent) => void
 ): () => void {
-  const source = new EventSource(
-    `${NIB_ORIGIN}/v1/sessions/${sessionId}/stream?after=${afterSeq}`
-  )
+  const source = new EventSource(`${NIB_ORIGIN}/v1/sessions/${sessionId}/stream?after=${afterSeq}`)
 
   const handle = (message: MessageEvent<string>): void => {
     onEvent(JSON.parse(message.data) as SessionEvent)

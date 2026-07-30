@@ -77,6 +77,7 @@ import { AiBridge } from './plugins/aiBridge'
 import { registerPluginProtocol } from './plugins/protocol'
 import { NibServer } from './nib/server'
 import { registerNibProtocol } from './nib/protocol'
+import { NibReviewBridge, NIB_AGENT } from './nib/reviewBridge'
 import type { SettingScope } from '../shared/settings'
 
 interface Context {
@@ -258,9 +259,27 @@ const settings = new SettingsService({
 const nib = new NibServer({
   configuredPath: () => settings.get<string>('workbench.nibPath'),
   events: {
-    onReady: () => send('event:nib-status', nib.status()),
-    onExit: () => send('event:nib-status', nib.status())
+    onReady: () => {
+      send('event:nib-status', nib.status())
+      // A restart invalidates every stream, so the bridge re-subscribes rather
+      // than waiting for its next sync.
+      nibReviewBridge.reset()
+      nibReviewBridge.start()
+    },
+    onExit: () => {
+      send('event:nib-status', nib.status())
+      nibReviewBridge.reset()
+    }
   }
+})
+
+// Watches nib's sessions so a review keeps blocking the agent whether or not the
+// agent pane is open.
+const nibReviewBridge = new NibReviewBridge({
+  review,
+  endpoint: () => nib.endpoint(),
+  worktrees: () => context.worktrees,
+  reviewMode: () => settings.get<string>('workbench.reviewMode') ?? 'pre'
 })
 
 const actionRunner = new ActionRunner({
@@ -1109,11 +1128,21 @@ export function registerIpc(): void {
   // accepting everything lets its own write run, while any rejection means we
   // have already written the accepted subset, so the tool must be denied.
   // Drop a review the user bypassed (answered its permission card directly).
-  ipcMain.handle('agents:discardReview', (_e, batchId: string) => review.drop(batchId))
+  ipcMain.handle('agents:discardReview', (_e, batchId: string) => {
+    nibReviewBridge.discard(batchId)
+    review.drop(batchId)
+  })
 
   ipcMain.handle('agents:resolveReview', async (_e, batchId: string, decisions: HunkDecision[]) => {
     const batch = await review.resolve(batchId, decisions)
-    if (!batch || batch.origin !== 'gated' || !batch.permissionId) return
+    if (!batch) return
+    // A nib session is answered over its own protocol, not the adapter's
+    // permission resolver.
+    if (batch.agent === NIB_AGENT) {
+      await nibReviewBridge.report(batch, decisions)
+      return
+    }
+    if (batch.origin !== 'gated' || !batch.permissionId) return
     const rejected = decisions.some((decision) => !decision.accepted)
     if (!rejected) {
       agents.respondPermission(batch.permissionId, { behavior: 'allow', remember: false })
@@ -1561,6 +1590,7 @@ export function registerIpc(): void {
 // Clean shutdown: kill every child process.
 export async function shutdown(): Promise<void> {
   await apiSocketServer?.close().catch(() => {})
+  nibReviewBridge.stop()
   await nib.stop().catch(() => {})
   await supervisor.stopAll()
   await agents.stopAll()

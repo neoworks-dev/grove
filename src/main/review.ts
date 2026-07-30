@@ -111,7 +111,8 @@ export class ReviewService {
 
   /**
    * A gated Write/Edit held at the permission prompt. The file is untouched on
-   * disk; `proposed` is what the agent wants to write.
+   * disk; `proposed` is what the agent wants to write. Returns the batch id, so
+   * the caller can tie the eventual verdict back to the call it is holding.
    */
   async raiseGated(
     worktreePath: string,
@@ -120,7 +121,7 @@ export class ReviewService {
     permissionId: string,
     toolName: string,
     file: ReviewFile
-  ): Promise<void> {
+  ): Promise<string> {
     const batch: ReviewBatch = {
       id: randomUUID(),
       worktreeId: worktreePath,
@@ -132,6 +133,7 @@ export class ReviewService {
       toolName
     }
     this.events.onReview(batch)
+    return batch.id
   }
 
   private async closeAndRaise(

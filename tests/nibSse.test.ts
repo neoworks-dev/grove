@@ -13,9 +13,7 @@ async function parse(chunks: string[]): Promise<SseFrame[]> {
 describe('readSse', () => {
   test('reads a named frame with its sequence id', async () => {
     const frames = await parse(['id: 7\nevent: agent.message_delta\ndata: {"text":"hi"}\n\n'])
-    expect(frames).toEqual([
-      { id: '7', event: 'agent.message_delta', data: '{"text":"hi"}' }
-    ])
+    expect(frames).toEqual([{ id: '7', event: 'agent.message_delta', data: '{"text":"hi"}' }])
   })
 
   test('joins multi-line data with newlines', async () => {
@@ -24,7 +22,10 @@ describe('readSse', () => {
   })
 
   test('ignores keepalive comments', async () => {
-    const frames = await parse([': keepalive\n\n', 'id: 1\nevent: session.status_idle\ndata: {}\n\n'])
+    const frames = await parse([
+      ': keepalive\n\n',
+      'id: 1\nevent: session.status_idle\ndata: {}\n\n'
+    ])
     expect(frames).toHaveLength(1)
     expect(frames[0].event).toBe('session.status_idle')
   })
@@ -35,9 +36,7 @@ describe('readSse', () => {
   })
 
   test('reads several frames from one chunk', async () => {
-    const frames = await parse([
-      'id: 1\nevent: a\ndata: 1\n\nid: 2\nevent: b\ndata: 2\n\n'
-    ])
+    const frames = await parse(['id: 1\nevent: a\ndata: 1\n\nid: 2\nevent: b\ndata: 2\n\n'])
     expect(frames.map((frame) => frame.event)).toEqual(['a', 'b'])
     expect(frames.map((frame) => frame.id)).toEqual(['1', '2'])
   })

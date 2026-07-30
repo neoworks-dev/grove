@@ -30,6 +30,7 @@ import type {
   ServiceConfig,
   ServiceProposal,
   AgentRuntime,
+  NibStatus,
   AgentConfig,
   AgentOption,
   AgentLaunchOptions,
@@ -238,6 +239,10 @@ export interface WorkbenchApi {
     queue: (worktreeId: string, name: string, chatId: string) => Promise<QueuedMessage[]>
     cancelQueued: (worktreeId: string, name: string, chatId: string, id: string) => Promise<void>
     commands: (worktreeId: string, name: string) => Promise<AgentSlashCommand[]>
+  }
+  nib: {
+    status: () => Promise<NibStatus>
+    start: () => Promise<NibStatus>
   }
   fs: {
     watch: (worktreeIds: string[]) => Promise<void>

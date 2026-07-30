@@ -39,6 +39,15 @@ export function registerBaseSettings(): void {
         category: 'Agents'
       },
       {
+        key: 'workbench.nibPath',
+        type: 'string',
+        default: '',
+        title: 'nib Checkout',
+        description:
+          'Path to a nib source checkout to run the agent server from. Development only — packaged builds ship a compiled server. Leave empty to use the sibling checkout next to grove.',
+        category: 'Agents'
+      },
+      {
         key: 'workbench.reviewMode',
         type: 'enum',
         default: 'pre',

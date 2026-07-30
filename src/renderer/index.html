@@ -6,10 +6,12 @@
     <!-- Runtime libraries inject their own <style> tags (style-src
          'unsafe-inline'). Tree-sitter instantiates WASM (script-src
          'wasm-unsafe-eval'). Grammar downloads happen in the main process, so
-         connect-src stays 'self'. Local desktop tool, no remote content. -->
+         connect-src reaches nothing remote — grove-nib: is the embedded agent
+         server, proxied over a local socket. Local desktop tool, no remote
+         content. -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' grove-plugin:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' grove-plugin:; worker-src 'self'"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' grove-plugin:; style-src 'self' 'unsafe-inline'; img-src 'self' data: grove-nib:; font-src 'self' data:; connect-src 'self' grove-plugin: grove-nib:; worker-src 'self'"
     />
   </head>
 

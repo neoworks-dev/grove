@@ -14,7 +14,7 @@
 
 import { connectGrove, type GroveClient } from '../sdk/src/client/node'
 import { SCENARIOS } from './debug/scenarios'
-import { windows } from './debug/client'
+import { evaluate, windows } from './debug/client'
 import * as agent from './debug/agent'
 
 function print(value: unknown): void {
@@ -77,6 +77,10 @@ async function run(grove: GroveClient, command: string, args: string[]): Promise
     await scenario.run(grove, args.slice(1))
     return
   }
+  if (command === 'nib') {
+    await runNibCommand(grove, args)
+    return
+  }
   if (command === 'agent') {
     await runAgentCommand(grove, args)
     return
@@ -86,6 +90,26 @@ async function run(grove: GroveClient, command: string, args: string[]): Promise
     return
   }
   throw new Error(`unknown command: ${command}`)
+}
+
+/** The embedded nib agent server: is it up, and does it answer over its socket. */
+async function runNibCommand(grove: GroveClient, args: string[]): Promise<void> {
+  const [sub = 'status'] = args
+  if (sub === 'status') {
+    print(await evaluate(grove, 'window.workbench.nib.status()'))
+    return
+  }
+  if (sub === 'start') {
+    print(await evaluate(grove, 'window.workbench.nib.start()'))
+    return
+  }
+  if (sub === 'get') {
+    const path = args[1] ?? '/v1/health'
+    const expression = `fetch('grove-nib://api${path}').then((r) => r.json())`
+    print(await evaluate(grove, expression))
+    return
+  }
+  throw new Error(`unknown nib command: ${sub}`)
 }
 
 async function runAgentCommand(grove: GroveClient, args: string[]): Promise<void> {
@@ -230,6 +254,10 @@ function usage(): void {
   state                    snapshot of the review/editor state in one call
   scenarios                list replayable scenarios
   scenario <name> [args]   run one
+
+  nib status                         embedded agent server: pid, socket, error
+  nib start                          start it if it is not already up
+  nib get [path]                     GET a nib route (default /v1/health)
 
   agent start <prompt> [name]        start a run in manual-review mode
   agent send <text> [name]           send into the live run

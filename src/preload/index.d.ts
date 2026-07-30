@@ -227,6 +227,7 @@ export interface WorkbenchApi {
     respondDialog: (id: string, decision: AgentDialogDecision) => Promise<void>
     resolveReview: (batchId: string, decisions: HunkDecision[]) => Promise<void>
     discardReview: (batchId: string) => Promise<void>
+
     active: () => Promise<string[]>
     send: (
       worktreeId: string,
@@ -412,6 +413,9 @@ export interface WorkbenchApi {
     openFile: (scope: 'user' | 'project') => Promise<string | void>
   }
   openExternal: (url: string) => Promise<void>
+  // True when the app was started with GROVE_DEBUG=1; gates the renderer's
+  // debug hooks on window.
+  debug: boolean
   on: (channel: string, callback: (payload: unknown) => void) => () => void
 }
 

@@ -288,6 +288,10 @@ const workbench = {
   },
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
 
+  // Whether the app was started with GROVE_DEBUG=1. The renderer only publishes
+  // its stores on window when this is set, so a normal build exposes nothing.
+  debug: process.env.GROVE_DEBUG === '1',
+
   // Subscribe to a main->renderer event. Returns an unsubscribe function.
   on: (channel: string, callback: (payload: unknown) => void): (() => void) => {
     const listener = (_event: unknown, payload: unknown): void => callback(payload)

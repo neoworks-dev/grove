@@ -1498,7 +1498,7 @@
   // it. The card stays up until the review is actually on screen, so a failure
   // to open the diff can never leave the agent waiting with no way to answer.
   const reviewIsOpen = $derived(
-    gatedReview !== null && review.active?.id === gatedReview.id && review.leafOwner !== null
+    gatedReview !== null && review.active?.id === gatedReview.id && review.ownerNvimId !== null
   )
 
   function approve(remember: boolean): void {
@@ -1789,7 +1789,7 @@
           <AgentPermissionPrompt
             title={pendingPermission.title}
             path={pendingPermission.path}
-            hasDiff={store.proposedDiff !== null}
+            hasDiff={gatedReview !== null}
             onApprove={approve}
             onDeny={deny}
             onShowChange={showChange}

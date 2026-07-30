@@ -135,6 +135,11 @@ export class NeovimManager {
     }
   }
 
+  /** Ids of every live session, for the debug harness's session picker. */
+  sessionIds(): string[] {
+    return [...this.sessions.keys()]
+  }
+
   async request(id: string, method: string, args: unknown[]): Promise<unknown> {
     if (!/^nvim_/.test(method)) throw new Error(`blocked non-api method: ${method}`)
     const session = this.sessions.get(id)

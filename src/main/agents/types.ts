@@ -97,6 +97,13 @@ export function userPromptLine(text: string): string {
   return JSON.stringify({ type: 'user_prompt', text })
 }
 
+// The outcome of a review, echoed into the transcript. Kept distinct from
+// userPromptLine: the text is generated, not typed, and rendering it as a user
+// message misattributes it to the user.
+export function reviewFeedbackLine(text: string): string {
+  return JSON.stringify({ type: 'review_feedback', text })
+}
+
 export function textLine(id: string, text: string): string {
   return JSON.stringify({
     type: 'assistant',

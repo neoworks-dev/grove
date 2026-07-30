@@ -7,15 +7,18 @@
   import { store } from '../lib/store.svelte'
   import { layout } from '../lib/layout.svelte'
   import { keymap } from '../lib/keymap.svelte'
+  import { commands } from '../lib/commands.svelte'
   import BufferTabs from './BufferTabs.svelte'
   import Minimap from './Minimap.svelte'
   import InlineEditPrompt from './InlineEditPrompt.svelte'
   import InlineReviewOverlay from './InlineReviewOverlay.svelte'
   import ReviewOverlay from './ReviewOverlay.svelte'
+  import { review } from '../lib/review.svelte'
   import { settings } from '../lib/settings.svelte'
   import { NvimCanvasSession } from '../lib/nvim/session'
   import { registerNvimSession, unregisterNvimSession } from '../lib/nvim/registry'
   import { scratchFor, closeScratch } from '../lib/nvim/scratch.svelte'
+  import { editorHasContent } from '../lib/nvim/visibility'
   import { nvimKeymapBindings, type NvimMapping } from '../lib/nvimKeymap'
   import { operatorHintEntries, operatorTitle } from '../lib/nvimOperatorHints'
 
@@ -30,16 +33,25 @@
   let unavailable = $state(false)
 
   let session: NvimCanvasSession | null = null
+  // Leaf id this pane's session is registered under. Tracked separately from the
+  // `leafId` prop because the layout can rename a mounted pane's leaf, and the
+  // registry entry has to follow it.
+  let registeredLeafId = leafId
   let disposeNvimBindings: (() => void) | null = null
   let lastPushedPath: string | null = null
   // Cached operator-pending maps (plugin text objects); refetched with the
   // normal-mode keymap since it rarely changes mid-session.
   let operatorMaps: NvimMapping[] = []
 
-  // Reactive mirrors for the minimap child: the session id once attached, and a
-  // tick bumped on each redraw flush so it re-reads the buffer view.
-  let minimapNvimId = $state<string | null>(null)
+  // Reactive mirrors for the child overlays: the session id once attached, and a
+  // tick bumped on each redraw flush so the minimap re-reads the buffer view.
+  let nvimId = $state<string | null>(null)
   let minimapTick = $state(0)
+  // Files open inside this pane's nvim, reported by the autocmd below. Grove tabs
+  // don't cover buffers opened from within nvim (`:e`), so both are consulted
+  // before deciding the editor has nothing to show.
+  let nvimFileCount = $state(0)
+  let disposeBufferWatch: (() => void) | null = null
   // Git gutter for the minimap: the open file's changed-line ranges.
   let diffMarkers = $state<{ start: number; count: number; kind: 'add' | 'del' | 'mod' }[]>([])
 
@@ -75,7 +87,7 @@
 
   // Reload the gutter when the file switches or the fs watcher reports a change.
   $effect(() => {
-    void minimapNvimId
+    void nvimId
     store.activeTabPath
     store.fsVersion[store.selectedWorktreeId ?? '']
     void loadDiffMarkers()
@@ -84,6 +96,24 @@
   const activeTabs = $derived(
     store.tabs.filter((tab) => tab.worktreeId === store.selectedWorktreeId)
   )
+
+  // Nothing open anywhere → cover the editor with the empty state instead of
+  // showing nvim's blank scratch buffer. The session stays alive underneath so
+  // opening a file is instant.
+  const showEditor = $derived(
+    editorHasContent({
+      tabCount: activeTabs.length,
+      visibleBufferCount: nvimFileCount,
+      reviewOwnsPane: review.ownerNvimId !== null && review.ownerNvimId === nvimId
+    })
+  )
+
+  // "Go to File" is contributed by the files pane; run it through the registry
+  // rather than reaching into that component.
+  function openFileFinder(): void {
+    const finder = commands.commands.find((entry) => entry.id === 'files.find')
+    if (finder) void finder.run()
+  }
 
   function selectTab(path: string): void {
     store.activeTabPath = path
@@ -96,6 +126,12 @@
       return
     }
     store.closeTab(path)
+    // nvim keeps the buffer (and keeps showing it) unless it is told otherwise,
+    // which would leave a closed file on screen with no tab for it.
+    const id = session?.id
+    if (!id) return
+    if (path === lastPushedPath) lastPushedPath = null
+    void window.workbench.nvim.request(id, 'nvim_exec_lua', [CLOSE_BUFFER_LUA, [path]]).catch(() => {})
   }
 
   function cssVar(name: string, fallback: string): string {
@@ -138,6 +174,71 @@
     }
   }
 
+  // Reports how many windows currently show a named buffer, once now and again
+  // whenever that could change. Windows rather than the buffer list: a hidden
+  // buffer isn't on screen, so it shouldn't keep the editor up. The notify is
+  // scheduled because BufDelete/WinClosed fire before the change lands.
+  const BUFFER_COUNT_LUA = `
+local function count_visible()
+  local total = 0
+  for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
+    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
+      local buf = vim.api.nvim_win_get_buf(win)
+      if vim.api.nvim_buf_get_name(buf) ~= '' then
+        total = total + 1
+      end
+    end
+  end
+  return total
+end
+
+local group = vim.api.nvim_create_augroup('GroveBufferCount', { clear = true })
+vim.api.nvim_create_autocmd(
+  { 'BufWinEnter', 'BufEnter', 'BufDelete', 'BufWipeout', 'BufFilePost', 'WinEnter', 'WinClosed', 'TabEnter' },
+  {
+    group = group,
+    callback = function()
+      vim.schedule(function()
+        vim.rpcnotify(0, 'grove_buffers', { count = count_visible() })
+      end)
+    end,
+  }
+)
+
+return count_visible()
+`
+
+  // Drops a file's buffer when its grove tab closes. Modified buffers survive
+  // (no force), so an unsaved edit is never thrown away behind the user's back.
+  const CLOSE_BUFFER_LUA = `
+local path = ...
+local buf = vim.fn.bufnr(path)
+if buf > 0 then
+  pcall(vim.api.nvim_buf_delete, buf, {})
+end
+`
+
+  /**
+   * Install the visible-buffer autocmd in a freshly attached session and
+   * subscribe to its notifications, so the pane knows whether nvim has anything
+   * on screen even for buffers grove never opened a tab for.
+   */
+  function watchBufferCount(id: string): void {
+    disposeBufferWatch?.()
+    disposeBufferWatch = window.workbench.on('event:nvim-notify', (payload) => {
+      const event = payload as { id: string; method: string; args: unknown[] }
+      if (event.id !== id || event.method !== 'grove_buffers') return
+      const data = (event.args?.[0] ?? {}) as { count?: number }
+      if (typeof data.count === 'number') nvimFileCount = data.count
+    })
+    void window.workbench.nvim
+      .request(id, 'nvim_exec_lua', [BUFFER_COUNT_LUA, []])
+      .then((count) => {
+        if (typeof count === 'number') nvimFileCount = count
+      })
+      .catch(() => {})
+  }
+
   // Surface the operator-pending which-key panel when nvim enters (e.g.) `d`,
   // sourcing the pending operator from v:operator so the title matches. Hidden
   // on any transition back out of operator-pending mode.
@@ -175,8 +276,9 @@
           // Claim the current path so the tab-follow effect doesn't re-edit it;
           // a fresh session (start or restart) already opened it via initialFile.
           lastPushedPath = store.activeTabPath
-          minimapNvimId = id
+          nvimId = id
           void syncNvimKeymap()
+          watchBufferCount(id)
         },
         onFlush: () => {
           minimapTick += 1
@@ -186,10 +288,11 @@
         },
         onExited: (exitCode) => {
           console.warn(`nvim editor pane crashed (code ${exitCode}); restarting`)
-          minimapNvimId = null
+          nvimId = null
+          nvimFileCount = 0
         },
         onClose: () => {
-          minimapNvimId = null
+          nvimId = null
           layout.closeLeaf(leafId)
         },
         onUnavailable: () => {
@@ -197,14 +300,29 @@
         }
       }
     )
+    registeredLeafId = leafId
     registerNvimSession(leafId, session)
     void session.start()
   })
 
-  // Spatial pane nav focuses the leaf container; pull focus into the input so
-  // keys reach nvim.
+  // Re-key the session when the layout renames this pane's leaf. Without this
+  // the registry keeps the old id, so `nvimSessionFor(leafId)` misses and every
+  // overlay that compares its own leafId against a session's stops rendering —
+  // the pane still works, but nothing anchored to it does.
   $effect(() => {
-    if (keymap.activePane === leafId) session?.focus()
+    const current = leafId
+    if (!session || current === registeredLeafId) return
+    unregisterNvimSession(registeredLeafId)
+    session.setLeafId(current)
+    registerNvimSession(current, session)
+    registeredLeafId = current
+  })
+
+  // Spatial pane nav focuses the leaf container; pull focus into the input so
+  // keys reach nvim. Skipped while the empty state covers the pane — typing into
+  // a buffer nobody can see is worse than dropping the keys.
+  $effect(() => {
+    if (keymap.activePane === leafId && showEditor) session?.focus()
   })
 
   // Per-pane font zoom: re-measure nvim's cell when this pane's scale changes.
@@ -231,6 +349,11 @@
     const path = store.activeTabPath
     const id = session?.id
     if (!id || !path || path === lastPushedPath) return
+    // A review owns this pane's windows while it is up. `:edit` would replace
+    // the diff buffer in whichever window is current and drop diff mode with it,
+    // leaving the plain file on screen. Leave lastPushedPath alone so the tab is
+    // followed once the review closes.
+    if (review.ownerNvimId !== null && review.ownerNvimId === id) return
     lastPushedPath = path
     // Scratch tabs map to a live nvim buffer, not a file: switch the window to
     // it (only in the pane that owns the buffer) rather than :edit-ing a path.
@@ -283,25 +406,28 @@
 
   onDestroy(() => {
     disposeNvimBindings?.()
+    disposeBufferWatch?.()
     keymap.hideHints()
-    unregisterNvimSession(leafId)
+    unregisterNvimSession(registeredLeafId)
     session?.dispose()
   })
 </script>
 
 <div class="flex h-full min-h-0 w-full flex-col">
-  <BufferTabs tabs={activeTabs} onSelect={selectTab} onClose={closeTab} />
+  {#if showEditor}
+    <BufferTabs tabs={activeTabs} onSelect={selectTab} onClose={closeTab} />
+  {/if}
 
-  <div bind:this={hostEl} class="relative min-h-0 flex-1 overflow-hidden bg-canvas" role="none">
+  <div bind:this={hostEl} class="relative min-h-0 flex-1 overflow-hidden bg-elevated" role="none">
     {#if unavailable}
       <div class="flex h-full items-center justify-center text-dim">
         Neovim runtime missing — run `bun scripts/fetch-nvim.ts` and reopen this pane.
       </div>
     {:else}
       <canvas bind:this={canvasEl} class="block h-full w-full"></canvas>
-      {#if minimapNvimId}
+      {#if nvimId}
         <Minimap
-          nvimId={minimapNvimId}
+          {nvimId}
           tick={minimapTick}
           theme={store.activeTheme}
           {diffMarkers}
@@ -319,6 +445,27 @@
       <InlineEditPrompt {leafId} />
       <InlineReviewOverlay {leafId} tick={minimapTick} />
       <ReviewOverlay {leafId} tick={minimapTick} />
+      {#if !showEditor}
+        <div
+          class="absolute inset-0 z-30 flex flex-col items-center justify-center gap-4 bg-elevated text-dim"
+        >
+          <div class="text-sm">No file open</div>
+          <div class="flex flex-wrap justify-center gap-2">
+            <button
+              class="rounded-md border border-line px-3 py-1.5 text-xs hover:bg-hover hover:text-default"
+              onclick={openFileFinder}
+            >
+              Go to File
+            </button>
+            <button
+              class="rounded-md border border-line px-3 py-1.5 text-xs hover:bg-hover hover:text-default"
+              onclick={() => layout.ensurePane('files')}
+            >
+              Explorer
+            </button>
+          </div>
+        </div>
+      {/if}
     {/if}
   </div>
 </div>

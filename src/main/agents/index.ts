@@ -27,7 +27,7 @@ import type {
   WorktreeChatMessage
 } from '../../shared/types'
 import type { AgentAdapter, RunHandle } from './types'
-import { userPromptLine } from './types'
+import { userPromptLine, reviewFeedbackLine } from './types'
 import { FileLockManager } from './locks'
 import { WorktreeChannel } from './channel'
 import { claudeAdapter } from './claude'
@@ -392,9 +392,10 @@ export class AgentManager {
     agent: AgentConfig,
     ports: number[],
     options: AgentLaunchOptions,
-    // Internal turns (e.g. /compact) suppress the prompt echo so the command
-    // doesn't show up as a chat message in the transcript.
-    echoPrompt = true,
+    // How the prompt is echoed into the transcript: as the user's own message,
+    // as app-generated review feedback, or not at all (internal turns such as
+    // /compact, whose command should not read as something the user said).
+    echoPrompt: boolean | 'user' | 'review' = true,
     // The instance to run. Defaults to the container's active chat.
     chatId?: string
   ): Promise<AgentRuntime> {
@@ -464,9 +465,10 @@ export class AgentManager {
       logStream.write(line + '\n')
       this.events.onLog(worktree.id, name, chat.id, line)
     }
-    // Echo the user's prompt first so it opens the transcript as a chat message.
+    // Echo the prompt first so it opens the transcript as a chat message.
     if (echoPrompt && options.prompt && options.prompt.trim()) {
-      emit(userPromptLine(options.prompt.trim()))
+      const prompt = options.prompt.trim()
+      emit(echoPrompt === 'review' ? reviewFeedbackLine(prompt) : userPromptLine(prompt))
     }
 
     entry.handle = adapter.start({
@@ -523,7 +525,10 @@ export class AgentManager {
     agent: AgentConfig,
     ports: number[],
     text: string,
-    chatId?: string
+    chatId?: string,
+    // How the message is echoed into the transcript. Review feedback is written
+    // by the app, so attributing it to the user would misrepresent who said it.
+    echoAs: 'user' | 'review' = 'user'
   ): Promise<AgentSendResult> {
     const containerKey = this.key(worktree.id, name)
     const chat = chatId
@@ -538,8 +543,8 @@ export class AgentManager {
     const entry = this.running.get(runKey)
     if (entry) {
       if (entry.handle.send?.(trimmed)) {
-        // Echo like start() does so the injection shows as a chat message.
-        const line = userPromptLine(trimmed)
+        // Echo like start() does so the injection shows in the transcript.
+        const line = echoAs === 'review' ? reviewFeedbackLine(trimmed) : userPromptLine(trimmed)
         entry.logStream.write(line + '\n')
         this.events.onLog(worktree.id, name, chat.id, line)
         return { delivered: 'injected' }
@@ -558,7 +563,7 @@ export class AgentManager {
       agent,
       ports,
       { ...(launch?.options ?? {}), prompt: trimmed },
-      true,
+      echoAs,
       chat.id
     )
     return { delivered: 'started' }

@@ -32,6 +32,7 @@ export type PluginPermission =
   | 'languages.read' // LSP queries; mutations additionally need editor.edit
   | 'services.read' // dev-service status + logs
   | 'services.manage' // start/stop dev services
+  | 'debug.all' // arbitrary lua/JS execution; only registered under GROVE_DEBUG
 
 export const PLUGIN_PERMISSIONS: PluginPermission[] = [
   'workspace.read',
@@ -52,7 +53,8 @@ export const PLUGIN_PERMISSIONS: PluginPermission[] = [
   'terminal.exec',
   'languages.read',
   'services.read',
-  'services.manage'
+  'services.manage',
+  'debug.all'
 ]
 
 export type PermissionRisk = 'read' | 'write' | 'danger'
@@ -163,6 +165,12 @@ export const PERMISSION_META: Record<PluginPermission, PermissionMeta> = {
     label: 'Control dev services',
     description: 'Start and stop configured dev services',
     risk: 'write'
+  },
+  'debug.all': {
+    label: 'Debug the running app',
+    description:
+      'Run arbitrary Lua in the editor and arbitrary JavaScript in the UI — full control of the app',
+    risk: 'danger'
   }
 }
 

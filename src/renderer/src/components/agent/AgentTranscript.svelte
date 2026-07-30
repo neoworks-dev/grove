@@ -240,6 +240,16 @@
                 ? `task: ${item.input.subject || ''}`
                 : `task #${item.input.taskId || '?'} → ${item.input.status || 'updated'}`}
             </div>
+          {:else if item.kind === 'review-feedback'}
+            <!-- The outcome of a review, written by the app. Rendered as a full
+                 width note rather than a user bubble: nobody typed it, and
+                 attributing it to the user misreads the conversation. -->
+            <div
+              class="-mx-3 mb-3 border-y border-amber/30 bg-amber-soft px-3 py-2 text-2xs text-amber"
+            >
+              <div class="mb-1 font-medium">✓ Review submitted</div>
+              <div class="whitespace-pre-wrap text-muted">{item.text}</div>
+            </div>
           {:else if item.kind === 'compact'}
             <!-- Compaction boundary: earlier turns were summarized away. -->
             <div

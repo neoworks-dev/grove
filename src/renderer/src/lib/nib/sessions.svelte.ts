@@ -21,12 +21,7 @@ import {
   type ApiError
 } from './api'
 import { openStream } from './stream'
-import {
-  applyEvent,
-  createTranscript,
-  pendingApprovals,
-  type TranscriptState
-} from './transcript'
+import { applyEvent, createTranscript, pendingApprovals, type TranscriptState } from './transcript'
 import type {
   ClientEventBody,
   CreateSessionOptions,

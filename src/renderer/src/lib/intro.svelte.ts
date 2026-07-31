@@ -1,9 +1,16 @@
-// AGENTS.md onboarding session state. Drives the intro pane: launches the
-// dedicated "Onboarding" claude instance, tracks the protocol phase, and keeps
-// the AGENTS.md showcase diff fresh after every agent edit.
+// AGENTS.md onboarding session state. Drives the intro pane: launches a
+// dedicated onboarding session, tracks the protocol phase, and keeps the
+// AGENTS.md showcase diff fresh after every agent edit.
+//
+// The phase is not pushed to us. The agent reports it through the grove-intro
+// nib extension, which publishes it as a `ui.surface` node on the session's own
+// stream — so it is read back out of the transcript the session store already
+// holds.
 
 import { store, focusAgentInPane } from './store.svelte'
 import { layout } from './layout.svelte'
+import { nibSessions } from './nib/sessions.svelte'
+import { visiblePanels } from './nib/transcript'
 import { parseUnifiedDiff, type DiffRow } from './intro/introDiff'
 import {
   INTRO_KICKOFF_PROMPT,
@@ -14,7 +21,8 @@ import {
 
 const AGENTS_FILE = 'AGENTS.md'
 const EXAMPLES_DIR = '.workbench/intro'
-const AGENT_NAME = 'claude'
+// The surface the grove-intro extension publishes phases under.
+const PHASE_SURFACE = 'grove.intro'
 
 class IntroSession {
   active = $state(false)
@@ -63,25 +71,30 @@ class IntroSession {
       this.diffRows = []
       this.exampleFiles = []
       this.phase = 'explore'
-      const chat = await window.workbench.agents.createInstance(
-        worktreeId,
-        AGENT_NAME,
-        'Onboarding'
-      )
-      this.chatId = chat.id
-      await window.workbench.agents.start(
-        worktreeId,
-        AGENT_NAME,
+      // The onboarding protocol is what this session is for, so it is baked in
+      // at creation — nib composes the system prompt once and never again.
+      const sessionId = await nibSessions.create(worktreeId, {
+        title: 'Onboarding',
+        appendSystemPrompt: INTRO_SYSTEM_APPEND
+      })
+      if (!sessionId) {
+        store.setError(nibSessions.serverError || 'Could not reach the agent server.')
+        return
+      }
+      this.chatId = sessionId
+      // Onboarding writes AGENTS.md and example files as it goes; stopping to
+      // approve each one is not what this flow is for.
+      nibSessions.setMode(sessionId, 'acceptEdits')
+      await nibSessions.open(sessionId)
+      await nibSessions.send(sessionId, [
         {
-          prompt: INTRO_KICKOFF_PROMPT,
-          mode: 'acceptEdits',
-          appendSystemPrompt: INTRO_SYSTEM_APPEND,
-          intro: true
-        },
-        chat.id
-      )
+          type: 'user.message',
+          content: [{ type: 'text', text: INTRO_KICKOFF_PROMPT }],
+          deliverAs: 'steer'
+        }
+      ])
       this.active = true
-      await focusAgentInPane(worktreeId, AGENT_NAME, chat.id)
+      await focusAgentInPane(worktreeId, sessionId)
     } finally {
       this.starting = false
     }
@@ -124,12 +137,26 @@ class IntroSession {
     this.diffRows = []
   }
 
-  setPhase(worktreeId: string, chatId: string, phase: string): void {
+  /**
+   * The phase the agent has reported, read off its session's panel surfaces.
+   * Falls back to whatever was last seen, so a surface cleared mid-run does not
+   * rewind the stepper.
+   */
+  private reportedPhase(): IntroPhase | null {
+    const live = nibSessions.live[this.chatId]
+    if (!live) return null
+    const panel = visiblePanels(live.transcript).find((item) => item.surfaceId === PHASE_SURFACE)
+    if (!panel || panel.view.kind !== 'text') return null
+    const phase = panel.view.text
+    if (!(INTRO_PHASES as readonly string[]).includes(phase)) return null
+    return phase as IntroPhase
+  }
+
+  /** Advance the stepper if the agent has moved on. Called from an effect. */
+  syncPhase(): void {
     if (!this.active) return
-    if (worktreeId !== this.worktreeId || chatId !== this.chatId) return
-    if ((INTRO_PHASES as readonly string[]).includes(phase)) {
-      this.phase = phase as IntroPhase
-    }
+    const reported = this.reportedPhase()
+    if (reported) this.phase = reported
   }
 
   async discardExamples(): Promise<void> {
@@ -150,8 +177,8 @@ class IntroSession {
   }
 
   async finish(discardExamples: boolean): Promise<void> {
-    if (this.worktreeId && this.chatId) {
-      await window.workbench.agents.stop(this.worktreeId, AGENT_NAME, this.chatId).catch(() => {})
+    if (this.chatId) {
+      await nibSessions.send(this.chatId, [{ type: 'user.interrupt' }]).catch(() => {})
     }
     if (discardExamples) await this.discardExamples()
     this.phase = 'done'

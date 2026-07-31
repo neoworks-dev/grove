@@ -15,7 +15,14 @@ import {
   waitForNvimSession
 } from './nvim/registry'
 import type { NvimCanvasSession } from './nvim/session'
-import { relFromRoot, selectionRef, pickAgentMode, REVIEW_MODES, type ReviewMode } from './inlineEditRef'
+import {
+  relFromRoot,
+  selectionRef,
+  pickAgentMode,
+  REVIEW_MODES,
+  type ReviewMode
+} from './inlineEditRef'
+import { nibSessions } from './nib/sessions.svelte'
 
 const MODE_SETTING = 'workbench.inlineEditMode'
 const EDITOR_PANE = 'nvim'
@@ -147,11 +154,6 @@ class InlineEdit {
 
   // ── Dispatch ──────────────────────────────────────────────────────
   private async dispatch(selection: InlineSelection, userPrompt: string): Promise<void> {
-    const agent = this.currentAgent()
-    if (!agent) {
-      store.setError('No agent configured to run the inline edit.')
-      return
-    }
     let snapshot = ''
     try {
       snapshot = await window.workbench.files.read(selection.worktreeId, selection.absPath)
@@ -160,24 +162,21 @@ class InlineEdit {
     }
     const ref = selectionRef(selection.relPath, selection.startLine, selection.endLine)
     const text = `Make this edit in @${ref}: ${userPrompt}`
-    const mode = pickAgentMode(store.agentConfigs[agent]?.modes || [], this.mode)
     this.pendingReview = { ...selection, snapshot, review: this.mode }
-    try {
-      if (store.activeAgentWorktrees.includes(selection.worktreeId)) {
-        await window.workbench.agents.send(selection.worktreeId, agent, text)
-      } else {
-        await window.workbench.agents.start(selection.worktreeId, agent, { prompt: text, mode })
-      }
-    } catch (err) {
-      store.setError((err as Error).message)
-    }
-  }
 
-  private currentAgent(): string | null {
-    const saved = settings.get<string>('workbench.defaultAgent')
-    if (saved && store.agentConfigs[saved]) return saved
-    const names = Object.keys(store.agentConfigs)
-    return names[0] ?? null
+    // A worktree's id is its path, which is what a session records as its
+    // workspace root.
+    const sessionId = await nibSessions.ensureFor(selection.worktreeId)
+    if (!sessionId) {
+      store.setError(nibSessions.serverError || 'Could not reach the agent server.')
+      return
+    }
+    // The review style decides whether the edit is put to the user before it
+    // lands, so it has to be set before the run that produces it.
+    nibSessions.setMode(sessionId, pickAgentMode(this.mode))
+    await nibSessions.send(sessionId, [
+      { type: 'user.message', content: [{ type: 'text', text }], deliverAs: 'steer' }
+    ])
   }
 
   // ── Selection helpers ─────────────────────────────────────────────
@@ -251,7 +250,11 @@ class InlineEdit {
   claimFsChange(worktreeId: string, relPath: string): boolean {
     const active = this.review
     if (active && active.worktreeId === worktreeId && active.relPath === relPath) return true
-    if (this.beginning && this.beginning.worktreeId === worktreeId && this.beginning.relPath === relPath) {
+    if (
+      this.beginning &&
+      this.beginning.worktreeId === worktreeId &&
+      this.beginning.relPath === relPath
+    ) {
       return true
     }
     const pending = this.pendingReview
@@ -335,7 +338,9 @@ class InlineEdit {
     const session = nvimSessionFor(review.leafId)
     if (!session) return
     const pending = review.ranges.filter((range) => review.status[range.hunkIndex] === 'pending')
-    void session.paintInlineReview(pending.map((range) => ({ start: range.start, count: range.count })))
+    void session.paintInlineReview(
+      pending.map((range) => ({ start: range.start, count: range.count }))
+    )
   }
 
   private finishReview(): void {

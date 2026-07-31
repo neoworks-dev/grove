@@ -19,7 +19,7 @@ import type {
   ReviewOrigin,
   ReviewResolution
 } from '../shared/types'
-import { ReviewStaging, type BaselineSource } from './agents/reviewStaging'
+import { ReviewStaging, type BaselineSource } from './reviewStaging'
 import { applyInlineReview } from './inlineDiff'
 
 export interface ReviewEvents {
@@ -180,7 +180,12 @@ export class ReviewService {
     if (!wasAwaited) {
       const feedback = describeResolution(entry.batch, { batchId, decisions })
       if (feedback) {
-        this.events.onFeedback(entry.batch.worktreeId, entry.batch.agent, entry.batch.chatId, feedback)
+        this.events.onFeedback(
+          entry.batch.worktreeId,
+          entry.batch.agent,
+          entry.batch.chatId,
+          feedback
+        )
       }
     }
     return entry.batch

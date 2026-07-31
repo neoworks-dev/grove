@@ -21,10 +21,13 @@ import {
   type ApiError
 } from './api'
 import { openStream } from './stream'
+import { autoDecisionFor, type AgentMode } from './modes'
+import { settings } from '../settings.svelte'
 import { applyEvent, createTranscript, pendingApprovals, type TranscriptState } from './transcript'
 import type {
   ClientEventBody,
   CreateSessionOptions,
+  SessionEvent,
   SessionMeta,
   SessionSnapshot,
   SessionUpdate
@@ -56,6 +59,11 @@ class NibSessions {
   // Which session is on screen, per worktree path, so switching worktrees and
   // back lands where you left off.
   activeByWorktree = $state<Record<string, string>>({})
+  // The permission mode chosen for a session, keyed by session id. Held here
+  // rather than in the pane because it decides how approvals are answered, and
+  // an approval has to be answered whoever started the run — an inline edit
+  // dispatched from the editor is not going to answer its own prompts.
+  modes = $state<Record<string, AgentMode>>({})
   // Set when the server itself is unreachable, as opposed to one session failing.
   serverError = $state('')
 
@@ -83,6 +91,14 @@ class NibSessions {
     const sessions = this.forWorktree(worktreePath)
     if (remembered && sessions.some((session) => session.id === remembered)) return remembered
     return sessions[0]?.id ?? null
+  }
+
+  modeFor(sessionId: string): AgentMode {
+    return this.modes[sessionId] ?? 'default'
+  }
+
+  setMode(sessionId: string, mode: AgentMode): void {
+    this.modes = { ...this.modes, [sessionId]: mode }
   }
 
   setActive(worktreePath: string, sessionId: string | null): void {
@@ -137,6 +153,30 @@ class NibSessions {
       this.serverError = messageOf(cause)
       return null
     }
+  }
+
+  /**
+   * The session to talk to for a worktree, creating one if it has none. For the
+   * places that send to "the agent" without the user having picked a session —
+   * inline edits, keybind actions.
+   */
+  async ensureFor(worktreePath: string): Promise<string | null> {
+    const existing = this.resolveActive(worktreePath)
+    if (existing) return existing
+    await this.refreshList()
+    const afterRefresh = this.resolveActive(worktreePath)
+    if (afterRefresh) return afterRefresh
+    return this.create(worktreePath)
+  }
+
+  /** Say something to a worktree's agent, starting a session if there is none. */
+  async sendText(worktreePath: string, text: string): Promise<string | null> {
+    const sessionId = await this.ensureFor(worktreePath)
+    if (!sessionId) return null
+    await this.send(sessionId, [
+      { type: 'user.message', content: [{ type: 'text', text }], deliverAs: 'steer' }
+    ])
+    return sessionId
   }
 
   async remove(worktreePath: string, sessionId: string): Promise<void> {
@@ -273,11 +313,23 @@ class NibSessions {
     const close = openStream(session.id, session.transcript.lastSeq, (event) => {
       applyEvent(session.transcript, event)
       if (this.viewing !== session.id) session.unread += 1
+      if (event.type === 'agent.tool_use') this.applyMode(session.id, event)
       // Usage and the queue only live in the snapshot, so a turn boundary is
       // worth a re-read.
       if (event.type === 'session.status_idle') void this.refreshSnapshot(session.id)
     })
     this.closers.set(session.id, close)
+  }
+
+  /** Answer an approval the session's mode says not to bother the user with. */
+  private applyMode(sessionId: string, event: SessionEvent): void {
+    if (event.type !== 'agent.tool_use' || event.permission !== 'ask') return
+    const reviewMode = settings.get<string>('workbench.reviewMode') ?? 'pre'
+    const result = autoDecisionFor(this.modeFor(sessionId), event.name, reviewMode)
+    if (!result) return
+    void this.send(sessionId, [
+      { type: 'user.tool_confirmation', toolUseId: event.toolUseId, result }
+    ])
   }
 }
 

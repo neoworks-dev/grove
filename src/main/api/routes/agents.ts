@@ -1,68 +1,80 @@
-// agents.* routes: observe and drive agent runs. Chat references over the
-// wire are '<agentName>/<chatId>' plus a worktreeId — the adapter name is
-// part of the id so clients never enumerate internals. Everything a client
-// posts into the shared channel is stamped with its host-known identity.
-// agents.run is a danger scope: sends spend money and agents can edit files.
-// respondPermission/respondDialog are deliberately not exposed — a client
-// answering the agent's permission prompts would be privilege escalation.
+// agents.* routes: observe and drive agent sessions on the embedded nib server.
+//
+// Chat references over the wire are nib session ids scoped to a worktree, so a
+// client never enumerates internals and never reaches a session outside the
+// worktree it asked about. agents.run is a danger scope: sends spend money and
+// agents can edit files. Answering approvals is deliberately not exposed — a
+// client resolving the agent's own permission prompts would be privilege
+// escalation.
 
-import type { AgentChats, AgentRuntime, WorktreeChatMessage, Worktree } from '../../../shared/types'
-import type { EventHub, ApiEvent } from '../events'
+import type { WorktreeChatMessage } from '../../../shared/types'
 import { ApiError, type RouteRegistry } from '../registry'
 
+// The subset of nib's protocol these routes speak. Kept structural so this
+// module does not depend on the renderer's vendored copy of nib's types.
+interface NibSession {
+  id: string
+  title: string
+  workspaceRoot: string
+  provider: string
+  model: string
+  status: string
+  live: boolean
+}
+
+interface NibEvent {
+  seq: number
+  type: string
+  [key: string]: unknown
+}
+
 export interface AgentsRouteDeps {
-  hub: EventHub
-  agentNames: () => string[]
-  listChats: (worktreeId: string, name: string) => AgentChats
-  listInstances: (worktreeId: string) => AgentRuntime[]
-  listModels: (name: string) => Promise<{ label: string; value: string }[]>
-  isRunning: (worktreeId: string, name: string, chatId: string) => boolean
-  createInstance: (worktreeId: string, name: string, label?: string) => { id: string }
-  send: (worktreeId: string, name: string, text: string, chatId: string) => Promise<unknown>
-  stop: (worktreeId: string, name: string, chatId: string) => Promise<void>
-  cancelQueued: (worktreeId: string, name: string, chatId: string, queueId: string) => void
-  readTranscript: (worktree: Worktree, name: string, chatId: string) => Promise<string[]>
+  // Sessions across every workspace; routes filter to the requested worktree.
+  listSessions: () => Promise<NibSession[]>
+  listModels: () => Promise<{ provider: string; models: { id: string }[] }[]>
+  listEvents: (sessionId: string, after: number) => Promise<NibEvent[]>
+  createSession: (workspace: string, title?: string) => Promise<NibSession>
+  send: (sessionId: string, text: string) => Promise<void>
+  interrupt: (sessionId: string) => Promise<void>
+  unqueue: (sessionId: string, messageId: string) => Promise<void>
+  // Subscribe to one session's stream; the returned function unsubscribes.
+  observe: (sessionId: string, onEvent: (event: NibEvent) => void) => () => void
   sendChatAs: (
     worktreeId: string,
     from: { kind: 'agent'; name: string },
     text: string
-  ) => WorktreeChatMessage
-  chatHistory: (worktreeId: string, since?: number) => WorktreeChatMessage[]
-}
-
-interface ChatRef {
-  name: string
-  chatId: string
-}
-
-function parseChatRef(raw: unknown): ChatRef {
-  const ref = String(raw ?? '')
-  const separator = ref.indexOf('/')
-  if (separator <= 0 || separator === ref.length - 1) {
-    throw new ApiError('chatId must be "<agentName>/<chatId>"', 'invalid')
-  }
-  return { name: ref.slice(0, separator), chatId: ref.slice(separator + 1) }
+  ) => Promise<WorktreeChatMessage>
+  chatHistory: (worktreeId: string, since?: number) => Promise<WorktreeChatMessage[]>
 }
 
 export function registerAgentsRoutes(registry: RouteRegistry, deps: AgentsRouteDeps): void {
+  /** Resolve a session id, refusing one that belongs to another worktree. */
+  async function sessionIn(worktreePath: string, raw: unknown): Promise<NibSession> {
+    const sessionId = String(raw ?? '')
+    if (!sessionId) throw new ApiError('chatId is required', 'invalid')
+    const sessions = await deps.listSessions()
+    const session = sessions.find((candidate) => candidate.id === sessionId)
+    if (!session || session.workspaceRoot !== worktreePath) {
+      throw new ApiError(`unknown chat: ${sessionId}`, 'invalid')
+    }
+    return session
+  }
+
   // ── Read ──────────────────────────────────────────────────────
   registry.register({
     method: 'agents.listChats',
     scope: 'agents.read',
     handler: async (args, context) => {
       const worktree = context.worktreeFor(args)
-      const chats: unknown[] = []
-      for (const name of deps.agentNames()) {
-        for (const chat of deps.listChats(worktree.id, name).chats) {
-          chats.push({
-            id: `${name}/${chat.id}`,
-            worktreeId: worktree.id,
-            title: chat.name,
-            running: deps.isRunning(worktree.id, name, chat.id)
-          })
-        }
-      }
-      return chats
+      const sessions = await deps.listSessions()
+      return sessions
+        .filter((session) => session.workspaceRoot === worktree.path)
+        .map((session) => ({
+          id: session.id,
+          worktreeId: worktree.id,
+          title: session.title,
+          running: session.status === 'running'
+        }))
     }
   })
 
@@ -70,11 +82,14 @@ export function registerAgentsRoutes(registry: RouteRegistry, deps: AgentsRouteD
     method: 'agents.listModels',
     scope: 'agents.read',
     handler: async () => {
+      const providers = await deps.listModels().catch(() => [])
       const models: { id: string; label: string }[] = []
-      for (const name of deps.agentNames()) {
-        const options = await deps.listModels(name).catch(() => [])
-        for (const option of options) {
-          models.push({ id: `${name}:${option.value}`, label: `${name}: ${option.label}` })
+      for (const entry of providers) {
+        for (const model of entry.models) {
+          models.push({
+            id: `${entry.provider}:${model.id}`,
+            label: `${entry.provider}: ${model.id}`
+          })
         }
       }
       return models
@@ -85,10 +100,10 @@ export function registerAgentsRoutes(registry: RouteRegistry, deps: AgentsRouteD
     method: 'agents.readTranscript',
     scope: 'agents.read',
     handler: async (args, context) => {
-      const ref = parseChatRef(args.chatId)
       const worktree = context.worktreeFor(args)
-      const lines = await deps.readTranscript(worktree, ref.name, ref.chatId)
-      return lines.map((line) => ({ type: 'line', payload: line }))
+      const session = await sessionIn(worktree.path, args.chatId)
+      const events = await deps.listEvents(session.id, 0)
+      return events.map((event) => ({ type: 'event', payload: event }))
     }
   })
 
@@ -96,38 +111,34 @@ export function registerAgentsRoutes(registry: RouteRegistry, deps: AgentsRouteD
     method: 'agents.isRunning',
     scope: 'agents.read',
     handler: async (args, context) => {
-      const ref = parseChatRef(args.chatId)
       const worktree = context.worktreeFor(args)
-      return deps.isRunning(worktree.id, ref.name, ref.chatId)
+      const session = await sessionIn(worktree.path, args.chatId)
+      return session.status === 'running'
     }
   })
 
-  // Live observation: agent log lines + status transitions for one chat,
-  // ending when the run stops.
+  // Live observation: one session's events, ending when its turn does.
   registry.register({
     method: 'agents.observe',
     scope: 'agents.read',
     streaming: true,
-    handler: (args, context) => {
-      const ref = parseChatRef(args.chatId)
+    handler: async (args, context) => {
       const worktree = context.worktreeFor(args)
+      const session = await sessionIn(worktree.path, args.chatId)
+
       return new Promise<null>((resolve) => {
-        const finish = (unsubscribe: () => void): void => {
+        let unsubscribe = (): void => {}
+        const finish = (): void => {
           unsubscribe()
           resolve(null)
         }
-        const unsubscribe = deps.hub.subscribe(['agents.log', 'agents.didChangeStatus'], (event) => {
-          if (!matchesChat(event, worktree.id, ref)) return
-          if (event.topic === 'agents.log') {
-            context.emit([{ type: 'log', payload: (event.payload as { line: string }).line }])
-            return
-          }
-          const runtime = event.payload as AgentRuntime
-          context.emit([{ type: 'status', payload: runtime.status }])
-          if (runtime.status !== 'running') finish(unsubscribe)
+        unsubscribe = deps.observe(session.id, (event) => {
+          context.emit([{ type: 'event', payload: event }])
+          if (event.type === 'session.status_idle') finish()
+          if (event.type === 'session.status_terminated') finish()
         })
-        context.signal.addEventListener('abort', () => finish(unsubscribe))
-        if (!deps.isRunning(worktree.id, ref.name, ref.chatId)) finish(unsubscribe)
+        context.signal.addEventListener('abort', finish)
+        if (session.status !== 'running') finish()
       })
     }
   })
@@ -138,10 +149,8 @@ export function registerAgentsRoutes(registry: RouteRegistry, deps: AgentsRouteD
     handler: async (args, context) => {
       const worktree = context.worktreeFor(args)
       const since = args.since === undefined ? undefined : Number(args.since)
-      return deps.chatHistory(worktree.id, since).map((message) => ({
-        type: 'chat-message',
-        payload: message
-      }))
+      const messages = await deps.chatHistory(worktree.id, since)
+      return messages.map((message) => ({ type: 'chat-message', payload: message }))
     }
   })
 
@@ -151,14 +160,9 @@ export function registerAgentsRoutes(registry: RouteRegistry, deps: AgentsRouteD
     scope: 'agents.run',
     handler: async (args, context) => {
       const worktree = context.worktreeFor(args)
-      const names = deps.agentNames()
-      const name = args.agent === undefined ? names[0] : String(args.agent)
-      if (!name || !names.includes(name)) {
-        throw new ApiError(`unknown agent: ${String(args.agent ?? '(none configured)')}`, 'invalid')
-      }
       const title = args.title === undefined ? undefined : String(args.title)
-      const chat = deps.createInstance(worktree.id, name, title)
-      return { chatId: `${name}/${chat.id}` }
+      const session = await deps.createSession(worktree.path, title)
+      return { chatId: session.id }
     }
   })
 
@@ -167,9 +171,9 @@ export function registerAgentsRoutes(registry: RouteRegistry, deps: AgentsRouteD
     scope: 'agents.run',
     describe: (args) => `send to agent chat ${String(args.chatId ?? '')}`,
     handler: async (args, context) => {
-      const ref = parseChatRef(args.chatId)
       const worktree = context.worktreeFor(args)
-      await deps.send(worktree.id, ref.name, String(args.message ?? ''), ref.chatId)
+      const session = await sessionIn(worktree.path, args.chatId)
+      await deps.send(session.id, String(args.message ?? ''))
     }
   })
 
@@ -177,9 +181,9 @@ export function registerAgentsRoutes(registry: RouteRegistry, deps: AgentsRouteD
     method: 'agents.stop',
     scope: 'agents.run',
     handler: async (args, context) => {
-      const ref = parseChatRef(args.chatId)
       const worktree = context.worktreeFor(args)
-      await deps.stop(worktree.id, ref.name, ref.chatId)
+      const session = await sessionIn(worktree.path, args.chatId)
+      await deps.interrupt(session.id)
     }
   })
 
@@ -187,9 +191,9 @@ export function registerAgentsRoutes(registry: RouteRegistry, deps: AgentsRouteD
     method: 'agents.cancelQueued',
     scope: 'agents.run',
     handler: async (args, context) => {
-      const ref = parseChatRef(args.chatId)
       const worktree = context.worktreeFor(args)
-      deps.cancelQueued(worktree.id, ref.name, ref.chatId, String(args.queueId ?? ''))
+      const session = await sessionIn(worktree.path, args.chatId)
+      await deps.unqueue(session.id, String(args.queueId ?? ''))
     }
   })
 
@@ -201,18 +205,7 @@ export function registerAgentsRoutes(registry: RouteRegistry, deps: AgentsRouteD
       const text = String(args.text ?? '').trim()
       if (text.length === 0) throw new ApiError('text is required', 'invalid')
       // Host-stamped identity: the channel shows exactly which client spoke.
-      deps.sendChatAs(worktree.id, { kind: 'agent', name: context.client.key }, text)
+      await deps.sendChatAs(worktree.id, { kind: 'agent', name: context.client.key }, text)
     }
   })
-}
-
-function matchesChat(
-  event: ApiEvent,
-  worktreeId: string,
-  ref: ChatRef
-): boolean {
-  const payload = event.payload as { worktreeId?: string; name?: string; chatId?: string }
-  return (
-    payload.worktreeId === worktreeId && payload.name === ref.name && payload.chatId === ref.chatId
-  )
 }

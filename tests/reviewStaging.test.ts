@@ -2,7 +2,7 @@ import { describe, it, expect } from 'bun:test'
 import { mkdtemp, writeFile, rm, mkdir } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join, dirname } from 'path'
-import { ReviewStaging, type BaselineSource } from '../src/main/agents/reviewStaging'
+import { ReviewStaging, type BaselineSource } from '../src/main/reviewStaging'
 
 // A baseline source backed by a plain map, standing in for the checkpoint tree.
 // Keyed "tree:relPath" so a test can hold several baselines at once.

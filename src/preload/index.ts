@@ -96,47 +96,11 @@ const workbench = {
       ipcRenderer.invoke('services:restart', worktreeId, name)
   },
   agents: {
-    list: (worktreeId: string) => ipcRenderer.invoke('agents:list', worktreeId),
-    configs: () => ipcRenderer.invoke('agents:configs'),
-    models: (name: string) => ipcRenderer.invoke('agents:models', name),
-    createInstance: (worktreeId: string, name: string, label?: string) =>
-      ipcRenderer.invoke('agents:createInstance', worktreeId, name, label),
-    convertInstance: (worktreeId: string, fromName: string, toName: string, chatId: string) =>
-      ipcRenderer.invoke('agents:convertInstance', worktreeId, fromName, toName, chatId),
-    deleteChat: (worktreeId: string, name: string, chatId: string) =>
-      ipcRenderer.invoke('agents:deleteChat', worktreeId, name, chatId),
-    start: (worktreeId: string, name: string, options: unknown, chatId?: string) =>
-      ipcRenderer.invoke('agents:start', worktreeId, name, options, chatId),
-    stop: (worktreeId: string, name: string, chatId: string) =>
-      ipcRenderer.invoke('agents:stop', worktreeId, name, chatId),
-    compact: (worktreeId: string, name: string, instructions?: string, chatId?: string) =>
-      ipcRenderer.invoke('agents:compact', worktreeId, name, instructions, chatId),
-    reset: (worktreeId: string, name: string, chatId?: string) =>
-      ipcRenderer.invoke('agents:reset', worktreeId, name, chatId),
-    transcript: (worktreeId: string, name: string, chatId?: string) =>
-      ipcRenderer.invoke('agents:transcript', worktreeId, name, chatId),
-    chats: (worktreeId: string, name: string) =>
-      ipcRenderer.invoke('agents:chats', worktreeId, name),
-    renameChat: (worktreeId: string, name: string, chatId: string, chatName: string) =>
-      ipcRenderer.invoke('agents:renameChat', worktreeId, name, chatId, chatName),
-    activateChat: (worktreeId: string, name: string, chatId: string) =>
-      ipcRenderer.invoke('agents:activateChat', worktreeId, name, chatId),
-    respondPermission: (id: string, decision: unknown) =>
-      ipcRenderer.invoke('agents:respondPermission', id, decision),
-    respondDialog: (id: string, decision: unknown) =>
-      ipcRenderer.invoke('agents:respondDialog', id, decision),
+    // Sessions live on the nib server and are reached over grove-nib://. What
+    // stays on IPC is the review flow, which writes files.
     resolveReview: (batchId: string, decisions: unknown) =>
       ipcRenderer.invoke('agents:resolveReview', batchId, decisions),
-    discardReview: (batchId: string) => ipcRenderer.invoke('agents:discardReview', batchId),
-    active: () => ipcRenderer.invoke('agents:active'),
-    send: (worktreeId: string, name: string, text: string, chatId?: string) =>
-      ipcRenderer.invoke('agents:send', worktreeId, name, text, chatId),
-    queue: (worktreeId: string, name: string, chatId: string) =>
-      ipcRenderer.invoke('agents:queue', worktreeId, name, chatId),
-    cancelQueued: (worktreeId: string, name: string, chatId: string, id: string) =>
-      ipcRenderer.invoke('agents:cancelQueued', worktreeId, name, chatId, id),
-    commands: (worktreeId: string, name: string) =>
-      ipcRenderer.invoke('agents:commands', worktreeId, name)
+    discardReview: (batchId: string) => ipcRenderer.invoke('agents:discardReview', batchId)
   },
   // The embedded agent server. Sessions, events and everything else go straight
   // over grove-nib://; this is only the process itself.

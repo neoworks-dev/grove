@@ -13,8 +13,8 @@
 import { readFile } from 'fs/promises'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
-import type { ReviewBatch, ReviewFile, ReviewOrigin } from '../../shared/types'
-import { hunksBetween } from '../inlineDiff'
+import type { ReviewBatch, ReviewFile, ReviewOrigin } from '../shared/types'
+import { hunksBetween } from './inlineDiff'
 
 // Where a batch's baseline content comes from. Injected so staging can be
 // tested without a git repo; in the app this is backed by CheckpointManager.

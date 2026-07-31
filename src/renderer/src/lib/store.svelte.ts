@@ -1,36 +1,24 @@
 // Central reactive app state (Svelte 5 runes). Holds repo/worktree selection,
-// per-worktree service/agent runtimes, streamed logs, and open editor tabs.
+// per-worktree service runtimes, streamed logs, and open editor tabs.
 // Components read from here and call window.workbench, then push updates back.
+//
+// Agent state is deliberately absent: sessions, transcripts and approvals belong
+// to the embedded nib server and are held by lib/nib/sessions.svelte.ts.
 
 import type {
   Worktree,
   WorkbenchConfig,
   ServiceRuntime,
-  AgentRuntime,
-  AgentConfig,
-  AgentOption,
   RepoInfo,
   BranchList,
-  PermissionRequestEvent,
-  PermissionDecision,
-  AgentDialogRequest,
-  AgentDialogDecision,
-  AgentChats,
-  AgentQueueEvent,
-  AgentCommandsEvent,
-  AgentSlashCommand,
-  QueuedMessage,
   DiffStats,
   ReviewBatch,
   WorktreeChatMessage
 } from '../../../shared/types'
 
 export interface LogLine {
-  source: 'service' | 'agent'
+  source: 'service'
   name: string
-  // Present for agent lines: which instance (chat) produced it, so two runs of
-  // the same adapter don't interleave in a transcript.
-  chatId?: string
   line: string
 }
 
@@ -39,6 +27,7 @@ import { currentThemeName, applyThemeVars, themeFor } from './themes'
 import type { ColorTheme } from './themes'
 import { layout } from './layout.svelte'
 import { settings } from './settings.svelte'
+import { nibSessions } from './nib/sessions.svelte'
 import { inlineEdit } from './inlineEdit.svelte'
 import { review } from './review.svelte'
 import { intro } from './intro.svelte'
@@ -65,26 +54,15 @@ class WorkbenchStore {
 
   // Per-worktree runtime keyed by worktreeId.
   services = $state<Record<string, ServiceRuntime[]>>({})
-  agents = $state<Record<string, AgentRuntime[]>>({})
-  activeAgentWorktrees = $state<string[]>([])
-  // Named chats keyed by "worktreeId::agent".
-  agentChats = $state<Record<string, AgentChats>>({})
 
-  // Effective agent configs (detected + config) keyed by agent name.
-  agentConfigs = $state<Record<string, AgentConfig>>({})
-
-  // Provider-discovered model lists keyed by agent name (populated at runtime).
-  agentModels = $state<Record<string, AgentOption[]>>({})
-
-  // Messages queued while a run was active, keyed by "worktreeId::agent".
-  agentQueues = $state<Record<string, QueuedMessage[]>>({})
-
-  // Provider-discovered slash commands keyed by "worktreeId::agent".
-  agentCommands = $state<Record<string, AgentSlashCommand[]>>({})
-
-  // Text of queue items flushed by a user stop, keyed by "worktreeId::agent".
-  // The composer consumes (and clears) this to restore the text.
-  restoredQueueText = $state<Record<string, string>>({})
+  // Worktrees with a running agent session, so file changes stream in even when
+  // the worktree is not selected. Read straight off the nib session listing —
+  // a worktree's id is its path, which is what a session records as its
+  // workspace root.
+  get activeAgentWorktrees(): string[] {
+    const running = nibSessions.list.filter((session) => session.status === 'running')
+    return [...new Set(running.map((session) => session.workspaceRoot))]
+  }
 
   // A pending insertion into the agent composer (e.g. an @file:lines reference
   // built from the editor selection). AgentPane consumes it by nonce and clears
@@ -106,10 +84,10 @@ class WorkbenchStore {
   // worktreeId.
   worktreeChat = $state<Record<string, WorktreeChatMessage[]>>({})
 
-  // A request from the agents overview/sidebar to focus a specific agent
-  // instance in the Agent pane. The pane consumes it once its worktree matches,
-  // then clears it. chatId targets one instance of the adapter.
-  requestedAgent = $state<{ worktreeId: string; name: string; chatId?: string } | null>(null)
+  // A request from the agents overview/sidebar to show a specific agent session
+  // in the Agent pane. The pane consumes it once its worktree matches, then
+  // clears it.
+  requestedAgent = $state<{ worktreeId: string; sessionId?: string } | null>(null)
 
   // Set by the fs watcher when a running agent edits a file → the Git Changes
   // sidebar highlights it.
@@ -118,12 +96,6 @@ class WorkbenchStore {
   // Set when opening a file at a specific line (ripgrep search) → the editor
   // scrolls the cursor there once the file is loaded.
   revealTarget = $state<{ path: string; line: number } | null>(null)
-
-  // Pending interactive tool-permission requests (agent → user).
-  pendingPermissions = $state<PermissionRequestEvent[]>([])
-
-  // Pending blocking dialogs (e.g. agent questions) awaiting an answer.
-  pendingDialogs = $state<AgentDialogRequest[]>([])
 
   // Streamed logs keyed by worktreeId.
   logs = $state<Record<string, LogLine[]>>({})
@@ -203,18 +175,6 @@ class WorkbenchStore {
       ? list.map((service) => (service.name === runtime.name ? runtime : service))
       : [...list, runtime]
     this.services = { ...this.services, [runtime.worktreeId]: next }
-  }
-
-  updateAgentRuntime(runtime: AgentRuntime): void {
-    const list = this.agents[runtime.worktreeId] || []
-    // Instances are identified by (name, chatId): two runs of one adapter differ
-    // only by chatId, so upsert on the pair.
-    const matches = (agent: AgentRuntime): boolean =>
-      agent.name === runtime.name && agent.chatId === runtime.chatId
-    const next = list.some(matches)
-      ? list.map((agent) => (matches(agent) ? runtime : agent))
-      : [...list, runtime]
-    this.agents = { ...this.agents, [runtime.worktreeId]: next }
   }
 
   openTab(tab: EditorTab): void {
@@ -330,150 +290,6 @@ export function switchTab(direction: 'prev' | 'next' | 'first' | 'last'): void {
   store.activeTabPath = tabs[next].path
 }
 
-// Seed the in-memory transcript from the persisted on-disk log so a chat
-// reappears after an app restart. Caller only invokes this when no agent lines
-// exist yet for the worktree.
-export function seedAgentTranscript(
-  worktreeId: string,
-  name: string,
-  chatId: string,
-  lines: string[]
-): void {
-  if (lines.length === 0) return
-  const current = store.logs[worktreeId] || []
-  // The caller checks for existing lines before reading the file, but the read
-  // is async: a run started meanwhile already streamed its lines in live, and
-  // the file now holds those same lines. Seeding then would show them twice.
-  const alreadyLive = current.some(
-    (line) => line.source === 'agent' && line.name === name && line.chatId === chatId
-  )
-  if (alreadyLive) return
-  const entries: LogLine[] = lines.map((line) => ({ source: 'agent', name, chatId, line }))
-  store.logs = { ...store.logs, [worktreeId]: [...entries, ...current] }
-}
-
-// "New chat": reset the instance's continuation server-side and clear its
-// transcript + any pending review state from the UI.
-export async function resetAgentChat(
-  worktreeId: string,
-  agent: string,
-  chatId: string
-): Promise<void> {
-  await window.workbench.agents.reset(worktreeId, agent, chatId)
-  const current = store.logs[worktreeId] || []
-  // Drop only this instance's lines; peer instances keep theirs.
-  store.logs = {
-    ...store.logs,
-    [worktreeId]: current.filter(
-      (line) => !(line.source === 'agent' && line.name === agent && line.chatId === chatId)
-    )
-  }
-  store.pendingPermissions = store.pendingPermissions.filter(
-    (request) =>
-      !(request.worktreeId === worktreeId && request.agent === agent && request.chatId === chatId)
-  )
-}
-
-// "/delete": remove an instance (chat) and drop its transcript from the UI.
-export async function deleteAgentChat(
-  worktreeId: string,
-  agent: string,
-  chatId: string
-): Promise<void> {
-  await window.workbench.agents.deleteChat(worktreeId, agent, chatId)
-  const current = store.logs[worktreeId] || []
-  store.logs = {
-    ...store.logs,
-    [worktreeId]: current.filter(
-      (line) => !(line.source === 'agent' && line.name === agent && line.chatId === chatId)
-    )
-  }
-  store.pendingPermissions = store.pendingPermissions.filter(
-    (request) =>
-      !(request.worktreeId === worktreeId && request.agent === agent && request.chatId === chatId)
-  )
-  await refreshRuntimes(worktreeId)
-}
-
-// "/compact": summarize the conversation and continue with a compacted
-// context. The agent runs a compact turn; its output streams into the
-// transcript like any other turn (ending in a compact boundary marker).
-export async function compactChat(
-  worktreeId: string,
-  agent: string,
-  chatId: string,
-  instructions?: string
-): Promise<void> {
-  await window.workbench.agents.compact(worktreeId, agent, instructions, chatId)
-  await refreshRuntimes(worktreeId)
-}
-
-// Replace one instance's visible transcript with a given set of lines (used when
-// switching instances). Other instances' and service lines are kept.
-function setAgentTranscript(
-  worktreeId: string,
-  name: string,
-  chatId: string,
-  lines: string[]
-): void {
-  const others = (store.logs[worktreeId] || []).filter(
-    (line) => !(line.source === 'agent' && line.name === name && line.chatId === chatId)
-  )
-  const entries: LogLine[] = lines.map((line) => ({ source: 'agent', name, chatId, line }))
-  store.logs = { ...store.logs, [worktreeId]: [...entries, ...others] }
-}
-
-// Fetch the named-chat list for a worktree+agent into the store.
-export async function refreshChats(worktreeId: string, agent: string): Promise<void> {
-  const chats = await window.workbench.agents.chats(worktreeId, agent)
-  store.agentChats = { ...store.agentChats, [`${worktreeId}::${agent}`]: chats }
-}
-
-// Lazily fetch an adapter's model list (probes the provider SDK on first use),
-// so we never spin up a provider the user hasn't selected.
-const modelsInFlight = new Set<string>()
-export async function ensureAgentModels(agent: string): Promise<void> {
-  if (!agent || store.agentModels[agent] || modelsInFlight.has(agent)) return
-  modelsInFlight.add(agent)
-  try {
-    const models = await window.workbench.agents.models(agent)
-    store.agentModels = { ...store.agentModels, [agent]: models }
-  } catch {
-    // Leave empty — the picker falls back to free-text via /model.
-  } finally {
-    modelsInFlight.delete(agent)
-  }
-}
-
-// Rename a chat so it's easy to find when resuming.
-export async function renameChat(
-  worktreeId: string,
-  agent: string,
-  chatId: string,
-  chatName: string
-): Promise<void> {
-  await window.workbench.agents.renameChat(worktreeId, agent, chatId, chatName)
-}
-
-// Switch to an instance (chat): activate it server-side and swap its transcript
-// in. Runs concurrently, so this never stops anything.
-export async function resumeChat(worktreeId: string, agent: string, chatId: string): Promise<void> {
-  const lines = await window.workbench.agents.activateChat(worktreeId, agent, chatId)
-  setAgentTranscript(worktreeId, agent, chatId, lines)
-}
-
-// Answer a pending permission request and drop it from the queue.
-export async function respondPermission(id: string, decision: PermissionDecision): Promise<void> {
-  store.pendingPermissions = store.pendingPermissions.filter((request) => request.id !== id)
-  await window.workbench.agents.respondPermission(id, decision)
-}
-
-// Answer a pending agent dialog (e.g. a question) and drop it from the queue.
-export async function respondDialog(id: string, decision: AgentDialogDecision): Promise<void> {
-  store.pendingDialogs = store.pendingDialogs.filter((request) => request.id !== id)
-  await window.workbench.agents.respondDialog(id, decision)
-}
-
 // ── Actions ───────────────────────────────────────────────────
 
 export async function openRepoResult(result: {
@@ -484,7 +300,6 @@ export async function openRepoResult(result: {
   store.worktrees = result.worktrees
   store.config = await window.workbench.config.load()
   store.branches = await window.workbench.git.branches().catch(() => null)
-  store.agentConfigs = await window.workbench.agents.configs().catch(() => ({}))
   const repoState = await window.workbench.state.getRepo()
   const restored = repoState.selectedWorktreeId
   store.selectedWorktreeId =
@@ -596,24 +411,15 @@ export async function selectWorktree(worktreeId: string): Promise<void> {
   syncWatched()
 }
 
-// Select a worktree and request the Agent pane focus a specific agent instance.
-export async function focusAgentInPane(
-  worktreeId: string,
-  name: string,
-  chatId?: string
-): Promise<void> {
+// Select a worktree and ask the Agent pane to show one of its sessions.
+export async function focusAgentInPane(worktreeId: string, sessionId?: string): Promise<void> {
   await selectWorktree(worktreeId)
-  store.requestedAgent = { worktreeId, name, chatId }
+  store.requestedAgent = { worktreeId, sessionId }
 }
 
 export async function refreshRuntimes(worktreeId: string): Promise<void> {
-  const [services, agents] = await Promise.all([
-    window.workbench.services.list(worktreeId),
-    window.workbench.agents.list(worktreeId)
-  ])
+  const services = await window.workbench.services.list(worktreeId)
   store.services = { ...store.services, [worktreeId]: services }
-  store.agents = { ...store.agents, [worktreeId]: agents }
-  store.activeAgentWorktrees = await window.workbench.agents.active()
 }
 
 // Subscribe to streamed main-process events. Call once at app start.
@@ -621,60 +427,18 @@ export function subscribeEvents(): void {
   window.workbench.on('event:log', (payload) => {
     const event = payload as {
       worktreeId: string
-      source: 'service' | 'agent'
+      source: 'service'
       name: string
-      chatId?: string
       line: string
     }
     store.appendLog(event.worktreeId, {
       source: event.source,
       name: event.name,
-      chatId: event.chatId,
       line: event.line
     })
-    // Agent output in a worktree the user isn't looking at is unread.
-    if (event.source === 'agent' && event.worktreeId !== store.selectedWorktreeId) {
-      store.unread = { ...store.unread, [event.worktreeId]: true }
-    }
   })
   window.workbench.on('event:service-status', (payload) => {
     store.updateServiceRuntime(payload as ServiceRuntime)
-  })
-  window.workbench.on('event:agent-status', (payload) => {
-    const runtime = payload as AgentRuntime
-    store.updateAgentRuntime(runtime)
-    // Drop any stale permission prompts once an agent is no longer running.
-    if (runtime.status !== 'running') {
-      // Drop pending prompts for just this instance (name + chatId); other
-      // instances of the same adapter keep theirs.
-      const isThisInstance = (request: {
-        worktreeId: string
-        agent: string
-        chatId: string
-      }): boolean =>
-        request.worktreeId === runtime.worktreeId &&
-        request.agent === runtime.name &&
-        request.chatId === runtime.chatId
-      const stale = store.pendingPermissions.filter(isThisInstance)
-      store.pendingPermissions = store.pendingPermissions.filter(
-        (request) => !isThisInstance(request)
-      )
-      store.pendingDialogs = store.pendingDialogs.filter((request) => !isThisInstance(request))
-      // Drop any review raised for a permission this run will never answer.
-      for (const request of stale) review.discardFor(request.id)
-    }
-    void window.workbench.agents.active().then((ids) => {
-      store.activeAgentWorktrees = ids
-      syncWatched()
-    })
-  })
-  window.workbench.on('event:agent-permission', (payload) => {
-    // The reviewable diff for a file-editing tool is built in the main process
-    // and arrives separately as event:agent-review.
-    store.pendingPermissions = [...store.pendingPermissions, payload as PermissionRequestEvent]
-  })
-  window.workbench.on('event:agent-dialog', (payload) => {
-    store.pendingDialogs = [...store.pendingDialogs, payload as AgentDialogRequest]
   })
   window.workbench.on('event:agent-review', (payload) => {
     review.receive(payload as ReviewBatch)
@@ -683,33 +447,6 @@ export function subscribeEvents(): void {
     const event = payload as { worktreeId: string; count: number }
     review.setStaged(event.worktreeId, event.count)
   })
-  window.workbench.on('event:agent-chats', (payload) => {
-    const event = payload as { worktreeId: string; name: string; chats: AgentChats }
-    store.agentChats = {
-      ...store.agentChats,
-      [`${event.worktreeId}::${event.name}`]: event.chats
-    }
-  })
-  window.workbench.on('event:agent-queue', (payload) => {
-    const event = payload as AgentQueueEvent
-    // Queue is per instance (name + chatId), so two runs of one adapter don't
-    // share a queue.
-    const key = `${event.worktreeId}::${event.name}::${event.chatId}`
-    store.agentQueues = { ...store.agentQueues, [key]: event.queue }
-    // A user stop flushed these messages — hand their text back to the composer.
-    if (event.cleared && event.cleared.length > 0) {
-      const text = event.cleared.map((item) => item.text).join('\n\n')
-      store.restoredQueueText = { ...store.restoredQueueText, [key]: text }
-    }
-  })
-  window.workbench.on('event:agent-commands', (payload) => {
-    const event = payload as AgentCommandsEvent
-    store.agentCommands = {
-      ...store.agentCommands,
-      [`${event.worktreeId}::${event.name}`]: event.commands
-    }
-  })
-
   window.workbench.on('event:worktree-chat', (payload) => {
     const message = payload as WorktreeChatMessage
     const list = store.worktreeChat[message.worktreeId] || []
@@ -718,11 +455,6 @@ export function subscribeEvents(): void {
     if (message.from.kind === 'agent' && message.worktreeId !== store.selectedWorktreeId) {
       store.unread = { ...store.unread, [message.worktreeId]: true }
     }
-  })
-
-  window.workbench.on('event:intro-phase', (payload) => {
-    const event = payload as { worktreeId: string; chatId: string; phase: string }
-    intro.setPhase(event.worktreeId, event.chatId, event.phase)
   })
 
   window.workbench.on('event:fs-change', (payload) => {

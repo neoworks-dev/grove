@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   activeToolsFor,
   autoDecisionFor,
+  effectiveMode,
   modeOf,
   MUTATING_TOOLS
 } from '../src/renderer/src/lib/nib/modes'
@@ -36,32 +37,49 @@ function snapshot(overrides: Partial<SessionSnapshot> = {}): SessionSnapshot {
 
 describe('modeOf', () => {
   test('a session with everything available and nothing pre-approved is in default mode', () => {
-    expect(modeOf(snapshot(), false)).toBe('default')
+    expect(modeOf(snapshot())).toBe('default')
   })
 
   test('withholding every mutating tool reads as plan mode', () => {
     const activeTools = ALL_TOOLS.filter((tool) => !MUTATING_TOOLS.includes(tool))
-    expect(modeOf(snapshot({ activeTools }), false)).toBe('plan')
+    expect(modeOf(snapshot({ activeTools }))).toBe('plan')
   })
 
   test('withholding only some mutating tools is not plan mode', () => {
-    expect(modeOf(snapshot({ activeTools: ['read', 'edit'] }), false)).toBe('default')
+    expect(modeOf(snapshot({ activeTools: ['read', 'edit'] }))).toBe('default')
   })
 
   test('write and edit pre-approved for the session reads as accept-edits', () => {
-    expect(modeOf(snapshot({ autoApproveTools: ['write', 'edit'] }), false)).toBe('acceptEdits')
+    expect(modeOf(snapshot({ autoApproveTools: ['write', 'edit'] }))).toBe('acceptEdits')
   })
 
   test('only one of the two pre-approved is not accept-edits', () => {
-    expect(modeOf(snapshot({ autoApproveTools: ['write'] }), false)).toBe('default')
-  })
-
-  test('bypass wins over whatever the session says, since it is the local override', () => {
-    expect(modeOf(snapshot({ autoApproveTools: ['write', 'edit'] }), true)).toBe('bypass')
+    expect(modeOf(snapshot({ autoApproveTools: ['write'] }))).toBe('default')
   })
 
   test('a session that has not loaded yet is default rather than undefined', () => {
-    expect(modeOf(null, false)).toBe('default')
+    expect(modeOf(null)).toBe('default')
+  })
+})
+
+describe('effectiveMode', () => {
+  test('a chosen mode leads the session, which cannot show it yet', () => {
+    // Accept-edits and bypass are entered by answering approvals, so a session
+    // that has not seen one still reports "default".
+    expect(effectiveMode('acceptEdits', snapshot())).toBe('acceptEdits')
+    expect(effectiveMode('bypass', snapshot())).toBe('bypass')
+  })
+
+  test('with nothing chosen, the session speaks for itself', () => {
+    expect(effectiveMode(null, snapshot({ autoApproveTools: ['write', 'edit'] }))).toBe(
+      'acceptEdits'
+    )
+  })
+
+  test('a chosen mode overrides what the session settled into', () => {
+    expect(effectiveMode('default', snapshot({ autoApproveTools: ['write', 'edit'] }))).toBe(
+      'default'
+    )
   })
 })
 

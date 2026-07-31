@@ -6,19 +6,22 @@
   import MergeWorktreeDialog from './MergeWorktreeDialog.svelte'
   import WaveSpinner from './WaveSpinner.svelte'
   import AgentLogo from './AgentLogo.svelte'
-  import type { Worktree, ServiceRuntime, AgentRuntime } from '../../../shared/types'
+  import type { Worktree, ServiceRuntime } from '../../../shared/types'
+  import type { SessionMeta } from '../lib/nib/types'
+  import { sessionsFor } from '../lib/worktreeStatus'
 
   let showDialog = $state(false)
   let mergeSource = $state<Worktree | null>(null)
 
-  function agentsFor(worktreeId: string): AgentRuntime[] {
-    return store.agents[worktreeId] || []
+  function titleOf(session: SessionMeta): string {
+    if (session.title.trim().length > 0) return session.title
+    return session.model || 'Session'
   }
 
-  // Select the worktree, focus the Agent pane, and switch it to this instance.
-  function openAgent(worktreeId: string, name: string, chatId: string, event: MouseEvent): void {
+  // Select the worktree, focus the Agent pane, and switch it to this session.
+  function openSession(worktreeId: string, sessionId: string, event: MouseEvent): void {
     event.stopPropagation()
-    void focusAgentInPane(worktreeId, name, chatId)
+    void focusAgentInPane(worktreeId, sessionId)
     layout.ensurePane('agent')
   }
 
@@ -41,8 +44,7 @@
   }
 
   function hasActiveAgent(worktreeId: string): boolean {
-    const list: AgentRuntime[] = store.agents[worktreeId] || []
-    return list.some((agent) => agent.status === 'running')
+    return sessionsFor(worktreeId).some((session) => session.status === 'running')
   }
 
   async function remove(worktree: Worktree, event: MouseEvent): Promise<void> {
@@ -83,7 +85,7 @@
     {#each store.worktrees as worktree (worktree.id)}
       {@const summary = serviceSummary(worktree.id)}
       {@const diff = diffStatLabel(worktree.id)}
-      {@const agents = agentsFor(worktree.id)}
+      {@const sessions = sessionsFor(worktree.id)}
       <div
         class="group flex cursor-pointer items-center gap-2 px-3 py-2 text-sm {store.selectedWorktreeId ===
         worktree.id
@@ -172,24 +174,26 @@
         </div>
       </div>
 
-      <!-- One row per spawned instance in this worktree, running or not. -->
-      {#each agents as agent (agent.name + '::' + agent.chatId)}
+      <!-- One row per agent session in this worktree, running or not. -->
+      {#each sessions as session (session.id)}
         <button
           class="flex w-full items-center gap-2 py-1 pl-7 pr-3 text-left text-2xs hover:bg-hover {store.selectedWorktreeId ===
           worktree.id
             ? 'bg-surface'
             : ''}"
-          title="{agent.name} · {agent.label} — {agent.status}"
-          onclick={(event) => openAgent(worktree.id, agent.name, agent.chatId, event)}
+          title="{titleOf(session)} · {session.provider}/{session.model} — {session.status}"
+          onclick={(event) => openSession(worktree.id, session.id, event)}
         >
-          <AgentLogo name={agent.name} size={14} active={agent.status === 'running'} />
-          <span class="truncate {agent.status === 'running' ? 'text-default' : 'text-muted'}"
-            >{agent.label}</span
+          <AgentLogo name={session.provider} size={14} active={session.status === 'running'} />
+          <span class="truncate {session.status === 'running' ? 'text-default' : 'text-muted'}"
+            >{titleOf(session)}</span
           >
-          {#if agent.status === 'running'}
+          {#if session.status === 'running'}
             <span class="ml-auto text-green"><WaveSpinner count={3} /></span>
+          {:else if session.pendingApprovals.length > 0}
+            <span class="ml-auto text-amber">waiting</span>
           {:else}
-            <span class="ml-auto text-dim">{agent.status}</span>
+            <span class="ml-auto text-dim">{session.status}</span>
           {/if}
         </button>
       {/each}

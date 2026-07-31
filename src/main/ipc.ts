@@ -4,7 +4,7 @@
 
 import { app, ipcMain, dialog, shell, BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { access } from 'fs/promises'
-import { join, relative } from 'path'
+import { join } from 'path'
 import type {
   WorkbenchConfig,
   Worktree,
@@ -28,18 +28,10 @@ import type { LspPosition, LspRange, LspDiagnostic } from '../shared/types'
 import type { CodeAction, Diagnostic } from 'vscode-languageserver-protocol'
 import * as worktrees from './worktrees'
 import { ServiceSupervisor } from './services'
-import { AgentManager, detectAgents, mergeAgents } from './agents'
 import { WorktreeWatcher } from './watcher'
-import { ReviewService, describeResolution } from './review'
-import { FILE_WRITE_TOOLS, proposedContent } from './proposedEdit'
-import type {
-  AgentConfig,
-  AgentDialogDecision,
-  AgentLaunchOptions,
-  HunkDecision,
-  PermissionDecision,
-  PermissionRequestEvent
-} from '../shared/types'
+import { WorktreeChannel } from './worktreeChannel'
+import { ReviewService } from './review'
+import type { HunkDecision } from '../shared/types'
 import { getRepoState, updateRepoState, setLastRepo, loadState } from './state'
 import { SettingsService } from './settings'
 import { ActionRunner } from './actions'
@@ -78,6 +70,7 @@ import { registerPluginProtocol } from './plugins/protocol'
 import { NibServer } from './nib/server'
 import { registerNibProtocol } from './nib/protocol'
 import { NibReviewBridge, NIB_AGENT } from './nib/reviewBridge'
+import { NibClient } from './nib/client'
 import type { SettingScope } from '../shared/settings'
 
 interface Context {
@@ -100,65 +93,10 @@ const supervisor = new ServiceSupervisor({
     send('event:log', { worktreeId, source: 'service', name, line })
 })
 
-const agents = new AgentManager({
-  // Deferred lookups: aiBridge is constructed further down (it needs the
-  // plugin registry) but only runs when an agent starts.
-  pluginAi: {
-    mcpServers: () => aiBridge.buildMcpServers(),
-    systemAppend: () => aiBridge.systemAppend()
-  },
-  onStatus: (runtime) => {
-    send('event:agent-status', runtime)
-    eventHub.publish({
-      topic: 'agents.didChangeStatus',
-      payload: runtime,
-      worktreeId: runtime.worktreeId
-    })
-  },
-  onLog: (worktreeId, name, chatId, line) => {
-    send('event:log', { worktreeId, source: 'agent', name, chatId, line })
-    eventHub.publish({
-      topic: 'agents.log',
-      payload: { worktreeId, name, chatId, line },
-      worktreeId
-    })
-  },
-  onPermission: (request) => {
-    send('event:agent-permission', request)
-    // A gated file write is reviewable before it touches disk — raise it so the
-    // permission card can offer a real diff instead of a blind allow/deny.
-    void raiseGatedReview(request)
-  },
-  onDialog: (request) => send('event:agent-dialog', request),
-  onReviewBatchOpen: (worktreePath, name, chatId) => {
-    review.openBatch(worktreePath, name, chatId)
-  },
-  onReviewRequest: (worktreePath, name, chatId, summary) =>
-    review.requestReview(worktreePath, name, chatId, summary),
-  onReviewTurnEnd: (worktreePath, name, chatId) => {
-    void review.closeTurn(worktreePath, name, chatId).catch(() => {})
-  },
-  // Any session/chat change re-persists the whole named-chat map and notifies
-  // the renderer so its chat list stays in sync.
-  onSession: (worktreeId, name) => {
-    send('event:agent-chats', { worktreeId, name, chats: agents.listChats(worktreeId, name) })
-    if (!context.repoPath) return
-    void updateRepoState(context.repoPath, { agentChats: agents.allChats() })
-  },
-  onQueue: (event) => send('event:agent-queue', event),
-  onCommands: (event) => {
-    send('event:agent-commands', event)
-    // Persist so the slash menu is populated before the next session's first run.
-    if (context.repoPath) {
-      void updateRepoState(context.repoPath, { agentCommands: agents.allCommands() })
-    }
-  },
-  onChat: (message) => send('event:worktree-chat', message),
-  onIntroPhase: (worktreeId, chatId, phase) =>
-    send('event:intro-phase', { worktreeId, chatId, phase }),
-  onCheckpoint: (worktreePath, trigger, ctx) => {
-    void checkpoints.snapshot(worktreePath, trigger, ctx).catch(() => {})
-  }
+// The shared per-worktree chat channel. Agents post through the grove-chat nib
+// extension, which writes the same file this reads.
+const channel = new WorktreeChannel({
+  onMessage: (message) => send('event:worktree-chat', message)
 })
 
 const checkpoints = new CheckpointManager({
@@ -167,12 +105,6 @@ const checkpoints = new CheckpointManager({
     if (context.repoPath) void updateRepoState(context.repoPath, { checkpoints: all })
   }
 })
-
-// Persist the named-chat map after a mutation and push it to the renderer.
-function persistChats(worktreeId: string, name: string): void {
-  send('event:agent-chats', { worktreeId, name, chats: agents.listChats(worktreeId, name) })
-  if (context.repoPath) void updateRepoState(context.repoPath, { agentChats: agents.allChats() })
-}
 
 const watcher = new WorktreeWatcher((change) => {
   send('event:fs-change', change)
@@ -199,8 +131,10 @@ const review = new ReviewService(
       send('event:agent-review', batch)
     },
     onStaged: (worktreeId, count) => send('event:agent-review-staged', { worktreeId, count }),
-    onFeedback: (worktreeId, agent, chatId, text) => {
-      void sendToAgent(worktreeId, agent, text, chatId).catch(() => {})
+    // chatId is the nib session; feedback is delivered as a steer message so it
+    // lands at the top of the next turn.
+    onFeedback: (_worktreeId, _agent, chatId, text) => {
+      void nibReviewBridge.sendMessage(chatId, text).catch(() => {})
     }
   },
   {
@@ -208,47 +142,6 @@ const review = new ReviewService(
     postApprove: () => settings.get<string>('workbench.reviewMode') === 'post'
   }
 )
-
-// Deliver text to an agent as a user message, resolving the launch config the
-// same way the agents:send handler does.
-async function sendToAgent(
-  worktreeId: string,
-  name: string,
-  text: string,
-  chatId: string
-): Promise<void> {
-  const { config: cfg } = requireRepo()
-  const worktree = findWorktree(worktreeId)
-  const agent = effectiveAgents()[name]
-  if (!agent) return
-  const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
-  await agents.send(worktree, name, agent, ports, text, chatId, 'review')
-}
-
-// Build a gated review for a pending file-write permission: the file is still
-// untouched on disk, so the "current" side is what the agent proposes to write.
-async function raiseGatedReview(request: PermissionRequestEvent): Promise<void> {
-  if (settings.get<string>('workbench.reviewMode') === 'post') return
-  if (!FILE_WRITE_TOOLS.has(request.toolName) || !request.path) return
-  const worktree = context.worktrees.find((entry) => entry.id === request.worktreeId)
-  if (!worktree) return
-
-  const original = await files
-    .readFileContent(worktree.path, request.path)
-    .catch(() => '') // a file the agent is creating
-  const proposed = proposedContent(request.toolName, request.input, original)
-  if (proposed === null || proposed === original) return
-
-  const relPath = relative(worktree.path, request.path)
-  const hunks = await inlineDiff.hunksBetween(worktree.path, original, proposed)
-  if (hunks.length === 0) return
-  await review.raiseGated(worktree.path, request.agent, request.chatId, request.id, request.toolName, {
-    relPath,
-    baseline: original,
-    current: proposed,
-    hunks
-  })
-}
 
 const settings = new SettingsService({
   onChange: (snapshot) => send('event:settings-changed', snapshot)
@@ -275,6 +168,8 @@ const nib = new NibServer({
 
 // Watches nib's sessions so a review keeps blocking the agent whether or not the
 // agent pane is open.
+const nibClient = new NibClient(() => nib.endpoint())
+
 const nibReviewBridge = new NibReviewBridge({
   review,
   endpoint: () => nib.endpoint(),
@@ -474,27 +369,16 @@ registerServicesRoutes(apiRegistry, {
   stopService: async (worktreeId, name) => supervisor.stop(worktreeId, name)
 })
 registerAgentsRoutes(apiRegistry, {
-  hub: eventHub,
-  agentNames: () => Object.keys(effectiveAgents()),
-  listChats: (worktreeId, name) => agents.listChats(worktreeId, name),
-  listInstances: (worktreeId) => agents.listInstances(worktreeId),
-  listModels: (name) => agents.listModels(name, context.repoPath || process.cwd()),
-  isRunning: (worktreeId, name, chatId) => agents.isRunning(worktreeId, name, chatId),
-  createInstance: (worktreeId, name, label) => agents.createInstance(worktreeId, name, label),
-  send: (worktreeId, name, text, chatId) => {
-    const { config: cfg } = requireRepo()
-    const worktree = findWorktree(worktreeId)
-    const agent = effectiveAgents()[name]
-    if (!agent) throw new Error(`unknown agent: ${name}`)
-    const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
-    return agents.send(worktree, name, agent, ports, text, chatId)
-  },
-  stop: (worktreeId, name, chatId) => agents.stop(worktreeId, name, chatId, { clearQueue: true }),
-  cancelQueued: (worktreeId, name, chatId, queueId) =>
-    agents.cancelQueued(worktreeId, name, chatId, queueId),
-  readTranscript: (worktree, name, chatId) => agents.readTranscript(worktree.path, name, chatId),
-  sendChatAs: (worktreeId, from, text) => agents.sendChatAs(worktreeId, from, text),
-  chatHistory: (worktreeId, since) => agents.chatHistory(worktreeId, since)
+  listSessions: () => nibClient.listSessions(),
+  listModels: () => nibClient.listModels(),
+  listEvents: (sessionId, after) => nibClient.listEvents(sessionId, after),
+  createSession: (workspace, title) => nibClient.createSession(workspace, title),
+  send: (sessionId, text) => nibClient.send(sessionId, text),
+  interrupt: (sessionId) => nibClient.interrupt(sessionId),
+  unqueue: (sessionId, messageId) => nibClient.unqueue(sessionId, messageId),
+  observe: (sessionId, onEvent) => nibClient.observe(sessionId, onEvent),
+  sendChatAs: (worktreeId, from, text) => channel.post(worktreeId, from, text),
+  chatHistory: (worktreeId, since) => channel.list(worktreeId, since)
 })
 terminalsTap = registerTerminalsRoutes(apiRegistry, {
   create: ({ worktreeId, cols, rows }) => {
@@ -587,13 +471,6 @@ function requireRepo(): { repoPath: string; config: WorkbenchConfig } {
   return { repoPath: context.repoPath, config: context.config }
 }
 
-// Adapter defaults merged with config-defined agents (config overrides).
-function effectiveAgents(): Record<string, AgentConfig> {
-  const detected = detectAgents()
-  const configured = context.config?.agents || {}
-  return mergeAgents(detected, configured)
-}
-
 // Serializable plugin list for the renderer host.
 function pluginList(): unknown[] {
   return pluginRegistry.list().map((record) => ({
@@ -641,12 +518,7 @@ async function openRepo(repoPath: string): Promise<{
   await settings.attachRepo(root)
   await pluginRegistry.loadAll(root)
   send('event:plugins-changed', pluginList())
-  // Restore named chats (and migrate legacy tokens) so prior chats resume.
   const repoState = await getRepoState(root)
-  agents.loadChats(repoState.agentChats || {})
-  agents.loadSessions(repoState.agentSessions || {})
-  // Last-known slash commands populate the menu before the first run.
-  agents.loadCommands(repoState.agentCommands || {})
   checkpoints.hydrate(repoState.checkpoints || {})
   const list = await refreshWorktrees()
   return {
@@ -971,163 +843,10 @@ export function registerIpc(): void {
     return supervisor.start(worktree, name, service, ports)
   })
 
-  // ── Agents ────────────────────────────────────────────────────
-  // Every spawned instance in a worktree (running + idle chats), each keyed by
-  // its chatId. The adapter picker uses agents:configs, not this list.
-  ipcMain.handle('agents:list', (_e, worktreeId: string) => agents.listInstances(worktreeId))
-
-  // Spawn a fresh idle instance (chat) of an adapter without touching siblings.
-  ipcMain.handle(
-    'agents:createInstance',
-    (_e, worktreeId: string, name: string, label?: string) => {
-      const chat = agents.createInstance(worktreeId, name, label)
-      persistChats(worktreeId, name)
-      return chat
-    }
-  )
-
-  // Move a tab to a different adapter (fresh session, kept title).
-  ipcMain.handle(
-    'agents:convertInstance',
-    (_e, worktreeId: string, fromName: string, toName: string, chatId: string) => {
-      const moved = agents.convertInstance(worktreeId, fromName, toName, chatId)
-      if (moved) {
-        persistChats(worktreeId, fromName)
-        persistChats(worktreeId, toName)
-      }
-      return moved
-    }
-  )
-
-  // Delete an instance (chat) and its transcript.
-  ipcMain.handle(
-    'agents:deleteChat',
-    async (_e, worktreeId: string, name: string, chatId: string) => {
-      await agents.deleteChat(worktreeId, name, chatId)
-      persistChats(worktreeId, name)
-    }
-  )
-
-  ipcMain.handle(
-    'agents:start',
-    (_e, worktreeId: string, name: string, options: AgentLaunchOptions, chatId?: string) => {
-      const { config: cfg } = requireRepo()
-      const worktree = findWorktree(worktreeId)
-      const agent = effectiveAgents()[name]
-      if (!agent) throw new Error(`unknown agent: ${name}`)
-      const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
-      return agents.start(worktree, name, agent, ports, options || {}, true, chatId)
-    }
-  )
-
-  // User-initiated stop: also flushes queued messages back to the composer.
-  ipcMain.handle('agents:stop', (_e, worktreeId: string, name: string, chatId: string) =>
-    agents.stop(worktreeId, name, chatId, { clearQueue: true })
-  )
-
-  // Message typed while a run is active: inject live, queue, or start a
-  // resumed run when idle.
-  ipcMain.handle(
-    'agents:send',
-    (_e, worktreeId: string, name: string, text: string, chatId?: string) => {
-      const { config: cfg } = requireRepo()
-      const worktree = findWorktree(worktreeId)
-      const agent = effectiveAgents()[name]
-      if (!agent) throw new Error(`unknown agent: ${name}`)
-      const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
-      return agents.send(worktree, name, agent, ports, text, chatId)
-    }
-  )
-
-  ipcMain.handle('agents:queue', (_e, worktreeId: string, name: string, chatId: string) =>
-    agents.getQueue(worktreeId, name, chatId)
-  )
-
-  ipcMain.handle(
-    'agents:cancelQueued',
-    (_e, worktreeId: string, name: string, chatId: string, id: string) =>
-      agents.cancelQueued(worktreeId, name, chatId, id)
-  )
-
-  // Provider-discovered slash commands (claude); [] for other adapters.
-  ipcMain.handle('agents:commands', (_e, worktreeId: string, name: string) =>
-    agents.getCommands(worktreeId, name)
-  )
-
-  // Model list for one adapter, fetched from its SDK; [] when the adapter has
-  // no model-list API.
-  ipcMain.handle('agents:models', (_e, name: string) =>
-    agents.listModels(name, context.repoPath || process.cwd())
-  )
-
-  // Compact an instance (summarize + continue with less context).
-  ipcMain.handle(
-    'agents:compact',
-    (_e, worktreeId: string, name: string, instructions?: string, chatId?: string) => {
-      const { config: cfg } = requireRepo()
-      const worktree = findWorktree(worktreeId)
-      const agent = effectiveAgents()[name]
-      if (!agent) throw new Error(`unknown agent: ${name}`)
-      const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
-      return agents.compact(worktree, name, agent, ports, instructions, chatId)
-    }
-  )
-
-  // New chat: start a fresh active chat (prior chats stay resumable).
-  ipcMain.handle('agents:reset', async (_e, worktreeId: string, name: string, chatId?: string) => {
-    const worktree = findWorktree(worktreeId)
-    const chat = await agents.resetSession(worktree, name, chatId)
-    return chat
-  })
-
-  // Replay an instance's transcript (restore after restart / switch instance).
-  ipcMain.handle('agents:transcript', (_e, worktreeId: string, name: string, chatId?: string) => {
-    const worktree = findWorktree(worktreeId)
-    const target = chatId || agents.listChats(worktreeId, name).activeId
-    return agents.readTranscript(worktree.path, name, target)
-  })
-
-  // List the named chats for a worktree+agent.
-  ipcMain.handle('agents:chats', (_e, worktreeId: string, name: string) =>
-    agents.listChats(worktreeId, name)
-  )
-
-  // Rename a chat so it's easy to find when resuming.
-  ipcMain.handle(
-    'agents:renameChat',
-    (_e, worktreeId: string, name: string, chatId: string, chatName: string) => {
-      agents.renameChat(worktreeId, name, chatId, chatName)
-      persistChats(worktreeId, name)
-    }
-  )
-
-  // Switch the active/default instance and return its transcript. Instances run
-  // concurrently, so switching no longer stops any run.
-  ipcMain.handle(
-    'agents:activateChat',
-    async (_e, worktreeId: string, name: string, chatId: string) => {
-      agents.activateChat(worktreeId, name, chatId)
-      persistChats(worktreeId, name)
-      const worktree = findWorktree(worktreeId)
-      return agents.readTranscript(worktree.path, name, chatId)
-    }
-  )
-
-  // Answer an interactive tool-permission request.
-  ipcMain.handle('agents:respondPermission', (_e, id: string, decision: PermissionDecision) =>
-    agents.respondPermission(id, decision)
-  )
-
-  // Answer a blocking agent dialog (e.g. a question).
-  ipcMain.handle('agents:respondDialog', (_e, id: string, decision: AgentDialogDecision) =>
-    agents.respondDialog(id, decision)
-  )
-
-  // Finish a review: apply the per-hunk decisions to disk and report back. For a
-  // gated review this also settles the permission the agent is blocked on —
-  // accepting everything lets its own write run, while any rejection means we
-  // have already written the accepted subset, so the tool must be denied.
-  // Drop a review the user bypassed (answered its permission card directly).
+  // ── Agent review ──────────────────────────────────────────────
+  // Sessions, transcripts and approvals live on the nib server and are driven
+  // from the renderer over grove-nib://. What stays here is the review flow,
+  // which writes files and therefore cannot.
   ipcMain.handle('agents:discardReview', (_e, batchId: string) => {
     nibReviewBridge.discard(batchId)
     review.drop(batchId)
@@ -1142,36 +861,20 @@ export function registerIpc(): void {
       await nibReviewBridge.report(batch, decisions)
       return
     }
-    if (batch.origin !== 'gated' || !batch.permissionId) return
-    const rejected = decisions.some((decision) => !decision.accepted)
-    if (!rejected) {
-      agents.respondPermission(batch.permissionId, { behavior: 'allow', remember: false })
-      return
-    }
-    const feedback = describeResolution(batch, { batchId, decisions })
-    agents.respondPermission(batch.permissionId, {
-      behavior: 'deny',
-      message:
-        feedback ||
-        'The user rejected this edit. The accepted parts, if any, have already been written for you.'
-    })
   })
-
-  ipcMain.handle('agents:active', () => agents.activeWorktreeIds())
-
-  // Effective agent configs (adapter defaults + config) with modes/efforts,
-  // for building the launch UI.
-  ipcMain.handle('agents:configs', () => effectiveAgents())
 
   // ── Shared worktree chat (agent↔agent + agent↔user) ─────────────
   ipcMain.handle('chat:send', (_e, worktreeId: string, text: string) => {
     findWorktree(worktreeId)
-    return agents.sendChat(worktreeId, text)
+    return channel.post(worktreeId, { kind: 'user', name: 'you' }, text)
   })
 
-  ipcMain.handle('chat:history', (_e, worktreeId: string, since?: number) => {
+  ipcMain.handle('chat:history', async (_e, worktreeId: string, since?: number) => {
     findWorktree(worktreeId)
-    return agents.chatHistory(worktreeId, since)
+    // Watching is started lazily: a worktree whose channel nobody has opened
+    // does not need a file watcher.
+    await channel.watchWorktree(worktreeId)
+    return channel.list(worktreeId, since)
   })
 
   // ── Files ─────────────────────────────────────────────────────
@@ -1593,8 +1296,8 @@ export async function shutdown(): Promise<void> {
   nibReviewBridge.stop()
   await nib.stop().catch(() => {})
   await supervisor.stopAll()
-  await agents.stopAll()
   await watcher.closeAll()
+  channel.closeAll()
   lsp.stopAll()
   terminals.killAll()
   nvims.killAll()

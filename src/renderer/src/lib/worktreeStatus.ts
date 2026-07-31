@@ -1,9 +1,14 @@
 // Shared status colours + per-worktree attention derivation, consumed by both
-// the Dashboard and the Agents overview so the two surfaces stay in sync. All
-// attention signals are read from already-push-fed store state (no polling):
-// agent status/exit, pending permissions/dialogs, service health, dirty tree.
+// the Dashboard and the Agents overview so the two surfaces stay in sync.
+//
+// Agent signals come from the nib session listing, which is polled centrally by
+// the session store — so reading them here inside a Svelte reactive context is
+// enough to stay current, with nothing to subscribe to.
 
 import { store } from './store.svelte'
+import { nibSessions } from './nib/sessions.svelte'
+import { visibleItems, type AgentItem } from './nib/transcript'
+import type { SessionMeta } from './nib/types'
 
 export const serviceStatusColor: Record<string, string> = {
   running: 'bg-green',
@@ -14,14 +19,13 @@ export const serviceStatusColor: Record<string, string> = {
 
 export const agentStatusColor: Record<string, string> = {
   running: 'bg-green',
-  exited: 'bg-neutral-600',
-  stopped: 'bg-neutral-600',
+  idle: 'bg-neutral-600',
+  requires_action: 'bg-amber',
   error: 'bg-red'
 }
 
 export interface WorktreeAttention {
   waitingPermission: boolean
-  waitingDialog: boolean
   agentDone: boolean
   serviceUnhealthy: boolean
   unread: boolean
@@ -29,30 +33,31 @@ export interface WorktreeAttention {
   needsAttention: boolean
 }
 
-// Derive the attention flags for one worktree from live store state. Reading the
-// store inside a Svelte reactive context keeps callers reactive.
+/** Agent sessions rooted in a worktree. A worktree's id is its path. */
+export function sessionsFor(worktreeId: string): SessionMeta[] {
+  return nibSessions.forWorktree(worktreeId)
+}
+
+// Derive the attention flags for one worktree from live state. Reading the
+// stores inside a Svelte reactive context keeps callers reactive.
 export function attentionFor(worktreeId: string): WorktreeAttention {
-  const agents = store.agents[worktreeId] || []
+  const sessions = sessionsFor(worktreeId)
   const services = store.services[worktreeId] || []
   const worktree = store.worktrees.find((entry) => entry.id === worktreeId)
 
-  const waitingPermission = store.pendingPermissions.some(
-    (request) => request.worktreeId === worktreeId
-  )
-  const waitingDialog = store.pendingDialogs.some((request) => request.worktreeId === worktreeId)
-  const agentDone = agents.some((agent) => agent.status === 'exited' || agent.status === 'error')
+  const waitingPermission = sessions.some((session) => session.pendingApprovals.length > 0)
+  const agentDone = sessions.some((session) => session.stopReason === 'error')
   const serviceUnhealthy = services.some((service) => service.status === 'unhealthy')
   const unread = store.unread[worktreeId] === true
   const dirty = worktree?.dirty === true
 
   return {
     waitingPermission,
-    waitingDialog,
     agentDone,
     serviceUnhealthy,
     unread,
     dirty,
-    needsAttention: waitingPermission || waitingDialog || serviceUnhealthy || unread
+    needsAttention: waitingPermission || serviceUnhealthy || unread
   }
 }
 
@@ -65,21 +70,28 @@ export function diffStatLabel(worktreeId: string): { added: number; removed: num
   return { added: stats.added, removed: stats.removed }
 }
 
-// Last agent output line for a worktree, for a one-line activity preview.
-export function lastAgentLine(worktreeId: string): string {
-  const lines = (store.logs[worktreeId] || []).filter((line) => line.source === 'agent')
-  const last = lines[lines.length - 1]
-  return last ? last.line : ''
+/**
+ * The agent's most recent words in a session, for a one-line activity preview.
+ *
+ * Only a session with a stream open has a transcript to read; the listing alone
+ * does not carry message text, and opening a stream just to preview one line
+ * would cost a connection per worktree.
+ */
+export function lastAgentLineFor(sessionId: string): string {
+  const live = nibSessions.live[sessionId]
+  if (!live) return ''
+  const messages = visibleItems(live.transcript).filter(
+    (item): item is AgentItem => item.kind === 'agent' && item.text.length > 0
+  )
+  const last = messages[messages.length - 1]
+  if (!last) return ''
+  return last.text.split('\n')[0]
 }
 
-// Last output line for a specific instance in a worktree, for a per-row preview.
-export function lastAgentLineFor(worktreeId: string, name: string, chatId?: string): string {
-  const lines = (store.logs[worktreeId] || []).filter(
-    (line) =>
-      line.source === 'agent' &&
-      line.name === name &&
-      (chatId === undefined || line.chatId === chatId)
-  )
-  const last = lines[lines.length - 1]
-  return last ? last.line : ''
+/** Badge colour for a session row. */
+export function sessionStatusColor(session: SessionMeta): string {
+  if (session.pendingApprovals.length > 0) return agentStatusColor.requires_action
+  if (session.status === 'running') return agentStatusColor.running
+  if (session.stopReason === 'error') return agentStatusColor.error
+  return agentStatusColor.idle
 }

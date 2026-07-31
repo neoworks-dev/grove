@@ -30,16 +30,29 @@ export const MODE_LABELS: Record<AgentMode, string> = {
 }
 
 /**
- * Which mode a session is in. `bypassing` is the caller's own volatile flag; the
- * rest is read back off the session, so a session opened in a new window reports
- * the mode it is actually in.
+ * The mode a session is already in, read back off its own state — so reopening a
+ * session in a new window reports what it is actually doing rather than a
+ * default.
+ *
+ * This is only half the story: accept-edits and bypass are entered by answering
+ * approvals, so a freshly chosen one is not visible here until the first call it
+ * covers comes through. Callers hold the chosen mode alongside this and let it
+ * win, which is what `effectiveMode` does.
  */
-export function modeOf(snapshot: SessionSnapshot | null, bypassing: boolean): AgentMode {
-  if (bypassing) return 'bypass'
+export function modeOf(snapshot: SessionSnapshot | null): AgentMode {
   if (!snapshot) return 'default'
   if (isPlanning(snapshot)) return 'plan'
   if (WRITE_TOOLS.every((tool) => snapshot.autoApproveTools.includes(tool))) return 'acceptEdits'
   return 'default'
+}
+
+/** The mode in force: what the user last chose, else what the session reports. */
+export function effectiveMode(
+  chosen: AgentMode | null,
+  snapshot: SessionSnapshot | null
+): AgentMode {
+  if (chosen !== null) return chosen
+  return modeOf(snapshot)
 }
 
 function isPlanning(snapshot: SessionSnapshot): boolean {

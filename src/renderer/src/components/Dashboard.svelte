@@ -3,10 +3,11 @@
   import { store, selectWorktree, refreshRuntimes } from '../lib/store.svelte'
   import {
     serviceStatusColor,
-    agentStatusColor,
+    sessionsFor,
+    sessionStatusColor,
     attentionFor
   } from '../lib/worktreeStatus'
-  import type { ServiceRuntime, AgentRuntime } from '../../../shared/types'
+  import type { ServiceRuntime } from '../../../shared/types'
 
   // Runtime status arrives via push events (subscribeEvents) and mutates the
   // store reactively, so the dashboard just reads it. We seed once on mount
@@ -24,9 +25,6 @@
 
   function services(worktreeId: string): ServiceRuntime[] {
     return store.services[worktreeId] || []
-  }
-  function agents(worktreeId: string): AgentRuntime[] {
-    return store.agents[worktreeId] || []
   }
 
   async function writeConfig(): Promise<void> {
@@ -75,9 +73,6 @@
             {#if attention.waitingPermission}
               <span class="text-2xs text-amber" title="Waiting on permission">⊘ perm</span>
             {/if}
-            {#if attention.waitingDialog}
-              <span class="text-2xs text-amber" title="Waiting on a question">❓ ask</span>
-            {/if}
             {#if attention.agentDone}
               <span class="text-2xs text-green" title="Agent finished">✓ done</span>
             {/if}
@@ -108,16 +103,13 @@
 
         <div class="mb-1 text-2xs uppercase tracking-caps text-dim">Agents</div>
         <div class="flex flex-wrap gap-1">
-          {#each agents(worktree.id) as agent (agent.name)}
+          {#each sessionsFor(worktree.id) as session (session.id)}
             <span class="flex items-center gap-1 rounded bg-raised px-1.5 py-0.5 text-2xs">
-              <span
-                class="h-1.5 w-1.5 rounded-full {agentStatusColor[agent.status] ||
-                  'bg-neutral-600'}"
-              ></span>
-              {agent.name}
+              <span class="h-1.5 w-1.5 rounded-full {sessionStatusColor(session)}"></span>
+              {session.title || session.model}
             </span>
           {/each}
-          {#if agents(worktree.id).length === 0}
+          {#if sessionsFor(worktree.id).length === 0}
             <span class="text-2xs text-dim">idle</span>
           {/if}
         </div>

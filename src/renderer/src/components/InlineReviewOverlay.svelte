@@ -1,39 +1,26 @@
 <script lang="ts">
-  // Accept/reject controls for an inline edit under review, floated over the
-  // changed lines inside the NvimPane. Per-hunk ✓/✗ sit at each hunk's first
-  // changed row; a summary bar offers accept-all / reject-all. Row positions are
-  // recomputed from the viewport top on each redraw tick.
+  // Accept/reject for an inline edit or a file's uncommitted changes, drawn over
+  // the buffer they are in. The per-hunk controls are HunkVerdictOverlay, shared
+  // with the agent-write review; the summary bar here carries accept-all /
+  // reject-all for this file.
+  //
+  // No comment affordance: an inline review is applied straight to the file and
+  // has nobody to report a comment to.
   import { inlineEdit } from '../lib/inlineEdit.svelte'
-  import { nvimSessionFor } from '../lib/nvim/registry'
+  import HunkVerdictOverlay from './HunkVerdictOverlay.svelte'
 
   let { leafId, tick }: { leafId: string; tick: number } = $props()
 
   const review = $derived(
     inlineEdit.review && inlineEdit.review.leafId === leafId ? inlineEdit.review : null
   )
-  const pendingRanges = $derived(
-    review ? review.ranges.filter((range) => review.status[range.hunkIndex] === 'pending') : []
+  const anchors = $derived(
+    !review
+      ? []
+      : review.ranges
+          .filter((range) => review.status[range.hunkIndex] === 'pending')
+          .map((range) => ({ hunkIndex: range.hunkIndex, line: range.start }))
   )
-
-  let viewportTop = $state(1)
-  let cellHeight = $state(18)
-
-  // Re-read the viewport whenever the buffer redraws (scroll/edit) or the review
-  // ranges change, so the floated controls track the lines.
-  $effect(() => {
-    void tick
-    void review?.ranges
-    const session = nvimSessionFor(leafId)
-    if (!session || !review) return
-    if (session.cellHeight > 0) cellHeight = session.cellHeight
-    void session.viewportTop().then((top) => {
-      if (typeof top === 'number') viewportTop = top
-    })
-  })
-
-  function rowY(startLine: number): number {
-    return Math.max(0, startLine - viewportTop) * cellHeight
-  }
 </script>
 
 {#if review}
@@ -41,7 +28,7 @@
     class="absolute right-2 top-2 z-30 flex items-center gap-1 rounded-md border border-line bg-elevated/95 px-1.5 py-1 text-2xs shadow-lg backdrop-blur"
   >
     <span class="px-1 text-dim">
-      {pendingRanges.length} change{pendingRanges.length === 1 ? '' : 's'}
+      {anchors.length} change{anchors.length === 1 ? '' : 's'}
     </span>
     <button
       class="rounded px-1.5 py-0.5 text-green hover:bg-hover"
@@ -59,22 +46,10 @@
     </button>
   </div>
 
-  {#each pendingRanges as range (range.hunkIndex)}
-    <div class="absolute right-2 z-30 flex gap-1" style="top: {rowY(range.start)}px">
-      <button
-        class="rounded border border-line bg-elevated/95 px-1.5 py-0.5 text-2xs text-green shadow hover:bg-hover"
-        title="Accept this change"
-        onclick={() => void inlineEdit.decide(range.hunkIndex, true)}
-      >
-        ✓
-      </button>
-      <button
-        class="rounded border border-line bg-elevated/95 px-1.5 py-0.5 text-2xs text-red shadow hover:bg-hover"
-        title="Reject this change"
-        onclick={() => void inlineEdit.decide(range.hunkIndex, false)}
-      >
-        ✗
-      </button>
-    </div>
-  {/each}
+  <HunkVerdictOverlay
+    {leafId}
+    {tick}
+    {anchors}
+    onDecide={(hunkIndex, accept) => void inlineEdit.decide(hunkIndex, accept)}
+  />
 {/if}

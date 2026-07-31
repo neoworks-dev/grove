@@ -282,6 +282,10 @@ end
           nvimId = id
           void syncNvimKeymap()
           watchBufferCount(id)
+          // A renderer reload leaves a gated review's preview in the buffer with
+          // nothing left to take it down; this editor is attaching fresh, so
+          // whatever is flagged as previewed is stale by definition.
+          void session?.clearStalePreviews()
         },
         onFlush: () => {
           minimapTick += 1
@@ -359,14 +363,17 @@ end
   /**
    * Show grove's active tab in this pane's nvim.
    *
-   * A review holds its own nvim tab, and `:edit` into that tab would replace the
-   * diff buffer and drop diff mode with it. Asking for another file is asking to
-   * stop looking at the review, so the review is closed first — the batch stays
-   * queued and can be reopened from the chat — and only then is the file opened,
-   * in the tab the diff leaves behind.
+   * A review is shown in the buffer for the file it is about, so the file it
+   * opened is already on screen — re-opening it would only drop the proposal a
+   * gated review is previewing. Any *other* file is a request to stop looking at
+   * the review, so it is closed first; the batch stays queued and can be
+   * reopened from the chat.
    */
   async function followTab(id: string, path: string): Promise<void> {
-    if (review.ownerNvimId !== null && review.ownerNvimId === id) await review.cancel()
+    if (review.ownerNvimId !== null && review.ownerNvimId === id) {
+      if (path === review.showingPath) return
+      await review.cancel()
+    }
 
     // Scratch tabs map to a live nvim buffer, not a file: switch the window to
     // it (only in the pane that owns the buffer) rather than :edit-ing a path.

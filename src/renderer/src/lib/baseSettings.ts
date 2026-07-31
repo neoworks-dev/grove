@@ -70,18 +70,6 @@ export function registerBaseSettings(): void {
         category: 'Agents'
       },
       {
-        key: 'workbench.reviewDiffLayout',
-        type: 'enum',
-        default: 'side-by-side',
-        title: 'Review Diff Layout',
-        description: 'How a review diff is laid out in the editor.',
-        category: 'Agents',
-        enumValues: [
-          { value: 'side-by-side', label: 'Side by side' },
-          { value: 'inline', label: 'Inline' }
-        ]
-      },
-      {
         key: 'workbench.whichKeyDelay',
         type: 'number',
         default: 300,

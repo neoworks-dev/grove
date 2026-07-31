@@ -1,8 +1,8 @@
 // Embedded-Neovim canvas session controller. Owns one `nvim --embed` session:
 // the msgpack redraw stream, the canvas grid renderer, resize fitting, and
 // keyboard/mouse/wheel forwarding. Bound to caller-provided DOM elements so a
-// component only supplies markup and pane-specific effects (tab follow, diff
-// build, …) through the callbacks below.
+// component only supplies markup and pane-specific effects (tab follow, review
+// markup, …) through the callbacks below.
 //
 // If nvim exits unexpectedly (a crash, not a dispose), the session respawns in
 // place a bounded number of times and re-runs onAttached, so a pane recovers
@@ -28,7 +28,7 @@ export interface NvimSessionElements {
 export interface NvimSessionCallbacks {
   // nvim attached and its id is live. Runs after the initial file (if any) is
   // loaded, on the first connect AND after every automatic restart — the place
-  // to (re)build a diff split or re-open the active file.
+  // to re-open the active file.
   onAttached?: (id: string) => void | Promise<void>
   // A redraw batch was flushed to the canvas (drives minimap re-reads).
   onFlush?: () => void
@@ -48,141 +48,13 @@ export interface NvimSessionCallbacks {
 export interface NvimSessionConfig {
   leafId: string
   font: FontSpec
-  // File to `:edit` on attach, or null to attach with an empty buffer (the
-  // diff pane builds its own scratch buffers instead). A function is re-read on
-  // each restart so the reconnected session opens the currently active file.
+  // File to `:edit` on attach, or null to attach with an empty buffer. A
+  // function is re-read on each restart so the reconnected session opens the
+  // currently active file.
   initialFile?: string | null | (() => string | null)
 }
 
 const MOUSE_BUTTONS = ['left', 'middle', 'right']
-
-// Render a review diff. nvim's job here is display only: both buffers are
-// scratch and non-modifiable, so the user reads the change (and the whole file
-// around it) but every accept/reject/comment goes through the Svelte overlay.
-//
-// Side-by-side puts the baseline left and the result right as a vimdiff pair.
-// Inline shows a single buffer of the result with the baseline diffed against it
-// in a hidden-width window, so removals still register as diff highlights.
-//
-// The whole thing lives in its own tab page. Building it in the current window
-// meant `:enew`, which fails outright on a modified buffer (E37) and otherwise
-// evicts whatever the user was editing; a tab leaves their layout untouched and
-// is torn down in one call.
-const REVIEW_DIFF_OPEN_LUA = `
-local path, baseline, current, sideBySide = ...
-
--- Tear down any previous review before building the next one.
-local previous = vim.g.grove_review_tab
-if previous and vim.api.nvim_tabpage_is_valid(previous) then
-  local count = #vim.api.nvim_list_tabpages()
-  if count > 1 then
-    pcall(vim.cmd, 'tabclose! ' .. vim.api.nvim_tabpage_get_number(previous))
-  end
-end
-vim.g.grove_review_tab = nil
-vim.g.grove_review_wins = nil
-
-local name = vim.fn.fnamemodify(path, ':t')
-local ft = vim.filetype.match({ filename = path }) or ''
-
-local function scratch(label, text)
-  local buf = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, vim.split(text, '\\n', { plain = true }))
-  vim.bo[buf].buftype = 'nofile'
-  vim.bo[buf].bufhidden = 'wipe'
-  vim.bo[buf].swapfile = false
-  vim.bo[buf].filetype = ft
-  vim.bo[buf].modifiable = false
-  pcall(vim.api.nvim_buf_set_name, buf, label)
-  return buf
-end
-
-local resultBuf = scratch(name .. ' [reviewing]', current)
-local baseBuf = scratch(name .. ' [before]', baseline)
-
--- A fresh tab to build in. tabnew opens an empty scratch window, so no existing
--- buffer is disturbed and nothing can refuse to be replaced.
-vim.cmd('tabnew')
-local tab = vim.api.nvim_get_current_tabpage()
-
-local wins = {}
-if sideBySide then
-  local left = vim.api.nvim_get_current_win()
-  vim.api.nvim_win_set_buf(left, baseBuf)
-  vim.cmd('rightbelow vsplit')
-  local right = vim.api.nvim_get_current_win()
-  vim.api.nvim_win_set_buf(right, resultBuf)
-  wins = { left, right }
-  vim.g.grove_review_win = right
-else
-  -- Inline: the result fills the pane and the baseline sits in a zero-width
-  -- neighbour, which is enough for nvim to compute and paint the diff.
-  local main = vim.api.nvim_get_current_win()
-  vim.api.nvim_win_set_buf(main, resultBuf)
-  vim.cmd('leftabove vsplit')
-  local hidden = vim.api.nvim_get_current_win()
-  vim.api.nvim_win_set_buf(hidden, baseBuf)
-  vim.api.nvim_win_set_width(hidden, 1)
-  wins = { hidden, main }
-  vim.g.grove_review_win = main
-end
-
-for _, w in ipairs(wins) do
-  vim.api.nvim_win_call(w, function()
-    vim.cmd('diffthis')
-    vim.wo.scrollbind = true
-    vim.wo.cursorbind = true
-    vim.wo.foldenable = false
-  end)
-end
-vim.cmd('diffupdate')
-
-local focus = vim.g.grove_review_win
-vim.api.nvim_win_call(focus, function()
-  vim.cmd('normal! gg')
-  vim.cmd('silent! normal! ]c')
-  vim.cmd('normal! zz')
-  vim.cmd('syncbind')
-end)
-vim.api.nvim_set_current_win(focus)
-vim.g.grove_review_wins = wins
-vim.g.grove_review_tab = tab
-`
-
-// Close the review tab. `tabclose!` discards the scratch buffers without
-// prompting; the guard keeps it from closing the last remaining tab, which nvim
-// refuses anyway.
-const REVIEW_DIFF_CLOSE_LUA = `
-local tab = vim.g.grove_review_tab
-if tab and vim.api.nvim_tabpage_is_valid(tab) and #vim.api.nvim_list_tabpages() > 1 then
-  pcall(vim.cmd, 'tabclose! ' .. vim.api.nvim_tabpage_get_number(tab))
-end
-vim.g.grove_review_tab = nil
-vim.g.grove_review_wins = nil
-vim.g.grove_review_win = nil
-`
-
-// Screen row of each given buffer line in the review window, as an offset from
-// the window's first visible line. Lines scrolled out of view report -1 so the
-// overlay can hide their controls instead of pinning them to an edge.
-const REVIEW_ROWS_LUA = `
-local lines = ...
-local win = vim.g.grove_review_win
-if not win or not vim.api.nvim_win_is_valid(win) then return nil end
-return vim.api.nvim_win_call(win, function()
-  local top = vim.fn.line('w0')
-  local bottom = vim.fn.line('w$')
-  local rows = {}
-  for i, line in ipairs(lines) do
-    if line >= top and line <= bottom then
-      rows[i] = line - top
-    else
-      rows[i] = -1
-    end
-  end
-  return rows
-end)
-`
 
 // Re-read one file from disk if this editor has it open and unedited. `checktime`
 // rather than `edit!` so the cursor, marks and undo history survive, and so a
@@ -198,15 +70,17 @@ end)
 return true
 `
 
-// Tint the given 1-based line ranges as additions in the live buffer, replacing
-// any previous inline-review highlight. Used by the accept/reject overlay.
+// Mark up a change under review in the live buffer, replacing any previous
+// markup: added lines tinted as additions, replaced lines shown above them as
+// virtual lines tinted as deletions. Used by the accept/reject overlay.
 const INLINE_PAINT_LUA = `
-local ranges = ...
+local ranges, removed = ...
 local ns = vim.api.nvim_create_namespace('grove_inline')
 local buf = vim.api.nvim_get_current_buf()
 vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
 local total = vim.api.nvim_buf_line_count(buf)
-for _, r in ipairs(ranges) do
+
+for _, r in ipairs(ranges or {}) do
   local startLine = r.start - 1
   for line = startLine, startLine + r.count - 1 do
     if line >= 0 and line < total then
@@ -214,6 +88,66 @@ for _, r in ipairs(ranges) do
     end
   end
 end
+
+for _, entry in ipairs(removed or {}) do
+  local line = math.max(0, math.min(entry.line - 1, total - 1))
+  local virt = {}
+  for _, text in ipairs(entry.lines) do
+    virt[#virt + 1] = { { text, 'DiffDelete' } }
+  end
+  if #virt > 0 then
+    vim.api.nvim_buf_set_extmark(buf, ns, line, 0, { virt_lines = virt, virt_lines_above = true })
+  end
+end
+`
+
+// Put proposed content into the buffer for a file without touching the file.
+// The buffer is left unmodifiable and reported unmodified so nothing can save
+// it over the real thing; PREVIEW_END_LUA reverses both.
+const PREVIEW_FILE_LUA = `
+local path, content = ...
+vim.cmd('edit ' .. vim.fn.fnameescape(path))
+local buf = vim.api.nvim_get_current_buf()
+vim.bo[buf].modifiable = true
+vim.api.nvim_buf_set_lines(buf, 0, -1, false, vim.split(content, '\\n', { plain = true }))
+vim.bo[buf].modifiable = false
+vim.bo[buf].modified = false
+-- Flagged so a preview can be recognised and dropped even by a renderer that
+-- has forgotten about it (a reload mid-review).
+vim.b[buf].grove_preview = true
+return true
+`
+
+// Drop a preview: reload the file from disk and hand the buffer back.
+const PREVIEW_END_LUA = `
+local path = ...
+local buf = vim.fn.bufnr(vim.fn.fnameescape(path))
+if buf == -1 or not vim.api.nvim_buf_is_loaded(buf) then return false end
+vim.bo[buf].modifiable = true
+vim.b[buf].grove_preview = nil
+vim.api.nvim_buf_call(buf, function()
+  vim.cmd('silent! edit!')
+end)
+return true
+`
+
+// Drop every preview this editor still holds. Run on attach: a renderer reload
+// leaves the buffers previewed but nothing left to end them, and an
+// unmodifiable buffer full of content the file does not have is worse than a
+// lost review.
+const PREVIEW_CLEAR_ALL_LUA = `
+local cleared = 0
+for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+  if vim.api.nvim_buf_is_loaded(buf) and vim.b[buf].grove_preview then
+    vim.bo[buf].modifiable = true
+    vim.b[buf].grove_preview = nil
+    vim.api.nvim_buf_call(buf, function()
+      vim.cmd('silent! edit!')
+    end)
+    cleared = cleared + 1
+  end
+end
+return cleared
 `
 
 const INLINE_CLEAR_LUA = `
@@ -369,12 +303,24 @@ export class NvimCanvasSession {
     }
   }
 
-  // Tint the given 1-based line ranges as an inline-review highlight.
-  async paintInlineReview(ranges: { start: number; count: number }[]): Promise<void> {
+  /**
+   * Mark up a change under review inside the live buffer: added lines tinted,
+   * and the lines they replaced shown above them as virtual lines.
+   *
+   * This is the only review surface — there is no separate diff window — so the
+   * removed side has to be visible here or it is not visible at all.
+   */
+  async paintInlineReview(
+    ranges: { start: number; count: number }[],
+    removed: { line: number; lines: string[] }[] = []
+  ): Promise<void> {
     const id = this.nvimId
     if (!id) return
     try {
-      await window.workbench.nvim.request(id, 'nvim_exec_lua', [INLINE_PAINT_LUA, [ranges]])
+      await window.workbench.nvim.request(id, 'nvim_exec_lua', [
+        INLINE_PAINT_LUA,
+        [ranges, removed]
+      ])
     } catch {
       // session gone
     }
@@ -390,53 +336,40 @@ export class NvimCanvasSession {
     }
   }
 
-  // Show a review diff: the file's baseline against what the agent produced,
-  // read-only, with the whole file scrollable so decisions are made in context.
-  // Throws if nvim rejects the request. Unlike the fire-and-forget helpers here,
-  // a review that fails to render leaves the user with a prompt they cannot
-  // answer, so the caller has to know rather than silently show nothing.
-  async openReviewDiff(options: {
-    path: string
-    baseline: string
-    current: string
-    sideBySide: boolean
-  }): Promise<void> {
+  /**
+   * Show content the file does not hold yet — an agent's proposed write, held at
+   * its permission prompt — in the buffer for that file.
+   *
+   * The buffer is left unmodifiable and marked unmodified, so the preview cannot
+   * be edited or saved over the real file; `reloadBuffer` puts the file back.
+   * Nothing is written to disk: whether this content lands is the review's
+   * decision, and for a gated write it is the agent's tool call that applies it.
+   */
+  async previewFile(path: string, content: string): Promise<void> {
     const id = this.nvimId
     if (!id) throw new Error('no editor session attached')
-    await window.workbench.nvim.request(id, 'nvim_exec_lua', [
-      REVIEW_DIFF_OPEN_LUA,
-      [options.path, options.baseline, options.current, options.sideBySide]
-    ])
+    await window.workbench.nvim.request(id, 'nvim_exec_lua', [PREVIEW_FILE_LUA, [path, content]])
   }
 
-  async closeReviewDiff(): Promise<void> {
+  /** Give a previewed buffer back to the user, editable and matching disk. */
+  async endPreview(path: string): Promise<void> {
     const id = this.nvimId
     if (!id) return
     try {
-      await window.workbench.nvim.request(id, 'nvim_exec_lua', [REVIEW_DIFF_CLOSE_LUA, []])
+      await window.workbench.nvim.request(id, 'nvim_exec_lua', [PREVIEW_END_LUA, [path]])
     } catch {
       // session gone
     }
   }
 
-  /**
-   * Pixel y offset of each given 1-based buffer line inside the review window,
-   * for anchoring the overlay's per-hunk controls. Lines scrolled out of view
-   * come back as null.
-   */
-  async reviewRowOffsets(lines: number[]): Promise<(number | null)[]> {
+  /** Drop any preview left behind by a renderer that reloaded mid-review. */
+  async clearStalePreviews(): Promise<void> {
     const id = this.nvimId
-    if (!id || !this.metrics || lines.length === 0) return lines.map(() => null)
+    if (!id) return
     try {
-      const result = await window.workbench.nvim.request(id, 'nvim_exec_lua', [
-        REVIEW_ROWS_LUA,
-        [lines]
-      ])
-      if (!Array.isArray(result)) return lines.map(() => null)
-      const cellHeight = this.metrics.cellHeight
-      return result.map((row) => (typeof row === 'number' && row >= 0 ? row * cellHeight : null))
+      await window.workbench.nvim.request(id, 'nvim_exec_lua', [PREVIEW_CLEAR_ALL_LUA, []])
     } catch {
-      return lines.map(() => null)
+      // session gone
     }
   }
 

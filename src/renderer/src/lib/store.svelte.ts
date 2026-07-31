@@ -476,7 +476,12 @@ export function subscribeEvents(): void {
     // Something outside the editor wrote this file — an agent, or a review being
     // applied. Nothing else makes an embedded nvim re-read it, so an open buffer
     // would keep showing the old text and could write it back over the change.
-    if (event.type === 'change' || event.type === 'add') {
+    //
+    // The file a review is showing is left alone: its buffer holds the change
+    // under review (for a gated one, content that is not on disk at all), and
+    // re-reading would drop both that and the markup on top of it.
+    const underReview = review.showingPath === event.path
+    if ((event.type === 'change' || event.type === 'add') && !underReview) {
       for (const session of allNvimSessions()) void session.refreshFile(event.path)
     }
     // An inline edit under review keeps the change in the editor overlay, so it

@@ -19,7 +19,6 @@
     providers,
     reviewMode,
     reviewPause,
-    reviewDiffLayout,
     tokensLabel,
     onPickModel,
     onPickThinking,
@@ -35,7 +34,6 @@
     providers: ProviderModels[]
     reviewMode: string
     reviewPause: boolean
-    reviewDiffLayout: string
     tokensLabel: string
     onPickModel: (provider: string, model: string) => void
     onPickThinking: (level: ThinkingLevel) => void
@@ -50,10 +48,6 @@
   const REVIEW_MODES = [
     { value: 'pre', label: 'Before writing' },
     { value: 'post', label: 'After writing' }
-  ]
-  const REVIEW_LAYOUTS = [
-    { value: 'side-by-side', label: 'Side by side' },
-    { value: 'inline', label: 'Inline' }
   ]
 
   type Menu = 'model' | 'thinking' | 'mode' | 'review'
@@ -208,19 +202,6 @@
               ? 'text-default'
               : 'text-dim'}"
             onclick={() => onSetReview('workbench.reviewMode', option.value)}
-          >
-            {option.label}
-          </button>
-        {/each}
-
-        <div class="mt-1 border-t border-line px-2 pb-1 pt-1.5 text-2xs text-dim">Diff layout</div>
-        {#each REVIEW_LAYOUTS as option (option.value)}
-          <button
-            class="flex w-full items-center px-2 py-1 text-left hover:bg-hover {reviewDiffLayout ===
-            option.value
-              ? 'text-default'
-              : 'text-dim'}"
-            onclick={() => onSetReview('workbench.reviewDiffLayout', option.value)}
           >
             {option.label}
           </button>

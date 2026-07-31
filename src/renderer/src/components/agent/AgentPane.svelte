@@ -71,9 +71,6 @@
 
   const reviewMode = $derived(settings.get<string>('workbench.reviewMode') ?? 'pre')
   const reviewPause = $derived(settings.get<boolean>('workbench.reviewPause') ?? false)
-  const reviewDiffLayout = $derived(
-    settings.get<string>('workbench.reviewDiffLayout') ?? 'side-by-side'
-  )
 
   function setReviewSetting(key: string, value: string | boolean): void {
     void settings.set(key, value, 'user')
@@ -463,7 +460,6 @@
             providers={catalog.providers}
             {reviewMode}
             {reviewPause}
-            {reviewDiffLayout}
             tokensLabel={contextLabel}
             onPickModel={pickModel}
             onPickThinking={pickThinking}

@@ -9,8 +9,6 @@
 //    Accepting a subset cannot be expressed as "allow", so the tool is denied and
 //    the accepted hunks are written here instead.
 
-import { rm } from 'fs/promises'
-import { join } from 'path'
 import { randomUUID } from 'crypto'
 import type {
   HunkDecision,
@@ -70,6 +68,9 @@ export class ReviewService {
 
   /** Record an agent write. Called from the worktree watcher. */
   noteWrite(worktreePath: string, relPath: string): void {
+    // Switching to gated mode leaves whatever was open still open; ignoring
+    // writes here keeps a stale batch from collecting them.
+    if (!this.settings.postApprove()) return
     if (!this.staging.isOpen(worktreePath)) return
     this.staging.noteWrite(worktreePath, relPath)
     this.events.onStaged(worktreePath, this.staging.stagedCount(worktreePath))
@@ -146,8 +147,12 @@ export class ReviewService {
     const batch = await this.staging.close(worktreePath, origin, summary)
     this.events.onStaged(worktreePath, 0)
     // Reopen immediately so writes made while the user reviews land in the next
-    // batch instead of being dropped.
-    this.staging.open(worktreePath, agent, chatId).catch(() => {})
+    // batch instead of being dropped — but only in post-approve mode. Staging in
+    // gated mode would raise a second review for a write the user already
+    // decided on at the permission prompt.
+    if (this.settings.postApprove()) {
+      this.staging.open(worktreePath, agent, chatId).catch(() => {})
+    }
     if (!batch) return null
     this.events.onReview(batch)
     return batch
@@ -226,15 +231,14 @@ export class ReviewService {
     decisions: HunkDecision[]
   ): Promise<void> {
     const applied = file.hunks.map((_hunk, index) => isAccepted(decisions, file.relPath, index))
-    // Nothing rejected: post-approve files already hold exactly this on disk.
-    if (batch.origin !== 'gated' && applied.every(Boolean)) return
+    // Nothing rejected, so there is nothing to write here. A post-approve file
+    // already holds exactly this on disk, and a gated one is about to: its tool
+    // call is allowed, and writing first would leave the tool looking for text
+    // the file no longer contains ("oldText not found").
+    if (applied.every(Boolean)) return
 
-    // The agent removed the file and the removal stands — delete it rather than
-    // rebuilding it as empty.
-    if (file.deleted && applied.every(Boolean)) {
-      await rm(join(batch.worktreeId, file.relPath), { force: true })
-      return
-    }
+    // Something was rejected, so the file is rebuilt here from the baseline plus
+    // the hunks that survived. A deletion that was rejected is a rebuild too.
     await applyInlineReview(batch.worktreeId, file.relPath, file.baseline, file.hunks, applied)
   }
 }

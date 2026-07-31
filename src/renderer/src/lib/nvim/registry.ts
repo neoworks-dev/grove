@@ -25,6 +25,11 @@ export function nvimSessionFor(leafId: string): NvimCanvasSession | undefined {
   return sessions.get(leafId)
 }
 
+/** Every registered editor session, for changes that concern all of them. */
+export function allNvimSessions(): NvimCanvasSession[] {
+  return [...sessions.values()]
+}
+
 // Look a session up by the nvim process it drives. Callers that must survive a
 // leaf being renamed key on this instead of the leaf id.
 export function sessionByNvimId(nvimId: string): NvimCanvasSession | undefined {

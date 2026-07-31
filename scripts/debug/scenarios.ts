@@ -17,11 +17,17 @@ const ping: Scenario = {
   name: 'ping',
   describe: 'confirm the harness reaches nvim and the renderer',
   run: async (grove) => {
-    console.log('nvim:', await lua(grove, 'return vim.version().major .. "." .. vim.version().minor'))
+    console.log(
+      'nvim:',
+      await lua(grove, 'return vim.version().major .. "." .. vim.version().minor')
+    )
     console.log('renderer hooks:', await evaluate(grove, `typeof window.__grove_debug`))
     print('sessions', await grove.raw.request('debug.nvim.sessions'))
-    console.log('worktree:', await agent.selectedWorktree(grove))
-    console.log('agents:', (await agent.agentNames(grove)).join(', '))
+    const worktreePath = await agent.selectedWorktree(grove)
+    console.log('worktree:', worktreePath)
+    if (worktreePath) {
+      print('agent sessions', await agent.sessions(grove, worktreePath))
+    }
   }
 }
 
@@ -33,13 +39,16 @@ const reviewState: Scenario = {
     const app = await evaluate(
       grove,
       `(() => {
-        const { review, store, keymap } = window.__grove_debug
+        const { review, store, keymap, nibSessions, nibTranscript } = window.__grove_debug
         return {
           active: review.active && { id: review.active.id, origin: review.active.origin },
           activeFile: review.activeFile && review.activeFile.relPath,
           leafOwner: review.leafOwner,
           queued: review.queue.length,
-          pendingPermissions: store.pendingPermissions.length,
+          pendingPermissions: Object.values(nibSessions.live).reduce(
+            (total, session) => total + nibTranscript.pendingApprovals(session.transcript).length,
+            0
+          ),
           activeTabPath: store.activeTabPath,
           activePane: keymap.activePane,
           error: store.error
@@ -188,18 +197,15 @@ const reviewEndToEnd: Scenario = {
   name: 'review-e2e',
   describe: 'drive a full gated review: run an agent, review its edit, reject a hunk',
   run: async (grove, args) => {
-    const worktreeId = args[0] ?? (await agent.selectedWorktree(grove))
-    if (!worktreeId) throw new Error('no worktree selected — open a repo first')
-    const names = await agent.agentNames(grove)
-    const name = args[1] ?? names[0]
-    if (!name) throw new Error('no agent configured')
+    const worktreePath = args[0] ?? (await agent.selectedWorktree(grove))
+    if (!worktreePath) throw new Error('no worktree selected — open a repo first')
 
     const prompt =
-      args[2] ??
+      args[1] ??
       'Create a file called debug-review-probe.txt containing exactly three lines: one, two, three. Then stop.'
 
-    console.log(`worktree: ${worktreeId}\nagent: ${name}\nprompt: ${prompt}\n`)
-    await agent.start(grove, { worktreeId, agent: name, prompt, mode: 'default' })
+    console.log(`worktree: ${worktreePath}\nprompt: ${prompt}\n`)
+    print('started', await agent.start(grove, { worktreePath, prompt, mode: 'default' }))
 
     console.log('waiting for the agent to ask permission…')
     const permission = await agent.awaitPermission(grove)

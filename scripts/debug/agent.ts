@@ -1,18 +1,26 @@
 // Agent control for the debug harness. Everything here rides on
-// debug.renderer.eval calling window.workbench.agents.*, which is the same
-// surface the UI itself uses — so a scenario exercises the real path rather than
-// a parallel one that could drift from it.
+// debug.renderer.eval driving window.__grove_debug.nibSessions, which is the
+// same store the AgentPane drives — so a scenario exercises the real path
+// rather than a parallel one that could drift from it.
+//
+// Sessions live on the embedded nib server, so an "agent" here is a session id
+// and a permission request is a nib tool call parked at `ask`.
 
 import type { GroveClient } from '../../sdk/src/client/node'
 import { evaluate, pollUntil } from './client'
 
-export interface PendingPermission {
+export interface AgentSession {
   id: string
+  title: string
+  status: string
+}
+
+export interface PendingPermission {
+  /** The nib toolUseId, which is also the review batch's permissionId. */
+  id: string
+  sessionId: string
   toolName: string
   path: string | null
-  agent: string
-  chatId: string
-  worktreeId: string
 }
 
 export interface QueuedReview {
@@ -27,73 +35,91 @@ export function selectedWorktree(grove: GroveClient): Promise<string | null> {
   return evaluate(grove, `window.__grove_debug.store.selectedWorktreeId`) as Promise<string | null>
 }
 
-/** Agent adapter names the app knows about. */
-export function agentNames(grove: GroveClient): Promise<string[]> {
+/** Agent sessions belonging to a worktree, newest first. */
+export function sessions(grove: GroveClient, worktreePath: string): Promise<AgentSession[]> {
   return evaluate(
     grove,
-    `Object.keys(window.__grove_debug.store.agentConfigs)`
-  ) as Promise<string[]>
+    `window.__grove_debug.nibSessions.forWorktree(${JSON.stringify(worktreePath)}).map((session) => ({
+      id: session.id,
+      title: session.title,
+      status: session.status
+    }))`
+  ) as Promise<AgentSession[]>
 }
 
 /**
- * Start a run. `mode` is the SDK permission mode — 'default' gates every write
- * behind a permission prompt, which is what the review flow needs.
+ * Start a run in a fresh session. `mode` is grove's permission mode — 'default'
+ * answers nothing automatically, which is what the gated review flow needs.
+ *
+ * The session is opened as well as created, because a stream is what makes its
+ * approvals visible to `pendingPermissions`.
  */
-export async function start(
+export function start(
   grove: GroveClient,
-  options: { worktreeId: string; agent: string; prompt: string; mode?: string }
+  options: { worktreePath: string; prompt: string; mode?: string }
 ): Promise<unknown> {
-  const launch = JSON.stringify({ prompt: options.prompt, mode: options.mode ?? 'default' })
   return evaluate(
     grove,
-    `window.workbench.agents.start(
-      ${JSON.stringify(options.worktreeId)},
-      ${JSON.stringify(options.agent)},
-      ${launch}
-    )`
+    `(async () => {
+      const { nibSessions } = window.__grove_debug
+      const sessionId = await nibSessions.create(${JSON.stringify(options.worktreePath)}, {
+        title: 'Debug harness'
+      })
+      if (!sessionId) return { error: nibSessions.serverError || 'session was not created' }
+      nibSessions.setMode(sessionId, ${JSON.stringify(options.mode ?? 'default')})
+      await nibSessions.open(sessionId)
+      await nibSessions.send(sessionId, [{
+        type: 'user.message',
+        content: [{ type: 'text', text: ${JSON.stringify(options.prompt)} }],
+        deliverAs: 'steer'
+      }])
+      return { sessionId }
+    })()`
   )
 }
 
-export async function send(
+/** Say something to the worktree's active session, creating one if it has none. */
+export function send(
   grove: GroveClient,
-  options: { worktreeId: string; agent: string; text: string }
+  options: { worktreePath: string; text: string }
 ): Promise<unknown> {
   return evaluate(
     grove,
-    `window.workbench.agents.send(
-      ${JSON.stringify(options.worktreeId)},
-      ${JSON.stringify(options.agent)},
+    `window.__grove_debug.nibSessions.sendText(
+      ${JSON.stringify(options.worktreePath)},
       ${JSON.stringify(options.text)}
     )`
   )
 }
 
-export async function stop(
-  grove: GroveClient,
-  options: { worktreeId: string; agent: string; chatId: string }
-): Promise<unknown> {
+export function stop(grove: GroveClient, sessionId: string): Promise<unknown> {
   return evaluate(
     grove,
-    `window.workbench.agents.stop(
-      ${JSON.stringify(options.worktreeId)},
-      ${JSON.stringify(options.agent)},
-      ${JSON.stringify(options.chatId)}
-    )`
+    `window.__grove_debug.nibSessions.send(${JSON.stringify(sessionId)}, [{ type: 'user.interrupt' }])`
   )
 }
 
+// Tool calls parked at `ask`, across every session the renderer is streaming.
+const PENDING_PERMISSIONS_EXPRESSION = `(() => {
+  const { nibSessions, nibTranscript } = window.__grove_debug
+  const pending = []
+  for (const sessionId of Object.keys(nibSessions.live)) {
+    const session = nibSessions.live[sessionId]
+    for (const item of nibTranscript.pendingApprovals(session.transcript)) {
+      const input = item.input && typeof item.input === 'object' ? item.input : {}
+      pending.push({
+        id: item.toolUseId,
+        sessionId,
+        toolName: item.name,
+        path: typeof input.path === 'string' ? input.path : null
+      })
+    }
+  }
+  return pending
+})()`
+
 export function pendingPermissions(grove: GroveClient): Promise<PendingPermission[]> {
-  return evaluate(
-    grove,
-    `window.__grove_debug.store.pendingPermissions.map((request) => ({
-      id: request.id,
-      toolName: request.toolName,
-      path: request.path,
-      agent: request.agent,
-      chatId: request.chatId,
-      worktreeId: request.worktreeId
-    }))`
-  ) as Promise<PendingPermission[]>
+  return evaluate(grove, PENDING_PERMISSIONS_EXPRESSION) as Promise<PendingPermission[]>
 }
 
 /** Block until the agent asks permission for a tool, or give up. */
@@ -103,28 +129,41 @@ export function awaitPermission(
 ): Promise<PendingPermission | null> {
   return pollUntil<PendingPermission>(
     grove,
-    `(() => {
-      const [first] = window.__grove_debug.store.pendingPermissions
-      if (!first) return null
-      return { id: first.id, toolName: first.toolName, path: first.path, agent: first.agent, chatId: first.chatId, worktreeId: first.worktreeId }
-    })()`,
+    `(${PENDING_PERMISSIONS_EXPRESSION})[0] ?? null`,
     timeoutMs
   )
 }
 
-export async function respondPermission(
+/**
+ * Answer one parked tool call. `remember` maps to nib's session-wide always,
+ * which is what the "don't ask again" affordance sends.
+ */
+export function respondPermission(
   grove: GroveClient,
-  id: string,
+  request: { sessionId: string; id: string },
   decision: { behavior: 'allow'; remember?: boolean } | { behavior: 'deny'; message: string }
 ): Promise<unknown> {
-  const payload =
-    decision.behavior === 'allow'
-      ? { behavior: 'allow', remember: decision.remember === true }
-      : decision
+  const confirmation = {
+    type: 'user.tool_confirmation',
+    toolUseId: request.id,
+    result: confirmationResultOf(decision),
+    reason: decision.behavior === 'deny' ? decision.message : undefined
+  }
   return evaluate(
     grove,
-    `window.workbench.agents.respondPermission(${JSON.stringify(id)}, ${JSON.stringify(payload)})`
+    `window.__grove_debug.nibSessions.send(
+      ${JSON.stringify(request.sessionId)},
+      [${JSON.stringify(confirmation)}]
+    )`
   )
+}
+
+function confirmationResultOf(
+  decision: { behavior: 'allow'; remember?: boolean } | { behavior: 'deny'; message: string }
+): string {
+  if (decision.behavior === 'deny') return 'deny'
+  if (decision.remember === true) return 'always_session'
+  return 'allow'
 }
 
 export function queuedReviews(grove: GroveClient): Promise<QueuedReview[]> {
@@ -193,5 +232,8 @@ export async function finishReview(grove: GroveClient): Promise<unknown> {
 
 /** Whatever the app last surfaced as an error, so a scenario can report it. */
 export function lastError(grove: GroveClient): Promise<string | null> {
-  return evaluate(grove, `window.__grove_debug.store.error`) as Promise<string | null>
+  return evaluate(
+    grove,
+    `window.__grove_debug.store.error || window.__grove_debug.nibSessions.serverError || null`
+  ) as Promise<string | null>
 }

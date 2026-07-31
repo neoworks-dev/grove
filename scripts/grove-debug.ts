@@ -28,7 +28,8 @@ async function main(): Promise<void> {
     return
   }
   if (command === 'scenarios') {
-    for (const scenario of SCENARIOS) console.log(`${scenario.name.padEnd(18)} ${scenario.describe}`)
+    for (const scenario of SCENARIOS)
+      console.log(`${scenario.name.padEnd(18)} ${scenario.describe}`)
     return
   }
 
@@ -114,25 +115,43 @@ async function runNibCommand(grove: GroveClient, args: string[]): Promise<void> 
 
 async function runAgentCommand(grove: GroveClient, args: string[]): Promise<void> {
   const [sub, ...rest] = args
+
+  /** The worktree every agent command targets: whatever the UI has selected. */
+  async function targetWorktree(): Promise<string> {
+    const worktreePath = await agent.selectedWorktree(grove)
+    if (!worktreePath) throw new Error('no worktree selected — open a repo first')
+    return worktreePath
+  }
+
+  /** The permission the command names, or the first one waiting. */
+  async function namedPermission(id: string | undefined): Promise<agent.PendingPermission> {
+    const pending = await agent.pendingPermissions(grove)
+    const request = id ? pending.find((entry) => entry.id === id) : pending[0]
+    if (!request) throw new Error('no pending permission')
+    return request
+  }
+
+  if (sub === 'sessions') {
+    print(await agent.sessions(grove, await targetWorktree()))
+    return
+  }
   if (sub === 'start') {
-    const worktreeId = (await agent.selectedWorktree(grove)) ?? ''
-    const names = await agent.agentNames(grove)
-    if (!rest[0]) throw new Error('usage: grove-debug agent start <prompt> [agentName]')
-    print(
-      await agent.start(grove, {
-        worktreeId,
-        agent: rest[1] ?? names[0],
-        prompt: rest[0],
-        mode: 'default'
-      })
-    )
+    if (!rest[0]) throw new Error('usage: grove-debug agent start <prompt>')
+    const worktreePath = await targetWorktree()
+    print(await agent.start(grove, { worktreePath, prompt: rest[0], mode: 'default' }))
     return
   }
   if (sub === 'send') {
-    const worktreeId = (await agent.selectedWorktree(grove)) ?? ''
-    const names = await agent.agentNames(grove)
     if (!rest[0]) throw new Error('usage: grove-debug agent send <text>')
-    print(await agent.send(grove, { worktreeId, agent: rest[1] ?? names[0], text: rest[0] }))
+    const worktreePath = await targetWorktree()
+    print(await agent.send(grove, { worktreePath, text: rest[0] }))
+    return
+  }
+  if (sub === 'stop') {
+    const sessions = await agent.sessions(grove, await targetWorktree())
+    const sessionId = rest[0] ?? sessions[0]?.id
+    if (!sessionId) throw new Error('no session to stop')
+    print(await agent.stop(grove, sessionId))
     return
   }
   if (sub === 'permissions') {
@@ -140,18 +159,14 @@ async function runAgentCommand(grove: GroveClient, args: string[]): Promise<void
     return
   }
   if (sub === 'allow') {
-    const pending = await agent.pendingPermissions(grove)
-    const id = rest[0] ?? pending[0]?.id
-    if (!id) throw new Error('no pending permission')
-    print(await agent.respondPermission(grove, id, { behavior: 'allow' }))
+    print(
+      await agent.respondPermission(grove, await namedPermission(rest[0]), { behavior: 'allow' })
+    )
     return
   }
   if (sub === 'deny') {
-    const pending = await agent.pendingPermissions(grove)
-    const id = rest[1] ?? pending[0]?.id
-    if (!id) throw new Error('no pending permission')
     print(
-      await agent.respondPermission(grove, id, {
+      await agent.respondPermission(grove, await namedPermission(rest[1]), {
         behavior: 'deny',
         message: rest[0] ?? 'Denied by the debug harness'
       })
@@ -216,7 +231,7 @@ async function connect(): Promise<GroveClient> {
 const REVIEW_STATE_EXPRESSION = `(() => {
   const debug = window.__grove_debug
   if (!debug) return { error: 'renderer debug hooks missing — is GROVE_DEBUG set?' }
-  const { review, store, keymap, layout } = debug
+  const { review, store, keymap, layout, nibSessions, nibTranscript } = debug
   return {
     activeBatch: review.active && {
       id: review.active.id,
@@ -230,10 +245,17 @@ const REVIEW_STATE_EXPRESSION = `(() => {
     activeFileIndex: review.activeFileIndex,
     leafOwner: review.leafOwner,
     queue: review.queue.map((batch) => ({ id: batch.id, origin: batch.origin })),
-    pendingPermissions: store.pendingPermissions.map((request) => ({
-      id: request.id,
-      toolName: request.toolName,
-      path: request.path
+    pendingPermissions: Object.keys(nibSessions.live).flatMap((sessionId) =>
+      nibTranscript.pendingApprovals(nibSessions.live[sessionId].transcript).map((item) => ({
+        id: item.toolUseId,
+        sessionId,
+        toolName: item.name
+      }))
+    ),
+    agentSessions: nibSessions.list.map((session) => ({
+      id: session.id,
+      workspaceRoot: session.workspaceRoot,
+      status: session.status
     })),
     activeTabPath: store.activeTabPath,
     activePane: keymap.activePane,
@@ -259,8 +281,10 @@ function usage(): void {
   nib start                          start it if it is not already up
   nib get [path]                     GET a nib route (default /v1/health)
 
-  agent start <prompt> [name]        start a run in manual-review mode
-  agent send <text> [name]           send into the live run
+  agent sessions                     agent sessions in the selected worktree
+  agent start <prompt>               start a run in a new session, manual review
+  agent send <text>                  send into the worktree's active session
+  agent stop [sessionId]             interrupt the turn in flight
   agent permissions                  pending tool-permission requests
   agent allow [id]                   approve one (defaults to the first)
   agent deny <message> [id]          deny one

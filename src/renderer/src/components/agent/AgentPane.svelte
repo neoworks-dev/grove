@@ -19,7 +19,7 @@
     type SessionBadge
   } from '../../lib/nib/sessions.svelte'
   import { pendingApprovals, visibleItems } from '../../lib/nib/transcript'
-  import { activeToolsFor, autoDecisionFor, modeOf, type AgentMode } from '../../lib/nib/modes'
+  import { activeToolsFor, effectiveMode, type AgentMode } from '../../lib/nib/modes'
   import type {
     ClientEventBody,
     ConfirmationResult,
@@ -53,10 +53,13 @@
   const running = $derived(live?.transcript.status === 'running')
   const queued = $derived(snapshot?.queued ?? [])
 
-  // Bypass is deliberately not persisted: "do whatever you like" should not
-  // outlive the sitting it was granted in.
-  let bypassing = $state(false)
-  const mode = $derived(modeOf(snapshot, bypassing))
+  // The chosen mode leads the session state: accept-edits and bypass are entered
+  // by answering approvals, so a session that has not seen one yet still reports
+  // "default". The choice itself lives in the session store, because approvals
+  // have to be answered whoever started the run.
+  const mode = $derived(
+    activeId ? effectiveMode(nibSessions.modeFor(activeId), snapshot) : 'default'
+  )
 
   let expandedTools = $state<Record<string, boolean>>({})
   let transcriptViewport = $state<HTMLDivElement>()
@@ -104,15 +107,6 @@
     const id = activeId
     nibSessions.view(id)
     if (id) void nibSessions.open(id)
-  })
-
-  // Answer approvals the current mode says not to bother the user with.
-  $effect(() => {
-    if (!activeId) return
-    for (const approval of approvals) {
-      const decision = autoDecisionFor(mode, approval.name, reviewMode)
-      if (decision) void decide(approval.toolUseId, decision)
-    }
   })
 
   // Keep the newest output in view unless the user has scrolled away from it.
@@ -204,12 +198,12 @@
   }
 
   /**
-   * Switching mode is a session change, not a local flag — except for bypass,
-   * which has no server-side representation by design.
+   * Plan mode is a session change (it withholds tools); the other two only
+   * decide how approvals get answered, so they take effect as calls arrive.
    */
   function pickMode(next: AgentMode): void {
-    bypassing = next === 'bypass'
-    if (!activeId || next === 'bypass') return
+    if (!activeId) return
+    nibSessions.setMode(activeId, next)
     const allTools = catalog.tools.map((tool) => tool.name)
     void nibSessions.update(activeId, { activeTools: activeToolsFor(next, allTools) })
   }

@@ -6,7 +6,6 @@
   // it — that flow owns its own agent run, showcase diff and dismissal.
   import { setup, SETUP_STAGE_LABELS } from '../lib/setup.svelte'
   import SetupConfigStage from './setup/SetupConfigStage.svelte'
-  import SetupAgentStage from './setup/SetupAgentStage.svelte'
   import IntroPane from './IntroPane.svelte'
 
   // Only the stages this repo actually needs are shown, so a repo that already
@@ -55,8 +54,6 @@
 
     {#if setup.stage === 'config'}
       <SetupConfigStage />
-    {:else if setup.stage === 'agent'}
-      <SetupAgentStage />
     {/if}
 
     <div class="mt-auto pt-3">

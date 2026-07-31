@@ -6,12 +6,15 @@ import type { KeybindAction } from '../../../shared/actions'
 import { commands } from './commands.svelte'
 import { dialogs } from './dialogs.svelte'
 import { store } from './store.svelte'
-import { settings } from './settings.svelte'
 import { layout } from './layout.svelte'
 import { agentPrompt } from './agentPrompt.svelte'
+import { nibSessions } from './nib/sessions.svelte'
 import { actionHash } from './bindingResolution'
 
-export async function executeAction(action: KeybindAction, fromProjectScope: boolean): Promise<void> {
+export async function executeAction(
+  action: KeybindAction,
+  fromProjectScope: boolean
+): Promise<void> {
   if (action.type === 'command') {
     runCommand(action.commandId)
     return
@@ -21,7 +24,7 @@ export async function executeAction(action: KeybindAction, fromProjectScope: boo
     await runShell(action.commandLine)
     return
   }
-  await runAiPrompt(action.prompt, action.autoSend, action.agent)
+  await runAiPrompt(action.prompt, action.autoSend)
 }
 
 function runCommand(commandId: string): void {
@@ -46,7 +49,7 @@ async function runShell(commandLine: string): Promise<void> {
   }
 }
 
-async function runAiPrompt(prompt: string, autoSend: boolean, agent?: string): Promise<void> {
+async function runAiPrompt(prompt: string, autoSend: boolean): Promise<void> {
   if (!autoSend) {
     agentPrompt.request(prompt)
     focusAgentPane()
@@ -57,13 +60,14 @@ async function runAiPrompt(prompt: string, autoSend: boolean, agent?: string): P
     dialogs.notify({ level: 'warn', message: 'No worktree selected for AI prompt' })
     return
   }
-  const agentName = agent || settings.get<string>('workbench.defaultAgent')
-  if (!agentName) {
-    dialogs.notify({ level: 'warn', message: 'No agent configured for AI prompt actions' })
-    return
-  }
   try {
-    await window.workbench.agents.start(worktreeId, agentName, { prompt })
+    const sessionId = await nibSessions.sendText(worktreeId, prompt)
+    if (!sessionId) {
+      dialogs.notify({
+        level: 'error',
+        message: nibSessions.serverError || 'Could not reach the agent server.'
+      })
+    }
   } catch (error) {
     dialogs.notify({ level: 'error', message: (error as Error).message })
   }

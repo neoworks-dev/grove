@@ -70,7 +70,9 @@
       customScope: entry.source === 'custom-project' ? 'project' : 'user'
     }))
     return [...defaults, ...customs]
-      .filter((row) => matchesQuery(`${row.description} ${row.id} ${row.keys} ${row.group}`, filter))
+      .filter((row) =>
+        matchesQuery(`${row.description} ${row.id} ${row.keys} ${row.group}`, filter)
+      )
       .sort((a, b) => a.group.localeCompare(b.group) || a.description.localeCompare(b.description))
   })
 
@@ -98,7 +100,11 @@
   }
 
   // ── Override mutations ────────────────────────────────────────
-  async function writeOverride(id: string, keys: string | null, scope: SettingScope): Promise<void> {
+  async function writeOverride(
+    id: string,
+    keys: string | null,
+    scope: SettingScope
+  ): Promise<void> {
     const current = scope === 'user' ? userOverrides : projectOverrides
     await settings.set('keybindings.overrides', { ...current, [id]: keys }, scope)
   }
@@ -172,7 +178,6 @@
   const commandOptions = $derived(
     [...commands.commands].sort((a, b) => a.title.localeCompare(b.title))
   )
-  const agentNames = $derived(Object.keys(store.agentConfigs))
 
   function buildAction(): KeybindAction | null {
     if (newType === 'command') {
@@ -184,7 +189,12 @@
       return { type: 'shell', commandLine: newShell.trim() }
     }
     if (!newPrompt.trim()) return null
-    return { type: 'ai-prompt', prompt: newPrompt.trim(), autoSend: newAutoSend, agent: newAgent || undefined }
+    return {
+      type: 'ai-prompt',
+      prompt: newPrompt.trim(),
+      autoSend: newAutoSend,
+      agent: newAgent || undefined
+    }
   }
 
   async function saveNewBinding(): Promise<void> {
@@ -208,7 +218,9 @@
 
   function describeAction(action: KeybindAction): string {
     if (action.type === 'command') {
-      return commands.commands.find((entry) => entry.id === action.commandId)?.title ?? action.commandId
+      return (
+        commands.commands.find((entry) => entry.id === action.commandId)?.title ?? action.commandId
+      )
     }
     if (action.type === 'shell') return action.commandLine
     return `AI: ${action.prompt.slice(0, 40)}`
@@ -279,18 +291,6 @@
           <input type="checkbox" bind:checked={newAutoSend} />
           Send immediately
         </label>
-        <label class="flex flex-col gap-1 text-2xs text-dim">
-          Agent
-          <select
-            class="rounded-md border border-line bg-input px-2 py-1 text-xs text-default"
-            bind:value={newAgent}
-          >
-            <option value="">default</option>
-            {#each agentNames as name (name)}
-              <option value={name}>{name}</option>
-            {/each}
-          </select>
-        </label>
       {/if}
       <label class="flex flex-col gap-1 text-2xs text-dim">
         Keys
@@ -343,7 +343,9 @@
                 <span class="ml-1 text-2xs text-faint">{row.group}</span>
               {/if}
               {#if conflictIds.has(row.id)}
-                <span class="ml-1 text-2xs text-amber" title="Conflicts with another binding">⚠ conflict</span>
+                <span class="ml-1 text-2xs text-amber" title="Conflicts with another binding"
+                  >⚠ conflict</span
+                >
               {/if}
             </td>
             <td class="px-3 py-1.5">
@@ -360,7 +362,10 @@
             </td>
             <td class="px-3 py-1.5 text-right">
               {#if row.custom}
-                <button class="text-2xs text-red hover:opacity-80" onclick={() => void deleteCustom(row)}>
+                <button
+                  class="text-2xs text-red hover:opacity-80"
+                  onclick={() => void deleteCustom(row)}
+                >
                   Delete
                 </button>
               {:else}
@@ -373,7 +378,10 @@
                   </button>
                 {/if}
                 {#if !row.unbound}
-                  <button class="text-2xs text-dim hover:text-default" onclick={() => void unbind(row)}>
+                  <button
+                    class="text-2xs text-dim hover:text-default"
+                    onclick={() => void unbind(row)}
+                  >
                     Unbind
                   </button>
                 {/if}

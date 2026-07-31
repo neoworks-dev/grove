@@ -190,55 +190,8 @@ export interface WorkbenchApi {
     restart: (worktreeId: string, name: string) => Promise<ServiceRuntime>
   }
   agents: {
-    list: (worktreeId: string) => Promise<AgentRuntime[]>
-    configs: () => Promise<Record<string, AgentConfig>>
-    models: (name: string) => Promise<AgentOption[]>
-    createInstance: (worktreeId: string, name: string, label?: string) => Promise<ChatMeta>
-    convertInstance: (
-      worktreeId: string,
-      fromName: string,
-      toName: string,
-      chatId: string
-    ) => Promise<ChatMeta | null>
-    deleteChat: (worktreeId: string, name: string, chatId: string) => Promise<void>
-    start: (
-      worktreeId: string,
-      name: string,
-      options: AgentLaunchOptions,
-      chatId?: string
-    ) => Promise<AgentRuntime>
-    stop: (worktreeId: string, name: string, chatId: string) => Promise<void>
-    compact: (
-      worktreeId: string,
-      name: string,
-      instructions?: string,
-      chatId?: string
-    ) => Promise<AgentRuntime>
-    reset: (worktreeId: string, name: string, chatId?: string) => Promise<ChatMeta>
-    transcript: (worktreeId: string, name: string, chatId?: string) => Promise<string[]>
-    chats: (worktreeId: string, name: string) => Promise<AgentChats>
-    renameChat: (
-      worktreeId: string,
-      name: string,
-      chatId: string,
-      chatName: string
-    ) => Promise<void>
-    activateChat: (worktreeId: string, name: string, chatId: string) => Promise<string[]>
-    respondPermission: (id: string, decision: PermissionDecision) => Promise<void>
-    respondDialog: (id: string, decision: AgentDialogDecision) => Promise<void>
     resolveReview: (batchId: string, decisions: HunkDecision[]) => Promise<void>
     discardReview: (batchId: string) => Promise<void>
-
-    active: () => Promise<string[]>
-    send: (
-      worktreeId: string,
-      name: string,
-      text: string,
-      chatId?: string
-    ) => Promise<AgentSendResult>
-    queue: (worktreeId: string, name: string, chatId: string) => Promise<QueuedMessage[]>
-    cancelQueued: (worktreeId: string, name: string, chatId: string, id: string) => Promise<void>
-    commands: (worktreeId: string, name: string) => Promise<AgentSlashCommand[]>
   }
   nib: {
     status: () => Promise<NibStatus>

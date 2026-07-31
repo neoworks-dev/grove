@@ -9,22 +9,20 @@ describe('pendingStages', () => {
   it('offers every stage to a bare repo', () => {
     expect(pendingStages({ hasConfig: false, hasAgentsFile: false })).toEqual([
       'config',
-      'agent',
       'agents-md'
     ])
   })
 
   it('skips the config stage when workbench.yaml already exists', () => {
-    expect(pendingStages({ hasConfig: true, hasAgentsFile: false })).toEqual(['agent', 'agents-md'])
+    expect(pendingStages({ hasConfig: true, hasAgentsFile: false })).toEqual(['agents-md'])
   })
 
   it('skips the AGENTS.md stage when an instruction file already exists', () => {
-    expect(pendingStages({ hasConfig: false, hasAgentsFile: true })).toEqual(['config', 'agent'])
+    expect(pendingStages({ hasConfig: false, hasAgentsFile: true })).toEqual(['config'])
   })
 
-  it('still offers the agent stage to a fully configured repo', () => {
-    // Choosing a default agent is a preference, not a file we can detect.
-    expect(pendingStages({ hasConfig: true, hasAgentsFile: true })).toEqual(['agent'])
+  it('has nothing left for a fully configured repo', () => {
+    expect(pendingStages({ hasConfig: true, hasAgentsFile: true })).toEqual([])
   })
 })
 
@@ -32,23 +30,17 @@ describe('nextStage', () => {
   const all = pendingStages({ hasConfig: false, hasAgentsFile: false })
 
   it('walks the stages in order', () => {
-    expect(nextStage('config', all)).toBe('agent')
-    expect(nextStage('agent', all)).toBe('agents-md')
+    expect(nextStage('config', all)).toBe('agents-md')
   })
 
   it('returns null at the end so the caller finishes', () => {
     expect(nextStage('agents-md', all)).toBe(null)
   })
 
-  it('skips over a stage this repo does not need', () => {
-    const configured = pendingStages({ hasConfig: true, hasAgentsFile: false })
-    expect(nextStage('agent', configured)).toBe('agents-md')
-  })
-
   it('recovers to the first stage when the current one is not pending', () => {
     // A stale stage left from a previous repo must not strand the wizard.
     const configured = pendingStages({ hasConfig: true, hasAgentsFile: false })
-    expect(nextStage('config', configured)).toBe('agent')
+    expect(nextStage('config', configured)).toBe('agents-md')
   })
 
   it('returns null when there is nothing to do', () => {

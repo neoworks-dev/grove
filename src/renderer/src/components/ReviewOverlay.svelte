@@ -1,11 +1,11 @@
 <script lang="ts">
-  // Controls for an agent-write review, floated over the read-only diff nvim is
-  // rendering inside the NvimPane. nvim shows the whole file so decisions are
-  // made in context; every verdict is taken here.
+  // Per-hunk controls for an agent-write review, floated over the read-only diff
+  // nvim is rendering inside the NvimPane. nvim shows the whole file so
+  // decisions are made in context; every verdict is taken here.
   //
-  // Per-hunk accept/reject/comment buttons sit at each hunk's first changed row.
-  // A header bar carries the file navigation, the batch-wide actions, and the
-  // finish button. Row positions are recomputed on each redraw tick.
+  // Accept/reject/comment buttons sit at each hunk's first changed row, and the
+  // row positions are recomputed on each redraw tick. The batch-wide actions
+  // live in ReviewHeaderBar, above the canvas.
   import { review } from '../lib/review.svelte'
   import { nvimSessionFor } from '../lib/nvim/registry'
 
@@ -55,8 +55,6 @@
     commentDraft = ''
   })
 
-  const undecided = $derived(review.pendingCount)
-
   function statusFor(index: number): string {
     if (!file) return 'pending'
     return review.statusOf(file.relPath, index)
@@ -90,79 +88,13 @@
 </script>
 
 {#if visible && batch && file}
-  <!-- Header: what is being reviewed, navigation, batch-wide verdicts. -->
-  <div
-    class="absolute left-2 right-2 top-2 z-30 flex items-center gap-2 rounded-md border border-line bg-elevated/95 px-2 py-1 text-2xs shadow-lg backdrop-blur"
-  >
-    <span class="truncate font-mono text-default">{file.relPath}</span>
-    {#if file.deleted}
-      <span class="shrink-0 rounded bg-red-soft px-1 text-red">deleted</span>
-    {/if}
-    <span class="shrink-0 text-dim">
-      file {review.activeFileIndex + 1} of {batch.files.length}
-    </span>
-    {#if batch.files.length > 1}
-      <button
-        class="rounded px-1.5 py-0.5 text-muted hover:bg-hover disabled:opacity-40"
-        title="Previous file"
-        disabled={review.activeFileIndex === 0}
-        onclick={() => void review.previousFile()}
-      >
-        ‹
-      </button>
-      <button
-        class="rounded px-1.5 py-0.5 text-muted hover:bg-hover disabled:opacity-40"
-        title="Next file"
-        disabled={review.activeFileIndex >= batch.files.length - 1}
-        onclick={() => void review.nextFile()}
-      >
-        ›
-      </button>
-    {/if}
-
-    <div class="flex-1"></div>
-
-    {#if batch.summary}
-      <span class="max-w-[35%] truncate text-dim" title={batch.summary}>{batch.summary}</span>
-    {/if}
-    <span class="shrink-0 text-dim">{undecided} undecided</span>
-    <button
-      class="rounded px-1.5 py-0.5 text-green hover:bg-hover"
-      title="Keep every remaining change and submit the review"
-      onclick={() => void review.resolveAll('accepted')}
-    >
-      ✓ All
-    </button>
-    <button
-      class="rounded px-1.5 py-0.5 text-red hover:bg-hover"
-      title="Revert every remaining change and submit the review"
-      onclick={() => void review.resolveAll('rejected')}
-    >
-      ✗ All
-    </button>
-    <button
-      class="rounded border border-line px-2 py-0.5 text-default hover:bg-hover"
-      title="Apply these decisions and report back to the agent"
-      onclick={() => void review.finish()}
-    >
-      Finish
-    </button>
-    <button
-      class="rounded px-1.5 py-0.5 text-muted hover:bg-hover"
-      title="Close without deciding; the review stays in the chat"
-      onclick={() => review.cancel()}
-    >
-      ✕
-    </button>
-  </div>
-
   <!-- Per-hunk verdicts, anchored to the hunk's first changed row. -->
   {#each file.hunks as _hunk, index (index)}
     {@const offset = rowOffsets[index]}
     {#if offset !== null && offset !== undefined}
       {@const status = statusFor(index)}
       {@const comment = review.commentOf(file.relPath, index)}
-      <div class="absolute right-2 z-30 flex items-start gap-1" style="top: {offset + 30}px">
+      <div class="absolute right-2 z-30 flex items-start gap-1" style="top: {offset}px">
         {#if commenting === index}
           <div
             class="w-72 rounded-md border border-line bg-elevated/95 p-1.5 shadow-lg backdrop-blur"
@@ -182,7 +114,10 @@
             ></textarea>
             <div class="mt-1 flex items-center gap-1">
               <span class="flex-1 text-2xs text-dim">Esc discards · Ctrl+Enter saves</span>
-              <button class="rounded px-1.5 py-0.5 text-2xs text-muted hover:bg-hover" onclick={cancelComment}>
+              <button
+                class="rounded px-1.5 py-0.5 text-2xs text-muted hover:bg-hover"
+                onclick={cancelComment}
+              >
                 Cancel
               </button>
               <button

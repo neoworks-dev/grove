@@ -12,6 +12,7 @@
   import Minimap from './Minimap.svelte'
   import InlineEditPrompt from './InlineEditPrompt.svelte'
   import InlineReviewOverlay from './InlineReviewOverlay.svelte'
+  import ReviewHeaderBar from './ReviewHeaderBar.svelte'
   import ReviewOverlay from './ReviewOverlay.svelte'
   import { review } from '../lib/review.svelte'
   import { settings } from '../lib/settings.svelte'
@@ -131,7 +132,9 @@
     const id = session?.id
     if (!id) return
     if (path === lastPushedPath) lastPushedPath = null
-    void window.workbench.nvim.request(id, 'nvim_exec_lua', [CLOSE_BUFFER_LUA, [path]]).catch(() => {})
+    void window.workbench.nvim
+      .request(id, 'nvim_exec_lua', [CLOSE_BUFFER_LUA, [path]])
+      .catch(() => {})
   }
 
   function cssVar(name: string, fallback: string): string {
@@ -349,26 +352,39 @@ end
     const path = store.activeTabPath
     const id = session?.id
     if (!id || !path || path === lastPushedPath) return
-    // A review owns this pane's windows while it is up. `:edit` would replace
-    // the diff buffer in whichever window is current and drop diff mode with it,
-    // leaving the plain file on screen. Leave lastPushedPath alone so the tab is
-    // followed once the review closes.
-    if (review.ownerNvimId !== null && review.ownerNvimId === id) return
     lastPushedPath = path
+    void followTab(id, path)
+  })
+
+  /**
+   * Show grove's active tab in this pane's nvim.
+   *
+   * A review holds its own nvim tab, and `:edit` into that tab would replace the
+   * diff buffer and drop diff mode with it. Asking for another file is asking to
+   * stop looking at the review, so the review is closed first — the batch stays
+   * queued and can be reopened from the chat — and only then is the file opened,
+   * in the tab the diff leaves behind.
+   */
+  async function followTab(id: string, path: string): Promise<void> {
+    if (review.ownerNvimId !== null && review.ownerNvimId === id) await review.cancel()
+
     // Scratch tabs map to a live nvim buffer, not a file: switch the window to
     // it (only in the pane that owns the buffer) rather than :edit-ing a path.
     const scratch = scratchFor(path)
     if (scratch) {
-      if (scratch.nvimId === id) {
-        void window.workbench.nvim.request(id, 'nvim_set_current_buf', [scratch.bufnr]).catch(() => {})
-      }
+      if (scratch.nvimId !== id) return
+      await window.workbench.nvim
+        .request(id, 'nvim_set_current_buf', [scratch.bufnr])
+        .catch(() => {})
       return
     }
-    void window.workbench.nvim
-      .request(id, 'nvim_cmd', [{ cmd: 'edit', args: [path] }, {}])
-      .then(() => syncNvimKeymap())
-      .catch(() => {})
-  })
+    try {
+      await window.workbench.nvim.request(id, 'nvim_cmd', [{ cmd: 'edit', args: [path] }, {}])
+      syncNvimKeymap()
+    } catch {
+      // session gone, or the file vanished between the click and the open
+    }
+  }
 
   // Jump to a specific line when a search result (ripgrep) is accepted. Claim
   // lastPushedPath so the tab-follow effect doesn't also re-edit the file.
@@ -417,6 +433,7 @@ end
   {#if showEditor}
     <BufferTabs tabs={activeTabs} onSelect={selectTab} onClose={closeTab} />
   {/if}
+  <ReviewHeaderBar {leafId} />
 
   <div bind:this={hostEl} class="relative min-h-0 flex-1 overflow-hidden bg-elevated" role="none">
     {#if unavailable}

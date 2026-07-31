@@ -51,8 +51,9 @@ async function run(grove: GroveClient, command: string, args: string[]): Promise
     return
   }
   if (command === 'lua') {
-    if (!args[0]) throw new Error('usage: grove-debug lua <code>')
-    print(await grove.raw.request('debug.nvim.lua', { code: args[0] }))
+    if (!args[0]) throw new Error('usage: grove-debug lua <code> [session]')
+    // The session only has to be named when more than one editor is open.
+    print(await grove.raw.request('debug.nvim.lua', { code: args[0], session: args[1] }))
     return
   }
   if (command === 'rpc') {

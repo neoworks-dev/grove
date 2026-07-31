@@ -31,6 +31,7 @@ import { nibSessions } from './nib/sessions.svelte'
 import { inlineEdit } from './inlineEdit.svelte'
 import { review } from './review.svelte'
 import { intro } from './intro.svelte'
+import { allNvimSessions } from './nvim/registry'
 import { setup } from './setup.svelte'
 
 export interface EditorTab {
@@ -472,6 +473,12 @@ export function subscribeEvents(): void {
     // Refresh the +/- line counts for the worktree overviews (debounced).
     scheduleDiffStats(event.worktreeId)
     const isFile = event.type === 'add' || event.type === 'change' || event.type === 'unlink'
+    // Something outside the editor wrote this file — an agent, or a review being
+    // applied. Nothing else makes an embedded nvim re-read it, so an open buffer
+    // would keep showing the old text and could write it back over the change.
+    if (event.type === 'change' || event.type === 'add') {
+      for (const session of allNvimSessions()) void session.refreshFile(event.path)
+    }
     // An inline edit under review keeps the change in the editor overlay, so it
     // claims its own writes instead of the changes view taking over.
     if (isFile && inlineEdit.claimFsChange(event.worktreeId, event.relPath)) return

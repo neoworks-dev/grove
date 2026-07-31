@@ -184,6 +184,20 @@ return vim.api.nvim_win_call(win, function()
 end)
 `
 
+// Re-read one file from disk if this editor has it open and unedited. `checktime`
+// rather than `edit!` so the cursor, marks and undo history survive, and so a
+// buffer the user has unsaved work in is never silently thrown away.
+const REFRESH_FILE_LUA = `
+local path = ...
+local buf = vim.fn.bufnr(vim.fn.fnameescape(path))
+if buf == -1 or not vim.api.nvim_buf_is_loaded(buf) then return false end
+if vim.bo[buf].modified then return false end
+vim.api.nvim_buf_call(buf, function()
+  vim.cmd('checktime')
+end)
+return true
+`
+
 // Tint the given 1-based line ranges as additions in the live buffer, replacing
 // any previous inline-review highlight. Used by the accept/reject overlay.
 const INLINE_PAINT_LUA = `
@@ -433,6 +447,25 @@ export class NvimCanvasSession {
     if (!id) return
     try {
       await window.workbench.nvim.request(id, 'nvim_cmd', [{ cmd: 'edit', bang: true }, {}])
+    } catch {
+      // session gone
+    }
+  }
+
+  /**
+   * Pick up a change made to a file on disk by something other than this editor
+   * — an agent write, or a review being applied.
+   *
+   * An embedded nvim never gets a focus event, so nothing ever triggers its own
+   * `checktime`; without this the buffer keeps showing the pre-write text and
+   * writing it back would undo the change. A buffer with unsaved edits is left
+   * alone: that is the user's work, and losing it would be worse.
+   */
+  async refreshFile(path: string): Promise<void> {
+    const id = this.nvimId
+    if (!id) return
+    try {
+      await window.workbench.nvim.request(id, 'nvim_exec_lua', [REFRESH_FILE_LUA, [path]])
     } catch {
       // session gone
     }

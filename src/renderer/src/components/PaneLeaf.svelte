@@ -21,6 +21,10 @@
     !type?.ownsFontScale && fontScale !== 1 ? `zoom: ${fontScale}` : ''
   )
 
+  // Each leaf paints its own panel background now that the center container has
+  // none; pane types that bring their own background keep it.
+  const surfaceClass = $derived(type?.containerClass ?? 'bg-surface')
+
   function updateState(patch: Record<string, unknown>): void {
     layout.updateLeafState(leaf.id, patch)
   }
@@ -41,8 +45,10 @@
   data-zoom-container={leaf.id}
   style={zoomStyle}
   onpointerdown={onPointerDown}
-  class="flex h-full w-full min-w-0 min-h-0 flex-col overflow-hidden outline-none {type?.containerClass ??
-    ''} {keymap.activePane === leaf.id ? 'pane-active' : ''} {dragged ? 'opacity-40' : ''}"
+  class="flex h-full w-full min-w-0 min-h-0 flex-col overflow-hidden rounded-xl border border-line-faint outline-none {surfaceClass} {keymap.activePane ===
+  leaf.id
+    ? 'pane-active'
+    : ''} {dragged ? 'opacity-40' : ''}"
 >
   {#if !type}
     <MissingPane paneTypeId={leaf.paneTypeId} />

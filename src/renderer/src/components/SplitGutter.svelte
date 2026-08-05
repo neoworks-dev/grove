@@ -1,6 +1,7 @@
 <script lang="ts">
-  // Resize gutter between two siblings of a split. Renders as a 1px line with
-  // a wider invisible hit area; drag or arrow keys shift the boundary.
+  // Resize gutter between two siblings of a split. Renders as an empty gap the
+  // panes sit apart in — each pane draws its own border, so the gutter only
+  // needs to show a handle on hover; drag or arrow keys shift the boundary.
   import { layout } from '../lib/layout.svelte'
   import { panes } from '../lib/panes.svelte'
   import { leaves, type LayoutNode, type SplitNode, MIN_PANE_FRACTION } from '../lib/layoutTree'
@@ -137,12 +138,12 @@
 
 <div
   bind:this={rootEl}
-  class="relative shrink-0 {horizontal ? 'w-px' : 'h-px'} bg-line"
+  class="relative shrink-0 {horizontal ? 'w-1.5' : 'h-1.5'}"
   role="separator"
   aria-orientation={horizontal ? 'vertical' : 'horizontal'}
 >
   <div
-    class="absolute z-raised {horizontal
+    class="absolute z-raised rounded-full transition-colors {horizontal
       ? '-left-0.5 -right-0.5 top-0 h-full cursor-col-resize'
       : '-top-0.5 -bottom-0.5 left-0 w-full cursor-row-resize'} {dragging
       ? 'bg-accent'

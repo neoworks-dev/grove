@@ -209,7 +209,7 @@ export function registerCorePanes(): void {
     title: 'Terminal',
     icon: TerminalWindow,
     component: TerminalPane,
-    containerClass: 'bg-canvas',
+    containerClass: 'bg-elevated',
     minHeight: 120,
     // 'terminal' forwards every key to the shell; ctrl+\ ctrl+n drops to
     // 'normal' so global chords (ctrl+hjkl, leader) work; 'i' returns.

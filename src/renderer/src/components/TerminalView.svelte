@@ -89,10 +89,10 @@
     const fg = cssVar('--text', '#fafafa')
     const dim = cssVar('--text-dim', '#71717a')
     return {
-      background: cssVar('--bg', '#0b0b0d'),
+      background: cssVar('--bg-elevated', '#0b0b0d'),
       foreground: fg,
       cursor: fg,
-      cursorAccent: cssVar('--bg', '#0b0b0d'),
+      cursorAccent: cssVar('--bg-elevated', '#0b0b0d'),
       selectionBackground: cssVar('--surface-hover', '#26262a'),
       black: cssVar('--bg-elevated', '#18181b'),
       red: cssVar('--ctx-red', '#f87171'),
@@ -201,4 +201,4 @@
   })
 </script>
 
-<div bind:this={hostEl} class="h-full w-full overflow-hidden bg-canvas px-2 py-1"></div>
+<div bind:this={hostEl} class="h-full w-full overflow-hidden bg-elevated px-2 py-1"></div>

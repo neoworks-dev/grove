@@ -19,6 +19,10 @@ vim.opt.laststatus = 0
 vim.opt.showtabline = 0
 vim.opt.cmdheight = 1
 vim.opt.undofile = true
+-- Write-backups default to the file's own directory ('.') first, so a session
+-- killed mid-:w (e.g. a dev reload) leaves a stray `file~` in the worktree.
+-- Keep them in the isolated state dir instead.
+vim.opt.backupdir:remove('.')
 -- No swapfiles: every grove pane is its own embedded nvim, so two panes editing
 -- the same file would collide on a swapfile and trigger a blocking E325 ATTENTION
 -- prompt on attach (which aborts the session). Grove owns buffer persistence.

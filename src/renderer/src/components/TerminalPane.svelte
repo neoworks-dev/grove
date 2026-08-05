@@ -1,8 +1,9 @@
 <script lang="ts">
   // Integrated terminal panel: hosts one or more shells as tabs. Every open
   // terminal stays mounted (inactive ones hidden) so its pty keeps streaming and
-  // its scrollback survives switching. A list on the right gives an overview of
-  // all launched terminals and lets the user add, select, and close them.
+  // its scrollback survives switching. A tab strip along the top — styled like
+  // the editor buffer tabs — lists all launched terminals and lets the user
+  // add, select, and close them.
   import { onMount, onDestroy } from 'svelte'
   import TerminalView from './TerminalView.svelte'
   import { store } from '../lib/store.svelte'
@@ -25,6 +26,8 @@
   // Exported focus() of each mounted TerminalView, keyed by session.
   const views: Record<string, { focus: () => void }> = {}
 
+  let stripEl = $state<HTMLDivElement>()
+
   function focusActive(): void {
     if (activeKey) views[activeKey]?.focus()
   }
@@ -32,6 +35,15 @@
   // Called by the bottom panel when the Terminal tab becomes active.
   export function focus(): void {
     focusActive()
+  }
+
+  // Mirrors the editor buffer tab styling: the active tab reads as elevated,
+  // inactive tabs stay dim until hovered.
+  function tabClass(key: string): string {
+    if (key === activeKey) {
+      return 'border-x border-line bg-elevated text-default'
+    }
+    return 'border-y border-line text-dim hover:bg-hover hover:text-default'
   }
 
   function newTerminal(): void {
@@ -76,6 +88,17 @@
     }
   }
 
+  // Keep the active tab visible when the strip is scrolled elsewhere.
+  $effect(() => {
+    const active = activeKey
+    if (!stripEl || !active) return
+    for (const el of stripEl.querySelectorAll<HTMLElement>('[data-tab]')) {
+      if (el.dataset.tab !== active) continue
+      el.scrollIntoView({ inline: 'nearest', block: 'nearest' })
+      return
+    }
+  })
+
   let unregisterBindings: (() => void) | null = null
 
   onMount(() => {
@@ -98,7 +121,47 @@
   onDestroy(() => unregisterBindings?.())
 </script>
 
-<div class="flex h-full w-full bg-canvas">
+<div class="flex h-full w-full flex-col bg-elevated">
+  <!-- Top: tab strip of all launched terminals, like the editor buffer tabs. -->
+  <div class="flex h-7 shrink-0 items-stretch bg-surface">
+    <div bind:this={stripEl} class="no-scrollbar min-w-0 flex-1 overflow-x-auto">
+      <div class="flex h-full w-max items-stretch">
+        {#each sessions as session (session.key)}
+          <div
+            data-tab={session.key}
+            class="group/tab flex h-7 shrink-0 cursor-pointer items-center px-3 text-xs {tabClass(
+              session.key
+            )}"
+          >
+            <button
+              class="flex cursor-pointer items-center gap-1.5"
+              onclick={() => selectTerminal(session.key)}
+            >
+              <svg class="shrink-0 opacity-70" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 17l6-6-6-6M12 19h8" />
+              </svg>
+              <span class="max-w-40 truncate">{session.title}</span>
+            </button>
+            <button
+              class="inline-flex w-0 shrink-0 cursor-pointer items-center overflow-hidden text-dim opacity-0 transition-all duration-150 ease-out hover:text-red group-hover/tab:ml-1 group-hover/tab:w-3.5 group-hover/tab:opacity-100"
+              title="Close terminal"
+              onclick={() => closeTerminal(session.key)}>✕</button
+            >
+          </div>
+        {/each}
+      </div>
+    </div>
+    <button
+      class="flex w-7 shrink-0 cursor-pointer items-center justify-center border-l border-line text-dim transition hover:bg-hover hover:text-default"
+      title="New terminal"
+      onclick={newTerminal}
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 5v14M5 12h14" />
+      </svg>
+    </button>
+  </div>
+
   <!-- Terminal stack: only the active view is visible; the rest keep running. -->
   <div class="relative min-w-0 flex-1">
     {#each sessions as session (session.key)}
@@ -113,50 +176,5 @@
         />
       </div>
     {/each}
-  </div>
-
-  <!-- Right: overview of all launched terminals. -->
-  <div class="flex w-44 shrink-0 flex-col border-l border-line bg-elevated">
-    <div class="flex h-7 shrink-0 items-center justify-between border-b border-line px-2">
-      <span class="text-2xs font-semibold uppercase tracking-caps text-dim">Terminals</span>
-      <button
-        class="flex h-5 w-5 items-center justify-center rounded text-dim transition hover:bg-hover hover:text-default"
-        title="New terminal"
-        onclick={newTerminal}
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 5v14M5 12h14" />
-        </svg>
-      </button>
-    </div>
-
-    <div class="min-h-0 flex-1 overflow-auto py-1">
-      {#each sessions as session (session.key)}
-        <div
-          class="group mx-1 flex items-center gap-2 rounded px-2 py-1 {session.key === activeKey
-            ? 'bg-hover text-default'
-            : 'text-muted hover:bg-hover/60 hover:text-default'}"
-        >
-          <button
-            class="flex min-w-0 flex-1 items-center gap-2 text-left text-xs"
-            onclick={() => selectTerminal(session.key)}
-          >
-            <svg class="shrink-0 opacity-70" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M4 17l6-6-6-6M12 19h8" />
-            </svg>
-            <span class="truncate">{session.title}</span>
-          </button>
-          <button
-            class="shrink-0 text-dim opacity-0 transition hover:text-default group-hover:opacity-100"
-            title="Close terminal"
-            onclick={() => closeTerminal(session.key)}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M18 6L6 18M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-      {/each}
-    </div>
   </div>
 </div>

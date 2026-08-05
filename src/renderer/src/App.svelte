@@ -340,9 +340,9 @@
       </div>
     {/if}
 
-    <div
-      class="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl border border-line-faint bg-surface"
-    >
+    <!-- No surface of its own: every pane leaf is its own rounded panel, so the
+         gutters between them read as the canvas showing through. -->
+    <div class="flex min-h-0 min-w-0 flex-1 overflow-hidden">
       {#each layout.mountedViewIds as viewId (viewId)}
         <div
           class="flex min-h-0 min-w-0 flex-1 overflow-hidden {viewId === layout.activeViewId

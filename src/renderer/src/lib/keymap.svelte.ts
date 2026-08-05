@@ -257,6 +257,16 @@ class Keymap {
   private lastPointerX = Number.NaN
   private lastPointerY = Number.NaN
 
+  // While the user is typing, mouse jitter (a bumped desk, a palm brushing the
+  // trackpad) must not let focus-follows-mouse yank focus to the hovered pane.
+  private static readonly TYPING_FOCUS_GRACE_MS = 300
+  private lastKeydownAt = 0
+
+  // Called by the global key dispatcher on every keydown.
+  noteKeyActivity(): void {
+    this.lastKeydownAt = performance.now()
+  }
+
   // Focus the pane the mouse is over. Called from the pane action's mousemove.
   // Because it only acts on real motion, a keyboard focus change persists until
   // the user moves the mouse — a parked cursor emits no mousemove.
@@ -264,6 +274,7 @@ class Keymap {
     if (clientX === this.lastPointerX && clientY === this.lastPointerY) return
     this.lastPointerX = clientX
     this.lastPointerY = clientY
+    if (performance.now() - this.lastKeydownAt < Keymap.TYPING_FOCUS_GRACE_MS) return
     if (this.activePane === id) return
     this.focusPane(id)
   }

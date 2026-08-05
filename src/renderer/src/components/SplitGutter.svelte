@@ -138,20 +138,28 @@
 
 <div
   bind:this={rootEl}
-  class="relative shrink-0 {horizontal ? 'w-1.5' : 'h-1.5'}"
+  class="relative shrink-0 {horizontal ? 'w-1' : 'h-1'}"
   role="separator"
   aria-orientation={horizontal ? 'vertical' : 'horizontal'}
 >
+  <!-- Invisible hit zone wider than the gap so the gutter stays easy to grab;
+       the visible handle is the thin centered bar inside it. -->
   <div
-    class="absolute z-raised rounded-full transition-colors {horizontal
-      ? '-left-0.5 -right-0.5 top-0 h-full cursor-col-resize'
-      : '-top-0.5 -bottom-0.5 left-0 w-full cursor-row-resize'} {dragging
-      ? 'bg-accent'
-      : 'bg-transparent hover:bg-line-strong'}"
+    class="group absolute z-raised {horizontal
+      ? '-left-1 -right-1 top-0 h-full cursor-col-resize'
+      : '-top-1 -bottom-1 left-0 w-full cursor-row-resize'}"
     role="separator"
     aria-orientation={horizontal ? 'vertical' : 'horizontal'}
     tabindex="0"
     onpointerdown={onPointerDown}
     onkeydown={onKeyDown}
-  ></div>
+  >
+    <div
+      class="absolute rounded-full transition-colors {horizontal
+        ? 'inset-y-0 left-1/2 w-0.5 -translate-x-1/2'
+        : 'inset-x-0 top-1/2 h-0.5 -translate-y-1/2'} {dragging
+        ? 'bg-accent'
+        : 'bg-transparent group-hover:bg-line-strong'}"
+    ></div>
+  </div>
 </div>

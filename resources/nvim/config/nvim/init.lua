@@ -122,7 +122,14 @@ if (vim.uv or vim.loop).fs_stat(lazyPath) then
         'saghen/blink.cmp',
         version = '*',
         opts = {
-          keymap = { preset = 'default' },
+          -- 'enter' preset: <CR> accepts the selected item and is consumed, so
+          -- accepting never also inserts a newline ('default' leaves <CR> unmapped).
+          -- <Esc> with the menu open only closes the menu (staying in insert);
+          -- without a menu it falls through to the normal mode switch.
+          keymap = {
+            preset = 'enter',
+            ['<Esc>'] = { 'cancel', 'fallback' }
+          },
           sources = { default = { 'lsp', 'path', 'snippets', 'buffer' } },
           completion = { documentation = { auto_show = true } }
         }

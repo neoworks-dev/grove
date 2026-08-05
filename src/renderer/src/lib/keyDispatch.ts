@@ -17,6 +17,9 @@ export const keyDispatch = new KeyDispatcher(() => keymap.activePane)
  */
 export function startGlobalKeyDispatch(): () => void {
   function onWindowKeyDown(event: KeyboardEvent): void {
+    // Every keystroke suppresses focus-follows-mouse for a moment: hand jitter
+    // on the mouse while typing must not yank focus to the hovered pane.
+    keymap.noteKeyActivity()
     keyDispatch.dispatch(event)
   }
   window.addEventListener('keydown', onWindowKeyDown, true)

@@ -12,7 +12,7 @@
 import { keymap } from '../keymap.svelte'
 import { keyDispatch } from '../keyDispatch'
 import { store } from '../store.svelte'
-import { createGridState } from './types'
+import { createGridState, type GridState } from './types'
 import { applyRedraw } from './grid'
 import { encodeKeyEvent } from './keys'
 import { measureCell, type CellMetrics, type FontSpec } from './metrics'
@@ -213,6 +213,7 @@ export class NvimCanvasSession {
   private pendingDirtyRows = new Set<number>()
   private pendingDirtyAll = false
   private composing = false
+  private hasFocus = false
   private lastCursorRow = 0
   private lastMode = 'normal'
 
@@ -519,6 +520,7 @@ export class NvimCanvasSession {
     input.addEventListener('compositionstart', this.onComposition)
     input.addEventListener('compositionend', this.onComposition)
     input.addEventListener('focus', this.onInputFocus)
+    input.addEventListener('blur', this.onInputBlur)
 
     await this.connect()
   }
@@ -630,6 +632,7 @@ export class NvimCanvasSession {
     input.removeEventListener('compositionstart', this.onComposition)
     input.removeEventListener('compositionend', this.onComposition)
     input.removeEventListener('focus', this.onInputFocus)
+    input.removeEventListener('blur', this.onInputBlur)
     this.stopRedraw?.()
     this.stopExit?.()
     this.observer?.disconnect()
@@ -669,7 +672,7 @@ export class NvimCanvasSession {
     requestAnimationFrame(() => {
       this.renderScheduled = false
       if (!this.renderer) return
-      this.renderer.render(this.grid, {
+      this.renderer.render(this.renderState(), {
         all: this.pendingDirtyAll,
         rows: this.pendingDirtyRows,
         flushed: true
@@ -677,6 +680,13 @@ export class NvimCanvasSession {
       this.pendingDirtyAll = false
       this.pendingDirtyRows = new Set()
     })
+  }
+
+  // The grid as painted: an unfocused pane hides its cursor, so only the pane
+  // the user is typing into shows one.
+  private renderState(): GridState {
+    if (this.hasFocus) return this.grid
+    return { ...this.grid, cursor: { ...this.grid.cursor, visible: false } }
   }
 
   private handleRedraw(events: unknown[]): void {
@@ -772,6 +782,19 @@ export class NvimCanvasSession {
 
   private onInputFocus = (): void => {
     keymap.setPaneMode(this.config.leafId, this.mapMode(this.grid.modeName))
+    this.setFocusVisible(true)
+  }
+
+  private onInputBlur = (): void => {
+    this.setFocusVisible(false)
+  }
+
+  // Show/hide the cursor with pane focus; repaint its row so the change lands.
+  private setFocusVisible(hasFocus: boolean): void {
+    if (this.hasFocus === hasFocus) return
+    this.hasFocus = hasFocus
+    this.pendingDirtyRows.add(this.grid.cursor.row)
+    this.scheduleRender()
   }
 
   // Spatial pane nav focuses the leaf container; steer that into the hidden

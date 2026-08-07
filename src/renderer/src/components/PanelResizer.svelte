@@ -2,12 +2,25 @@
   // Resize handle that lives in the gap between two floating panels rather than
   // on either panel's border. Drives a dock's width; when the dock is collapsed
   // it degrades to a plain spacer so the gutter spacing stays consistent.
-  import { layout } from '../lib/layout.svelte'
+  import { layout, dockLeafId } from '../lib/layout.svelte'
+  import { keymap } from '../lib/keymap.svelte'
+  import { leafTouchesSide } from '../lib/layoutTree'
   import type { DockSide } from '../../../shared/types'
 
   let { side, enabled = true }: { side: DockSide; enabled?: boolean } = $props()
 
   let dragging = $state(false)
+
+  // tmux-style focus marker, matching SplitGutter: this resizer sits between a
+  // dock and the center tree, so it lights up when the focused pane is the dock
+  // itself or a center leaf whose edge reaches this side of the tree.
+  const touchesActive = $derived.by(() => {
+    if (!enabled) return false
+    const activeId = keymap.activeSurfaceId
+    if (!activeId) return false
+    if (activeId === dockLeafId(side)) return true
+    return leafTouchesSide(layout.tree, activeId, side)
+  })
 
   function startResize(event: PointerEvent): void {
     if (!enabled) return
@@ -47,7 +60,9 @@
     <div
       class="my-1.5 w-0.5 rounded-full transition-colors {dragging
         ? 'bg-accent'
-        : 'bg-transparent group-hover:bg-line-strong'}"
+        : touchesActive
+          ? 'bg-accent/50 group-hover:bg-accent'
+          : 'bg-transparent group-hover:bg-line-strong'}"
     ></div>
   {/if}
 </div>

@@ -4,11 +4,32 @@
   // needs to show a handle on hover; drag or arrow keys shift the boundary.
   import { layout } from '../lib/layout.svelte'
   import { panes } from '../lib/panes.svelte'
-  import { leaves, type LayoutNode, type SplitNode, MIN_PANE_FRACTION } from '../lib/layoutTree'
+  import { keymap } from '../lib/keymap.svelte'
+  import {
+    leaves,
+    leafTouchesSide,
+    type LayoutNode,
+    type SplitNode,
+    MIN_PANE_FRACTION
+  } from '../lib/layoutTree'
 
   let { split, gutterIndex }: { split: SplitNode; gutterIndex: number } = $props()
 
   const horizontal = $derived(split.direction === 'row')
+
+  // tmux-style focus marker: light this gutter up when the focused pane's edge
+  // is part of it — the focused leaf must touch the boundary itself, not merely
+  // live somewhere in a neighboring subtree.
+  const touchesActive = $derived.by(() => {
+    const activeId = keymap.activeSurfaceId
+    if (!activeId) return false
+    const before = split.children[gutterIndex]
+    const after = split.children[gutterIndex + 1]
+    if (horizontal) {
+      return leafTouchesSide(before, activeId, 'right') || leafTouchesSide(after, activeId, 'left')
+    }
+    return leafTouchesSide(before, activeId, 'bottom') || leafTouchesSide(after, activeId, 'top')
+  })
 
   // Once a neighbor bottoms out at its min, dragging this many more px past the
   // clamp collapses (closes) it — mirroring the dock resize, and independent of
@@ -138,7 +159,7 @@
 
 <div
   bind:this={rootEl}
-  class="relative shrink-0 {horizontal ? 'w-1' : 'h-1'}"
+  class="relative shrink-0 {horizontal ? 'w-2' : 'h-2'}"
   role="separator"
   aria-orientation={horizontal ? 'vertical' : 'horizontal'}
 >
@@ -159,7 +180,9 @@
         ? 'inset-y-0 left-1/2 w-0.5 -translate-x-1/2'
         : 'inset-x-0 top-1/2 h-0.5 -translate-y-1/2'} {dragging
         ? 'bg-accent'
-        : 'bg-transparent group-hover:bg-line-strong'}"
+        : touchesActive
+          ? 'bg-accent/50 group-hover:bg-accent'
+          : 'bg-transparent group-hover:bg-line-strong'}"
     ></div>
   </div>
 </div>

@@ -5,11 +5,17 @@
   import { layout, dockLeafId } from '../lib/layout.svelte'
   import { keymap } from '../lib/keymap.svelte'
   import { leafTouchesSide } from '../lib/layoutTree'
+  import {
+    activeSurfaceElement,
+    dividerSegment,
+    type DividerSegment
+  } from '../lib/paneDividers'
   import type { DockSide } from '../../../shared/types'
 
   let { side, enabled = true }: { side: DockSide; enabled?: boolean } = $props()
 
   let dragging = $state(false)
+  let rootEl = $state<HTMLElement>()
 
   // tmux-style focus marker, matching SplitGutter: this resizer sits between a
   // dock and the center tree, so it lights up when the focused pane is the dock
@@ -20,6 +26,33 @@
     if (!activeId) return false
     if (activeId === dockLeafId(side)) return true
     return leafTouchesSide(layout.tree, activeId, side)
+  })
+
+  // The stretch of this resizer the focused pane runs alongside — the tint
+  // spans just that segment (a half-height center pane lights only half the
+  // divider), re-measured when either element changes size.
+  let segment = $state<DividerSegment | null>(null)
+
+  function measureSegment(paneEl: HTMLElement): void {
+    if (!rootEl) return
+    segment = dividerSegment(rootEl, paneEl, 'y')
+  }
+
+  $effect(() => {
+    if (!touchesActive || !rootEl) {
+      segment = null
+      return
+    }
+    const paneEl = activeSurfaceElement(keymap.activeSurfaceId)
+    if (!paneEl) {
+      segment = null
+      return
+    }
+    measureSegment(paneEl)
+    const observer = new ResizeObserver(() => measureSegment(paneEl))
+    observer.observe(paneEl)
+    observer.observe(rootEl)
+    return () => observer.disconnect()
   })
 
   function startResize(event: PointerEvent): void {
@@ -48,6 +81,7 @@
      it so the highlight sits between panels, never on a border. A negative inset
      widens the pointer hit area past the 4px gap without shifting layout. -->
 <div
+  bind:this={rootEl}
   class="group relative flex w-2 shrink-0 items-stretch justify-center {enabled
     ? 'cursor-col-resize'
     : ''}"
@@ -60,9 +94,14 @@
     <div
       class="my-1.5 w-0.5 rounded-full transition-colors {dragging
         ? 'bg-accent'
-        : touchesActive
-          ? 'bg-accent/50 group-hover:bg-accent'
-          : 'bg-transparent group-hover:bg-line-strong'}"
+        : 'bg-transparent group-hover:bg-line-strong'}"
     ></div>
+    <!-- Focus tint: only the stretch the focused pane borders, tmux-style. -->
+    {#if segment && !dragging}
+      <div
+        class="pointer-events-none absolute left-1/2 w-0.5 -translate-x-1/2 rounded-full bg-accent/50"
+        style={`top:${segment.offset}px;height:${segment.length}px`}
+      ></div>
+    {/if}
   {/if}
 </div>

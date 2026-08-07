@@ -6,6 +6,11 @@
   import { panes } from '../lib/panes.svelte'
   import { keymap } from '../lib/keymap.svelte'
   import {
+    activeSurfaceElement,
+    dividerSegment,
+    type DividerSegment
+  } from '../lib/paneDividers'
+  import {
     leaves,
     leafTouchesSide,
     type LayoutNode,
@@ -29,6 +34,33 @@
       return leafTouchesSide(before, activeId, 'right') || leafTouchesSide(after, activeId, 'left')
     }
     return leafTouchesSide(before, activeId, 'bottom') || leafTouchesSide(after, activeId, 'top')
+  })
+
+  // The stretch of this gutter the focused pane runs alongside — the tint spans
+  // just that segment, not the gutter's full length. Re-measured whenever the
+  // focused pane or the gutter itself changes size.
+  let segment = $state<DividerSegment | null>(null)
+
+  function measureSegment(paneEl: HTMLElement): void {
+    if (!rootEl) return
+    segment = dividerSegment(rootEl, paneEl, horizontal ? 'y' : 'x')
+  }
+
+  $effect(() => {
+    if (!touchesActive) {
+      segment = null
+      return
+    }
+    const paneEl = activeSurfaceElement(keymap.activeSurfaceId)
+    if (!paneEl) {
+      segment = null
+      return
+    }
+    measureSegment(paneEl)
+    const observer = new ResizeObserver(() => measureSegment(paneEl))
+    observer.observe(paneEl)
+    observer.observe(rootEl)
+    return () => observer.disconnect()
   })
 
   // Once a neighbor bottoms out at its min, dragging this many more px past the
@@ -180,9 +212,18 @@
         ? 'inset-y-0 left-1/2 w-0.5 -translate-x-1/2'
         : 'inset-x-0 top-1/2 h-0.5 -translate-y-1/2'} {dragging
         ? 'bg-accent'
-        : touchesActive
-          ? 'bg-accent/50 group-hover:bg-accent'
-          : 'bg-transparent group-hover:bg-line-strong'}"
+        : 'bg-transparent group-hover:bg-line-strong'}"
     ></div>
   </div>
+  <!-- Focus tint: only the stretch the focused pane borders, tmux-style. -->
+  {#if segment && !dragging}
+    <div
+      class="pointer-events-none absolute rounded-full bg-accent/50 {horizontal
+        ? 'left-1/2 w-0.5 -translate-x-1/2'
+        : 'top-1/2 h-0.5 -translate-y-1/2'}"
+      style={horizontal
+        ? `top:${segment.offset}px;height:${segment.length}px`
+        : `left:${segment.offset}px;width:${segment.length}px`}
+    ></div>
+  {/if}
 </div>

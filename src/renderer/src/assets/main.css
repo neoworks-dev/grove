@@ -410,14 +410,14 @@
 [data-theme='dark'] {
   color-scheme: dark;
 
-  --bg: #141416;
-  --bg-elevated: #262628;
-  --surface: #1c1c1e;
+  --bg: #000000;
+  --bg-elevated: #0b0b0d;
+  --surface: #141416;
   --surface-raised: #1c1c1f;
   --surface-hover: #1f1f23;
   --surface-input: #0e0e10;
 
-  --border: #29292b;
+  --border: #262626;
   --border-strong: #3f3f46;
   --border-faint: rgba(255, 255, 255, 0.06);
 
@@ -652,12 +652,24 @@
     font-family: var(--font-mono);
   }
 
-  /* Active-pane marker (keyboard focus model). Focus is signalled by the
-     tmux-style gutter highlight (SplitGutter lights the dividers the focused
-     pane touches), not by dimming inactive panes. `.pane-surface` marks every
-     focusable pane container (split-tree leaves and docked panes alike). */
+  /* Active-pane marker (keyboard focus model): an accent inset border on the
+     focused pane. Inset so it never shifts layout or overlaps neighbor gutters.
+     Accent rather than a grey — every pane now draws its own faint border, so a
+     grey ring would be nearly indistinguishable from an unfocused pane.
+     Drawn as an overlay pseudo-element: an inset box-shadow on the pane itself
+     paints under child backgrounds, so opaque children (xterm, nvim canvases)
+     would swallow the ring. */
   .pane-active {
     position: relative;
+  }
+  .pane-active::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 40;
+    pointer-events: none;
+    border-radius: inherit;
+    box-shadow: inset 0 0 0 1px var(--color-accent);
   }
 
   /* Shadows */
@@ -765,10 +777,14 @@
  * ═══════════════════════════════════════════════════════════════
  * Same unlayered approach as .doc-article so daisyUI's dark-only prose vars
  * can't override our [data-theme] tokens. Tighter spacing for a chat bubble. */
-/* Sticky newest-user-message band: opaque elevated bubble so transcript
-   content scrolling under the sticky message never shows through. */
+/* Sticky newest-user-message band: green-soft is translucent, so layer it over
+   the base background to stay opaque while transcript content scrolls under. */
 .agent-sticky-user {
-  background: var(--bg-elevated);
+  /* Orange bubble, layered over the base bg so it stays opaque while the sticky
+     message scrolls over the transcript below it. */
+  background:
+    linear-gradient(var(--ctx-amber-soft), var(--ctx-amber-soft)),
+    var(--bg);
 }
 
 .agent-markdown.prose {

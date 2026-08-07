@@ -75,28 +75,6 @@ export function findLeaf(root: LayoutNode, leafId: string): LeafNode | null {
   return found ?? null
 }
 
-export type LayoutSide = 'left' | 'right' | 'top' | 'bottom'
-
-/**
- * Whether a leaf sits flush against one outer side of this subtree — i.e. the
- * leaf's edge is part of the subtree's edge on that side. Drives the tmux-style
- * gutter highlight: a gutter lights up only when the focused pane touches it.
- */
-export function leafTouchesSide(node: LayoutNode, leafId: string, side: LayoutSide): boolean {
-  if (node.kind === 'leaf') return node.id === leafId
-  const sideIsHorizontal = side === 'left' || side === 'right'
-  const splitRunsAlongSide = (node.direction === 'row') === sideIsHorizontal
-  if (!splitRunsAlongSide) {
-    // The side runs across the split axis: every child spans it, so the leaf
-    // touches it from whichever child holds it.
-    return node.children.some((child) => leafTouchesSide(child, leafId, side))
-  }
-  // The side is one end of the split axis: only the first/last child reaches it.
-  const firstEnd = side === 'left' || side === 'top'
-  const edgeChild = firstEnd ? node.children[0] : node.children[node.children.length - 1]
-  return leafTouchesSide(edgeChild, leafId, side)
-}
-
 export function findParentSplit(root: LayoutNode, nodeId: string): SplitNode | null {
   if (root.kind === 'leaf') return null
   for (const child of root.children) {

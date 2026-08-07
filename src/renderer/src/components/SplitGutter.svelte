@@ -4,64 +4,11 @@
   // needs to show a handle on hover; drag or arrow keys shift the boundary.
   import { layout } from '../lib/layout.svelte'
   import { panes } from '../lib/panes.svelte'
-  import { keymap } from '../lib/keymap.svelte'
-  import {
-    activeSurfaceElement,
-    dividerSegment,
-    type DividerSegment
-  } from '../lib/paneDividers'
-  import {
-    leaves,
-    leafTouchesSide,
-    type LayoutNode,
-    type SplitNode,
-    MIN_PANE_FRACTION
-  } from '../lib/layoutTree'
+  import { leaves, type LayoutNode, type SplitNode, MIN_PANE_FRACTION } from '../lib/layoutTree'
 
   let { split, gutterIndex }: { split: SplitNode; gutterIndex: number } = $props()
 
   const horizontal = $derived(split.direction === 'row')
-
-  // tmux-style focus marker: light this gutter up when the focused pane's edge
-  // is part of it — the focused leaf must touch the boundary itself, not merely
-  // live somewhere in a neighboring subtree.
-  const touchesActive = $derived.by(() => {
-    const activeId = keymap.activeSurfaceId
-    if (!activeId) return false
-    const before = split.children[gutterIndex]
-    const after = split.children[gutterIndex + 1]
-    if (horizontal) {
-      return leafTouchesSide(before, activeId, 'right') || leafTouchesSide(after, activeId, 'left')
-    }
-    return leafTouchesSide(before, activeId, 'bottom') || leafTouchesSide(after, activeId, 'top')
-  })
-
-  // The stretch of this gutter the focused pane runs alongside — the tint spans
-  // just that segment, not the gutter's full length. Re-measured whenever the
-  // focused pane or the gutter itself changes size.
-  let segment = $state<DividerSegment | null>(null)
-
-  function measureSegment(paneEl: HTMLElement): void {
-    if (!rootEl) return
-    segment = dividerSegment(rootEl, paneEl, horizontal ? 'y' : 'x')
-  }
-
-  $effect(() => {
-    if (!touchesActive) {
-      segment = null
-      return
-    }
-    const paneEl = activeSurfaceElement(keymap.activeSurfaceId)
-    if (!paneEl) {
-      segment = null
-      return
-    }
-    measureSegment(paneEl)
-    const observer = new ResizeObserver(() => measureSegment(paneEl))
-    observer.observe(paneEl)
-    observer.observe(rootEl)
-    return () => observer.disconnect()
-  })
 
   // Once a neighbor bottoms out at its min, dragging this many more px past the
   // clamp collapses (closes) it — mirroring the dock resize, and independent of
@@ -191,7 +138,7 @@
 
 <div
   bind:this={rootEl}
-  class="relative shrink-0 {horizontal ? 'w-2' : 'h-2'}"
+  class="relative shrink-0 {horizontal ? 'w-1' : 'h-1'}"
   role="separator"
   aria-orientation={horizontal ? 'vertical' : 'horizontal'}
 >
@@ -215,15 +162,4 @@
         : 'bg-transparent group-hover:bg-line-strong'}"
     ></div>
   </div>
-  <!-- Focus tint: only the stretch the focused pane borders, tmux-style. -->
-  {#if segment && !dragging}
-    <div
-      class="pointer-events-none absolute rounded-full bg-accent/50 {horizontal
-        ? 'left-1/2 w-0.5 -translate-x-1/2'
-        : 'top-1/2 h-0.5 -translate-y-1/2'}"
-      style={horizontal
-        ? `top:${segment.offset}px;height:${segment.length}px`
-        : `left:${segment.offset}px;width:${segment.length}px`}
-    ></div>
-  {/if}
 </div>

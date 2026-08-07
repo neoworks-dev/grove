@@ -5,6 +5,7 @@ import {
   leaves,
   findLeaf,
   findParentSplit,
+  leafTouchesSide,
   splitLeaf,
   removeLeaf,
   resizeGutter,
@@ -258,5 +259,51 @@ describe('findParentSplit', () => {
     expect(findParentSplit(root, b.id)?.id).toBe(inner.id)
     expect(findParentSplit(root, inner.id)?.id).toBe(root.id)
     expect(findParentSplit(root, 'missing')).toBeNull()
+  })
+})
+
+describe('leafTouchesSide', () => {
+  it('a lone leaf touches every side', () => {
+    const editor = createLeaf('editor')
+    for (const side of ['left', 'right', 'top', 'bottom'] as const) {
+      expect(leafTouchesSide(editor, editor.id, side)).toBe(true)
+    }
+  })
+
+  it('in a row split only the end children reach the left/right sides', () => {
+    const a = createLeaf('a')
+    const b = createLeaf('b')
+    const c = createLeaf('c')
+    const root = createSplit('row', [a, b, c])
+    expect(leafTouchesSide(root, a.id, 'left')).toBe(true)
+    expect(leafTouchesSide(root, a.id, 'right')).toBe(false)
+    expect(leafTouchesSide(root, b.id, 'left')).toBe(false)
+    expect(leafTouchesSide(root, b.id, 'right')).toBe(false)
+    expect(leafTouchesSide(root, c.id, 'right')).toBe(true)
+  })
+
+  it('every row-split child spans the top and bottom sides', () => {
+    const a = createLeaf('a')
+    const b = createLeaf('b')
+    const root = createSplit('row', [a, b])
+    expect(leafTouchesSide(root, a.id, 'top')).toBe(true)
+    expect(leafTouchesSide(root, b.id, 'bottom')).toBe(true)
+  })
+
+  it('nested: a leaf buried inside a neighbor subtree does not touch the boundary', () => {
+    // row [ a | column [ b / c ] ] — the vertical boundary between a and the
+    // column is touched by b and c (both span the column's left edge), while
+    // in row [ a | column [ row [ b | d ] / c ] ] only d's side matters.
+    const a = createLeaf('a')
+    const b = createLeaf('b')
+    const c = createLeaf('c')
+    const d = createLeaf('d')
+    const innerRow = createSplit('row', [b, d])
+    const column = createSplit('column', [innerRow, c])
+    expect(leafTouchesSide(column, b.id, 'left')).toBe(true)
+    expect(leafTouchesSide(column, d.id, 'left')).toBe(false)
+    expect(leafTouchesSide(column, c.id, 'left')).toBe(true)
+    expect(leafTouchesSide(column, d.id, 'right')).toBe(true)
+    expect(leafTouchesSide(column, a.id, 'left')).toBe(false)
   })
 })

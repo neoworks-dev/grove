@@ -1,7 +1,7 @@
 import { app, shell, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import icon from '../../resources/icon.png?asset'
+import icon from '../../resources/grove-icon.png?asset'
 import { registerIpc, shutdown } from './ipc'
 import { registerPluginScheme } from './plugins/protocol'
 import { registerNibScheme } from './nib/protocol'

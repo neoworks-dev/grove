@@ -17,6 +17,7 @@
     "build:plugins": "bun scripts/build-plugins.ts",
     "fetch:nvim": "bun scripts/fetch-nvim.ts",
     "build:nib": "bun scripts/build-nib.ts",
+    "icons": "bun scripts/generate-icons.ts",
     "start": "electron-vite preview",
     "dev": "npm run build:plugins && npm run fetch:nvim && electron-vite dev",
     "build": "npm run typecheck && npm run build:plugins && npm run fetch:nvim && npm run build:nib && electron-vite build",

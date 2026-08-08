@@ -3,9 +3,15 @@
  * `resources/grove-icon.png`.
  *
  * Outputs:
- *   build/icon.png   512x512 PNG   — Linux targets, and electron-builder's fallback
- *   build/icon.ico   multi-size    — Windows / NSIS
- *   build/icon.icns  multi-size    — macOS
+ *   build/icons/<size>.png  hicolor set  — Linux targets (AppImage, snap, deb)
+ *   build/icon.png          512x512 PNG  — electron-builder's single-file fallback
+ *   build/icon.ico          multi-size   — Windows / NSIS
+ *   build/icon.icns         multi-size   — macOS
+ *
+ * electron-builder resolves icons by probing `build/` for well-known names. For
+ * Linux it checks the `icons` directory before `icon.png`, so shipping the
+ * directory is what gets every freedesktop hicolor size installed rather than a
+ * lone 512x512 that desktop environments then downscale themselves.
  *
  * The runtime BrowserWindow icon reads `resources/grove-icon.png` directly, so
  * it needs no generated variant.
@@ -13,7 +19,7 @@
  * Requires ImageMagick (`magick`) on PATH. Run with `npm run icons`.
  */
 import { execFileSync } from 'node:child_process'
-import { readFileSync, writeFileSync, mkdtempSync, rmSync, existsSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdtempSync, rmSync, existsSync, mkdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -21,6 +27,9 @@ import { fileURLToPath } from 'node:url'
 const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 const sourcePath = join(repositoryRoot, 'resources', 'grove-icon.png')
 const buildDirectory = join(repositoryRoot, 'build')
+
+// Freedesktop hicolor sizes installed under /usr/share/icons/hicolor/<n>x<n>/apps.
+const linuxIconSizes = [16, 24, 32, 48, 64, 128, 256, 512]
 
 // OSType -> pixel dimension. Covers the 1x (icp*/ic07-ic10) and retina
 // (ic11-ic14) slots macOS looks up. All of these accept PNG payloads.
@@ -57,7 +66,22 @@ function renderPng(size: number, destination: string): void {
   ])
 }
 
-function writeLinuxPng(): void {
+/**
+ * Writes the per-size Linux icon set. electron-builder's directory collector
+ * matches `<size>.png` and `<size>x<size>.png`, so the flat numeric names are
+ * enough for it to map each file onto its hicolor bucket.
+ */
+function writeLinuxIconSet(): void {
+  const destination = join(buildDirectory, 'icons')
+  mkdirSync(destination, { recursive: true })
+
+  for (const size of linuxIconSizes) {
+    renderPng(size, join(destination, `${size}.png`))
+  }
+  console.log(`wrote ${destination} (${linuxIconSizes.join(', ')})`)
+}
+
+function writeFallbackPng(): void {
   const destination = join(buildDirectory, 'icon.png')
   renderPng(512, destination)
   console.log(`wrote ${destination}`)
@@ -115,6 +139,7 @@ function writeMacIcns(): void {
 }
 
 assertSourceExists()
-writeLinuxPng()
+writeLinuxIconSet()
+writeFallbackPng()
 writeWindowsIco()
 writeMacIcns()

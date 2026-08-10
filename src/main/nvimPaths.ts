@@ -88,6 +88,31 @@ async function moveNvimConfigAside(target: string): Promise<void> {
   )
 }
 
+// Copilot keeps its device-flow token under $XDG_CONFIG_HOME/github-copilot.
+// Grove repoints XDG_CONFIG_HOME at ~/.config/grove, so copilot.lua would look
+// at a fresh directory and demand a second `:Copilot auth` from users already
+// signed in for their own nvim. Link grove's path at the real one so a single
+// login serves both. No global config means no link: copilot.lua then creates
+// its own directory on first auth and grove stays self-contained.
+export async function ensureCopilotConfigLink(): Promise<void> {
+  const globalConfig = join(homedir(), '.config', 'github-copilot')
+  if (!existsSync(globalConfig)) return
+
+  const target = join(nvimConfigHome(), 'github-copilot')
+  // Anything already at the path wins — a real directory there holds a grove-only
+  // login that replacing would sign the user out of.
+  const existing = await lstat(target).catch(() => null)
+  if (existing) return
+
+  await mkdir(nvimConfigHome(), { recursive: true })
+  const linkType = process.platform === 'win32' ? 'junction' : 'dir'
+  try {
+    await symlink(globalConfig, target, linkType)
+  } catch (error) {
+    console.warn(`[nvim] could not link ${target} at ${globalConfig}:`, error)
+  }
+}
+
 export function nvimAvailable(): boolean {
   return existsSync(nvimBinary())
 }

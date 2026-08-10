@@ -7,7 +7,13 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { mkdir } from 'node:fs/promises'
 import { NvimRpc, toPlain } from './nvimRpc'
-import { nvimBinary, nvimAvailable, nvimEnvOverlay, ensureNvimUserConfig } from './nvimPaths'
+import {
+  nvimBinary,
+  nvimAvailable,
+  nvimEnvOverlay,
+  ensureNvimUserConfig,
+  ensureCopilotConfigLink
+} from './nvimPaths'
 
 export interface NvimEvents {
   onRedraw: (id: string, events: unknown[]) => void
@@ -56,6 +62,7 @@ export class NeovimManager {
     const env = { ...options.env, ...nvimEnvOverlay() }
     await this.ensureStateDirs(env)
     await ensureNvimUserConfig()
+    await ensureCopilotConfigLink()
 
     const child = spawn(nvimBinary(), ['--embed'], { cwd: options.cwd, env })
     if (!child.stdin || !child.stdout) throw new Error('nvim spawn failed: no stdio')

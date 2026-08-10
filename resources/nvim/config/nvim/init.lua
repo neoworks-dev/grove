@@ -28,6 +28,12 @@ vim.opt.backupdir:remove('.')
 -- prompt on attach (which aborts the session). Grove owns buffer persistence.
 vim.opt.swapfile = false
 vim.opt.mouse = 'a'
+-- Route yanks and puts through the desktop clipboard. Without this the '+'
+-- register is never touched, so nothing yanked in an editor pane can be pasted
+-- outside grove. nvim picks its own provider (wl-copy, xclip, pbcopy, win32yank);
+-- grove spawns nvim with the full parent environment, so WAYLAND_DISPLAY and
+-- DISPLAY are present for the detection to succeed.
+vim.opt.clipboard = 'unnamedplus'
 -- Keep 4 context lines visible above/below the cursor when scrolling.
 vim.opt.scrolloff = 4
 -- Also suppress the swap/attention message class outright as a belt-and-suspenders.
@@ -57,6 +63,18 @@ if not (vim.uv or vim.loop).fs_stat(lazyPath) then
     'git', 'clone', '--filter=blob:none', '--branch=stable',
     'https://github.com/folke/lazy.nvim.git', lazyPath
   })
+end
+
+-- Accepts the Copilot ghost-text suggestion currently on screen. Returns true
+-- when it consumed the key, which is blink.cmp's signal to stop walking the
+-- rest of its <Tab> fallback chain. Returns false when copilot.lua has not
+-- loaded yet or has nothing to offer, so <Tab> keeps its normal meaning.
+local function acceptCopilotSuggestion()
+  local ok, suggestion = pcall(require, 'copilot.suggestion')
+  if not ok then return false end
+  if not suggestion.is_visible() then return false end
+  suggestion.accept()
+  return true
 end
 
 if (vim.uv or vim.loop).fs_stat(lazyPath) then
@@ -126,12 +144,54 @@ if (vim.uv or vim.loop).fs_stat(lazyPath) then
           -- accepting never also inserts a newline ('default' leaves <CR> unmapped).
           -- <Esc> with the menu open only closes the menu (staying in insert);
           -- without a menu it falls through to the normal mode switch.
+          -- <Tab> is shared with Copilot. Owning it in one place (rather than
+          -- letting copilot.lua install its own insert-mode map) keeps either
+          -- plugin from silently swallowing the key from the other: a visible
+          -- ghost-text suggestion wins, then blink's snippet jump, then a
+          -- literal tab.
           keymap = {
             preset = 'enter',
-            ['<Esc>'] = { 'cancel', 'fallback' }
+            ['<Esc>'] = { 'cancel', 'fallback' },
+            ['<Tab>'] = { acceptCopilotSuggestion, 'snippet_forward', 'fallback' }
           },
           sources = { default = { 'lsp', 'path', 'snippets', 'buffer' } },
           completion = { documentation = { auto_show = true } }
+        }
+      },
+
+      -- GitHub Copilot as inline ghost text. Deliberately not wired as a
+      -- blink.cmp source: the suggestion renders as virtual text after the
+      -- cursor, so the completion menu stays LSP/path/snippet/buffer only and
+      -- never lists the same completion twice.
+      --
+      -- Auth lives at $XDG_CONFIG_HOME/github-copilot. Grove points
+      -- XDG_CONFIG_HOME at ~/.config/grove and links that subdirectory to the
+      -- user's real ~/.config/github-copilot (see src/main/nvimPaths.ts), so an
+      -- existing Copilot login carries over. Without one, `:Copilot auth` once
+      -- in any editor pane signs in.
+      {
+        'zbirenbaum/copilot.lua',
+        event = 'InsertEnter',
+        opts = {
+          suggestion = {
+            enabled = true,
+            auto_trigger = true,
+            -- No accept mapping here: blink.cmp owns <Tab> and calls into
+            -- copilot.suggestion from its fallback chain (see above).
+            keymap = {
+              accept = false,
+              accept_word = false,
+              accept_line = false,
+              next = '<M-]>',
+              prev = '<M-[>',
+              dismiss = '<C-]>'
+            }
+          },
+          -- The Copilot panel opens its own split; grove owns the layout.
+          panel = { enabled = false },
+          -- copilot.lua disables prose filetypes by default. Grove edits docs
+          -- and config in the same panes as code, so re-enable the useful ones.
+          filetypes = { markdown = true, yaml = true, gitcommit = true }
         }
       },
 

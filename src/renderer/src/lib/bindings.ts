@@ -10,6 +10,7 @@ import { layout } from './layout.svelte'
 import { bufferMenu } from './buffermenu.svelte'
 import { inlineEdit } from './inlineEdit.svelte'
 import { symbolsOutline } from './symbolsOutline.svelte'
+import { workspaceSymbols } from './workspaceSymbols.svelte'
 import { undoTree } from './undotree.svelte'
 import { dialogs } from './dialogs.svelte'
 import type { ReviewMode } from './inlineEditRef'
@@ -147,6 +148,14 @@ export function registerCoreBindings(): void {
       group: 'Code',
       description: 'Symbol outline',
       run: () => symbolsOutline.toggle()
+    },
+    {
+      id: 'leader.workspaceSymbols',
+      keys: '<Leader> S',
+      context: 'global',
+      group: 'Code',
+      description: 'Search workspace symbols',
+      run: () => workspaceSymbols.toggle()
     },
     {
       id: 'leader.undotree',
@@ -401,6 +410,13 @@ export function registerCoreBindings(): void {
       group: 'Code',
       keywords: 'symbols outline aerial functions classes methods navigate',
       run: () => symbolsOutline.toggle()
+    },
+    {
+      id: 'symbols.workspace',
+      title: 'Code: Search Workspace Symbols',
+      group: 'Code',
+      keywords: 'symbols workspace search functions classes methods go to symbol lsp',
+      run: () => workspaceSymbols.toggle()
     },
     {
       id: 'undotree.open',

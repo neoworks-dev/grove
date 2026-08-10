@@ -81,13 +81,13 @@ const CSS_VARS: Record<keyof ThemePalette, string> = {
 
 // ── Neoworks base (dark) — the design-system default palette. ──────────
 const neoworksDark: ThemePalette = {
-  bg: '#000000',
-  bgElevated: '#0b0b0d',
-  surface: '#141416',
+  bg: '#141416',
+  bgElevated: '#262628',
+  surface: '#1c1c1e',
   surfaceRaised: '#1c1c1f',
   surfaceHover: '#1f1f23',
   surfaceInput: '#0e0e10',
-  border: '#262626',
+  border: '#29292b',
   borderStrong: '#3f3f46',
   borderFaint: 'rgba(255, 255, 255, 0.06)',
   text: '#fafafa',

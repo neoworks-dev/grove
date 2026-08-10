@@ -4,6 +4,7 @@
   // (rail-driven on the left, user-pickable on the right), is focus/keyboard
   // navigable via use:pane, and resizes with an edge handle. It deliberately
   // sets NO data-leaf attribute, so pane drag-and-drop ignores it.
+  import DotsThreeIcon from 'phosphor-svelte/lib/DotsThreeIcon'
   import MissingPane from './MissingPane.svelte'
   import { panes } from '../lib/panes.svelte'
   import { keymap, pane } from '../lib/keymap.svelte'
@@ -15,7 +16,9 @@
   const dock = $derived(layout.docks[side])
   const type = $derived(panes.get(dock.paneType))
   const leafId = $derived(dockLeafId(side))
-  const active = $derived(keymap.activePane === leafId)
+  // Nested panes (the file tree, etc.) report their own pane id, so surface
+  // containment — not pane-id equality — decides whether this dock is active.
+  const active = $derived(keymap.activeSurfaceId === leafId)
 
   // Per-pane font zoom. Canvas panes (e.g. a terminal picked into the right
   // dock) scale their own font; DOM panes get CSS zoom on the content area,
@@ -26,6 +29,14 @@
   )
 
   let pickerOpen = $state(false)
+  let menuEl = $state<HTMLDivElement>()
+
+  /** Close the pane menu when a pointer press lands outside it. */
+  function onWindowPointerDown(event: PointerEvent): void {
+    if (!pickerOpen) return
+    if (menuEl && event.target instanceof Node && menuEl.contains(event.target)) return
+    pickerOpen = false
+  }
 
   // Right dock is a utility slot: the user can swap the agent panel for a
   // terminal or anything else. Left dock content is chosen from the rail.
@@ -46,6 +57,8 @@
   function updateState(): void {}
 </script>
 
+<svelte:window onpointerdown={onWindowPointerDown} />
+
 <div
   class="relative flex h-full shrink-0 flex-col {side === 'left'
     ? 'border-l border-line-faint'
@@ -55,50 +68,56 @@
   <div
     use:pane={{ id: leafId, type: type?.contextType ?? dock.paneType, modes: type?.modes }}
     data-pane={leafId}
+    data-surface={leafId}
     data-zoom-container={leafId}
-    class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden outline-none {type?.containerClass ??
+    class="pane-surface flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden outline-none {type?.containerClass ??
       ''} {active ? 'pane-active' : ''}"
   >
-    <!-- Dock header: title, optional type picker (right), collapse. -->
-    <div class="flex h-7 shrink-0 items-center gap-1 border-b border-line px-2">
-      {#if pickable}
-        <div class="relative">
-          <button
-            class="flex items-center gap-1 rounded px-1 text-2xs font-semibold uppercase tracking-caps text-dim hover:text-default"
-            onclick={() => (pickerOpen = !pickerOpen)}
-          >
-            {type?.title ?? dock.paneType} ▾
-          </button>
-          {#if pickerOpen}
-            <div
-              class="absolute left-0 top-full z-20 mt-1 max-h-64 w-40 overflow-auto rounded border border-line bg-raised py-1 shadow-lg"
-            >
-              {#each options as option (option.id)}
-                <button
-                  class="block w-full px-2 py-1 text-left text-2xs hover:bg-hover {option.id ===
-                  dock.paneType
-                    ? 'text-default'
-                    : 'text-dim'}"
-                  onclick={() => choose(option.id)}
-                >
-                  {option.title}
-                </button>
-              {/each}
-            </div>
-          {/if}
-        </div>
-      {:else}
-        <span class="text-2xs font-semibold uppercase tracking-caps text-dim"
-          >{type?.title ?? dock.paneType}</span
-        >
-      {/if}
+    <!-- Floating pane menu instead of a header: a "…" button in the top-right
+         corner that only fades in when the pointer is near it. The menu holds
+         the pane-type picker (right dock) and the collapse action. -->
+    <div
+      bind:this={menuEl}
+      class="group/dockmenu absolute right-0 top-0 z-30 flex flex-col items-end p-1.5"
+    >
       <button
-        class="ml-auto text-dim hover:text-default"
-        title="Collapse panel"
-        onclick={collapse}
+        class="flex h-6 w-6 items-center justify-center rounded-md text-dim opacity-0 transition-opacity duration-100 hover:bg-hover hover:text-default group-hover/dockmenu:opacity-100 {pickerOpen
+          ? 'opacity-100'
+          : ''}"
+        title="Pane options"
+        onclick={() => (pickerOpen = !pickerOpen)}
       >
-        {side === 'left' ? '«' : '»'}
+        <DotsThreeIcon size={14} weight="bold" />
       </button>
+      {#if pickerOpen}
+        <div
+          class="mt-1 max-h-64 w-40 overflow-auto rounded-md border border-line bg-elevated py-1 shadow-lg"
+        >
+          {#if pickable}
+            {#each options as option (option.id)}
+              <button
+                class="block w-full px-2 py-1 text-left text-2xs hover:bg-hover {option.id ===
+                dock.paneType
+                  ? 'text-default'
+                  : 'text-dim'}"
+                onclick={() => choose(option.id)}
+              >
+                {option.title}
+              </button>
+            {/each}
+            <div class="my-1 border-t border-line"></div>
+          {/if}
+          <button
+            class="block w-full px-2 py-1 text-left text-2xs text-dim hover:bg-hover hover:text-default"
+            onclick={() => {
+              pickerOpen = false
+              collapse()
+            }}
+          >
+            Collapse panel
+          </button>
+        </div>
+      {/if}
     </div>
 
     <div class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" style={zoomStyle}>

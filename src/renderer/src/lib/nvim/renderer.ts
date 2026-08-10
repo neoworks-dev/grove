@@ -6,6 +6,9 @@ import type { CellMetrics, FontSpec } from './metrics'
 
 export interface GridRenderer {
   attach(canvas: HTMLCanvasElement): void
+  // Copy the pixels of a canvas this renderer previously drove onto the current
+  // one, so a pane whose component was rebuilt keeps showing its last frame.
+  carryFrom(previous: HTMLCanvasElement): void
   setFont(font: FontSpec, metrics: CellMetrics): void
   resize(cols: number, rows: number, dpr: number, pxWidth: number, pxHeight: number): void
   render(state: GridState, dirty: DirtyState): void

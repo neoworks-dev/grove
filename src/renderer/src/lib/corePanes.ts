@@ -53,7 +53,7 @@ export function registerCorePanes(): void {
     component: FilesView,
     rail: { order: 1 },
     slot: SIDEBAR_SLOT,
-    containerClass: 'bg-elevated',
+    containerClass: 'bg-surface',
     minWidth: 180
   })
   panes.register({
@@ -146,7 +146,7 @@ export function registerCorePanes(): void {
     title: 'Neovim',
     component: NvimPane,
     slot: CENTER_SLOT,
-    containerClass: 'bg-elevated',
+    containerClass: 'bg-surface',
     minWidth: 240,
     // Reports the 'editor' keymap context so editor-scoped bindings (file
     // finder, etc.) match here.
@@ -191,7 +191,7 @@ export function registerCorePanes(): void {
     id: 'agent',
     title: 'Agent',
     component: AgentPane,
-    containerClass: 'bg-elevated',
+    containerClass: 'bg-surface',
     minWidth: 240,
     // Vim-style: 'normal' scrolls the transcript and navigates instances; 'i'
     // enters 'insert', which focuses the composer; Escape returns to 'normal'.
@@ -209,7 +209,7 @@ export function registerCorePanes(): void {
     title: 'Terminal',
     icon: TerminalWindow,
     component: TerminalPane,
-    containerClass: 'bg-elevated',
+    containerClass: 'bg-surface',
     minHeight: 120,
     // 'terminal' forwards every key to the shell; ctrl+\ ctrl+n drops to
     // 'normal' so global chords (ctrl+hjkl, leader) work; 'i' returns.
@@ -248,25 +248,31 @@ export function registerCorePanes(): void {
     paneTypeId: 'diagnostics',
     order: 20
   })
+  // Settings-family panes open beside the editor rather than in the center
+  // slot: taking the slot swapped the editor out, and nothing in these panes
+  // put it back.
   panes.register({
     id: 'preferences',
     title: 'Preferences',
     component: PreferencesPane,
-    slot: CENTER_SLOT,
+    preferredOrientation: 'row',
+    containerClass: 'bg-elevated',
     minWidth: 320
   })
   panes.register({
     id: 'keybindings',
     title: 'Keyboard Shortcuts',
     component: KeyboardPane,
-    slot: CENTER_SLOT,
+    preferredOrientation: 'row',
+    containerClass: 'bg-elevated',
     minWidth: 320
   })
   panes.register({
     id: 'permissions',
     title: 'Permissions & Access',
     component: GrantsPane,
-    slot: CENTER_SLOT,
+    preferredOrientation: 'row',
+    containerClass: 'bg-elevated',
     minWidth: 320
   })
 }

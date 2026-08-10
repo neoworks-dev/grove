@@ -12,8 +12,6 @@
         "@iconify/svelte": "^5.2.2",
         "@msgpack/msgpack": "^3.1.3",
         "@neoworks-dev/ui": "link:@neoworks-dev/ui",
-        "@openai/codex-sdk": "0.143.0",
-        "@opencode-ai/sdk": "1.17.15",
         "@vscode/ripgrep": "^1.18.0",
         "@xterm/addon-fit": "^0.11.0",
         "@xterm/xterm": "^6.0.0",
@@ -25,7 +23,6 @@
         "node-pty": "^1.1.0",
         "phosphor-svelte": "^3.1.0",
         "simple-git": "^3.36.0",
-        "tree-sitter-wasms": "^0.1.13",
         "vscode-jsonrpc": "^9.0.1",
         "vscode-languageserver-protocol": "^3.18.2",
         "vscode-languageserver-types": "^3.18.0",
@@ -58,7 +55,7 @@
     },
     "sdk": {
       "name": "@grove/plugin-sdk",
-      "version": "0.1.0",
+      "version": "0.2.0",
     },
   },
   "packages": {
@@ -265,24 +262,6 @@
     "@neoworks-dev/ui": ["@neoworks-dev/ui@link:@neoworks-dev/ui", {}],
 
     "@noble/hashes": ["@noble/hashes@2.2.0", "", {}, "sha512-IYqDGiTXab6FniAgnSdZwgWbomxpy9FtYvLKs7wCUs2a8RkITG+DFGO1DM9cr+E3/RgADRpFjrKVaJ1z6sjtEg=="],
-
-    "@openai/codex": ["@openai/codex@0.143.0", "", { "optionalDependencies": { "@openai/codex-darwin-arm64": "npm:@openai/codex@0.143.0-darwin-arm64", "@openai/codex-darwin-x64": "npm:@openai/codex@0.143.0-darwin-x64", "@openai/codex-linux-arm64": "npm:@openai/codex@0.143.0-linux-arm64", "@openai/codex-linux-x64": "npm:@openai/codex@0.143.0-linux-x64", "@openai/codex-win32-arm64": "npm:@openai/codex@0.143.0-win32-arm64", "@openai/codex-win32-x64": "npm:@openai/codex@0.143.0-win32-x64" }, "bin": { "codex": "bin/codex.js" } }, "sha512-6h53sNtESIYncWVwU7zEjdVajwcad/0H94MOrgGqhwBMa9RRUDVG6DU9E9euC7yRdtrsKDAkJkz/m5moZ6MU3A=="],
-
-    "@openai/codex-darwin-arm64": ["@openai/codex@0.143.0-darwin-arm64", "", { "os": "darwin", "cpu": "arm64" }, "sha512-hs9bPkE1c0+EtbHxxVfhaaGl1u6/LVdhEtOX5t9N+ri54yjMUkzKJLc7MOBa1DYRMDTWT+lPEfeB+8Fv9coTKg=="],
-
-    "@openai/codex-darwin-x64": ["@openai/codex@0.143.0-darwin-x64", "", { "os": "darwin", "cpu": "x64" }, "sha512-xHbrb/Qkj+ZZqYkAuio3mcFxpqlg/NNpBDz5iMKlGa7XfK3miUu6R50c9cRW1ZPQVRfRnFhs4l7OhI5u5r+HvA=="],
-
-    "@openai/codex-linux-arm64": ["@openai/codex@0.143.0-linux-arm64", "", { "os": "linux", "cpu": "arm64" }, "sha512-1TMx1a/YBEY0SBhPGn8z9HjOpaDssw+WJiIi/+r0CB5uZf6qnALN02TrZTZl2PSUI8olnBf/VccjnwVCrzR38w=="],
-
-    "@openai/codex-linux-x64": ["@openai/codex@0.143.0-linux-x64", "", { "os": "linux", "cpu": "x64" }, "sha512-B6v6oUgBbjt1bL7yBbRp7e0vLiVOjRdz9Wykotve52Aq2H2TeiCqxM5BSOaFkmNO6VxE0seW7hTi2UZF9x8LLA=="],
-
-    "@openai/codex-sdk": ["@openai/codex-sdk@0.143.0", "", { "dependencies": { "@openai/codex": "0.143.0" } }, "sha512-AQb06ERd2Z6MGgyiL3pcN4sw7m4ESkVSy1nSd2ks+cmchnk06AMOy8lRCH5dkyxI+dtnqWa7dLolqf7aRuOqJA=="],
-
-    "@openai/codex-win32-arm64": ["@openai/codex@0.143.0-win32-arm64", "", { "os": "win32", "cpu": "arm64" }, "sha512-8ntYPI3IQWZuayL214tYanuYhom23RxHUWRkmay45hGymEW4TwwFqzppKXEzcBXrCF5uSWlOMMG+B2elN6kWuQ=="],
-
-    "@openai/codex-win32-x64": ["@openai/codex@0.143.0-win32-x64", "", { "os": "win32", "cpu": "x64" }, "sha512-d60HLkzSQ7rdL35xPxH1x3g8DuJjEbhEx1UOK5ivA1PBD9eWvP46rtdHkSvCZyqHUhaHFr5We2SugE9+Y8HhVA=="],
-
-    "@opencode-ai/sdk": ["@opencode-ai/sdk@1.17.15", "", { "dependencies": { "cross-spawn": "7.0.6" } }, "sha512-gWRQOEggHTELJ9+BtelxnuAczk9qutCXVZenPgRPaT8oVxePf52jfWbqfhyFjnrN8Vlp8tCCTdkEpFW5pZAuEA=="],
 
     "@peculiar/asn1-schema": ["@peculiar/asn1-schema@2.8.0", "", { "dependencies": { "@peculiar/utils": "^2.0.2", "asn1js": "^3.0.10", "tslib": "^2.8.1" } }, "sha512-7YT0U/ze0tF2QOBbE15gKZwy5tvgGyLRiRHLzhlbOpf7BT032oBSd0haZqXn5W6l26WLlu3dyxzjM+2638/z2Q=="],
 
@@ -1209,8 +1188,6 @@
     "tmp-promise": ["tmp-promise@3.0.3", "", { "dependencies": { "tmp": "^0.2.0" } }, "sha512-RwM7MoPojPxsOBYnyd2hy0bxtIlVrihNs9pj5SUvY8Zz1sQcQG2tG1hSr8PDxfgEB8RNKDhqbIlroIarSNDNsQ=="],
 
     "toidentifier": ["toidentifier@1.0.1", "", {}, "sha512-o5sSPKEkg/DIQNmH43V0/uerLrpzVedkUh8tGNvaeXpfpuwjKenlSox/2O/BTlZUtEe+JG7s5YhEz608PlAHRA=="],
-
-    "tree-sitter-wasms": ["tree-sitter-wasms@0.1.13", "", { "dependencies": { "tree-sitter-wasms": "^0.1.11" } }, "sha512-wT+cR6DwaIz80/vho3AvSF0N4txuNx/5bcRKoXouOfClpxh/qqrF4URNLQXbbt8MaAxeksZcZd1j8gcGjc+QxQ=="],
 
     "truncate-utf8-bytes": ["truncate-utf8-bytes@1.0.2", "", { "dependencies": { "utf8-byte-length": "^1.0.1" } }, "sha512-95Pu1QXQvruGEhv62XCMO3Mm90GscOCClvrIUwCM0PYOXK3kaF3l3sIHxx71ThJfcbM2O5Au6SO3AWCSEfW4mQ=="],
 

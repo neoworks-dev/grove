@@ -138,7 +138,7 @@
 
 <div
   bind:this={rootEl}
-  class="relative shrink-0 {horizontal ? 'w-1' : 'h-1'}"
+  class="relative shrink-0 {horizontal ? 'w-2' : 'h-2'}"
   role="separator"
   aria-orientation={horizontal ? 'vertical' : 'horizontal'}
 >

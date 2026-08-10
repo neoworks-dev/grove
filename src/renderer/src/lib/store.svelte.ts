@@ -98,6 +98,10 @@ class WorkbenchStore {
   // scrolls the cursor there once the file is loaded.
   revealTarget = $state<{ path: string; line: number } | null>(null)
 
+  // One-shot request to expand/select a worktree-relative path in the file
+  // explorer (breadcrumb clicks); the explorer consumes and clears it.
+  explorerRevealPath = $state<string | null>(null)
+
   // Streamed logs keyed by worktreeId.
   logs = $state<Record<string, LogLine[]>>({})
 

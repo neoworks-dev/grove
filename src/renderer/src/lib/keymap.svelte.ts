@@ -79,6 +79,11 @@ class Keymap {
   // inside a leaf, e.g. the file tree inside the files leaf).
   activeLeafId = $state<string | null>(null)
 
+  // The pane surface (split-tree leaf or dock) containing the active pane.
+  // Nested panes (e.g. the file tree inside a dock) count as focus on their
+  // surface, which drives the active/dimmed pane styling.
+  activeSurfaceId = $state<string | null>(null)
+
   // Pane type of the active pane (e.g. 'editor'), when the registrar gave one.
   activePaneTypeState = $state<string | null>(null)
 
@@ -238,6 +243,8 @@ class Keymap {
     const el = this.panes.get(id)
     const leafEl = el?.closest('[data-leaf]') as HTMLElement | null
     this.activeLeafId = leafEl?.dataset.leaf ?? null
+    const surfaceEl = el?.closest('[data-surface]') as HTMLElement | null
+    this.activeSurfaceId = surfaceEl?.dataset.surface ?? null
   }
 
   focusPane(id: PaneId): void {

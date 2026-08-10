@@ -1,7 +1,10 @@
 <script lang="ts">
-  // Per-adapter brand logo for instance tabs / agent rows. Real brand SVGs live
-  // in assets/agents; add a new adapter by dropping its file and extending the
-  // map. Inactive instances render desaturated + dimmed.
+  // Per-provider brand logo for instance tabs / agent rows. Real brand SVGs
+  // live in assets/agents; brands without a local asset fall back to a
+  // phosphor icon (OpenAI logo, then a generic robot). Inactive instances
+  // render desaturated + dimmed.
+  import OpenAiLogoIcon from 'phosphor-svelte/lib/OpenAiLogoIcon'
+  import RobotIcon from 'phosphor-svelte/lib/RobotIcon'
   import claudeLogo from '../assets/agents/claude.svg'
 
   let {
@@ -10,12 +13,13 @@
     active = true
   }: { name: string; size?: number; active?: boolean } = $props()
 
-  function logoFor(adapter: string): string {
-    if (adapter === 'claude') return claudeLogo
+  function logoFor(provider: string): string {
+    if (provider === 'claude' || provider === 'anthropic') return claudeLogo
     return ''
   }
 
   const src = $derived(logoFor(name))
+  const isOpenAi = $derived(name === 'codex' || name === 'openai')
 </script>
 
 {#if src}
@@ -26,10 +30,8 @@
     class="shrink-0 object-contain {active ? '' : 'opacity-40 grayscale'}"
     style="width:{size}px;height:{size}px"
   />
+{:else if isOpenAi}
+  <OpenAiLogoIcon {size} class="shrink-0 {active ? '' : 'opacity-40 grayscale'}" />
 {:else}
-  <span
-    class="inline-block shrink-0 rounded-full bg-neutral-600 {active ? '' : 'opacity-40'}"
-    style="width:{size}px;height:{size}px"
-    title={name}
-  ></span>
+  <RobotIcon {size} class="shrink-0 {active ? '' : 'opacity-40 grayscale'}" />
 {/if}

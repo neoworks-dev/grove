@@ -6,6 +6,11 @@
   import { formatStep, type KeyStep } from '../lib/keySequence'
   import Kbd from './Kbd.svelte'
 
+  // `inline` anchors the panel to the nearest positioned ancestor (the editor
+  // pane) instead of the window, so nvim's pending keys are listed over the
+  // buffer they apply to.
+  let { inline = false }: { inline?: boolean } = $props()
+
   interface Entry {
     token: string
     label: string
@@ -46,7 +51,10 @@
 
 {#if visible}
   <div
-    class="pointer-events-none fixed bottom-8 right-3 z-overlay max-h-[60%] w-72 overflow-auto rounded-lg border border-line bg-elevated/95 shadow-overlay backdrop-blur"
+    class="pointer-events-none z-overlay max-h-[60%] w-72 overflow-auto rounded-lg border border-line bg-elevated/95 shadow-overlay backdrop-blur"
+    class:fixed={!inline}
+    class:bottom-8={!inline}
+    class:right-3={!inline}
   >
     <div class="flex items-center gap-2 border-b border-line px-3 py-1.5">
       <span class="text-2xs font-semibold uppercase tracking-caps text-dim">{heading}</span>
@@ -66,7 +74,10 @@
 {:else if keymap.hintVisible && keymap.hintTitle}
   <!-- Static hint panel (Vim operator-pending etc.) — same look, fixed content. -->
   <div
-    class="pointer-events-none fixed bottom-8 right-3 z-overlay max-h-[60%] w-72 overflow-auto rounded-lg border border-line bg-elevated/95 shadow-overlay backdrop-blur"
+    class="pointer-events-none z-overlay max-h-[60%] w-72 overflow-auto rounded-lg border border-line bg-elevated/95 shadow-overlay backdrop-blur"
+    class:fixed={!inline}
+    class:bottom-8={!inline}
+    class:right-3={!inline}
   >
     <div class="flex items-center gap-2 border-b border-line px-3 py-1.5">
       <span class="text-2xs font-semibold uppercase tracking-caps text-dim"

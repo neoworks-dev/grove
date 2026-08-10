@@ -270,7 +270,7 @@
     <div class="mb-1.5 truncate text-2xs text-red">{error}</div>
   {/if}
 
-  <div class="relative mb-2 rounded-md border border-line bg-input">
+  <div class="relative mb-2 rounded-md border border-line-strong bg-elevated">
     <textarea
       bind:this={promptEl}
       bind:value={draft}

@@ -4,6 +4,7 @@
   // none.
   import Icon from '@iconify/svelte'
   import { store } from '../lib/store.svelte'
+  import { fileIcon } from '../lib/icons'
 
   interface Tab {
     path: string
@@ -13,18 +14,10 @@
     scratch?: boolean
   }
 
-  // Ephemeral scratch buffers (batch rename, etc.) get an amber tint so they
-  // read as distinct from real file tabs.
-  function tabClass(tab: Tab): string {
-    const active = store.activeTabPath === tab.path
-    if (tab.scratch) {
-      return active
-        ? 'border-x border-amber/40 bg-amber-soft text-amber'
-        : 'border-y border-line bg-amber-soft/40 text-amber hover:bg-amber-soft'
-    }
-    return active
-      ? 'border-x border-line bg-elevated text-default'
-      : 'border-y border-line text-dim hover:bg-hover hover:text-default'
+  /** File-type icon for a tab, tracking the active icon pack. */
+  function iconFor(tab: Tab): string {
+    store.iconPack
+    return fileIcon(tab.name)
   }
 
   let {
@@ -54,18 +47,32 @@
   })
 </script>
 
-<div class="flex h-7 shrink-0 items-stretch bg-surface">
+<div class="flex h-8 shrink-0 items-center bg-surface px-1.5">
   <div bind:this={stripEl} class="no-scrollbar min-w-0 flex-1 overflow-x-auto">
-    <div class="flex h-full w-max items-stretch">
+    <div class="flex w-max items-center gap-1">
       {#each tabs as tab (tab.path)}
+        {@const active = store.activeTabPath === tab.path}
+        <!-- Floating pills: inactive tabs sit flat on the strip, the active one
+             lifts to elevated. Ephemeral scratch buffers (batch rename, etc.)
+             get an amber tint so they read as distinct from real file tabs. -->
         <div
           data-tab={tab.path}
-          class="group/tab flex h-7 shrink-0 cursor-pointer items-center px-3 text-xs {tabClass(
-            tab
-          )}"
+          class="group/tab flex h-6 shrink-0 cursor-pointer items-center rounded-md px-2 text-xs {!active &&
+          tab.scratch
+            ? 'bg-amber-soft/40'
+            : ''}"
+          class:bg-elevated={active && !tab.scratch}
+          class:text-default={active && !tab.scratch}
+          class:text-dim={!active && !tab.scratch}
+          class:hover:bg-hover={!active && !tab.scratch}
+          class:hover:text-default={!active && !tab.scratch}
+          class:text-amber={tab.scratch}
+          class:bg-amber-soft={active && tab.scratch}
+          class:hover:bg-amber-soft={!active && tab.scratch}
         >
-          <button class="flex cursor-pointer items-center gap-1" onclick={() => onSelect(tab.path)}>
+          <button class="flex cursor-pointer items-center gap-1.5" onclick={() => onSelect(tab.path)}>
             {#if tab.pinned}<Icon icon="ph:push-pin-fill" width="11" height="11" class="text-amber" />{/if}
+            <Icon icon={iconFor(tab)} width="13" height="13" class="shrink-0" />
             <span>{tab.name}</span>
             {#if dirtyPaths[tab.path]}<span class="text-amber">●</span>{/if}
           </button>

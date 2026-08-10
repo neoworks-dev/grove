@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import { PERMISSION_META, type PluginPermission } from '../../../shared/plugins'
   import { store } from '../lib/store.svelte'
+  import { layout } from '../lib/layout.svelte'
 
   interface GrantSummary {
     clientId: string
@@ -12,6 +13,8 @@
     permissions: Partial<Record<PluginPermission, 'granted' | 'denied'>>
     fsScopes: string[]
   }
+
+  let { leafId }: { leafId: string } = $props()
 
   let grants = $state<GrantSummary[]>([])
   let query = $state('')
@@ -90,6 +93,13 @@
       onclick={refresh}
     >
       Refresh
+    </button>
+    <button
+      class="shrink-0 px-1 text-dim hover:text-default"
+      onclick={() => layout.closeLeaf(leafId)}
+      aria-label="Close permissions"
+    >
+      ✕
     </button>
   </div>
 

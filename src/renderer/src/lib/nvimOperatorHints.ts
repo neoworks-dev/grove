@@ -5,7 +5,7 @@
 // plugins appear automatically next to the built-ins.
 
 import type { HintEntry } from './keymap.svelte'
-import type { NvimMapping } from './nvimKeymap'
+import { isTypableLhs, type NvimMapping } from './nvimKeymap'
 
 // Operator key → the verb shown as the panel title (`+delete`, `+change`, …).
 // Multi-key operators (g-prefixed) are matched on their full v:operator value.
@@ -83,6 +83,7 @@ export function operatorHintEntries(operator: string, omaps: NvimMapping[]): Hin
   for (const mapping of omaps) {
     const lhs = mapping.lhs
     if (!lhs || seen.has(lhs)) continue
+    if (!isTypableLhs(lhs)) continue
     seen.add(lhs)
     const description = (mapping.desc && mapping.desc.trim()) || mapping.rhs || lhs
     entries.push({ keys: lhs, description })

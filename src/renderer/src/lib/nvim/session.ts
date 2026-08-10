@@ -193,8 +193,11 @@ const RESTART_WINDOW_MS = 10_000
 const RESTART_DELAY_MS = 150
 
 export class NvimCanvasSession {
-  private readonly elements: NvimSessionElements
-  private readonly callbacks: NvimSessionCallbacks
+  // Not readonly: a session outlives its component. Restructuring the layout
+  // tree rebuilds the Svelte subtree around a pane, and the session is handed
+  // to the new component instance (see reattach) rather than killing nvim.
+  private elements: NvimSessionElements
+  private callbacks: NvimSessionCallbacks
   private readonly config: NvimSessionConfig
 
   private nvimId: string | null = null
@@ -220,6 +223,11 @@ export class NvimCanvasSession {
   private fitScheduled = false
   private lastWidth = 0
   private lastHeight = 0
+  // Trailing-edge timer for nvim_ui_try_resize: a drag changes the host box
+  // every frame, and each try_resize costs nvim a full-screen redraw.
+  private nvimResizeTimer: ReturnType<typeof setTimeout> | null = null
+  private pendingGridSize: { cols: number; rows: number } | null = null
+  private lastNvimResizeAt = 0
 
   private dragButton: string | null = null
   private lastDragRow = -1
@@ -281,7 +289,10 @@ export class NvimCanvasSession {
     this.renderer.resize(cols, rows, window.devicePixelRatio, width, height)
     this.pendingDirtyAll = true
     this.scheduleRender()
-    void window.workbench.nvim.resize(this.nvimId, cols, rows)
+    // A font change is a single deliberate event, so it goes to nvim at once —
+    // and supersedes anything a drag left queued.
+    this.pendingGridSize = { cols, rows }
+    this.flushNvimResize()
   }
 
   get cellHeight(): number {
@@ -497,7 +508,7 @@ export class NvimCanvasSession {
   async start(): Promise<void> {
     if (this.started) return
     this.started = true
-    const { host, canvas, input } = this.elements
+    const { host, canvas } = this.elements
     await document.fonts.ready
     if (this.destroyed) return
     this.metrics = measureCell(this.config.font)
@@ -510,6 +521,15 @@ export class NvimCanvasSession {
     this.lastWidth = host.clientWidth
     this.lastHeight = host.clientHeight
 
+    this.wireElements()
+
+    await this.connect()
+  }
+
+  // Bind every listener that hangs off the pane's DOM. Split out of start() so
+  // reattach can rebind them onto the elements of a rebuilt component.
+  private wireElements(): void {
+    const { host, input } = this.elements
     this.observer = new ResizeObserver(() => this.scheduleFit())
     this.observer.observe(host)
     this.leafEl = (host.closest('[data-leaf]') as HTMLElement | null) ?? null
@@ -521,8 +541,47 @@ export class NvimCanvasSession {
     input.addEventListener('compositionend', this.onComposition)
     input.addEventListener('focus', this.onInputFocus)
     input.addEventListener('blur', this.onInputBlur)
+  }
 
-    await this.connect()
+  private unwireElements(): void {
+    const { host, input } = this.elements
+    this.observer?.disconnect()
+    this.observer = null
+    this.leafEl?.removeEventListener('focusin', this.onLeafFocus)
+    this.leafEl = null
+    host.removeEventListener('mousedown', this.onMouseDown)
+    host.removeEventListener('wheel', this.onWheel)
+    this.stopKeySink?.()
+    this.stopKeySink = null
+    input.removeEventListener('compositionstart', this.onComposition)
+    input.removeEventListener('compositionend', this.onComposition)
+    input.removeEventListener('focus', this.onInputFocus)
+    input.removeEventListener('blur', this.onInputBlur)
+  }
+
+  /**
+   * Move this session onto a freshly mounted pane's elements, keeping nvim
+   * alive. The layout rebuilds the component subtree around a pane whenever the
+   * split tree changes shape (opening a pane beside it, dragging it elsewhere);
+   * without this the pane's nvim would be killed and respawned each time.
+   */
+  reattach(elements: NvimSessionElements, callbacks: NvimSessionCallbacks): void {
+    if (this.destroyed) return
+    const previousCanvas = this.elements.canvas
+    this.unwireElements()
+    this.elements = elements
+    this.callbacks = callbacks
+    this.renderer?.attach(elements.canvas)
+    // The rebuilt component brought a blank canvas. Copy the last frame onto it
+    // before anything paints, so the pane never flashes empty; the fit below
+    // then resizes it (preserving those pixels) and nvim's redraw replaces them.
+    this.renderer?.carryFrom(previousCanvas)
+    this.wireElements()
+    // Force a re-fit: the guard compares against the old box, and the pane's new
+    // box is usually a different size (that is why the layout rebuilt it).
+    this.lastWidth = 0
+    this.lastHeight = 0
+    this.scheduleFit()
   }
 
   // Spawn nvim, wire the redraw/exit stream, attach the UI, and run onAttached.
@@ -621,21 +680,16 @@ export class NvimCanvasSession {
 
   dispose(): void {
     this.destroyed = true
-    const { host, input } = this.elements
+    if (this.nvimResizeTimer) {
+      clearTimeout(this.nvimResizeTimer)
+      this.nvimResizeTimer = null
+    }
+    this.pendingGridSize = null
     window.removeEventListener('mousemove', this.onMouseMove)
     window.removeEventListener('mouseup', this.onMouseUp)
-    this.leafEl?.removeEventListener('focusin', this.onLeafFocus)
-    host.removeEventListener('mousedown', this.onMouseDown)
-    host.removeEventListener('wheel', this.onWheel)
-    this.stopKeySink?.()
-    this.stopKeySink = null
-    input.removeEventListener('compositionstart', this.onComposition)
-    input.removeEventListener('compositionend', this.onComposition)
-    input.removeEventListener('focus', this.onInputFocus)
-    input.removeEventListener('blur', this.onInputBlur)
+    this.unwireElements()
     this.stopRedraw?.()
     this.stopExit?.()
-    this.observer?.disconnect()
     if (this.nvimId) void window.workbench.nvim.kill(this.nvimId)
     this.renderer?.dispose()
   }
@@ -671,15 +725,20 @@ export class NvimCanvasSession {
     this.renderScheduled = true
     requestAnimationFrame(() => {
       this.renderScheduled = false
-      if (!this.renderer) return
-      this.renderer.render(this.renderState(), {
-        all: this.pendingDirtyAll,
-        rows: this.pendingDirtyRows,
-        flushed: true
-      })
-      this.pendingDirtyAll = false
-      this.pendingDirtyRows = new Set()
+      this.renderNow()
     })
+  }
+
+  // Paint the pending dirty set now, for callers already inside a frame.
+  private renderNow(): void {
+    if (!this.renderer) return
+    this.renderer.render(this.renderState(), {
+      all: this.pendingDirtyAll,
+      rows: this.pendingDirtyRows,
+      flushed: true
+    })
+    this.pendingDirtyAll = false
+    this.pendingDirtyRows = new Set()
   }
 
   // The grid as painted: an unfocused pane hides its cursor, so only the pane
@@ -725,14 +784,57 @@ export class NvimCanvasSession {
       this.lastWidth = width
       this.lastHeight = height
       const { cols, rows } = this.gridSize()
-      // Changing canvas dimensions clears it; repaint the current grid at once
-      // so the pane never shows a half-blank buffer while waiting for nvim's
-      // grid_resize redraw.
+      // The renderer carries the last painted frame across the backing resize,
+      // so the pane keeps showing real content until nvim's grid_resize redraw
+      // arrives. Repainting the old grid here instead would draw it against the
+      // new cell edges — the same cells at the wrong columns.
       this.renderer.resize(cols, rows, window.devicePixelRatio, width, height)
-      this.pendingDirtyAll = true
-      this.scheduleRender()
-      void window.workbench.nvim.resize(this.nvimId, cols, rows)
+      this.queueNvimResize(cols, rows)
     })
+  }
+
+  // Tell nvim about the new grid once the box has stopped changing. Mid-drag
+  // the canvas keeps repainting the current grid at the new geometry, so the
+  // pane tracks the pointer without nvim reflowing the buffer every frame.
+  private static readonly RESIZE_SETTLE_MS = 90
+
+  private queueNvimResize(cols: number, rows: number): void {
+    this.pendingGridSize = { cols, rows }
+    // Leading edge: a resize that isn't part of an ongoing drag (opening a
+    // pane, toggling a dock) reflows immediately — waiting out the settle
+    // window would leave the carried-over frame on screen for no reason.
+    const settling = this.nvimResizeTimer !== null
+    const quiet = performance.now() - this.lastNvimResizeAt > NvimCanvasSession.RESIZE_SETTLE_MS
+    if (!settling && quiet) {
+      this.flushNvimResize()
+      // Still arm the timer: the frames that follow (a drag) coalesce into one
+      // trailing resize with the final size.
+      this.nvimResizeTimer = setTimeout(() => {
+        this.nvimResizeTimer = null
+        this.flushNvimResize()
+      }, NvimCanvasSession.RESIZE_SETTLE_MS)
+      return
+    }
+    if (this.nvimResizeTimer) clearTimeout(this.nvimResizeTimer)
+    this.nvimResizeTimer = setTimeout(() => {
+      this.nvimResizeTimer = null
+      this.flushNvimResize()
+    }, NvimCanvasSession.RESIZE_SETTLE_MS)
+  }
+
+  // Send the last queued grid size now, dropping the timer. Used when something
+  // else resizes the grid (font zoom) and on teardown, so a stale trailing
+  // resize can never land after it.
+  private flushNvimResize(): void {
+    if (this.nvimResizeTimer) {
+      clearTimeout(this.nvimResizeTimer)
+      this.nvimResizeTimer = null
+    }
+    const size = this.pendingGridSize
+    this.pendingGridSize = null
+    if (!size || !this.nvimId || this.destroyed) return
+    this.lastNvimResizeAt = performance.now()
+    void window.workbench.nvim.resize(this.nvimId, size.cols, size.rows)
   }
 
   // Grove → nvim mode names, clamped to what a pane registers.

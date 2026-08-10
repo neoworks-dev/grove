@@ -28,9 +28,12 @@ mock.module('electron', () => ({
 }))
 mock.module('node:os', () => ({ ...nodeOs, homedir: () => testHome }))
 
-const { ensureNvimUserConfig, nvimUserConfigDir, bundledNvimConfigDir } = await import(
-  '../src/main/nvimPaths'
-)
+const {
+  ensureNvimUserConfig,
+  ensureCopilotConfigLink,
+  nvimUserConfigDir,
+  bundledNvimConfigDir
+} = await import('../src/main/nvimPaths')
 
 let sandbox = ''
 
@@ -100,5 +103,57 @@ describe('ensureNvimUserConfig', () => {
     expect(backups).toHaveLength(1)
     const moved = join(groveConfigRoot(), backups[0], 'init.lua')
     expect(await readFile(moved, 'utf8')).toBe('-- leftover\n')
+  })
+})
+
+function globalCopilotConfigDir(): string {
+  return join(testHome, '.config', 'github-copilot')
+}
+
+function groveCopilotConfigDir(): string {
+  return join(groveConfigRoot(), 'github-copilot')
+}
+
+async function writeGlobalCopilotAuth(): Promise<void> {
+  await mkdir(globalCopilotConfigDir(), { recursive: true })
+  await writeFile(join(globalCopilotConfigDir(), 'apps.json'), '{"github.com":{}}\n')
+}
+
+// copilot.lua reads $XDG_CONFIG_HOME/github-copilot, which grove repoints at
+// ~/.config/grove. Without the link an already-signed-in user faces a second
+// `:Copilot auth` inside grove.
+describe('ensureCopilotConfigLink', () => {
+  it("links grove's copilot config at the user's real one", async () => {
+    await writeGlobalCopilotAuth()
+    await ensureCopilotConfigLink()
+
+    const linked = join(groveCopilotConfigDir(), 'apps.json')
+    expect(await readFile(linked, 'utf8')).toBe('{"github.com":{}}\n')
+  })
+
+  it('does nothing when the user has no global copilot config', async () => {
+    await ensureCopilotConfigLink()
+    await expect(readlink(groveCopilotConfigDir())).rejects.toThrow()
+  })
+
+  it('leaves a grove-local copilot directory alone', async () => {
+    await writeGlobalCopilotAuth()
+    await mkdir(groveCopilotConfigDir(), { recursive: true })
+    await writeFile(join(groveCopilotConfigDir(), 'apps.json'), '{"grove-only":{}}\n')
+
+    await ensureCopilotConfigLink()
+
+    const kept = join(groveCopilotConfigDir(), 'apps.json')
+    expect(await readFile(kept, 'utf8')).toBe('{"grove-only":{}}\n')
+  })
+
+  it('is idempotent across launches', async () => {
+    await writeGlobalCopilotAuth()
+    await ensureCopilotConfigLink()
+    await ensureCopilotConfigLink()
+
+    expect(await realpath(await readlink(groveCopilotConfigDir()))).toBe(
+      await realpath(globalCopilotConfigDir())
+    )
   })
 })

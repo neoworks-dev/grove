@@ -63,9 +63,9 @@
 
 {#snippet row(item: TranscriptItem)}
   {#if item.kind === 'user'}
-    <!-- Typed by the user: a right-aligned bubble, with any attached images. -->
+    <!-- Typed by the user: a left-aligned bubble, with any attached images. -->
     <div
-      class="agent-sticky-user mb-3 ml-auto w-fit max-w-[85%] whitespace-pre-wrap rounded-xl px-3 py-2 text-default"
+      class="agent-sticky-user mb-3 w-fit max-w-[85%] whitespace-pre-wrap rounded-xl px-3 py-2 text-default"
     >
       {item.text}
       {#if item.attachments.length > 0}

@@ -3,8 +3,12 @@
   "version": "1.0.0",
   "description": "Grove — a git worktree editor",
   "main": "./out/main/index.js",
-  "author": "example.com",
-  "homepage": "https://electron-vite.org",
+  "author": {
+    "name": "Neoworks",
+    "url": "https://neoworks.dev",
+    "email": "info@neoworks.dev"
+  },
+  "homepage": "https://grove.neoworks.dev",
   "workspaces": [
     "sdk"
   ],
@@ -46,7 +50,6 @@
     "node-pty": "^1.1.0",
     "phosphor-svelte": "^3.1.0",
     "simple-git": "^3.36.0",
-    "tree-sitter-wasms": "^0.1.13",
     "vscode-jsonrpc": "^9.0.1",
     "vscode-languageserver-protocol": "^3.18.2",
     "vscode-languageserver-types": "^3.18.0",

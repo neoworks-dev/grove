@@ -10,6 +10,7 @@
   import { commands } from '../lib/commands.svelte'
   import BufferTabs from './BufferTabs.svelte'
   import Minimap from './Minimap.svelte'
+  import WhichKey from './WhichKey.svelte'
   import InlineEditPrompt from './InlineEditPrompt.svelte'
   import InlineReviewOverlay from './InlineReviewOverlay.svelte'
   import ReviewHeaderBar from './ReviewHeaderBar.svelte'
@@ -17,11 +18,18 @@
   import { review } from '../lib/review.svelte'
   import { settings } from '../lib/settings.svelte'
   import { NvimCanvasSession } from '../lib/nvim/session'
-  import { registerNvimSession, unregisterNvimSession } from '../lib/nvim/registry'
+  import type { NvimSessionCallbacks, NvimSessionElements } from '../lib/nvim/session'
+  import {
+    adoptParkedSession,
+    parkNvimSession,
+    registerNvimSession,
+    unregisterNvimSession
+  } from '../lib/nvim/registry'
   import { scratchFor, closeScratch } from '../lib/nvim/scratch.svelte'
   import { editorHasContent } from '../lib/nvim/visibility'
   import { nvimKeymapBindings, type NvimMapping } from '../lib/nvimKeymap'
   import { operatorHintEntries, operatorTitle } from '../lib/nvimOperatorHints'
+  import { decodeNvimKey, nextPending, pendingHint } from '../lib/nvimPendingKeys'
 
   let { leafId }: { leafId: string } = $props()
 
@@ -43,6 +51,13 @@
   // Cached operator-pending maps (plugin text objects); refetched with the
   // normal-mode keymap since it rarely changes mid-session.
   let operatorMaps: NvimMapping[] = []
+  // Cached normal-mode maps, used to decide whether a half-typed nvim sequence
+  // is still going somewhere (see nvimPendingKeys).
+  let normalMaps: NvimMapping[] = []
+  // Keys nvim has taken but not yet acted on ('5', 'g', '5g'), rebuilt from the
+  // on_key stream below.
+  let pendingNvimKeys = ''
+  let disposePendingKeys: (() => void) | null = null
 
   // Reactive mirrors for the child overlays: the session id once attached, and a
   // tick bumped on each redraw flush so the minimap re-reads the buffer view.
@@ -163,6 +178,7 @@
       ])
       if (!session?.id || !Array.isArray(bufferMaps) || !Array.isArray(globalMaps)) return
       const mappings = [...bufferMaps, ...globalMaps] as NvimMapping[]
+      normalMaps = mappings
       const bindings = nvimKeymapBindings(mappings, 'editor', 'normal', (lhs) => {
         if (session?.id) void window.workbench.nvim.input(session.id, lhs)
       })
@@ -242,10 +258,78 @@ end
       .catch(() => {})
   }
 
+  // Streams every typed key back to grove while nvim is in normal or visual
+  // mode, so the which-key overlay can show nvim's pending sequences (counts,
+  // `g`/`z`/`[` layers, half-typed mappings). Nvim reports pending keys nowhere
+  // else without ext_messages, which grove does not attach with. Keys produced
+  // by mappings or feedkeys have an empty `typed` and are ignored — only what
+  // the user actually pressed builds the sequence.
+  const PENDING_KEYS_LUA = `
+local ns = vim.api.nvim_create_namespace('grove_pending_keys')
+vim.on_key(function(key, typed)
+  local pressed = typed
+  if pressed == nil or pressed == '' then return end
+  local ok, state = pcall(vim.api.nvim_get_mode)
+  if not ok then return end
+  local mode = state.mode
+  local head = mode:sub(1, 1)
+  if head ~= 'n' and head ~= 'v' and head ~= 'V' and head ~= '\\22' then return end
+  pcall(vim.rpcnotify, 0, 'grove_pending_keys', { key = pressed, mode = mode })
+end, ns)
+`
+
+  /**
+   * Install the on_key hook in a freshly attached session and turn its key
+   * stream into which-key panels for nvim's pending sequences.
+   */
+  function watchPendingKeys(id: string): void {
+    disposePendingKeys?.()
+    pendingNvimKeys = ''
+    disposePendingKeys = window.workbench.on('event:nvim-notify', (payload) => {
+      const event = payload as { id: string; method: string; args: unknown[] }
+      if (event.id !== id || event.method !== 'grove_pending_keys') return
+      const data = (event.args?.[0] ?? {}) as { key?: string; mode?: string }
+      if (typeof data.key !== 'string') return
+      handlePendingKey(data.key, data.mode || '')
+    })
+    void window.workbench.nvim.request(id, 'nvim_exec_lua', [PENDING_KEYS_LUA, []]).catch(() => {})
+  }
+
+  // Hides the pending panel without churning keymap state on every keystroke.
+  function clearPendingKeys(): void {
+    pendingNvimKeys = ''
+    if (keymap.hintTitle !== null) keymap.hideHints()
+  }
+
+  /**
+   * Fold one typed key into the pending sequence and show (or drop) its panel.
+   * Operator-pending mode is left to handleModeChange, which knows the operator.
+   */
+  function handlePendingKey(raw: string, mode: string): void {
+    if (mode.startsWith('no')) {
+      pendingNvimKeys = ''
+      return
+    }
+    const key = decodeNvimKey(raw)
+    if (key === null) {
+      clearPendingKeys()
+      return
+    }
+    pendingNvimKeys = nextPending(pendingNvimKeys, key, normalMaps)
+    const hint = pendingHint(pendingNvimKeys, normalMaps)
+    if (!hint) {
+      clearPendingKeys()
+      return
+    }
+    keymap.showHints(hint.title, hint.entries)
+  }
+
   // Surface the operator-pending which-key panel when nvim enters (e.g.) `d`,
   // sourcing the pending operator from v:operator so the title matches. Hidden
   // on any transition back out of operator-pending mode.
   async function handleModeChange(mode: string): Promise<void> {
+    // A mode change means whatever was half-typed either ran or was abandoned.
+    pendingNvimKeys = ''
     if (mode !== 'operator') {
       keymap.hideHints()
       return
@@ -264,48 +348,77 @@ end
     keymap.showHints(operatorTitle(operator), operatorHintEntries(operator, operatorMaps))
   }
 
+  // Callbacks the session drives this component through. Built here rather than
+  // inline because an adopted session has to be re-pointed at the new component
+  // instance's state.
+  function sessionCallbacks(): NvimSessionCallbacks {
+    return {
+      onAttached: (id) => {
+        // Claim the current path so the tab-follow effect doesn't re-edit it;
+        // a fresh session (start or restart) already opened it via initialFile.
+        lastPushedPath = store.activeTabPath
+        nvimId = id
+        void syncNvimKeymap()
+        watchBufferCount(id)
+        watchPendingKeys(id)
+        // A renderer reload leaves a gated review's preview in the buffer with
+        // nothing left to take it down; this editor is attaching fresh, so
+        // whatever is flagged as previewed is stale by definition.
+        void session?.clearStalePreviews()
+      },
+      onFlush: () => {
+        minimapTick += 1
+      },
+      onModeChange: (mode) => {
+        void handleModeChange(mode)
+      },
+      onExited: (exitCode) => {
+        console.warn(`nvim editor pane crashed (code ${exitCode}); restarting`)
+        nvimId = null
+        nvimFileCount = 0
+      },
+      onClose: () => {
+        nvimId = null
+        layout.closeLeaf(leafId)
+      },
+      onUnavailable: () => {
+        unavailable = true
+      }
+    }
+  }
+
+  // Take over the session this leaf's previous component instance parked, so a
+  // layout change that rebuilds the pane doesn't restart nvim.
+  function adoptSession(elements: NvimSessionElements): boolean {
+    const parked = adoptParkedSession(leafId)
+    if (!parked) return false
+    session = parked
+    session.reattach(elements, sessionCallbacks())
+    registeredLeafId = leafId
+    registerNvimSession(leafId, session)
+    const id = session.id
+    if (!id) return true
+    lastPushedPath = store.activeTabPath
+    nvimId = id
+    void syncNvimKeymap()
+    watchBufferCount(id)
+    watchPendingKeys(id)
+    return true
+  }
+
   onMount(() => {
     keymap.setPaneMode(leafId, 'normal')
     if (!hostEl || !canvasEl || !inputEl) return
+    const elements = { host: hostEl, canvas: canvasEl, input: inputEl }
+    if (adoptSession(elements)) return
     const font = {
       family: cssVar('--font-mono', 'monospace'),
       sizePx: fontSize() * layout.fontScale(leafId)
     }
     session = new NvimCanvasSession(
-      { host: hostEl, canvas: canvasEl, input: inputEl },
+      elements,
       { leafId, font, initialFile: () => store.activeTabPath },
-      {
-        onAttached: (id) => {
-          // Claim the current path so the tab-follow effect doesn't re-edit it;
-          // a fresh session (start or restart) already opened it via initialFile.
-          lastPushedPath = store.activeTabPath
-          nvimId = id
-          void syncNvimKeymap()
-          watchBufferCount(id)
-          // A renderer reload leaves a gated review's preview in the buffer with
-          // nothing left to take it down; this editor is attaching fresh, so
-          // whatever is flagged as previewed is stale by definition.
-          void session?.clearStalePreviews()
-        },
-        onFlush: () => {
-          minimapTick += 1
-        },
-        onModeChange: (mode) => {
-          void handleModeChange(mode)
-        },
-        onExited: (exitCode) => {
-          console.warn(`nvim editor pane crashed (code ${exitCode}); restarting`)
-          nvimId = null
-          nvimFileCount = 0
-        },
-        onClose: () => {
-          nvimId = null
-          layout.closeLeaf(leafId)
-        },
-        onUnavailable: () => {
-          unavailable = true
-        }
-      }
+      sessionCallbacks()
     )
     registeredLeafId = leafId
     registerNvimSession(leafId, session)
@@ -430,9 +543,13 @@ end
   onDestroy(() => {
     disposeNvimBindings?.()
     disposeBufferWatch?.()
+    disposePendingKeys?.()
     keymap.hideHints()
     unregisterNvimSession(registeredLeafId)
-    session?.dispose()
+    // Park rather than dispose: the layout rebuilds this component whenever the
+    // split tree changes shape, and the remounted pane adopts the session. A
+    // park nobody claims is disposed by the registry's grace timer.
+    if (session) parkNvimSession(registeredLeafId, session)
   })
 </script>
 
@@ -442,7 +559,7 @@ end
   {/if}
   <ReviewHeaderBar {leafId} />
 
-  <div bind:this={hostEl} class="relative min-h-0 flex-1 overflow-hidden bg-elevated" role="none">
+  <div bind:this={hostEl} class="relative min-h-0 flex-1 overflow-hidden bg-surface" role="none">
     {#if unavailable}
       <div class="flex h-full items-center justify-center text-dim">
         Neovim runtime missing — run `bun scripts/fetch-nvim.ts` and reopen this pane.
@@ -466,12 +583,19 @@ end
         tabindex="0"
         aria-label="Neovim input"
       ></div>
+      <!-- Which-key rides over the buffer it applies to, clear of the minimap.
+           Only the focused pane shows it, so split editors don't each draw one. -->
+      {#if keymap.activeLeafId === leafId}
+        <div class="pointer-events-none absolute bottom-3 right-[72px] z-30">
+          <WhichKey inline />
+        </div>
+      {/if}
       <InlineEditPrompt {leafId} />
       <InlineReviewOverlay {leafId} tick={minimapTick} />
       <ReviewOverlay {leafId} tick={minimapTick} />
       {#if !showEditor}
         <div
-          class="absolute inset-0 z-30 flex flex-col items-center justify-center gap-4 bg-elevated text-dim"
+          class="absolute inset-0 z-30 flex flex-col items-center justify-center gap-4 bg-surface text-dim"
         >
           <div class="text-sm">No file open</div>
           <div class="flex flex-wrap justify-center gap-2">

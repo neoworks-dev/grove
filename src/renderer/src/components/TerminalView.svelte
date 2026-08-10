@@ -15,13 +15,15 @@
     worktreeId,
     active,
     onExit,
-    onTitle
+    onTitle,
+    onStatus
   }: {
     leafId: string
     worktreeId: string
     active: boolean
     onExit: () => void
     onTitle: (title: string) => void
+    onStatus?: (status: { running: boolean; exitCode?: number }) => void
   } = $props()
 
   // xterm renders to its own canvas, so it scales its font from the pane's zoom
@@ -89,12 +91,12 @@
     const fg = cssVar('--text', '#fafafa')
     const dim = cssVar('--text-dim', '#71717a')
     return {
-      background: cssVar('--bg-elevated', '#0b0b0d'),
+      background: cssVar('--surface', '#1c1c1e'),
       foreground: fg,
       cursor: fg,
-      cursorAccent: cssVar('--bg-elevated', '#0b0b0d'),
+      cursorAccent: cssVar('--surface', '#1c1c1e'),
       selectionBackground: cssVar('--surface-hover', '#26262a'),
-      black: cssVar('--bg-elevated', '#18181b'),
+      black: cssVar('--surface', '#1c1c1e'),
       red: cssVar('--ctx-red', '#f87171'),
       green: cssVar('--ctx-green', '#a3e635'),
       yellow: cssVar('--ctx-amber', '#fbbf24'),
@@ -126,6 +128,18 @@
     term.loadAddon(fit)
     term.open(hostEl)
     term.attachCustomKeyEventHandler(createTerminalEscapeHandler(enterNormalMode))
+    // Semantic-prompt markers (OSC 133, emitted by fish and configured shells):
+    // "C" fires when a command starts executing, "D;<status>" when it finishes.
+    // They drive the tab status dot; unhandled (return false) so other
+    // consumers still see them.
+    term.parser.registerOscHandler(133, (data) => {
+      if (data.startsWith('C')) onStatus?.({ running: true })
+      if (data.startsWith('D')) {
+        const code = Number.parseInt(data.split(';')[1] ?? '', 10)
+        onStatus?.({ running: false, exitCode: Number.isNaN(code) ? undefined : code })
+      }
+      return false
+    })
     // Clicking back into the terminal resumes terminal mode.
     term.textarea?.addEventListener('focus', () => keymap.setPaneMode(leafId, 'terminal'))
 
@@ -201,4 +215,4 @@
   })
 </script>
 
-<div bind:this={hostEl} class="h-full w-full overflow-hidden bg-elevated px-2 py-1"></div>
+<div bind:this={hostEl} class="h-full w-full overflow-hidden bg-surface px-2 py-1"></div>

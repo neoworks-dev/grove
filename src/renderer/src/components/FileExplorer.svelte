@@ -168,6 +168,14 @@
     treeViewport?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' })
   }
 
+  // Breadcrumb clicks request a specific path; consume the one-shot request.
+  $effect(() => {
+    const target = store.explorerRevealPath
+    if (!target || worktreeId !== store.selectedWorktreeId) return
+    store.explorerRevealPath = null
+    untrack(() => void reveal(target))
+  })
+
   // Reveal the active buffer whenever it changes — buffer switches, overlay
   // opens, tab clicks — by expanding to and selecting its row.
   $effect(() => {

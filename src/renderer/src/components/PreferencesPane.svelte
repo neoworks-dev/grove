@@ -5,6 +5,7 @@
   // viewed scope overrides the effective default.
   import { settings } from '../lib/settings.svelte'
   import { store } from '../lib/store.svelte'
+  import { layout } from '../lib/layout.svelte'
   import { matchesQuery } from '../lib/overlays.svelte'
   import SettingToggle from './controls/SettingToggle.svelte'
   import SettingSelect from './controls/SettingSelect.svelte'
@@ -13,6 +14,8 @@
   import SettingColorInput from './controls/SettingColorInput.svelte'
   import KeybindCapture from './controls/KeybindCapture.svelte'
   import type { SettingDefinition, SettingScope, SettingsContribution } from '../../../shared/settings'
+
+  let { leafId }: { leafId: string } = $props()
 
   let filter = $state('')
   let scope = $state<SettingScope>('user')
@@ -105,6 +108,13 @@
     </div>
     <button class="ml-auto text-2xs text-dim hover:text-default" onclick={openFile}>
       Open settings.json
+    </button>
+    <button
+      class="text-dim hover:text-default"
+      onclick={() => layout.closeLeaf(leafId)}
+      aria-label="Close preferences"
+    >
+      ✕
     </button>
   </div>
 

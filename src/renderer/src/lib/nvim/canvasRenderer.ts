@@ -40,6 +40,16 @@ export class CanvasGridRenderer implements GridRenderer {
     this.ctx = canvas.getContext('2d')
   }
 
+  carryFrom(previous: HTMLCanvasElement): void {
+    if (!this.canvas || !this.ctx) return
+    if (previous.width === 0 || previous.height === 0) return
+    this.canvas.width = previous.width
+    this.canvas.height = previous.height
+    this.canvas.style.width = `${previous.width / this.dpr}px`
+    this.canvas.style.height = `${previous.height / this.dpr}px`
+    this.ctx.drawImage(previous, 0, 0)
+  }
+
   setFont(font: FontSpec, metrics: CellMetrics): void {
     this.font = font
     this.metrics = metrics
@@ -61,14 +71,34 @@ export class CanvasGridRenderer implements GridRenderer {
     // (colX/rowY), so there's no sub-cell gap and no row is clipped.
     const width = Math.ceil(pxWidth * dpr)
     const height = Math.ceil(pxHeight * dpr)
+    const backingChanged = this.canvas.width !== width || this.canvas.height !== height
+    // Writing width/height wipes the bitmap, and nvim's redraw for the new grid
+    // is a round trip away — so carry the last painted frame over. Without it
+    // the pane blanks (or shows the old grid smeared across the new cell edges)
+    // until that redraw lands.
+    const carried = backingChanged ? this.snapshot() : null
     if (this.canvas.width !== width) this.canvas.width = width
     if (this.canvas.height !== height) this.canvas.height = height
     this.canvas.style.width = `${width / dpr}px`
     this.canvas.style.height = `${height / dpr}px`
+    if (carried && this.ctx) this.ctx.drawImage(carried, 0, 0)
     // Spread the backing across cols/rows so every cell is `cellW`/`cellH` or
     // one px larger, distributed evenly — the grid reaches every edge.
     this.colX = buildEdges(cols, width)
     this.rowY = buildEdges(rows, height)
+  }
+
+  // Copy of the current backing store, used to survive a backing resize.
+  private snapshot(): HTMLCanvasElement | null {
+    const source = this.canvas
+    if (!source || source.width === 0 || source.height === 0) return null
+    const copy = document.createElement('canvas')
+    copy.width = source.width
+    copy.height = source.height
+    const copyCtx = copy.getContext('2d')
+    if (!copyCtx) return null
+    copyCtx.drawImage(source, 0, 0)
+    return copy
   }
 
   render(state: GridState, dirty: DirtyState): void {

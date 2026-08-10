@@ -193,7 +193,12 @@ if (vim.uv or vim.loop).fs_stat(lazyPath) then
         dependencies = { 'williamboman/mason.nvim', 'neovim/nvim-lspconfig', 'saghen/blink.cmp' },
         opts = {
           ensure_installed = { 'vtsls' },
-          automatic_installation = true
+          automatic_installation = true,
+          -- vtsls is the TypeScript server here. mason-lspconfig enables every
+          -- installed server, so a leftover ts_ls install would attach to the
+          -- same buffers — two tsservers indexing the project, doubled
+          -- diagnostics and completions.
+          automatic_enable = { exclude = { 'ts_ls' } }
         },
         config = function(_, opts)
           require('mason').setup()
@@ -202,6 +207,22 @@ if (vim.uv or vim.loop).fs_stat(lazyPath) then
           if ok then
             vim.lsp.config('*', { capabilities = blink.get_lsp_capabilities() })
           end
+          -- vtsls reports inlay hints only for the categories asked for; without
+          -- these it advertises the capability and returns nothing.
+          local inlay_hints = {
+            parameterNames = { enabled = 'literals', suppressWhenArgumentMatchesName = true },
+            parameterTypes = { enabled = true },
+            variableTypes = { enabled = true, suppressWhenTypeMatchesName = true },
+            propertyDeclarationTypes = { enabled = true },
+            functionLikeReturnTypes = { enabled = true },
+            enumMemberValues = { enabled = true }
+          }
+          vim.lsp.config('vtsls', {
+            settings = {
+              typescript = { inlayHints = inlay_hints },
+              javascript = { inlayHints = inlay_hints }
+            }
+          })
           require('mason-lspconfig').setup(opts)
           -- Belt-and-suspenders on nvim 0.11+: enable the server explicitly in
           -- case mason-lspconfig's automatic enable is unavailable.
@@ -247,6 +268,19 @@ vim.api.nvim_create_autocmd('DiagnosticChanged', {
   end
 })
 
+-- Inlay hints are off until something turns them on, so a server advertising
+-- the capability still renders nothing. Turn them on per buffer as each capable
+-- server attaches.
+vim.api.nvim_create_autocmd('LspAttach', {
+  callback = function(args)
+    local client = vim.lsp.get_client_by_id(args.data.client_id)
+    if not client or not client:supports_method('textDocument/inlayHint') then
+      return
+    end
+    pcall(vim.lsp.inlay_hint.enable, true, { bufnr = args.buf })
+  end
+})
+
 -- Applied by grove over RPC (nvim_exec_lua) on create and on theme change.
 -- `palette` is a subset of grove's ThemePalette: hex strings.
 -- Mix two "#rrggbb" colors; ratio 0 = base, 1 = tint. Used to derive subtle
@@ -265,24 +299,24 @@ local function blend(base, tint, ratio)
 end
 
 -- The editor sits in a pane next to grove's own panes, so it paints on the
--- elevated pane background rather than the canvas underneath them; floats and
--- menus step up one more level so they still read as raised.
+-- surface pane background rather than the canvas underneath them; floats and
+-- menus step up to the elevated level so they still read as raised.
 _G.grove_apply_theme = function(palette)
   local set = vim.api.nvim_set_hl
-  set(0, 'Normal', { fg = palette.text, bg = palette.bgElevated })
-  set(0, 'NormalNC', { fg = palette.text, bg = palette.bgElevated })
-  set(0, 'NormalFloat', { fg = palette.text, bg = palette.surface })
-  set(0, 'FloatBorder', { fg = palette.border, bg = palette.surface })
-  set(0, 'Visual', { bg = palette.surfaceHover })
+  set(0, 'Normal', { fg = palette.text, bg = palette.surface })
+  set(0, 'NormalNC', { fg = palette.text, bg = palette.surface })
+  set(0, 'NormalFloat', { fg = palette.text, bg = palette.bgElevated })
+  set(0, 'FloatBorder', { fg = palette.border, bg = palette.bgElevated })
+  set(0, 'Visual', { bg = palette.borderStrong })
   set(0, 'LineNr', { fg = palette.textDim })
-  set(0, 'CursorLine', { bg = palette.surface })
+  set(0, 'CursorLine', { bg = palette.surfaceHover })
   set(0, 'CursorLineNr', { fg = palette.textMuted })
-  set(0, 'SignColumn', { bg = palette.bgElevated })
-  set(0, 'EndOfBuffer', { fg = palette.bgElevated })
+  set(0, 'SignColumn', { bg = palette.surface })
+  set(0, 'EndOfBuffer', { fg = palette.surface })
   set(0, 'WinSeparator', { fg = palette.border })
-  set(0, 'Pmenu', { fg = palette.text, bg = palette.surface })
+  set(0, 'Pmenu', { fg = palette.text, bg = palette.bgElevated })
   set(0, 'PmenuSel', { fg = palette.textInverse, bg = palette.primary })
-  set(0, 'PmenuSbar', { bg = palette.surface })
+  set(0, 'PmenuSbar', { bg = palette.bgElevated })
   set(0, 'PmenuThumb', { bg = palette.borderStrong })
   set(0, 'Search', { fg = palette.textInverse, bg = palette.ctxAmber })
   set(0, 'IncSearch', { fg = palette.textInverse, bg = palette.primary })
@@ -290,7 +324,7 @@ _G.grove_apply_theme = function(palette)
   set(0, 'MatchParen', { fg = palette.ctxAmber, bold = true })
   set(0, 'ErrorMsg', { fg = palette.ctxRed })
   set(0, 'WarningMsg', { fg = palette.ctxAmber })
-  set(0, 'MsgArea', { fg = palette.textMuted, bg = palette.bgElevated })
+  set(0, 'MsgArea', { fg = palette.textMuted, bg = palette.surface })
   set(0, 'Question', { fg = palette.ctxGreen })
   set(0, 'Directory', { fg = palette.ctxBlue })
   set(0, 'Title', { fg = palette.ctxViolet, bold = true })
@@ -313,10 +347,61 @@ _G.grove_apply_theme = function(palette)
   set(0, 'Delimiter', { fg = palette.textMuted })
   -- Full-line diff fills: tint the base bg toward green/red so changed lines
   -- read at a glance without washing out the syntax-colored text on top.
-  set(0, 'DiffAdd', { bg = blend(palette.bgElevated, palette.ctxGreen, 0.22) })
-  set(0, 'DiffDelete', { bg = blend(palette.bgElevated, palette.ctxRed, 0.22) })
-  set(0, 'DiffChange', { bg = blend(palette.bgElevated, palette.ctxAmber, 0.22) })
+  set(0, 'DiffAdd', { bg = blend(palette.surface, palette.ctxGreen, 0.22) })
+  set(0, 'DiffDelete', { bg = blend(palette.surface, palette.ctxRed, 0.22) })
+  set(0, 'DiffChange', { bg = blend(palette.surface, palette.ctxAmber, 0.22) })
 end
+
+-- Push the named code scopes enclosing the cursor (function/class/etc, outer
+-- first) to grove's breadcrumb bar. Treesitter-based, so it works in any
+-- buffer with a running parser; buffers without one report an empty chain.
+local function grove_code_context()
+  local ok, node = pcall(vim.treesitter.get_node)
+  if not ok then
+    return {}
+  end
+  local names = {}
+  while node do
+    local node_type = node:type()
+    local is_scope = node_type:find('function')
+      or node_type:find('method')
+      or node_type:find('class')
+      or node_type:find('interface')
+      or node_type:find('struct')
+      or node_type:find('enum')
+      or node_type:find('module')
+      or node_type:find('namespace')
+      or node_type:find('impl')
+    if is_scope then
+      local name_node = node:field('name')[1]
+      if name_node then
+        table.insert(names, 1, vim.treesitter.get_node_text(name_node, 0))
+      end
+    elseif node_type == 'variable_declarator' then
+      -- `const foo = () => …`: the arrow function itself is anonymous, its
+      -- name lives on the declarator.
+      local value = node:field('value')[1]
+      local name_node = node:field('name')[1]
+      if value and name_node and value:type():find('function') then
+        table.insert(names, 1, vim.treesitter.get_node_text(name_node, 0))
+      end
+    end
+    node = node:parent()
+  end
+  return names
+end
+
+local code_context_timer = nil
+vim.api.nvim_create_autocmd({ 'CursorMoved', 'CursorMovedI', 'BufEnter' }, {
+  callback = function()
+    if code_context_timer then
+      code_context_timer:stop()
+    end
+    code_context_timer = vim.defer_fn(function()
+      vim.rpcnotify(0, 'grove_code_context', { names = grove_code_context() })
+    end, 120)
+  end
+})
 
 -- Sanctioned user-extension hook (Phase C): a writable init in nvim's data
 -- dir (grove userData) is sourced last when present.

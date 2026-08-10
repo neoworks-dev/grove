@@ -42,10 +42,11 @@
 <div
   use:pane={{ id: leaf.id, type: type?.contextType ?? leaf.paneTypeId, modes: type?.modes }}
   data-leaf={leaf.id}
+  data-surface={leaf.id}
   data-zoom-container={leaf.id}
   style={zoomStyle}
   onpointerdown={onPointerDown}
-  class="flex h-full w-full min-w-0 min-h-0 flex-col overflow-hidden rounded-xl border border-line-faint outline-none {surfaceClass} {keymap.activePane ===
+  class="pane-surface flex h-full w-full min-w-0 min-h-0 flex-col overflow-hidden rounded-xl border border-line-faint outline-none {surfaceClass} {keymap.activeSurfaceId ===
   leaf.id
     ? 'pane-active'
     : ''} {dragged ? 'opacity-40' : ''}"

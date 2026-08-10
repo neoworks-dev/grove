@@ -387,7 +387,7 @@
       <AgentQueue messages={queued} onCancel={unqueue} />
     {/if}
 
-    <div class="relative shrink-0 border-t border-line p-3">
+    <div class="relative shrink-0 p-2">
       {#if postReviews.length > 0}
         <!-- Post-approve reviews: the writes are already on disk, so nothing is
              blocked on these. Opening one shows its diff in the editor. -->

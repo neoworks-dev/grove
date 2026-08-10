@@ -36,6 +36,11 @@ const DEFAULT_PANEL_SIZES: Record<string, number> = {
 
 const CENTER_TYPES = ['nvim', 'dashboard']
 
+// The editor is the one pane a slot swap may never take over — everything else
+// opens beside it. Losing the editor to a pane with no way back stranded the
+// user (settings did exactly that).
+const EDITOR_TYPE = 'nvim'
+
 // Center pane type shown when the last real center pane is closed, so the
 // center never collapses to nothing.
 const EMPTY_CENTER_TYPE = 'empty'
@@ -392,6 +397,10 @@ class LayoutStore {
       return
     }
     const slotMate = definition?.slot ? this.slotLeaf(definition.slot) : null
+    if (slotMate && slotMate.paneTypeId === EDITOR_TYPE) {
+      this.splitFocused('row', paneTypeId)
+      return
+    }
     if (slotMate) {
       this.setActiveTree(replaceLeafType(this.tree, slotMate.id, paneTypeId))
       this.focusLeafSoon(slotMate.id)

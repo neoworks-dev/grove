@@ -5,6 +5,7 @@
   // session blocked on an approval elsewhere is the one thing you need to be told
   // about without switching to it.
 
+  import AgentLogo from '../AgentLogo.svelte'
   import WaveSpinner from '../WaveSpinner.svelte'
   import type { SessionBadge } from '../../lib/nib/sessions.svelte'
   import type { SessionMeta } from '../../lib/nib/types'
@@ -33,20 +34,19 @@
   }
 </script>
 
-<div
-  class="no-scrollbar flex shrink-0 items-center gap-1 overflow-x-auto border-b border-line px-2 py-1"
->
+<div class="no-scrollbar flex h-8 shrink-0 items-center gap-1 overflow-x-auto px-1.5">
   {#each sessions as session (session.id)}
     {@const active = session.id === activeId}
     {@const badge = badgeFor(session)}
     {@const unread = unreadFor(session)}
     <div
-      class="group/tab flex shrink-0 items-center rounded px-2 py-1 text-xs {active
-        ? 'bg-raised text-default'
+      class="group/tab flex h-6 shrink-0 items-center rounded-md px-2 text-xs {active
+        ? 'bg-elevated text-default'
         : 'text-dim hover:bg-hover hover:text-default'}"
       title="{titleOf(session)} · {session.provider}/{session.model} ({badge})"
     >
       <button class="flex cursor-pointer items-center gap-1.5" onclick={() => onSelect(session.id)}>
+        <AgentLogo name={session.provider} size={13} {active} />
         <span class="max-w-[12rem] truncate">{titleOf(session)}</span>
         {#if badge === 'running'}
           <span class="text-green"><WaveSpinner count={3} /></span>
@@ -66,7 +66,7 @@
     </div>
   {/each}
   <button
-    class="shrink-0 rounded px-2 py-1 text-2xs text-dim hover:bg-hover hover:text-default"
+    class="flex h-6 shrink-0 items-center rounded-md px-2 text-2xs text-dim hover:bg-hover hover:text-default"
     title="New session in this worktree"
     onclick={onCreate}
   >

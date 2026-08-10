@@ -14,6 +14,18 @@ export interface NvimMapping {
   desc?: string | null
 }
 
+// Pseudo-key prefixes that no user can type: plugin hook targets and
+// script-local mappings. They exist to be referenced by other maps, so they are
+// never worth listing in which-key.
+const PSEUDO_KEY_PREFIXES = ['<Plug>', '<SNR>', '<Nop>']
+
+/**
+ * Can this mapping's lhs actually be typed? False for `<Plug>`/`<SNR>` hooks.
+ */
+export function isTypableLhs(lhs: string): boolean {
+  return !PSEUDO_KEY_PREFIXES.some((prefix) => lhs.startsWith(prefix))
+}
+
 // nvim <> key names → grove named keys (see keySequence NAMED_KEYS).
 const SPECIAL_KEYS: Record<string, string> = {
   space: 'space',

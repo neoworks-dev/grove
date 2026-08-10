@@ -13,6 +13,7 @@
   import DialogHost from './components/DialogHost.svelte'
   import NotificationHost from './components/NotificationHost.svelte'
   import KeybindCheatsheet from './components/KeybindCheatsheet.svelte'
+  import EditorBreadcrumbs from './components/EditorBreadcrumbs.svelte'
   import StatusBranch from './components/StatusBranch.svelte'
   import StatusClock from './components/StatusClock.svelte'
   import StatusMode from './components/StatusMode.svelte'
@@ -55,6 +56,7 @@
   // Core status bar items (plugins can register more, left or right aligned).
   statusBar.register({ id: 'mode', align: 'left', order: 0, component: StatusMode })
   statusBar.register({ id: 'git.branch', align: 'left', order: 1, component: StatusBranch })
+  statusBar.register({ id: 'breadcrumbs', align: 'left', order: 2, component: EditorBreadcrumbs })
   statusBar.register({ id: 'clock', align: 'right', order: 100, component: StatusClock })
   // Visible only while an AGENTS.md onboarding session runs but its pane is
   // hidden — one click returns to the flow.
@@ -365,7 +367,10 @@
   </div>
 
   <StatusBar />
-  <WhichKey />
+  <!-- Window-anchored fallback: editor panes draw their own over the buffer. -->
+  {#if keymap.activePaneType !== 'editor'}
+    <WhichKey />
+  {/if}
 </div>
 
 <PaneDragOverlay />

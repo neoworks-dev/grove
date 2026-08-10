@@ -67,6 +67,8 @@
   // don't cover buffers opened from within nvim (`:e`), so both are consulted
   // before deciding the editor has nothing to show.
   let nvimFileCount = $state(0)
+  // Absolute paths of buffers with unsaved changes, keyed for tab lookup.
+  let dirtyPaths = $state<Record<string, boolean>>({})
   let disposeBufferWatch: (() => void) | null = null
   // Git gutter for the minimap: the open file's changed-line ranges.
   let diffMarkers = $state<{ start: number; count: number; kind: 'add' | 'del' | 'mod' }[]>([])
@@ -193,11 +195,14 @@
     }
   }
 
-  // Reports how many windows currently show a named buffer, once now and again
-  // whenever that could change. Windows rather than the buffer list: a hidden
-  // buffer isn't on screen, so it shouldn't keep the editor up. The notify is
-  // scheduled because BufDelete/WinClosed fire before the change lands.
-  const BUFFER_COUNT_LUA = `
+  // Reports how many windows currently show a named buffer and which buffers
+  // hold unsaved changes, once now and again whenever either could change.
+  // Windows rather than the buffer list for the count: a hidden buffer isn't on
+  // screen, so it shouldn't keep the editor up. The unsaved set spans all loaded
+  // buffers, because a modified file keeps its tab dot while hidden behind
+  // another. The notify is scheduled because BufDelete/WinClosed fire before the
+  // change lands.
+  const BUFFER_STATE_LUA = `
 local function count_visible()
   local total = 0
   for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
@@ -211,20 +216,42 @@ local function count_visible()
   return total
 end
 
+-- Absolute paths of every loaded buffer with unsaved changes. Unnamed buffers
+-- are skipped: grove has no tab to mark for them.
+local function modified_paths()
+  local paths = {}
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].modified then
+      local name = vim.api.nvim_buf_get_name(buf)
+      if name ~= '' then
+        table.insert(paths, name)
+      end
+    end
+  end
+  return paths
+end
+
+local function snapshot()
+  return { count = count_visible(), modified = modified_paths() }
+end
+
 local group = vim.api.nvim_create_augroup('GroveBufferCount', { clear = true })
 vim.api.nvim_create_autocmd(
-  { 'BufWinEnter', 'BufEnter', 'BufDelete', 'BufWipeout', 'BufFilePost', 'WinEnter', 'WinClosed', 'TabEnter' },
+  {
+    'BufWinEnter', 'BufEnter', 'BufDelete', 'BufWipeout', 'BufFilePost',
+    'WinEnter', 'WinClosed', 'TabEnter', 'BufModifiedSet', 'BufWritePost'
+  },
   {
     group = group,
     callback = function()
       vim.schedule(function()
-        vim.rpcnotify(0, 'grove_buffers', { count = count_visible() })
+        vim.rpcnotify(0, 'grove_buffers', snapshot())
       end)
     end,
   }
 )
 
-return count_visible()
+return snapshot()
 `
 
   // Drops a file's buffer when its grove tab closes. Modified buffers survive
@@ -237,24 +264,42 @@ if buf > 0 then
 end
 `
 
+  interface BufferSnapshot {
+    count?: number
+    modified?: unknown
+  }
+
+  /** Turns nvim's list of unsaved buffer paths into the lookup BufferTabs takes. */
+  function toDirtyPaths(paths: unknown): Record<string, boolean> {
+    if (!Array.isArray(paths)) return {}
+    const dirty: Record<string, boolean> = {}
+    for (const path of paths) {
+      if (typeof path === 'string') dirty[path] = true
+    }
+    return dirty
+  }
+
+  /** Applies one snapshot from the buffer-state autocmd to the pane's state. */
+  function applyBufferSnapshot(snapshot: BufferSnapshot): void {
+    if (typeof snapshot.count === 'number') nvimFileCount = snapshot.count
+    dirtyPaths = toDirtyPaths(snapshot.modified)
+  }
+
   /**
-   * Install the visible-buffer autocmd in a freshly attached session and
-   * subscribe to its notifications, so the pane knows whether nvim has anything
-   * on screen even for buffers grove never opened a tab for.
+   * Install the buffer-state autocmd in a freshly attached session and subscribe
+   * to its notifications, so the pane knows whether nvim has anything on screen
+   * even for buffers grove never opened a tab for, and which of them are unsaved.
    */
-  function watchBufferCount(id: string): void {
+  function watchBufferState(id: string): void {
     disposeBufferWatch?.()
     disposeBufferWatch = window.workbench.on('event:nvim-notify', (payload) => {
       const event = payload as { id: string; method: string; args: unknown[] }
       if (event.id !== id || event.method !== 'grove_buffers') return
-      const data = (event.args?.[0] ?? {}) as { count?: number }
-      if (typeof data.count === 'number') nvimFileCount = data.count
+      applyBufferSnapshot((event.args?.[0] ?? {}) as BufferSnapshot)
     })
     void window.workbench.nvim
-      .request(id, 'nvim_exec_lua', [BUFFER_COUNT_LUA, []])
-      .then((count) => {
-        if (typeof count === 'number') nvimFileCount = count
-      })
+      .request(id, 'nvim_exec_lua', [BUFFER_STATE_LUA, []])
+      .then((snapshot) => applyBufferSnapshot((snapshot ?? {}) as BufferSnapshot))
       .catch(() => {})
   }
 
@@ -359,7 +404,7 @@ end, ns)
         lastPushedPath = store.activeTabPath
         nvimId = id
         void syncNvimKeymap()
-        watchBufferCount(id)
+        watchBufferState(id)
         watchPendingKeys(id)
         // A renderer reload leaves a gated review's preview in the buffer with
         // nothing left to take it down; this editor is attaching fresh, so
@@ -376,6 +421,7 @@ end, ns)
         console.warn(`nvim editor pane crashed (code ${exitCode}); restarting`)
         nvimId = null
         nvimFileCount = 0
+        dirtyPaths = {}
       },
       onClose: () => {
         nvimId = null
@@ -401,7 +447,7 @@ end, ns)
     lastPushedPath = store.activeTabPath
     nvimId = id
     void syncNvimKeymap()
-    watchBufferCount(id)
+    watchBufferState(id)
     watchPendingKeys(id)
     return true
   }
@@ -555,7 +601,7 @@ end, ns)
 
 <div class="flex h-full min-h-0 w-full flex-col">
   {#if showEditor}
-    <BufferTabs tabs={activeTabs} onSelect={selectTab} onClose={closeTab} />
+    <BufferTabs tabs={activeTabs} {dirtyPaths} onSelect={selectTab} onClose={closeTab} />
   {/if}
   <ReviewHeaderBar {leafId} />
 

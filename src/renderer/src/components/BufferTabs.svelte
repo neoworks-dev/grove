@@ -1,7 +1,7 @@
 <script lang="ts">
   // The editor buffer tab strip for the Neovim center pane, showing the row of
-  // open files. Dirty state is optional: nvim owns its own buffers and passes
-  // none.
+  // open files. Dirty state is optional; NvimPane sources it from nvim's
+  // 'modified' flag and marks those tabs with a dot ahead of the file icon.
   import Icon from '@iconify/svelte'
   import { store } from '../lib/store.svelte'
   import { fileIcon } from '../lib/icons'
@@ -72,9 +72,14 @@
         >
           <button class="flex cursor-pointer items-center gap-1.5" onclick={() => onSelect(tab.path)}>
             {#if tab.pinned}<Icon icon="ph:push-pin-fill" width="11" height="11" class="text-amber" />{/if}
+            <!-- Unsaved marker sits ahead of the file icon, so a scanning eye
+                 finds every dirty tab in one straight column. -->
+            {#if dirtyPaths[tab.path]}<span
+                class="shrink-0 text-[8px] leading-none text-amber"
+                title="Unsaved changes">●</span
+              >{/if}
             <Icon icon={iconFor(tab)} width="13" height="13" class="shrink-0" />
             <span>{tab.name}</span>
-            {#if dirtyPaths[tab.path]}<span class="text-amber">●</span>{/if}
           </button>
           <button
             class="inline-flex w-0 shrink-0 cursor-pointer items-center overflow-hidden text-dim opacity-0 transition-all duration-150 ease-out hover:text-red group-hover/tab:ml-1 group-hover/tab:w-3.5 group-hover/tab:opacity-100"

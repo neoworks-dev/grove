@@ -6,6 +6,7 @@ import {
   stepFromEvent,
   sequenceStartsWith,
   findConflicts,
+  stepMatchesSequence,
   type KeyStep
 } from '../src/renderer/src/lib/keySequence'
 
@@ -148,5 +149,38 @@ describe('findConflicts', () => {
   it('ignores different contexts and leader/non-leader differences', () => {
     expect(findConflicts([entry('a', 'leader x', 'tree'), entry('b', 'leader x', 'global')])).toHaveLength(0)
     expect(findConflicts([entry('a', 'leader x'), entry('b', 'x')])).toHaveLength(0)
+  })
+})
+
+// Overlay actions (and plugin contributions) declare their shortcut as text and
+// match it against live key events. Comparing the display form '<Ctrl-D>' to the
+// declared 'ctrl+d' silently matched nothing, which left every buffer-menu
+// action dead.
+describe('stepMatchesSequence', () => {
+  it('matches a canonical chord against the pressed step', () => {
+    expect(stepMatchesSequence('ctrl+d', step('d', { ctrl: true }))).toBe(true)
+    expect(stepMatchesSequence('ctrl+o', step('o', { ctrl: true }))).toBe(true)
+  })
+
+  it('accepts the bracket form of the same chord', () => {
+    expect(stepMatchesSequence('<Ctrl-D>', step('d', { ctrl: true }))).toBe(true)
+  })
+
+  it('rejects the same key without its modifier', () => {
+    expect(stepMatchesSequence('ctrl+d', step('d'))).toBe(false)
+  })
+
+  it('rejects a different key and extra modifiers', () => {
+    expect(stepMatchesSequence('ctrl+d', step('p', { ctrl: true }))).toBe(false)
+    expect(stepMatchesSequence('ctrl+d', step('d', { ctrl: true, alt: true }))).toBe(false)
+  })
+
+  it('rejects multi-step and leader sequences', () => {
+    expect(stepMatchesSequence('ctrl+k ctrl+s', step('k', { ctrl: true }))).toBe(false)
+    expect(stepMatchesSequence('leader b', step('b'))).toBe(false)
+  })
+
+  it('rejects unparseable text', () => {
+    expect(stepMatchesSequence('bogus+key', step('d', { ctrl: true }))).toBe(false)
   })
 })

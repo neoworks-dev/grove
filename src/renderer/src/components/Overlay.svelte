@@ -7,7 +7,7 @@
   import { cubicOut } from 'svelte/easing'
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
   import { overlays } from '../lib/overlays.svelte'
-  import { stepFromEvent, formatStep } from '../lib/keySequence'
+  import { stepFromEvent, stepMatchesSequence } from '../lib/keySequence'
   import { fileIcon } from '../lib/icons'
 
   // 'file:<name>' resolves through the active icon pack (plugins can't call
@@ -73,8 +73,10 @@
 
   function runMatchingAction(event: KeyboardEvent): void {
     if (!descriptor?.actions) return
-    const pressed = formatStep(stepFromEvent(event))
-    const action = descriptor.actions.find((candidate) => candidate.key === pressed)
+    const pressed = stepFromEvent(event)
+    const action = descriptor.actions.find((candidate) =>
+      stepMatchesSequence(candidate.key, pressed)
+    )
     if (!action) return
     event.preventDefault()
     event.stopPropagation()

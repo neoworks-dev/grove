@@ -2,7 +2,7 @@ import { app, shell, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/grove-icon.png?asset'
-import { registerIpc, shutdown } from './ipc'
+import { registerIpc, shutdown, reapNvimSessions } from './ipc'
 import { registerPluginScheme } from './plugins/protocol'
 import { registerNibScheme } from './nib/protocol'
 
@@ -72,6 +72,14 @@ function createWindow(): void {
   })
 
   registerPaneZoomForwarding(mainWindow)
+
+  // A reload tears down the renderer without running any component teardown, so
+  // the nvim sidecars it spawned are orphaned. Reap them before the new document
+  // loads, while the only sessions in flight still belong to the old one.
+  mainWindow.webContents.on('did-start-navigation', (details) => {
+    if (!details.isMainFrame || details.isSameDocument) return
+    reapNvimSessions()
+  })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)

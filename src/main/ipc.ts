@@ -1290,6 +1290,21 @@ export function registerIpc(): void {
   )
 }
 
+/**
+ * Kill every embedded-Neovim sidecar. Called when the renderer is about to be
+ * replaced (reload, dev hot restart, crash recovery): those processes are driven
+ * entirely from the renderer, so a document that goes away leaves them
+ * unreachable — still running, still holding their buffers, and still pushing
+ * diagnostics that no pane can correct. The fresh renderer respawns whatever its
+ * panes need.
+ */
+export function reapNvimSessions(): void {
+  const orphaned = nvims.sessionIds()
+  if (orphaned.length === 0) return
+  console.warn(`[nvim] renderer replaced; reaping ${orphaned.length} orphaned session(s)`)
+  nvims.killAll()
+}
+
 // Clean shutdown: kill every child process.
 export async function shutdown(): Promise<void> {
   await apiSocketServer?.close().catch(() => {})

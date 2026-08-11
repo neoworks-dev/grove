@@ -245,6 +245,19 @@ export function stepFromEvent(event: KeyboardEvent): KeyStep {
   return step
 }
 
+/**
+ * True when `text` is a single-step sequence describing exactly this key press.
+ * Callers that declare a shortcut as text — overlay actions, plugin
+ * contributions — match it against live events with this rather than comparing
+ * strings: formatStep() renders the display form ('<Ctrl-D>'), which never
+ * equals the canonical form ('ctrl+d') the declarations are written in.
+ */
+export function stepMatchesSequence(text: string, step: KeyStep): boolean {
+  const parsed = parseSequence(text)
+  if (!parsed || parsed.leader || parsed.steps.length !== 1) return false
+  return stepsEqual(parsed.steps[0], step)
+}
+
 export function stepsEqual(a: KeyStep, b: KeyStep): boolean {
   return (
     a.key === b.key && a.ctrl === b.ctrl && a.alt === b.alt && a.shift === b.shift && a.meta === b.meta

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, untrack } from 'svelte'
+  import { onMount } from 'svelte'
   import { cubicOut } from 'svelte/easing'
   import ActivityBar from './components/ActivityBar.svelte'
   import Dock from './components/Dock.svelte'
@@ -13,54 +13,22 @@
   import DialogHost from './components/DialogHost.svelte'
   import NotificationHost from './components/NotificationHost.svelte'
   import KeybindCheatsheet from './components/KeybindCheatsheet.svelte'
-  import EditorBreadcrumbs from './components/EditorBreadcrumbs.svelte'
-  import StatusBranch from './components/StatusBranch.svelte'
-  import StatusClock from './components/StatusClock.svelte'
-  import StatusMode from './components/StatusMode.svelte'
-  import StatusIntro from './components/StatusIntro.svelte'
-  import {
-    store,
-    subscribeEvents,
-    openRepoResult,
-    applyIconPack,
-    switchTab
-  } from './lib/store.svelte'
+  import { store, subscribeEvents, openRepoResult, switchTab } from './lib/store.svelte'
   import { commands } from './lib/commands.svelte'
   import { keymap } from './lib/keymap.svelte'
   import { keyDispatch, KeyPriority, startGlobalKeyDispatch } from './lib/keyDispatch'
   import { layout } from './lib/layout.svelte'
-  import { setup } from './lib/setup.svelte'
-  import { statusBar } from './lib/statusbar.svelte'
-  import { registerCoreBindings } from './lib/bindings'
-  import { registerCorePanes } from './lib/corePanes'
-  import { registerCoreViews } from './lib/coreViews'
-  import { registerCoreMenu } from './lib/coreMenu'
   import { settings } from './lib/settings.svelte'
   import { registerBaseSettings, applyBaseSettings } from './lib/baseSettings'
   import { pluginHost } from './plugins/host.svelte'
-  import { views } from './lib/views.svelte'
-  import { menu } from './lib/menu.svelte'
   import { loadInstalledExtensions } from './lib/editorCatalog'
-  import { initIcons, availablePacks } from './lib/icons'
-  import { diagnostics } from './lib/diagnostics.svelte'
+  import { initIcons } from './lib/icons'
   import { initThemes } from './lib/themes'
-  import { themePicker } from './lib/themepicker.svelte'
   import { overlays } from './lib/overlays.svelte'
 
-  // Core pane types, views, and menu structure. Plugins register theirs
-  // through the same registries.
-  registerCorePanes()
-  registerCoreViews()
-  registerCoreMenu()
-
-  // Core status bar items (plugins can register more, left or right aligned).
-  statusBar.register({ id: 'mode', align: 'left', order: 0, component: StatusMode })
-  statusBar.register({ id: 'git.branch', align: 'left', order: 1, component: StatusBranch })
-  statusBar.register({ id: 'breadcrumbs', align: 'left', order: 2, component: EditorBreadcrumbs })
-  statusBar.register({ id: 'clock', align: 'right', order: 100, component: StatusClock })
-  // Visible only while an AGENTS.md onboarding session runs but its pane is
-  // hidden — one click returns to the flow.
-  statusBar.register({ id: 'intro.active', align: 'right', order: 50, component: StatusIntro })
+  // Panes, views, menus, keybindings, commands and status bar items are all
+  // contributed by the core plugins the kernel mounts (kernel/boot.ts). This
+  // component is the chrome they render into.
 
   // Persist layout (split tree, nested panel sizes, open tabs) whenever any of
   // these change; layout.schedule() debounces the write to per-repo state.
@@ -72,97 +40,6 @@
     void [tree, sizes, tabs, active]
     layout.schedule()
   })
-
-  // Registered views drive the header switcher, palette commands, and the
-  // View menu — re-registered reactively as plugins add views. The registry
-  // writes are untracked: register() also READS its own $state list, which
-  // would otherwise make this effect depend on what it writes and loop.
-  $effect(() => {
-    const list = views.views
-    const dispose = untrack(() => {
-      const disposeCommands = commands.registerAll(
-        list.map((view) => ({
-          id: `view.${view.id}`,
-          title: `View: ${view.label}`,
-          group: 'View',
-          run: () => layout.switchView(view.id)
-        }))
-      )
-      const disposeItems = menu.registerItems(
-        list.map((view) => ({
-          id: `view.switch.${view.id}`,
-          menuId: 'view',
-          label: view.label,
-          group: '1-views',
-          order: view.order,
-          run: () => layout.switchView(view.id)
-        }))
-      )
-      return () => {
-        disposeCommands()
-        disposeItems()
-      }
-    })
-    return dispose
-  })
-
-  // Core commands. Other components contribute their own via commands.register.
-  function registerCoreCommands(): void {
-    commands.register({
-      id: 'repo.open',
-      title: 'Open Repository…',
-      group: 'Repository',
-      run: pickRepo
-    })
-    commands.register({
-      id: 'workspace.setup',
-      title: 'Set Up This Workspace…',
-      group: 'Repository',
-      keywords: 'onboarding wizard services config workbench.yaml agents claude style intro',
-      run: async () => {
-        await setup.begin()
-        layout.ensurePane('setup')
-      }
-    })
-    commands.register({
-      id: 'view.toggleLogs',
-      title: 'Toggle Logs Panel',
-      group: 'View',
-      run: () => layout.togglePane('logs')
-    })
-    commands.register({
-      id: 'view.toggleRightDock',
-      title: 'Toggle Right Panel',
-      group: 'View',
-      run: () => layout.toggleDock('right')
-    })
-    commands.register({
-      id: 'view.toggleFocusMode',
-      title: 'Toggle Focus Mode',
-      group: 'View',
-      keywords: 'zen distraction free fullscreen center',
-      run: () => layout.toggleFocusMode()
-    })
-    // Icon theme selection — dynamically one command per available pack.
-    for (const pack of availablePacks()) {
-      commands.register({
-        id: `icons.${pack.name}`,
-        title: `Icon Theme: ${pack.label}`,
-        group: 'Appearance',
-        keywords: 'icon theme style',
-        run: () => applyIconPack(pack.name)
-      })
-    }
-    // A single entry opens the theme picker (live-previews on focus, applies on
-    // Enter) rather than one command per theme.
-    commands.register({
-      id: 'theme.switch',
-      title: 'Switch Color Theme',
-      group: 'Appearance',
-      keywords: 'color theme palette scheme dark light appearance',
-      run: () => themePicker.show()
-    })
-  }
 
   // Per-pane font zoom is driven from main (event:pane-zoom) because Chromium
   // eats Ctrl/Cmd +/-/0 as page-zoom accelerators before the renderer keydown.
@@ -245,11 +122,8 @@
     // re-applied from the settings provider once it loads.
     initThemes()
     initIcons()
-    diagnostics.start()
     registerBaseSettings()
     subscribeEvents()
-    registerCoreCommands()
-    registerCoreBindings()
     void loadInstalledExtensions()
     const stopKeyDispatch = startGlobalKeyDispatch()
     const unsubscribeKeys = [
@@ -292,16 +166,6 @@
       duration: params.duration ?? 200,
       easing: cubicOut,
       css: (t: number) => `width:${t * width}px; min-width:0; overflow:hidden;`
-    }
-  }
-
-  async function pickRepo(): Promise<void> {
-    store.clearError()
-    try {
-      const result = await window.workbench.repo.pick()
-      if (result) await openRepoResult(result)
-    } catch (err) {
-      store.setError((err as Error).message)
     }
   }
 </script>

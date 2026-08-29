@@ -10,15 +10,16 @@
 // reading an inherited rune accessor with a derived `this` throws on the
 // private field. Facades that need behaviour of their own (sidebar, editor,
 // panel) are Service subclasses that keep their state in plain objects.
+//
+// The rail-launcher and bottom-panel registries are deliberately absent here:
+// they belong to the sidebar and panel host services, which own those surfaces.
 
 import type { Context } from '@neoworks/extension-system'
 import { commands } from '../lib/commands.svelte'
 import { keymap } from '../lib/keymap.svelte'
 import { panes } from '../lib/panes.svelte'
-import { panels } from '../lib/panels.svelte'
 import { views } from '../lib/views.svelte'
 import { statusBar } from '../lib/statusbar.svelte'
-import { sidebar } from '../lib/sidebar.svelte'
 import { menu } from '../lib/menu.svelte'
 import { overlays } from '../lib/overlays.svelte'
 import { settings } from '../lib/settings.svelte'
@@ -31,10 +32,8 @@ declare module '@neoworks/extension-system' {
     commands: typeof commands
     keymap: typeof keymap
     panes: typeof panes
-    panels: typeof panels
     views: typeof views
     statusbar: typeof statusBar
-    sidebar: typeof sidebar
     menu: typeof menu
     overlays: typeof overlays
     settings: typeof settings
@@ -52,10 +51,8 @@ export const coreServices = {
     ctx.provide('commands', commands)
     ctx.provide('keymap', keymap)
     ctx.provide('panes', panes)
-    ctx.provide('panels', panels)
     ctx.provide('views', views)
     ctx.provide('statusbar', statusBar)
-    ctx.provide('sidebar', sidebar)
     ctx.provide('menu', menu)
     ctx.provide('overlays', overlays)
     ctx.provide('settings', settings)

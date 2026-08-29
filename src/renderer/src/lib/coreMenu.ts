@@ -4,11 +4,12 @@ import { menu } from './menu.svelte'
 import { commands } from './commands.svelte'
 import { layout } from './layout.svelte'
 
-export function registerCoreMenu(): void {
-  menu.registerMenu({ id: 'file', label: 'File', order: 1 })
-  menu.registerMenu({ id: 'view', label: 'View', order: 2 })
+/** Register the base menus and their items; returns the inverse. */
+export function registerCoreMenu(): () => void {
+  const disposeFile = menu.registerMenu({ id: 'file', label: 'File', order: 1 })
+  const disposeView = menu.registerMenu({ id: 'view', label: 'View', order: 2 })
 
-  menu.registerItems([
+  const disposeItems = menu.registerItems([
     {
       id: 'file.openRepo',
       menuId: 'file',
@@ -95,4 +96,10 @@ export function registerCoreMenu(): void {
       run: () => layout.togglePane('agent')
     }
   ])
+
+  return () => {
+    disposeItems()
+    disposeFile()
+    disposeView()
+  }
 }

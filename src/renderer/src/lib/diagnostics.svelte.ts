@@ -32,23 +32,30 @@ class DiagnosticsStore {
   private bySession = $state<Record<string, Diagnostic[]>>({})
   private started = false
 
-  // Wire the IPC subscriptions once, from the app shell on boot.
-  start(): void {
-    if (this.started) return
+  // Wire the IPC subscriptions once. Returns the inverse so the plugin that
+  // starts the collector also stops it when it unloads.
+  start(): () => void {
+    if (this.started) return () => {}
     this.started = true
-    window.workbench.on('event:nvim-notify', (payload) => {
+    const unsubscribeNotify = window.workbench.on('event:nvim-notify', (payload) => {
       const event = payload as { id: string; method: string; args: unknown[] }
       if (event.method !== 'grove_diagnostics') return
       const list = (event.args?.[0] as Diagnostic[]) ?? []
       this.bySession = { ...this.bySession, [event.id]: list }
     })
-    window.workbench.on('event:nvim-exit', (payload) => {
+    const unsubscribeExit = window.workbench.on('event:nvim-exit', (payload) => {
       const event = payload as { id: string }
       if (!(event.id in this.bySession)) return
       const next = { ...this.bySession }
       delete next[event.id]
       this.bySession = next
     })
+    return () => {
+      unsubscribeNotify()
+      unsubscribeExit()
+      this.bySession = {}
+      this.started = false
+    }
   }
 
   // Merged across sessions, de-duplicated, sorted by severity then location.

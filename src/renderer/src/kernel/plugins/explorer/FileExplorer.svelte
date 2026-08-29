@@ -120,6 +120,66 @@
 
   const selectedRow = $derived(rows[selectedIndex])
 
+  // Ancestor directory rows of `index`, ordered shallowest first. The tree is a
+  // contiguous flattened list, so walking backwards and taking every strictly
+  // shallower row yields exactly one row per depth level above it.
+  function ancestorRowsOf(index: number): Row[] {
+    const anchor = rows[index]
+    if (!anchor) return []
+    const chain: Row[] = []
+    let depth = anchor.depth
+    for (let cursor = index - 1; cursor >= 0 && depth > 0; cursor--) {
+      if (rows[cursor].depth < depth) {
+        chain.unshift(rows[cursor])
+        depth = rows[cursor].depth
+      }
+    }
+    return chain
+  }
+
+  // ── Sticky ancestor headers ────────────────────────────────────
+  // The ancestor directories of the topmost visible row stay pinned above the
+  // scrolled content, so a deep path keeps its context and every parent is one
+  // click away from collapsing.
+  const MAX_STICKY_ROWS = 5
+  let scrollTop = $state(0)
+  let measuredRowHeight = $state(22)
+
+  $effect(() => {
+    rows.length
+    const row = treeViewport?.querySelector('[role="treeitem"]') as HTMLElement | null
+    if (row && row.offsetHeight > 0) measuredRowHeight = row.offsetHeight
+  })
+
+  // The selected row's ancestor chain, trimmed to the ancestors that have
+  // scrolled out of the viewport. Ancestor indices increase with depth, so the
+  // first one still in view ends the stack — the rest are visible in flow and
+  // would only be duplicated by pinning them.
+  const stickyRows = $derived.by<Row[]>(() => {
+    const stack: Row[] = []
+    for (const ancestor of ancestorRowsOf(selectedIndex)) {
+      if (stack.length >= MAX_STICKY_ROWS) break
+      const index = rows.findIndex((candidate) => candidate.node.relPath === ancestor.node.relPath)
+      if (index < 0) break
+      if (index * measuredRowHeight >= scrollTop + stack.length * measuredRowHeight) break
+      stack.push(ancestor)
+    }
+    return stack
+  })
+
+  // Clicking a pinned header collapses that directory and scrolls it back to
+  // the top of the viewport, just under its own remaining ancestors.
+  async function collapseSticky(row: Row): Promise<void> {
+    const index = rows.findIndex((candidate) => candidate.node.relPath === row.node.relPath)
+    if (index < 0) return
+    exitVisual()
+    selectedIndex = index
+    expanded = { ...expanded, [row.node.relPath]: false }
+    rootEl?.focus({ preventScroll: true })
+    await tick()
+    if (treeViewport) treeViewport.scrollTop = Math.max(0, (index - row.depth) * measuredRowHeight)
+  }
+
   // Inclusive row range currently marked in visual mode, or null.
   const visualRange = $derived.by<{ lo: number; hi: number } | null>(() => {
     if (visualAnchor === null) return null
@@ -427,15 +487,10 @@
     })
   }
 
-  function rowHeightPx(): number {
-    const row = treeViewport?.querySelector('[role="treeitem"]') as HTMLElement | null
-    return row?.offsetHeight || 22
-  }
-
   // Half the visible rows — the Vim Ctrl-D/Ctrl-U scroll distance.
   function halfPageRows(): number {
     const viewportHeight = treeViewport?.clientHeight || 0
-    return Math.max(1, Math.floor(viewportHeight / rowHeightPx() / 2))
+    return Math.max(1, Math.floor(viewportHeight / measuredRowHeight / 2))
   }
 
   function moveSelection(next: number): void {
@@ -569,15 +624,45 @@
 <div
   bind:this={rootEl}
   use:pane={{ id: 'tree', modes: ['normal', 'visual-line'] }}
-  class="flex h-full flex-col outline-none {keymap.activePane === 'tree' ? 'pane-active' : ''}"
+  class="relative flex h-full flex-col outline-none {keymap.activePane === 'tree'
+    ? 'pane-active'
+    : ''}"
+  style="--sticky-height: {stickyRows.length * measuredRowHeight}px"
   onkeydown={onKey}
   role="tree"
   tabindex="-1"
 >
+  <!-- Pinned ancestors of the selected row. The scroll area below is its own
+       positioned stacking context, so this needs an explicit z-index to stay
+       above the rows it covers. -->
+  {#if stickyRows.length > 0}
+    <div class="absolute top-1 right-0 left-0 z-10 border-b border-line-faint bg-surface">
+      {#each stickyRows as row (row.node.relPath)}
+        <div
+          class="flex w-full cursor-pointer select-none items-center gap-1 px-2 py-[3px] text-left text-xs text-muted hover:bg-hover"
+          style="padding-left: {row.depth * 12 + 8}px"
+          role="button"
+          tabindex="-1"
+          title="Collapse {row.node.relPath}"
+          onclick={() => void collapseSticky(row)}
+          oncontextmenu={(event) => openMenu(event, row.node)}
+          onkeydown={(event) => {
+            if (event.key === 'Enter') void collapseSticky(row)
+          }}
+        >
+          <span class="w-3 shrink-0 text-center text-2xs text-dim">▾</span>
+          <Icon icon={iconFor(row.node)} width="16" height="16" class="shrink-0" />
+          <span class="min-w-0 flex-1 truncate {nameColor(row.node)}">{row.node.name}</span>
+        </div>
+      {/each}
+    </div>
+  {/if}
+
   <FloatingScrollbar
     class="min-h-0 flex-1 py-1"
     bind:viewport={treeViewport}
     oncontextmenu={(event) => openMenu(event, null)}
+    onscroll={() => (scrollTop = treeViewport?.scrollTop || 0)}
   >
     <!-- Single content wrapper: keeps the scrollbar's ResizeObserver watching
          one child instead of one per row (hundreds), so mounting the tree on a
@@ -660,3 +745,11 @@
 {#if menu}
   <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => (menu = null)} />
 {/if}
+
+<style>
+  /* Keep scrollIntoView (cursor moves, reveal) from parking a row underneath
+     the pinned ancestor headers. */
+  [role='treeitem'] {
+    scroll-margin-top: var(--sticky-height, 0px);
+  }
+</style>

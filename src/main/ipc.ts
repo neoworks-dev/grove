@@ -1093,10 +1093,11 @@ export function registerIpc(): void {
       action: string,
       modifier: string,
       row: number,
-      col: number
+      col: number,
+      grid?: number
     ) => {
       trackNvimActivity(id)
-      nvims.inputMouse(id, button, action, modifier, row, col)
+      nvims.inputMouse(id, button, action, modifier, row, col, grid)
     }
   )
   ipcMain.handle('nvim:resize', (_e, id: string, cols: number, rows: number) =>

@@ -204,8 +204,9 @@ const workbench = {
       action: string,
       modifier: string,
       row: number,
-      col: number
-    ) => ipcRenderer.invoke('nvim:inputMouse', id, button, action, modifier, row, col),
+      col: number,
+      grid?: number
+    ) => ipcRenderer.invoke('nvim:inputMouse', id, button, action, modifier, row, col, grid),
     resize: (id: string, cols: number, rows: number) =>
       ipcRenderer.invoke('nvim:resize', id, cols, rows),
     command: (id: string, command: string) => ipcRenderer.invoke('nvim:command', id, command),

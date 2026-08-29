@@ -12,12 +12,12 @@
 import { keymap } from '../keymap.svelte'
 import { keyDispatch } from '../keyDispatch'
 import { store } from '../store.svelte'
-import { createGridState, type GridState } from './types'
-import { applyRedraw } from './grid'
+import { createGridState, type DirtyState, type GridState } from './types'
 import { encodeKeyEvent } from './keys'
 import { measureCell, type CellMetrics, type FontSpec } from './metrics'
 import { CanvasGridRenderer } from './canvasRenderer'
 import type { GridRenderer } from './renderer'
+import { applyMultigridRedraw, createMultigridState, type NvimWindowPlacement } from './multigrid'
 
 export interface NvimSessionElements {
   host: HTMLDivElement
@@ -43,6 +43,9 @@ export interface NvimSessionCallbacks {
   onClose?: () => void
   // Spawn failed — the runtime is missing. The component shows a hint.
   onUnavailable?: () => void
+  // Window topology changed. The owner projects floats into overlays and
+  // ordinary nvim windows into Grove split leaves.
+  onWindowsChanged?: (windows: NvimWindowPlacement[]) => void
 }
 
 export interface NvimSessionConfig {
@@ -212,6 +215,12 @@ export class NvimCanvasSession {
   private metrics: CellMetrics | null = null
 
   private grid = createGridState()
+  private multigrid = createMultigridState()
+  private primaryGridId = 1
+  private externalSurfaces = new Map<
+    number,
+    { host: HTMLElement; renderer: CanvasGridRenderer; observer: ResizeObserver }
+  >()
   private renderScheduled = false
   private pendingDirtyRows = new Set<number>()
   private pendingDirtyAll = false
@@ -279,6 +288,9 @@ export class NvimCanvasSession {
     if (!this.renderer || this.destroyed) return
     this.metrics = measureCell(this.config.font)
     this.renderer.setFont(this.config.font, this.metrics)
+    for (const surface of this.externalSurfaces.values()) {
+      surface.renderer.setFont(this.config.font, this.metrics)
+    }
     const { host } = this.elements
     const width = host.clientWidth
     const height = host.clientHeight
@@ -297,6 +309,29 @@ export class NvimCanvasSession {
 
   get cellHeight(): number {
     return this.metrics?.cellHeight ?? 0
+  }
+
+  get cellWidth(): number {
+    return this.metrics?.cellWidth ?? 0
+  }
+
+  /**
+   * Maps Neovim's global screen rows to the same distributed pixel edges used
+   * by the primary canvas. Multiplying by the nominal font cell height drifts
+   * by a few pixels because the renderer spreads the pane's remainder across
+   * all rows.
+   */
+  screenRowToPixel(row: number): number {
+    const rows = this.multigrid.grids.get(1)?.rows ?? this.grid.rows
+    if (rows < 1) return row * this.cellHeight
+    return Math.round((row * this.elements.host.clientHeight) / rows)
+  }
+
+  /** Maps Neovim's global screen columns onto the primary canvas edges. */
+  screenColToPixel(col: number): number {
+    const cols = this.multigrid.grids.get(1)?.cols ?? this.grid.cols
+    if (cols < 1) return col * this.cellWidth
+    return Math.round((col * this.elements.host.clientWidth) / cols)
   }
 
   // The 1-based buffer line at the top of the viewport (`line('w0')`), for
@@ -529,13 +564,13 @@ export class NvimCanvasSession {
   // Bind every listener that hangs off the pane's DOM. Split out of start() so
   // reattach can rebind them onto the elements of a rebuilt component.
   private wireElements(): void {
-    const { host, input } = this.elements
+    const { host, input, canvas } = this.elements
     this.observer = new ResizeObserver(() => this.scheduleFit())
     this.observer.observe(host)
     this.leafEl = (host.closest('[data-leaf]') as HTMLElement | null) ?? null
     this.leafEl?.addEventListener('focusin', this.onLeafFocus)
-    host.addEventListener('mousedown', this.onMouseDown)
-    host.addEventListener('wheel', this.onWheel, { passive: false })
+    canvas.addEventListener('mousedown', this.onMouseDown)
+    canvas.addEventListener('wheel', this.onWheel, { passive: false })
     this.stopKeySink = keyDispatch.registerPaneSink(this.config.leafId, this.onKeydown)
     input.addEventListener('compositionstart', this.onComposition)
     input.addEventListener('compositionend', this.onComposition)
@@ -544,13 +579,13 @@ export class NvimCanvasSession {
   }
 
   private unwireElements(): void {
-    const { host, input } = this.elements
+    const { host, input, canvas } = this.elements
     this.observer?.disconnect()
     this.observer = null
     this.leafEl?.removeEventListener('focusin', this.onLeafFocus)
     this.leafEl = null
-    host.removeEventListener('mousedown', this.onMouseDown)
-    host.removeEventListener('wheel', this.onWheel)
+    canvas.removeEventListener('mousedown', this.onMouseDown)
+    canvas.removeEventListener('wheel', this.onWheel)
     this.stopKeySink?.()
     this.stopKeySink = null
     input.removeEventListener('compositionstart', this.onComposition)
@@ -577,6 +612,10 @@ export class NvimCanvasSession {
     // then resizes it (preserving those pixels) and nvim's redraw replaces them.
     this.renderer?.carryFrom(previousCanvas)
     this.wireElements()
+    // The replacement component starts with no Svelte window state. Replay the
+    // live topology immediately so an already-open float/split does not vanish
+    // until Neovim happens to emit another placement event.
+    this.callbacks.onWindowsChanged?.([...this.multigrid.windows.values()])
     // Force a re-fit: the guard compares against the old box, and the pane's new
     // box is usually a different size (that is why the layout rebuilt it).
     this.lastWidth = 0
@@ -692,6 +731,11 @@ export class NvimCanvasSession {
     this.stopExit?.()
     if (this.nvimId) void window.workbench.nvim.kill(this.nvimId)
     this.renderer?.dispose()
+    for (const surface of this.externalSurfaces.values()) {
+      surface.observer.disconnect()
+      surface.renderer.dispose()
+    }
+    this.externalSurfaces.clear()
   }
 
   async pushTheme(): Promise<void> {
@@ -711,12 +755,24 @@ export class NvimCanvasSession {
   private gridSize(): { cols: number; rows: number } {
     const { host } = this.elements
     if (!this.metrics) return { cols: 80, rows: 24 }
+    // Once ordinary nvim windows live in separate Grove leaves, the UI's outer
+    // size is their union—not the now-smaller owner leaf. Measuring every
+    // surface prevents a layout reconciliation from recursively shrinking nvim.
+    const id = this.nvimId
+    const surfaces = id ? [...document.querySelectorAll<HTMLElement>(`[data-nvim-ui="${id}"]`)] : []
+    const rects = surfaces.map((surface) => surface.getBoundingClientRect())
+    const width = rects.length
+      ? Math.max(...rects.map((rect) => rect.right)) - Math.min(...rects.map((rect) => rect.left))
+      : host.clientWidth
+    const height = rects.length
+      ? Math.max(...rects.map((rect) => rect.bottom)) - Math.min(...rects.map((rect) => rect.top))
+      : host.clientHeight
     // Floor so the grid fits inside the pane; the renderer then spreads the
     // sub-cell remainder across the cells (distributed edges) to reach every
     // edge, so there's no gap and no row is clipped.
     return {
-      cols: Math.max(2, Math.floor(host.clientWidth / this.metrics.cellWidth)),
-      rows: Math.max(2, Math.floor(host.clientHeight / this.metrics.cellHeight))
+      cols: Math.max(2, Math.floor(width / this.metrics.cellWidth)),
+      rows: Math.max(2, Math.floor(height / this.metrics.cellHeight))
     }
   }
 
@@ -744,14 +800,54 @@ export class NvimCanvasSession {
   // The grid as painted: an unfocused pane hides its cursor, so only the pane
   // the user is typing into shows one.
   private renderState(): GridState {
-    if (this.hasFocus) return this.grid
-    return { ...this.grid, cursor: { ...this.grid.cursor, visible: false } }
+    let state = this.grid
+    const message = [...this.multigrid.windows.values()].find(
+      (entry) => entry.kind === 'message' && !entry.hidden
+    )
+    if (message) {
+      const messageGrid = this.multigrid.grids.get(message.grid)
+      if (messageGrid?.lines[0]) {
+        const rows = Math.max(state.rows, message.row + 1)
+        const lines = [...state.lines]
+        while (lines.length < rows) {
+          lines.push(Array.from({ length: state.cols }, () => ({ text: ' ', hlId: 0 })))
+        }
+        lines[message.row] = messageGrid.lines[0]
+        const messageHasCursor = this.multigrid.cursorGrid === message.grid
+        state = {
+          ...state,
+          rows,
+          lines,
+          cursor: messageHasCursor
+            ? { ...messageGrid.cursor, row: message.row + messageGrid.cursor.row }
+            : state.cursor
+        }
+      }
+    }
+    if (this.hasFocus) return state
+    return { ...state, cursor: { ...state.cursor, visible: false } }
   }
 
   private handleRedraw(events: unknown[]): void {
-    const dirty = applyRedraw(this.grid, events)
+    const update = applyMultigridRedraw(this.multigrid, events)
+    const primary = this.multigrid.primaryGrid ?? 1
+    if (primary !== this.primaryGridId) {
+      this.primaryGridId = primary
+      this.pendingDirtyAll = true
+    }
+    this.grid = this.multigrid.grids.get(primary) ?? this.multigrid.grids.get(1) ?? this.grid
+    const dirty = update.grids.get(primary) ?? {
+      all: false,
+      rows: new Set<number>(),
+      flushed: false
+    }
     if (dirty.all) this.pendingDirtyAll = true
     for (const row of dirty.rows) this.pendingDirtyRows.add(row)
+    for (const placement of this.multigrid.windows.values()) {
+      if (placement.kind === 'message' && update.grids.has(placement.grid)) {
+        this.pendingDirtyRows.add(placement.row)
+      }
+    }
     const mode = this.mapMode(this.grid.modeName)
     keymap.setPaneMode(this.config.leafId, mode)
     if (mode !== this.lastMode) {
@@ -763,10 +859,104 @@ export class NvimCanvasSession {
     this.pendingDirtyRows.add(this.lastCursorRow)
     this.pendingDirtyRows.add(this.grid.cursor.row)
     this.lastCursorRow = this.grid.cursor.row
-    if (dirty.flushed || dirty.all) {
+    if (update.placementsChanged) {
+      this.pendingDirtyAll = true
+      this.callbacks.onWindowsChanged?.([...this.multigrid.windows.values()])
+    }
+    if (update.flushed || dirty.all) {
       this.scheduleRender()
+      this.renderExternalSurfaces(update.grids)
       this.callbacks.onFlush?.()
     }
+  }
+
+  /** Bind one non-primary multigrid grid to a canvas owned by a float or pane. */
+  attachGridSurface(
+    gridId: number,
+    host: HTMLElement,
+    canvas: HTMLCanvasElement,
+    resizeWin?: number
+  ): () => void {
+    this.detachGridSurface(gridId)
+    const renderer = new CanvasGridRenderer()
+    renderer.attach(canvas)
+    if (this.metrics) renderer.setFont(this.config.font, this.metrics)
+    const fit = (): void => {
+      const grid = this.multigrid.grids.get(gridId)
+      if (!grid || host.clientWidth < 1 || host.clientHeight < 1) return
+      renderer.resize(
+        grid.cols,
+        grid.rows,
+        window.devicePixelRatio,
+        host.clientWidth,
+        host.clientHeight
+      )
+      renderer.render(grid, { all: true, rows: new Set(), flushed: true })
+      if (resizeWin && this.nvimId && this.metrics) {
+        const cols = Math.max(1, Math.floor(host.clientWidth / this.metrics.cellWidth))
+        const rows = Math.max(1, Math.floor(host.clientHeight / this.metrics.cellHeight))
+        void window.workbench.nvim
+          .request(this.nvimId, 'nvim_win_set_width', [resizeWin, cols])
+          .catch(() => {})
+        void window.workbench.nvim
+          .request(this.nvimId, 'nvim_win_set_height', [resizeWin, rows])
+          .catch(() => {})
+      }
+    }
+    const observer = new ResizeObserver(fit)
+    observer.observe(host)
+    this.externalSurfaces.set(gridId, { host, renderer, observer })
+    fit()
+    return () => this.detachGridSurface(gridId, renderer)
+  }
+
+  private detachGridSurface(gridId: number, expected?: CanvasGridRenderer): void {
+    const surface = this.externalSurfaces.get(gridId)
+    if (!surface || (expected && surface.renderer !== expected)) return
+    surface.observer.disconnect()
+    surface.renderer.dispose()
+    this.externalSurfaces.delete(gridId)
+  }
+
+  private renderExternalSurfaces(dirty: Map<number, DirtyState>): void {
+    for (const [gridId, surface] of this.externalSurfaces) {
+      const grid = this.multigrid.grids.get(gridId)
+      const changed = dirty.get(gridId)
+      if (!grid || !changed) continue
+      surface.renderer.render(grid, changed)
+    }
+  }
+
+  focusWindow(win: number, focusInput = true): void {
+    if (!this.nvimId) return
+    void window.workbench.nvim.request(this.nvimId, 'nvim_set_current_win', [win])
+    if (focusInput) this.elements.input.focus()
+  }
+
+  closeWindow(win: number): void {
+    if (!this.nvimId) return
+    void window.workbench.nvim.request(this.nvimId, 'nvim_win_close', [win, true]).catch(() => {})
+  }
+
+  closeFloatingWindows(): void {
+    if (!this.nvimId) return
+    for (const placement of this.multigrid.windows.values()) {
+      if (placement.kind === 'float' && !placement.hidden) {
+        this.closeWindow(placement.win)
+      }
+    }
+  }
+
+  inputMouseOnGrid(
+    grid: number,
+    button: string,
+    action: string,
+    modifier: string,
+    row: number,
+    col: number
+  ): void {
+    if (!this.nvimId) return
+    void window.workbench.nvim.inputMouse(this.nvimId, button, action, modifier, row, col, grid)
   }
 
   // Coalesced resize → nvim_ui_try_resize (nvim answers with grid_resize).
@@ -915,7 +1105,7 @@ export class NvimCanvasSession {
 
   private cellAt(event: MouseEvent | WheelEvent): { row: number; col: number } | null {
     if (!this.metrics) return null
-    const rect = this.elements.host.getBoundingClientRect()
+    const rect = this.elements.canvas.getBoundingClientRect()
     const col = Math.floor((event.clientX - rect.left) / this.metrics.cellWidth)
     const row = Math.floor((event.clientY - rect.top) / this.metrics.cellHeight)
     return { row: Math.max(0, row), col: Math.max(0, col) }
@@ -941,7 +1131,8 @@ export class NvimCanvasSession {
       'press',
       this.mouseModifier(event),
       cell.row,
-      cell.col
+      cell.col,
+      this.primaryGridId
     )
     window.addEventListener('mousemove', this.onMouseMove)
     window.addEventListener('mouseup', this.onMouseUp)
@@ -960,7 +1151,8 @@ export class NvimCanvasSession {
       'drag',
       this.mouseModifier(event),
       cell.row,
-      cell.col
+      cell.col,
+      this.primaryGridId
     )
   }
 
@@ -978,7 +1170,8 @@ export class NvimCanvasSession {
       'release',
       this.mouseModifier(event),
       cell.row,
-      cell.col
+      cell.col,
+      this.primaryGridId
     )
   }
 
@@ -996,7 +1189,8 @@ export class NvimCanvasSession {
         action,
         modifier,
         cell.row,
-        cell.col
+        cell.col,
+        this.primaryGridId
       )
     }
     if (event.deltaX !== 0) {
@@ -1007,7 +1201,8 @@ export class NvimCanvasSession {
         action,
         modifier,
         cell.row,
-        cell.col
+        cell.col,
+        this.primaryGridId
       )
     }
   }

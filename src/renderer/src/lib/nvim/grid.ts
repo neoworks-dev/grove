@@ -1,12 +1,11 @@
 // ext_linegrid redraw state machine. Applies a batch of redraw events (as
 // forwarded by main, one array per event: [name, ...tuples]) to the grid and
 // reports which rows changed. Unknown events are ignored for forward
-// compatibility. Only grid 1 exists (no ext_multigrid).
+// compatibility. A state represents one ext_multigrid grid; callers route
+// tuples by grid id and broadcast global highlight/mode events.
 
 import type { Cell, DirtyState, GridState, ModeInfo } from './types'
 import { defineHighlight } from './highlights'
-
-const OUTER_GRID = 1
 
 export function applyRedraw(state: GridState, events: unknown[]): DirtyState {
   const dirty: DirtyState = { all: false, rows: new Set(), flushed: false }
@@ -34,10 +33,10 @@ function applyEvent(state: GridState, dirty: DirtyState, name: string, args: unk
       applyScroll(state, dirty, args as number[])
       break
     case 'grid_clear':
-      if (args[0] === OUTER_GRID) clearGrid(state, dirty)
+      if (args[0] === state.id) clearGrid(state, dirty)
       break
     case 'grid_cursor_goto':
-      if (args[0] === OUTER_GRID) {
+      if (args[0] === state.id) {
         state.cursor.row = args[1] as number
         state.cursor.col = args[2] as number
       }
@@ -74,7 +73,7 @@ function emptyRow(cols: number): Cell[] {
 
 function applyResize(state: GridState, dirty: DirtyState, args: [number, number, number]): void {
   const [grid, cols, rows] = args
-  if (grid !== OUTER_GRID) return
+  if (grid !== state.id) return
   const next: Cell[][] = []
   for (let rowIdx = 0; rowIdx < rows; rowIdx += 1) {
     const existing = state.lines[rowIdx]
@@ -95,7 +94,7 @@ function applyResize(state: GridState, dirty: DirtyState, args: [number, number,
 // [text, hl_id?, repeat?]; hl_id carries over from the previous cell.
 function applyLine(state: GridState, dirty: DirtyState, args: unknown[]): void {
   const [grid, row, colStart, cells] = args as [number, number, number, unknown[]]
-  if (grid !== OUTER_GRID) return
+  if (grid !== state.id) return
   const line = state.lines[row]
   if (!line) return
   let col = colStart
@@ -120,7 +119,7 @@ function applyLine(state: GridState, dirty: DirtyState, args: unknown[]): void {
 // survives a frame.
 function applyScroll(state: GridState, dirty: DirtyState, args: number[]): void {
   const [grid, top, bot, left, right, rows] = args
-  if (grid !== OUTER_GRID) return
+  if (grid !== state.id) return
   if (rows > 0) {
     for (let row = top; row < bot - rows; row += 1) {
       copyRowSpan(state, row + rows, row, left, right)
@@ -136,7 +135,13 @@ function applyScroll(state: GridState, dirty: DirtyState, args: number[]): void 
   for (let row = top; row < top - rows; row += 1) dirty.rows.add(row)
 }
 
-function copyRowSpan(state: GridState, from: number, to: number, left: number, right: number): void {
+function copyRowSpan(
+  state: GridState,
+  from: number,
+  to: number,
+  left: number,
+  right: number
+): void {
   const source = state.lines[from]
   const target = state.lines[to]
   if (!source || !target) return

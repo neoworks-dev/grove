@@ -182,11 +182,19 @@ class WorkbenchStore {
     this.services = { ...this.services, [runtime.worktreeId]: next }
   }
 
-  openTab(tab: EditorTab): void {
-    if (!this.tabs.some((existing) => existing.path === tab.path)) {
-      this.tabs = [...this.tabs, tab]
+  // Register a file that the already-mounted editor entered itself (`gd`,
+  // `:edit`, tag jumps). Unlike openTab this must not drive the layout back into
+  // the editor: nvim is already there and only Grove's tab model needs catching up.
+  attachEditorTab(tab: EditorTab): void {
+    const tabs = this.tabsByWorktree[tab.worktreeId] ?? []
+    if (!tabs.some((existing) => existing.path === tab.path)) {
+      this.tabsByWorktree = { ...this.tabsByWorktree, [tab.worktreeId]: [...tabs, tab] }
     }
-    this.activeTabPath = tab.path
+    this.activeTabByWorktree = { ...this.activeTabByWorktree, [tab.worktreeId]: tab.path }
+  }
+
+  openTab(tab: EditorTab): void {
+    this.attachEditorTab(tab)
     layout.showCenterPane(preferredEditorPane())
   }
 

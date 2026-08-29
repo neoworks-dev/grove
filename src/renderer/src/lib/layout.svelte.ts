@@ -257,6 +257,57 @@ class LayoutStore {
     this.schedule()
   }
 
+  // Reconcile ordinary ext_multigrid windows with transient Grove leaves. The
+  // first normal window remains the owning NvimPane; every other window gets a
+  // pane backed by the same nvim process and keyed by its stable window handle.
+  syncNvimWindows(
+    ownerLeafId: string,
+    nvimId: string,
+    windows: {
+      grid: number
+      win: number
+      kind: string
+      row: number
+      col: number
+      hidden: boolean
+    }[]
+  ): void {
+    const normal = windows.filter((entry) => entry.kind === 'normal' && !entry.hidden)
+    const primary = normal[0]
+    if (!primary) return
+    let next = this.tree
+    const existing = leaves(next).filter(
+      (leaf) => leaf.paneTypeId === 'nvim-grid' && leaf.paneState?.ownerLeafId === ownerLeafId
+    )
+    const desiredWins = new Set(normal.slice(1).map((entry) => entry.win))
+    for (const leaf of existing) {
+      if (desiredWins.has(Number(leaf.paneState?.win))) continue
+      next = removeLeaf(next, leaf.id) ?? next
+    }
+    const existingWins = new Set(
+      leaves(next)
+        .filter(
+          (leaf) => leaf.paneTypeId === 'nvim-grid' && leaf.paneState?.ownerLeafId === ownerLeafId
+        )
+        .map((leaf) => Number(leaf.paneState?.win))
+    )
+    for (const entry of normal.slice(1)) {
+      if (existingWins.has(entry.win) || !findLeaf(next, ownerLeafId)) continue
+      const horizontal = Math.abs(entry.col - primary.col) >= Math.abs(entry.row - primary.row)
+      const direction: SplitDirection = horizontal ? 'row' : 'column'
+      const before = horizontal ? entry.col < primary.col : entry.row < primary.row
+      const leaf = createLeaf('nvim-grid', {
+        transient: true,
+        ownerLeafId,
+        nvimId,
+        grid: entry.grid,
+        win: entry.win
+      })
+      next = splitLeaf(next, ownerLeafId, direction, leaf, before ? 'before' : 'after')
+    }
+    if (next !== this.tree) this.setActiveTree(next)
+  }
+
   // Whether any leaf of the given pane type is open in the active view.
   hasPaneType(paneTypeId: string): boolean {
     return leaves(this.tree).some((leaf) => leaf.paneTypeId === paneTypeId)
@@ -555,7 +606,11 @@ class LayoutStore {
         // live tree over it.
         viewLayouts: {
           ...this.storedTrees,
-          ...($state.snapshot(this.trees) as Record<string, LayoutNode>)
+          ...Object.fromEntries(
+            Object.entries($state.snapshot(this.trees) as Record<string, LayoutNode>).map(
+              ([id, tree]) => [id, stripTransientNvimGrids(tree) ?? buildDefaultTree()]
+            )
+          )
         },
         activeLayoutView: this.activeViewId,
         paneSizes: $state.snapshot(this.paneSizes),
@@ -585,6 +640,24 @@ class LayoutStore {
       // best-effort; layout is non-critical
     }
   }
+}
+
+// Neovim-derived leaves are reconstructed from win_pos after attach. Persisting
+// process-local grid/window ids would restore dead panes on the next launch.
+function stripTransientNvimGrids(node: LayoutNode): LayoutNode | null {
+  if (node.kind === 'leaf') return node.paneState?.transient === true ? null : node
+  const projected = node.children.map((child, index) => ({
+    child: stripTransientNvimGrids(child),
+    size: node.sizes[index]
+  }))
+  const kept = projected
+    .map((entry) => entry.child)
+    .filter((child): child is LayoutNode => child !== null)
+  if (kept.length === 0) return null
+  if (kept.length === 1) return kept[0]
+  const sizes = projected.filter((entry) => entry.child !== null).map((entry) => entry.size)
+  const total = sizes.reduce((sum, size) => sum + size, 0)
+  return { ...node, children: kept, sizes: sizes.map((size) => size / total) }
 }
 
 // Sanitize every stored view tree; the phase-2 'default' key maps to 'code'.

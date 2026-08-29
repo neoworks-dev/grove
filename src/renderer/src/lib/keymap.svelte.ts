@@ -357,12 +357,12 @@ class Keymap {
   }
 
   // ── Sequence engine ───────────────────────────────────────────
-  // Plain text fields swallow bare keys. Mode-aware panes are not covered by
-  // this check — the embedded editor's input is a contenteditable div, and it
-  // gates itself by the mode it reports instead.
+  // Text fields and native selectors swallow bare keys. Mode-aware panes are
+  // not covered by this check — the embedded editor's input is a contenteditable
+  // div, and it gates itself by the mode it reports instead.
   private notTyping(): boolean {
     const tag = document.activeElement?.tagName
-    return tag !== 'INPUT' && tag !== 'TEXTAREA'
+    return tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT'
   }
 
   // Bare keys are only claimed from a mode-aware pane in normal mode, so Vim

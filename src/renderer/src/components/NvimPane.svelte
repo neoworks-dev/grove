@@ -15,9 +15,11 @@
   import InlineReviewOverlay from './InlineReviewOverlay.svelte'
   import ReviewHeaderBar from './ReviewHeaderBar.svelte'
   import ReviewOverlay from './ReviewOverlay.svelte'
+  import NvimGridSurface from './NvimGridSurface.svelte'
   import { review } from '../lib/review.svelte'
   import { settings } from '../lib/settings.svelte'
   import { NvimCanvasSession } from '../lib/nvim/session'
+  import { resolveNvimWindowPosition, type NvimWindowPlacement } from '../lib/nvim/multigrid'
   import type { NvimSessionCallbacks, NvimSessionElements } from '../lib/nvim/session'
   import {
     adoptParkedSession,
@@ -30,6 +32,7 @@
   import { nvimKeymapBindings, type NvimMapping } from '../lib/nvimKeymap'
   import { operatorHintEntries, operatorTitle } from '../lib/nvimOperatorHints'
   import { decodeNvimKey, nextPending, pendingHint } from '../lib/nvimPendingKeys'
+  import { references } from '../lib/references.svelte'
 
   let { leafId }: { leafId: string } = $props()
 
@@ -41,7 +44,10 @@
   let inputEl = $state<HTMLDivElement>()
   let unavailable = $state(false)
 
-  let session: NvimCanvasSession | null = null
+  // The template gates native multigrid surfaces on the live session. In runes
+  // mode a plain variable never invalidates that branch after onMount assigns
+  // it, leaving floats present in state but absent from the DOM.
+  let session = $state.raw<NvimCanvasSession | null>(null)
   // Leaf id this pane's session is registered under. Tracked separately from the
   // `leafId` prop because the layout can rename a mounted pane's leaf, and the
   // registry entry has to follow it.
@@ -58,20 +64,53 @@
   // on_key stream below.
   let pendingNvimKeys = ''
   let disposePendingKeys: (() => void) | null = null
+  let disposeReferences: (() => void) | null = null
 
   // Reactive mirrors for the child overlays: the session id once attached, and a
   // tick bumped on each redraw flush so the minimap re-reads the buffer view.
   let nvimId = $state<string | null>(null)
   let minimapTick = $state(0)
-  // Files open inside this pane's nvim, reported by the autocmd below. Grove tabs
-  // don't cover buffers opened from within nvim (`:e`), so both are consulted
-  // before deciding the editor has nothing to show.
+  // Files open inside this pane's nvim, reported by the autocmd below. The same
+  // snapshot attaches a directly-entered file (`gd`, `:e`, tag jumps) to Grove's
+  // tab strip; the count also keeps the editor visible during that handoff.
   let nvimFileCount = $state(0)
   // Absolute paths of buffers with unsaved changes, keyed for tab lookup.
   let dirtyPaths = $state<Record<string, boolean>>({})
   let disposeBufferWatch: (() => void) | null = null
   // Git gutter for the minimap: the open file's changed-line ranges.
   let diffMarkers = $state<{ start: number; count: number; kind: 'add' | 'del' | 'mod' }[]>([])
+  let nvimWindows = $state<NvimWindowPlacement[]>([])
+  const floatingWindows = $derived(
+    nvimWindows.filter((entry) => entry.kind === 'float' && !entry.hidden)
+  )
+  // Neovim reserves zindex 100 and above for transient editor UI such as
+  // completion menus. Those surfaces already draw their own chrome and must not
+  // acquire Grove's modal backdrop or close button.
+  const modalFloatingWindows = $derived(floatingWindows.filter((entry) => entry.zindex < 100))
+
+  function isTransientFloat(entry: NvimWindowPlacement): boolean {
+    return entry.zindex >= 100
+  }
+
+  function floatStyle(entry: NvimWindowPlacement): string {
+    const cellWidth = session?.cellWidth ?? 8
+    const cellHeight = session?.cellHeight ?? 18
+    const maxWidth = Math.max(80, (hostEl?.clientWidth ?? entry.width * cellWidth) - 24)
+    const maxHeight = Math.max(60, (hostEl?.clientHeight ?? entry.height * cellHeight) - 24)
+    const width = Math.min(entry.width * cellWidth, maxWidth)
+    const height = Math.min(entry.height * cellHeight, maxHeight)
+    const position = resolveNvimWindowPosition(nvimWindows, entry)
+    let left = session?.screenColToPixel(position.col) ?? position.col * cellWidth
+    let top = session?.screenRowToPixel(position.row) ?? position.row * cellHeight
+    left = Math.max(0, Math.min(left, (hostEl?.clientWidth ?? left + width) - width))
+    // Completion surfaces must keep Neovim's below-cursor anchor even when the
+    // full menu does not fit. The pane clips the excess at its bottom edge;
+    // shifting the whole menu upward is what made it cover the edited row.
+    top = isTransientFloat(entry)
+      ? Math.max(0, top)
+      : Math.max(0, Math.min(top, (hostEl?.clientHeight ?? top + height) - height))
+    return `left:${left}px;top:${top}px;width:${width}px;height:${height}px;z-index:${40 + (entry.compindex ?? entry.zindex)}`
+  }
 
   // Fetch the active file's git hunks and map them to minimap gutter markers.
   async function loadDiffMarkers(): Promise<void> {
@@ -231,8 +270,19 @@ local function modified_paths()
   return paths
 end
 
+-- Only ordinary file buffers become Grove tabs. Quickfix/help/terminal buffers
+-- are native nvim surfaces, while named scratch buffers already have explicit
+-- scratch:// tabs managed by Grove.
+local function active_file()
+  local buf = vim.api.nvim_get_current_buf()
+  if vim.bo[buf].buftype ~= '' then return nil end
+  local name = vim.api.nvim_buf_get_name(buf)
+  if name == '' then return nil end
+  return name
+end
+
 local function snapshot()
-  return { count = count_visible(), modified = modified_paths() }
+  return { count = count_visible(), modified = modified_paths(), active = active_file() }
 end
 
 local group = vim.api.nvim_create_augroup('GroveBufferCount', { clear = true })
@@ -267,6 +317,7 @@ end
   interface BufferSnapshot {
     count?: number
     modified?: unknown
+    active?: unknown
   }
 
   /** Turns nvim's list of unsaved buffer paths into the lookup BufferTabs takes. */
@@ -279,16 +330,31 @@ end
     return dirty
   }
 
+  /**
+   * Attach a file entered from inside nvim to Grove's tab model. Claiming the
+   * path before updating the reactive active tab prevents the tab-follow effect
+   * from redundantly :edit-ing the buffer that nvim has already opened.
+   */
+  function attachActiveBuffer(path: unknown): void {
+    if (typeof path !== 'string' || path === '') return
+    const worktreeId = store.selectedWorktreeId
+    if (!worktreeId) return
+    const name = path.split(/[\\/]/).pop() || path
+    lastPushedPath = path
+    store.attachEditorTab({ worktreeId, path, name })
+  }
+
   /** Applies one snapshot from the buffer-state autocmd to the pane's state. */
   function applyBufferSnapshot(snapshot: BufferSnapshot): void {
     if (typeof snapshot.count === 'number') nvimFileCount = snapshot.count
     dirtyPaths = toDirtyPaths(snapshot.modified)
+    attachActiveBuffer(snapshot.active)
   }
 
   /**
    * Install the buffer-state autocmd in a freshly attached session and subscribe
-   * to its notifications, so the pane knows whether nvim has anything on screen
-   * even for buffers grove never opened a tab for, and which of them are unsaved.
+   * to its notifications, so the pane knows whether nvim has anything on screen,
+   * attaches directly-entered files to Grove tabs, and tracks unsaved buffers.
    */
   function watchBufferState(id: string): void {
     disposeBufferWatch?.()
@@ -299,7 +365,11 @@ end
     })
     void window.workbench.nvim
       .request(id, 'nvim_exec_lua', [BUFFER_STATE_LUA, []])
-      .then((snapshot) => applyBufferSnapshot((snapshot ?? {}) as BufferSnapshot))
+      .then((snapshot) => {
+        // A worktree rebind can replace the session while this initial snapshot
+        // is in flight; never attach the old worktree's active file to the new one.
+        if (session?.id === id) applyBufferSnapshot((snapshot ?? {}) as BufferSnapshot)
+      })
       .catch(() => {})
   }
 
@@ -338,6 +408,19 @@ end, ns)
       handlePendingKey(data.key, data.mode || '')
     })
     void window.workbench.nvim.request(id, 'nvim_exec_lua', [PENDING_KEYS_LUA, []]).catch(() => {})
+  }
+
+  // Neovim owns the `gr` mapping because it knows when an LSP client is
+  // attached; its notification hands the multi-result presentation to Grove.
+  function watchReferences(id: string): void {
+    disposeReferences?.()
+    disposeReferences = window.workbench.on('event:nvim-notify', (payload) => {
+      const event = payload as { id: string; method: string; args: unknown[] }
+      if (event.id !== id || event.method !== 'grove_references') return
+      clearPendingKeys()
+      const data = (event.args?.[0] ?? {}) as { symbol?: unknown }
+      references.show(id, typeof data.symbol === 'string' ? data.symbol : '')
+    })
   }
 
   // Hides the pending panel without churning keymap state on every keystroke.
@@ -406,6 +489,7 @@ end, ns)
         void syncNvimKeymap()
         watchBufferState(id)
         watchPendingKeys(id)
+        watchReferences(id)
         // A renderer reload leaves a gated review's preview in the buffer with
         // nothing left to take it down; this editor is attaching fresh, so
         // whatever is flagged as previewed is stale by definition.
@@ -416,6 +500,10 @@ end, ns)
       },
       onModeChange: (mode) => {
         void handleModeChange(mode)
+      },
+      onWindowsChanged: (windows) => {
+        nvimWindows = windows
+        if (session?.id) layout.syncNvimWindows(leafId, session.id, windows)
       },
       onExited: (exitCode) => {
         console.warn(`nvim editor pane crashed (code ${exitCode}); restarting`)
@@ -449,6 +537,7 @@ end, ns)
     void syncNvimKeymap()
     watchBufferState(id)
     watchPendingKeys(id)
+    watchReferences(id)
     return true
   }
 
@@ -590,6 +679,7 @@ end, ns)
     disposeNvimBindings?.()
     disposeBufferWatch?.()
     disposePendingKeys?.()
+    disposeReferences?.()
     keymap.hideHints()
     unregisterNvimSession(registeredLeafId)
     // Park rather than dispose: the layout rebuilds this component whenever the
@@ -605,13 +695,59 @@ end, ns)
   {/if}
   <ReviewHeaderBar {leafId} />
 
-  <div bind:this={hostEl} class="relative min-h-0 flex-1 overflow-hidden bg-surface" role="none">
+  <div
+    bind:this={hostEl}
+    data-nvim-ui={nvimId ?? undefined}
+    class="relative min-h-0 flex-1 overflow-hidden bg-surface"
+    role="none"
+  >
     {#if unavailable}
       <div class="flex h-full items-center justify-center text-dim">
         Neovim runtime missing — run `bun scripts/fetch-nvim.ts` and reopen this pane.
       </div>
     {:else}
       <canvas bind:this={canvasEl} class="block h-full w-full"></canvas>
+      {#if session && floatingWindows.length > 0}
+        {#if modalFloatingWindows.length > 0}
+          <div
+            class="absolute inset-0 z-30 bg-black/25"
+            role="presentation"
+            onclick={(e) => {
+              e.stopPropagation()
+              for (const floating of modalFloatingWindows) session?.closeWindow(floating.win)
+            }}
+            onmousedown={(e) => e.stopPropagation()}
+          ></div>
+        {/if}
+        {#each floatingWindows as floating (floating.grid)}
+          <div
+            class={isTransientFloat(floating)
+              ? 'absolute overflow-hidden'
+              : 'group absolute overflow-hidden rounded-lg border border-line bg-surface shadow-2xl'}
+            style={floatStyle(floating)}
+          >
+            {#if !isTransientFloat(floating)}
+              <button
+                class="absolute right-1.5 top-1.5 z-40 flex h-5 w-5 items-center justify-center rounded text-xs text-dim opacity-60 transition-opacity hover:bg-hover hover:text-default hover:opacity-100"
+                title="Close window"
+                onclick={(e) => {
+                  e.stopPropagation()
+                  session?.closeWindow(floating.win)
+                }}
+                onmousedown={(e) => e.stopPropagation()}
+              >
+                ✕
+              </button>
+            {/if}
+            <NvimGridSurface
+              {session}
+              grid={floating.grid}
+              win={floating.win}
+              class="pointer-events-auto"
+            />
+          </div>
+        {/each}
+      {/if}
       {#if nvimId}
         <Minimap
           {nvimId}

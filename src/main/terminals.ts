@@ -38,7 +38,8 @@ export class TerminalManager {
   create(options: CreateTerminalOptions): string {
     this.counter += 1
     const id = `term-${this.counter}`
-    const pty = spawnPty(defaultShell(), [], {
+    const args = process.platform === 'win32' ? [] : ['-l', '-i']
+    const pty = spawnPty(defaultShell(), args, {
       name: 'xterm-256color',
       cwd: options.cwd,
       cols: options.cols ?? 80,

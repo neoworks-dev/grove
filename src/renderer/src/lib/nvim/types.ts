@@ -32,6 +32,7 @@ export interface ModeInfo {
 }
 
 export interface GridState {
+  id: number
   cols: number
   rows: number
   lines: Cell[][]
@@ -49,8 +50,9 @@ export interface DirtyState {
   flushed: boolean
 }
 
-export function createGridState(): GridState {
+export function createGridState(id = 1): GridState {
   return {
+    id,
     cols: 0,
     rows: 0,
     lines: [],

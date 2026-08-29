@@ -1,9 +1,8 @@
-# Worktree Workbench
+# Grove
 
-A model-agnostic AI coding cockpit. A graphical desktop app to manage multiple Git
-worktrees at once, run per-worktree dev services on deterministic ports, preview them,
-inspect logs, edit code in a GUI editor with Vim bindings, review changes in a
-side-by-side diff, and launch replaceable CLI agents (`claude -p`, `codex exec`, …).
+Grove is a code editor built around embedded Neovim, Git worktrees, and AI coding
+agents. It lets you work across multiple worktrees, run per-worktree dev services,
+inspect logs, preview your work, and review changes without leaving the editor.
 
 Not a terminal-first app — terminals/exec are implementation details behind a graphical UI.
 
@@ -18,13 +17,13 @@ Not a terminal-first app — terminals/exec are implementation details behind a 
 - **Service supervisor** — start/stop/restart services per worktree, capture output to
   `<worktree>/.workbench/logs/<service>.log` (purged on relaunch), track PIDs, poll
   health URLs, open preview URLs.
-- **Editor** — Monaco with a file tree, tabs, Vim keybindings (`monaco-vim`), and save.
-- **Diff viewer** — side-by-side Monaco DiffEditor; changed-file list and diff content
-  are sourced from `git diff` (staged/unstaged), never diffed in JS.
+- **Editor** — embedded Neovim with a file tree, buffer tabs, and native Vim editing.
+- **Diff viewer** — an integrated review workflow whose changed-file list and diff
+  content come from `git diff` (staged/unstaged), never from client-side diffing.
 - **Agents** — named command adapters launched per worktree via exec-capture; output
   (e.g. `claude -p` JSON) streams into the Agent pane and a log file. Multiple worktrees
   can run agents concurrently.
-- **Dashboard** — overview across all worktrees: ports, service status, active agents.
+- **Dashboard** — overview across all worktrees: ports, service status, agents.
 
 ## Environment variables per worktree
 
@@ -46,10 +45,10 @@ slot is stable and persisted.
   dashboard.
 - `src/shared/types.ts` — shared type definitions.
 
-## Project Setup
+## Project setup
 
 ```bash
-bun install      # or npm install
+bun install
 bun run dev      # electron-vite dev
 bun test         # unit tests for the pure main modules
 bun run build    # typecheck + bundle

@@ -1,6 +1,6 @@
-// agents.* routes: observe and drive agent sessions on the embedded nib server.
+// agents.* routes: observe and drive grove's agent sessions.
 //
-// Chat references over the wire are nib session ids scoped to a worktree, so a
+// Chat references over the wire are session ids scoped to a worktree, so a
 // client never enumerates internals and never reaches a session outside the
 // worktree it asked about. agents.run is a danger scope: sends spend money and
 // agents can edit files. Answering approvals is deliberately not exposed — a
@@ -8,37 +8,20 @@
 // escalation.
 
 import type { WorktreeChatMessage } from '../../../shared/types'
+import type { SessionEvent, SessionMeta, SessionSnapshot } from '../../../shared/agents'
 import { ApiError, type RouteRegistry } from '../registry'
-
-// The subset of nib's protocol these routes speak. Kept structural so this
-// module does not depend on the renderer's vendored copy of nib's types.
-interface NibSession {
-  id: string
-  title: string
-  workspaceRoot: string
-  provider: string
-  model: string
-  status: string
-  live: boolean
-}
-
-interface NibEvent {
-  seq: number
-  type: string
-  [key: string]: unknown
-}
 
 export interface AgentsRouteDeps {
   // Sessions across every workspace; routes filter to the requested worktree.
-  listSessions: () => Promise<NibSession[]>
+  listSessions: () => Promise<SessionMeta[]>
   listModels: () => Promise<{ provider: string; models: { id: string }[] }[]>
-  listEvents: (sessionId: string, after: number) => Promise<NibEvent[]>
-  createSession: (workspace: string, title?: string) => Promise<NibSession>
+  listEvents: (sessionId: string, after: number) => Promise<SessionEvent[]>
+  createSession: (workspace: string, title?: string) => Promise<SessionSnapshot>
   send: (sessionId: string, text: string) => Promise<void>
   interrupt: (sessionId: string) => Promise<void>
   unqueue: (sessionId: string, messageId: string) => Promise<void>
   // Subscribe to one session's stream; the returned function unsubscribes.
-  observe: (sessionId: string, onEvent: (event: NibEvent) => void) => () => void
+  observe: (sessionId: string, onEvent: (event: SessionEvent) => void) => () => void
   sendChatAs: (
     worktreeId: string,
     from: { kind: 'agent'; name: string },
@@ -49,7 +32,7 @@ export interface AgentsRouteDeps {
 
 export function registerAgentsRoutes(registry: RouteRegistry, deps: AgentsRouteDeps): void {
   /** Resolve a session id, refusing one that belongs to another worktree. */
-  async function sessionIn(worktreePath: string, raw: unknown): Promise<NibSession> {
+  async function sessionIn(worktreePath: string, raw: unknown): Promise<SessionMeta> {
     const sessionId = String(raw ?? '')
     if (!sessionId) throw new ApiError('chatId is required', 'invalid')
     const sessions = await deps.listSessions()

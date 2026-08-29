@@ -1,31 +1,31 @@
 <script lang="ts">
   // The agent pane.
   //
-  // Sessions, transcripts, approvals and persistence all belong to the embedded
-  // nib server; this is a client for them, plus the two things that are grove's
-  // own business — which worktree a session belongs to, and how its file changes
-  // get reviewed.
+  // Sessions, transcripts, approvals and persistence belong to the main process,
+  // which runs whichever harness the session names; this is a client for them,
+  // plus the two things that are the pane's own business — which worktree a
+  // session belongs to, and how its file changes get reviewed.
 
   import { onDestroy, onMount } from 'svelte'
   import { openFileInEditor, store } from '../../../../lib/store.svelte'
   import { keymap } from '../../../../lib/keymap.svelte'
   import { settings } from '../../../../lib/settings.svelte'
   import { review } from '../../../../lib/review.svelte'
-  import { catalog } from '../../../../lib/nib/catalog.svelte'
+  import { catalog } from '../../../../lib/agents/catalog.svelte'
   import {
     badgeOf,
-    nibSessions,
+    agentSessions,
     type LiveSession,
     type SessionBadge
-  } from '../../../../lib/nib/sessions.svelte'
-  import { pendingApprovals, visibleItems } from '../../../../lib/nib/transcript'
-  import { activeToolsFor, effectiveMode, type AgentMode } from '../../../../lib/nib/modes'
+  } from '../../../../lib/agents/sessions.svelte'
+  import { pendingApprovals, visibleItems } from '../../../../lib/agents/transcript'
+  import { activeToolsFor, effectiveMode, type AgentMode } from '../../../../lib/agents/modes'
   import type {
     ClientEventBody,
     ConfirmationResult,
     SessionMeta,
     ThinkingLevel
-  } from '../../../../lib/nib/types'
+  } from '../../../../lib/agents/types'
   import AgentApproval from './AgentApproval.svelte'
   import AgentComposer from './AgentComposer.svelte'
   import AgentControls from './AgentControls.svelte'
@@ -34,19 +34,26 @@
   import AgentTranscript from './AgentTranscript.svelte'
   import AgentWorkingBar from './AgentWorkingBar.svelte'
 
-  // The agent this pane speaks for, in grove's review vocabulary. One adapter now,
-  // so it is a constant rather than a choice.
-  const AGENT = 'nib'
-
   let { leafId }: { leafId: string } = $props()
 
   const worktree = $derived(store.selectedWorktree)
   const worktreePath = $derived(worktree?.path ?? '')
 
-  const sessionList = $derived(worktreePath ? nibSessions.forWorktree(worktreePath) : [])
-  const activeId = $derived(worktreePath ? nibSessions.resolveActive(worktreePath) : null)
-  const live = $derived<LiveSession | undefined>(activeId ? nibSessions.live[activeId] : undefined)
+  const sessionList = $derived(worktreePath ? agentSessions.forWorktree(worktreePath) : [])
+  const activeId = $derived(worktreePath ? agentSessions.resolveActive(worktreePath) : null)
+  const live = $derived<LiveSession | undefined>(
+    activeId ? agentSessions.live[activeId] : undefined
+  )
   const snapshot = $derived(live?.snapshot ?? null)
+
+  // Reviews are recorded under the harness that made the changes, so the queue
+  // for this session is looked up by the harness it is running on.
+  const activeMeta = $derived(sessionList.find((session) => session.id === activeId))
+  const harness = $derived.by(() => {
+    if (snapshot) return snapshot.harness
+    if (activeMeta) return activeMeta.harness
+    return ''
+  })
 
   const items = $derived(live ? visibleItems(live.transcript) : [])
   const approvals = $derived(live ? pendingApprovals(live.transcript) : [])
@@ -58,7 +65,7 @@
   // "default". The choice itself lives in the session store, because approvals
   // have to be answered whoever started the run.
   const mode = $derived(
-    activeId ? effectiveMode(nibSessions.modeFor(activeId), snapshot) : 'default'
+    activeId ? effectiveMode(agentSessions.modeFor(activeId), snapshot) : 'default'
   )
 
   let expandedTools = $state<Record<string, boolean>>({})
@@ -68,6 +75,12 @@
   let disposeBindings: (() => void) | undefined
 
   // ── Settings ────────────────────────────────────────────────────
+
+  // The harness a new session starts on: the last one chosen, else the first
+  // that can actually run.
+  const newSessionHarness = $derived(
+    settings.get<string>('workbench.agentHarness') || (catalog.available[0]?.id ?? '')
+  )
 
   const reviewMode = $derived(settings.get<string>('workbench.reviewMode') ?? 'pre')
   const reviewPause = $derived(settings.get<boolean>('workbench.reviewPause') ?? false)
@@ -83,14 +96,14 @@
   const reviewIsOpen = $derived(gatedReview !== null && review.active?.id === gatedReview.id)
   const postReviews = $derived(
     worktreePath && activeId
-      ? review.queueFor(worktreePath, AGENT, activeId).filter((batch) => batch.origin !== 'gated')
+      ? review.queueFor(worktreePath, harness, activeId).filter((batch) => batch.origin !== 'gated')
       : []
   )
 
   // ── Lifecycle ───────────────────────────────────────────────────
 
   onMount(() => {
-    const unwatch = nibSessions.watch()
+    const unwatch = agentSessions.watch()
     void catalog.load()
     disposeBindings = registerBindings()
     return unwatch
@@ -102,8 +115,14 @@
   // store which one it is so its unread count clears.
   $effect(() => {
     const id = activeId
-    nibSessions.view(id)
-    if (id) void nibSessions.open(id)
+    agentSessions.view(id)
+    if (id) void agentSessions.open(id)
+  })
+
+  // The catalog answers for one harness at a time; point it at this session's,
+  // or at the one a new session would start on when there is none.
+  $effect(() => {
+    void catalog.use(harness || newSessionHarness || null)
   })
 
   // Keep the newest output in view unless the user has scrolled away from it.
@@ -126,20 +145,27 @@
 
   // ── Sessions ────────────────────────────────────────────────────
 
+  /**
+   * A new session runs the harness the user last chose, and otherwise whichever
+   * one the main process finds available.
+   */
   async function createSession(): Promise<void> {
     if (!worktreePath) return
-    await nibSessions.create(worktreePath, { title: `Session ${sessionList.length + 1}` })
+    await agentSessions.create(worktreePath, {
+      title: `Session ${sessionList.length + 1}`,
+      harness: newSessionHarness || undefined
+    })
   }
 
   async function closeSession(sessionId: string, event: MouseEvent): Promise<void> {
     event.stopPropagation()
     if (!worktreePath) return
-    await nibSessions.remove(worktreePath, sessionId)
+    await agentSessions.remove(worktreePath, sessionId)
   }
 
   function selectSession(sessionId: string): void {
     if (!worktreePath) return
-    nibSessions.setActive(worktreePath, sessionId)
+    agentSessions.setActive(worktreePath, sessionId)
   }
 
   function cycleSession(step: number): void {
@@ -150,48 +176,59 @@
   }
 
   function badgeFor(session: SessionMeta): SessionBadge {
-    return badgeOf(session, nibSessions.live[session.id])
+    return badgeOf(session, agentSessions.live[session.id])
   }
 
   function unreadFor(session: SessionMeta): number {
-    return nibSessions.live[session.id]?.unread ?? 0
+    return agentSessions.live[session.id]?.unread ?? 0
   }
 
   // ── Sending ─────────────────────────────────────────────────────
 
   function send(events: ClientEventBody[]): void {
     if (!activeId) return
-    void nibSessions.send(activeId, events)
+    void agentSessions.send(activeId, events)
     stickToBottom = true
   }
 
   function decide(toolUseId: string, result: ConfirmationResult, reason?: string): Promise<void> {
     if (!activeId) return Promise.resolve()
-    return nibSessions.send(activeId, [
+    return agentSessions.send(activeId, [
       { type: 'user.tool_confirmation', toolUseId, result, reason }
     ])
   }
 
   function interrupt(): void {
     if (!activeId) return
-    void nibSessions.send(activeId, [{ type: 'user.interrupt' }])
+    void agentSessions.send(activeId, [{ type: 'user.interrupt' }])
   }
 
   function unqueue(messageId: string): void {
     if (!activeId) return
-    void nibSessions.send(activeId, [{ type: 'user.unqueue', messageId }])
+    void agentSessions.send(activeId, [{ type: 'user.unqueue', messageId }])
   }
 
   // ── Session settings ────────────────────────────────────────────
 
   function pickModel(provider: string, model: string): void {
     if (!activeId) return
-    void nibSessions.update(activeId, { provider, model })
+    void agentSessions.update(activeId, { provider, model })
+  }
+
+  /**
+   * Switching harness restarts the conversation on the new runtime: the old one's
+   * resume key means nothing to it. The choice is remembered so new sessions
+   * start there too.
+   */
+  function pickHarness(next: string): void {
+    void settings.set('workbench.agentHarness', next, 'user')
+    if (!activeId || next === harness) return
+    void agentSessions.update(activeId, { harness: next })
   }
 
   function pickThinking(thinkingLevel: ThinkingLevel): void {
     if (!activeId) return
-    void nibSessions.update(activeId, { thinkingLevel })
+    void agentSessions.update(activeId, { thinkingLevel })
   }
 
   /**
@@ -200,9 +237,9 @@
    */
   function pickMode(next: AgentMode): void {
     if (!activeId) return
-    nibSessions.setMode(activeId, next)
+    agentSessions.setMode(activeId, next)
     const allTools = catalog.tools.map((tool) => tool.name)
-    void nibSessions.update(activeId, { activeTools: activeToolsFor(next, allTools) })
+    void agentSessions.update(activeId, { activeTools: activeToolsFor(next, allTools) })
   }
 
   // ── Editor handoff ──────────────────────────────────────────────
@@ -333,7 +370,7 @@
     return `${(used / 1000).toFixed(1)}k · ${Math.round(snapshot.context.ratio * 100)}%`
   })
 
-  const errorText = $derived(live?.error || nibSessions.serverError || catalog.error)
+  const errorText = $derived(live?.error || agentSessions.serverError || catalog.error)
 </script>
 
 <div class="flex h-full flex-col">
@@ -370,6 +407,23 @@
     {:else}
       <div class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-3">
         <p class="text-xs text-dim">No agent session in this worktree.</p>
+        <!-- Pick the harness before starting: switching afterwards restarts the
+             conversation, since the new runtime knows nothing of the old one. -->
+        <div class="flex items-center gap-1">
+          {#each catalog.harnesses as entry (entry.id)}
+            <button
+              class="rounded border border-line px-2 py-1 text-2xs hover:bg-hover disabled:opacity-50 {entry.id ===
+              newSessionHarness
+                ? 'text-default'
+                : 'text-dim'}"
+              disabled={!entry.available}
+              title={entry.detail ?? entry.description}
+              onclick={() => pickHarness(entry.id)}
+            >
+              {entry.label}
+            </button>
+          {/each}
+        </div>
         <button
           class="rounded-md bg-action px-3 py-1 text-xs text-action-fg"
           onclick={createSession}
@@ -452,6 +506,8 @@
 
         {#if snapshot}
           <AgentControls
+            harness={snapshot.harness}
+            harnesses={catalog.harnesses}
             provider={snapshot.provider}
             model={snapshot.model}
             thinking={snapshot.thinkingLevel}
@@ -461,6 +517,7 @@
             {reviewMode}
             {reviewPause}
             tokensLabel={contextLabel}
+            onPickHarness={pickHarness}
             onPickModel={pickModel}
             onPickThinking={pickThinking}
             onPickMode={pickMode}

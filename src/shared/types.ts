@@ -398,23 +398,6 @@ export interface ServiceRuntime {
   ports: number[]
 }
 
-// The embedded nib agent server. `endpoint` is shaped for node's http client:
-// a unix socket everywhere, a loopback port on Windows.
-export interface NibEndpoint {
-  socketPath?: string
-  host?: string
-  port?: number
-}
-
-export interface NibStatus {
-  running: boolean
-  pid: number | null
-  endpoint: NibEndpoint | null
-  // The checkout or binary the server was started from.
-  source: string | null
-  error: string | null
-}
-
 export type AgentStatus = 'stopped' | 'running' | 'exited' | 'error'
 
 export interface AgentRuntime {

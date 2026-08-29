@@ -3,7 +3,7 @@
 // Components read from here and call window.workbench, then push updates back.
 //
 // Agent state is deliberately absent: sessions, transcripts and approvals belong
-// to the embedded nib server and are held by lib/nib/sessions.svelte.ts.
+// to the main process and are held by lib/agents/sessions.svelte.ts.
 
 import type {
   Worktree,
@@ -27,7 +27,7 @@ import { currentThemeName, applyThemeVars, themeFor } from './themes'
 import type { ColorTheme } from './themes'
 import { layout } from './layout.svelte'
 import { settings } from './settings.svelte'
-import { nibSessions } from './nib/sessions.svelte'
+import { agentSessions } from './agents/sessions.svelte'
 import { inlineEdit } from './inlineEdit.svelte'
 import { review } from './review.svelte'
 import { intro } from './intro.svelte'
@@ -57,11 +57,11 @@ class WorkbenchStore {
   services = $state<Record<string, ServiceRuntime[]>>({})
 
   // Worktrees with a running agent session, so file changes stream in even when
-  // the worktree is not selected. Read straight off the nib session listing —
+  // the worktree is not selected. Read straight off the agent session listing —
   // a worktree's id is its path, which is what a session records as its
   // workspace root.
   get activeAgentWorktrees(): string[] {
-    const running = nibSessions.list.filter((session) => session.status === 'running')
+    const running = agentSessions.list.filter((session) => session.status === 'running')
     return [...new Set(running.map((session) => session.workspaceRoot))]
   }
 

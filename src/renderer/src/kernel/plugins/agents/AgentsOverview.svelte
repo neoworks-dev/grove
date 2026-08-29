@@ -7,7 +7,7 @@
   import { onMount } from 'svelte'
   import { store, selectWorktree, focusAgentInPane } from '../../../lib/store.svelte'
   import { layout } from '../../../lib/layout.svelte'
-  import { nibSessions } from '../../../lib/nib/sessions.svelte'
+  import { agentSessions } from '../../../lib/agents/sessions.svelte'
   import {
     attentionFor,
     lastAgentLineFor,
@@ -16,11 +16,11 @@
     diffStatLabel
   } from '../../../lib/worktreeStatus'
   import WaveSpinner from '../../../components/WaveSpinner.svelte'
-  import type { SessionMeta } from '../../../lib/nib/types'
+  import type { SessionMeta } from '../../../lib/agents/types'
 
   // The session listing is polled centrally; this keeps it live while the
   // overview is on screen even when no agent pane is open.
-  onMount(() => nibSessions.watch())
+  onMount(() => agentSessions.watch())
 
   function titleOf(session: SessionMeta): string {
     if (session.title.trim().length > 0) return session.title

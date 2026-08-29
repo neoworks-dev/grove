@@ -1,5 +1,5 @@
-// The main-process IPC surface is 19 route plugins on a kernel context. This
-// pins the two properties the split has to keep: every channel the preload
+// The main-process IPC surface is a set of route plugins on a kernel context.
+// This pins the two properties the split has to keep: every channel the preload
 // bridge invokes gets registered, and unloading the plugins removes all of them.
 //
 // Electron is stubbed so the routes can mount outside an Electron runtime; the
@@ -27,8 +27,9 @@ const SERVICE_STUBS: Record<string, unknown> = {
   watcher: {},
   chat: {},
   actions: {},
-  nib: {},
-  nibReview: {},
+  agents: { watch: () => () => {} },
+  agentReview: {},
+  harnesses: { register: () => () => {} },
   plugins: { registry: { loadAll: async () => [] } },
   apps: {}
 }

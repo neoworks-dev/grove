@@ -96,17 +96,31 @@ const workbench = {
       ipcRenderer.invoke('services:restart', worktreeId, name)
   },
   agents: {
-    // Sessions live on the nib server and are reached over grove-nib://. What
-    // stays on IPC is the review flow, which writes files.
     resolveReview: (batchId: string, decisions: unknown) =>
       ipcRenderer.invoke('agents:resolveReview', batchId, decisions),
-    discardReview: (batchId: string) => ipcRenderer.invoke('agents:discardReview', batchId)
-  },
-  // The embedded agent server. Sessions, events and everything else go straight
-  // over grove-nib://; this is only the process itself.
-  nib: {
-    status: () => ipcRenderer.invoke('nib:status'),
-    start: () => ipcRenderer.invoke('nib:start')
+    discardReview: (batchId: string) => ipcRenderer.invoke('agents:discardReview', batchId),
+
+    // Which harnesses are mounted, and what each one can offer.
+    harnesses: () => ipcRenderer.invoke('agents:harnesses'),
+    catalog: (harnessId: string) => ipcRenderer.invoke('agents:catalog', harnessId),
+
+    listSessions: () => ipcRenderer.invoke('agents:listSessions'),
+    createSession: (options: unknown) => ipcRenderer.invoke('agents:createSession', options),
+    getSession: (sessionId: string) => ipcRenderer.invoke('agents:getSession', sessionId),
+    updateSession: (sessionId: string, changes: unknown) =>
+      ipcRenderer.invoke('agents:updateSession', sessionId, changes),
+    deleteSession: (sessionId: string) => ipcRenderer.invoke('agents:deleteSession', sessionId),
+
+    // The transcript: replay from a cursor, and the events a client sends back.
+    listEvents: (sessionId: string, after: number) =>
+      ipcRenderer.invoke('agents:listEvents', sessionId, after),
+    sendEvents: (sessionId: string, events: unknown) =>
+      ipcRenderer.invoke('agents:sendEvents', sessionId, events),
+
+    searchFiles: (sessionId: string, query: string, limit?: number) =>
+      ipcRenderer.invoke('agents:searchFiles', sessionId, query, limit),
+    uploadBlob: (sessionId: string, bytes: Uint8Array, mediaType: string, filename?: string) =>
+      ipcRenderer.invoke('agents:uploadBlob', sessionId, bytes, mediaType, filename)
   },
   fs: {
     watch: (worktreeIds: string[]) => ipcRenderer.invoke('fs:watch', worktreeIds)

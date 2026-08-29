@@ -39,12 +39,12 @@ export function registerBaseSettings(): void {
         category: 'Agents'
       },
       {
-        key: 'workbench.nibPath',
+        key: 'workbench.agentHarness',
         type: 'string',
         default: '',
-        title: 'nib Checkout',
+        title: 'Agent Harness',
         description:
-          'Path to a nib source checkout to run the agent server from. Development only — packaged builds ship a compiled server. Leave empty to use the sibling checkout next to grove.',
+          'The agent runtime new sessions start on: claude, codex or pi. Leave empty to use the first one that can run.',
         category: 'Agents'
       },
       {

@@ -11,7 +11,7 @@ import { intro } from './intro.svelte'
 export function startAppEffects(): () => void {
   return $effect.root(() => {
     // An agent starting or finishing in an unselected worktree changes what has
-    // to be watched for file changes, and that is learned from polling nib's
+    // to be watched for file changes, and that is learned from polling the
     // session list rather than from an event — so follow it reactively.
     $effect(() => {
       void store.activeAgentWorktrees.length

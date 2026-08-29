@@ -1,12 +1,12 @@
 <script lang="ts">
-  // An extension's own UI, rendered from nib's declarative UiNode vocabulary.
+  // A tool's own UI, rendered from the declarative UiNode vocabulary.
   //
   // The extension says what it wants shown, not what it looks like — so a node
   // kind grove has not implemented falls back to its `fallbackText` rather than
-  // failing, which is what lets nib grow the vocabulary without breaking us.
+  // failing, which is what lets the vocabulary grow without breaking us.
 
   import { renderMarkdown } from '../../../../lib/markdown'
-  import type { UiNode, UiTone } from '../../../../lib/nib/types'
+  import type { UiNode, UiTone } from '../../../../lib/agents/types'
   import AgentSurface from './AgentSurface.svelte'
 
   let { node }: { node: UiNode } = $props()
@@ -24,7 +24,7 @@
   }
 
   // Read before the branch: once every known kind has been ruled out the node
-  // narrows to `never`, and the fallback is exactly the case nib added a kind we
+  // narrows to `never`, and the fallback is exactly the case a kind was added we
   // have not implemented yet.
   const fallback = $derived(node.fallbackText ?? '')
 </script>

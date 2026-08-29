@@ -12,7 +12,7 @@
   import WaveSpinner from '../../../components/WaveSpinner.svelte'
   import AgentLogo from '../../../components/AgentLogo.svelte'
   import type { Worktree, ServiceRuntime } from '../../../../../shared/types'
-  import type { SessionMeta } from '../../../lib/nib/types'
+  import type { SessionMeta } from '../../../lib/agents/types'
   import { sessionsFor } from '../../../lib/worktreeStatus'
 
   let showDialog = $state(false)

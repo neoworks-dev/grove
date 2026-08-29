@@ -3,14 +3,14 @@
 // AGENTS.md showcase diff fresh after every agent edit.
 //
 // The phase is not pushed to us. The agent reports it through the grove-intro
-// nib extension, which publishes it as a `ui.surface` node on the session's own
+// tool, which publishes it as a `ui.surface` node on the session's own
 // stream — so it is read back out of the transcript the session store already
 // holds.
 
 import { store, focusAgentInPane } from './store.svelte'
 import { layout } from './layout.svelte'
-import { nibSessions } from './nib/sessions.svelte'
-import { visiblePanels } from './nib/transcript'
+import { agentSessions } from './agents/sessions.svelte'
+import { visiblePanels } from './agents/transcript'
 import { parseUnifiedDiff, type DiffRow } from './intro/introDiff'
 import {
   INTRO_KICKOFF_PROMPT,
@@ -72,21 +72,21 @@ class IntroSession {
       this.exampleFiles = []
       this.phase = 'explore'
       // The onboarding protocol is what this session is for, so it is baked in
-      // at creation — nib composes the system prompt once and never again.
-      const sessionId = await nibSessions.create(worktreeId, {
+      // at creation — the harness composes the system prompt once and never again.
+      const sessionId = await agentSessions.create(worktreeId, {
         title: 'Onboarding',
         appendSystemPrompt: INTRO_SYSTEM_APPEND
       })
       if (!sessionId) {
-        store.setError(nibSessions.serverError || 'Could not reach the agent server.')
+        store.setError(agentSessions.serverError || 'Could not reach the agent server.')
         return
       }
       this.chatId = sessionId
       // Onboarding writes AGENTS.md and example files as it goes; stopping to
       // approve each one is not what this flow is for.
-      nibSessions.setMode(sessionId, 'acceptEdits')
-      await nibSessions.open(sessionId)
-      await nibSessions.send(sessionId, [
+      agentSessions.setMode(sessionId, 'acceptEdits')
+      await agentSessions.open(sessionId)
+      await agentSessions.send(sessionId, [
         {
           type: 'user.message',
           content: [{ type: 'text', text: INTRO_KICKOFF_PROMPT }],
@@ -143,7 +143,7 @@ class IntroSession {
    * rewind the stepper.
    */
   private reportedPhase(): IntroPhase | null {
-    const live = nibSessions.live[this.chatId]
+    const live = agentSessions.live[this.chatId]
     if (!live) return null
     const panel = visiblePanels(live.transcript).find((item) => item.surfaceId === PHASE_SURFACE)
     if (!panel || panel.view.kind !== 'text') return null
@@ -178,7 +178,7 @@ class IntroSession {
 
   async finish(discardExamples: boolean): Promise<void> {
     if (this.chatId) {
-      await nibSessions.send(this.chatId, [{ type: 'user.interrupt' }]).catch(() => {})
+      await agentSessions.send(this.chatId, [{ type: 'user.interrupt' }]).catch(() => {})
     }
     if (discardExamples) await this.discardExamples()
     this.phase = 'done'

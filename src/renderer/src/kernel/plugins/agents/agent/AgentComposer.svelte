@@ -9,14 +9,14 @@
 
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
   import Kbd from '../../../../components/Kbd.svelte'
-  import { searchFiles, uploadBlob } from '../../../../lib/nib/api'
+  import { searchFiles, uploadBlob } from '../../../../lib/agents/api'
   import {
     activeCompletion,
     applyCompletion,
     parseSubmission,
     type Completion
-  } from '../../../../lib/nib/completion'
-  import type { ClientEventBody, ImageBlock, UserContentBlock } from '../../../../lib/nib/types'
+  } from '../../../../lib/agents/completion'
+  import type { ClientEventBody, ImageBlock, UserContentBlock } from '../../../../lib/agents/types'
 
   let {
     sessionId,
@@ -114,7 +114,7 @@
     suggestions = []
   }
 
-  /** A submitted draft, as the client events nib expects for it. */
+  /** A submitted draft, as the client events a session expects for it. */
   function eventsFor(submission: ReturnType<typeof parseSubmission>): ClientEventBody[] {
     if (!submission) {
       // Attachments with no text still count as something to say.

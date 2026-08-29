@@ -3,7 +3,7 @@
 //
 // The channel is a file — `.workbench/chat.jsonl` in the worktree — rather than
 // memory, because the two sides of it live in different processes: the user
-// posts through grove, and agents post through the grove-chat nib extension,
+// posts through grove, and agents post through grove's own chat tools,
 // which is in-process bun code inside the agent server with no way to call back
 // here. A file is the one thing they both already have.
 //

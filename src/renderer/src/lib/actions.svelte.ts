@@ -8,7 +8,7 @@ import { dialogs } from './dialogs.svelte'
 import { store } from './store.svelte'
 import { layout } from './layout.svelte'
 import { agentPrompt } from './agentPrompt.svelte'
-import { nibSessions } from './nib/sessions.svelte'
+import { agentSessions } from './agents/sessions.svelte'
 import { actionHash } from './bindingResolution'
 
 export async function executeAction(
@@ -61,11 +61,11 @@ async function runAiPrompt(prompt: string, autoSend: boolean): Promise<void> {
     return
   }
   try {
-    const sessionId = await nibSessions.sendText(worktreeId, prompt)
+    const sessionId = await agentSessions.sendText(worktreeId, prompt)
     if (!sessionId) {
       dialogs.notify({
         level: 'error',
-        message: nibSessions.serverError || 'Could not reach the agent server.'
+        message: agentSessions.serverError || 'Could not reach the agent server.'
       })
     }
   } catch (error) {

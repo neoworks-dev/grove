@@ -97,7 +97,9 @@ describe('agents routes over nib', () => {
 
     // 'b' exists, so this is authorization rather than a lookup miss.
     await expect(call('agents.readTranscript', { chatId: 'b' })).rejects.toThrow('unknown chat: b')
-    await expect(call('agents.send', { chatId: 'b', message: 'hi' })).rejects.toThrow('unknown chat: b')
+    await expect(call('agents.send', { chatId: 'b', message: 'hi' })).rejects.toThrow(
+      'unknown chat: b'
+    )
     await expect(call('agents.stop', { chatId: 'b' })).rejects.toThrow('unknown chat: b')
   })
 
@@ -157,7 +159,9 @@ describe('agents routes over nib', () => {
   it('rejects an empty channel message', async () => {
     const { call } = build()
 
-    await expect(call('agents.sendChannelMessage', { text: '   ' })).rejects.toThrow('text is required')
+    await expect(call('agents.sendChannelMessage', { text: '   ' })).rejects.toThrow(
+      'text is required'
+    )
   })
 
   it('keeps answering approvals off the wire entirely', () => {

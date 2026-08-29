@@ -1,7 +1,7 @@
 // Pure helpers for building the @file:lines reference used by inline edit.
 // Kept free of renderer/store imports so they are unit-testable in isolation.
 
-import type { AgentMode } from './nib/modes'
+import type { AgentMode } from './agents/modes'
 
 // How an inline edit is reviewed:
 //  - auto:   agent applies the edit, no review at all.

@@ -7,8 +7,8 @@
 
   import AgentLogo from '../../../../components/AgentLogo.svelte'
   import WaveSpinner from '../../../../components/WaveSpinner.svelte'
-  import type { SessionBadge } from '../../../../lib/nib/sessions.svelte'
-  import type { SessionMeta } from '../../../../lib/nib/types'
+  import type { SessionBadge } from '../../../../lib/agents/sessions.svelte'
+  import type { SessionMeta } from '../../../../lib/agents/types'
 
   let {
     sessions,

@@ -22,15 +22,15 @@ import {
   REVIEW_MODES,
   type ReviewMode
 } from './inlineEditRef'
-import { catalog } from './nib/catalog.svelte'
+import { catalog } from './agents/catalog.svelte'
 import {
   discoveredModelOptions,
   encodeModelSelection,
   resolveModelSelection,
   type ModelOption,
   type ModelSelection
-} from './nib/modelSelection'
-import { nibSessions } from './nib/sessions.svelte'
+} from './agents/modelSelection'
+import { agentSessions } from './agents/sessions.svelte'
 
 const MODE_SETTING = 'workbench.inlineEditMode'
 const MODEL_SETTING = 'inlineEdit.model'
@@ -121,7 +121,7 @@ class InlineEdit {
   }
 
   // Models are provider-discovered at runtime. Registering the resulting enum
-  // only after nib answers keeps a newly installed provider from requiring a
+  // only after the harness answers keeps a newly installed provider from requiring a
   // Grove code change, while also exposing the same choice in Preferences.
   async loadModels(): Promise<void> {
     await catalog.load()
@@ -231,21 +231,21 @@ class InlineEdit {
     // and concurrent queued work could then run under whichever task changed it
     // last.
     await this.loadModels()
-    const sessionId = await nibSessions.ensureInlineFor(
+    const sessionId = await agentSessions.ensureInlineFor(
       selection.worktreeId,
       this.modelSelection ?? undefined
     )
     if (!sessionId) {
-      store.setError(nibSessions.serverError || 'Could not reach the agent server.')
+      store.setError(agentSessions.serverError || 'Could not reach the agent server.')
       return
     }
     // The review style decides whether the edit is put to the user before it
     // lands, so it has to be set before the run that produces it. Keep the
     // background session streamed too: auto/inline modes answer write approvals
     // from that stream even when no Agent pane is mounted.
-    nibSessions.setMode(sessionId, pickAgentMode(this.mode))
-    await nibSessions.open(sessionId)
-    await nibSessions.send(sessionId, [
+    agentSessions.setMode(sessionId, pickAgentMode(this.mode))
+    await agentSessions.open(sessionId)
+    await agentSessions.send(sessionId, [
       { type: 'user.message', content: [{ type: 'text', text }], deliverAs: 'steer' }
     ])
   }

@@ -15,11 +15,14 @@ import { lspRoutes } from './lsp'
 import { terminalsRoutes } from './terminals'
 import { nvimRoutes } from './nvim'
 import { stateRoutes } from './state'
-import { nibRoutes } from './nib'
+import { agentRoutes } from './agents'
 import { pluginsRoutes } from './plugins'
 import { actionsRoutes } from './actions'
 import { settingsRoutes } from './settings'
 import { miscRoutes } from './misc'
+import { claudeHarness } from '../agents/harnesses/claude'
+import { codexHarness } from '../agents/harnesses/codex'
+import { piHarness } from '../agents/harnesses/pi'
 
 export const routePlugins = [
   repoRoutes,
@@ -36,9 +39,14 @@ export const routePlugins = [
   terminalsRoutes,
   nvimRoutes,
   stateRoutes,
-  nibRoutes,
+  agentRoutes,
   pluginsRoutes,
   actionsRoutes,
   settingsRoutes,
-  miscRoutes
+  miscRoutes,
+  // Agent harnesses. Each registers itself into the harness registry and can be
+  // unloaded without the rest noticing; adding another means adding a file here.
+  claudeHarness,
+  codexHarness,
+  piHarness
 ]

@@ -39,14 +39,14 @@ const reviewState: Scenario = {
     const app = await evaluate(
       grove,
       `(() => {
-        const { review, store, keymap, nibSessions, nibTranscript } = window.__grove_debug
+        const { review, store, keymap, agentSessions, agentTranscript } = window.__grove_debug
         return {
           active: review.active && { id: review.active.id, origin: review.active.origin },
           activeFile: review.activeFile && review.activeFile.relPath,
           leafOwner: review.leafOwner,
           queued: review.queue.length,
-          pendingPermissions: Object.values(nibSessions.live).reduce(
-            (total, session) => total + nibTranscript.pendingApprovals(session.transcript).length,
+          pendingPermissions: Object.values(agentSessions.live).reduce(
+            (total, session) => total + agentTranscript.pendingApprovals(session.transcript).length,
             0
           ),
           activeTabPath: store.activeTabPath,

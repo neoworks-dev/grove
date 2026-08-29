@@ -69,6 +69,7 @@ const PREFIX_ENTRIES: Record<string, HintEntry[]> = {
     { keys: 'g', description: 'first line' },
     { keys: 'd', description: 'goto definition' },
     { keys: 'D', description: 'goto declaration' },
+    { keys: 'r', description: 'goto references' },
     { keys: 'f', description: 'open file under cursor' },
     { keys: 'i', description: 'insert at last edit' },
     { keys: 'v', description: 'reselect last visual' },
@@ -213,6 +214,13 @@ export function isPendingSequence(pending: string, mappings: NvimMapping[]): boo
   if (!pending) return false
   const { count, rest } = splitCount(pending)
   if (!rest) return count.length > 0
+  // An exact <nowait> map executes before any longer map under the same prefix.
+  // Mirroring that rule prevents a stale `+gr` panel after Grove's references
+  // mapping has already opened the picker.
+  const resolvesNow = mappings.some(
+    (mapping) => mapping.lhs === rest && (mapping.nowait === true || mapping.nowait === 1)
+  )
+  if (resolvesNow) return false
   if (PREFIX_ENTRIES[rest]) return true
   return mapsUnder(rest, mappings).length > 0
 }

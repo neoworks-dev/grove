@@ -67,6 +67,28 @@ describe('resolving a gated review', () => {
     }
   })
 
+  it('does not fabricate a user message when request_review follows an accepted write', async () => {
+    const root = await worktreeWith('a.ts', 'one\ntwo\n')
+    try {
+      const { review } = build('pre')
+      const batchId = await review.raiseGated(root, 'nib', 'session-1', 'call-1', 'edit', {
+        relPath: 'a.ts',
+        baseline: 'one\ntwo\n',
+        current: 'one\nTWO\n',
+        hunks: [{ beforeStart: 2, removed: ['two'], afterStart: 2, added: ['TWO'] }]
+      })
+
+      await review.resolve(batchId, [{ relPath: 'a.ts', hunkIndex: 0, accepted: true }])
+
+      // Gated mode already presented the change at the write permission. Its
+      // conventional end-of-task request_review has no second batch to raise and
+      // must not be echoed into the transcript as if the user sent a message.
+      expect(await review.requestReview(root, 'nib', 'session-1', 'done')).toBeNull()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('writes the surviving hunks itself when one was rejected', async () => {
     const root = await worktreeWith('a.ts', 'one\ntwo\n')
     try {

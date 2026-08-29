@@ -100,7 +100,11 @@ export class NeovimManager {
   // has subscribed to redraw events.
   async attach(id: string, cols: number, rows: number, file?: string): Promise<void> {
     const session = this.requireSession(id)
-    await session.rpc.request('nvim_ui_attach', [cols, rows, { rgb: true, ext_linegrid: true }])
+    await session.rpc.request('nvim_ui_attach', [
+      cols,
+      rows,
+      { rgb: true, ext_linegrid: true, ext_multigrid: true }
+    ])
     if (file) {
       await session.rpc.request('nvim_cmd', [{ cmd: 'edit', args: [file] }, {}])
     }
@@ -110,18 +114,19 @@ export class NeovimManager {
     this.sessions.get(id)?.rpc.notify('nvim_input', [keys])
   }
 
-  // Forward a mouse event to nvim. Single-grid UI, so grid is 0.
+  // Forward a mouse event to the multigrid surface that received it.
   inputMouse(
     id: string,
     button: string,
     action: string,
     modifier: string,
     row: number,
-    col: number
+    col: number,
+    grid = 0
   ): void {
     this.sessions
       .get(id)
-      ?.rpc.notify('nvim_input_mouse', [button, action, modifier, 0, row, col])
+      ?.rpc.notify('nvim_input_mouse', [button, action, modifier, grid, row, col])
   }
 
   resize(id: string, cols: number, rows: number): void {

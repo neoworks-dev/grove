@@ -40,6 +40,11 @@ const MAX_STREAMS = 4
 
 const POLL_INTERVAL_MS = 3_000
 
+// Inline edits have their own conversation and model so changing their model
+// never mutates the interactive Agent pane session. The stable title lets a
+// renderer reload rediscover the task session from nib's persisted listing.
+const INLINE_SESSION_TITLE = 'Inline edits'
+
 export interface LiveSession {
   id: string
   snapshot: SessionSnapshot | null
@@ -73,6 +78,8 @@ class NibSessions {
   private viewing: string | null = null
   private poller: ReturnType<typeof setInterval> | null = null
   private watchers = 0
+  private inlineByWorktree = new Map<string, string>()
+  private inlineEnsures = new Map<string, Promise<string | null>>()
 
   // ── Listing ─────────────────────────────────────────────────────
 
@@ -156,9 +163,9 @@ class NibSessions {
   }
 
   /**
-   * The session to talk to for a worktree, creating one if it has none. For the
-   * places that send to "the agent" without the user having picked a session —
-   * inline edits, keybind actions.
+   * The interactive session to talk to for a worktree, creating one if it has
+   * none. Used by places such as keybind actions that send to "the agent"
+   * without the user explicitly picking a session.
    */
   async ensureFor(worktreePath: string): Promise<string | null> {
     const existing = this.resolveActive(worktreePath)
@@ -167,6 +174,26 @@ class NibSessions {
     const afterRefresh = this.resolveActive(worktreePath)
     if (afterRefresh) return afterRefresh
     return this.create(worktreePath)
+  }
+
+  /**
+   * Reuse the worktree's dedicated inline-edit session, creating it in the
+   * background when needed. It is deliberately not made active: the Agent pane
+   * keeps its own conversation and model while inline edits retain context with
+   * one another. The selected model is reasserted before each dispatch, so a
+   * user inspecting and changing this session cannot make the two tasks drift.
+   */
+  async ensureInlineFor(
+    worktreePath: string,
+    selected?: { provider: string; model: string }
+  ): Promise<string | null> {
+    const pending = this.inlineEnsures.get(worktreePath)
+    if (pending) return pending
+    const ensure = this.ensureInlineSession(worktreePath, selected).finally(() => {
+      this.inlineEnsures.delete(worktreePath)
+    })
+    this.inlineEnsures.set(worktreePath, ensure)
+    return ensure
   }
 
   /** Say something to a worktree's agent, starting a session if there is none. */
@@ -188,6 +215,48 @@ class NibSessions {
     }
     if (this.activeId(worktreePath) === sessionId) this.setActive(worktreePath, null)
     await this.refreshList()
+  }
+
+  private async ensureInlineSession(
+    worktreePath: string,
+    selected?: { provider: string; model: string }
+  ): Promise<string | null> {
+    await this.refreshList()
+    const remembered = this.inlineByWorktree.get(worktreePath)
+    let session = this.list.find(
+      (candidate) =>
+        candidate.workspaceRoot === worktreePath &&
+        (candidate.id === remembered || candidate.title === INLINE_SESSION_TITLE)
+    )
+
+    try {
+      if (!session) {
+        const created = await createSession({
+          workspace: worktreePath,
+          title: INLINE_SESSION_TITLE,
+          provider: selected?.provider,
+          model: selected?.model
+        })
+        this.inlineByWorktree.set(worktreePath, created.id)
+        this.serverError = ''
+        await this.refreshList()
+        return created.id
+      }
+
+      this.inlineByWorktree.set(worktreePath, session.id)
+      if (selected && (session.provider !== selected.provider || session.model !== selected.model)) {
+        const result = await updateSession(session.id, selected)
+        const live = this.live[session.id]
+        if (live) live.snapshot = result.session
+        session = { ...session, provider: selected.provider, model: selected.model }
+        await this.refreshList()
+      }
+      this.serverError = ''
+      return session.id
+    } catch (cause) {
+      this.serverError = messageOf(cause)
+      return null
+    }
   }
 
   /** Change title, model, thinking level or the active tool set. */

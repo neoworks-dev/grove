@@ -126,6 +126,10 @@ export function nvimEnvOverlay(): Record<string, string> {
   const base = join(app.getPath('userData'), 'nvim-runtime')
   return {
     VIMRUNTIME: nvimRuntime(),
+    REAL_XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME || join(homedir(), '.config'),
+    REAL_XDG_DATA_HOME: process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share'),
+    REAL_XDG_STATE_HOME: process.env.XDG_STATE_HOME || join(homedir(), '.local', 'state'),
+    REAL_XDG_CACHE_HOME: process.env.XDG_CACHE_HOME || join(homedir(), '.cache'),
     XDG_CONFIG_HOME: nvimConfigHome(),
     XDG_DATA_HOME: join(base, 'data'),
     XDG_STATE_HOME: join(base, 'state'),

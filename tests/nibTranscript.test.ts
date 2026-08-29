@@ -67,6 +67,31 @@ describe('transcript fold', () => {
     expect(state.stopReason).toBe('end_turn')
   })
 
+  test('renders application context separately from user-authored messages', () => {
+    const feedback = 'The user reviewed your changes.\n\na.ts:\n  Reverted hunk(s) 1.'
+    const state = fold([
+      {
+        type: 'app.message',
+        label: 'Review feedback',
+        text: feedback,
+        deliverAs: 'steer'
+      },
+      {
+        type: 'user.message',
+        content: [{ type: 'text', text: 'The user reviewed your changes.' }]
+      }
+    ])
+
+    expect(state.items[0]).toEqual({
+      kind: 'app',
+      seq: 1,
+      eventId: 'evt_1',
+      label: 'Review feedback',
+      text: feedback
+    })
+    expect(state.items[1]).toMatchObject({ kind: 'user' })
+  })
+
   test('keeps attachment refs on a user message', () => {
     const state = fold([
       {

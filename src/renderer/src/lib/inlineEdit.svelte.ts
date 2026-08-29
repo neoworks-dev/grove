@@ -22,9 +22,18 @@ import {
   REVIEW_MODES,
   type ReviewMode
 } from './inlineEditRef'
+import { catalog } from './nib/catalog.svelte'
+import {
+  discoveredModelOptions,
+  encodeModelSelection,
+  resolveModelSelection,
+  type ModelOption,
+  type ModelSelection
+} from './nib/modelSelection'
 import { nibSessions } from './nib/sessions.svelte'
 
 const MODE_SETTING = 'workbench.inlineEditMode'
+const MODEL_SETTING = 'inlineEdit.model'
 const EDITOR_PANE = 'nvim'
 
 // The editor session a diff preview should land in. A proposed edit arrives
@@ -88,6 +97,7 @@ class InlineEdit {
   review = $state<ActiveReview | null>(null)
 
   private modeLoaded = false
+  private modelSchemaSignature = ''
 
   private ensureModeLoaded(): void {
     if (this.modeLoaded) return
@@ -108,6 +118,57 @@ class InlineEdit {
     const next = REVIEW_MODES[(REVIEW_MODES.indexOf(this.mode) + 1) % REVIEW_MODES.length]
     this.setMode(next)
     return next
+  }
+
+  // Models are provider-discovered at runtime. Registering the resulting enum
+  // only after nib answers keeps a newly installed provider from requiring a
+  // Grove code change, while also exposing the same choice in Preferences.
+  async loadModels(): Promise<void> {
+    await catalog.load()
+    const options = this.modelOptions
+    if (options.length === 0) return
+    const fallback = resolveModelSelection('', catalog.defaults, catalog.providers)
+    const signature = JSON.stringify({ options: options.map((option) => option.key), fallback })
+    if (signature === this.modelSchemaSignature) return
+    this.modelSchemaSignature = signature
+    settings.registerSchemas({
+      contributorId: 'inlineEdit',
+      title: 'Inline Edits',
+      settings: [
+        {
+          key: MODEL_SETTING,
+          type: 'enum',
+          default: fallback ? encodeModelSelection(fallback) : '',
+          title: 'Model',
+          description:
+            'Provider and model used by inline edits. Agent pane sessions keep their own model.',
+          category: 'Agents',
+          enumValues: options.map((option) => ({ value: option.key, label: option.label }))
+        }
+      ]
+    })
+  }
+
+  get modelOptions(): ModelOption[] {
+    return discoveredModelOptions(catalog.providers)
+  }
+
+  get modelSelection(): ModelSelection | null {
+    return resolveModelSelection(settings.get(MODEL_SETTING), catalog.defaults, catalog.providers)
+  }
+
+  get modelKey(): string {
+    const selected = this.modelSelection
+    return selected ? encodeModelSelection(selected) : ''
+  }
+
+  get modelLabel(): string {
+    const selected = this.modelSelection
+    return selected ? `${selected.provider} / ${selected.model}` : 'Server default'
+  }
+
+  setModel(key: string): void {
+    void settings.set(MODEL_SETTING, key || undefined, 'user')
   }
 
   // ── Phase A: send the selection to the composer as an @-reference ──
@@ -133,6 +194,7 @@ class InlineEdit {
     this.promptCentered = placement.centered
     this.promptRefLabel = selectionRef(selection.relPath, selection.startLine, selection.endLine)
     this.promptOpen = true
+    void this.loadModels()
   }
 
   cancelPrompt(): void {
@@ -164,16 +226,25 @@ class InlineEdit {
     const text = `Make this edit in @${ref}: ${userPrompt}`
     this.pendingReview = { ...selection, snapshot, review: this.mode }
 
-    // A worktree's id is its path, which is what a session records as its
-    // workspace root.
-    const sessionId = await nibSessions.ensureFor(selection.worktreeId)
+    // Inline edits use a dedicated task session. Sharing the Agent pane's active
+    // session would make this model selection mutate that conversation's model,
+    // and concurrent queued work could then run under whichever task changed it
+    // last.
+    await this.loadModels()
+    const sessionId = await nibSessions.ensureInlineFor(
+      selection.worktreeId,
+      this.modelSelection ?? undefined
+    )
     if (!sessionId) {
       store.setError(nibSessions.serverError || 'Could not reach the agent server.')
       return
     }
     // The review style decides whether the edit is put to the user before it
-    // lands, so it has to be set before the run that produces it.
+    // lands, so it has to be set before the run that produces it. Keep the
+    // background session streamed too: auto/inline modes answer write approvals
+    // from that stream even when no Agent pane is mounted.
     nibSessions.setMode(sessionId, pickAgentMode(this.mode))
+    await nibSessions.open(sessionId)
     await nibSessions.send(sessionId, [
       { type: 'user.message', content: [{ type: 'text', text }], deliverAs: 'steer' }
     ])

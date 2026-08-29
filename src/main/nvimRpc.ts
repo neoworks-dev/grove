@@ -4,7 +4,7 @@
 // tiny — a UI client needs requests, notifications, and the redraw stream;
 // the `neovim` npm package's Buffer/Window proxy layer is dead weight here.
 
-import { encode, decodeMultiStream, ExtData } from '@msgpack/msgpack'
+import { decode, encode, decodeMultiStream, ExtData } from '@msgpack/msgpack'
 import type { Readable, Writable } from 'node:stream'
 
 type PendingRequest = {
@@ -24,9 +24,10 @@ export type NotificationHandler = (method: string, args: unknown[]) => void
 
 // Redraw payloads must survive webContents.send; ExtData (Buffer/Window/
 // Tabpage handles) and binary strings are normalized to plain values once at
-// this boundary.
+// this boundary. Nvim encodes API handles as big-endian extension payloads;
+// keeping their numeric value is essential for ext_multigrid win_pos events.
 export function toPlain(value: unknown): unknown {
-  if (value instanceof ExtData) return null
+  if (value instanceof ExtData) return extHandle(value)
   if (value instanceof Uint8Array) return Buffer.from(value).toString('utf8')
   if (Array.isArray(value)) return value.map(toPlain)
   if (value !== null && typeof value === 'object') {
@@ -35,6 +36,27 @@ export function toPlain(value: unknown): unknown {
     return out
   }
   return value
+}
+
+function extHandle(value: ExtData): number | null {
+  if (typeof value.data === 'function') return null
+  const bytes = value.data
+  if (bytes.length === 0) return null
+  // Neovim stores the handle as a complete MessagePack integer inside the
+  // extension payload (for example cd 03 e8 for window 1000).
+  try {
+    const decoded = decode(bytes)
+    if (typeof decoded === 'number' && Number.isSafeInteger(decoded)) return decoded
+    if (typeof decoded === 'bigint' && decoded <= BigInt(Number.MAX_SAFE_INTEGER)) {
+      return Number(decoded)
+    }
+  } catch {
+    // Older encoders used raw big-endian bytes; retain that compatibility.
+  }
+  if (bytes.length > 8) return null
+  let handle = 0n
+  for (const byte of bytes) handle = (handle << 8n) | BigInt(byte)
+  return handle <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(handle) : null
 }
 
 export class NvimRpc {

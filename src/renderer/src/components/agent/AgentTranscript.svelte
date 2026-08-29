@@ -63,10 +63,7 @@
 
 {#snippet row(item: TranscriptItem)}
   {#if item.kind === 'user'}
-    <!-- Typed by the user: a left-aligned bubble, with any attached images. -->
-    <div
-      class="agent-sticky-user mb-3 w-fit max-w-[85%] whitespace-pre-wrap rounded-xl px-3 py-2 text-default"
-    >
+    <div class="agent-sticky-user -mx-3 mb-3 whitespace-pre-wrap px-3 py-2 text-default">
       {item.text}
       {#if item.attachments.length > 0}
         <div class="mt-1.5 flex flex-wrap gap-1.5">
@@ -79,6 +76,15 @@
           {/each}
         </div>
       {/if}
+    </div>
+  {:else if item.kind === 'app'}
+    <!-- app.message is model-visible but explicitly application-authored, so it
+         belongs in a neutral card rather than a sticky user-authored bubble. -->
+    <div class="-mx-1 mb-3 rounded-md border border-amber/30 bg-amber-soft px-2.5 py-2">
+      <div class="mb-1 text-2xs font-medium uppercase tracking-wide text-amber">
+        {item.label}
+      </div>
+      <div class="whitespace-pre-wrap text-xs text-muted">{item.text}</div>
     </div>
   {:else if item.kind === 'agent'}
     <div class="mb-3">

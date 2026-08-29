@@ -46,6 +46,14 @@ export interface AgentItem {
   streaming: boolean
 }
 
+export interface AppItem {
+  kind: 'app'
+  seq: number
+  eventId: string
+  label: string
+  text: string
+}
+
 export interface ToolItem {
   kind: 'tool'
   seq: number
@@ -90,7 +98,14 @@ export interface SurfaceItem {
   view: UiNode
 }
 
-export type TranscriptItem = UserItem | AgentItem | ToolItem | ShellItem | NoticeItem | SurfaceItem
+export type TranscriptItem =
+  | UserItem
+  | AppItem
+  | AgentItem
+  | ToolItem
+  | ShellItem
+  | NoticeItem
+  | SurfaceItem
 
 export interface TranscriptState {
   /** Every item ever created, in seq order — including branches not currently in play. */
@@ -212,8 +227,17 @@ function applyMessage(state: TranscriptState, event: SessionEvent): void {
       attachments: event.content.filter((block): block is ImageBlock => block.type === 'image')
     })
   }
+  if (event.type === 'app.message') {
+    state.items.push({
+      kind: 'app',
+      seq: event.seq,
+      eventId: event.id,
+      label: event.label,
+      text: event.text
+    })
+  }
   if (event.type === 'user.unqueue') {
-    dropUserMessage(state, event.messageId)
+    dropModelVisibleMessage(state, event.messageId)
   }
   if (event.type === 'agent.message_start') {
     state.items.push({
@@ -370,8 +394,10 @@ function textOf(content: UserContentBlock[]): string {
     .join('')
 }
 
-function dropUserMessage(state: TranscriptState, eventId: string): void {
-  const index = state.items.findIndex((item) => item.kind === 'user' && item.eventId === eventId)
+function dropModelVisibleMessage(state: TranscriptState, eventId: string): void {
+  const index = state.items.findIndex(
+    (item) => (item.kind === 'user' || item.kind === 'app') && item.eventId === eventId
+  )
   if (index >= 0) {
     state.items.splice(index, 1)
   }

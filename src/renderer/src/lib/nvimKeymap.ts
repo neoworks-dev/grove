@@ -12,6 +12,9 @@ export interface NvimMapping {
   lhs: string
   rhs?: string
   desc?: string | null
+  // Nvim serializes this as 0/1. A nowait exact map resolves even when longer
+  // mappings share its prefix, which matters to the pending-key reconstruction.
+  nowait?: boolean | number
 }
 
 // Pseudo-key prefixes that no user can type: plugin hook targets and

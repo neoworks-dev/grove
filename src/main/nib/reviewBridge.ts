@@ -156,12 +156,19 @@ export class NibReviewBridge {
     this.gated.delete(batchId)
   }
 
-  /** Deliver review feedback for a batch nothing is blocked on. */
+  /** Deliver model-visible review feedback without attributing it to the user. */
   async sendMessage(sessionId: string, text: string): Promise<void> {
     const endpoint = this.options.endpoint()
     if (!endpoint) return
     await nibPost(endpoint, `/v1/sessions/${sessionId}/events`, {
-      events: [{ type: 'user.message', content: [{ type: 'text', text }], deliverAs: 'steer' }]
+      events: [
+        {
+          type: 'app.message',
+          label: 'Review feedback',
+          text,
+          deliverAs: 'steer'
+        }
+      ]
     }).catch(() => {})
   }
 

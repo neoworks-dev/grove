@@ -58,6 +58,16 @@ describe('isPendingSequence', () => {
     expect(isPendingSequence('y', MAPS)).toBe(true)
   })
 
+  it('resolves an exact nowait map despite longer mappings under it', () => {
+    const mappings: NvimMapping[] = [
+      { lhs: 'gr', desc: 'references', nowait: 1 },
+      { lhs: 'grt', desc: 'type definition' }
+    ]
+    expect(isPendingSequence('g', mappings)).toBe(true)
+    expect(isPendingSequence('gr', mappings)).toBe(false)
+    expect(nextPending('g', 'r', mappings)).toBe('')
+  })
+
   it('rejects resolved keys and unknown prefixes', () => {
     expect(isPendingSequence('p', MAPS)).toBe(false)
     expect(isPendingSequence('x', MAPS)).toBe(false)
@@ -100,6 +110,7 @@ describe('pendingHint', () => {
     expect(hint?.title).toBe('goto')
     expect(hint?.entries.find((entry) => entry.keys === 'cc')?.description).toBe('comment line')
     expect(hint?.entries.find((entry) => entry.keys === 'g')?.description).toBe('first line')
+    expect(hint?.entries.find((entry) => entry.keys === 'r')?.description).toBe('goto references')
   })
 
   it('keeps the count in the title of a prefixed layer', () => {

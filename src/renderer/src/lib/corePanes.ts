@@ -23,6 +23,7 @@ import AgentsOverview from '../components/AgentsOverview.svelte'
 import CheckpointsView from '../components/CheckpointsView.svelte'
 import WorktreeChatPane from '../components/WorktreeChatPane.svelte'
 import NvimPane from '../components/NvimPane.svelte'
+import NvimGridPane from '../components/NvimGridPane.svelte'
 import Dashboard from '../components/Dashboard.svelte'
 import SetupPane from '../components/SetupPane.svelte'
 import EmptyCenter from '../components/EmptyCenter.svelte'
@@ -152,6 +153,18 @@ export function registerCorePanes(): void {
     // finder, etc.) match here.
     contextType: 'editor',
     // Modes reported live from the embedded nvim's mode_change events.
+    modes: ['normal', 'insert', 'visual', 'replace', 'cmdline', 'operator', 'terminal'],
+    ownsFontScale: true,
+    when: repoOpen
+  })
+  panes.register({
+    id: 'nvim-grid',
+    title: 'Neovim Window',
+    component: NvimGridPane,
+    containerClass: 'bg-surface',
+    minWidth: 120,
+    minHeight: 80,
+    contextType: 'editor',
     modes: ['normal', 'insert', 'visual', 'replace', 'cmdline', 'operator', 'terminal'],
     ownsFontScale: true,
     when: repoOpen

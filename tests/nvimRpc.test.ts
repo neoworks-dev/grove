@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { PassThrough } from 'node:stream'
-import { encode, decodeMultiStream } from '@msgpack/msgpack'
+import { encode, decodeMultiStream, ExtData } from '@msgpack/msgpack'
 import { NvimRpc, toPlain } from '../src/main/nvimRpc'
 
 function makeSession(): { rpc: NvimRpc; stdin: PassThrough; stdout: PassThrough } {
@@ -83,5 +83,9 @@ describe('toPlain', () => {
       nested: { ok: true }
     })
     expect(value).toEqual({ list: ['hi', 3], nested: { ok: true } })
+  })
+
+  test('preserves Neovim extension handles as numeric ids', () => {
+    expect(toPlain(new ExtData(1, encode(1000)))).toBe(1000)
   })
 })

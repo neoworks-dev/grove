@@ -49,6 +49,7 @@ export interface EventEnvelope {
 
 export type ClientEventBody =
   | { type: 'user.message'; content: UserContentBlock[]; deliverAs?: DeliverAs }
+  | { type: 'app.message'; label: string; text: string; deliverAs?: DeliverAs }
   | {
       type: 'user.tool_confirmation'
       toolUseId: string
@@ -138,6 +139,7 @@ export type SessionEvent = EventBody & EventEnvelope
 /** Every event name the server frames as `event: <type>`, so the stream can listen for each. */
 export const EVENT_TYPES: EventBody['type'][] = [
   'user.message',
+  'app.message',
   'user.tool_confirmation',
   'user.interrupt',
   'user.tool_result',

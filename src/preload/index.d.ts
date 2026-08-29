@@ -330,7 +330,8 @@ export interface WorkbenchApi {
       action: string,
       modifier: string,
       row: number,
-      col: number
+      col: number,
+      grid?: number
     ) => Promise<void>
     resize: (id: string, cols: number, rows: number) => Promise<void>
     command: (id: string, command: string) => Promise<void>

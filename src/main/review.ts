@@ -86,16 +86,23 @@ export class ReviewService {
   /**
    * The agent called request_review. Closes the batch and raises it. Resolves
    * with the text the model reads back: the user's verdict when the run pauses
-   * for review, or an acknowledgement when reviews are queued instead.
+   * for review, or an acknowledgement when reviews are queued instead. Gated
+   * mode returns no message because each write was already reviewed at its
+   * permission prompt; presenting that expected empty batch as a new user
+   * message would falsely imply the user sent feedback.
    */
   async requestReview(
     worktreePath: string,
     agent: string,
     chatId: string,
     summary: string
-  ): Promise<string> {
+  ): Promise<string | null> {
     const batch = await this.closeAndRaise(worktreePath, agent, chatId, 'agent', summary)
-    if (!batch) return 'No file changes to review since your last request.'
+    if (!batch) {
+      return this.settings.postApprove()
+        ? 'No file changes to review since your last request.'
+        : null
+    }
 
     if (!this.settings.pause()) {
       return 'Submitted for review. The user will respond in their own time — carry on.'

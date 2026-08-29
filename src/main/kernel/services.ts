@@ -13,8 +13,9 @@ import type { LspManager } from '../lsp'
 import type { WorktreeWatcher } from '../watcher'
 import type { WorktreeChannel } from '../worktreeChannel'
 import type { ActionRunner } from '../actions'
-import type { NibServer } from '../nib/server'
-import type { NibReviewBridge } from '../nib/reviewBridge'
+import type { AgentService } from '../agents/service'
+import type { AgentReviewBridge } from '../agents/reviewBridge'
+import type { HarnessRegistry } from '../agents/harness'
 import type { PermissionBroker } from '../api/broker'
 import type { PluginRegistry } from '../plugins/loader'
 import type { AiBridge } from '../plugins/aiBridge'
@@ -84,8 +85,9 @@ declare module '@neoworks/extension-system' {
     watcher: WorktreeWatcher
     chat: WorktreeChannel
     actions: ActionRunner
-    nib: NibServer
-    nibReview: NibReviewBridge
+    agents: AgentService
+    harnesses: HarnessRegistry
+    agentReview: AgentReviewBridge
     plugins: PluginsService
     apps: AppsService
   }

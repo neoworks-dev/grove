@@ -1,14 +1,14 @@
 <script lang="ts">
   // A tool call the agent is blocked on.
   //
-  // nib parks the agent loop on a promise until this is answered, so the card
+  // The harness parks its loop until this is answered, so the card
   // replaces the composer rather than sitting beside it — there is nothing else
   // worth doing until it is dealt with. Arrow keys and Enter work, because
   // answering these is the most repeated action in the pane.
 
-  import { labelFor } from '../../../../lib/nib/tools'
-  import type { ToolItem } from '../../../../lib/nib/transcript'
-  import type { ConfirmationResult, ToolInfo } from '../../../../lib/nib/types'
+  import { labelFor } from '../../../../lib/agents/tools'
+  import type { ToolItem } from '../../../../lib/agents/transcript'
+  import type { ConfirmationResult, ToolInfo } from '../../../../lib/agents/types'
 
   let {
     item,

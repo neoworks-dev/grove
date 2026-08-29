@@ -1,5 +1,5 @@
 <script lang="ts">
-  // The conversation. Items come from nib's fold, already reduced to what should
+  // The conversation. Items come from the transcript fold, already reduced to what should
   // be on screen; this decides what each one looks like.
   //
   // Rows are grouped into sections, one per user message, and each section owns
@@ -9,9 +9,9 @@
 
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
   import { renderMarkdown } from '../../../../lib/markdown'
-  import { blobUrl } from '../../../../lib/nib/api'
-  import type { TranscriptItem } from '../../../../lib/nib/transcript'
-  import type { ToolInfo } from '../../../../lib/nib/types'
+  import { blobUrl } from '../../../../lib/agents/api'
+  import type { TranscriptItem } from '../../../../lib/agents/transcript'
+  import type { ToolInfo } from '../../../../lib/agents/types'
   import AgentToolCall from './AgentToolCall.svelte'
   import AgentSurface from './AgentSurface.svelte'
 

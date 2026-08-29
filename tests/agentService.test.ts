@@ -1,0 +1,286 @@
+// The service is the contract every harness is written against: it starts a run
+// on first prompt, folds what the run emits onto the log, holds tool calls until
+// grove answers them, and queues anything sent while a turn is in flight.
+//
+// A fake harness stands in for the SDKs so the protocol itself is what is tested
+// rather than any one of them.
+
+import { describe, expect, test } from 'bun:test'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { AgentService } from '../src/main/agents/service'
+import { HarnessRegistry, type HarnessRunOptions } from '../src/main/agents/harness'
+import { SessionStore } from '../src/main/agents/store'
+
+class FakeRun {
+  resumeKey = 'thread-1'
+  prompts: string[] = []
+  steered: string[] = []
+  interrupted = 0
+  disposed = 0
+
+  constructor(readonly options: HarnessRunOptions) {}
+
+  async prompt(text: string): Promise<void> {
+    this.prompts.push(text)
+    this.options.emit({ type: 'session.status_running' })
+  }
+
+  async steer(text: string): Promise<void> {
+    this.steered.push(text)
+  }
+
+  async interrupt(): Promise<void> {
+    this.interrupted += 1
+  }
+
+  async dispose(): Promise<void> {
+    this.disposed += 1
+  }
+
+  /** Finish the turn, the way a real harness does when its loop settles. */
+  finish(): void {
+    this.options.emit({ type: 'session.status_idle', stopReason: 'end_turn' })
+  }
+}
+
+interface Harness {
+  service: AgentService
+  store: SessionStore
+  runs: FakeRun[]
+  cleanup: () => Promise<void>
+}
+
+/** Let the service's own promise chains settle before asserting on them. */
+function settle(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 5))
+}
+
+async function setup(): Promise<Harness> {
+  const root = await mkdtemp(join(tmpdir(), 'grove-agent-service-'))
+  const store = new SessionStore(root)
+  const harnesses = new HarnessRegistry()
+  const runs: FakeRun[] = []
+
+  // Two of them, so switching harness can be tested for what it actually does.
+  for (const id of ['fake', 'other']) {
+    harnesses.register({
+      id,
+      label: id,
+      description: '',
+      capabilities: {
+        approvals: true,
+        interrupt: true,
+        liveModelSwitch: true,
+        thinking: true,
+        steering: true,
+        groveTools: true
+      },
+      probe: async () => ({ available: true, detail: null }),
+      offering: async () => ({
+        tools: [],
+        commands: [],
+        skills: [],
+        providers: [],
+        default: null
+      }),
+      start: async (options) => {
+        const run = new FakeRun(options)
+        runs.push(run)
+        return run
+      },
+      intentOf: () => null
+    })
+  }
+
+  const service = new AgentService({
+    store,
+    harnesses,
+    tools: () => [],
+    publish: () => {},
+    defaultHarness: () => 'fake'
+  })
+
+  return {
+    service,
+    store,
+    runs,
+    cleanup: () => rm(root, { recursive: true, force: true })
+  }
+}
+
+function say(text: string): { type: 'user.message'; content: { type: 'text'; text: string }[] } {
+  return { type: 'user.message', content: [{ type: 'text', text }] }
+}
+
+describe('AgentService', () => {
+  test('the first message starts a run on the session harness', async () => {
+    const { service, runs, cleanup } = await setup()
+    try {
+      const session = await service.createSession({ workspace: '/tmp/worktree' })
+      expect(session.harness).toBe('fake')
+
+      await service.send(session.id, [say('hello')])
+      expect(runs).toHaveLength(1)
+      expect(runs[0].prompts).toEqual(['hello'])
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('the harness-native id is stored so a restart can resume', async () => {
+    const { service, store, cleanup } = await setup()
+    try {
+      const session = await service.createSession({ workspace: '/tmp/worktree' })
+      await service.send(session.id, [say('hello')])
+
+      expect((await store.require(session.id)).resumeKey).toBe('thread-1')
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('a steer reaches a running turn, a follow-up waits for the next one', async () => {
+    const { service, runs, cleanup } = await setup()
+    try {
+      const session = await service.createSession({ workspace: '/tmp/worktree' })
+      await service.send(session.id, [say('first')])
+
+      await service.send(session.id, [{ ...say('urgent'), deliverAs: 'steer' }])
+      await service.send(session.id, [{ ...say('later'), deliverAs: 'followUp' }])
+
+      expect(runs[0].steered).toEqual(['urgent'])
+      expect(runs[0].prompts).toEqual(['first'])
+      expect(service.queueOf(session.id).map((message) => message.text)).toEqual(['later'])
+
+      runs[0].finish()
+      await settle()
+      expect(runs[0].prompts).toEqual(['first', 'later'])
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('an unqueued message is never delivered', async () => {
+    const { service, runs, cleanup } = await setup()
+    try {
+      const session = await service.createSession({ workspace: '/tmp/worktree' })
+      await service.send(session.id, [say('first')])
+      await service.send(session.id, [{ ...say('later'), deliverAs: 'followUp' }])
+
+      const [queued] = service.queueOf(session.id)
+      await service.send(session.id, [{ type: 'user.unqueue', messageId: queued.id }])
+      runs[0].finish()
+      await settle()
+
+      expect(runs[0].prompts).toEqual(['first'])
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('a tool call parks until it is answered, and is announced as pending', async () => {
+    const { service, cleanup } = await setup()
+    try {
+      const session = await service.createSession({ workspace: '/tmp/worktree' })
+      await service.send(session.id, [say('go')])
+
+      const confirm = service['requestApproval'](session.id, {
+        toolUseId: 'call-1',
+        name: 'write',
+        input: { path: 'a.ts' }
+      })
+      const snapshot = await service.getSession(session.id)
+      expect(snapshot.pendingApprovals).toEqual(['call-1'])
+
+      await service.send(session.id, [
+        { type: 'user.tool_confirmation', toolUseId: 'call-1', result: 'allow' }
+      ])
+      expect(await confirm).toEqual({ result: 'allow' })
+      expect((await service.getSession(session.id)).pendingApprovals).toEqual([])
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('always_session answers the rest of that tool’s calls without asking', async () => {
+    const { service, cleanup } = await setup()
+    try {
+      const session = await service.createSession({ workspace: '/tmp/worktree' })
+      await service.send(session.id, [say('go')])
+
+      const first = service['requestApproval'](session.id, {
+        toolUseId: 'call-1',
+        name: 'write',
+        input: {}
+      })
+      await service.send(session.id, [
+        { type: 'user.tool_confirmation', toolUseId: 'call-1', result: 'always_session' }
+      ])
+      expect(await first).toEqual({ result: 'always_session' })
+
+      const second = await service['requestApproval'](session.id, {
+        toolUseId: 'call-2',
+        name: 'write',
+        input: {}
+      })
+      expect(second).toEqual({ result: 'allow' })
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('a tool call reaches the log exactly once, whoever reports it', async () => {
+    const { service, store, runs, cleanup } = await setup()
+    try {
+      const session = await service.createSession({ workspace: '/tmp/worktree' })
+      await service.send(session.id, [say('go')])
+
+      void service['requestApproval'](session.id, {
+        toolUseId: 'call-1',
+        name: 'write',
+        input: {}
+      })
+      // The adapter reports the same call again once the model's message lands.
+      runs[0].options.emit({
+        type: 'agent.tool_use',
+        toolUseId: 'call-1',
+        name: 'write',
+        input: {},
+        permission: 'allow'
+      })
+      await settle()
+
+      const events = await store.eventsSince(session.id, 0)
+      const calls = events.filter((event) => event.type === 'agent.tool_use')
+      expect(calls).toHaveLength(1)
+      expect(calls[0]).toMatchObject({ permission: 'ask' })
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('changing harness drops the run and the id that belonged to it', async () => {
+    const { service, store, runs, cleanup } = await setup()
+    try {
+      const session = await service.createSession({ workspace: '/tmp/worktree' })
+      await service.send(session.id, [say('go')])
+      await service.updateSession(session.id, { harness: 'other' })
+
+      expect(runs[0].disposed).toBe(1)
+      expect((await store.require(session.id)).resumeKey).toBeNull()
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('a session without a workspace is refused', async () => {
+    const { service, cleanup } = await setup()
+    try {
+      await expect(service.createSession({})).rejects.toThrow('a session needs a workspace')
+    } finally {
+      await cleanup()
+    }
+  })
+})

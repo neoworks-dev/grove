@@ -11,8 +11,8 @@ import { review } from './lib/review.svelte'
 import { keymap } from './lib/keymap.svelte'
 import { layout } from './lib/layout.svelte'
 import { inlineEdit } from './lib/inlineEdit.svelte'
-import { nibSessions } from './lib/nib/sessions.svelte'
-import * as nibTranscript from './lib/nib/transcript'
+import { agentSessions } from './lib/agents/sessions.svelte'
+import * as agentTranscript from './lib/agents/transcript'
 import * as nvimRegistry from './lib/nvim/registry'
 
 // The kernel goes up first: core plugins publish the services the app renders
@@ -45,10 +45,10 @@ if (window.workbench?.debug) {
     layout,
     inlineEdit,
     nvimRegistry,
-    nibSessions,
+    agentSessions,
     // The transcript fold, so the harness can read pending approvals out of a
     // live session the same way the pane does.
-    nibTranscript
+    agentTranscript
   }
 }
 

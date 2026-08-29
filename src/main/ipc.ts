@@ -48,9 +48,11 @@ import { ApiSocketServer } from './api/socket/server'
 import { createHash } from 'crypto'
 import { PluginRegistry } from './plugins/loader'
 import { AiBridge } from './plugins/aiBridge'
-import { NibServer } from './nib/server'
-import { NibReviewBridge } from './nib/reviewBridge'
-import { NibClient } from './nib/client'
+import { HarnessRegistry } from './agents/harness'
+import { SessionStore } from './agents/store'
+import { AgentService } from './agents/service'
+import { AgentReviewBridge } from './agents/reviewBridge'
+import { groveTools } from './agents/tools'
 
 interface RepoContext {
   repoPath: string | null
@@ -72,8 +74,8 @@ const supervisor = new ServiceSupervisor({
     send('event:log', { worktreeId, source: 'service', name, line })
 })
 
-// The shared per-worktree chat channel. Agents post through the grove-chat nib
-// extension, which writes the same file this reads.
+// The shared per-worktree chat channel. Agents post through grove's own chat
+// tools, which append to the same file this reads.
 const channel = new WorktreeChannel({
   onMessage: (message) => send('event:worktree-chat', message)
 })
@@ -110,10 +112,10 @@ const review = new ReviewService(
       send('event:agent-review', batch)
     },
     onStaged: (worktreeId, count) => send('event:agent-review-staged', { worktreeId, count }),
-    // chatId is the nib session; feedback is delivered as a steer message so it
-    // lands at the top of the next turn.
+    // chatId is the agent session; feedback is delivered as a steer message so
+    // it lands at the top of the next turn.
     onFeedback: (_worktreeId, _agent, chatId, text) => {
-      void nibReviewBridge.sendMessage(chatId, text).catch(() => {})
+      void agentReviewBridge.sendMessage(chatId, text).catch(() => {})
     }
   },
   {
@@ -126,33 +128,30 @@ const settings = new SettingsService({
   onChange: (snapshot) => send('event:settings-changed', snapshot)
 })
 
-// The embedded agent server. Started lazily — the first grove-nib:// request
-// brings it up — so a grove that never opens the agent pane never pays for it.
-const nib = new NibServer({
-  configuredPath: () => settings.get<string>('workbench.nibPath'),
-  events: {
-    onReady: () => {
-      send('event:nib-status', nib.status())
-      // A restart invalidates every stream, so the bridge re-subscribes rather
-      // than waiting for its next sync.
-      nibReviewBridge.reset()
-      nibReviewBridge.start()
-    },
-    onExit: () => {
-      send('event:nib-status', nib.status())
-      nibReviewBridge.reset()
-    }
-  }
+// Agent sessions. The harnesses themselves are mounted as plugins, so the only
+// thing constructed here is the state they share: the registry they register
+// into, the store that persists sessions, and the service that drives them.
+const harnesses = new HarnessRegistry()
+
+const sessionStore = new SessionStore(join(app.getPath('userData'), 'agents'), (message) =>
+  console.error(`[agents] ${message}`)
+)
+
+const agents = new AgentService({
+  store: sessionStore,
+  harnesses,
+  tools: () => groveTools({ chat: channel }),
+  publish: (event) => send('event:agent-event', event),
+  defaultHarness: () => settings.get<string>('workbench.agentHarness')
 })
 
-// Watches nib's sessions so a review keeps blocking the agent whether or not the
+// Watches the event log so a review keeps blocking the agent whether or not the
 // agent pane is open.
-const nibClient = new NibClient(() => nib.endpoint())
-
-const nibReviewBridge = new NibReviewBridge({
+const agentReviewBridge = new AgentReviewBridge({
   review,
-  endpoint: () => nib.endpoint(),
-  worktrees: () => context.worktrees,
+  agents,
+  store: sessionStore,
+  harnesses,
   reviewMode: () => settings.get<string>('workbench.reviewMode') ?? 'pre'
 })
 
@@ -348,14 +347,19 @@ registerServicesRoutes(apiRegistry, {
   stopService: async (worktreeId, name) => supervisor.stop(worktreeId, name)
 })
 registerAgentsRoutes(apiRegistry, {
-  listSessions: () => nibClient.listSessions(),
-  listModels: () => nibClient.listModels(),
-  listEvents: (sessionId, after) => nibClient.listEvents(sessionId, after),
-  createSession: (workspace, title) => nibClient.createSession(workspace, title),
-  send: (sessionId, text) => nibClient.send(sessionId, text),
-  interrupt: (sessionId) => nibClient.interrupt(sessionId),
-  unqueue: (sessionId, messageId) => nibClient.unqueue(sessionId, messageId),
-  observe: (sessionId, onEvent) => nibClient.observe(sessionId, onEvent),
+  listSessions: () => agents.listSessions(),
+  listModels: () => agents.allModels(),
+  listEvents: (sessionId, after) => agents.listEvents(sessionId, after),
+  createSession: (workspace, title) => agents.createSession({ workspace, title }),
+  send: (sessionId, text) =>
+    agents
+      .send(sessionId, [{ type: 'user.message', content: [{ type: 'text', text }] }])
+      .then(() => undefined),
+  interrupt: (sessionId) =>
+    agents.send(sessionId, [{ type: 'user.interrupt' }]).then(() => undefined),
+  unqueue: (sessionId, messageId) =>
+    agents.send(sessionId, [{ type: 'user.unqueue', messageId }]).then(() => undefined),
+  observe: (sessionId, onEvent) => agents.observe(sessionId, onEvent),
   sendChatAs: (worktreeId, from, text) => channel.post(worktreeId, from, text),
   chatHistory: (worktreeId, since) => channel.list(worktreeId, since)
 })
@@ -575,8 +579,13 @@ const mainServices = {
     ctx.provide('watcher', watcher)
     ctx.provide('chat', channel)
     ctx.provide('actions', actionRunner)
-    ctx.provide('nib', nib)
-    ctx.provide('nibReview', nibReviewBridge)
+    ctx.provide('harnesses', harnesses)
+    ctx.provide('agents', agents)
+    ctx.provide('agentReview', agentReviewBridge)
+
+    // The review bridge follows the log for the life of the process: a gated
+    // write blocks the agent whether or not any pane is watching.
+    ctx.effect(() => agentReviewBridge.watch(), 'agents:review-bridge')
 
     // One-time startup work that belongs to no single route domain: the local
     // API socket external apps connect over, and the user settings file.
@@ -629,8 +638,8 @@ export function reapNvimSessions(): void {
 export async function shutdown(): Promise<void> {
   await mainContext.fiber.dispose().catch(() => {})
   await apiSocketServer?.close().catch(() => {})
-  nibReviewBridge.stop()
-  await nib.stop().catch(() => {})
+  await agents.stopAll().catch(() => {})
+  await sessionStore.flush().catch(() => {})
   await supervisor.stopAll()
   await watcher.closeAll()
   channel.closeAll()

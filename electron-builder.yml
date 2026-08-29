@@ -21,10 +21,6 @@ extraResources:
   # current build target only — CI fetches per platform).
   - from: resources/nvim
     to: nvim
-  # The nib agent server (compiled by scripts/build-nib.ts) plus grove's own
-  # nib extensions, which are copied into nib's data dir at startup.
-  - from: resources/nib
-    to: nib
 asarUnpack:
   - resources/**
   # Ripgrep ships a native binary that must run from disk, not inside the asar.

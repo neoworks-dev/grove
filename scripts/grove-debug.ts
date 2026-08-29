@@ -79,8 +79,8 @@ async function run(grove: GroveClient, command: string, args: string[]): Promise
     await scenario.run(grove, args.slice(1))
     return
   }
-  if (command === 'nib') {
-    await runNibCommand(grove, args)
+  if (command === 'harnesses') {
+    await runHarnessCommand(grove, args)
     return
   }
   if (command === 'agent') {
@@ -94,24 +94,20 @@ async function run(grove: GroveClient, command: string, args: string[]): Promise
   throw new Error(`unknown command: ${command}`)
 }
 
-/** The embedded nib agent server: is it up, and does it answer over its socket. */
-async function runNibCommand(grove: GroveClient, args: string[]): Promise<void> {
-  const [sub = 'status'] = args
-  if (sub === 'status') {
-    print(await evaluate(grove, 'window.workbench.nib.status()'))
+/** The mounted agent harnesses: which are there, and which can actually run. */
+async function runHarnessCommand(grove: GroveClient, args: string[]): Promise<void> {
+  const [sub = 'list'] = args
+  if (sub === 'list') {
+    print(await evaluate(grove, 'window.workbench.agents.harnesses()'))
     return
   }
-  if (sub === 'start') {
-    print(await evaluate(grove, 'window.workbench.nib.start()'))
+  if (sub === 'catalog') {
+    const harness = args[1]
+    if (!harness) throw new Error('usage: harnesses catalog <harness>')
+    print(await evaluate(grove, `window.workbench.agents.catalog(${JSON.stringify(harness)})`))
     return
   }
-  if (sub === 'get') {
-    const path = args[1] ?? '/v1/health'
-    const expression = `fetch('grove-nib://api${path}').then((r) => r.json())`
-    print(await evaluate(grove, expression))
-    return
-  }
-  throw new Error(`unknown nib command: ${sub}`)
+  throw new Error(`unknown harnesses command: ${sub}`)
 }
 
 async function runAgentCommand(grove: GroveClient, args: string[]): Promise<void> {
@@ -232,7 +228,7 @@ async function connect(): Promise<GroveClient> {
 const REVIEW_STATE_EXPRESSION = `(() => {
   const debug = window.__grove_debug
   if (!debug) return { error: 'renderer debug hooks missing — is GROVE_DEBUG set?' }
-  const { review, store, keymap, layout, nibSessions, nibTranscript } = debug
+  const { review, store, keymap, layout, agentSessions, agentTranscript } = debug
   return {
     activeBatch: review.active && {
       id: review.active.id,
@@ -246,14 +242,14 @@ const REVIEW_STATE_EXPRESSION = `(() => {
     activeFileIndex: review.activeFileIndex,
     leafOwner: review.leafOwner,
     queue: review.queue.map((batch) => ({ id: batch.id, origin: batch.origin })),
-    pendingPermissions: Object.keys(nibSessions.live).flatMap((sessionId) =>
-      nibTranscript.pendingApprovals(nibSessions.live[sessionId].transcript).map((item) => ({
+    pendingPermissions: Object.keys(agentSessions.live).flatMap((sessionId) =>
+      agentTranscript.pendingApprovals(agentSessions.live[sessionId].transcript).map((item) => ({
         id: item.toolUseId,
         sessionId,
         toolName: item.name
       }))
     ),
-    agentSessions: nibSessions.list.map((session) => ({
+    agentSessions: agentSessions.list.map((session) => ({
       id: session.id,
       workspaceRoot: session.workspaceRoot,
       status: session.status
@@ -278,9 +274,8 @@ function usage(): void {
   scenarios                list replayable scenarios
   scenario <name> [args]   run one
 
-  nib status                         embedded agent server: pid, socket, error
-  nib start                          start it if it is not already up
-  nib get [path]                     GET a nib route (default /v1/health)
+  harnesses list                     mounted agent harnesses and whether they can run
+  harnesses catalog <harness>        its models, commands and skills
 
   agent sessions                     agent sessions in the selected worktree
   agent start <prompt>               start a run in a new session, manual review

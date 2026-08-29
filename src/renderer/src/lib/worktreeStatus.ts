@@ -1,14 +1,14 @@
 // Shared status colours + per-worktree attention derivation, consumed by both
 // the Dashboard and the Agents overview so the two surfaces stay in sync.
 //
-// Agent signals come from the nib session listing, which is polled centrally by
+// Agent signals come from the agent session listing, which is polled centrally by
 // the session store — so reading them here inside a Svelte reactive context is
 // enough to stay current, with nothing to subscribe to.
 
 import { store } from './store.svelte'
-import { nibSessions } from './nib/sessions.svelte'
-import { visibleItems, type AgentItem } from './nib/transcript'
-import type { SessionMeta } from './nib/types'
+import { agentSessions } from './agents/sessions.svelte'
+import { visibleItems, type AgentItem } from './agents/transcript'
+import type { SessionMeta } from './agents/types'
 
 export const serviceStatusColor: Record<string, string> = {
   running: 'bg-green',
@@ -35,7 +35,7 @@ export interface WorktreeAttention {
 
 /** Agent sessions rooted in a worktree. A worktree's id is its path. */
 export function sessionsFor(worktreeId: string): SessionMeta[] {
-  return nibSessions.forWorktree(worktreeId)
+  return agentSessions.forWorktree(worktreeId)
 }
 
 // Derive the attention flags for one worktree from live state. Reading the
@@ -78,7 +78,7 @@ export function diffStatLabel(worktreeId: string): { added: number; removed: num
  * would cost a connection per worktree.
  */
 export function lastAgentLineFor(sessionId: string): string {
-  const live = nibSessions.live[sessionId]
+  const live = agentSessions.live[sessionId]
   if (!live) return ''
   const messages = visibleItems(live.transcript).filter(
     (item): item is AgentItem => item.kind === 'agent' && item.text.length > 0

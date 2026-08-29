@@ -1,12 +1,12 @@
 <script lang="ts">
   // One tool call: a collapsed header line that expands to its input and result.
   //
-  // How a call renders is data, not code — nib ships a `display` descriptor with
+  // How a call renders is data, not code — a tool ships a `display` descriptor with
   // each tool (GET /v1/tools), and a tool this pane has never heard of gets the
   // same treatment as a builtin.
 
   import CaretRight from 'phosphor-svelte/lib/CaretRight'
-  import { diffLines, statsOf } from '../../../../lib/nib/diff'
+  import { diffLines, statsOf } from '../../../../lib/agents/diff'
   import {
     editsOf,
     inputViewOf,
@@ -15,9 +15,9 @@
     resultViewOf,
     stringOf,
     asRecord
-  } from '../../../../lib/nib/tools'
-  import type { ToolItem, ToolStatus } from '../../../../lib/nib/transcript'
-  import type { ToolDisplay } from '../../../../lib/nib/types'
+  } from '../../../../lib/agents/tools'
+  import type { ToolItem, ToolStatus } from '../../../../lib/agents/transcript'
+  import type { ToolDisplay } from '../../../../lib/agents/types'
 
   let {
     item,

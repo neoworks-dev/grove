@@ -1,16 +1,19 @@
 <script lang="ts">
-  // The status line under the composer: what will run, how hard it will think, how
-  // freely it may act, and when its changes get reviewed.
+  // The status line under the composer: which harness runs the session, what
+  // model it will use, how hard it will think, how freely it may act, and when
+  // its changes get reviewed.
   //
-  // Provider, model and thinking level are session state on the server, so picking
-  // one PATCHes the session. Mode is derived from the same session state (see
-  // lib/nib/modes.ts) rather than stored here.
+  // Harness, provider, model and thinking level are session state in the main
+  // process, so picking one updates the session. Mode is derived from the same
+  // state (see lib/agents/modes.ts) rather than stored here.
 
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
-  import { MODE_LABELS, type AgentMode } from '../../../../lib/nib/modes'
-  import type { ProviderModels, ThinkingLevel } from '../../../../lib/nib/types'
+  import { MODE_LABELS, type AgentMode } from '../../../../lib/agents/modes'
+  import type { HarnessInfo, ProviderModels, ThinkingLevel } from '../../../../lib/agents/types'
 
   let {
+    harness,
+    harnesses,
     provider,
     model,
     thinking,
@@ -20,12 +23,15 @@
     reviewMode,
     reviewPause,
     tokensLabel,
+    onPickHarness,
     onPickModel,
     onPickThinking,
     onPickMode,
     onSetReview,
     onInterrupt
   }: {
+    harness: string
+    harnesses: HarnessInfo[]
     provider: string
     model: string
     thinking: ThinkingLevel
@@ -35,6 +41,7 @@
     reviewMode: string
     reviewPause: boolean
     tokensLabel: string
+    onPickHarness: (harness: string) => void
     onPickModel: (provider: string, model: string) => void
     onPickThinking: (level: ThinkingLevel) => void
     onPickMode: (mode: AgentMode) => void
@@ -50,9 +57,22 @@
     { value: 'post', label: 'After writing' }
   ]
 
-  type Menu = 'model' | 'thinking' | 'mode' | 'review'
+  type Menu = 'harness' | 'model' | 'thinking' | 'mode' | 'review'
   let openMenu = $state<Menu | null>(null)
   let submenuProvider = $state<string | null>(null)
+  // A harness that cannot enumerate its models (Codex) takes one by name.
+  let typedModel = $state('')
+
+  const current = $derived(harnesses.find((entry) => entry.id === harness))
+  const capabilities = $derived(current?.capabilities)
+
+  function submitTypedModel(): void {
+    const trimmed = typedModel.trim()
+    if (trimmed.length === 0) return
+    onPickModel(provider, trimmed)
+    typedModel = ''
+    close()
+  }
 
   function toggle(menu: Menu): void {
     openMenu = openMenu === menu ? null : menu
@@ -85,6 +105,46 @@
     ></button>
   {/if}
 
+  <!-- Harness: which runtime drives this session. -->
+  <div class="relative z-20">
+    <button
+      class="flex items-center gap-1 rounded border border-line px-2 py-1 hover:bg-hover"
+      title="The agent runtime this session runs on"
+      onclick={() => toggle('harness')}
+    >
+      <span class="font-medium text-default">{current?.label ?? harness ?? 'harness'}</span>
+      <span class="text-dim">▾</span>
+    </button>
+    {#if openMenu === 'harness'}
+      <div
+        class="absolute bottom-full left-0 z-30 mb-1 w-64 rounded-md border border-line bg-elevated py-1 shadow-lg"
+      >
+        {#each harnesses as entry (entry.id)}
+          <button
+            class="flex w-full flex-col items-start px-2 py-1 text-left hover:bg-hover disabled:opacity-50 {entry.id ===
+            harness
+              ? 'text-default'
+              : 'text-dim'}"
+            disabled={!entry.available}
+            title={entry.detail ?? entry.description}
+            onclick={() => {
+              onPickHarness(entry.id)
+              close()
+            }}
+          >
+            <span>{entry.label}</span>
+            {#if !entry.available}
+              <span class="truncate text-2xs text-red">{entry.detail ?? 'unavailable'}</span>
+            {/if}
+          </button>
+        {/each}
+        {#if harnesses.length === 0}
+          <div class="px-2 py-1 text-2xs text-dim">No harness is mounted</div>
+        {/if}
+      </div>
+    {/if}
+  </div>
+
   <!-- Provider → model cascade: each provider row flies out its own models. -->
   <div class="relative z-20">
     <button
@@ -101,6 +161,19 @@
       <div
         class="absolute bottom-full left-0 z-30 mb-1 w-44 rounded-md border border-line bg-elevated py-1 shadow-lg"
       >
+        {#if providers.length === 0}
+          <!-- Nothing to enumerate: this harness takes a model by name. -->
+          <div class="px-2 py-1">
+            <input
+              class="w-full rounded border border-line bg-surface px-1.5 py-1 text-2xs text-default"
+              placeholder="model id"
+              bind:value={typedModel}
+              onkeydown={(event) => {
+                if (event.key === 'Enter') submitTypedModel()
+              }}
+            />
+          </div>
+        {/if}
         {#each providers as entry (entry.provider)}
           <div
             class="relative"
@@ -227,8 +300,8 @@
     <span class="truncate font-mono text-dim" title="Context used">{tokensLabel}</span>
   {/if}
 
-  <!-- Thinking -->
-  <div class="relative z-20 ml-auto">
+  <!-- Thinking: hidden for a harness that has no thinking levels. -->
+  <div class="relative z-20 ml-auto" class:hidden={capabilities?.thinking === false}>
     <button
       class="flex items-center gap-1 rounded border border-line px-2 py-1 hover:bg-hover"
       title="Thinking level"
@@ -258,7 +331,7 @@
     {/if}
   </div>
 
-  {#if running}
+  {#if running && capabilities?.interrupt !== false}
     <button
       class="rounded-md border border-line px-3 py-1 text-xs hover:bg-hover"
       onclick={onInterrupt}

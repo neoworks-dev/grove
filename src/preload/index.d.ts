@@ -30,7 +30,6 @@ import type {
   ServiceConfig,
   ServiceProposal,
   AgentRuntime,
-  NibStatus,
   AgentConfig,
   AgentOption,
   AgentLaunchOptions,
@@ -52,6 +51,18 @@ import type {
   LspRange,
   LspDiagnostic
 } from '../shared/types'
+import type {
+  BlobDescriptor,
+  ClientEventBody,
+  CreateSessionOptions,
+  FileMatch,
+  HarnessCatalog,
+  HarnessInfo,
+  SessionEvent,
+  SessionMeta,
+  SessionSnapshot,
+  SessionUpdate
+} from '../shared/agents'
 
 interface OpenRepoResult {
   info: RepoInfo
@@ -192,10 +203,29 @@ export interface WorkbenchApi {
   agents: {
     resolveReview: (batchId: string, decisions: HunkDecision[]) => Promise<void>
     discardReview: (batchId: string) => Promise<void>
-  }
-  nib: {
-    status: () => Promise<NibStatus>
-    start: () => Promise<NibStatus>
+
+    harnesses: () => Promise<HarnessInfo[]>
+    catalog: (harnessId: string) => Promise<HarnessCatalog>
+
+    listSessions: () => Promise<SessionMeta[]>
+    createSession: (options: CreateSessionOptions) => Promise<SessionSnapshot>
+    getSession: (sessionId: string) => Promise<SessionSnapshot>
+    updateSession: (
+      sessionId: string,
+      changes: SessionUpdate
+    ) => Promise<{ changed: string[]; session: SessionSnapshot }>
+    deleteSession: (sessionId: string) => Promise<void>
+
+    listEvents: (sessionId: string, after: number) => Promise<SessionEvent[]>
+    sendEvents: (sessionId: string, events: ClientEventBody[]) => Promise<{ lastSeq: number }>
+
+    searchFiles: (sessionId: string, query: string, limit?: number) => Promise<FileMatch[]>
+    uploadBlob: (
+      sessionId: string,
+      bytes: Uint8Array,
+      mediaType: string,
+      filename?: string
+    ) => Promise<BlobDescriptor>
   }
   fs: {
     watch: (worktreeIds: string[]) => Promise<void>

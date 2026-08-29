@@ -15,6 +15,7 @@ bun scripts/grove-debug.ts windows               # nvim tabs/windows/buffers/dif
 bun scripts/grove-debug.ts eval '<js>'           # anything in the renderer
 bun scripts/grove-debug.ts lua '<lua>'           # anything in the editor
 
+bun scripts/grove-debug.ts harnesses list         # mounted agent runtimes, and which can run
 bun scripts/grove-debug.ts agent start '<prompt>'
 bun scripts/grove-debug.ts agent permissions | allow | deny '<why>'
 bun scripts/grove-debug.ts review list | open | decide | comment | finish
@@ -57,6 +58,10 @@ Where things live:
   `src/renderer/src/components/`.
 - `src/main/kernel/` + `src/main/routes/` — the main root context, the service contracts, and
   the IPC surface split one plugin per domain.
+- `src/main/agents/` — the agent runtime: the session store and event log, the service the
+  renderer drives, the review bridge, and grove's own tools. `harnesses/` holds one plugin per
+  coding agent (`claude`, `codex`, `pi`), each registering a descriptor into the `harnesses`
+  registry. Adding another means adding a file there and listing it in `src/main/routes/index.ts`.
 - `src/renderer/src/plugins/` — the sandboxed third-party host: one Worker and one fiber per
   plugin record.
 

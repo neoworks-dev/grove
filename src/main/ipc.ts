@@ -2,51 +2,31 @@
 // streamed events (logs, service/agent status) to the renderer. This is the
 // single source of truth for the API exposed via preload.
 
-import { app, ipcMain, dialog, shell, BrowserWindow, type IpcMainInvokeEvent } from 'electron'
+import { app, dialog, BrowserWindow } from 'electron'
 import { access } from 'fs/promises'
 import { join } from 'path'
 import type { Context } from '@neoworks/extension-system'
 import { mainContext } from './kernel/context'
-import type {
-  WorkbenchConfig,
-  Worktree,
-  DiffFile,
-  OpenPrOptions,
-  MergePrOptions,
-  InlineHunk,
-  RepoInfo,
-  ServiceConfig
-} from '../shared/types'
+import { routePlugins } from './routes'
+import type { WorkbenchService, NvimService, PluginsService, AppsService } from './kernel/services'
+import type { WorkbenchConfig, Worktree, RepoInfo } from '../shared/types'
 import * as git from './git'
 import { CheckpointManager } from './checkpoints'
-import * as inlineDiff from './inlineDiff'
-import * as github from './github'
 import * as config from './config'
-import { detectServices } from './detect'
-import * as files from './files'
-import * as editorCatalog from './editorCatalog'
 import { LspManager } from './lsp'
-import type { LspPosition, LspRange, LspDiagnostic } from '../shared/types'
-import type { CodeAction, Diagnostic } from 'vscode-languageserver-protocol'
 import * as worktrees from './worktrees'
 import { ServiceSupervisor } from './services'
 import { WorktreeWatcher } from './watcher'
 import { WorktreeChannel } from './worktreeChannel'
 import { ReviewService } from './review'
-import type { HunkDecision } from '../shared/types'
-import { getRepoState, updateRepoState, setLastRepo, loadState } from './state'
+import { getRepoState, updateRepoState, setLastRepo } from './state'
 import { SettingsService } from './settings'
 import { ActionRunner } from './actions'
 import { TerminalManager } from './terminals'
 import { NeovimManager } from './nvim'
 import { buildWorktreeEnv, spawnEnv } from './env'
-import {
-  PermissionBroker,
-  PermissionError,
-  type PermissionDecision as PluginPermissionDecision
-} from './api/broker'
+import { PermissionBroker, PermissionError } from './api/broker'
 import { clientFromPlugin, type ClientRecord } from './api/clients'
-import type { PluginPermission } from '../shared/plugins'
 import { RouteRegistry } from './api/registry'
 import { ApiDispatcher } from './api/dispatcher'
 import { registerWorkspaceRoutes } from './api/routes/workspace'
@@ -68,12 +48,9 @@ import { ApiSocketServer } from './api/socket/server'
 import { createHash } from 'crypto'
 import { PluginRegistry } from './plugins/loader'
 import { AiBridge } from './plugins/aiBridge'
-import { registerPluginProtocol } from './plugins/protocol'
 import { NibServer } from './nib/server'
-import { registerNibProtocol } from './nib/protocol'
-import { NibReviewBridge, NIB_AGENT } from './nib/reviewBridge'
+import { NibReviewBridge } from './nib/reviewBridge'
 import { NibClient } from './nib/client'
-import type { SettingScope } from '../shared/settings'
 
 interface RepoContext {
   repoPath: string | null
@@ -82,9 +59,6 @@ interface RepoContext {
 }
 
 const context: RepoContext = { repoPath: null, config: null, worktrees: [] }
-
-// The listener shape ipcMain.handle takes; route() forwards it unchanged.
-type IpcHandler = Parameters<typeof ipcMain.handle>[1]
 
 function send(channel: string, payload: unknown): void {
   for (const window of BrowserWindow.getAllWindows()) {
@@ -538,771 +512,102 @@ async function openRepo(repoPath: string): Promise<{
   }
 }
 
-/**
- * Every IPC channel Grove exposes, mounted as one plugin. Each handler is an
- * effect, so `ipcMain.removeHandler` runs when the plugin unloads instead of a
- * stale handler outliving the subsystem behind it.
- */
-const ipcRoutes = {
-  name: 'main/ipc',
+// The subsystems above, published as kernel services. Route plugins inject
+// these instead of importing this module, so each domain of the IPC surface can
+// live in its own file and state stays owned by one place.
+const mainServices = {
+  name: 'main/services',
 
   apply(ctx: Context): void {
-    const route = (channel: string, handler: IpcHandler): void => {
-      ctx.effect(() => {
-        ipcMain.handle(channel, handler)
-        return () => ipcMain.removeHandler(channel)
-      }, `ipc:${channel}`)
-    }
-
-    // ── Repo ──────────────────────────────────────────────────────
-    route('repo:pick', async () => {
-      const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
-      if (result.canceled || result.filePaths.length === 0) return null
-      return openRepo(result.filePaths[0])
-    })
-
-    route('repo:open', (_e, repoPath: string) => openRepo(repoPath))
-
-    route('repo:last', async () => {
-      const state = await loadState()
-      return state.lastRepoPath
-    })
-
-    // ── Worktrees ─────────────────────────────────────────────────
-    route('worktrees:list', () => refreshWorktrees())
-
-    route(
-      'worktrees:create',
-      async (_e, options: { name: string; baseBranch: string; newBranch?: string }) => {
-        const { repoPath, config: cfg } = requireRepo()
-        const created = await worktrees.createWorktree(repoPath, cfg, options, (worktreeId, line) =>
-          send('event:log', { worktreeId, source: 'service', name: 'setup', line })
-        )
-        await refreshWorktrees()
-        return created
-      }
-    )
-
-    route('worktrees:remove', async (_e, worktreeId: string, force: boolean) => {
-      const { repoPath } = requireRepo()
-      const worktree = findWorktree(worktreeId)
-      await supervisor.stopAllForWorktree(worktreeId)
-      await worktrees.removeWorktree(repoPath, worktree.path, force)
-      return refreshWorktrees()
-    })
-
-    // ── Git (branches + diff) ─────────────────────────────────────
-    route('git:branches', () => {
-      const { repoPath } = requireRepo()
-      return git.listBranches(repoPath)
-    })
-
-    route('git:changedFiles', (_e, worktreeId: string) => {
-      const worktree = findWorktree(worktreeId)
-      return git.changedFiles(worktree.path)
-    })
-
-    route('git:diffSides', (_e, worktreeId: string, file: DiffFile) => {
-      const worktree = findWorktree(worktreeId)
-      return git.diffSides(worktree.path, file)
-    })
-
-    route('git:diffHunks', (_e, worktreeId: string, file: DiffFile) => {
-      const worktree = findWorktree(worktreeId)
-      return git.diffHunks(worktree.path, file)
-    })
-
-    route('git:diffStats', (_e, worktreeId: string) => {
-      const worktree = findWorktree(worktreeId)
-      return git.diffStats(worktree.path)
-    })
-
-    // ── Local-only checkpoints ──────────────────────────────────────
-    route('checkpoints:list', (_e, worktreeId: string) => {
-      const worktree = findWorktree(worktreeId)
-      return checkpoints.list(worktree.path)
-    })
-
-    route('checkpoints:snapshot', (_e, worktreeId: string, note?: string) => {
-      const worktree = findWorktree(worktreeId)
-      return checkpoints.snapshot(worktree.path, 'manual', { note })
-    })
-
-    route('checkpoints:restore', (_e, worktreeId: string, commit: string) => {
-      const worktree = findWorktree(worktreeId)
-      return checkpoints.restore(worktree.path, commit)
-    })
-
-    // ── Inline agent edit (per-hunk accept/reject) ──────────────────
-    route(
-      'git:beginInlineReview',
-      async (_e, worktreeId: string, relPath: string, snapshot: string) => {
-        const worktree = findWorktree(worktreeId)
-        const hunks = await inlineDiff.diffSnapshot(worktree.path, relPath, snapshot)
-        const ranges = inlineDiff.rebuildWithAccepted(
-          snapshot,
-          hunks,
-          hunks.map(() => true)
-        ).ranges
-        return { hunks, ranges }
-      }
-    )
-
-    route(
-      'git:applyInlineReview',
-      (
-        _e,
-        worktreeId: string,
-        relPath: string,
-        snapshot: string,
-        hunks: InlineHunk[],
-        applied: boolean[]
-      ) => {
-        const worktree = findWorktree(worktreeId)
-        return inlineDiff.applyInlineReview(worktree.path, relPath, snapshot, hunks, applied)
-      }
-    )
-
-    // Unified diff between two in-memory file versions, for previewing a pending
-    // Write/Edit inline in the permission card.
-    route('git:diffText', (_e, worktreeId: string, before: string, after: string) => {
-      const worktree = findWorktree(worktreeId)
-      return inlineDiff.diffStrings(worktree.path, before, after)
-    })
-
-    // ── Git ship-it chain (stage → commit → push → merge → archive) ──
-    route('git:stage', (_e, worktreeId: string, paths: string[]) => {
-      const worktree = findWorktree(worktreeId)
-      return git.stage(worktree.path, paths)
-    })
-
-    route('git:unstage', (_e, worktreeId: string, paths: string[]) => {
-      const worktree = findWorktree(worktreeId)
-      return git.unstage(worktree.path, paths)
-    })
-
-    route('git:commit', (_e, worktreeId: string, message: string) => {
-      const worktree = findWorktree(worktreeId)
-      return git.commit(worktree.path, message)
-    })
-
-    route('git:push', (_e, worktreeId: string) => {
-      const worktree = findWorktree(worktreeId)
-      return git.push(worktree.path)
-    })
-
-    // Local merge runs in the main worktree (repoPath), merging the feature
-    // worktree's branch into baseBranch.
-    route('git:mergeLocal', (_e, worktreeId: string, baseBranch: string) => {
-      const { repoPath } = requireRepo()
-      const worktree = findWorktree(worktreeId)
-      return git.mergeToBase(repoPath, worktree.branch, baseBranch)
-    })
-
-    // ── Worktree-into-worktree merge ────────────────────────────────
-    route('git:mergePreview', async (_e, targetWorktreeId: string, sourceWorktreeId: string) => {
-      const target = findWorktree(targetWorktreeId)
-      const source = findWorktree(sourceWorktreeId)
-      const preview = await git.mergePreview(target.path, source.branch)
-      return { ...preview, sourceDirty: await git.isDirty(source.path) }
-    })
-
-    route(
-      'git:mergeWorktree',
-      async (
-        _e,
-        targetWorktreeId: string,
-        sourceWorktreeId: string,
-        opts: { mode: import('../shared/types').MergeMode; message?: string }
-      ) => {
-        const target = findWorktree(targetWorktreeId)
-        const source = findWorktree(sourceWorktreeId)
-        if (target.isDetached) {
-          throw new Error(
-            `target worktree "${target.name}" is on a detached HEAD; cannot merge into it`
-          )
-        }
-        if (await git.isDirty(target.path)) {
-          throw new Error(
-            `target worktree "${target.name}" has uncommitted changes; commit or revert them before merging`
-          )
-        }
-        // Snapshot the target before the merge so a bad result is one restore away.
-        await checkpoints.snapshot(target.path, 'pre-merge', {
-          note: `merge ${source.branch} → ${target.branch}`
-        })
-        return git.mergeWorktree(target.path, source.branch, opts)
-      }
-    )
-
-    route('git:mergeAbort', (_e, targetWorktreeId: string) => {
-      const target = findWorktree(targetWorktreeId)
-      return git.abortMerge(target.path)
-    })
-
-    route('git:mergeContinue', (_e, targetWorktreeId: string) => {
-      const target = findWorktree(targetWorktreeId)
-      return git.continueMerge(target.path)
-    })
-
-    route('git:mergeConflicts', (_e, targetWorktreeId: string) => {
-      const target = findWorktree(targetWorktreeId)
-      return git.conflictedFiles(target.path)
-    })
-
-    route('github:openPr', (_e, worktreeId: string, options: OpenPrOptions) => {
-      const worktree = findWorktree(worktreeId)
-      return github.openPr(worktree.path, options)
-    })
-
-    route('github:mergePr', (_e, worktreeId: string, options: MergePrOptions) => {
-      const worktree = findWorktree(worktreeId)
-      return github.mergePr(worktree.path, options)
-    })
-
-    route(
-      'worktrees:archive',
-      async (_e, worktreeId: string, options: { deleteBranch: boolean; force: boolean }) => {
+    ctx.provide('workbench', {
+      send,
+      requireRepo,
+      findWorktree,
+      refreshWorktrees,
+      openRepo,
+      reloadConfig: async () => {
         const { repoPath } = requireRepo()
-        const worktree = findWorktree(worktreeId)
-        await supervisor.stopAllForWorktree(worktreeId)
-        await worktrees.archiveWorktree(repoPath, worktree.path, {
-          branch: worktree.branch,
-          deleteBranch: options.deleteBranch,
-          force: options.force
-        })
-        return refreshWorktrees()
+        context.config = await config.loadConfig(repoPath)
+        return context.config
+      },
+      get repoPath() {
+        return context.repoPath
+      },
+      get worktrees() {
+        return context.worktrees
       }
-    )
+    } satisfies WorkbenchService)
 
-    // ── Config ────────────────────────────────────────────────────
-    route('config:load', async () => {
-      const { repoPath } = requireRepo()
-      context.config = await config.loadConfig(repoPath)
-      return context.config
-    })
-
-    route('config:exists', () => {
-      const { repoPath } = requireRepo()
-      return config.configExists(repoPath)
-    })
-
-    route('config:writeSample', async () => {
-      const { repoPath } = requireRepo()
-      const written = await config.writeSampleConfig(repoPath)
-      context.config = await config.loadConfig(repoPath)
-      return written
-    })
-
-    // Setup wizard: propose service entries from what the repo looks like.
-    route('config:detect', () => {
-      const { repoPath } = requireRepo()
-      return detectServices(repoPath)
-    })
-
-    // Setup wizard: write the reviewed services into workbench.yaml, merged over
-    // whatever is already there so a partially configured repo is not clobbered.
-    route('config:writeServices', async (_e, services: Record<string, ServiceConfig>) => {
-      const { repoPath } = requireRepo()
-      const current = await config.loadConfig(repoPath)
-      const merged: WorkbenchConfig = {
-        ...current,
-        services: { ...current.services, ...services }
-      }
-      await config.saveConfig(repoPath, merged)
-      context.config = await config.loadConfig(repoPath)
-      return context.config
-    })
-
-    // ── Services ──────────────────────────────────────────────────
-    route('services:list', (_e, worktreeId: string) => {
-      const { config: cfg } = requireRepo()
-      const worktree = findWorktree(worktreeId)
-      const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
-      return Object.entries(cfg.services).map(([name, service]) => {
-        const live = supervisor.getRuntime(worktreeId, name)
-        return live || supervisor.buildIdleRuntime(worktree, name, service, ports)
-      })
-    })
-
-    route('services:start', (_e, worktreeId: string, name: string) => {
-      const { config: cfg } = requireRepo()
-      const worktree = findWorktree(worktreeId)
-      const service = cfg.services[name]
-      if (!service) throw new Error(`unknown service: ${name}`)
-      const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
-      return supervisor.start(worktree, name, service, ports)
-    })
-
-    route('services:startAll', async (_e, worktreeId: string) => {
-      const { config: cfg } = requireRepo()
-      const worktree = findWorktree(worktreeId)
-      const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
-      for (const [name, service] of Object.entries(cfg.services)) {
-        await supervisor.start(worktree, name, service, ports)
-      }
-    })
-
-    route('services:stop', (_e, worktreeId: string, name: string) =>
-      supervisor.stop(worktreeId, name)
-    )
-
-    route('services:stopAll', (_e, worktreeId: string) => supervisor.stopAllForWorktree(worktreeId))
-
-    route('services:restart', (_e, worktreeId: string, name: string) => {
-      const { config: cfg } = requireRepo()
-      const worktree = findWorktree(worktreeId)
-      const service = cfg.services[name]
-      if (!service) throw new Error(`unknown service: ${name}`)
-      const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
-      return supervisor.start(worktree, name, service, ports)
-    })
-
-    // ── Agent review ──────────────────────────────────────────────
-    // Sessions, transcripts and approvals live on the nib server and are driven
-    // from the renderer over grove-nib://. What stays here is the review flow,
-    // which writes files and therefore cannot.
-    route('agents:discardReview', (_e, batchId: string) => {
-      nibReviewBridge.discard(batchId)
-      review.drop(batchId)
-    })
-
-    route('agents:resolveReview', async (_e, batchId: string, decisions: HunkDecision[]) => {
-      const batch = await review.resolve(batchId, decisions)
-      if (!batch) return
-      // A nib session is answered over its own protocol, not the adapter's
-      // permission resolver.
-      if (batch.agent === NIB_AGENT) {
-        await nibReviewBridge.report(batch, decisions)
-        return
-      }
-    })
-
-    // ── Shared worktree chat (agent↔agent + agent↔user) ─────────────
-    route('chat:send', (_e, worktreeId: string, text: string) => {
-      findWorktree(worktreeId)
-      return channel.post(worktreeId, { kind: 'user', name: 'you' }, text)
-    })
-
-    route('chat:history', async (_e, worktreeId: string, since?: number) => {
-      findWorktree(worktreeId)
-      // Watching is started lazily: a worktree whose channel nobody has opened
-      // does not need a file watcher.
-      await channel.watchWorktree(worktreeId)
-      return channel.list(worktreeId, since)
-    })
-
-    // ── Files ─────────────────────────────────────────────────────
-    route('files:listDir', (_e, worktreeId: string, relPath: string) => {
-      const worktree = findWorktree(worktreeId)
-      return files.listDir(worktree.path, relPath)
-    })
-
-    route('files:listAll', (_e, worktreeId: string) => {
-      const worktree = findWorktree(worktreeId)
-      return files.listAll(worktree.path)
-    })
-
-    // Arbitrary-directory listing for @ path completion (may leave the worktree).
-    route('files:listPath', (_e, worktreeId: string, rawPath: string) => {
-      const worktree = findWorktree(worktreeId)
-      return files.listPath(worktree.path, rawPath)
-    })
-
-    route('files:read', (_e, worktreeId: string, absPath: string) => {
-      const worktree = findWorktree(worktreeId)
-      return files.readFileContent(worktree.path, absPath)
-    })
-
-    route('files:write', (_e, worktreeId: string, absPath: string, content: string) => {
-      const worktree = findWorktree(worktreeId)
-      return files.writeFileContent(worktree.path, absPath, content)
-    })
-
-    // Save a pasted/dropped attachment for @-mentioning in the agent prompt.
-    route('files:saveAttachment', (_e, worktreeId: string, data: Uint8Array, ext: string) => {
-      const worktree = findWorktree(worktreeId)
-      return files.saveAttachment(worktree.path, data, ext)
-    })
-
-    route('files:create', (_e, worktreeId: string, relPath: string) => {
-      const worktree = findWorktree(worktreeId)
-      return files.createFile(worktree.path, relPath)
-    })
-
-    route('files:createDir', (_e, worktreeId: string, relPath: string) => {
-      const worktree = findWorktree(worktreeId)
-      return files.createDir(worktree.path, relPath)
-    })
-
-    route('files:rename', (_e, worktreeId: string, fromRel: string, toRel: string) => {
-      const worktree = findWorktree(worktreeId)
-      return files.renamePath(worktree.path, fromRel, toRel)
-    })
-
-    route('files:delete', (_e, worktreeId: string, relPath: string) => {
-      const worktree = findWorktree(worktreeId)
-      return files.removePath(worktree.path, relPath)
-    })
-
-    // ── Editor catalog (grammars / themes / LSP servers) ──────────
-    route('extensions:catalog', () => editorCatalog.listCatalog())
-    route('extensions:installed', () => editorCatalog.listInstalled())
-    route('extensions:install', (_e, id: string) => editorCatalog.install(id))
-    route('extensions:uninstall', (_e, id: string) => editorCatalog.uninstall(id))
-    route('extensions:setEnabled', (_e, id: string, enabled: boolean) =>
-      editorCatalog.setEnabled(id, enabled)
-    )
-    route('extensions:grammar', (_e, id: string) => editorCatalog.readGrammar(id))
-
-    // ── LSP ───────────────────────────────────────────────────────
-    route('lsp:ensure', (_e, worktreeId: string, language: string, uri: string, text: string) => {
-      const worktree = findWorktree(worktreeId)
-      return lsp.ensure(worktreeId, worktree.path, language, uri, text)
-    })
-    route(
-      'lsp:didChange',
-      (_e, worktreeId: string, language: string, uri: string, version: number, text: string) =>
-        lsp.didChange(worktreeId, language, uri, version, text)
-    )
-    route(
-      'lsp:completion',
-      (_e, worktreeId: string, language: string, uri: string, position: LspPosition) =>
-        lsp.completion(worktreeId, language, uri, position)
-    )
-    route(
-      'lsp:hover',
-      (_e, worktreeId: string, language: string, uri: string, position: LspPosition) =>
-        lsp.hover(worktreeId, language, uri, position)
-    )
-    route(
-      'lsp:definition',
-      (_e, worktreeId: string, language: string, uri: string, position: LspPosition) =>
-        lsp.definition(worktreeId, language, uri, position)
-    )
-    route(
-      'lsp:references',
-      (_e, worktreeId: string, language: string, uri: string, position: LspPosition) =>
-        lsp.references(worktreeId, language, uri, position)
-    )
-    route(
-      'lsp:implementation',
-      (_e, worktreeId: string, language: string, uri: string, position: LspPosition) =>
-        lsp.implementation(worktreeId, language, uri, position)
-    )
-    route(
-      'lsp:typeDefinition',
-      (_e, worktreeId: string, language: string, uri: string, position: LspPosition) =>
-        lsp.typeDefinition(worktreeId, language, uri, position)
-    )
-    route(
-      'lsp:declaration',
-      (_e, worktreeId: string, language: string, uri: string, position: LspPosition) =>
-        lsp.declaration(worktreeId, language, uri, position)
-    )
-    route(
-      'lsp:rename',
-      (
-        _e,
-        worktreeId: string,
-        language: string,
-        uri: string,
-        position: LspPosition,
-        newName: string
-      ) => lsp.rename(worktreeId, language, uri, position, newName)
-    )
-    route(
-      'lsp:formatting',
-      (_e, worktreeId: string, language: string, uri: string, tabSize: number) =>
-        lsp.formatting(worktreeId, language, uri, tabSize)
-    )
-    route(
-      'lsp:codeAction',
-      (
-        _e,
-        worktreeId: string,
-        language: string,
-        uri: string,
-        range: LspRange,
-        diagnostics: LspDiagnostic[]
-        // severity is a plain number over IPC; identical to DiagnosticSeverity.
-      ) => lsp.codeAction(worktreeId, language, uri, range, diagnostics as unknown as Diagnostic[])
-    )
-    route('lsp:resolveCodeAction', (_e, worktreeId: string, language: string, action: CodeAction) =>
-      lsp.resolveCodeAction(worktreeId, language, action)
-    )
-    route(
-      'lsp:executeCommand',
-      (_e, worktreeId: string, language: string, command: string, args: unknown[]) =>
-        lsp.executeCommand(worktreeId, language, command, args)
-    )
-    route(
-      'lsp:inlayHints',
-      (_e, worktreeId: string, language: string, uri: string, range: LspRange) =>
-        lsp.inlayHints(worktreeId, language, uri, range)
-    )
-
-    // ── Terminal ──────────────────────────────────────────────────
-    // Spawn a shell in the worktree's directory with its WT_*/PORT_n vars, so a
-    // terminal matches what services and keybind actions see.
-    route('terminal:create', (_e, worktreeId: string | null, cols: number, rows: number) => {
-      let cwd = context.repoPath ?? process.cwd()
-      let vars: Record<string, string> = {}
-      if (worktreeId) {
-        const worktree = findWorktree(worktreeId)
-        const cfg = requireRepo().config
-        vars = buildWorktreeEnv(worktree, worktrees.portsForWorktree(cfg, worktree.portSlot))
-        cwd = worktree.path
-      }
-      // Tools launched inside Grove terminals discover the local API socket
-      // with zero config.
-      if (apiSocketPath) vars.GROVE_SOCK = apiSocketPath
-      return terminals.create({ cwd, env: spawnEnv(vars), cols, rows })
-    })
-    route('terminal:write', (_e, id: string, data: string) => terminals.write(id, data))
-    route('terminal:resize', (_e, id: string, cols: number, rows: number) =>
-      terminals.resize(id, cols, rows)
-    )
-    route('terminal:kill', (_e, id: string) => terminals.kill(id))
-
-    // ── Embedded Neovim ───────────────────────────────────────────
-    // A vendored `nvim --embed` per pane, spawned in the worktree with the same
-    // WT_*/PORT_n vars as terminals. Redraw batches stream via event:nvim-redraw.
-    route('nvim:spawn', async (_e, worktreeId: string | null) => {
-      let cwd = context.repoPath ?? process.cwd()
-      let vars: Record<string, string> = {}
-      if (worktreeId) {
-        const worktree = findWorktree(worktreeId)
-        const cfg = requireRepo().config
-        vars = buildWorktreeEnv(worktree, worktrees.portsForWorktree(cfg, worktree.portSlot))
-        cwd = worktree.path
-      }
-      const sessionId = await nvims.spawn({ cwd, env: spawnEnv(vars) })
-      nvimSessionWorktrees.set(sessionId, worktreeId)
-      if (worktreeId && !lastActiveNvimByWorktree.has(worktreeId)) {
-        lastActiveNvimByWorktree.set(worktreeId, sessionId)
-      }
-      return sessionId
-    })
-    route('nvim:attach', (_e, id: string, cols: number, rows: number, file?: string) =>
-      nvims.attach(id, cols, rows, file)
-    )
-    route('nvim:input', (_e, id: string, keys: string) => {
-      trackNvimActivity(id)
-      nvims.input(id, keys)
-    })
-    route(
-      'nvim:inputMouse',
-      (
-        _e,
-        id: string,
-        button: string,
-        action: string,
-        modifier: string,
-        row: number,
-        col: number,
-        grid?: number
-      ) => {
-        trackNvimActivity(id)
-        nvims.inputMouse(id, button, action, modifier, row, col, grid)
-      }
-    )
-    route('nvim:resize', (_e, id: string, cols: number, rows: number) =>
-      nvims.resize(id, cols, rows)
-    )
-    route('nvim:command', (_e, id: string, command: string) => nvims.command(id, command))
-    route('nvim:request', (_e, id: string, method: string, args: unknown[]) =>
-      nvims.request(id, method, args)
-    )
-    route('nvim:kill', (_e, id: string) => nvims.kill(id))
-
-    // ── State ─────────────────────────────────────────────────────
-    route('state:getRepo', () => {
-      const { repoPath } = requireRepo()
-      return getRepoState(repoPath)
-    })
-
-    route('state:update', (_e, patch: Record<string, unknown>) => {
-      const { repoPath } = requireRepo()
-      return updateRepoState(repoPath, patch)
-    })
-
-    // ── File watching ─────────────────────────────────────────────
-    // Watch exactly the given worktrees (selected + those with running agents).
-    route('fs:watch', (_e, worktreeIds: string[]) => {
-      const paths = worktreeIds
-        .map((id) => context.worktrees.find((worktree) => worktree.id === id)?.path)
-        .filter((path): path is string => Boolean(path))
-      watcher.setWatched(paths)
-    })
-
-    // ── Agent server ──────────────────────────────────────────────
-    registerNibProtocol(nib)
-    route('nib:status', () => nib.status())
-    route('nib:start', async () => {
-      await nib.start()
-      return nib.status()
-    })
-
-    // ── Plugins ───────────────────────────────────────────────────
-    registerPluginProtocol(pluginRegistry)
-    void pluginRegistry.loadAll(null)
-    route('plugins:list', () => pluginList())
-    route('plugins:trust', async (_e: IpcMainInvokeEvent, pluginId: string) => {
-      const record = pluginRegistry.get(pluginId)
-      if (!record || !context.repoPath) return pluginList()
-      await pluginBroker.trustProjectPlugin(context.repoPath, record.manifest)
-      await pluginRegistry.refresh(pluginId)
-      send('event:plugins-changed', pluginList())
-      return pluginList()
-    })
-    route(
-      'plugins:setEnabled',
-      async (_e: IpcMainInvokeEvent, pluginId: string, enabled: boolean) => {
-        await pluginBroker.setEnabled(pluginId, enabled)
-        await pluginRegistry.refresh(pluginId)
-        if (!enabled) {
-          aiBridge.clearPlugin(pluginId)
-          apiDispatcher.cancelAllForClient(`plugin:${pluginId}`)
+    ctx.provide('nvim', {
+      manager: nvims,
+      bind: (sessionId, worktreeId) => {
+        nvimSessionWorktrees.set(sessionId, worktreeId)
+        if (worktreeId && !lastActiveNvimByWorktree.has(worktreeId)) {
+          lastActiveNvimByWorktree.set(worktreeId, sessionId)
         }
-        send('event:plugins-changed', pluginList())
-        return pluginList()
-      }
-    )
-    route(
-      'plugins:invoke',
-      (
-        _e: IpcMainInvokeEvent,
-        pluginId: string,
-        callId: string,
-        method: string,
-        params: unknown
-      ) => {
-        const client = pluginClient(pluginId)
-        const emit = (chunk: unknown): void =>
-          send('event:plugin-stream', { pluginId, callId, chunk })
-        const invoke = (): Promise<unknown> =>
-          apiDispatcher.invoke(client, callId, method, params, { transport: 'worker', emit })
-        if (!apiRegistry.get(method)?.streaming) return invoke()
-        // Streaming wire contract: the invoke promise resolves immediately and
-        // completion/errors travel as an end event, matching what the renderer
-        // host awaits (mainStreams finish).
-        void invoke()
-          .then(() => send('event:plugin-stream', { pluginId, callId, end: true }))
-          .catch((error: Error) =>
-            send('event:plugin-stream', {
-              pluginId,
-              callId,
-              end: true,
-              error: { message: error.message }
-            })
-          )
-        return null
-      }
-    )
-    route('plugins:cancel', (_e: IpcMainInvokeEvent, pluginId: string, callId: string) =>
-      apiDispatcher.cancel(`plugin:${pluginId}`, callId)
-    )
-    route('plugins:cancelAll', (_e: IpcMainInvokeEvent, pluginId: string) => {
-      aiBridge.clearPlugin(pluginId)
-      apiDispatcher.cancelAllForClient(`plugin:${pluginId}`)
-    })
-    route(
-      'plugins:respondPermission',
-      (_e: IpcMainInvokeEvent, id: string, decision: PluginPermissionDecision) =>
-        pluginBroker.respondPermission(id, decision)
-    )
-    const grantClients = async (): Promise<ClientRecord[]> => {
-      const pluginClients = pluginRegistry.list().map(clientFromPlugin)
-      const apps = await appPairing.list()
-      const appClients: ClientRecord[] = apps.map((record) => ({
-        key: `app:${record.appId}`,
-        kind: 'app',
-        id: record.appId,
-        name: record.name,
-        source: 'external',
-        declaredScopes: record.grantedScopes
-      }))
-      return [...pluginClients, ...appClients]
-    }
-    route('plugins:grants:list', async () => pluginBroker.listGrants(await grantClients()))
-    route(
-      'plugins:grants:revoke',
-      async (_e: IpcMainInvokeEvent, clientId: string, permission: PluginPermission) => {
-        await pluginBroker.revoke(clientId, permission)
-        return pluginBroker.listGrants(await grantClients())
-      }
-    )
-    route(
-      'plugins:grants:revokeScope',
-      async (_e: IpcMainInvokeEvent, clientId: string, path: string) => {
-        await pluginBroker.revokeFsScope(clientId, path)
-        return pluginBroker.listGrants(await grantClients())
-      }
-    )
-    route('plugins:grants:revokeAll', async (_e: IpcMainInvokeEvent, clientId: string) => {
-      await pluginBroker.revokeAll(clientId)
-      // Revoking everything for an external app also unpairs it.
-      if (clientId.startsWith('app:')) {
-        const appId = clientId.slice('app:'.length)
-        await appPairing.revoke(appId)
-        apiSocketServer?.dropClient(clientId)
-      }
-      return pluginBroker.listGrants(await grantClients())
-    })
+      },
+      trackActivity: trackNvimActivity
+    } satisfies NvimService)
 
-    // ── External apps ─────────────────────────────────────────────
+    ctx.provide('plugins', {
+      registry: pluginRegistry,
+      broker: pluginBroker,
+      aiBridge,
+      dispatcher: apiDispatcher,
+      apiRoutes: apiRegistry,
+      list: pluginList,
+      client: pluginClient,
+      grantClients
+    } satisfies PluginsService)
+
+    ctx.provide('apps', {
+      pairing: appPairing,
+      socketPath: () => apiSocketPath,
+      dropClient: (clientId) => apiSocketServer?.dropClient(clientId)
+    } satisfies AppsService)
+
+    ctx.provide('supervisor', supervisor)
+    ctx.provide('checkpoints', checkpoints)
+    ctx.provide('review', review)
+    ctx.provide('settings', settings)
+    ctx.provide('terminals', terminals)
+    ctx.provide('lsp', lsp)
+    ctx.provide('watcher', watcher)
+    ctx.provide('chat', channel)
+    ctx.provide('actions', actionRunner)
+    ctx.provide('nib', nib)
+    ctx.provide('nibReview', nibReviewBridge)
+
+    // One-time startup work that belongs to no single route domain: the local
+    // API socket external apps connect over, and the user settings file.
     startApiSocket()
-    route('apps:list', () => appPairing.list())
-    route('apps:respondPairing', (_e: IpcMainInvokeEvent, id: string, approved: boolean) =>
-      appPairing.respondPairing(id, approved)
-    )
-    route('apps:revoke', async (_e: IpcMainInvokeEvent, appId: string) => {
-      await appPairing.revoke(appId)
-      await pluginBroker.revokeAll(`app:${appId}`)
-      apiSocketServer?.dropClient(`app:${appId}`)
-      return appPairing.list()
-    })
-    route(
-      'plugins:respondToolCall',
-      (_e: IpcMainInvokeEvent, id: string, result: unknown, errorMessage?: string) =>
-        aiBridge.respondToolCall(id, result, errorMessage)
-    )
-
-    // ── Keybind actions ───────────────────────────────────────────
-    route('actions:runShell', (_e: IpcMainInvokeEvent, worktreeId: string, commandLine: string) => {
-      const { config: cfg } = requireRepo()
-      const worktree = findWorktree(worktreeId)
-      const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
-      actionRunner.run(worktree, commandLine, ports)
-    })
-
-    // ── Settings ──────────────────────────────────────────────────
     void settings.loadUser()
-    route('settings:read', () => settings.snapshot())
-    route(
-      'settings:set',
-      async (_e: IpcMainInvokeEvent, key: string, value: unknown, scope: SettingScope) => {
-        const snapshot = await settings.set(key, value, scope)
-        // Broadcast so every window (and future ones) stays coherent.
-        send('event:settings-changed', snapshot)
-        return snapshot
-      }
-    )
-    route('settings:openFile', (_e: IpcMainInvokeEvent, scope: SettingScope) => {
-      const path = settings.openPath(scope)
-      if (!path) return
-      return shell.openPath(path)
-    })
-
-    // ── Misc ──────────────────────────────────────────────────────
-    route('shell:openExternal', (_e: IpcMainInvokeEvent, url: string) => shell.openExternal(url))
   }
 }
 
-/** Mount the IPC routes on the main kernel. */
+/** Every client that can hold a grant: plugins and paired external apps. */
+async function grantClients(): Promise<ClientRecord[]> {
+  const pluginClients = pluginRegistry.list().map(clientFromPlugin)
+  const apps = await appPairing.list()
+  const appClients: ClientRecord[] = apps.map((record) => ({
+    key: `app:${record.appId}`,
+    kind: 'app',
+    id: record.appId,
+    name: record.name,
+    source: 'external',
+    declaredScopes: record.grantedScopes
+  }))
+  return [...pluginClients, ...appClients]
+}
+
+/**
+ * Mount the main kernel: the subsystem services first, then every route plugin.
+ * Each route plugin injects what it needs, so ordering beyond this is the
+ * kernel's problem, not ours.
+ */
 export async function registerIpc(): Promise<void> {
-  await mainContext.plugin(ipcRoutes)
+  await mainContext.plugin(mainServices)
+  await Promise.all(routePlugins.map((plugin) => mainContext.plugin(plugin)))
 }
 
 /**

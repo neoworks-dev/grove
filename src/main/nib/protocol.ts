@@ -30,7 +30,8 @@ export function registerNibScheme(): void {
   ])
 }
 
-export function registerNibProtocol(server: NibServer): void {
+/** Serve grove-nib:// from the embedded agent server; returns the inverse. */
+export function registerNibProtocol(server: NibServer): () => void {
   protocol.handle('grove-nib', async (request) => {
     const url = new URL(request.url)
     if (url.hostname !== HOST) {
@@ -54,6 +55,7 @@ export function registerNibProtocol(server: NibServer): void {
       return problem(502, (error as Error).message)
     }
   })
+  return () => protocol.unhandle('grove-nib')
 }
 
 // Match nib's own error shape so the renderer has one thing to parse.

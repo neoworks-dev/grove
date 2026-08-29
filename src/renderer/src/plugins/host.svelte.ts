@@ -1,24 +1,22 @@
-// PluginHost: loads plugin records, registers their manifest contributions as
-// lazy stubs into the canonical registries, and manages one sandboxed Web
-// Worker per activated plugin. All worker→host API calls land here; privileged
-// ones forward to main over plugin-scoped IPC (pluginId stamped by this host,
-// never by the worker).
+// PluginHost: loads plugin records, mounts one kernel fiber per plugin, and
+// manages the sandboxed Web Worker that fiber owns. All worker→host API calls
+// land here; privileged ones forward to main over plugin-scoped IPC (pluginId
+// stamped by this host, never by the worker).
+//
+// Every registration a plugin makes — manifest contribution, runtime call, the
+// worker process itself — is installed through its fiber's `ctx.effect`, so
+// unloading the plugin is `fiber.dispose()` and nothing can be left behind. The
+// fiber injects the surfaces it contributes into, so a plugin also stops when
+// the sidebar, editor or panel it targets goes away.
 
+import type { Context, Fiber } from '@neoworks/extension-system'
 import type { PluginManifest } from '../../../shared/plugins'
 import { GROVE_API_VERSION, PERMISSION_META } from '../../../shared/plugins'
 import { RpcEndpoint } from './rpc'
-import { commands } from '../lib/commands.svelte'
-import { keymap } from '../lib/keymap.svelte'
+import { groveContext } from '../kernel/context'
 import { overlays, type OverlayItem, type OverlayPreviewContent } from '../lib/overlays.svelte'
-import { statusBar } from '../lib/statusbar.svelte'
-import { sidebar } from '../lib/sidebar.svelte'
-import { menu } from '../lib/menu.svelte'
-import { panes } from '../lib/panes.svelte'
-import { panels } from '../lib/panels.svelte'
-import { views } from '../lib/views.svelte'
-import { settings } from '../lib/settings.svelte'
 import { dialogs } from '../lib/dialogs.svelte'
-import { layout } from '../lib/layout.svelte'
+import { settings } from '../lib/settings.svelte'
 import { store, openFileInEditor, openFileAtLine } from '../lib/store.svelte'
 import { sanitize, createLeaf } from '../lib/layoutTree'
 import { isAbsolutePath, joinPath, relativePath } from '../lib/paths'
@@ -57,12 +55,18 @@ interface MainStream {
 
 interface PluginInstance {
   record: PluginRecordShape
+  // The plugin's fiber and its context. Every effect this plugin installs
+  // belongs to them, so disposing the fiber reverts all of it.
+  fiber: Fiber | null
+  ctx: Context | null
   worker: Worker | null
   rpc: RpcEndpoint | null
   activating: Promise<void> | null
   runtimeError: string | null
-  contributionDisposers: (() => void)[]
-  runtimeDisposers: Map<string, () => void>
+  // Effect disposers the plugin can revert individually through a `:dispose`
+  // RPC call, keyed by registration. The fiber owns them too, so an unload
+  // still cleans up whatever the plugin forgot.
+  effects: Map<string, () => void>
   overlayDeclarations: Map<string, OverlayDeclaration>
   mainStreams: Map<string, MainStream>
   subscribedEvents: Set<string>
@@ -70,6 +74,34 @@ interface PluginInstance {
   // Skill/MCP declarations stashed for the AI bridge (wired in a later phase).
   mcpServers: Map<string, unknown>
   skills: Map<string, unknown>
+}
+
+/**
+ * One fiber per plugin record. It injects the surfaces plugins contribute into,
+ * so it only runs while they exist; its body hands the context back to the host,
+ * which installs the plugin's contributions on it.
+ */
+class WorkerPlugin {
+  static inject = [
+    'commands',
+    'keymap',
+    'panes',
+    'views',
+    'statusbar',
+    'menu',
+    'sidebar',
+    'panel',
+    'settings',
+    'dialogs',
+    'overlays',
+    'layout',
+    'workspace',
+    'editor'
+  ]
+
+  constructor(ctx: Context, config: { host: PluginHost; record: PluginRecordShape }) {
+    config.host.attachFiber(config.record.id, ctx)
+  }
 }
 
 class PluginHost {
@@ -108,7 +140,7 @@ class PluginHost {
       const instance = this.instances.get(ownerId)
       return instance?.rpc?.request('command:execute', { id: commandId, args })
     }
-    const command = commands.commands.find((entry) => entry.id === commandId)
+    const command = groveContext.commands.commands.find((entry) => entry.id === commandId)
     if (command) return command.run()
     dialogs.notify({ level: 'error', message: `Unknown command "${commandId}"` })
     return undefined
@@ -140,7 +172,7 @@ class PluginHost {
     for (const [id, instance] of this.instances) {
       const record = records.find((entry) => entry.id === id)
       if (record && record.status === 'ready') continue
-      this.disposeInstance(instance)
+      void this.disposeInstance(instance)
       this.instances.delete(id)
       if (!known.has(id)) continue
     }
@@ -155,12 +187,13 @@ class PluginHost {
   private registerInstance(record: PluginRecordShape): void {
     const instance: PluginInstance = {
       record,
+      fiber: null,
+      ctx: null,
       worker: null,
       rpc: null,
       activating: null,
       runtimeError: null,
-      contributionDisposers: [],
-      runtimeDisposers: new Map(),
+      effects: new Map(),
       overlayDeclarations: new Map(),
       mainStreams: new Map(),
       subscribedEvents: new Set(),
@@ -169,19 +202,39 @@ class PluginHost {
       skills: new Map()
     }
     this.instances.set(record.id, instance)
-    this.contribute(instance)
-    if ((record.manifest.activation ?? ['onStartup']).includes('onStartup')) {
-      void this.ensureActivated(record.id)
-    }
+    // The fiber calls back into attachFiber() once its injected services
+    // resolve; until then the plugin contributes nothing, which is correct.
+    instance.fiber = groveContext.plugin(WorkerPlugin, { host: this, record })
   }
 
-  private disposeInstance(instance: PluginInstance): void {
-    for (const dispose of instance.contributionDisposers) dispose()
-    for (const dispose of instance.runtimeDisposers.values()) dispose()
-    instance.contributionDisposers = []
-    instance.runtimeDisposers.clear()
+  /**
+   * Called from the plugin's fiber body. Installs the manifest contributions on
+   * the fiber's context and starts the worker if the plugin activates on
+   * startup. Runs again after a reload, so it must not assume a clean slate.
+   */
+  attachFiber(pluginId: string, ctx: Context): void {
+    const instance = this.instances.get(pluginId)
+    if (!instance) return
+    // A reload reverted the previous generation's effects, worker included, so
+    // the activation state has to start over with them.
+    instance.ctx = ctx
+    instance.effects.clear()
+    instance.worker = null
+    instance.rpc = null
+    instance.activating = null
+    this.contribute(instance)
+    const activation = instance.record.manifest.activation ?? ['onStartup']
+    if (activation.includes('onStartup')) void this.ensureActivated(pluginId)
+  }
+
+  private async disposeInstance(instance: PluginInstance): Promise<void> {
     instance.rpc?.failAllPending('plugin disposed')
-    instance.worker?.terminate()
+    // Reverts every contribution, every runtime registration and the worker
+    // itself — they are all effects on this fiber.
+    await instance.fiber?.dispose()
+    instance.fiber = null
+    instance.ctx = null
+    instance.effects.clear()
     instance.worker = null
     instance.rpc = null
     instance.activating = null
@@ -284,40 +337,49 @@ class PluginHost {
     return instance.activating
   }
 
+  // The worker is an effect on the plugin's fiber: spawning it registers its
+  // own inverse, so an unload terminates it even mid-activation.
   private activate(instance: PluginInstance): Promise<void> {
-    const worker = new Worker(new URL('./sandbox/bootstrap.ts', import.meta.url), {
-      type: 'module'
-    })
-    const rpc = new RpcEndpoint((message) => worker.postMessage(message), 'even')
-    this.registerHostMethods(instance, rpc)
-    instance.worker = worker
-    instance.rpc = rpc
+    const ctx = instance.ctx
+    if (!ctx) return Promise.reject(new Error(`plugin not mounted: ${instance.record.id}`))
 
     return new Promise((resolve, reject) => {
-      rpc.onEvent('lifecycle:ready', () => resolve())
-      rpc.onEvent('lifecycle:error', (payload) => {
-        const message = (payload as { message?: string }).message ?? 'plugin crashed'
-        this.crash(instance, message)
-        reject(new Error(message))
-      })
-      worker.onmessage = (event) => rpc.handleMessage(event.data)
-      worker.onerror = (event) => {
-        this.crash(instance, event.message || 'worker error')
-        reject(new Error(event.message || 'worker error'))
-      }
-      worker.postMessage({
-        kind: 'init',
-        pluginId: instance.record.id,
-        entryUrl: `grove-plugin://${instance.record.id}/${instance.record.manifest.entry}`,
-        apiVersion: GROVE_API_VERSION
-      })
+      ctx.effect(() => {
+        const worker = new Worker(new URL('./sandbox/bootstrap.ts', import.meta.url), {
+          type: 'module'
+        })
+        const rpc = new RpcEndpoint((message) => worker.postMessage(message), 'even')
+        this.registerHostMethods(instance, rpc)
+        instance.worker = worker
+        instance.rpc = rpc
+
+        rpc.onEvent('lifecycle:ready', () => resolve())
+        rpc.onEvent('lifecycle:error', (payload) => {
+          const message = (payload as { message?: string }).message ?? 'plugin crashed'
+          this.crash(instance, message)
+          reject(new Error(message))
+        })
+        worker.onmessage = (event) => rpc.handleMessage(event.data)
+        worker.onerror = (event) => {
+          this.crash(instance, event.message || 'worker error')
+          reject(new Error(event.message || 'worker error'))
+        }
+        worker.postMessage({
+          kind: 'init',
+          pluginId: instance.record.id,
+          entryUrl: `grove-plugin://${instance.record.id}/${instance.record.manifest.entry}`,
+          apiVersion: GROVE_API_VERSION
+        })
+
+        return () => worker.terminate()
+      }, `worker:${instance.record.id}`)
     })
   }
 
   private crash(instance: PluginInstance, message: string): void {
     instance.runtimeError = message
     dialogs.notify({ level: 'error', message: `Plugin ${instance.record.id}: ${message}` })
-    this.disposeInstance(instance)
+    void this.disposeInstance(instance)
   }
 
   async deactivate(pluginId: string): Promise<void> {
@@ -327,156 +389,193 @@ class PluginHost {
       instance.rpc.request('lifecycle:deactivate', {}),
       new Promise((resolve) => setTimeout(resolve, 2000))
     ]).catch(() => {})
-    this.disposeInstance(instance)
+    await this.disposeInstance(instance)
   }
 
   // ── Manifest contributions (lazy stubs, registered before activation) ──
+  // Each one is an effect on the plugin's fiber, so it is reverted by an unload
+  // and by the disappearance of the service it was registered against.
   private contribute(instance: PluginInstance): void {
     const { manifest } = instance.record
     const contributes = manifest.contributes ?? {}
-    const add = (dispose: () => void): void => {
-      instance.contributionDisposers.push(dispose)
+    const ctx = instance.ctx
+    if (!ctx) return
+    const pluginId = instance.record.id
+    const add = (execute: () => () => void, label: string): void => {
+      ctx.effect(execute, `${pluginId}:${label}`)
     }
 
     for (const command of contributes.commands ?? []) {
-      this.commandOwners.set(command.id, instance.record.id)
-      add(
-        commands.register({
+      add(() => {
+        this.commandOwners.set(command.id, pluginId)
+        const dispose = ctx.commands.register({
           id: command.id,
           title: command.title,
           group: command.group,
           keywords: command.keywords,
           run: () => void this.executeCommandById(command.id, [])
         })
-      )
-      add(() => this.commandOwners.delete(command.id))
+        return () => {
+          dispose()
+          this.commandOwners.delete(command.id)
+        }
+      }, `command:${command.id}`)
     }
 
     for (const binding of contributes.keybindings ?? []) {
       add(
-        keymap.registerBindings([
-          {
-            id: binding.id,
-            keys: binding.keys,
-            context: binding.context,
-            mode: binding.mode,
-            group: binding.group,
-            description: binding.description,
-            run: () => void this.executeCommandById(binding.command, [])
-          }
-        ])
+        () =>
+          ctx.keymap.registerBindings([
+            {
+              id: binding.id,
+              keys: binding.keys,
+              context: binding.context,
+              mode: binding.mode,
+              group: binding.group,
+              description: binding.description,
+              run: () => void this.executeCommandById(binding.command, [])
+            }
+          ]),
+        `keybinding:${binding.id}`
       )
     }
 
     for (const overlay of contributes.overlays ?? []) {
-      instance.overlayDeclarations.set(overlay.id, overlay)
-      this.overlayOwners.set(overlay.id, instance.record.id)
       add(() => {
-        instance.overlayDeclarations.delete(overlay.id)
-        this.overlayOwners.delete(overlay.id)
-      })
+        instance.overlayDeclarations.set(overlay.id, overlay)
+        this.overlayOwners.set(overlay.id, pluginId)
+        return () => {
+          instance.overlayDeclarations.delete(overlay.id)
+          this.overlayOwners.delete(overlay.id)
+        }
+      }, `overlay:${overlay.id}`)
     }
 
     for (const item of contributes.sidebar ?? []) {
       add(
-        sidebar.register({
-          id: item.id,
-          label: item.label,
-          icon: item.icon,
-          order: item.order ?? 100,
-          run: () => void this.executeCommandById(item.command, [])
-        })
+        () =>
+          ctx.sidebar.registerLauncher({
+            id: item.id,
+            label: item.label,
+            icon: item.icon,
+            order: item.order ?? 100,
+            run: () => void this.executeCommandById(item.command, [])
+          }),
+        `sidebar:${item.id}`
       )
     }
 
     for (const item of contributes.menu ?? []) {
       add(
-        menu.registerItems([
-          {
-            id: item.id,
-            menuId: item.menuId,
-            label: item.label,
-            group: item.group,
-            order: item.order,
-            run: () => void this.executeCommandById(item.command, [])
-          }
-        ])
+        () =>
+          ctx.menu.registerItems([
+            {
+              id: item.id,
+              menuId: item.menuId,
+              label: item.label,
+              group: item.group,
+              order: item.order,
+              run: () => void this.executeCommandById(item.command, [])
+            }
+          ]),
+        `menu:${item.id}`
       )
     }
 
     for (const item of contributes.statusBar ?? []) {
-      this.statusItems = {
-        ...this.statusItems,
-        [item.id]: { text: item.text ?? '', tooltip: item.tooltip, command: item.command }
-      }
-      add(
-        statusBar.register({
+      add(() => {
+        this.statusItems = {
+          ...this.statusItems,
+          [item.id]: { text: item.text ?? '', tooltip: item.tooltip, command: item.command }
+        }
+        const dispose = ctx.statusbar.register({
           id: item.id,
           align: item.align,
           order: item.order ?? 50,
           component: DeclarativeStatusItem,
           props: { itemId: item.id }
         })
-      )
+        return () => {
+          dispose()
+          const next = { ...this.statusItems }
+          delete next[item.id]
+          this.statusItems = next
+        }
+      }, `status:${item.id}`)
     }
 
     for (const pane of contributes.panes ?? []) {
-      this.paneOwners.set(pane.id, instance.record.id)
-      add(
-        panes.register({
+      add(() => {
+        this.paneOwners.set(pane.id, pluginId)
+        const dispose = ctx.panes.register({
           id: pane.id,
           title: pane.title,
           component: DeclarativeSurface
         })
-      )
-      add(() => this.paneOwners.delete(pane.id))
+        return () => {
+          dispose()
+          this.paneOwners.delete(pane.id)
+        }
+      }, `pane:${pane.id}`)
+
       if (pane.panel) {
         add(
-          panels.register({
-            id: pane.id,
-            title: pane.panel.title ?? pane.title,
-            paneTypeId: pane.id,
-            order: pane.panel.order
-          })
+          () =>
+            ctx.panel.registerTab({
+              id: pane.id,
+              title: pane.panel?.title ?? pane.title,
+              paneTypeId: pane.id,
+              order: pane.panel?.order
+            }),
+          `panel:${pane.id}`
         )
       }
     }
 
     for (const view of contributes.views ?? []) {
       add(
-        views.register({
-          id: view.id,
-          label: view.label,
-          order: view.order ?? 50,
-          buildTree: () => sanitize(view.tree) ?? createLeaf('nvim')
-        })
+        () =>
+          ctx.views.register({
+            id: view.id,
+            label: view.label,
+            order: view.order ?? 50,
+            buildTree: () => sanitize(view.tree) ?? createLeaf('nvim')
+          }),
+        `view:${view.id}`
       )
     }
 
     if (Array.isArray(contributes.settings) && contributes.settings.length > 0) {
       try {
         add(
-          settings.registerSchemas({
-            contributorId: instance.record.id,
-            title: manifest.name,
-            settings: contributes.settings as SettingDefinition[]
-          })
+          () =>
+            ctx.settings.registerSchemas({
+              contributorId: pluginId,
+              title: manifest.name,
+              settings: contributes.settings as SettingDefinition[]
+            }),
+          'settings'
         )
       } catch (error) {
-        console.warn(`plugin ${instance.record.id}: invalid settings schema`, error)
+        console.warn(`plugin ${pluginId}: invalid settings schema`, error)
       }
     }
   }
 
   // ── Worker→host API methods ───────────────────────────────────
   private registerHostMethods(instance: PluginInstance, rpc: RpcEndpoint): void {
-    const track = (key: string, dispose: () => void): void => {
-      instance.runtimeDisposers.get(key)?.()
-      instance.runtimeDisposers.set(key, dispose)
+    // Runtime registrations are effects too, keyed so the plugin can revert one
+    // on its own through the matching `:dispose` call. Re-registering the same
+    // key reverts the previous effect first.
+    const track = (key: string, execute: () => () => void): void => {
+      const ctx = instance.ctx
+      if (!ctx) return
+      instance.effects.get(key)?.()
+      instance.effects.set(key, ctx.effect(execute, `${instance.record.id}:${key}`))
     }
     const disposeTracked = (key: string): void => {
-      instance.runtimeDisposers.get(key)?.()
-      instance.runtimeDisposers.delete(key)
+      instance.effects.get(key)?.()
+      instance.effects.delete(key)
     }
 
     this.registerUiMethods(instance, rpc, track, disposeTracked)
@@ -506,25 +605,30 @@ class PluginHost {
   private registerUiMethods(
     instance: PluginInstance,
     rpc: RpcEndpoint,
-    track: (key: string, dispose: () => void) => void,
+    track: (key: string, execute: () => () => void) => void,
     disposeTracked: (key: string) => void
   ): void {
     const pluginId = instance.record.id
+    const ctx = instance.ctx
+    if (!ctx) return
 
     rpc.handle('host.registerCommand', async (params) => {
       const { id } = params as { id: string }
       // Manifest-contributed commands already have a stub; only register new ones.
       if (!this.commandOwners.has(id)) {
-        this.commandOwners.set(id, pluginId)
-        track(
-          `command:${id}`,
-          commands.register({
+        track(`command:${id}`, () => {
+          this.commandOwners.set(id, pluginId)
+          const dispose = ctx.commands.register({
             id,
             title: id,
             group: instance.record.manifest.name,
             run: () => void this.executeCommandById(id, [])
           })
-        )
+          return () => {
+            dispose()
+            this.commandOwners.delete(id)
+          }
+        })
       }
       return undefined
     })
@@ -547,9 +651,8 @@ class PluginHost {
         description: string
         command: string
       }
-      track(
-        `keybinding:${binding.id}`,
-        keymap.registerBindings([
+      track(`keybinding:${binding.id}`, () =>
+        ctx.keymap.registerBindings([
           { ...binding, run: () => void this.executeCommandById(binding.command, []) }
         ])
       )
@@ -591,20 +694,25 @@ class PluginHost {
         tooltip?: string
         command?: string
       }
-      this.statusItems = {
-        ...this.statusItems,
-        [item.id]: { text: item.text, tooltip: item.tooltip, command: item.command }
-      }
-      track(
-        `status:${item.id}`,
-        statusBar.register({
+      track(`status:${item.id}`, () => {
+        this.statusItems = {
+          ...this.statusItems,
+          [item.id]: { text: item.text, tooltip: item.tooltip, command: item.command }
+        }
+        const dispose = ctx.statusbar.register({
           id: item.id,
           align: item.align,
           order: item.order ?? 50,
           component: DeclarativeStatusItem,
           props: { itemId: item.id }
         })
-      )
+        return () => {
+          dispose()
+          const next = { ...this.statusItems }
+          delete next[item.id]
+          this.statusItems = next
+        }
+      })
       return undefined
     })
     rpc.handle('host.addStatusBarItem:dispose', async (params) => {
@@ -621,9 +729,8 @@ class PluginHost {
 
     rpc.handle('host.addSidebarItem', async (params) => {
       const item = params as { id: string; label: string; icon: string; order?: number; command: string }
-      track(
-        `sidebar:${item.id}`,
-        sidebar.register({
+      track(`sidebar:${item.id}`, () =>
+        ctx.sidebar.registerLauncher({
           id: item.id,
           label: item.label,
           icon: item.icon,
@@ -647,9 +754,8 @@ class PluginHost {
         order?: number
         command: string
       }
-      track(
-        `menu:${item.id}`,
-        menu.registerItems([
+      track(`menu:${item.id}`, () =>
+        ctx.menu.registerItems([
           { ...item, run: () => void this.executeCommandById(item.command, []) }
         ])
       )
@@ -662,14 +768,18 @@ class PluginHost {
 
     rpc.handle('host.registerPaneType', async (params) => {
       const { id } = params as { id: string }
-      this.paneOwners.set(id, pluginId)
-      track(`pane:${id}`, panes.register({ id, title: id, component: DeclarativeSurface }))
+      track(`pane:${id}`, () => {
+        this.paneOwners.set(id, pluginId)
+        const dispose = ctx.panes.register({ id, title: id, component: DeclarativeSurface })
+        return () => {
+          dispose()
+          this.paneOwners.delete(id)
+        }
+      })
       return undefined
     })
     rpc.handle('host.registerPaneType:dispose', async (params) => {
-      const { id } = params as { id: string }
-      disposeTracked(`pane:${id}`)
-      this.paneOwners.delete(id)
+      disposeTracked(`pane:${(params as { id: string }).id}`)
       return undefined
     })
     rpc.handle('host.updatePane', async (params) => {
@@ -680,9 +790,8 @@ class PluginHost {
 
     rpc.handle('host.registerView', async (params) => {
       const view = params as { id: string; label: string; order?: number; tree: unknown }
-      track(
-        `view:${view.id}`,
-        views.register({
+      track(`view:${view.id}`, () =>
+        ctx.views.register({
           id: view.id,
           label: view.label,
           order: view.order ?? 50,
@@ -716,6 +825,8 @@ class PluginHost {
   }
 
   private registerWorkspaceMethods(instance: PluginInstance, rpc: RpcEndpoint): void {
+    const ctx = instance.ctx
+
     rpc.handle('host.getCurrentWorktree', async () => {
       const worktree = store.selectedWorktree
       if (!worktree) return null
@@ -723,7 +834,9 @@ class PluginHost {
     })
 
     rpc.handle('host.getActiveFile', async () => {
-      const session = activeNvimSession()
+      // Through the editor service when the fiber is live, so a plugin cannot
+      // reach the buffer of an editor that has been unloaded.
+      const session = ctx ? ctx.editor.activeSession() : activeNvimSession()
       if (!session) return null
       const active = await session.getActiveFile()
       if (!active) return null
@@ -802,12 +915,23 @@ class PluginHost {
     })
     rpc.handle('host.watchSetting', async (params) => {
       const { key } = params as { key: string }
+      const ctx = instance.ctx
+      if (!ctx) return undefined
       if (instance.watchedSettings.has(key)) return undefined
       instance.watchedSettings.add(key)
-      const dispose = settings.onChange(key, (value) => {
-        instance.rpc?.event('settings:changed', { key, value })
-      })
-      instance.runtimeDisposers.set(`setting-watch:${key}`, dispose)
+      const watchKey = `setting-watch:${key}`
+      instance.effects.set(
+        watchKey,
+        ctx.effect(() => {
+          const dispose = settings.onChange(key, (value) => {
+            instance.rpc?.event('settings:changed', { key, value })
+          })
+          return () => {
+            dispose()
+            instance.watchedSettings.delete(key)
+          }
+        }, `${instance.record.id}:${watchKey}`)
+      )
       return undefined
     })
   }

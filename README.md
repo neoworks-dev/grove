@@ -38,11 +38,23 @@ slot is stable and persisted.
 
 ## Architecture
 
+Grove is built on [`@neoworks/extension-system`](https://github.com/neoworks-dev/extension-system),
+a plugin kernel with revertible effects and reactive dependency resolution. Core features and
+third-party plugins use the same mechanism: a plugin registers everything through `ctx.effect`,
+which carries the inverse, and declares what it needs through `inject`, so it only runs while
+those services exist.
+
 - `src/main/` — privileged backend (pure, unit-testable TS): `git`, `config`, `ports`,
-  `env`, `worktrees`, `services`, `agents`, `state`, `ipc`.
+  `env`, `worktrees`, `services`, `state`.
+  - `src/main/kernel/` — the main-process root context and the service contracts routes inject.
+  - `src/main/routes/` — the IPC surface, one plugin per domain.
 - `src/preload/` — typed `window.workbench` bridge (context isolation on).
-- `src/renderer/` — Svelte 5 UI: sidebar, editor, diff, services, logs, preview, agent,
-  dashboard.
+- `src/renderer/` — Svelte 5 UI.
+  - `src/renderer/src/kernel/services/` — the surfaces that host everything else: `sidebar`,
+    `editor`, `panel`.
+  - `src/renderer/src/kernel/plugins/` — the core features that contribute into them.
+  - `src/renderer/src/plugins/` — the sandboxed third-party plugin host: one Web Worker per
+    plugin, one fiber per record, permissions brokered in main.
 - `src/shared/types.ts` — shared type definitions.
 
 ## Project setup

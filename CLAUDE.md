@@ -23,11 +23,42 @@ bun scripts/grove-debug.ts scenarios             # replayable end-to-end flows
 bun scripts/grove-debug.ts scenario review-e2e   # drives a whole gated review
 ```
 
-`debug.renderer.eval` reaches `window.__grove_debug` (store, review, keymap, layout, inlineEdit, nvimRegistry) and `window.workbench.*`, so you can read any app state and call any IPC the UI calls.
+`debug.renderer.eval` reaches `window.__grove_debug` (ctx, store, review, keymap, layout, inlineEdit, nvimRegistry) and `window.workbench.*`, so you can read any app state and call any IPC the UI calls.
+
+`ctx` is the renderer's kernel context. `ctx.fiber.getEffects()` lists everything currently installed, `ctx.registry.values()` lists the mounted plugins, and `ctx.panes` / `ctx.commands` / `ctx.sidebar` / `ctx.editor` / `ctx.panel` reach the services they contribute into.
 
 Ask me to restart the app after changing main-process code; the renderer hot-reloads on its own.
 
 If a UI bug is reported, reproduce it through the harness and confirm the mechanism before proposing a fix. Guessing from source has been wrong more often than right.
+
+## Extension system
+
+Grove runs on `@neoworks/extension-system`. Core features and third-party plugins are both
+plugins on one kernel — read its skill (`skills/extension-system/SKILL.md` in that package)
+before touching plugin code.
+
+Two rules carry everything here:
+
+- **Register through `ctx.effect`.** Anything a plugin does to the outside world hands back
+  the inverse. Renderer registries (`ctx.commands.register`, `ctx.panes.register`, …) already
+  return a disposer, so wrapping them is a one-liner. Raw APIs — `setInterval`, a DOM listener,
+  a `Worker`, `ipcMain.handle` — must return their own.
+- **Declare what you need through `inject`.** A plugin contributing to the sidebar injects
+  `'sidebar'` and only runs while it exists.
+
+Where things live:
+
+- `src/renderer/src/kernel/` — the renderer root context, the registries published as services,
+  the host services (`sidebar`, `editor`, `panel`) and the core feature plugins.
+- `src/main/kernel/` + `src/main/routes/` — the main root context, the service contracts, and
+  the IPC surface split one plugin per domain.
+- `src/renderer/src/plugins/` — the sandboxed third-party host: one Worker and one fiber per
+  plugin record.
+
+Do not put `$state` class fields on a `Service` subclass. Svelte compiles them into private
+fields, and `isolate`/`intercept` re-create the service through `Object.create()`, which then
+throws on the inherited accessor. Keep reactive state in the `.svelte.ts` registry the service
+delegates to.
 
 ## Style
 

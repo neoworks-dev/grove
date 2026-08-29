@@ -2,21 +2,17 @@ import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { appStub, electronStub } from './electronStub'
 
 // paths.ts reads electron's app at call time for userData, the app path and the
 // packaged flag; all three are redirected per test.
 let userDataPath = ''
 let appPath = ''
 let packaged = false
-mock.module('electron', () => ({
-  app: {
-    get isPackaged() {
-      return packaged
-    },
-    getAppPath: () => appPath,
-    getPath: () => userDataPath
-  }
-}))
+Object.defineProperty(appStub, 'isPackaged', { get: () => packaged, configurable: true })
+appStub.getAppPath = () => appPath
+appStub.getPath = () => userDataPath
+mock.module('electron', () => electronStub)
 
 const { nibLaunch, nibAvailable, nibSocketPath, nibDataDir } = await import('../src/main/nib/paths')
 

@@ -1,14 +1,9 @@
 import { describe, it, expect, mock } from 'bun:test'
+import { electronStub } from './electronStub'
 
 // nvim.ts pulls in nvimPaths, which imports electron's `app` at load. Stub it so
 // the manager can be constructed under bun's non-electron test runtime.
-mock.module('electron', () => ({
-  app: {
-    isPackaged: false,
-    getAppPath: () => process.cwd(),
-    getPath: () => process.cwd()
-  }
-}))
+mock.module('electron', () => electronStub)
 
 const { NeovimManager } = await import('../src/main/nvim')
 

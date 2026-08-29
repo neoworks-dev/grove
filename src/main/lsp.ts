@@ -54,7 +54,7 @@ import {
   type Command,
   type InlayHint
 } from 'vscode-languageserver-protocol'
-import { catalogEntry, listInstalled } from './extensions'
+import { catalogEntry, listInstalled } from './editorCatalog'
 import type { CatalogEntry, LspCompletion, LspDiagnostic, LspPosition } from '../shared/types'
 
 export interface LspEvents {

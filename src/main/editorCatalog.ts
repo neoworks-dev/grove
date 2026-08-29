@@ -1,8 +1,10 @@
-// Editor extensions catalog: tree-sitter grammars, color themes, and LSP
-// servers. The catalog is a curated manifest (grammar wasm from tree-sitter-wasms
-// on jsDelivr, highlight queries from nvim-treesitter). Installing a grammar
-// downloads its wasm + highlights into userData; themes/LSP entries are metadata.
-// Installed set is persisted app-globally in state.
+// Editor catalog: tree-sitter grammars, color themes, and LSP servers. Not to
+// be confused with the extension system (plugins) — these are downloadable
+// editor assets. The catalog is a curated manifest (grammar wasm from
+// tree-sitter-wasms on jsDelivr, highlight queries from nvim-treesitter).
+// Installing a grammar downloads its wasm + highlights into userData;
+// themes/LSP entries are metadata. Installed set is persisted app-globally in
+// state.
 
 import { app } from 'electron'
 import { readFile, writeFile, mkdir, rm } from 'fs/promises'

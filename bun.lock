@@ -12,6 +12,7 @@
         "@iconify/svelte": "^5.2.2",
         "@msgpack/msgpack": "^3.1.3",
         "@neoworks-dev/ui": "link:@neoworks-dev/ui",
+        "@neoworks/extension-system": "link:@neoworks/extension-system",
         "@vscode/ripgrep": "^1.18.0",
         "@xterm/addon-fit": "^0.11.0",
         "@xterm/xterm": "^6.0.0",
@@ -260,6 +261,8 @@
     "@msgpack/msgpack": ["@msgpack/msgpack@3.1.3", "", {}, "sha512-47XIizs9XZXvuJgoaJUIE2lFoID8ugvc0jzSHP+Ptfk8nTbnR8g788wv48N03Kx0UkAv559HWRQ3yzOgzlRNUA=="],
 
     "@neoworks-dev/ui": ["@neoworks-dev/ui@link:@neoworks-dev/ui", {}],
+
+    "@neoworks/extension-system": ["@neoworks/extension-system@link:@neoworks/extension-system", {}],
 
     "@noble/hashes": ["@noble/hashes@2.2.0", "", {}, "sha512-IYqDGiTXab6FniAgnSdZwgWbomxpy9FtYvLKs7wCUs2a8RkITG+DFGO1DM9cr+E3/RgADRpFjrKVaJ1z6sjtEg=="],
 

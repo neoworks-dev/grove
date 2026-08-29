@@ -1,4 +1,4 @@
-// Renderer side of the extensions system. Loads installed themes into the
+// Renderer side of the editor catalog. Loads installed themes into the
 // color-theme registry, at startup and after an install/enable change.
 // Installed grammars are consumed by the embedded Neovim (nvim-treesitter),
 // not the renderer, so only themes are registered here.

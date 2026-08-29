@@ -3,6 +3,8 @@ import { mount } from 'svelte'
 import './assets/main.css'
 
 import App from './App.svelte'
+import { bootKernel } from './kernel/boot'
+import { groveContext } from './kernel/context'
 import { startAppEffects } from './lib/appEffects.svelte'
 import { store } from './lib/store.svelte'
 import { review } from './lib/review.svelte'
@@ -12,6 +14,17 @@ import { inlineEdit } from './lib/inlineEdit.svelte'
 import { nibSessions } from './lib/nib/sessions.svelte'
 import * as nibTranscript from './lib/nib/transcript'
 import * as nvimRegistry from './lib/nvim/registry'
+
+// The kernel goes up first: core plugins publish the services the app renders
+// against. A failure here must not blank the window, so it is recorded the same
+// way a failed app effect is and the UI still mounts.
+try {
+  await bootKernel()
+} catch (error) {
+  const message = error instanceof Error ? error.stack || error.message : String(error)
+  console.error('kernel failed to boot', error)
+  ;(window as unknown as Record<string, unknown>).__grove_boot_error = message
+}
 
 const app = mount(App, {
   target: document.getElementById('app')!
@@ -23,6 +36,9 @@ const app = mount(App, {
 // effects run, so a failure in one of them still leaves the app diagnosable.
 if (window.workbench?.debug) {
   ;(window as unknown as Record<string, unknown>).__grove_debug = {
+    // Root plugin context: `ctx.fiber.getEffects()` is the authoritative list of
+    // everything the kernel currently has installed.
+    ctx: groveContext,
     store,
     review,
     keymap,

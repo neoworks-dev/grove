@@ -27,8 +27,9 @@ function cycleReviewMode(): void {
   dialogs.notify({ level: 'info', message: `Edit mode: ${REVIEW_MODE_HINT[mode]}` })
 }
 
-export function registerCoreBindings(): void {
-  keymap.registerBindings([
+/** Register the core keybindings and their palette commands; returns the inverse. */
+export function registerCoreBindings(): () => void {
+  const disposeBindings = keymap.registerBindings([
     {
       id: 'leader.buffers',
       keys: '<Leader> b',
@@ -326,7 +327,7 @@ export function registerCoreBindings(): void {
     }
   ])
 
-  commands.registerAll([
+  const disposeCommands = commands.registerAll([
     {
       id: 'window.splitRight',
       title: 'Window: Split Right',
@@ -454,4 +455,9 @@ export function registerCoreBindings(): void {
       run: cycleReviewMode
     }
   ])
+
+  return () => {
+    disposeBindings()
+    disposeCommands()
+  }
 }

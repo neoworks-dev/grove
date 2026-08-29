@@ -22,7 +22,7 @@ import * as github from './github'
 import * as config from './config'
 import { detectServices } from './detect'
 import * as files from './files'
-import * as extensions from './extensions'
+import * as editorCatalog from './editorCatalog'
 import { LspManager } from './lsp'
 import type { LspPosition, LspRange, LspDiagnostic } from '../shared/types'
 import type { CodeAction, Diagnostic } from 'vscode-languageserver-protocol'
@@ -933,15 +933,15 @@ export function registerIpc(): void {
     return files.removePath(worktree.path, relPath)
   })
 
-  // ── Extensions (grammars / themes / LSP) ──────────────────────
-  ipcMain.handle('extensions:catalog', () => extensions.listCatalog())
-  ipcMain.handle('extensions:installed', () => extensions.listInstalled())
-  ipcMain.handle('extensions:install', (_e, id: string) => extensions.install(id))
-  ipcMain.handle('extensions:uninstall', (_e, id: string) => extensions.uninstall(id))
+  // ── Editor catalog (grammars / themes / LSP servers) ──────────
+  ipcMain.handle('extensions:catalog', () => editorCatalog.listCatalog())
+  ipcMain.handle('extensions:installed', () => editorCatalog.listInstalled())
+  ipcMain.handle('extensions:install', (_e, id: string) => editorCatalog.install(id))
+  ipcMain.handle('extensions:uninstall', (_e, id: string) => editorCatalog.uninstall(id))
   ipcMain.handle('extensions:setEnabled', (_e, id: string, enabled: boolean) =>
-    extensions.setEnabled(id, enabled)
+    editorCatalog.setEnabled(id, enabled)
   )
-  ipcMain.handle('extensions:grammar', (_e, id: string) => extensions.readGrammar(id))
+  ipcMain.handle('extensions:grammar', (_e, id: string) => editorCatalog.readGrammar(id))
 
   // ── LSP ───────────────────────────────────────────────────────
   ipcMain.handle(

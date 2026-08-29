@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { store, applyColorTheme } from '../lib/store.svelte'
-  import { loadInstalledExtensions } from '../lib/extensions'
+  import { loadInstalledExtensions } from '../lib/editorCatalog'
   import { pluginHost } from '../plugins/host.svelte'
   import { layout } from '../lib/layout.svelte'
   import type { CatalogEntry, InstalledExtension } from '../../../shared/types'

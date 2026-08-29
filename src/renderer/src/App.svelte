@@ -40,7 +40,7 @@
   import { pluginHost } from './plugins/host.svelte'
   import { views } from './lib/views.svelte'
   import { menu } from './lib/menu.svelte'
-  import { loadInstalledExtensions } from './lib/extensions'
+  import { loadInstalledExtensions } from './lib/editorCatalog'
   import { initIcons, availablePacks } from './lib/icons'
   import { diagnostics } from './lib/diagnostics.svelte'
   import { initThemes } from './lib/themes'

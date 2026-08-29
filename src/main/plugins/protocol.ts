@@ -24,7 +24,8 @@ export function registerPluginScheme(): void {
   ])
 }
 
-export function registerPluginProtocol(registry: PluginRegistry): void {
+/** Serve grove-plugin:// bundle files; returns the inverse. */
+export function registerPluginProtocol(registry: PluginRegistry): () => void {
   protocol.handle('grove-plugin', async (request) => {
     const url = new URL(request.url)
     const pluginId = url.hostname
@@ -45,4 +46,5 @@ export function registerPluginProtocol(registry: PluginRegistry): void {
       return new Response('not found', { status: 404 })
     }
   })
+  return () => protocol.unhandle('grove-plugin')
 }

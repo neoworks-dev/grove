@@ -12,6 +12,7 @@ import {
 } from 'node:fs/promises'
 import * as nodeOs from 'node:os'
 import { join } from 'node:path'
+import { appStub, electronStub } from './electronStub'
 
 // nvimPaths derives the config root from os.homedir() and the bundled config from
 // app.getAppPath(); both are redirected into a temp tree per test. Stubbing
@@ -19,21 +20,13 @@ import { join } from 'node:path'
 // the developer's real ~/.config/grove.
 let appRoot = ''
 let testHome = ''
-mock.module('electron', () => ({
-  app: {
-    isPackaged: false,
-    getAppPath: () => appRoot,
-    getPath: () => appRoot
-  }
-}))
+appStub.getAppPath = () => appRoot
+appStub.getPath = () => appRoot
+mock.module('electron', () => electronStub)
 mock.module('node:os', () => ({ ...nodeOs, homedir: () => testHome }))
 
-const {
-  ensureNvimUserConfig,
-  ensureCopilotConfigLink,
-  nvimUserConfigDir,
-  bundledNvimConfigDir
-} = await import('../src/main/nvimPaths')
+const { ensureNvimUserConfig, ensureCopilotConfigLink, nvimUserConfigDir, bundledNvimConfigDir } =
+  await import('../src/main/nvimPaths')
 
 let sandbox = ''
 

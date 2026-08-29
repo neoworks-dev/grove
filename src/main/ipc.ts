@@ -5,6 +5,8 @@
 import { app, ipcMain, dialog, shell, BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { access } from 'fs/promises'
 import { join } from 'path'
+import type { Context } from '@neoworks/extension-system'
+import { mainContext } from './kernel/context'
 import type {
   WorkbenchConfig,
   Worktree,
@@ -73,13 +75,16 @@ import { NibReviewBridge, NIB_AGENT } from './nib/reviewBridge'
 import { NibClient } from './nib/client'
 import type { SettingScope } from '../shared/settings'
 
-interface Context {
+interface RepoContext {
   repoPath: string | null
   config: WorkbenchConfig | null
   worktrees: Worktree[]
 }
 
-const context: Context = { repoPath: null, config: null, worktrees: [] }
+const context: RepoContext = { repoPath: null, config: null, worktrees: [] }
+
+// The listener shape ipcMain.handle takes; route() forwards it unchanged.
+type IpcHandler = Parameters<typeof ipcMain.handle>[1]
 
 function send(channel: string, payload: unknown): void {
   for (const window of BrowserWindow.getAllWindows()) {
@@ -533,762 +538,771 @@ async function openRepo(repoPath: string): Promise<{
   }
 }
 
-export function registerIpc(): void {
-  // ── Repo ──────────────────────────────────────────────────────
-  ipcMain.handle('repo:pick', async () => {
-    const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
-    if (result.canceled || result.filePaths.length === 0) return null
-    return openRepo(result.filePaths[0])
-  })
+/**
+ * Every IPC channel Grove exposes, mounted as one plugin. Each handler is an
+ * effect, so `ipcMain.removeHandler` runs when the plugin unloads instead of a
+ * stale handler outliving the subsystem behind it.
+ */
+const ipcRoutes = {
+  name: 'main/ipc',
 
-  ipcMain.handle('repo:open', (_e, repoPath: string) => openRepo(repoPath))
-
-  ipcMain.handle('repo:last', async () => {
-    const state = await loadState()
-    return state.lastRepoPath
-  })
-
-  // ── Worktrees ─────────────────────────────────────────────────
-  ipcMain.handle('worktrees:list', () => refreshWorktrees())
-
-  ipcMain.handle(
-    'worktrees:create',
-    async (_e, options: { name: string; baseBranch: string; newBranch?: string }) => {
-      const { repoPath, config: cfg } = requireRepo()
-      const created = await worktrees.createWorktree(repoPath, cfg, options, (worktreeId, line) =>
-        send('event:log', { worktreeId, source: 'service', name: 'setup', line })
-      )
-      await refreshWorktrees()
-      return created
+  apply(ctx: Context): void {
+    const route = (channel: string, handler: IpcHandler): void => {
+      ctx.effect(() => {
+        ipcMain.handle(channel, handler)
+        return () => ipcMain.removeHandler(channel)
+      }, `ipc:${channel}`)
     }
-  )
 
-  ipcMain.handle('worktrees:remove', async (_e, worktreeId: string, force: boolean) => {
-    const { repoPath } = requireRepo()
-    const worktree = findWorktree(worktreeId)
-    await supervisor.stopAllForWorktree(worktreeId)
-    await worktrees.removeWorktree(repoPath, worktree.path, force)
-    return refreshWorktrees()
-  })
+    // ── Repo ──────────────────────────────────────────────────────
+    route('repo:pick', async () => {
+      const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
+      if (result.canceled || result.filePaths.length === 0) return null
+      return openRepo(result.filePaths[0])
+    })
 
-  // ── Git (branches + diff) ─────────────────────────────────────
-  ipcMain.handle('git:branches', () => {
-    const { repoPath } = requireRepo()
-    return git.listBranches(repoPath)
-  })
+    route('repo:open', (_e, repoPath: string) => openRepo(repoPath))
 
-  ipcMain.handle('git:changedFiles', (_e, worktreeId: string) => {
-    const worktree = findWorktree(worktreeId)
-    return git.changedFiles(worktree.path)
-  })
+    route('repo:last', async () => {
+      const state = await loadState()
+      return state.lastRepoPath
+    })
 
-  ipcMain.handle('git:diffSides', (_e, worktreeId: string, file: DiffFile) => {
-    const worktree = findWorktree(worktreeId)
-    return git.diffSides(worktree.path, file)
-  })
+    // ── Worktrees ─────────────────────────────────────────────────
+    route('worktrees:list', () => refreshWorktrees())
 
-  ipcMain.handle('git:diffHunks', (_e, worktreeId: string, file: DiffFile) => {
-    const worktree = findWorktree(worktreeId)
-    return git.diffHunks(worktree.path, file)
-  })
+    route(
+      'worktrees:create',
+      async (_e, options: { name: string; baseBranch: string; newBranch?: string }) => {
+        const { repoPath, config: cfg } = requireRepo()
+        const created = await worktrees.createWorktree(repoPath, cfg, options, (worktreeId, line) =>
+          send('event:log', { worktreeId, source: 'service', name: 'setup', line })
+        )
+        await refreshWorktrees()
+        return created
+      }
+    )
 
-  ipcMain.handle('git:diffStats', (_e, worktreeId: string) => {
-    const worktree = findWorktree(worktreeId)
-    return git.diffStats(worktree.path)
-  })
-
-  // ── Local-only checkpoints ──────────────────────────────────────
-  ipcMain.handle('checkpoints:list', (_e, worktreeId: string) => {
-    const worktree = findWorktree(worktreeId)
-    return checkpoints.list(worktree.path)
-  })
-
-  ipcMain.handle('checkpoints:snapshot', (_e, worktreeId: string, note?: string) => {
-    const worktree = findWorktree(worktreeId)
-    return checkpoints.snapshot(worktree.path, 'manual', { note })
-  })
-
-  ipcMain.handle('checkpoints:restore', (_e, worktreeId: string, commit: string) => {
-    const worktree = findWorktree(worktreeId)
-    return checkpoints.restore(worktree.path, commit)
-  })
-
-  // ── Inline agent edit (per-hunk accept/reject) ──────────────────
-  ipcMain.handle(
-    'git:beginInlineReview',
-    async (_e, worktreeId: string, relPath: string, snapshot: string) => {
+    route('worktrees:remove', async (_e, worktreeId: string, force: boolean) => {
+      const { repoPath } = requireRepo()
       const worktree = findWorktree(worktreeId)
-      const hunks = await inlineDiff.diffSnapshot(worktree.path, relPath, snapshot)
-      const ranges = inlineDiff.rebuildWithAccepted(
-        snapshot,
-        hunks,
-        hunks.map(() => true)
-      ).ranges
-      return { hunks, ranges }
-    }
-  )
+      await supervisor.stopAllForWorktree(worktreeId)
+      await worktrees.removeWorktree(repoPath, worktree.path, force)
+      return refreshWorktrees()
+    })
 
-  ipcMain.handle(
-    'git:applyInlineReview',
-    (
-      _e,
-      worktreeId: string,
-      relPath: string,
-      snapshot: string,
-      hunks: InlineHunk[],
-      applied: boolean[]
-    ) => {
+    // ── Git (branches + diff) ─────────────────────────────────────
+    route('git:branches', () => {
+      const { repoPath } = requireRepo()
+      return git.listBranches(repoPath)
+    })
+
+    route('git:changedFiles', (_e, worktreeId: string) => {
       const worktree = findWorktree(worktreeId)
-      return inlineDiff.applyInlineReview(worktree.path, relPath, snapshot, hunks, applied)
-    }
-  )
+      return git.changedFiles(worktree.path)
+    })
 
-  // Unified diff between two in-memory file versions, for previewing a pending
-  // Write/Edit inline in the permission card.
-  ipcMain.handle('git:diffText', (_e, worktreeId: string, before: string, after: string) => {
-    const worktree = findWorktree(worktreeId)
-    return inlineDiff.diffStrings(worktree.path, before, after)
-  })
+    route('git:diffSides', (_e, worktreeId: string, file: DiffFile) => {
+      const worktree = findWorktree(worktreeId)
+      return git.diffSides(worktree.path, file)
+    })
 
-  // ── Git ship-it chain (stage → commit → push → merge → archive) ──
-  ipcMain.handle('git:stage', (_e, worktreeId: string, paths: string[]) => {
-    const worktree = findWorktree(worktreeId)
-    return git.stage(worktree.path, paths)
-  })
+    route('git:diffHunks', (_e, worktreeId: string, file: DiffFile) => {
+      const worktree = findWorktree(worktreeId)
+      return git.diffHunks(worktree.path, file)
+    })
 
-  ipcMain.handle('git:unstage', (_e, worktreeId: string, paths: string[]) => {
-    const worktree = findWorktree(worktreeId)
-    return git.unstage(worktree.path, paths)
-  })
+    route('git:diffStats', (_e, worktreeId: string) => {
+      const worktree = findWorktree(worktreeId)
+      return git.diffStats(worktree.path)
+    })
 
-  ipcMain.handle('git:commit', (_e, worktreeId: string, message: string) => {
-    const worktree = findWorktree(worktreeId)
-    return git.commit(worktree.path, message)
-  })
+    // ── Local-only checkpoints ──────────────────────────────────────
+    route('checkpoints:list', (_e, worktreeId: string) => {
+      const worktree = findWorktree(worktreeId)
+      return checkpoints.list(worktree.path)
+    })
 
-  ipcMain.handle('git:push', (_e, worktreeId: string) => {
-    const worktree = findWorktree(worktreeId)
-    return git.push(worktree.path)
-  })
+    route('checkpoints:snapshot', (_e, worktreeId: string, note?: string) => {
+      const worktree = findWorktree(worktreeId)
+      return checkpoints.snapshot(worktree.path, 'manual', { note })
+    })
 
-  // Local merge runs in the main worktree (repoPath), merging the feature
-  // worktree's branch into baseBranch.
-  ipcMain.handle('git:mergeLocal', (_e, worktreeId: string, baseBranch: string) => {
-    const { repoPath } = requireRepo()
-    const worktree = findWorktree(worktreeId)
-    return git.mergeToBase(repoPath, worktree.branch, baseBranch)
-  })
+    route('checkpoints:restore', (_e, worktreeId: string, commit: string) => {
+      const worktree = findWorktree(worktreeId)
+      return checkpoints.restore(worktree.path, commit)
+    })
 
-  // ── Worktree-into-worktree merge ────────────────────────────────
-  ipcMain.handle(
-    'git:mergePreview',
-    async (_e, targetWorktreeId: string, sourceWorktreeId: string) => {
+    // ── Inline agent edit (per-hunk accept/reject) ──────────────────
+    route(
+      'git:beginInlineReview',
+      async (_e, worktreeId: string, relPath: string, snapshot: string) => {
+        const worktree = findWorktree(worktreeId)
+        const hunks = await inlineDiff.diffSnapshot(worktree.path, relPath, snapshot)
+        const ranges = inlineDiff.rebuildWithAccepted(
+          snapshot,
+          hunks,
+          hunks.map(() => true)
+        ).ranges
+        return { hunks, ranges }
+      }
+    )
+
+    route(
+      'git:applyInlineReview',
+      (
+        _e,
+        worktreeId: string,
+        relPath: string,
+        snapshot: string,
+        hunks: InlineHunk[],
+        applied: boolean[]
+      ) => {
+        const worktree = findWorktree(worktreeId)
+        return inlineDiff.applyInlineReview(worktree.path, relPath, snapshot, hunks, applied)
+      }
+    )
+
+    // Unified diff between two in-memory file versions, for previewing a pending
+    // Write/Edit inline in the permission card.
+    route('git:diffText', (_e, worktreeId: string, before: string, after: string) => {
+      const worktree = findWorktree(worktreeId)
+      return inlineDiff.diffStrings(worktree.path, before, after)
+    })
+
+    // ── Git ship-it chain (stage → commit → push → merge → archive) ──
+    route('git:stage', (_e, worktreeId: string, paths: string[]) => {
+      const worktree = findWorktree(worktreeId)
+      return git.stage(worktree.path, paths)
+    })
+
+    route('git:unstage', (_e, worktreeId: string, paths: string[]) => {
+      const worktree = findWorktree(worktreeId)
+      return git.unstage(worktree.path, paths)
+    })
+
+    route('git:commit', (_e, worktreeId: string, message: string) => {
+      const worktree = findWorktree(worktreeId)
+      return git.commit(worktree.path, message)
+    })
+
+    route('git:push', (_e, worktreeId: string) => {
+      const worktree = findWorktree(worktreeId)
+      return git.push(worktree.path)
+    })
+
+    // Local merge runs in the main worktree (repoPath), merging the feature
+    // worktree's branch into baseBranch.
+    route('git:mergeLocal', (_e, worktreeId: string, baseBranch: string) => {
+      const { repoPath } = requireRepo()
+      const worktree = findWorktree(worktreeId)
+      return git.mergeToBase(repoPath, worktree.branch, baseBranch)
+    })
+
+    // ── Worktree-into-worktree merge ────────────────────────────────
+    route('git:mergePreview', async (_e, targetWorktreeId: string, sourceWorktreeId: string) => {
       const target = findWorktree(targetWorktreeId)
       const source = findWorktree(sourceWorktreeId)
       const preview = await git.mergePreview(target.path, source.branch)
       return { ...preview, sourceDirty: await git.isDirty(source.path) }
-    }
-  )
-
-  ipcMain.handle(
-    'git:mergeWorktree',
-    async (
-      _e,
-      targetWorktreeId: string,
-      sourceWorktreeId: string,
-      opts: { mode: import('../shared/types').MergeMode; message?: string }
-    ) => {
-      const target = findWorktree(targetWorktreeId)
-      const source = findWorktree(sourceWorktreeId)
-      if (target.isDetached) {
-        throw new Error(
-          `target worktree "${target.name}" is on a detached HEAD; cannot merge into it`
-        )
-      }
-      if (await git.isDirty(target.path)) {
-        throw new Error(
-          `target worktree "${target.name}" has uncommitted changes; commit or revert them before merging`
-        )
-      }
-      // Snapshot the target before the merge so a bad result is one restore away.
-      await checkpoints.snapshot(target.path, 'pre-merge', {
-        note: `merge ${source.branch} → ${target.branch}`
-      })
-      return git.mergeWorktree(target.path, source.branch, opts)
-    }
-  )
-
-  ipcMain.handle('git:mergeAbort', (_e, targetWorktreeId: string) => {
-    const target = findWorktree(targetWorktreeId)
-    return git.abortMerge(target.path)
-  })
-
-  ipcMain.handle('git:mergeContinue', (_e, targetWorktreeId: string) => {
-    const target = findWorktree(targetWorktreeId)
-    return git.continueMerge(target.path)
-  })
-
-  ipcMain.handle('git:mergeConflicts', (_e, targetWorktreeId: string) => {
-    const target = findWorktree(targetWorktreeId)
-    return git.conflictedFiles(target.path)
-  })
-
-  ipcMain.handle('github:openPr', (_e, worktreeId: string, options: OpenPrOptions) => {
-    const worktree = findWorktree(worktreeId)
-    return github.openPr(worktree.path, options)
-  })
-
-  ipcMain.handle('github:mergePr', (_e, worktreeId: string, options: MergePrOptions) => {
-    const worktree = findWorktree(worktreeId)
-    return github.mergePr(worktree.path, options)
-  })
-
-  ipcMain.handle(
-    'worktrees:archive',
-    async (_e, worktreeId: string, options: { deleteBranch: boolean; force: boolean }) => {
-      const { repoPath } = requireRepo()
-      const worktree = findWorktree(worktreeId)
-      await supervisor.stopAllForWorktree(worktreeId)
-      await worktrees.archiveWorktree(repoPath, worktree.path, {
-        branch: worktree.branch,
-        deleteBranch: options.deleteBranch,
-        force: options.force
-      })
-      return refreshWorktrees()
-    }
-  )
-
-  // ── Config ────────────────────────────────────────────────────
-  ipcMain.handle('config:load', async () => {
-    const { repoPath } = requireRepo()
-    context.config = await config.loadConfig(repoPath)
-    return context.config
-  })
-
-  ipcMain.handle('config:exists', () => {
-    const { repoPath } = requireRepo()
-    return config.configExists(repoPath)
-  })
-
-  ipcMain.handle('config:writeSample', async () => {
-    const { repoPath } = requireRepo()
-    const written = await config.writeSampleConfig(repoPath)
-    context.config = await config.loadConfig(repoPath)
-    return written
-  })
-
-  // Setup wizard: propose service entries from what the repo looks like.
-  ipcMain.handle('config:detect', () => {
-    const { repoPath } = requireRepo()
-    return detectServices(repoPath)
-  })
-
-  // Setup wizard: write the reviewed services into workbench.yaml, merged over
-  // whatever is already there so a partially configured repo is not clobbered.
-  ipcMain.handle('config:writeServices', async (_e, services: Record<string, ServiceConfig>) => {
-    const { repoPath } = requireRepo()
-    const current = await config.loadConfig(repoPath)
-    const merged: WorkbenchConfig = {
-      ...current,
-      services: { ...current.services, ...services }
-    }
-    await config.saveConfig(repoPath, merged)
-    context.config = await config.loadConfig(repoPath)
-    return context.config
-  })
-
-  // ── Services ──────────────────────────────────────────────────
-  ipcMain.handle('services:list', (_e, worktreeId: string) => {
-    const { config: cfg } = requireRepo()
-    const worktree = findWorktree(worktreeId)
-    const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
-    return Object.entries(cfg.services).map(([name, service]) => {
-      const live = supervisor.getRuntime(worktreeId, name)
-      return live || supervisor.buildIdleRuntime(worktree, name, service, ports)
     })
-  })
 
-  ipcMain.handle('services:start', (_e, worktreeId: string, name: string) => {
-    const { config: cfg } = requireRepo()
-    const worktree = findWorktree(worktreeId)
-    const service = cfg.services[name]
-    if (!service) throw new Error(`unknown service: ${name}`)
-    const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
-    return supervisor.start(worktree, name, service, ports)
-  })
+    route(
+      'git:mergeWorktree',
+      async (
+        _e,
+        targetWorktreeId: string,
+        sourceWorktreeId: string,
+        opts: { mode: import('../shared/types').MergeMode; message?: string }
+      ) => {
+        const target = findWorktree(targetWorktreeId)
+        const source = findWorktree(sourceWorktreeId)
+        if (target.isDetached) {
+          throw new Error(
+            `target worktree "${target.name}" is on a detached HEAD; cannot merge into it`
+          )
+        }
+        if (await git.isDirty(target.path)) {
+          throw new Error(
+            `target worktree "${target.name}" has uncommitted changes; commit or revert them before merging`
+          )
+        }
+        // Snapshot the target before the merge so a bad result is one restore away.
+        await checkpoints.snapshot(target.path, 'pre-merge', {
+          note: `merge ${source.branch} → ${target.branch}`
+        })
+        return git.mergeWorktree(target.path, source.branch, opts)
+      }
+    )
 
-  ipcMain.handle('services:startAll', async (_e, worktreeId: string) => {
-    const { config: cfg } = requireRepo()
-    const worktree = findWorktree(worktreeId)
-    const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
-    for (const [name, service] of Object.entries(cfg.services)) {
-      await supervisor.start(worktree, name, service, ports)
-    }
-  })
+    route('git:mergeAbort', (_e, targetWorktreeId: string) => {
+      const target = findWorktree(targetWorktreeId)
+      return git.abortMerge(target.path)
+    })
 
-  ipcMain.handle('services:stop', (_e, worktreeId: string, name: string) =>
-    supervisor.stop(worktreeId, name)
-  )
+    route('git:mergeContinue', (_e, targetWorktreeId: string) => {
+      const target = findWorktree(targetWorktreeId)
+      return git.continueMerge(target.path)
+    })
 
-  ipcMain.handle('services:stopAll', (_e, worktreeId: string) =>
-    supervisor.stopAllForWorktree(worktreeId)
-  )
+    route('git:mergeConflicts', (_e, targetWorktreeId: string) => {
+      const target = findWorktree(targetWorktreeId)
+      return git.conflictedFiles(target.path)
+    })
 
-  ipcMain.handle('services:restart', (_e, worktreeId: string, name: string) => {
-    const { config: cfg } = requireRepo()
-    const worktree = findWorktree(worktreeId)
-    const service = cfg.services[name]
-    if (!service) throw new Error(`unknown service: ${name}`)
-    const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
-    return supervisor.start(worktree, name, service, ports)
-  })
+    route('github:openPr', (_e, worktreeId: string, options: OpenPrOptions) => {
+      const worktree = findWorktree(worktreeId)
+      return github.openPr(worktree.path, options)
+    })
 
-  // ── Agent review ──────────────────────────────────────────────
-  // Sessions, transcripts and approvals live on the nib server and are driven
-  // from the renderer over grove-nib://. What stays here is the review flow,
-  // which writes files and therefore cannot.
-  ipcMain.handle('agents:discardReview', (_e, batchId: string) => {
-    nibReviewBridge.discard(batchId)
-    review.drop(batchId)
-  })
+    route('github:mergePr', (_e, worktreeId: string, options: MergePrOptions) => {
+      const worktree = findWorktree(worktreeId)
+      return github.mergePr(worktree.path, options)
+    })
 
-  ipcMain.handle('agents:resolveReview', async (_e, batchId: string, decisions: HunkDecision[]) => {
-    const batch = await review.resolve(batchId, decisions)
-    if (!batch) return
-    // A nib session is answered over its own protocol, not the adapter's
-    // permission resolver.
-    if (batch.agent === NIB_AGENT) {
-      await nibReviewBridge.report(batch, decisions)
-      return
-    }
-  })
+    route(
+      'worktrees:archive',
+      async (_e, worktreeId: string, options: { deleteBranch: boolean; force: boolean }) => {
+        const { repoPath } = requireRepo()
+        const worktree = findWorktree(worktreeId)
+        await supervisor.stopAllForWorktree(worktreeId)
+        await worktrees.archiveWorktree(repoPath, worktree.path, {
+          branch: worktree.branch,
+          deleteBranch: options.deleteBranch,
+          force: options.force
+        })
+        return refreshWorktrees()
+      }
+    )
 
-  // ── Shared worktree chat (agent↔agent + agent↔user) ─────────────
-  ipcMain.handle('chat:send', (_e, worktreeId: string, text: string) => {
-    findWorktree(worktreeId)
-    return channel.post(worktreeId, { kind: 'user', name: 'you' }, text)
-  })
+    // ── Config ────────────────────────────────────────────────────
+    route('config:load', async () => {
+      const { repoPath } = requireRepo()
+      context.config = await config.loadConfig(repoPath)
+      return context.config
+    })
 
-  ipcMain.handle('chat:history', async (_e, worktreeId: string, since?: number) => {
-    findWorktree(worktreeId)
-    // Watching is started lazily: a worktree whose channel nobody has opened
-    // does not need a file watcher.
-    await channel.watchWorktree(worktreeId)
-    return channel.list(worktreeId, since)
-  })
+    route('config:exists', () => {
+      const { repoPath } = requireRepo()
+      return config.configExists(repoPath)
+    })
 
-  // ── Files ─────────────────────────────────────────────────────
-  ipcMain.handle('files:listDir', (_e, worktreeId: string, relPath: string) => {
-    const worktree = findWorktree(worktreeId)
-    return files.listDir(worktree.path, relPath)
-  })
+    route('config:writeSample', async () => {
+      const { repoPath } = requireRepo()
+      const written = await config.writeSampleConfig(repoPath)
+      context.config = await config.loadConfig(repoPath)
+      return written
+    })
 
-  ipcMain.handle('files:listAll', (_e, worktreeId: string) => {
-    const worktree = findWorktree(worktreeId)
-    return files.listAll(worktree.path)
-  })
+    // Setup wizard: propose service entries from what the repo looks like.
+    route('config:detect', () => {
+      const { repoPath } = requireRepo()
+      return detectServices(repoPath)
+    })
 
-  // Arbitrary-directory listing for @ path completion (may leave the worktree).
-  ipcMain.handle('files:listPath', (_e, worktreeId: string, rawPath: string) => {
-    const worktree = findWorktree(worktreeId)
-    return files.listPath(worktree.path, rawPath)
-  })
+    // Setup wizard: write the reviewed services into workbench.yaml, merged over
+    // whatever is already there so a partially configured repo is not clobbered.
+    route('config:writeServices', async (_e, services: Record<string, ServiceConfig>) => {
+      const { repoPath } = requireRepo()
+      const current = await config.loadConfig(repoPath)
+      const merged: WorkbenchConfig = {
+        ...current,
+        services: { ...current.services, ...services }
+      }
+      await config.saveConfig(repoPath, merged)
+      context.config = await config.loadConfig(repoPath)
+      return context.config
+    })
 
-  ipcMain.handle('files:read', (_e, worktreeId: string, absPath: string) => {
-    const worktree = findWorktree(worktreeId)
-    return files.readFileContent(worktree.path, absPath)
-  })
+    // ── Services ──────────────────────────────────────────────────
+    route('services:list', (_e, worktreeId: string) => {
+      const { config: cfg } = requireRepo()
+      const worktree = findWorktree(worktreeId)
+      const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
+      return Object.entries(cfg.services).map(([name, service]) => {
+        const live = supervisor.getRuntime(worktreeId, name)
+        return live || supervisor.buildIdleRuntime(worktree, name, service, ports)
+      })
+    })
 
-  ipcMain.handle('files:write', (_e, worktreeId: string, absPath: string, content: string) => {
-    const worktree = findWorktree(worktreeId)
-    return files.writeFileContent(worktree.path, absPath, content)
-  })
+    route('services:start', (_e, worktreeId: string, name: string) => {
+      const { config: cfg } = requireRepo()
+      const worktree = findWorktree(worktreeId)
+      const service = cfg.services[name]
+      if (!service) throw new Error(`unknown service: ${name}`)
+      const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
+      return supervisor.start(worktree, name, service, ports)
+    })
 
-  // Save a pasted/dropped attachment for @-mentioning in the agent prompt.
-  ipcMain.handle(
-    'files:saveAttachment',
-    (_e, worktreeId: string, data: Uint8Array, ext: string) => {
+    route('services:startAll', async (_e, worktreeId: string) => {
+      const { config: cfg } = requireRepo()
+      const worktree = findWorktree(worktreeId)
+      const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
+      for (const [name, service] of Object.entries(cfg.services)) {
+        await supervisor.start(worktree, name, service, ports)
+      }
+    })
+
+    route('services:stop', (_e, worktreeId: string, name: string) =>
+      supervisor.stop(worktreeId, name)
+    )
+
+    route('services:stopAll', (_e, worktreeId: string) => supervisor.stopAllForWorktree(worktreeId))
+
+    route('services:restart', (_e, worktreeId: string, name: string) => {
+      const { config: cfg } = requireRepo()
+      const worktree = findWorktree(worktreeId)
+      const service = cfg.services[name]
+      if (!service) throw new Error(`unknown service: ${name}`)
+      const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
+      return supervisor.start(worktree, name, service, ports)
+    })
+
+    // ── Agent review ──────────────────────────────────────────────
+    // Sessions, transcripts and approvals live on the nib server and are driven
+    // from the renderer over grove-nib://. What stays here is the review flow,
+    // which writes files and therefore cannot.
+    route('agents:discardReview', (_e, batchId: string) => {
+      nibReviewBridge.discard(batchId)
+      review.drop(batchId)
+    })
+
+    route('agents:resolveReview', async (_e, batchId: string, decisions: HunkDecision[]) => {
+      const batch = await review.resolve(batchId, decisions)
+      if (!batch) return
+      // A nib session is answered over its own protocol, not the adapter's
+      // permission resolver.
+      if (batch.agent === NIB_AGENT) {
+        await nibReviewBridge.report(batch, decisions)
+        return
+      }
+    })
+
+    // ── Shared worktree chat (agent↔agent + agent↔user) ─────────────
+    route('chat:send', (_e, worktreeId: string, text: string) => {
+      findWorktree(worktreeId)
+      return channel.post(worktreeId, { kind: 'user', name: 'you' }, text)
+    })
+
+    route('chat:history', async (_e, worktreeId: string, since?: number) => {
+      findWorktree(worktreeId)
+      // Watching is started lazily: a worktree whose channel nobody has opened
+      // does not need a file watcher.
+      await channel.watchWorktree(worktreeId)
+      return channel.list(worktreeId, since)
+    })
+
+    // ── Files ─────────────────────────────────────────────────────
+    route('files:listDir', (_e, worktreeId: string, relPath: string) => {
+      const worktree = findWorktree(worktreeId)
+      return files.listDir(worktree.path, relPath)
+    })
+
+    route('files:listAll', (_e, worktreeId: string) => {
+      const worktree = findWorktree(worktreeId)
+      return files.listAll(worktree.path)
+    })
+
+    // Arbitrary-directory listing for @ path completion (may leave the worktree).
+    route('files:listPath', (_e, worktreeId: string, rawPath: string) => {
+      const worktree = findWorktree(worktreeId)
+      return files.listPath(worktree.path, rawPath)
+    })
+
+    route('files:read', (_e, worktreeId: string, absPath: string) => {
+      const worktree = findWorktree(worktreeId)
+      return files.readFileContent(worktree.path, absPath)
+    })
+
+    route('files:write', (_e, worktreeId: string, absPath: string, content: string) => {
+      const worktree = findWorktree(worktreeId)
+      return files.writeFileContent(worktree.path, absPath, content)
+    })
+
+    // Save a pasted/dropped attachment for @-mentioning in the agent prompt.
+    route('files:saveAttachment', (_e, worktreeId: string, data: Uint8Array, ext: string) => {
       const worktree = findWorktree(worktreeId)
       return files.saveAttachment(worktree.path, data, ext)
-    }
-  )
+    })
 
-  ipcMain.handle('files:create', (_e, worktreeId: string, relPath: string) => {
-    const worktree = findWorktree(worktreeId)
-    return files.createFile(worktree.path, relPath)
-  })
+    route('files:create', (_e, worktreeId: string, relPath: string) => {
+      const worktree = findWorktree(worktreeId)
+      return files.createFile(worktree.path, relPath)
+    })
 
-  ipcMain.handle('files:createDir', (_e, worktreeId: string, relPath: string) => {
-    const worktree = findWorktree(worktreeId)
-    return files.createDir(worktree.path, relPath)
-  })
+    route('files:createDir', (_e, worktreeId: string, relPath: string) => {
+      const worktree = findWorktree(worktreeId)
+      return files.createDir(worktree.path, relPath)
+    })
 
-  ipcMain.handle('files:rename', (_e, worktreeId: string, fromRel: string, toRel: string) => {
-    const worktree = findWorktree(worktreeId)
-    return files.renamePath(worktree.path, fromRel, toRel)
-  })
+    route('files:rename', (_e, worktreeId: string, fromRel: string, toRel: string) => {
+      const worktree = findWorktree(worktreeId)
+      return files.renamePath(worktree.path, fromRel, toRel)
+    })
 
-  ipcMain.handle('files:delete', (_e, worktreeId: string, relPath: string) => {
-    const worktree = findWorktree(worktreeId)
-    return files.removePath(worktree.path, relPath)
-  })
+    route('files:delete', (_e, worktreeId: string, relPath: string) => {
+      const worktree = findWorktree(worktreeId)
+      return files.removePath(worktree.path, relPath)
+    })
 
-  // ── Editor catalog (grammars / themes / LSP servers) ──────────
-  ipcMain.handle('extensions:catalog', () => editorCatalog.listCatalog())
-  ipcMain.handle('extensions:installed', () => editorCatalog.listInstalled())
-  ipcMain.handle('extensions:install', (_e, id: string) => editorCatalog.install(id))
-  ipcMain.handle('extensions:uninstall', (_e, id: string) => editorCatalog.uninstall(id))
-  ipcMain.handle('extensions:setEnabled', (_e, id: string, enabled: boolean) =>
-    editorCatalog.setEnabled(id, enabled)
-  )
-  ipcMain.handle('extensions:grammar', (_e, id: string) => editorCatalog.readGrammar(id))
+    // ── Editor catalog (grammars / themes / LSP servers) ──────────
+    route('extensions:catalog', () => editorCatalog.listCatalog())
+    route('extensions:installed', () => editorCatalog.listInstalled())
+    route('extensions:install', (_e, id: string) => editorCatalog.install(id))
+    route('extensions:uninstall', (_e, id: string) => editorCatalog.uninstall(id))
+    route('extensions:setEnabled', (_e, id: string, enabled: boolean) =>
+      editorCatalog.setEnabled(id, enabled)
+    )
+    route('extensions:grammar', (_e, id: string) => editorCatalog.readGrammar(id))
 
-  // ── LSP ───────────────────────────────────────────────────────
-  ipcMain.handle(
-    'lsp:ensure',
-    (_e, worktreeId: string, language: string, uri: string, text: string) => {
+    // ── LSP ───────────────────────────────────────────────────────
+    route('lsp:ensure', (_e, worktreeId: string, language: string, uri: string, text: string) => {
       const worktree = findWorktree(worktreeId)
       return lsp.ensure(worktreeId, worktree.path, language, uri, text)
-    }
-  )
-  ipcMain.handle(
-    'lsp:didChange',
-    (_e, worktreeId: string, language: string, uri: string, version: number, text: string) =>
-      lsp.didChange(worktreeId, language, uri, version, text)
-  )
-  ipcMain.handle(
-    'lsp:completion',
-    (_e, worktreeId: string, language: string, uri: string, position: LspPosition) =>
-      lsp.completion(worktreeId, language, uri, position)
-  )
-  ipcMain.handle(
-    'lsp:hover',
-    (_e, worktreeId: string, language: string, uri: string, position: LspPosition) =>
-      lsp.hover(worktreeId, language, uri, position)
-  )
-  ipcMain.handle(
-    'lsp:definition',
-    (_e, worktreeId: string, language: string, uri: string, position: LspPosition) =>
-      lsp.definition(worktreeId, language, uri, position)
-  )
-  ipcMain.handle(
-    'lsp:references',
-    (_e, worktreeId: string, language: string, uri: string, position: LspPosition) =>
-      lsp.references(worktreeId, language, uri, position)
-  )
-  ipcMain.handle(
-    'lsp:implementation',
-    (_e, worktreeId: string, language: string, uri: string, position: LspPosition) =>
-      lsp.implementation(worktreeId, language, uri, position)
-  )
-  ipcMain.handle(
-    'lsp:typeDefinition',
-    (_e, worktreeId: string, language: string, uri: string, position: LspPosition) =>
-      lsp.typeDefinition(worktreeId, language, uri, position)
-  )
-  ipcMain.handle(
-    'lsp:declaration',
-    (_e, worktreeId: string, language: string, uri: string, position: LspPosition) =>
-      lsp.declaration(worktreeId, language, uri, position)
-  )
-  ipcMain.handle(
-    'lsp:rename',
-    (
-      _e,
-      worktreeId: string,
-      language: string,
-      uri: string,
-      position: LspPosition,
-      newName: string
-    ) => lsp.rename(worktreeId, language, uri, position, newName)
-  )
-  ipcMain.handle(
-    'lsp:formatting',
-    (_e, worktreeId: string, language: string, uri: string, tabSize: number) =>
-      lsp.formatting(worktreeId, language, uri, tabSize)
-  )
-  ipcMain.handle(
-    'lsp:codeAction',
-    (
-      _e,
-      worktreeId: string,
-      language: string,
-      uri: string,
-      range: LspRange,
-      diagnostics: LspDiagnostic[]
-      // severity is a plain number over IPC; identical to DiagnosticSeverity.
-    ) => lsp.codeAction(worktreeId, language, uri, range, diagnostics as unknown as Diagnostic[])
-  )
-  ipcMain.handle(
-    'lsp:resolveCodeAction',
-    (_e, worktreeId: string, language: string, action: CodeAction) =>
+    })
+    route(
+      'lsp:didChange',
+      (_e, worktreeId: string, language: string, uri: string, version: number, text: string) =>
+        lsp.didChange(worktreeId, language, uri, version, text)
+    )
+    route(
+      'lsp:completion',
+      (_e, worktreeId: string, language: string, uri: string, position: LspPosition) =>
+        lsp.completion(worktreeId, language, uri, position)
+    )
+    route(
+      'lsp:hover',
+      (_e, worktreeId: string, language: string, uri: string, position: LspPosition) =>
+        lsp.hover(worktreeId, language, uri, position)
+    )
+    route(
+      'lsp:definition',
+      (_e, worktreeId: string, language: string, uri: string, position: LspPosition) =>
+        lsp.definition(worktreeId, language, uri, position)
+    )
+    route(
+      'lsp:references',
+      (_e, worktreeId: string, language: string, uri: string, position: LspPosition) =>
+        lsp.references(worktreeId, language, uri, position)
+    )
+    route(
+      'lsp:implementation',
+      (_e, worktreeId: string, language: string, uri: string, position: LspPosition) =>
+        lsp.implementation(worktreeId, language, uri, position)
+    )
+    route(
+      'lsp:typeDefinition',
+      (_e, worktreeId: string, language: string, uri: string, position: LspPosition) =>
+        lsp.typeDefinition(worktreeId, language, uri, position)
+    )
+    route(
+      'lsp:declaration',
+      (_e, worktreeId: string, language: string, uri: string, position: LspPosition) =>
+        lsp.declaration(worktreeId, language, uri, position)
+    )
+    route(
+      'lsp:rename',
+      (
+        _e,
+        worktreeId: string,
+        language: string,
+        uri: string,
+        position: LspPosition,
+        newName: string
+      ) => lsp.rename(worktreeId, language, uri, position, newName)
+    )
+    route(
+      'lsp:formatting',
+      (_e, worktreeId: string, language: string, uri: string, tabSize: number) =>
+        lsp.formatting(worktreeId, language, uri, tabSize)
+    )
+    route(
+      'lsp:codeAction',
+      (
+        _e,
+        worktreeId: string,
+        language: string,
+        uri: string,
+        range: LspRange,
+        diagnostics: LspDiagnostic[]
+        // severity is a plain number over IPC; identical to DiagnosticSeverity.
+      ) => lsp.codeAction(worktreeId, language, uri, range, diagnostics as unknown as Diagnostic[])
+    )
+    route('lsp:resolveCodeAction', (_e, worktreeId: string, language: string, action: CodeAction) =>
       lsp.resolveCodeAction(worktreeId, language, action)
-  )
-  ipcMain.handle(
-    'lsp:executeCommand',
-    (_e, worktreeId: string, language: string, command: string, args: unknown[]) =>
-      lsp.executeCommand(worktreeId, language, command, args)
-  )
-  ipcMain.handle(
-    'lsp:inlayHints',
-    (_e, worktreeId: string, language: string, uri: string, range: LspRange) =>
-      lsp.inlayHints(worktreeId, language, uri, range)
-  )
+    )
+    route(
+      'lsp:executeCommand',
+      (_e, worktreeId: string, language: string, command: string, args: unknown[]) =>
+        lsp.executeCommand(worktreeId, language, command, args)
+    )
+    route(
+      'lsp:inlayHints',
+      (_e, worktreeId: string, language: string, uri: string, range: LspRange) =>
+        lsp.inlayHints(worktreeId, language, uri, range)
+    )
 
-  // ── Terminal ──────────────────────────────────────────────────
-  // Spawn a shell in the worktree's directory with its WT_*/PORT_n vars, so a
-  // terminal matches what services and keybind actions see.
-  ipcMain.handle('terminal:create', (_e, worktreeId: string | null, cols: number, rows: number) => {
-    let cwd = context.repoPath ?? process.cwd()
-    let vars: Record<string, string> = {}
-    if (worktreeId) {
-      const worktree = findWorktree(worktreeId)
-      const cfg = requireRepo().config
-      vars = buildWorktreeEnv(worktree, worktrees.portsForWorktree(cfg, worktree.portSlot))
-      cwd = worktree.path
-    }
-    // Tools launched inside Grove terminals discover the local API socket
-    // with zero config.
-    if (apiSocketPath) vars.GROVE_SOCK = apiSocketPath
-    return terminals.create({ cwd, env: spawnEnv(vars), cols, rows })
-  })
-  ipcMain.handle('terminal:write', (_e, id: string, data: string) => terminals.write(id, data))
-  ipcMain.handle('terminal:resize', (_e, id: string, cols: number, rows: number) =>
-    terminals.resize(id, cols, rows)
-  )
-  ipcMain.handle('terminal:kill', (_e, id: string) => terminals.kill(id))
-
-  // ── Embedded Neovim ───────────────────────────────────────────
-  // A vendored `nvim --embed` per pane, spawned in the worktree with the same
-  // WT_*/PORT_n vars as terminals. Redraw batches stream via event:nvim-redraw.
-  ipcMain.handle('nvim:spawn', async (_e, worktreeId: string | null) => {
-    let cwd = context.repoPath ?? process.cwd()
-    let vars: Record<string, string> = {}
-    if (worktreeId) {
-      const worktree = findWorktree(worktreeId)
-      const cfg = requireRepo().config
-      vars = buildWorktreeEnv(worktree, worktrees.portsForWorktree(cfg, worktree.portSlot))
-      cwd = worktree.path
-    }
-    const sessionId = await nvims.spawn({ cwd, env: spawnEnv(vars) })
-    nvimSessionWorktrees.set(sessionId, worktreeId)
-    if (worktreeId && !lastActiveNvimByWorktree.has(worktreeId)) {
-      lastActiveNvimByWorktree.set(worktreeId, sessionId)
-    }
-    return sessionId
-  })
-  ipcMain.handle('nvim:attach', (_e, id: string, cols: number, rows: number, file?: string) =>
-    nvims.attach(id, cols, rows, file)
-  )
-  ipcMain.handle('nvim:input', (_e, id: string, keys: string) => {
-    trackNvimActivity(id)
-    nvims.input(id, keys)
-  })
-  ipcMain.handle(
-    'nvim:inputMouse',
-    (
-      _e,
-      id: string,
-      button: string,
-      action: string,
-      modifier: string,
-      row: number,
-      col: number,
-      grid?: number
-    ) => {
-      trackNvimActivity(id)
-      nvims.inputMouse(id, button, action, modifier, row, col, grid)
-    }
-  )
-  ipcMain.handle('nvim:resize', (_e, id: string, cols: number, rows: number) =>
-    nvims.resize(id, cols, rows)
-  )
-  ipcMain.handle('nvim:command', (_e, id: string, command: string) => nvims.command(id, command))
-  ipcMain.handle('nvim:request', (_e, id: string, method: string, args: unknown[]) =>
-    nvims.request(id, method, args)
-  )
-  ipcMain.handle('nvim:kill', (_e, id: string) => nvims.kill(id))
-
-  // ── State ─────────────────────────────────────────────────────
-  ipcMain.handle('state:getRepo', () => {
-    const { repoPath } = requireRepo()
-    return getRepoState(repoPath)
-  })
-
-  ipcMain.handle('state:update', (_e, patch: Record<string, unknown>) => {
-    const { repoPath } = requireRepo()
-    return updateRepoState(repoPath, patch)
-  })
-
-  // ── File watching ─────────────────────────────────────────────
-  // Watch exactly the given worktrees (selected + those with running agents).
-  ipcMain.handle('fs:watch', (_e, worktreeIds: string[]) => {
-    const paths = worktreeIds
-      .map((id) => context.worktrees.find((worktree) => worktree.id === id)?.path)
-      .filter((path): path is string => Boolean(path))
-    watcher.setWatched(paths)
-  })
-
-  // ── Agent server ──────────────────────────────────────────────
-  registerNibProtocol(nib)
-  ipcMain.handle('nib:status', () => nib.status())
-  ipcMain.handle('nib:start', async () => {
-    await nib.start()
-    return nib.status()
-  })
-
-  // ── Plugins ───────────────────────────────────────────────────
-  registerPluginProtocol(pluginRegistry)
-  void pluginRegistry.loadAll(null)
-  ipcMain.handle('plugins:list', () => pluginList())
-  ipcMain.handle('plugins:trust', async (_e: IpcMainInvokeEvent, pluginId: string) => {
-    const record = pluginRegistry.get(pluginId)
-    if (!record || !context.repoPath) return pluginList()
-    await pluginBroker.trustProjectPlugin(context.repoPath, record.manifest)
-    await pluginRegistry.refresh(pluginId)
-    send('event:plugins-changed', pluginList())
-    return pluginList()
-  })
-  ipcMain.handle(
-    'plugins:setEnabled',
-    async (_e: IpcMainInvokeEvent, pluginId: string, enabled: boolean) => {
-      await pluginBroker.setEnabled(pluginId, enabled)
-      await pluginRegistry.refresh(pluginId)
-      if (!enabled) {
-        aiBridge.clearPlugin(pluginId)
-        apiDispatcher.cancelAllForClient(`plugin:${pluginId}`)
+    // ── Terminal ──────────────────────────────────────────────────
+    // Spawn a shell in the worktree's directory with its WT_*/PORT_n vars, so a
+    // terminal matches what services and keybind actions see.
+    route('terminal:create', (_e, worktreeId: string | null, cols: number, rows: number) => {
+      let cwd = context.repoPath ?? process.cwd()
+      let vars: Record<string, string> = {}
+      if (worktreeId) {
+        const worktree = findWorktree(worktreeId)
+        const cfg = requireRepo().config
+        vars = buildWorktreeEnv(worktree, worktrees.portsForWorktree(cfg, worktree.portSlot))
+        cwd = worktree.path
       }
+      // Tools launched inside Grove terminals discover the local API socket
+      // with zero config.
+      if (apiSocketPath) vars.GROVE_SOCK = apiSocketPath
+      return terminals.create({ cwd, env: spawnEnv(vars), cols, rows })
+    })
+    route('terminal:write', (_e, id: string, data: string) => terminals.write(id, data))
+    route('terminal:resize', (_e, id: string, cols: number, rows: number) =>
+      terminals.resize(id, cols, rows)
+    )
+    route('terminal:kill', (_e, id: string) => terminals.kill(id))
+
+    // ── Embedded Neovim ───────────────────────────────────────────
+    // A vendored `nvim --embed` per pane, spawned in the worktree with the same
+    // WT_*/PORT_n vars as terminals. Redraw batches stream via event:nvim-redraw.
+    route('nvim:spawn', async (_e, worktreeId: string | null) => {
+      let cwd = context.repoPath ?? process.cwd()
+      let vars: Record<string, string> = {}
+      if (worktreeId) {
+        const worktree = findWorktree(worktreeId)
+        const cfg = requireRepo().config
+        vars = buildWorktreeEnv(worktree, worktrees.portsForWorktree(cfg, worktree.portSlot))
+        cwd = worktree.path
+      }
+      const sessionId = await nvims.spawn({ cwd, env: spawnEnv(vars) })
+      nvimSessionWorktrees.set(sessionId, worktreeId)
+      if (worktreeId && !lastActiveNvimByWorktree.has(worktreeId)) {
+        lastActiveNvimByWorktree.set(worktreeId, sessionId)
+      }
+      return sessionId
+    })
+    route('nvim:attach', (_e, id: string, cols: number, rows: number, file?: string) =>
+      nvims.attach(id, cols, rows, file)
+    )
+    route('nvim:input', (_e, id: string, keys: string) => {
+      trackNvimActivity(id)
+      nvims.input(id, keys)
+    })
+    route(
+      'nvim:inputMouse',
+      (
+        _e,
+        id: string,
+        button: string,
+        action: string,
+        modifier: string,
+        row: number,
+        col: number,
+        grid?: number
+      ) => {
+        trackNvimActivity(id)
+        nvims.inputMouse(id, button, action, modifier, row, col, grid)
+      }
+    )
+    route('nvim:resize', (_e, id: string, cols: number, rows: number) =>
+      nvims.resize(id, cols, rows)
+    )
+    route('nvim:command', (_e, id: string, command: string) => nvims.command(id, command))
+    route('nvim:request', (_e, id: string, method: string, args: unknown[]) =>
+      nvims.request(id, method, args)
+    )
+    route('nvim:kill', (_e, id: string) => nvims.kill(id))
+
+    // ── State ─────────────────────────────────────────────────────
+    route('state:getRepo', () => {
+      const { repoPath } = requireRepo()
+      return getRepoState(repoPath)
+    })
+
+    route('state:update', (_e, patch: Record<string, unknown>) => {
+      const { repoPath } = requireRepo()
+      return updateRepoState(repoPath, patch)
+    })
+
+    // ── File watching ─────────────────────────────────────────────
+    // Watch exactly the given worktrees (selected + those with running agents).
+    route('fs:watch', (_e, worktreeIds: string[]) => {
+      const paths = worktreeIds
+        .map((id) => context.worktrees.find((worktree) => worktree.id === id)?.path)
+        .filter((path): path is string => Boolean(path))
+      watcher.setWatched(paths)
+    })
+
+    // ── Agent server ──────────────────────────────────────────────
+    registerNibProtocol(nib)
+    route('nib:status', () => nib.status())
+    route('nib:start', async () => {
+      await nib.start()
+      return nib.status()
+    })
+
+    // ── Plugins ───────────────────────────────────────────────────
+    registerPluginProtocol(pluginRegistry)
+    void pluginRegistry.loadAll(null)
+    route('plugins:list', () => pluginList())
+    route('plugins:trust', async (_e: IpcMainInvokeEvent, pluginId: string) => {
+      const record = pluginRegistry.get(pluginId)
+      if (!record || !context.repoPath) return pluginList()
+      await pluginBroker.trustProjectPlugin(context.repoPath, record.manifest)
+      await pluginRegistry.refresh(pluginId)
       send('event:plugins-changed', pluginList())
       return pluginList()
+    })
+    route(
+      'plugins:setEnabled',
+      async (_e: IpcMainInvokeEvent, pluginId: string, enabled: boolean) => {
+        await pluginBroker.setEnabled(pluginId, enabled)
+        await pluginRegistry.refresh(pluginId)
+        if (!enabled) {
+          aiBridge.clearPlugin(pluginId)
+          apiDispatcher.cancelAllForClient(`plugin:${pluginId}`)
+        }
+        send('event:plugins-changed', pluginList())
+        return pluginList()
+      }
+    )
+    route(
+      'plugins:invoke',
+      (
+        _e: IpcMainInvokeEvent,
+        pluginId: string,
+        callId: string,
+        method: string,
+        params: unknown
+      ) => {
+        const client = pluginClient(pluginId)
+        const emit = (chunk: unknown): void =>
+          send('event:plugin-stream', { pluginId, callId, chunk })
+        const invoke = (): Promise<unknown> =>
+          apiDispatcher.invoke(client, callId, method, params, { transport: 'worker', emit })
+        if (!apiRegistry.get(method)?.streaming) return invoke()
+        // Streaming wire contract: the invoke promise resolves immediately and
+        // completion/errors travel as an end event, matching what the renderer
+        // host awaits (mainStreams finish).
+        void invoke()
+          .then(() => send('event:plugin-stream', { pluginId, callId, end: true }))
+          .catch((error: Error) =>
+            send('event:plugin-stream', {
+              pluginId,
+              callId,
+              end: true,
+              error: { message: error.message }
+            })
+          )
+        return null
+      }
+    )
+    route('plugins:cancel', (_e: IpcMainInvokeEvent, pluginId: string, callId: string) =>
+      apiDispatcher.cancel(`plugin:${pluginId}`, callId)
+    )
+    route('plugins:cancelAll', (_e: IpcMainInvokeEvent, pluginId: string) => {
+      aiBridge.clearPlugin(pluginId)
+      apiDispatcher.cancelAllForClient(`plugin:${pluginId}`)
+    })
+    route(
+      'plugins:respondPermission',
+      (_e: IpcMainInvokeEvent, id: string, decision: PluginPermissionDecision) =>
+        pluginBroker.respondPermission(id, decision)
+    )
+    const grantClients = async (): Promise<ClientRecord[]> => {
+      const pluginClients = pluginRegistry.list().map(clientFromPlugin)
+      const apps = await appPairing.list()
+      const appClients: ClientRecord[] = apps.map((record) => ({
+        key: `app:${record.appId}`,
+        kind: 'app',
+        id: record.appId,
+        name: record.name,
+        source: 'external',
+        declaredScopes: record.grantedScopes
+      }))
+      return [...pluginClients, ...appClients]
     }
-  )
-  ipcMain.handle(
-    'plugins:invoke',
-    (_e: IpcMainInvokeEvent, pluginId: string, callId: string, method: string, params: unknown) => {
-      const client = pluginClient(pluginId)
-      const emit = (chunk: unknown): void =>
-        send('event:plugin-stream', { pluginId, callId, chunk })
-      const invoke = (): Promise<unknown> =>
-        apiDispatcher.invoke(client, callId, method, params, { transport: 'worker', emit })
-      if (!apiRegistry.get(method)?.streaming) return invoke()
-      // Streaming wire contract: the invoke promise resolves immediately and
-      // completion/errors travel as an end event, matching what the renderer
-      // host awaits (mainStreams finish).
-      void invoke()
-        .then(() => send('event:plugin-stream', { pluginId, callId, end: true }))
-        .catch((error: Error) =>
-          send('event:plugin-stream', {
-            pluginId,
-            callId,
-            end: true,
-            error: { message: error.message }
-          })
-        )
-      return null
-    }
-  )
-  ipcMain.handle('plugins:cancel', (_e: IpcMainInvokeEvent, pluginId: string, callId: string) =>
-    apiDispatcher.cancel(`plugin:${pluginId}`, callId)
-  )
-  ipcMain.handle('plugins:cancelAll', (_e: IpcMainInvokeEvent, pluginId: string) => {
-    aiBridge.clearPlugin(pluginId)
-    apiDispatcher.cancelAllForClient(`plugin:${pluginId}`)
-  })
-  ipcMain.handle(
-    'plugins:respondPermission',
-    (_e: IpcMainInvokeEvent, id: string, decision: PluginPermissionDecision) =>
-      pluginBroker.respondPermission(id, decision)
-  )
-  const grantClients = async (): Promise<ClientRecord[]> => {
-    const pluginClients = pluginRegistry.list().map(clientFromPlugin)
-    const apps = await appPairing.list()
-    const appClients: ClientRecord[] = apps.map((record) => ({
-      key: `app:${record.appId}`,
-      kind: 'app',
-      id: record.appId,
-      name: record.name,
-      source: 'external',
-      declaredScopes: record.grantedScopes
-    }))
-    return [...pluginClients, ...appClients]
-  }
-  ipcMain.handle('plugins:grants:list', async () => pluginBroker.listGrants(await grantClients()))
-  ipcMain.handle(
-    'plugins:grants:revoke',
-    async (_e: IpcMainInvokeEvent, clientId: string, permission: PluginPermission) => {
-      await pluginBroker.revoke(clientId, permission)
+    route('plugins:grants:list', async () => pluginBroker.listGrants(await grantClients()))
+    route(
+      'plugins:grants:revoke',
+      async (_e: IpcMainInvokeEvent, clientId: string, permission: PluginPermission) => {
+        await pluginBroker.revoke(clientId, permission)
+        return pluginBroker.listGrants(await grantClients())
+      }
+    )
+    route(
+      'plugins:grants:revokeScope',
+      async (_e: IpcMainInvokeEvent, clientId: string, path: string) => {
+        await pluginBroker.revokeFsScope(clientId, path)
+        return pluginBroker.listGrants(await grantClients())
+      }
+    )
+    route('plugins:grants:revokeAll', async (_e: IpcMainInvokeEvent, clientId: string) => {
+      await pluginBroker.revokeAll(clientId)
+      // Revoking everything for an external app also unpairs it.
+      if (clientId.startsWith('app:')) {
+        const appId = clientId.slice('app:'.length)
+        await appPairing.revoke(appId)
+        apiSocketServer?.dropClient(clientId)
+      }
       return pluginBroker.listGrants(await grantClients())
-    }
-  )
-  ipcMain.handle(
-    'plugins:grants:revokeScope',
-    async (_e: IpcMainInvokeEvent, clientId: string, path: string) => {
-      await pluginBroker.revokeFsScope(clientId, path)
-      return pluginBroker.listGrants(await grantClients())
-    }
-  )
-  ipcMain.handle('plugins:grants:revokeAll', async (_e: IpcMainInvokeEvent, clientId: string) => {
-    await pluginBroker.revokeAll(clientId)
-    // Revoking everything for an external app also unpairs it.
-    if (clientId.startsWith('app:')) {
-      const appId = clientId.slice('app:'.length)
+    })
+
+    // ── External apps ─────────────────────────────────────────────
+    startApiSocket()
+    route('apps:list', () => appPairing.list())
+    route('apps:respondPairing', (_e: IpcMainInvokeEvent, id: string, approved: boolean) =>
+      appPairing.respondPairing(id, approved)
+    )
+    route('apps:revoke', async (_e: IpcMainInvokeEvent, appId: string) => {
       await appPairing.revoke(appId)
-      apiSocketServer?.dropClient(clientId)
-    }
-    return pluginBroker.listGrants(await grantClients())
-  })
+      await pluginBroker.revokeAll(`app:${appId}`)
+      apiSocketServer?.dropClient(`app:${appId}`)
+      return appPairing.list()
+    })
+    route(
+      'plugins:respondToolCall',
+      (_e: IpcMainInvokeEvent, id: string, result: unknown, errorMessage?: string) =>
+        aiBridge.respondToolCall(id, result, errorMessage)
+    )
 
-  // ── External apps ─────────────────────────────────────────────
-  startApiSocket()
-  ipcMain.handle('apps:list', () => appPairing.list())
-  ipcMain.handle('apps:respondPairing', (_e: IpcMainInvokeEvent, id: string, approved: boolean) =>
-    appPairing.respondPairing(id, approved)
-  )
-  ipcMain.handle('apps:revoke', async (_e: IpcMainInvokeEvent, appId: string) => {
-    await appPairing.revoke(appId)
-    await pluginBroker.revokeAll(`app:${appId}`)
-    apiSocketServer?.dropClient(`app:${appId}`)
-    return appPairing.list()
-  })
-  ipcMain.handle(
-    'plugins:respondToolCall',
-    (_e: IpcMainInvokeEvent, id: string, result: unknown, errorMessage?: string) =>
-      aiBridge.respondToolCall(id, result, errorMessage)
-  )
-
-  // ── Keybind actions ───────────────────────────────────────────
-  ipcMain.handle(
-    'actions:runShell',
-    (_e: IpcMainInvokeEvent, worktreeId: string, commandLine: string) => {
+    // ── Keybind actions ───────────────────────────────────────────
+    route('actions:runShell', (_e: IpcMainInvokeEvent, worktreeId: string, commandLine: string) => {
       const { config: cfg } = requireRepo()
       const worktree = findWorktree(worktreeId)
       const ports = worktrees.portsForWorktree(cfg, worktree.portSlot)
       actionRunner.run(worktree, commandLine, ports)
-    }
-  )
+    })
 
-  // ── Settings ──────────────────────────────────────────────────
-  void settings.loadUser()
-  ipcMain.handle('settings:read', () => settings.snapshot())
-  ipcMain.handle(
-    'settings:set',
-    async (_e: IpcMainInvokeEvent, key: string, value: unknown, scope: SettingScope) => {
-      const snapshot = await settings.set(key, value, scope)
-      // Broadcast so every window (and future ones) stays coherent.
-      send('event:settings-changed', snapshot)
-      return snapshot
-    }
-  )
-  ipcMain.handle('settings:openFile', (_e: IpcMainInvokeEvent, scope: SettingScope) => {
-    const path = settings.openPath(scope)
-    if (!path) return
-    return shell.openPath(path)
-  })
+    // ── Settings ──────────────────────────────────────────────────
+    void settings.loadUser()
+    route('settings:read', () => settings.snapshot())
+    route(
+      'settings:set',
+      async (_e: IpcMainInvokeEvent, key: string, value: unknown, scope: SettingScope) => {
+        const snapshot = await settings.set(key, value, scope)
+        // Broadcast so every window (and future ones) stays coherent.
+        send('event:settings-changed', snapshot)
+        return snapshot
+      }
+    )
+    route('settings:openFile', (_e: IpcMainInvokeEvent, scope: SettingScope) => {
+      const path = settings.openPath(scope)
+      if (!path) return
+      return shell.openPath(path)
+    })
 
-  // ── Misc ──────────────────────────────────────────────────────
-  ipcMain.handle('shell:openExternal', (_e: IpcMainInvokeEvent, url: string) =>
-    shell.openExternal(url)
-  )
+    // ── Misc ──────────────────────────────────────────────────────
+    route('shell:openExternal', (_e: IpcMainInvokeEvent, url: string) => shell.openExternal(url))
+  }
+}
+
+/** Mount the IPC routes on the main kernel. */
+export async function registerIpc(): Promise<void> {
+  await mainContext.plugin(ipcRoutes)
 }
 
 /**
@@ -1306,8 +1320,9 @@ export function reapNvimSessions(): void {
   nvims.killAll()
 }
 
-// Clean shutdown: kill every child process.
+// Clean shutdown: drop the IPC surface, then kill every child process.
 export async function shutdown(): Promise<void> {
+  await mainContext.fiber.dispose().catch(() => {})
   await apiSocketServer?.close().catch(() => {})
   nibReviewBridge.stop()
   await nib.stop().catch(() => {})

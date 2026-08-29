@@ -100,8 +100,9 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  registerIpc()
-  createWindow()
+  // The IPC handlers are effects on the main kernel, so they land one fiber
+  // activation later — the window only opens once they are installed.
+  void registerIpc().then(createWindow)
 
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

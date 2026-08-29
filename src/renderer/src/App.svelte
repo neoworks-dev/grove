@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { cubicOut } from 'svelte/easing'
-  import ActivityBar from './components/ActivityBar.svelte'
+  import ActivityBar from './kernel/plugins/sidebar/ActivityBar.svelte'
   import Dock from './components/Dock.svelte'
   import PanelResizer from './components/PanelResizer.svelte'
   import SplitTree from './components/SplitTree.svelte'

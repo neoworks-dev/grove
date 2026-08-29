@@ -49,7 +49,12 @@ Two rules carry everything here:
 Where things live:
 
 - `src/renderer/src/kernel/` — the renderer root context, the registries published as services,
-  the host services (`sidebar`, `editor`, `panel`) and the core feature plugins.
+  the host services (`editor`, `panel`) and the core feature plugins.
+- `src/renderer/src/kernel/plugins/sidebar/` — the sidebar host: the service, the rail-launcher
+  registry and `ActivityBar.svelte`. Each view it shows is a sibling plugin directory
+  (`explorer/`, `worktrees/`, `gitChanges/`, `agents/`, `checkpoints/`, `extensions/`, `setup/`)
+  holding its plugin and the components only it renders. Shared components stay in
+  `src/renderer/src/components/`.
 - `src/main/kernel/` + `src/main/routes/` — the main root context, the service contracts, and
   the IPC surface split one plugin per domain.
 - `src/renderer/src/plugins/` — the sandboxed third-party host: one Worker and one fiber per

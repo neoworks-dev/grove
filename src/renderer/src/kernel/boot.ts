@@ -3,7 +3,7 @@
 
 import { groveContext } from './context'
 import { coreServices } from './coreServices'
-import { SidebarService } from './services/sidebar'
+import { SidebarService } from './plugins/sidebar'
 import { PanelService } from './services/panel'
 import { EditorService } from './services/editor'
 import { corePlugins } from './plugins'

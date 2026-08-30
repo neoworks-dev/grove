@@ -1,25 +1,18 @@
-import { defineConfig } from 'eslint/config'
-import tseslint from '@electron-toolkit/eslint-config-ts'
-import eslintConfigPrettier from '@electron-toolkit/eslint-config-prettier'
-import eslintPluginSvelte from 'eslint-plugin-svelte'
+import neoworks from '@neoworks/lint-config/eslint'
 
-export default defineConfig(
-  { ignores: ['**/node_modules', '**/dist', '**/out'] },
-  tseslint.configs.recommended,
-  eslintPluginSvelte.configs['flat/recommended'],
+/**
+ * ESLint is scoped to `.svelte` templates only; oxlint owns TypeScript and JavaScript.
+ * The shared setup lives in `@neoworks/lint-config`.
+ */
+export default [
+  ...neoworks,
   {
-    files: ['**/*.svelte'],
-    languageOptions: {
-      parserOptions: {
-        parser: tseslint.parser
-      }
-    }
+    ignores: ['**/node_modules', '**/dist', '**/out', '**/resources', 'sdk/**']
   },
   {
-    files: ['**/*.{tsx,svelte}'],
+    files: ['**/*.svelte'],
     rules: {
       'svelte/no-unused-svelte-ignore': 'off'
     }
-  },
-  eslintConfigPrettier
-)
+  }
+]

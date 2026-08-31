@@ -365,6 +365,7 @@ function createPiHarness(): HarnessDescriptor {
     id: HARNESS_ID,
     label: 'pi',
     description: 'The pi coding agent, running in process with grove.',
+    icon: 'grove:pi',
     capabilities: {
       approvals: true,
       interrupt: true,

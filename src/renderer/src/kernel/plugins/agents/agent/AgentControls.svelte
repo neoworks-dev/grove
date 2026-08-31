@@ -7,6 +7,7 @@
   // process, so picking one updates the session. Mode is derived from the same
   // state (see lib/agents/modes.ts) rather than stored here.
 
+  import Icon from '@iconify/svelte'
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
   import { MODE_LABELS, type AgentMode } from '../../../../lib/agents/modes'
   import type { HarnessInfo, ProviderModels, ThinkingLevel } from '../../../../lib/agents/types'
@@ -112,6 +113,9 @@
       title="The agent runtime this session runs on"
       onclick={() => toggle('harness')}
     >
+      {#if current}
+        <Icon icon={current.icon} class="size-3.5 shrink-0" />
+      {/if}
       <span class="font-medium text-default">{current?.label ?? harness ?? 'harness'}</span>
       <span class="text-dim">▾</span>
     </button>
@@ -121,7 +125,7 @@
       >
         {#each harnesses as entry (entry.id)}
           <button
-            class="flex w-full flex-col items-start px-2 py-1 text-left hover:bg-hover disabled:opacity-50 {entry.id ===
+            class="flex w-full items-start gap-2 px-2 py-1 text-left hover:bg-hover disabled:opacity-50 {entry.id ===
             harness
               ? 'text-default'
               : 'text-dim'}"
@@ -132,10 +136,13 @@
               close()
             }}
           >
-            <span>{entry.label}</span>
-            {#if !entry.available}
-              <span class="truncate text-2xs text-red">{entry.detail ?? 'unavailable'}</span>
-            {/if}
+            <Icon icon={entry.icon} class="mt-0.5 size-3.5 shrink-0" />
+            <span class="flex min-w-0 flex-col items-start">
+              <span>{entry.label}</span>
+              {#if !entry.available}
+                <span class="truncate text-2xs text-red">{entry.detail ?? 'unavailable'}</span>
+              {/if}
+            </span>
           </button>
         {/each}
         {#if harnesses.length === 0}
@@ -201,12 +208,15 @@
                           provider && candidate.id === model
                           ? 'text-default'
                           : 'text-dim'}"
+                        title={candidate.id}
                         onclick={() => {
                           onPickModel(entry.provider, candidate.id)
                           close()
                         }}
                       >
-                        <span class="truncate">{candidate.id}</span>
+                        <!-- Harnesses label their models for humans ("Opus (1M
+                             context)"); the id stays in the tooltip. -->
+                        <span class="truncate">{candidate.label || candidate.id}</span>
                       </button>
                     {/each}
                     {#if entry.models.length === 0}

@@ -96,16 +96,50 @@ export class AgentService {
     const workspaceRoot = options.workspace
     if (!workspaceRoot) throw new Error('a session needs a workspace')
 
+    const model = await this.startingModel(harness, options)
+
     const session = await this.store.create({
       workspaceRoot,
       harness,
       title: options.title ?? 'Session',
-      provider: options.provider ?? '',
-      model: options.model ?? '',
+      provider: model.provider,
+      model: model.model,
       thinkingLevel: options.thinkingLevel ?? 'off',
       activeTools: options.activeTools ?? null
     })
     return this.snapshot(session)
+  }
+
+  /**
+   * The model a new session opens on.
+   *
+   * A caller that names one gets it. Otherwise the harness is asked what it
+   * recommends, so nothing has to be typed in before the first turn — and a
+   * harness that cannot say leaves the fields empty, as before.
+   */
+  private async startingModel(
+    harness: string,
+    options: CreateSessionOptions
+  ): Promise<{ provider: string; model: string }> {
+    if (options.model) {
+      return { provider: options.provider ?? '', model: options.model }
+    }
+    const recommended = await this.recommendedModel(harness)
+    if (recommended) return recommended
+    return { provider: options.provider ?? '', model: '' }
+  }
+
+  /** What a harness would pick for itself, or null when it cannot say. */
+  private async recommendedModel(
+    harness: string
+  ): Promise<{ provider: string; model: string } | null> {
+    try {
+      const offering = await this.options.harnesses.require(harness).offering()
+      return offering.default
+    } catch {
+      // A harness that fails to answer must not stop a session being created.
+      return null
+    }
   }
 
   async getSession(sessionId: string): Promise<SessionSnapshot> {

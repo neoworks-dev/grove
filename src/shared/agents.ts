@@ -303,6 +303,8 @@ export interface HarnessInfo {
   id: string
   label: string
   description: string
+  /** Iconify id for the runtime's mark; see renderer `lib/agents/harnessIcons`. */
+  icon: string
   capabilities: HarnessCapabilities
   /** False when the runtime is missing or unauthenticated; `detail` says why. */
   available: boolean

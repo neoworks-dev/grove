@@ -6,6 +6,9 @@
 // approvals arrive through `canUseTool`, so grove's review flow can hold a write
 // at the prompt and answer it once the user has decided.
 
+import { accessSync, constants, readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { delimiter, dirname, join } from 'node:path'
 import type { Context } from '@neoworks/extension-system'
 import type {
   ModelInfo as SdkModelInfo,
@@ -21,8 +24,7 @@ import type {
   ContentBlock,
   ProviderModels,
   ServerEventBody,
-  ThinkingLevel,
-  ToolInfo
+  ThinkingLevel
 } from '../../../shared/agents'
 import { zodShapeFromJsonSchema, type JsonSchemaObject } from '../../plugins/zodSchema'
 import type {
@@ -36,13 +38,18 @@ import type {
 
 const HARNESS_ID = 'claude'
 
+// Claude Code talks to one provider, so every model it lists is grouped under
+// this one in the picker's provider → model cascade.
+const PROVIDER = 'anthropic'
+
 // The MCP server grove's own tools are published under. The model sees them as
 // `mcp__grove__<name>`, which is what the intent matcher below strips back off.
 const GROVE_SERVER = 'grove'
 
-// How long to wait for a probe query to answer before calling the harness
-// unavailable. A missing login shows up as a failure to start at all.
-const PROBE_TIMEOUT_MS = 20_000
+// How long to wait for the offering query to report what the CLI can do. The
+// CLI loads settings, plugins and MCP servers before it answers, so this is
+// generous on purpose; it is off the path that decides availability.
+const OFFERING_TIMEOUT_MS = 120_000
 
 // Claude's file-writing tools, and the input field each one names the file with.
 const WRITE_TOOLS: Record<string, string> = {
@@ -60,6 +67,89 @@ const THINKING_BUDGETS: Record<ThinkingLevel, number> = {
   high: 32_000,
   xhigh: 64_000,
   max: 128_000
+}
+
+const SDK_PACKAGE = '@anthropic-ai/claude-agent-sdk'
+
+/**
+ * Which Claude Code executable the SDK should spawn, or `undefined` to let it
+ * pick its own.
+ *
+ * The SDK ships the CLI as per-platform optional dependencies and refuses to
+ * start when none of them is installed — which is what any install that skipped
+ * optional packages leaves behind, and it surfaces as the whole harness being
+ * unavailable. Grove looks those packages up itself and, when none is there,
+ * falls back to a `claude` on PATH so a system install serves just as well.
+ */
+function resolveClaudeExecutable(): string | undefined {
+  if (bundledExecutable() !== null) return undefined
+  return executableOnPath('claude') ?? undefined
+}
+
+/**
+ * The CLI shipped inside one of the SDK's per-platform packages.
+ *
+ * The names are read off the SDK's own `optionalDependencies` rather than
+ * rebuilt from `process.platform`, so grove does not have to track how the SDK
+ * names its targets: only the package for this platform is ever installed, so
+ * the first one that resolves is the right one.
+ */
+function bundledExecutable(): string | null {
+  const require = createRequire(__filename)
+  for (const name of platformPackages(require)) {
+    for (const entry of ['claude', 'claude.exe']) {
+      try {
+        return require.resolve(`${name}/${entry}`)
+      } catch {
+        continue
+      }
+    }
+  }
+  return null
+}
+
+interface SdkManifest {
+  optionalDependencies?: Record<string, string>
+}
+
+function platformPackages(require: NodeJS.Require): string[] {
+  try {
+    // The SDK's `exports` map does not expose package.json, so it is read off
+    // disk next to the entry point the resolver does hand back.
+    const packageRoot = dirname(require.resolve(SDK_PACKAGE))
+    const manifest = readJson<SdkManifest>(join(packageRoot, 'package.json'))
+    if (!manifest.optionalDependencies) return []
+    return Object.keys(manifest.optionalDependencies)
+  } catch {
+    return []
+  }
+}
+
+function readJson<T>(path: string): T {
+  return JSON.parse(readFileSync(path, 'utf8'))
+}
+
+/** The first executable of that name on PATH, or null when there is none. */
+export function executableOnPath(name: string): string | null {
+  const directories = (process.env.PATH ?? '').split(delimiter).filter(Boolean)
+  for (const directory of directories) {
+    for (const candidate of candidateNames(name)) {
+      const full = join(directory, candidate)
+      try {
+        accessSync(full, constants.X_OK)
+        return full
+      } catch {
+        continue
+      }
+    }
+  }
+  return null
+}
+
+/** Windows spells its executables with an extension; nothing else does. */
+function candidateNames(name: string): string[] {
+  if (process.platform !== 'win32') return [name]
+  return [`${name}.cmd`, `${name}.exe`]
 }
 
 /**
@@ -164,6 +254,7 @@ class ClaudeRun implements HarnessRun {
     const budget = THINKING_BUDGETS[this.options.thinkingLevel]
     return {
       cwd: this.options.workspaceRoot,
+      pathToClaudeCodeExecutable: resolveClaudeExecutable(),
       model: this.options.model ?? undefined,
       resume: this.options.resumeKey ?? undefined,
       includePartialMessages: true,
@@ -330,27 +421,38 @@ class Offering {
   }
 
   /**
-   * Ask a throwaway streaming query what it can do. The query never receives a
-   * prompt, so nothing is charged for it: the `system/init` message the CLI
-   * sends on connect already names every tool, command and skill, and the model
-   * catalog comes from a control request on the same connection.
+   * Ask a throwaway streaming query what it can do.
+   *
+   * Everything comes off the control channel, which the CLI answers as soon as
+   * it has connected. The `system/init` message would also name the built-in
+   * tools, but it is only sent once a turn begins — behind settings, plugin and
+   * MCP-server startup — so waiting for it made the catalog take minutes or time
+   * out altogether. Nothing here starts a turn, so nothing is charged for it.
+   *
+   * Skills arrive as commands (the CLI lists them alongside the built-ins), so
+   * they are not enumerated separately.
    */
   private async probe(): Promise<HarnessOffering> {
     const { query } = await import('@anthropic-ai/claude-agent-sdk')
     const queue = new MessageQueue()
     const abort = new AbortController()
-    const timer = setTimeout(() => abort.abort(), PROBE_TIMEOUT_MS)
-    const session = query({ prompt: queue, options: { abortController: abort } })
+    const timer = setTimeout(() => abort.abort(), OFFERING_TIMEOUT_MS)
+    const session = query({
+      prompt: queue,
+      options: {
+        abortController: abort,
+        pathToClaudeCodeExecutable: resolveClaudeExecutable()
+      }
+    })
 
     try {
-      const initialization = await firstInit(session)
-      const models = await session.supportedModels()
+      const initialization = await session.initializationResult()
       this.cached = {
-        tools: toolsOf(initialization.tools),
-        commands: commandsOf(await session.supportedCommands()),
-        skills: initialization.skills.map((name) => ({ name, description: '', path: '' })),
-        providers: providersOf(models),
-        default: { provider: 'anthropic', model: models[0]?.value ?? '' }
+        tools: [],
+        commands: commandsOf(initialization.commands),
+        skills: [],
+        providers: providersOf(initialization.models),
+        default: defaultModelOf(initialization.models)
       }
       return this.cached
     } finally {
@@ -359,30 +461,6 @@ class Offering {
       await session.return(undefined).catch(() => {})
     }
   }
-}
-
-/** Read the connect message, which is the first thing the CLI sends. */
-async function firstInit(session: Query): Promise<{ tools: string[]; skills: string[] }> {
-  for await (const message of session) {
-    if (message.type !== 'system' || message.subtype !== 'init') continue
-    return { tools: message.tools, skills: message.skills ?? [] }
-  }
-  throw new Error('the Claude CLI did not report what it can do')
-}
-
-/**
- * Claude names its built-in tools but does not describe them, so they are listed
- * with an empty schema: enough for the mode switch to withhold them and for the
- * transcript to label a call, and the approval card falls back to raw input.
- */
-function toolsOf(names: string[]): ToolInfo[] {
-  return names.map((name) => ({
-    name,
-    description: '',
-    policy: 'ask',
-    parallelSafe: false,
-    inputSchema: {}
-  }))
 }
 
 function commandsOf(commands: SlashCommand[]): CommandInfo[] {
@@ -398,14 +476,21 @@ function providersOf(models: SdkModelInfo[]): ProviderModels[] {
   if (models.length === 0) return []
   return [
     {
-      provider: 'anthropic',
+      provider: PROVIDER,
       models: models.map((model) => ({
         id: model.value,
-        provider: 'anthropic',
+        provider: PROVIDER,
         label: model.displayName
       }))
     }
   ]
+}
+
+/** The CLI lists its recommended model first, which is the one to start on. */
+function defaultModelOf(models: SdkModelInfo[]): { provider: string; model: string } | null {
+  const first = models[0]
+  if (!first) return null
+  return { provider: PROVIDER, model: first.value }
 }
 
 function userMessage(text: string): SDKUserMessage {
@@ -508,6 +593,7 @@ function createClaudeHarness(): HarnessDescriptor {
     id: HARNESS_ID,
     label: 'Claude',
     description: "Anthropic's Claude Agent SDK, running the Claude Code loop in process.",
+    icon: 'grove:claude',
     capabilities: {
       approvals: true,
       interrupt: true,
@@ -517,13 +603,16 @@ function createClaudeHarness(): HarnessDescriptor {
       groveTools: true
     },
 
-    async probe() {
-      try {
-        await offering.load()
-        return { available: true, detail: null }
-      } catch (cause) {
-        return { available: false, detail: (cause as Error).message }
-      }
+    // Availability is only "is there a CLI to spawn". Loading the offering here
+    // instead would tie the harness list to how long the CLI takes to start,
+    // which is long enough to leave Claude greyed out in the picker.
+    probe() {
+      const executable = bundledExecutable() ?? executableOnPath('claude')
+      if (executable !== null) return Promise.resolve({ available: true, detail: null })
+      return Promise.resolve({
+        available: false,
+        detail: `no Claude Code CLI found — install ${SDK_PACKAGE} with its optional packages, or put \`claude\` on PATH`
+      })
     },
 
     offering: () => offering.load(),

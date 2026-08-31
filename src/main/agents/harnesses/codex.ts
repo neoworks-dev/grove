@@ -9,10 +9,19 @@
 import { spawn } from 'node:child_process'
 import type { Context } from '@neoworks/extension-system'
 import type { Codex, Thread, ThreadEvent, ThreadItem } from '@openai/codex-sdk'
-import type { ServerEventBody, ThinkingLevel, UiNode } from '../../../shared/agents'
+import type {
+  ProviderModels,
+  ServerEventBody,
+  ThinkingLevel,
+  UiNode
+} from '../../../shared/agents'
 import type { HarnessDescriptor, HarnessRun, HarnessRunOptions } from '../harness'
 
 const HARNESS_ID = 'codex'
+
+// Codex reaches OpenAI's models only, so they all group under this one provider
+// in the picker's provider → model cascade.
+const PROVIDER = 'openai'
 
 // The surface the to-do list is published under; one per session, replaced as
 // the plan changes rather than appended to the transcript over and over.
@@ -260,6 +269,110 @@ function blockText(block: unknown): string {
   return typed.text
 }
 
+/**
+ * The model catalog, read off the CLI's app-server protocol.
+ *
+ * The Codex SDK has no endpoint that enumerates models, but the CLI's
+ * `app-server` does: one `model/list` request over stdio answers with the same
+ * catalog the interactive picker shows. Asking it means grove never has to keep
+ * a list of OpenAI model ids of its own.
+ */
+function listCodexModels(): Promise<CodexModel[]> {
+  return appServerRequest<{ data: CodexModel[] }>('model/list', {}).then(
+    (response) => response.data
+  )
+}
+
+interface CodexModel {
+  id: string
+  displayName: string
+  description: string
+  hidden: boolean
+  isDefault: boolean
+}
+
+// How long to give `codex app-server` to answer before giving up on the
+// catalog. It only has to start and reply; it never runs a turn.
+const APP_SERVER_TIMEOUT_MS = 30_000
+
+/**
+ * Run one JSON-RPC request against a throwaway `codex app-server`.
+ *
+ * The server speaks newline-delimited JSON-RPC on stdio and requires an
+ * `initialize` handshake before anything else, so both are done here and the
+ * process is torn down as soon as the answer arrives.
+ */
+function appServerRequest<T>(method: string, params: Record<string, unknown>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const server = spawn('codex', ['app-server'], { stdio: ['pipe', 'pipe', 'ignore'] })
+    const timer = setTimeout(() => finish(new Error(`codex ${method} timed out`)), APP_SERVER_TIMEOUT_MS)
+
+    function finish(error: Error | null, value?: T): void {
+      clearTimeout(timer)
+      server.kill()
+      if (error) reject(error)
+      else resolve(value as T)
+    }
+
+    function send(message: Record<string, unknown>): void {
+      server.stdin.write(`${JSON.stringify(message)}\n`)
+    }
+
+    server.on('error', (cause) => finish(cause))
+    readJsonLines(server.stdout, (message) => {
+      if (message.id === 1) {
+        send({ jsonrpc: '2.0', method: 'initialized' })
+        send({ jsonrpc: '2.0', id: 2, method, params })
+        return
+      }
+      if (message.id !== 2) return
+      if (message.error) finish(new Error(String(message.error.message ?? `codex ${method} failed`)))
+      else finish(null, message.result as T)
+    })
+
+    send({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: { clientInfo: { name: 'grove', version: '0' } }
+    })
+  })
+}
+
+interface JsonRpcMessage {
+  id?: number
+  result?: unknown
+  error?: { message?: unknown }
+}
+
+/** Fold a stdout stream into whole newline-delimited JSON messages. */
+export function readJsonLines(
+  stream: NodeJS.ReadableStream,
+  onMessage: (message: JsonRpcMessage) => void
+): void {
+  let buffered = ''
+  stream.on('data', (chunk: Buffer) => {
+    buffered += chunk.toString()
+    const lines = buffered.split('\n')
+    buffered = lines.pop() ?? ''
+    for (const line of lines) {
+      const message = parseMessage(line)
+      if (message) onMessage(message)
+    }
+  })
+}
+
+/** One line of the stream, or null when it is not a protocol message. */
+function parseMessage(line: string): JsonRpcMessage | null {
+  if (!line.trim()) return null
+  try {
+    return JSON.parse(line)
+  } catch {
+    // The server interleaves diagnostics that are not protocol messages.
+    return null
+  }
+}
+
 /** Is the `codex` CLI on PATH? The SDK spawns it, so nothing works without it. */
 function codexInstalled(): Promise<{ available: boolean; detail: string | null }> {
   return new Promise((resolve) => {
@@ -277,8 +390,46 @@ function codexInstalled(): Promise<{ available: boolean; detail: string | null }
   })
 }
 
+/** Every provider Codex can reach is OpenAI's, so the cascade has one row. */
+function providersOf(models: CodexModel[]): ProviderModels[] {
+  if (models.length === 0) return []
+  return [
+    {
+      provider: PROVIDER,
+      models: models.map((model) => ({
+        id: model.id,
+        provider: PROVIDER,
+        label: model.displayName
+      }))
+    }
+  ]
+}
+
+function defaultModelOf(models: CodexModel[]): { provider: string; model: string } | null {
+  const chosen = models.find((model) => model.isDefault) ?? models[0]
+  if (!chosen) return null
+  return { provider: PROVIDER, model: chosen.id }
+}
+
 function createCodexHarness(): HarnessDescriptor {
   let client: Codex | null = null
+  let models: Promise<CodexModel[]> | null = null
+
+  /**
+   * The catalog, fetched once. A failure is not cached, so a picker opened
+   * again after logging in gets a second chance.
+   */
+  function offeringModels(): Promise<CodexModel[]> {
+    if (models === null) {
+      models = listCodexModels()
+        .then((listed) => listed.filter((model) => !model.hidden))
+        .catch(() => {
+          models = null
+          return []
+        })
+    }
+    return models
+  }
 
   async function codex(): Promise<Codex> {
     if (client) return client
@@ -291,6 +442,7 @@ function createCodexHarness(): HarnessDescriptor {
     id: HARNESS_ID,
     label: 'Codex',
     description: "OpenAI's Codex SDK, driving the codex CLI in a sandboxed thread.",
+    icon: 'grove:codex',
     capabilities: {
       approvals: false,
       interrupt: true,
@@ -303,18 +455,20 @@ function createCodexHarness(): HarnessDescriptor {
     probe: codexInstalled,
 
     /**
-     * Codex has no endpoint that enumerates models or commands, so the model is
-     * whatever the user types and the composer offers no completions. Nothing is
-     * invented here: an empty catalog is the honest answer.
+     * Codex exposes no tools, commands or skills to enumerate, so the approval
+     * card falls back to raw input and the composer offers no completions.
+     * Models it does have, via the app-server catalog, and they are cached
+     * because the answer costs a process start.
      */
-    offering() {
-      return Promise.resolve({
+    async offering() {
+      const models = await offeringModels()
+      return {
         tools: [],
         commands: [],
         skills: [],
-        providers: [],
-        default: null
-      })
+        providers: providersOf(models),
+        default: defaultModelOf(models)
+      }
     },
 
     async start(options: HarnessRunOptions) {

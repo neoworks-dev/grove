@@ -153,6 +153,12 @@ export interface HarnessDescriptor {
   id: string
   label: string
   description: string
+  /**
+   * The runtime's mark, as an Iconify icon id. The marks themselves live in the
+   * renderer's `grove` collection (`lib/agents/harnessIcons`), so a harness that
+   * brings a new logo adds its body there.
+   */
+  icon: string
   capabilities: HarnessCapabilities
   /** Is the runtime installed and authenticated? Cheap enough to call on demand. */
   probe(): Promise<{ available: boolean; detail: string | null }>
@@ -217,6 +223,7 @@ async function describeOne(descriptor: HarnessDescriptor): Promise<HarnessInfo> 
     id: descriptor.id,
     label: descriptor.label,
     description: descriptor.description,
+    icon: descriptor.icon,
     capabilities: descriptor.capabilities,
     available: probe.available,
     detail: probe.detail

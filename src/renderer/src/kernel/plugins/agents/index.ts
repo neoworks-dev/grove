@@ -7,6 +7,7 @@ import type { Context } from '@neoworks/extension-system'
 import AgentsOverview from './AgentsOverview.svelte'
 import AgentPane from './agent/AgentPane.svelte'
 import WorktreeChatPane from './WorktreeChatPane.svelte'
+import { initHarnessIcons } from '../../../lib/agents/harnessIcons'
 import { repoOpen } from '../guards'
 
 export const agents = {
@@ -14,6 +15,8 @@ export const agents = {
   inject: ['sidebar', 'panes'],
 
   apply(ctx: Context): void {
+    initHarnessIcons()
+
     ctx.effect(
       () =>
         ctx.sidebar.registerView({

@@ -6,6 +6,7 @@
   // plus the two things that are the pane's own business — which worktree a
   // session belongs to, and how its file changes get reviewed.
 
+  import Icon from '@iconify/svelte'
   import { onDestroy, onMount } from 'svelte'
   import { openFileInEditor, store } from '../../../../lib/store.svelte'
   import { keymap } from '../../../../lib/keymap.svelte'
@@ -412,7 +413,7 @@
         <div class="flex items-center gap-1">
           {#each catalog.harnesses as entry (entry.id)}
             <button
-              class="rounded border border-line px-2 py-1 text-2xs hover:bg-hover disabled:opacity-50 {entry.id ===
+              class="flex items-center gap-1.5 rounded border border-line px-2 py-1 text-2xs hover:bg-hover disabled:opacity-50 {entry.id ===
               newSessionHarness
                 ? 'text-default'
                 : 'text-dim'}"
@@ -420,6 +421,7 @@
               title={entry.detail ?? entry.description}
               onclick={() => pickHarness(entry.id)}
             >
+              <Icon icon={entry.icon} class="size-3.5 shrink-0" />
               {entry.label}
             </button>
           {/each}

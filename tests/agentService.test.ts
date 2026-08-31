@@ -69,6 +69,7 @@ async function setup(): Promise<Harness> {
       id,
       label: id,
       description: '',
+      icon: 'grove:test',
       capabilities: {
         approvals: true,
         interrupt: true,
@@ -82,8 +83,8 @@ async function setup(): Promise<Harness> {
         tools: [],
         commands: [],
         skills: [],
-        providers: [],
-        default: null
+        providers: [{ provider: id, models: [{ id: `${id}-model`, provider: id }] }],
+        default: { provider: id, model: `${id}-model` }
       }),
       start: async (options) => {
         const run = new FakeRun(options)
@@ -124,6 +125,32 @@ describe('AgentService', () => {
       await service.send(session.id, [say('hello')])
       expect(runs).toHaveLength(1)
       expect(runs[0].prompts).toEqual(['hello'])
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('a new session starts on the model its harness recommends', async () => {
+    const { service, cleanup } = await setup()
+    try {
+      const session = await service.createSession({ workspace: '/tmp/worktree' })
+      expect(session.provider).toBe('fake')
+      expect(session.model).toBe('fake-model')
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('an explicitly named model wins over the harness default', async () => {
+    const { service, cleanup } = await setup()
+    try {
+      const session = await service.createSession({
+        workspace: '/tmp/worktree',
+        provider: 'chosen',
+        model: 'chosen-model'
+      })
+      expect(session.provider).toBe('chosen')
+      expect(session.model).toBe('chosen-model')
     } finally {
       await cleanup()
     }

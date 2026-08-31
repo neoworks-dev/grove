@@ -11,6 +11,7 @@ function descriptor(id: string, available = true): HarnessDescriptor {
     id,
     label: id,
     description: '',
+    icon: 'grove:test',
     capabilities: {
       approvals: true,
       interrupt: true,

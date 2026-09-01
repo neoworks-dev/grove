@@ -7,9 +7,11 @@
   // block is the section box rather than the whole transcript, the header pins
   // only while its own turn is on screen and scrolls away with it.
 
+  import CaretRight from 'phosphor-svelte/lib/CaretRight'
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
   import { renderMarkdown } from '../../../../lib/markdown'
   import { blobUrl } from '../../../../lib/agents/api'
+  import { tallyOf, toTranscriptRows, type ToolRunRow } from '../../../../lib/agents/toolRuns'
   import type { TranscriptItem } from '../../../../lib/agents/transcript'
   import type { ToolInfo } from '../../../../lib/agents/types'
   import AgentToolCall from './AgentToolCall.svelte'
@@ -56,10 +58,55 @@
     return result
   })
 
+  // Runs of finished tool calls collapse into one line, so a burst of reads does
+  // not push the answer off screen. Which ones the user opened is the pane's own
+  // business, so it stays here rather than travelling with the transcript.
+  let expandedRuns = $state<Record<string, boolean>>({})
+
+  function toggleRun(key: string): void {
+    expandedRuns = { ...expandedRuns, [key]: !expandedRuns[key] }
+  }
+
   function displayOf(name: string): ToolInfo['display'] {
     return tools.find((tool) => tool.name === name)?.display
   }
 </script>
+
+{#snippet toolRun(run: ToolRunRow)}
+  {@const open = Boolean(expandedRuns[run.key])}
+  <div class="mb-1">
+    <button
+      class="flex w-full min-w-0 items-center gap-2 text-left font-mono text-2xs"
+      onclick={() => toggleRun(run.key)}
+      title="Show every call in this run"
+    >
+      <span
+        class="inline-flex shrink-0 text-dim transition-transform duration-200 ease-out"
+        class:rotate-90={open}
+      >
+        <CaretRight width="10" height="10" weight="bold" />
+      </span>
+      {#each tallyOf(run.items) as tally (tally.name)}
+        <span class="shrink-0 text-muted">
+          {tally.name}{#if tally.count > 1}<span class="text-dim">&nbsp;×{tally.count}</span>{/if}
+        </span>
+      {/each}
+    </button>
+    {#if open}
+      <div class="pl-4">
+        {#each run.items as call (call.eventId)}
+          <AgentToolCall
+            item={call}
+            display={displayOf(call.name)}
+            expanded={Boolean(expandedTools[call.toolUseId])}
+            onToggle={() => toggleTool(call.toolUseId)}
+            {onOpenFile}
+          />
+        {/each}
+      </div>
+    {/if}
+  </div>
+{/snippet}
 
 {#snippet row(item: TranscriptItem)}
   {#if item.kind === 'user'}
@@ -168,8 +215,12 @@
             {@render row(section.header)}
           </div>
         {/if}
-        {#each section.body as item (item.eventId)}
-          {@render row(item)}
+        {#each toTranscriptRows(section.body) as bodyRow (bodyRow.key)}
+          {#if bodyRow.kind === 'toolRun'}
+            {@render toolRun(bodyRow)}
+          {:else}
+            {@render row(bodyRow.item)}
+          {/if}
         {/each}
       </div>
     {/each}

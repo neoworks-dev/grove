@@ -14,6 +14,7 @@
   import { tallyOf, toTranscriptRows, type ToolRunRow } from '../../../../lib/agents/toolRuns'
   import type { TranscriptItem } from '../../../../lib/agents/transcript'
   import type { ToolInfo } from '../../../../lib/agents/types'
+  import ShimmerText from '../../../../components/ShimmerText.svelte'
   import AgentToolCall from './AgentToolCall.svelte'
   import AgentSurface from './AgentSurface.svelte'
 
@@ -22,6 +23,7 @@
     items,
     tools,
     expandedTools,
+    thinking,
     toggleTool,
     onOpenFile,
     viewport = $bindable(),
@@ -31,6 +33,8 @@
     items: TranscriptItem[]
     tools: ToolInfo[]
     expandedTools: Record<string, boolean>
+    /** The agent is working and has nothing on screen yet to show for it. */
+    thinking: boolean
     toggleTool: (toolUseId: string) => void
     onOpenFile: (path: string) => void
     viewport?: HTMLDivElement
@@ -224,7 +228,11 @@
         {/each}
       </div>
     {/each}
-    {#if items.length === 0}
+    {#if thinking}
+      <!-- Sits at the end of the conversation, where the answer will appear. -->
+      <div class="mb-3"><ShimmerText text="Thinking…" class="text-xs" /></div>
+    {/if}
+    {#if items.length === 0 && !thinking}
       <p class="text-dim">Nothing yet. Write a prompt below.</p>
     {/if}
   </div>

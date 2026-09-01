@@ -275,8 +275,12 @@ class ClaudeRun implements HarnessRun {
       mcpServers: await this.groveServer(),
       canUseTool: async (name, input, { toolUseID }) => {
         const decision = await this.options.confirm({ toolUseId: toolUseID, name, input })
-        if (allows(decision.result)) return { behavior: 'allow', updatedInput: input }
-        return { behavior: 'deny', message: decision.reason ?? 'denied by the user' }
+        if (!allows(decision.result)) {
+          return { behavior: 'deny', message: decision.reason ?? 'denied by the user' }
+        }
+        // The user may have rewritten the arguments, or answered a call that
+        // asked them something; either way the call runs with what they gave.
+        return { behavior: 'allow', updatedInput: asInput(decision.input) ?? input }
       }
     }
   }
@@ -557,6 +561,12 @@ function userMessage(text: string): SDKUserMessage {
 
 function allows(result: ConfirmationResult): boolean {
   return result !== 'deny'
+}
+
+/** A replacement input the SDK will take, or null when there is none to take. */
+function asInput(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
+  return value as Record<string, unknown>
 }
 
 /** A message's content blocks, whatever shape the SDK handed over. */

@@ -327,10 +327,18 @@ class AgentSessions {
 
   // ── Sending ─────────────────────────────────────────────────────
 
+  /**
+   * Send client events to a session.
+   *
+   * Events are snapshotted first: anything assembled out of `$state` (composer
+   * attachments, an editor selection) arrives as a Svelte proxy, and Electron's
+   * IPC cannot clone one — it fails the whole send with "An object could not be
+   * cloned".
+   */
   async send(sessionId: string, events: ClientEventBody[]): Promise<void> {
     const session = this.live[sessionId]
     try {
-      await sendEvents(sessionId, events)
+      await sendEvents(sessionId, $state.snapshot(events) as ClientEventBody[])
       if (session) session.error = ''
       // A queued follow-up shows up in the snapshot, never on the stream.
       await this.refreshSnapshot(sessionId)

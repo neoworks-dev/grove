@@ -173,14 +173,17 @@
     suggestions = []
   }
 
+  /** Everything riding along with the message: attached slices, then images. */
+  function carriedBlocks(): UserContentBlock[] {
+    return [...references, ...attachments]
+  }
+
   /** A submitted draft, as the client events a session expects for it. */
   function eventsFor(submission: ReturnType<typeof parseSubmission>): ClientEventBody[] {
     if (!submission) {
       // Attachments with no text still count as something to say.
       if (attachments.length === 0 && references.length === 0) return []
-      return [
-        { type: 'user.message', content: [...references, ...attachments], deliverAs: 'steer' }
-      ]
+      return [{ type: 'user.message', content: carriedBlocks(), deliverAs: 'steer' }]
     }
     if (submission.kind === 'shell') {
       return [{ type: 'user.shell', command: submission.command, share: submission.share }]
@@ -191,8 +194,7 @@
 
     const content: UserContentBlock[] = [
       { type: 'text', text: submission.text },
-      ...references,
-      ...attachments
+      ...carriedBlocks()
     ]
     // While a turn is running, `steer` redirects the work in flight rather than
     // waiting for it to finish — which is what typing mid-run is usually for.

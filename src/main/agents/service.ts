@@ -30,14 +30,20 @@ import type {
   UserContentBlock
 } from '../../shared/agents'
 import * as files from '../files'
-import type { ApprovalRequest, GroveTool, HarnessRegistry, HarnessRun } from './harness'
+import type {
+  ApprovalDecision,
+  ApprovalRequest,
+  GroveTool,
+  HarnessRegistry,
+  HarnessRun
+} from './harness'
 import { idleRuntime, SessionStore, type RuntimeState, type StoredSession } from './store'
 
 const BLOBS_DIR = 'blobs'
 
 interface PendingApproval {
   name: string
-  resolve: (result: ConfirmationResult) => void
+  resolve: (decision: ApprovalDecision) => void
 }
 
 /** The in-memory half of a session, dropped when grove exits. */
@@ -190,7 +196,7 @@ export class AgentService {
   private async accept(sessionId: string, event: ClientEventBody): Promise<void> {
     if (event.type === 'user.tool_confirmation') {
       await this.store.append(sessionId, event)
-      await this.answerApproval(sessionId, event.toolUseId, event.result)
+      await this.answerApproval(sessionId, event.toolUseId, event.result, event.input)
       return
     }
     if (event.type === 'user.interrupt') {
@@ -293,10 +299,7 @@ export class AgentService {
    * user, from the session's permission mode, or from the review flow once the
    * diff has been decided.
    */
-  private requestApproval(
-    sessionId: string,
-    request: ApprovalRequest
-  ): Promise<{ result: ConfirmationResult }> {
+  private requestApproval(sessionId: string, request: ApprovalRequest): Promise<ApprovalDecision> {
     const runtime = this.runtimeOrCreate(sessionId)
     // Claimed before anything is awaited: the adapter reports the same call on
     // its own stream a moment later, and whichever arrives second must not
@@ -317,10 +320,7 @@ export class AgentService {
     void this.recordToolUse(sessionId, request, 'ask')
 
     return new Promise((resolve) => {
-      runtime.approvals.set(request.toolUseId, {
-        name: request.name,
-        resolve: (result) => resolve({ result })
-      })
+      runtime.approvals.set(request.toolUseId, { name: request.name, resolve })
     })
   }
 
@@ -329,10 +329,16 @@ export class AgentService {
     return this.store.peek(sessionId)?.autoApproveTools.includes(toolName) === true
   }
 
+  /**
+   * `input` is what the call should run with when the user changed it — an
+   * edited command, or the answers to a call that asked them something. It
+   * goes on the log as well, so the transcript shows what actually ran.
+   */
   private async answerApproval(
     sessionId: string,
     toolUseId: string,
-    result: ConfirmationResult
+    result: ConfirmationResult,
+    input?: unknown
   ): Promise<void> {
     const runtime = this.runtimeOrCreate(sessionId)
     const pending = runtime.approvals.get(toolUseId)
@@ -343,7 +349,15 @@ export class AgentService {
     if (result === 'always_session' || result === 'always_project') {
       await this.rememberAutoApproval(sessionId, pending.name)
     }
-    pending.resolve(result)
+    if (input !== undefined) {
+      await this.store.append(sessionId, {
+        type: 'agent.tool_use_edited',
+        toolUseId,
+        name: pending.name,
+        input
+      })
+    }
+    pending.resolve({ result, input })
   }
 
   private async rememberAutoApproval(sessionId: string, toolName: string): Promise<void> {

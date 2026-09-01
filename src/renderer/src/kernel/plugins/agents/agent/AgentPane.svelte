@@ -20,6 +20,7 @@
     type SessionBadge
   } from '../../../../lib/agents/sessions.svelte'
   import { pendingApprovals, visibleItems } from '../../../../lib/agents/transcript'
+  import { questionsOf } from '../../../../lib/agents/questions'
   import { activeToolsFor, effectiveMode, type AgentMode } from '../../../../lib/agents/modes'
   import type {
     ClientEventBody,
@@ -29,6 +30,7 @@
   } from '../../../../lib/agents/types'
   import AgentApproval from './AgentApproval.svelte'
   import AgentComposer from './AgentComposer.svelte'
+  import AgentQuestion from './AgentQuestion.svelte'
   import AgentControls from './AgentControls.svelte'
   import AgentQueue from './AgentQueue.svelte'
   import AgentSessionTabs from './AgentSessionTabs.svelte'
@@ -58,6 +60,9 @@
 
   const items = $derived(live ? visibleItems(live.transcript) : [])
   const approvals = $derived(live ? pendingApprovals(live.transcript) : [])
+  // A parked call whose input is a set of questions is one, whatever the
+  // harness named the tool.
+  const questions = $derived(approvals[0] ? questionsOf(approvals[0].input) : null)
   const running = $derived(live?.transcript.status === 'running')
   const queued = $derived(snapshot?.queued ?? [])
 
@@ -196,6 +201,15 @@
     if (!activeId) return Promise.resolve()
     return agentSessions.send(activeId, [
       { type: 'user.tool_confirmation', toolUseId, result, reason }
+    ])
+  }
+
+  /** Let the asking call run, with the user's answers written into its input. */
+  function answerQuestion(input: unknown): void {
+    const pending = approvals[0]
+    if (!activeId || !pending) return
+    void agentSessions.send(activeId, [
+      { type: 'user.tool_confirmation', toolUseId: pending.toolUseId, result: 'allow', input }
     ])
   }
 
@@ -400,6 +414,7 @@
         {items}
         tools={catalog.tools}
         {expandedTools}
+        thinking={running && approvals.length === 0}
         toggleTool={(id) => (expandedTools = { ...expandedTools, [id]: !expandedTools[id] })}
         onOpenFile={openFile}
         bind:viewport={transcriptViewport}
@@ -482,6 +497,17 @@
             Go to diff
           </button>
         </div>
+      {:else if approvals[0] && questions}
+        <!-- The call is a question, not an operation to approve: answering it is
+             what lets it run, so the card asks rather than asking permission. -->
+        {#key approvals[0].toolUseId}
+          <AgentQuestion
+            {questions}
+            input={approvals[0].input}
+            onAnswer={answerQuestion}
+            onDecline={() => void decide(approvals[0].toolUseId, 'deny', 'no answer given')}
+          />
+        {/key}
       {:else if approvals[0]}
         <!-- An approval blocks the agent, so it replaces the composer until it is
              answered. Keyed so its selection state resets per request. -->

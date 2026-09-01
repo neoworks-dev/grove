@@ -45,6 +45,15 @@ class FakeRun {
   }
 }
 
+/** A run that can also take slash commands, which is optional in the contract. */
+class CommandRun extends FakeRun {
+  commands: string[] = []
+
+  async command(name: string, args: string): Promise<void> {
+    this.commands.push(`${name} ${args}`.trim())
+  }
+}
+
 interface Harness {
   service: AgentService
   store: SessionStore
@@ -63,8 +72,9 @@ async function setup(): Promise<Harness> {
   const harnesses = new HarnessRegistry()
   const runs: FakeRun[] = []
 
-  // Two of them, so switching harness can be tested for what it actually does.
-  for (const id of ['fake', 'other']) {
+  // Several of them, so switching harness — and a harness that can run commands
+  // against one that cannot — can be tested for what they actually do.
+  for (const id of ['fake', 'other', 'commanding']) {
     harnesses.register({
       id,
       label: id,
@@ -87,7 +97,7 @@ async function setup(): Promise<Harness> {
         default: { provider: id, model: `${id}-model` }
       }),
       start: async (options) => {
-        const run = new FakeRun(options)
+        const run = id === 'commanding' ? new CommandRun(options) : new FakeRun(options)
         runs.push(run)
         return run
       },
@@ -297,6 +307,35 @@ describe('AgentService', () => {
 
       expect(runs[0].disposed).toBe(1)
       expect((await store.require(session.id)).resumeKey).toBeNull()
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('a slash command reaches a harness that can run one', async () => {
+    const { service, runs, cleanup } = await setup()
+    try {
+      const session = await service.createSession({
+        workspace: '/tmp/worktree',
+        harness: 'commanding'
+      })
+      await service.send(session.id, [{ type: 'user.command', name: 'review', args: 'the diff' }])
+
+      expect((runs[0] as CommandRun).commands).toEqual(['review the diff'])
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('a harness without commands says so instead of dropping the ask', async () => {
+    const { service, store, cleanup } = await setup()
+    try {
+      const session = await service.createSession({ workspace: '/tmp/worktree' })
+      await service.send(session.id, [{ type: 'user.command', name: 'review', args: '' }])
+
+      const events = await store.eventsSince(session.id, 0)
+      const notice = events.find((event) => event.type === 'session.notice')
+      expect(notice).toMatchObject({ message: '"/review" is not supported by this harness' })
     } finally {
       await cleanup()
     }

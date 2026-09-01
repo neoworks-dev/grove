@@ -46,3 +46,5 @@ export type {
   Usage,
   UserContentBlock
 } from '../../../../shared/agents'
+
+export { commandLine } from '../../../../shared/agents'

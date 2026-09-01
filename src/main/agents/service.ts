@@ -208,6 +208,11 @@ export class AgentService {
       await this.deliver(sessionId, event)
       return
     }
+    if (event.type === 'user.command') {
+      await this.store.append(sessionId, event)
+      await this.runCommand(sessionId, event.name, event.args)
+      return
+    }
     // Compaction, branching and shell passthrough belong to the harness; the
     // ones that cannot do them say so rather than silently dropping the ask.
     await this.store.append(sessionId, event)
@@ -245,6 +250,28 @@ export class AgentService {
   private dropQueued(sessionId: string, messageId: string): void {
     const runtime = this.runtimeOrCreate(sessionId)
     runtime.queued = runtime.queued.filter((message) => message.id !== messageId)
+  }
+
+  /**
+   * Run a slash command on the harness.
+   *
+   * Support is a property of the run rather than the descriptor, so the run has
+   * to exist before the ask can be answered either way.
+   */
+  private async runCommand(sessionId: string, name: string, args: string): Promise<void> {
+    try {
+      const run = await this.ensureRun(sessionId)
+      if (!run.command) {
+        await this.store.append(sessionId, {
+          type: 'session.notice',
+          message: `"/${name}" is not supported by this harness`
+        })
+        return
+      }
+      await run.command(name, args)
+    } catch (cause) {
+      await this.reportError(sessionId, cause as Error)
+    }
   }
 
   private async startTurn(sessionId: string, text: string): Promise<void> {

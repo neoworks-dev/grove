@@ -293,6 +293,15 @@ function applyMessage(state: TranscriptState, event: SessionEvent): void {
 function applyTool(state: TranscriptState, event: SessionEvent): void {
   if (event.type === 'agent.tool_use') {
     closeOpenAgentItem(state)
+    // A harness may report the call before it knows whether it needs approval,
+    // and say so in a second event. That is the same call, so it updates the
+    // one on screen instead of appearing twice.
+    const known = findTool(state, event.toolUseId)
+    if (known) {
+      known.permission = event.permission
+      known.status = initialToolStatus(event.permission)
+      return
+    }
     state.items.push({
       kind: 'tool',
       seq: event.seq,

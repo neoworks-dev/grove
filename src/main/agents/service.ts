@@ -310,7 +310,11 @@ export class AgentService {
     }
 
     runtime.pendingApprovals = [...runtime.pendingApprovals, request.toolUseId]
-    if (fresh) void this.recordToolUse(sessionId, request, 'ask')
+    // Recorded even when the adapter got there first with an ungated call: the
+    // harness reports the call as it is made and only then asks whether it may
+    // run it, so the second record is what says the call is parked. The fold
+    // updates the call it already has rather than adding another.
+    void this.recordToolUse(sessionId, request, 'ask')
 
     return new Promise((resolve) => {
       runtime.approvals.set(request.toolUseId, {

@@ -92,6 +92,10 @@ export type ServerEventBody =
   | { type: 'session.notice'; message: string }
   | { type: 'session.info_changed'; changed: string[] }
   | { type: 'session.compacted'; summary: string; droppedMessages: number }
+  /** The harness dropped the conversation and started a fresh one (`/clear`). */
+  | { type: 'session.cleared' }
+  /** What a command the harness ran itself has to say (`/usage`, `/help`, …). */
+  | { type: 'session.command_output'; text: string }
   | { type: 'session.forked'; childSessionId: string; afterSeq: number }
   | { type: 'session.branched'; fromSeq: number }
   | {

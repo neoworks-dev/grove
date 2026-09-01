@@ -88,6 +88,14 @@ export interface NoticeItem {
   text: string
 }
 
+/** What a harness-run command printed — `/usage`, `/help` and friends. */
+export interface CommandOutputItem {
+  kind: 'commandOutput'
+  seq: number
+  eventId: string
+  text: string
+}
+
 /** An extension's own UI. `slot` decides whether it belongs in the conversation or beside it. */
 export interface SurfaceItem {
   kind: 'surface'
@@ -99,7 +107,14 @@ export interface SurfaceItem {
 }
 
 export type TranscriptItem =
-  UserItem | AppItem | AgentItem | ToolItem | ShellItem | NoticeItem | SurfaceItem
+  | UserItem
+  | AppItem
+  | AgentItem
+  | ToolItem
+  | ShellItem
+  | NoticeItem
+  | CommandOutputItem
+  | SurfaceItem
 
 export interface TranscriptState {
   /** Every item ever created, in seq order — including branches not currently in play. */
@@ -160,6 +175,13 @@ export function applyEvent(state: TranscriptState, event: SessionEvent): void {
     recomputeActive(state)
     return
   }
+  // A cleared conversation is a branch from the root: nothing before it is in
+  // play any more, but the log still holds it, so the tree panel can go back.
+  if (event.type === 'session.cleared') {
+    state.head = ROOT
+    recomputeActive(state)
+    return
+  }
   // The request to branch is what moves the head, so it belongs to no branch itself.
   if (event.type === 'user.branch') {
     return
@@ -173,6 +195,7 @@ export function applyEvent(state: TranscriptState, event: SessionEvent): void {
   applyMessage(state, event)
   applyTool(state, event)
   applyShell(state, event)
+  applyCommandOutput(state, event)
   applyNotice(state, event)
   applySurface(state, event)
 }
@@ -302,6 +325,18 @@ function applyTool(state: TranscriptState, event: SessionEvent): void {
   if (event.type === 'agent.tool_result') {
     applyToolResult(state, event.toolUseId, event.content, event.isError)
   }
+}
+
+function applyCommandOutput(state: TranscriptState, event: SessionEvent): void {
+  if (event.type !== 'session.command_output') {
+    return
+  }
+  state.items.push({
+    kind: 'commandOutput',
+    seq: event.seq,
+    eventId: event.id,
+    text: event.text
+  })
 }
 
 function applyShell(state: TranscriptState, event: SessionEvent): void {

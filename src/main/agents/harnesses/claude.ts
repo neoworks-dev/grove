@@ -329,6 +329,7 @@ class ClaudeRun implements HarnessRun {
       this.resumeKey = message.session_id
       return
     }
+    if (this.handleSessionChange(message)) return
     if (message.type === 'stream_event') {
       this.handleStreamEvent(message.event)
       return
@@ -342,6 +343,32 @@ class ClaudeRun implements HarnessRun {
       return
     }
     if (message.type === 'result') this.handleResult(message)
+  }
+
+  /**
+   * What the CLI's own commands did to the session.
+   *
+   * Commands like `/clear`, `/compact` and `/usage` run inside Claude Code
+   * rather than in grove, and report back out of band: the conversation is gone,
+   * the context was summarised, a command has something to print. Returns true
+   * when the message was one of those and needs no further handling.
+   */
+  private handleSessionChange(message: SDKMessage): boolean {
+    if (message.type === 'conversation_reset') {
+      this.resumeKey = message.new_conversation_id
+      this.options.emit({ type: 'session.cleared' })
+      return true
+    }
+    if (message.type !== 'system') return false
+    if (message.subtype === 'local_command_output') {
+      this.options.emit({ type: 'session.command_output', text: message.content })
+      return true
+    }
+    if (message.subtype === 'compact_boundary') {
+      this.options.emit({ type: 'session.notice', message: compactionNotice(message) })
+      return true
+    }
+    return false
   }
 
   /** Partial messages carry the deltas the transcript streams. */
@@ -503,6 +530,21 @@ function defaultModelOf(models: SdkModelInfo[]): { provider: string; model: stri
   const first = models[0]
   if (!first) return null
   return { provider: PROVIDER, model: first.value }
+}
+
+/**
+ * What a compaction did, in tokens.
+ *
+ * The boundary reports token counts rather than a message count or a summary,
+ * so it is said as a notice instead of `session.compacted` — which promises
+ * both.
+ */
+function compactionNotice(message: Extract<SDKMessage, { subtype: 'compact_boundary' }>): string {
+  const { trigger, pre_tokens: before, post_tokens: after } = message.compact_metadata
+  if (typeof after !== 'number') {
+    return `Context compacted (${trigger}) from ${before.toLocaleString()} tokens.`
+  }
+  return `Context compacted (${trigger}): ${before.toLocaleString()} → ${after.toLocaleString()} tokens.`
 }
 
 function userMessage(text: string): SDKUserMessage {

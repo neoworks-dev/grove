@@ -438,11 +438,27 @@ export class AgentService {
     const runtime = this.runtimeOrCreate(sessionId)
     runtime.status = 'idle'
     runtime.stopReason = stopReason
+    await this.persistResumeKey(sessionId)
 
     const next = runtime.queued[0]
     if (!next) return
     runtime.queued = runtime.queued.slice(1)
     await this.startTurn(sessionId, next.text)
+  }
+
+  /**
+   * Keep the stored conversation id in step with the run's.
+   *
+   * A run does not keep the id it started with: `/clear` drops the conversation
+   * and opens a new one. Storing only the id from `startRun` would resume a
+   * conversation the harness has already left behind.
+   */
+  private async persistResumeKey(sessionId: string): Promise<void> {
+    const key = this.runtimes.get(sessionId)?.run?.resumeKey
+    if (!key) return
+    const session = await this.store.require(sessionId)
+    if (session.resumeKey === key) return
+    await this.store.patch(sessionId, { resumeKey: key })
   }
 
   private async applyLiveChanges(sessionId: string, changes: SessionUpdate): Promise<void> {

@@ -146,6 +146,12 @@
     >
       <span class="whitespace-pre-wrap">{item.text}</span>
     </div>
+  {:else if item.kind === 'commandOutput'}
+    <!-- A command the harness ran itself (/usage, /help): its output, verbatim. -->
+    <div class="mb-2 rounded-md border border-line bg-elevated px-2.5 py-2">
+      <pre
+        class="max-h-72 overflow-auto whitespace-pre-wrap font-mono text-2xs text-muted">{item.text}</pre>
+    </div>
   {:else if item.kind === 'surface'}
     <AgentSurface node={item.view} />
   {/if}

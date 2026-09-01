@@ -178,6 +178,23 @@ describe('AgentService', () => {
     }
   })
 
+  test('a conversation id the run changes mid-flight is stored', async () => {
+    const { service, store, runs, cleanup } = await setup()
+    try {
+      const session = await service.createSession({ workspace: '/tmp/worktree' })
+      await service.send(session.id, [say('hello')])
+
+      // What `/clear` does: the harness drops the conversation for a new one.
+      runs[0].resumeKey = 'thread-2'
+      runs[0].finish()
+      await settle()
+
+      expect((await store.require(session.id)).resumeKey).toBe('thread-2')
+    } finally {
+      await cleanup()
+    }
+  })
+
   test('a steer reaches a running turn, a follow-up waits for the next one', async () => {
     const { service, runs, cleanup } = await setup()
     try {

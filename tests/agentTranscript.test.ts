@@ -67,6 +67,27 @@ describe('transcript fold', () => {
     expect(state.stopReason).toBe('end_turn')
   })
 
+  test('a cleared conversation empties the transcript without losing the log', () => {
+    const state = fold([
+      { type: 'user.message', content: [{ type: 'text', text: 'first' }] },
+      { type: 'session.cleared' },
+      { type: 'user.message', content: [{ type: 'text', text: 'second' }] }
+    ])
+
+    expect(textsOf(visibleItems(state))).toEqual(['second'])
+    expect(state.items).toHaveLength(2)
+  })
+
+  test('a harness-run command shows its output', () => {
+    const state = fold([
+      { type: 'user.command', name: 'usage', args: '' },
+      { type: 'session.command_output', text: 'Session cost: $0.42' }
+    ])
+
+    expect(visibleItems(state).map((item) => item.kind)).toEqual(['user', 'commandOutput'])
+    expect(textsOf(visibleItems(state))).toEqual(['/usage', 'Session cost: $0.42'])
+  })
+
   test('an attached file slice is a chip, not part of the message text', () => {
     const state = fold([
       {

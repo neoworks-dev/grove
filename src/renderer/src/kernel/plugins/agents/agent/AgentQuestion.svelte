@@ -53,6 +53,9 @@
     const current = chosen[entry.question] ?? []
     if (!entry.multiSelect) {
       chosen = { ...chosen, [entry.question]: [label] }
+      // One pick answers the question, so move on to the next — but never past
+      // the last one: sending stays the user's call.
+      if (activeIndex < questions.length - 1) activeIndex += 1
       return
     }
     const next = current.includes(label)

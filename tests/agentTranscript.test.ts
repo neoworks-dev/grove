@@ -311,6 +311,31 @@ describe('transcript fold', () => {
     expect(pendingApprovals(state)).toEqual([])
   })
 
+  // The Claude adapter reports a call as the model makes it and only then learns
+  // the harness wants it approved, so the same call arrives twice.
+  test('a re-announced tool call becomes pending in place', () => {
+    const state = fold([
+      {
+        type: 'agent.tool_use',
+        toolUseId: 't1',
+        name: 'write',
+        input: { path: 'a' },
+        permission: 'allow'
+      },
+      {
+        type: 'agent.tool_use',
+        toolUseId: 't1',
+        name: 'write',
+        input: { path: 'a' },
+        permission: 'ask'
+      }
+    ])
+
+    expect(state.items).toHaveLength(1)
+    expect(state.items[0]).toMatchObject({ status: 'pending', permission: 'ask' })
+    expect(pendingApprovals(state).map((tool) => tool.toolUseId)).toEqual(['t1'])
+  })
+
   test('marks a denied tool call and an errored result', () => {
     const state = fold([
       { type: 'agent.tool_use', toolUseId: 't1', name: 'write', input: {}, permission: 'ask' },

@@ -489,7 +489,7 @@
           <AgentApproval
             item={approvals[0]}
             tool={catalog.toolNamed(approvals[0].name)}
-            hasDiff={gatedReview !== null}
+            batch={gatedReview}
             onDecide={(result, reason) => void decide(approvals[0].toolUseId, result, reason)}
             onShowChange={showChange}
           />

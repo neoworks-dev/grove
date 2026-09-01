@@ -17,7 +17,12 @@
     type Completion
   } from '../../../../lib/agents/completion'
   import { store } from '../../../../lib/store.svelte'
-  import type { ClientEventBody, ImageBlock, UserContentBlock } from '../../../../lib/agents/types'
+  import type {
+    ClientEventBody,
+    FileBlock,
+    ImageBlock,
+    UserContentBlock
+  } from '../../../../lib/agents/types'
 
   let {
     sessionId,
@@ -44,6 +49,10 @@
   // Images pasted or dropped into the composer, already uploaded and waiting to
   // ride along with the next message.
   let attachments = $state<ImageBlock[]>([])
+
+  // File slices sent over from the editor, riding along with the next message so
+  // the model reads the code rather than resolving a path itself.
+  let references = $state<FileBlock[]>([])
 
   // Sent messages, newest last, stepped through with the arrow keys.
   let history = $state<string[]>([])
@@ -118,7 +127,23 @@
     if (!request || request.nonce === lastComposerInsertNonce) return
     lastComposerInsertNonce = request.nonce
     insertMentionAtCaret(request.text)
+    if (request.reference) attachReference(request.reference)
   })
+
+  /** Carry a file slice with the next message, replacing an identical earlier one. */
+  function attachReference(reference: FileBlock): void {
+    const kept = references.filter((existing) => refKey(existing) !== refKey(reference))
+    references = [...kept, reference]
+  }
+
+  function refKey(reference: FileBlock): string {
+    return `${reference.path}:${reference.startLine}-${reference.endLine}`
+  }
+
+  function dropReference(reference: FileBlock): void {
+    references = references.filter((existing) => existing !== reference)
+    promptEl?.focus()
+  }
 
   function acceptSuggestion(value: string): void {
     if (!completion) return
@@ -134,7 +159,7 @@
 
   function submit(): void {
     const submission = parseSubmission(draft)
-    if (!submission && attachments.length === 0) return
+    if (!submission && attachments.length === 0 && references.length === 0) return
 
     const events = eventsFor(submission)
     if (events.length === 0) return
@@ -143,6 +168,7 @@
     if (draft.trim().length > 0) history = [...history, draft]
     draft = ''
     attachments = []
+    references = []
     historyIndex = -1
     suggestions = []
   }
@@ -151,8 +177,10 @@
   function eventsFor(submission: ReturnType<typeof parseSubmission>): ClientEventBody[] {
     if (!submission) {
       // Attachments with no text still count as something to say.
-      if (attachments.length === 0) return []
-      return [{ type: 'user.message', content: [...attachments], deliverAs: 'steer' }]
+      if (attachments.length === 0 && references.length === 0) return []
+      return [
+        { type: 'user.message', content: [...references, ...attachments], deliverAs: 'steer' }
+      ]
     }
     if (submission.kind === 'shell') {
       return [{ type: 'user.shell', command: submission.command, share: submission.share }]
@@ -161,7 +189,11 @@
       return [{ type: 'user.command', name: submission.name, args: submission.args }]
     }
 
-    const content: UserContentBlock[] = [{ type: 'text', text: submission.text }, ...attachments]
+    const content: UserContentBlock[] = [
+      { type: 'text', text: submission.text },
+      ...references,
+      ...attachments
+    ]
     // While a turn is running, `steer` redirects the work in flight rather than
     // waiting for it to finish — which is what typing mid-run is usually for.
     return [{ type: 'user.message', content, deliverAs: 'steer' }]
@@ -294,6 +326,20 @@
           onclick={() => (attachments = attachments.filter((_, at) => at !== index))}
         >
           image ✕
+        </button>
+      {/each}
+    </div>
+  {/if}
+
+  {#if references.length > 0}
+    <div class="mb-1.5 flex flex-wrap gap-1.5">
+      {#each references as reference (refKey(reference))}
+        <button
+          class="rounded border border-line bg-canvas px-1.5 py-0.5 font-mono text-2xs text-muted hover:text-red"
+          title="Remove this attached selection"
+          onclick={() => dropReference(reference)}
+        >
+          {refKey(reference)} ✕
         </button>
       {/each}
     </div>

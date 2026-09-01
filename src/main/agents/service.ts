@@ -26,7 +26,8 @@ import type {
   SessionMeta,
   SessionSnapshot,
   SessionUpdate,
-  ThinkingLevel
+  ThinkingLevel,
+  UserContentBlock
 } from '../../shared/agents'
 import * as files from '../files'
 import type { ApprovalRequest, GroveTool, HarnessRegistry, HarnessRun } from './harness'
@@ -590,9 +591,20 @@ export class AgentService {
 function textOf(event: Extract<ClientEventBody, { type: 'user.message' | 'app.message' }>): string {
   if (event.type === 'app.message') return `[${event.label}]\n${event.text}`
   return event.content
-    .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
-    .map((block) => block.text)
+    .map(blockText)
+    .filter((text) => text.length > 0)
     .join('\n')
+}
+
+/**
+ * One content block as the model reads it. Attached file slices are tagged with
+ * where they came from, so the model can cite lines without reading the file.
+ */
+function blockText(block: UserContentBlock): string {
+  if (block.type === 'text') return block.text
+  if (block.type !== 'file') return ''
+  const range = `${block.startLine}-${block.endLine}`
+  return `<file path="${block.path}" lines="${range}">\n${block.text}\n</file>`
 }
 
 /**

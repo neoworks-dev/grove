@@ -181,7 +181,13 @@ if startLine == 0 or endLine == 0 then
   startLine, endLine = cur[1], cur[1]
 end
 if startLine > endLine then startLine, endLine = endLine, startLine end
-return { path = vim.api.nvim_buf_get_name(0), startLine = startLine, endLine = endLine }
+local lines = vim.api.nvim_buf_get_lines(0, startLine - 1, endLine, false)
+return {
+  path = vim.api.nvim_buf_get_name(0),
+  startLine = startLine,
+  endLine = endLine,
+  text = table.concat(lines, '\\n')
+}
 `
 // Buffer path plus the 1-based cursor line of the active window. Used to pin the
 // file the user is currently editing (Harpoon-style marks).
@@ -496,24 +502,33 @@ export class NvimCanvasSession {
     this.elements.input.focus()
   }
 
-  // The current editor selection (buffer path + 1-based inclusive line range).
-  // Returns null when no session is live or the buffer is unnamed (scratch).
+  // The current editor selection: buffer path, 1-based inclusive line range and
+  // the selected text as the buffer has it — unsaved edits included, which is
+  // what the user is looking at. Returns null when no session is live or the
+  // buffer is unnamed (scratch).
   async getVisualSelection(): Promise<{
     path: string
     startLine: number
     endLine: number
+    text: string
   } | null> {
     const id = this.nvimId
     if (!id) return null
     try {
       const result = await window.workbench.nvim.request(id, 'nvim_exec_lua', [SELECTION_LUA, []])
       if (!result || typeof result !== 'object') return null
-      const selection = result as { path?: string; startLine?: number; endLine?: number }
+      const selection = result as {
+        path?: string
+        startLine?: number
+        endLine?: number
+        text?: string
+      }
       if (!selection.path || !selection.startLine || !selection.endLine) return null
       return {
         path: selection.path,
         startLine: selection.startLine,
-        endLine: selection.endLine
+        endLine: selection.endLine,
+        text: selection.text ?? ''
       }
     } catch {
       return null

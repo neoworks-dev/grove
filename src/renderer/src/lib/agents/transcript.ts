@@ -14,6 +14,7 @@
 import { commandLine } from './types'
 import type {
   ContentBlock,
+  FileBlock,
   IdleReason,
   ImageBlock,
   SessionEvent,
@@ -32,6 +33,8 @@ export interface UserItem {
   eventId: string
   text: string
   attachments: ImageBlock[]
+  /** File slices sent with the message; shown as chips, not inlined in the bubble. */
+  references: FileBlock[]
 }
 
 export interface AgentItem {
@@ -215,7 +218,8 @@ function applyMessage(state: TranscriptState, event: SessionEvent): void {
       seq: event.seq,
       eventId: event.id,
       text: textOf(event.content),
-      attachments: event.content.filter((block): block is ImageBlock => block.type === 'image')
+      attachments: event.content.filter((block): block is ImageBlock => block.type === 'image'),
+      references: event.content.filter((block): block is FileBlock => block.type === 'file')
     })
   }
   // A command reads back as the line that was typed, since that is what the
@@ -226,7 +230,8 @@ function applyMessage(state: TranscriptState, event: SessionEvent): void {
       seq: event.seq,
       eventId: event.id,
       text: commandLine(event.name, event.args),
-      attachments: []
+      attachments: [],
+      references: []
     })
   }
   if (event.type === 'app.message') {

@@ -15,6 +15,7 @@ export type {
   DeliverAs,
   EventBody,
   EventEnvelope,
+  FileBlock,
   FileMatch,
   HarnessCapabilities,
   HarnessCatalog,

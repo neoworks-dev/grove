@@ -15,6 +15,7 @@ import type {
   ReviewBatch,
   WorktreeChatMessage
 } from '../../../shared/types'
+import type { FileBlock } from './agents/types'
 
 export interface LogLine {
   source: 'service'
@@ -65,10 +66,12 @@ class WorkbenchStore {
     return [...new Set(running.map((session) => session.workspaceRoot))]
   }
 
-  // A pending insertion into the agent composer (e.g. an @file:lines reference
-  // built from the editor selection). AgentPane consumes it by nonce and clears
-  // the field; the nonce distinguishes repeat inserts of identical text.
-  composerInsert = $state<{ text: string; nonce: number } | null>(null)
+  // A pending insertion into the agent composer: the @file:lines reference built
+  // from the editor selection, and the slice itself so the message carries the
+  // code rather than a name the harness may or may not resolve. The composer
+  // consumes it by nonce; the nonce distinguishes repeat inserts of identical
+  // text.
+  composerInsert = $state<{ text: string; reference?: FileBlock; nonce: number } | null>(null)
 
   // Bumped per worktree on any file change, so trees/diffs re-read reactively.
   fsVersion = $state<Record<string, number>>({})
@@ -282,12 +285,13 @@ export function openFileAtLine(worktreeId: string, path: string, line: number): 
   store.revealTarget = { path, line }
 }
 
-// Queue text for insertion into the agent composer at its caret. AgentPane
-// picks it up reactively (mounting it first via the caller's ensurePane).
+// Queue text for insertion into the agent composer at its caret, optionally with
+// a file slice to attach to the message it becomes. The composer picks this up
+// reactively (mounted first by the caller's ensurePane).
 let composerInsertNonce = 0
-export function insertIntoComposer(text: string): void {
+export function insertIntoComposer(text: string, reference?: FileBlock): void {
   composerInsertNonce += 1
-  store.composerInsert = { text, nonce: composerInsertNonce }
+  store.composerInsert = { text, reference, nonce: composerInsertNonce }
 }
 
 // Move between open editor tabs (Shift+hjkl in the editor).

@@ -56,6 +56,8 @@ interface InlineSelection {
   relPath: string
   startLine: number
   endLine: number
+  /** The selected lines as the buffer has them, unsaved edits included. */
+  text: string
   leafId: string
 }
 
@@ -172,12 +174,23 @@ class InlineEdit {
   }
 
   // ── Phase A: send the selection to the composer as an @-reference ──
+  /**
+   * Put the selection in the composer: the reference as text to type around, and
+   * the selected lines attached to the message so the model reads what the user
+   * highlighted instead of resolving the reference itself.
+   */
   async sendSelectionToComposer(): Promise<void> {
     const selection = await this.readSelection()
     if (!selection) return
     const ref = selectionRef(selection.relPath, selection.startLine, selection.endLine)
     layout.ensurePane('agent')
-    insertIntoComposer(ref)
+    insertIntoComposer(ref, {
+      type: 'file',
+      path: selection.relPath,
+      startLine: selection.startLine,
+      endLine: selection.endLine,
+      text: selection.text
+    })
   }
 
   // ── Phase B: floating inline-edit prompt ──────────────────────────
@@ -270,6 +283,7 @@ class InlineEdit {
       relPath: relFromRoot(store.selectedWorktree?.path, selection.path),
       startLine: selection.startLine,
       endLine: selection.endLine,
+      text: selection.text,
       leafId: session.leafId
     }
   }
@@ -304,6 +318,9 @@ class InlineEdit {
       relPath: file.path,
       startLine: 0,
       endLine: 0,
+      // A working-tree review covers the whole file, so there is no slice to
+      // carry — the diff is what is under review.
+      text: '',
       leafId: session.leafId,
       snapshot,
       review: 'inline'

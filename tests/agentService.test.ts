@@ -312,6 +312,28 @@ describe('AgentService', () => {
     }
   })
 
+  test('an attached file slice reaches the harness as tagged text', async () => {
+    const { service, runs, cleanup } = await setup()
+    try {
+      const session = await service.createSession({ workspace: '/tmp/worktree' })
+      await service.send(session.id, [
+        {
+          type: 'user.message',
+          content: [
+            { type: 'text', text: 'explain this' },
+            { type: 'file', path: 'src/a.ts', startLine: 12, endLine: 13, text: 'a\nb' }
+          ]
+        }
+      ])
+
+      expect(runs[0].prompts).toEqual([
+        'explain this\n<file path="src/a.ts" lines="12-13">\na\nb\n</file>'
+      ])
+    } finally {
+      await cleanup()
+    }
+  })
+
   test('a slash command reaches a harness that can run one', async () => {
     const { service, runs, cleanup } = await setup()
     try {

@@ -60,11 +60,41 @@ describe('transcript fold', () => {
     ])
 
     expect(state.items).toEqual([
-      { kind: 'user', seq: 1, eventId: 'evt_1', text: 'hi', attachments: [] },
+      { kind: 'user', seq: 1, eventId: 'evt_1', text: 'hi', attachments: [], references: [] },
       { kind: 'agent', seq: 3, eventId: 'evt_3', thinking: 'hmm', text: 'hello', streaming: false }
     ])
     expect(state.status).toBe('idle')
     expect(state.stopReason).toBe('end_turn')
+  })
+
+  test('an attached file slice is a chip, not part of the message text', () => {
+    const state = fold([
+      {
+        type: 'user.message',
+        content: [
+          { type: 'text', text: 'explain this' },
+          {
+            type: 'file',
+            path: 'src/a.ts',
+            startLine: 12,
+            endLine: 14,
+            text: 'const a = 1\nconst b = 2\nconst c = 3'
+          }
+        ]
+      }
+    ])
+
+    const [item] = state.items
+    expect(item).toMatchObject({ kind: 'user', text: 'explain this' })
+    expect(item.kind === 'user' && item.references).toEqual([
+      {
+        type: 'file',
+        path: 'src/a.ts',
+        startLine: 12,
+        endLine: 14,
+        text: 'const a = 1\nconst b = 2\nconst c = 3'
+      }
+    ])
   })
 
   test('renders application context separately from user-authored messages', () => {

@@ -34,7 +34,24 @@ export interface ImageBlock {
   mediaType: string
 }
 
-export type UserContentBlock = TextBlock | ImageBlock
+/**
+ * A slice of a file, attached by grove rather than named for the harness to
+ * resolve.
+ *
+ * Harnesses differ on what an `@path` reference means — Claude expands a bare
+ * path and ignores one with a line range, others do nothing at all — so the text
+ * that reaches the model is grove's to produce.
+ */
+export interface FileBlock {
+  type: 'file'
+  path: string
+  /** 1-based, inclusive. */
+  startLine: number
+  endLine: number
+  text: string
+}
+
+export type UserContentBlock = TextBlock | ImageBlock | FileBlock
 
 export interface ContentBlock {
   type: string

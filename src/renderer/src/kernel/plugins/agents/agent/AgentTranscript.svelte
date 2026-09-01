@@ -65,6 +65,18 @@
   {#if item.kind === 'user'}
     <div class="agent-sticky-user -mx-3 mb-3 whitespace-pre-wrap px-3 py-2 text-default">
       {item.text}
+      {#if item.references.length > 0}
+        <!-- The slice itself went to the model; the bubble only names it. -->
+        <div class="mt-1.5 flex flex-wrap gap-1.5">
+          {#each item.references as reference (`${reference.path}:${reference.startLine}`)}
+            <span
+              class="rounded border border-line bg-canvas px-1.5 py-0.5 font-mono text-2xs text-muted"
+            >
+              {reference.path}:{reference.startLine}-{reference.endLine}
+            </span>
+          {/each}
+        </div>
+      {/if}
       {#if item.attachments.length > 0}
         <div class="mt-1.5 flex flex-wrap gap-1.5">
           {#each item.attachments as attachment (attachment.ref)}

@@ -16,6 +16,7 @@
     parseSubmission,
     type Completion
   } from '../../../../lib/agents/completion'
+  import { store } from '../../../../lib/store.svelte'
   import type { ClientEventBody, ImageBlock, UserContentBlock } from '../../../../lib/agents/types'
 
   let {
@@ -86,6 +87,38 @@
   function syncCaret(): void {
     caret = promptEl?.selectionStart ?? draft.length
   }
+
+  /**
+   * Drop an `@ref ` into the draft where the caret is, and leave the caret and
+   * focus after it.
+   *
+   * Revealing the pane focuses it on the next animation frame, so the focus here
+   * has to be taken on a frame rather than a microtask — otherwise the pane
+   * takes it back and the reference lands in a composer nobody is typing in.
+   */
+  function insertMentionAtCaret(reference: string): void {
+    const at = promptEl ? promptEl.selectionStart : draft.length
+    const mention = `@${reference} `
+    draft = draft.slice(0, at) + mention + draft.slice(at)
+    requestAnimationFrame(() => {
+      if (!promptEl) return
+      const position = at + mention.length
+      promptEl.focus()
+      promptEl.setSelectionRange(position, position)
+      syncCaret()
+    })
+  }
+
+  // An @file:lines reference pushed in from the editor selection ("Send
+  // Selection to Composer"). Nonce-gated so the same reference can be sent twice
+  // in a row.
+  let lastComposerInsertNonce = 0
+  $effect(() => {
+    const request = store.composerInsert
+    if (!request || request.nonce === lastComposerInsertNonce) return
+    lastComposerInsertNonce = request.nonce
+    insertMentionAtCaret(request.text)
+  })
 
   function acceptSuggestion(value: string): void {
     if (!completion) return

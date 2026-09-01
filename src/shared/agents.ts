@@ -136,6 +136,18 @@ export type UiNode =
 
 export type EventBody = ClientEventBody | ServerEventBody
 
+/**
+ * A slash command written back out as the line the user typed.
+ *
+ * Harnesses that parse commands out of the prompt send this, and the transcript
+ * shows it, so both spell the same command the same way.
+ */
+export function commandLine(name: string, args: string): string {
+  const trimmed = args.trim()
+  if (trimmed.length === 0) return `/${name}`
+  return `/${name} ${trimmed}`
+}
+
 export type SessionEvent = EventBody & EventEnvelope
 
 export interface Usage {

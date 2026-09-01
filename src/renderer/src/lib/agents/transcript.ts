@@ -11,6 +11,7 @@
  * tree panel put one back.
  */
 
+import { commandLine } from './types'
 import type {
   ContentBlock,
   IdleReason,
@@ -215,6 +216,17 @@ function applyMessage(state: TranscriptState, event: SessionEvent): void {
       eventId: event.id,
       text: textOf(event.content),
       attachments: event.content.filter((block): block is ImageBlock => block.type === 'image')
+    })
+  }
+  // A command reads back as the line that was typed, since that is what the
+  // harness was asked to run.
+  if (event.type === 'user.command') {
+    state.items.push({
+      kind: 'user',
+      seq: event.seq,
+      eventId: event.id,
+      text: commandLine(event.name, event.args),
+      attachments: []
     })
   }
   if (event.type === 'app.message') {

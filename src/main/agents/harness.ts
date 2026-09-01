@@ -114,6 +114,11 @@ export interface HarnessRun {
   readonly resumeKey: string | null
   /** Start a turn. Only called while the session is idle. */
   prompt(text: string): Promise<void>
+  /**
+   * Run one of the commands `offering()` listed. Harnesses that leave this out
+   * get told they cannot, rather than having the ask silently dropped.
+   */
+  command?(name: string, args: string): Promise<void>
   /** Deliver into a turn already in flight; only when `capabilities.steering`. */
   steer?(text: string, deliverAs: DeliverAs): Promise<void>
   interrupt(): Promise<void>

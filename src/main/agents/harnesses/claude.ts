@@ -18,6 +18,7 @@ import type {
   SDKUserMessage,
   SlashCommand
 } from '@anthropic-ai/claude-agent-sdk'
+import { commandLine } from '../../../shared/agents'
 import type {
   CommandInfo,
   ConfirmationResult,
@@ -225,6 +226,17 @@ class ClaudeRun implements HarnessRun {
 
   steer(text: string): Promise<void> {
     this.queue.push(userMessage(text))
+    return Promise.resolve()
+  }
+
+  /**
+   * Claude Code parses slash commands out of the prompt itself, so a command is
+   * sent the same way a message is — as the line the user would have typed.
+   */
+  command(name: string, args: string): Promise<void> {
+    if (!this.query) throw new Error('the Claude harness is not running')
+    this.options.emit({ type: 'session.status_running' })
+    this.queue.push(userMessage(commandLine(name, args)))
     return Promise.resolve()
   }
 

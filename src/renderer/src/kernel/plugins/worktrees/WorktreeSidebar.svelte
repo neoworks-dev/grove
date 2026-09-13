@@ -189,7 +189,7 @@
           title="{titleOf(session)} · {session.provider}/{session.model} — {session.status}"
           onclick={(event) => openSession(worktree.id, session.id, event)}
         >
-          <AgentLogo name={session.provider} size={14} active={session.status === 'running'} />
+          <AgentLogo harness={session.harness} size={14} active={session.status === 'running'} />
           <span class="truncate {session.status === 'running' ? 'text-default' : 'text-muted'}"
             >{titleOf(session)}</span
           >

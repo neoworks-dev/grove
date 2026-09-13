@@ -82,9 +82,16 @@ class AgentSessions {
 
   // ── Listing ─────────────────────────────────────────────────────
 
-  /** Sessions belonging to one worktree, newest first. */
+  /**
+   * Sessions belonging to one worktree, in the order they were created.
+   *
+   * The listing arrives newest first; tabs are read left to right, so a new session belongs at the
+   * end rather than in front of the one it was started beside.
+   */
   forWorktree(worktreePath: string): SessionMeta[] {
-    return this.list.filter((session) => session.workspaceRoot === worktreePath)
+    return this.list
+      .filter((session) => session.workspaceRoot === worktreePath)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
   }
 
   activeId(worktreePath: string): string | null {
@@ -96,7 +103,7 @@ class AgentSessions {
     const remembered = this.activeId(worktreePath)
     const sessions = this.forWorktree(worktreePath)
     if (remembered && sessions.some((session) => session.id === remembered)) return remembered
-    return sessions[0]?.id ?? null
+    return sessions[sessions.length - 1]?.id ?? null
   }
 
   modeFor(sessionId: string): AgentMode {

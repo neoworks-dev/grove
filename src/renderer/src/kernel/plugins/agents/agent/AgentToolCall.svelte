@@ -6,12 +6,16 @@
   // same treatment as a builtin.
 
   import CaretRight from 'phosphor-svelte/lib/CaretRight'
+  import Icon from '@iconify/svelte'
+  import { fileIcon } from '../../../../lib/icons'
   import { diffLines, statsOf } from '../../../../lib/agents/diff'
   import {
+    descriptionOf,
     editsOf,
     inputViewOf,
     labelFor,
     languageOfInput,
+    pathLabelOf,
     resultViewOf,
     stringOf,
     asRecord
@@ -22,12 +26,15 @@
   let {
     item,
     display,
+    root = '',
     expanded,
     onToggle,
     onOpenFile
   }: {
     item: ToolItem
     display: ToolDisplay | undefined
+    /** The workspace the session runs in; paths under it are shown relative to it. */
+    root?: string
     expanded: boolean
     onToggle: () => void
     onOpenFile: (path: string) => void
@@ -40,6 +47,31 @@
   const inputView = $derived(inputViewOf(display))
   const resultView = $derived(resultViewOf(display))
   const language = $derived(languageOfInput(display, input))
+
+  // A call about a file leads with the file name and an icon for its type; the
+  // directory follows it, dimmed, because it is the part every row repeats. A
+  // command is never a path, however single-token it looks.
+  const pathLabel = $derived.by(() => {
+    if (inputView === 'command') {
+      return null
+    }
+    return pathLabelOf(label, root)
+  })
+
+  // What the model said it was doing leads the row; the arguments follow it,
+  // dimmed, since "run the formatter" reads faster than the command line does.
+  const description = $derived(descriptionOf(input))
+  const detail = $derived.by(() => {
+    if (description.length === 0 || label !== description) {
+      return label
+    }
+    // The fallback label picked the description; the command is what is left to show.
+    const fields = asRecord(input)
+    if (fields === null) {
+      return ''
+    }
+    return stringOf(fields.command)
+  })
 
   const path = $derived.by<string | null>(() => {
     const fields = asRecord(input)
@@ -92,7 +124,22 @@
         <CaretRight width="10" height="10" weight="bold" />
       </span>
       <span class="shrink-0 font-semibold {STATUS_COLOR[item.status]}">{item.name}</span>
-      {#if label}<span class="truncate text-muted">{label}</span>{/if}
+      {#if pathLabel}
+        <Icon icon={fileIcon(pathLabel.name)} width="12" height="12" class="shrink-0" />
+        <span class="shrink-0 text-default">{pathLabel.name}</span>
+        {#if pathLabel.directory}
+          <span class="truncate text-dim">{pathLabel.directory}</span>
+        {/if}
+      {:else}
+        {#if description}<span class="min-w-0 truncate text-muted">{description}</span>{/if}
+        {#if detail}
+          <span
+            class="min-w-0 truncate"
+            class:text-dim={description.length > 0}
+            class:text-muted={description.length === 0}>{detail}</span
+          >
+        {/if}
+      {/if}
       {#if diffStats.added > 0}<span class="shrink-0 text-green">+{diffStats.added}</span>{/if}
       {#if diffStats.removed > 0}<span class="shrink-0 text-red">−{diffStats.removed}</span>{/if}
     </button>

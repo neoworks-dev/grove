@@ -22,6 +22,7 @@
     sessionId,
     items,
     tools,
+    root = '',
     expandedTools,
     thinking,
     toggleTool,
@@ -32,6 +33,8 @@
     sessionId: string
     items: TranscriptItem[]
     tools: ToolInfo[]
+    /** The worktree the session runs in; tool calls show their paths relative to it. */
+    root?: string
     expandedTools: Record<string, boolean>
     /** The agent is working and has nothing on screen yet to show for it. */
     thinking: boolean
@@ -102,6 +105,7 @@
           <AgentToolCall
             item={call}
             display={displayOf(call.name)}
+            {root}
             expanded={Boolean(expandedTools[call.toolUseId])}
             onToggle={() => toggleTool(call.toolUseId)}
             {onOpenFile}
@@ -171,6 +175,7 @@
     <AgentToolCall
       {item}
       display={displayOf(item.name)}
+      {root}
       expanded={Boolean(expandedTools[item.toolUseId])}
       onToggle={() => toggleTool(item.toolUseId)}
       {onOpenFile}

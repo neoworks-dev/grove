@@ -77,6 +77,62 @@ export function labelFor(display: ToolDisplay | undefined, input: unknown): stri
     .trim()
 }
 
+/**
+ * What the call says it is doing, in the model's own words.
+ *
+ * Tools that take a `description` beside their arguments — a shell call is the usual one — carry
+ * the intent that the arguments alone do not, which is exactly what an approval hangs on.
+ */
+export function descriptionOf(input: unknown): string {
+  const fields = asRecord(input)
+  if (fields === null || typeof fields.description !== 'string') {
+    return ''
+  }
+  return fields.description.trim()
+}
+
+export interface PathLabel {
+  /** The directory the file sits in, workspace-relative when it is inside one. */
+  directory: string
+  name: string
+}
+
+// A label is only a path if it is a single token: a command or a sentence is not
+// one, and neither is a glob, whose "name" would be a pattern rather than a file.
+const SINGLE_TOKEN = /^[^\s*?<>|]+$/
+const EXTENSION = /\.[A-Za-z0-9]{1,8}$/
+
+/**
+ * Reads a header label as a file path, so a call about a file can lead with the
+ * file name and leave the directory behind it.
+ *
+ * Returns null for labels that are not paths — those stay one plain string.
+ */
+export function pathLabelOf(label: string, root: string): PathLabel | null {
+  const value = label.trim()
+  if (value.length === 0 || !SINGLE_TOKEN.test(value)) {
+    return null
+  }
+  if (!value.includes('/') && !EXTENSION.test(value)) {
+    return null
+  }
+
+  const relative = relativeTo(value, root)
+  const cut = relative.lastIndexOf('/')
+  if (cut < 0) {
+    return { directory: '', name: relative }
+  }
+  return { directory: relative.slice(0, cut + 1), name: relative.slice(cut + 1) }
+}
+
+/** Paths inside the workspace read better without the part every row shares. */
+function relativeTo(path: string, root: string): string {
+  if (root.length === 0 || !path.startsWith(`${root}/`)) {
+    return path
+  }
+  return path.slice(root.length + 1)
+}
+
 export function inputViewOf(display: ToolDisplay | undefined): ToolInputView {
   if (display === undefined || display.input === undefined) {
     return 'json'

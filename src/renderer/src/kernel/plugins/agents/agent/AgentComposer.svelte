@@ -13,6 +13,7 @@
   import {
     activeCompletion,
     applyCompletion,
+    draftSegments,
     parseSubmission,
     type Completion
   } from '../../../../lib/agents/completion'
@@ -95,7 +96,22 @@
 
   function syncCaret(): void {
     caret = promptEl?.selectionStart ?? draft.length
+    syncHighlightScroll()
   }
+
+  // The highlight layer is a second copy of the text with the same typography, so
+  // it only stays in register while it scrolls with the textarea over it.
+  let highlightEl = $state<HTMLDivElement>()
+
+  function syncHighlightScroll(): void {
+    if (!highlightEl || !promptEl) {
+      return
+    }
+    highlightEl.scrollTop = promptEl.scrollTop
+    highlightEl.scrollLeft = promptEl.scrollLeft
+  }
+
+  const segments = $derived(draftSegments(draft))
 
   /**
    * Drop an `@ref ` into the draft where the caret is, and leave the caret and
@@ -355,7 +371,7 @@
     <textarea
       bind:this={promptEl}
       bind:value={draft}
-      class="h-20 w-full resize-none border-0 bg-transparent px-2 py-1.5 text-xs text-default outline-none placeholder:text-dim"
+      class="relative z-0 block h-20 w-full resize-none border-0 bg-transparent px-2 py-1.5 text-xs leading-normal text-transparent caret-default outline-none placeholder:text-dim"
       placeholder={running
         ? 'Steer the running agent…  ( Enter send · Ctrl+C interrupt )'
         : `Prompt…  ( / commands · @ files · ! shell · ↑↓ history · Enter send${placeholderHint} )`}
@@ -363,6 +379,7 @@
       onkeyup={syncCaret}
       onclick={syncCaret}
       oninput={syncCaret}
+      onscroll={syncHighlightScroll}
       onpaste={onPaste}
       ondrop={onDrop}
       ondragover={(event) => event.preventDefault()}
@@ -375,6 +392,19 @@
         onFocusChange(false)
       }}
     ></textarea>
+
+    <!-- The text again, painted over the (transparent) textarea so `@file`
+         mentions read as one token. Everything that decides layout — padding,
+         size, leading, wrapping — has to match the textarea exactly, or the two
+         copies drift apart as the draft grows. The zero-width space keeps a
+         draft ending in a newline the same height in both. -->
+    <div
+      bind:this={highlightEl}
+      aria-hidden="true"
+      class="pointer-events-none absolute inset-0 z-10 overflow-hidden whitespace-pre-wrap break-words px-2 py-1.5 text-xs leading-normal text-default"
+    >{#each segments as segment, index (index)}{#if segment.mention}<span
+            class="rounded-sm bg-action/15 text-action">{segment.text}</span
+          >{:else}{segment.text}{/if}{/each}&#8203;</div>
 
     {#if !focused}
       <!-- Normal-mode hint: press i (or click) to focus the composer. -->

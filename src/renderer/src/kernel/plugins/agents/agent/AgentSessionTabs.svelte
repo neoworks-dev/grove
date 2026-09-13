@@ -46,7 +46,7 @@
       title="{titleOf(session)} · {session.provider}/{session.model} ({badge})"
     >
       <button class="flex cursor-pointer items-center gap-1.5" onclick={() => onSelect(session.id)}>
-        <AgentLogo name={session.provider} size={13} {active} />
+        <AgentLogo harness={session.harness} size={13} {active} />
         <span class="max-w-[12rem] truncate">{titleOf(session)}</span>
         {#if badge === 'running'}
           <span class="text-green"><WaveSpinner count={3} /></span>

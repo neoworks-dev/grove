@@ -1,37 +1,40 @@
 <script lang="ts">
-  // Per-provider brand logo for instance tabs / agent rows. Real brand SVGs
-  // live in assets/agents; brands without a local asset fall back to a
-  // phosphor icon (OpenAI logo, then a generic robot). Inactive instances
-  // render desaturated + dimmed.
-  import OpenAiLogoIcon from 'phosphor-svelte/lib/OpenAiLogoIcon'
+  // The mark for an agent session, in tabs and worktree rows.
+  //
+  // A harness names its own icon in its descriptor (`HarnessInfo.icon`), which is
+  // what the composer's harness picker draws; resolving it from the same place
+  // here means a session and the picker that started it never show two different
+  // logos. A harness grove cannot resolve — one that is no longer mounted — falls
+  // back to a generic robot.
+
+  import Icon from '@iconify/svelte'
   import RobotIcon from 'phosphor-svelte/lib/RobotIcon'
-  import claudeLogo from '../assets/agents/claude.svg'
+  import { catalog } from '../lib/agents/catalog.svelte'
 
   let {
-    name,
+    harness,
     size = 14,
     active = true
-  }: { name: string; size?: number; active?: boolean } = $props()
+  }: { harness: string; size?: number; active?: boolean } = $props()
 
-  function logoFor(provider: string): string {
-    if (provider === 'claude' || provider === 'anthropic') return claudeLogo
-    return ''
-  }
+  // The listing may not have been fetched yet where no agent pane is open; the
+  // load is cached, so asking for it here costs nothing after the first time.
+  $effect(() => {
+    void catalog.load()
+  })
 
-  const src = $derived(logoFor(name))
-  const isOpenAi = $derived(name === 'codex' || name === 'openai')
+  const icon = $derived(catalog.harnessNamed(harness)?.icon)
 </script>
 
-{#if src}
-  <img
-    {src}
-    alt={name}
-    title={name}
-    class="shrink-0 object-contain {active ? '' : 'opacity-40 grayscale'}"
-    style="width:{size}px;height:{size}px"
-  />
-{:else if isOpenAi}
-  <OpenAiLogoIcon {size} class="shrink-0 {active ? '' : 'opacity-40 grayscale'}" />
-{:else}
-  <RobotIcon {size} class="shrink-0 {active ? '' : 'opacity-40 grayscale'}" />
-{/if}
+<span
+  class="inline-flex shrink-0"
+  title={harness}
+  class:opacity-40={!active}
+  class:grayscale={!active}
+>
+  {#if icon}
+    <Icon {icon} width={size} height={size} />
+  {:else}
+    <RobotIcon {size} />
+  {/if}
+</span>

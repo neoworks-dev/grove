@@ -53,6 +53,40 @@ function fileAt(text: string, caret: number): Completion | null {
   return { kind: 'file', query, start, end: caret }
 }
 
+export interface DraftSegment {
+  text: string
+  /** An `@file` reference, which the composer paints so it reads as one token. */
+  mention: boolean
+}
+
+// The same rule `fileAt` completes on: an `@` that opens a word, running to the
+// next space.
+const MENTION = /(^|\s)(@\S+)/g
+
+/**
+ * A draft split into plain runs and the mentions between them, for the layer drawn behind the
+ * textarea. Concatenating the segments gives the draft back, which is what keeps the layer in
+ * register with the text it sits under.
+ */
+export function draftSegments(text: string): DraftSegment[] {
+  const segments: DraftSegment[] = []
+  let index = 0
+
+  for (const match of text.matchAll(MENTION)) {
+    const start = match.index + match[1].length
+    if (start > index) {
+      segments.push({ text: text.slice(index, start), mention: false })
+    }
+    segments.push({ text: match[2], mention: true })
+    index = start + match[2].length
+  }
+
+  if (index < text.length) {
+    segments.push({ text: text.slice(index), mention: false })
+  }
+  return segments
+}
+
 function firstBreakAfter(text: string, from: number): number {
   const match = /\s/.exec(text.slice(from))
   return match === null ? text.length : from + match.index

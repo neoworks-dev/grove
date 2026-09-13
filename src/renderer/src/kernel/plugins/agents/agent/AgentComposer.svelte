@@ -83,10 +83,10 @@
 
   async function loadFileSuggestions(active: Completion): Promise<void> {
     try {
-      const response = await searchFiles(sessionId, active.query)
+      const matches = await searchFiles(sessionId, active.query)
       // The caret may have moved on while the request was in flight.
       if (completion?.start !== active.start || completion?.query !== active.query) return
-      suggestions = response.files.map((file) => file.path)
+      suggestions = matches.map((match) => match.path)
       suggestionIndex = 0
     } catch {
       suggestions = []

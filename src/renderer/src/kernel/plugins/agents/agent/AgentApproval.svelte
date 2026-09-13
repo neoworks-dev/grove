@@ -12,7 +12,7 @@
   import PencilSimple from 'phosphor-svelte/lib/PencilSimple'
   import { fileIcon } from '../../../../lib/icons'
   import { diffLines, statsOf } from '../../../../lib/agents/diff'
-  import { labelFor } from '../../../../lib/agents/tools'
+  import { asRecord, descriptionOf, labelFor, stringOf } from '../../../../lib/agents/tools'
   import type { ToolItem } from '../../../../lib/agents/transcript'
   import type { ConfirmationResult, ToolInfo } from '../../../../lib/agents/types'
   import type { ReviewBatch } from '../../../../../../shared/types'
@@ -39,6 +39,20 @@
   let rootEl = $state<HTMLDivElement>()
 
   const label = $derived(labelFor(tool?.display, item.input))
+
+  // A call that says what it is doing says it here; the arguments stay below it,
+  // because "run the formatter" is what the decision is actually about.
+  const description = $derived(descriptionOf(item.input))
+  const detail = $derived.by(() => {
+    if (description.length === 0 || label !== description) {
+      return label
+    }
+    const fields = asRecord(item.input)
+    if (fields === null) {
+      return ''
+    }
+    return stringOf(fields.command)
+  })
   const reason = $derived(tool?.summary || tool?.description || 'This tool needs your approval')
 
   /** The file the call would change, with what it adds and removes. */
@@ -140,9 +154,18 @@
       {#if change.removed > 0}<span class="shrink-0 text-red">−{change.removed}</span>{/if}
     {:else}
       <span class="shrink-0 font-mono text-default">{item.name}</span>
-      {#if label}<span class="min-w-0 truncate font-mono text-muted">{label}</span>{/if}
+      {#if description}<span class="min-w-0 truncate text-default">{description}</span>{/if}
+      {#if detail && !description}
+        <span class="min-w-0 truncate font-mono text-muted">{detail}</span>
+      {/if}
     {/if}
   </div>
+
+  <!-- The arguments themselves, once the description has said what they are for. -->
+  {#if description && detail}
+    <pre
+      class="mt-1.5 max-h-24 overflow-auto whitespace-pre-wrap rounded border border-line bg-canvas px-2 py-1 font-mono text-2xs text-muted">{detail}</pre>
+  {/if}
 
   {#if denyReasonMode}
     <textarea

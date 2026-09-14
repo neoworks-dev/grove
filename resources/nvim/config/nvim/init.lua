@@ -36,6 +36,14 @@ vim.opt.mouse = 'a'
 vim.opt.clipboard = 'unnamedplus'
 -- Keep 4 context lines visible above/below the cursor when scrolling.
 vim.opt.scrolloff = 4
+-- nvim's stock 8-column tab makes anything indented with tabs look twice as
+-- deep as the project meant it to. Two is the house style; .editorconfig and
+-- vim-sleuth both override this per project, so it only decides files that
+-- carry no evidence of their own.
+vim.opt.tabstop = 2
+vim.opt.shiftwidth = 2
+vim.opt.softtabstop = 2
+vim.opt.expandtab = true
 -- Also suppress the swap/attention message class outright as a belt-and-suspenders.
 vim.opt.shortmess:append('IA')
 vim.opt.fillchars = { eob = ' ' }
@@ -81,6 +89,11 @@ if (vim.uv or vim.loop).fs_stat(lazyPath) then
   vim.opt.rtp:prepend(lazyPath)
   pcall(function()
     require('lazy').setup({
+      -- vim-sleuth: read a file's own indentation and set tabstop/shiftwidth/
+      -- expandtab from it, so a tab-indented project keeps its tabs and a
+      -- 4-space one keeps its four. No config, no keys — it just observes.
+      { 'tpope/vim-sleuth' },
+
       -- flash.nvim: quick label-based motion. `s`/`S` jump by on-screen labels.
       {
         'folke/flash.nvim',

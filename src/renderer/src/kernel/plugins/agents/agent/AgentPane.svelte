@@ -7,6 +7,7 @@
   // session belongs to, and how its file changes get reviewed.
 
   import Icon from '@iconify/svelte'
+  import Eye from 'phosphor-svelte/lib/Eye'
   import { onDestroy, onMount } from 'svelte'
   import { openFileInEditor, store } from '../../../../lib/store.svelte'
   import { keymap } from '../../../../lib/keymap.svelte'
@@ -20,13 +21,15 @@
     type SessionBadge
   } from '../../../../lib/agents/sessions.svelte'
   import { pendingApprovals, visibleItems } from '../../../../lib/agents/transcript'
+  import { fileOfCall } from '../../../../lib/agents/tools'
   import { questionsOf } from '../../../../lib/agents/questions'
   import { activeToolsFor, effectiveMode, type AgentMode } from '../../../../lib/agents/modes'
   import type {
     ClientEventBody,
     ConfirmationResult,
     SessionMeta,
-    ThinkingLevel
+    ThinkingLevel,
+    ToolInfo
   } from '../../../../lib/agents/types'
   import AgentApproval from './AgentApproval.svelte'
   import AgentComposer from './AgentComposer.svelte'
@@ -271,6 +274,57 @@
     if (gatedReview) void review.open(gatedReview.id)
   }
 
+  // ── Follow mode ─────────────────────────────────────────────────
+  //
+  // With it on, every file the agent reads or writes opens in the editor as the
+  // call appears, so the editor tracks the agent instead of being clicked along.
+
+  const following = $derived(settings.get<boolean>('workbench.agentFollow') ?? false)
+
+  function toggleFollow(): void {
+    void settings.set('workbench.agentFollow', !following, 'user')
+  }
+
+  // Calls already followed, and the session they belong to. A call that was on
+  // screen before follow mode came on is history, not something to replay into
+  // the editor.
+  let followedCalls = new Set<string>()
+  let followedSession: string | null = null
+
+  function callIdsOnScreen(): Set<string> {
+    const ids = new Set<string>()
+    for (const item of items) {
+      if (item.kind === 'tool') ids.add(item.toolUseId)
+    }
+    return ids
+  }
+
+  function displayOf(name: string): ToolInfo['display'] {
+    return catalog.tools.find((tool) => tool.name === name)?.display
+  }
+
+  /** Opens the file of every call seen for the first time; only ever moves forward. */
+  function followNewCalls(): void {
+    for (const item of items) {
+      if (item.kind !== 'tool') continue
+      if (followedCalls.has(item.toolUseId)) continue
+      followedCalls.add(item.toolUseId)
+      const path = fileOfCall(displayOf(item.name), item.editedInput ?? item.input, worktreePath)
+      if (path) openFile(path)
+    }
+  }
+
+  $effect(() => {
+    // Follow mode off, or a session just switched in: take what is on screen as
+    // already seen and wait for the next call.
+    if (!following || activeId !== followedSession) {
+      followedSession = activeId
+      followedCalls = callIdsOnScreen()
+      return
+    }
+    followNewCalls()
+  })
+
   // ── Keybindings ─────────────────────────────────────────────────
 
   function focusComposer(): void {
@@ -392,15 +446,31 @@
   {#if !worktree}
     <p class="px-3 py-3 text-xs text-dim">Select a worktree.</p>
   {:else}
-    <AgentSessionTabs
-      sessions={sessionList}
-      {activeId}
-      {badgeFor}
-      {unreadFor}
-      onSelect={selectSession}
-      onClose={closeSession}
-      onCreate={createSession}
-    />
+    <!-- Tabs scroll; the follow toggle is pinned beside them so it stays reachable. -->
+    <div class="flex shrink-0 items-center">
+      <div class="flex min-w-0 flex-1">
+        <AgentSessionTabs
+          sessions={sessionList}
+          {activeId}
+          {badgeFor}
+          {unreadFor}
+          onSelect={selectSession}
+          onClose={closeSession}
+          onCreate={createSession}
+        />
+      </div>
+      <button
+        class="mr-1.5 flex h-6 shrink-0 items-center gap-1 rounded-md px-2 text-2xs {following
+          ? 'bg-elevated text-blue'
+          : 'text-dim hover:bg-hover hover:text-default'}"
+        title="Follow mode: open every file the agent reads or writes"
+        aria-pressed={following}
+        onclick={toggleFollow}
+      >
+        <Eye width="13" height="13" weight={following ? 'fill' : 'regular'} />
+        Follow
+      </button>
+    </div>
 
     {#if errorText}
       <div class="shrink-0 border-b border-red/30 bg-red-soft px-3 py-1.5 text-2xs text-red">

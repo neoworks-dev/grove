@@ -416,6 +416,7 @@
         root={worktreePath}
         {expandedTools}
         thinking={running && approvals.length === 0}
+        {running}
         toggleTool={(id) => (expandedTools = { ...expandedTools, [id]: !expandedTools[id] })}
         onOpenFile={openFile}
         bind:viewport={transcriptViewport}

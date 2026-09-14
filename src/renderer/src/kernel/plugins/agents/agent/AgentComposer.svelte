@@ -17,6 +17,7 @@
     parseSubmission,
     type Completion
   } from '../../../../lib/agents/completion'
+  import { selectionRef } from '../../../../lib/inlineEditRef'
   import { store } from '../../../../lib/store.svelte'
   import type {
     ClientEventBody,
@@ -137,30 +138,34 @@
   }
 
   // An @file:lines reference pushed in from the editor selection ("Send
-  // Selection to Composer"). Nonce-gated so the same reference can be sent twice
-  // in a row.
-  let lastComposerInsertNonce = 0
+  // Selection to Composer"). Taken off the store as it lands: the composer is
+  // unmounted while an approval card is up, and a request left sitting there
+  // would be inserted again by the composer that replaces it.
   $effect(() => {
     const request = store.composerInsert
-    if (!request || request.nonce === lastComposerInsertNonce) return
-    lastComposerInsertNonce = request.nonce
+    if (!request) return
+    store.composerInsert = null
     insertMentionAtCaret(request.text)
     if (request.reference) attachReference(request.reference)
   })
 
   /** Carry a file slice with the next message, replacing an identical earlier one. */
   function attachReference(reference: FileBlock): void {
-    const kept = references.filter((existing) => refKey(existing) !== refKey(reference))
+    const kept = references.filter((existing) => mentionFor(existing) !== mentionFor(reference))
     references = [...kept, reference]
   }
 
-  function refKey(reference: FileBlock): string {
-    return `${reference.path}:${reference.startLine}-${reference.endLine}`
+  /** The `@file:lines` text a slice rides along with. */
+  function mentionFor(reference: FileBlock): string {
+    return `@${selectionRef(reference.path, reference.startLine, reference.endLine)}`
   }
 
-  function dropReference(reference: FileBlock): void {
-    references = references.filter((existing) => existing !== reference)
-    promptEl?.focus()
+  /**
+   * The slices still spoken for by the draft. The mention is the only handle on
+   * an attached selection, so deleting it from the text is what detaches it.
+   */
+  function activeReferences(): FileBlock[] {
+    return references.filter((reference) => draft.includes(mentionFor(reference)))
   }
 
   function acceptSuggestion(value: string): void {
@@ -177,9 +182,10 @@
 
   function submit(): void {
     const submission = parseSubmission(draft)
-    if (!submission && attachments.length === 0 && references.length === 0) return
+    const carried = carriedBlocks()
+    if (!submission && carried.length === 0) return
 
-    const events = eventsFor(submission)
+    const events = eventsFor(submission, carried)
     if (events.length === 0) return
 
     onSend(events)
@@ -193,15 +199,18 @@
 
   /** Everything riding along with the message: attached slices, then images. */
   function carriedBlocks(): UserContentBlock[] {
-    return [...references, ...attachments]
+    return [...activeReferences(), ...attachments]
   }
 
   /** A submitted draft, as the client events a session expects for it. */
-  function eventsFor(submission: ReturnType<typeof parseSubmission>): ClientEventBody[] {
+  function eventsFor(
+    submission: ReturnType<typeof parseSubmission>,
+    carried: UserContentBlock[]
+  ): ClientEventBody[] {
     if (!submission) {
       // Attachments with no text still count as something to say.
-      if (attachments.length === 0 && references.length === 0) return []
-      return [{ type: 'user.message', content: carriedBlocks(), deliverAs: 'steer' }]
+      if (carried.length === 0) return []
+      return [{ type: 'user.message', content: carried, deliverAs: 'steer' }]
     }
     if (submission.kind === 'shell') {
       return [{ type: 'user.shell', command: submission.command, share: submission.share }]
@@ -210,10 +219,7 @@
       return [{ type: 'user.command', name: submission.name, args: submission.args }]
     }
 
-    const content: UserContentBlock[] = [
-      { type: 'text', text: submission.text },
-      ...carriedBlocks()
-    ]
+    const content: UserContentBlock[] = [{ type: 'text', text: submission.text }, ...carried]
     // While a turn is running, `steer` redirects the work in flight rather than
     // waiting for it to finish — which is what typing mid-run is usually for.
     return [{ type: 'user.message', content, deliverAs: 'steer' }]
@@ -353,20 +359,6 @@
           onclick={() => (attachments = attachments.filter((_, at) => at !== index))}
         >
           image ✕
-        </button>
-      {/each}
-    </div>
-  {/if}
-
-  {#if references.length > 0}
-    <div class="mb-1.5 flex flex-wrap gap-1.5">
-      {#each references as reference (refKey(reference))}
-        <button
-          class="rounded border border-line bg-canvas px-1.5 py-0.5 font-mono text-2xs text-muted hover:text-red"
-          title="Remove this attached selection"
-          onclick={() => dropReference(reference)}
-        >
-          {refKey(reference)} ✕
         </button>
       {/each}
     </div>

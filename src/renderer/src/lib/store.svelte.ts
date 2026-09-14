@@ -69,9 +69,9 @@ class WorkbenchStore {
   // A pending insertion into the agent composer: the @file:lines reference built
   // from the editor selection, and the slice itself so the message carries the
   // code rather than a name the harness may or may not resolve. The composer
-  // consumes it by nonce; the nonce distinguishes repeat inserts of identical
-  // text.
-  composerInsert = $state<{ text: string; reference?: FileBlock; nonce: number } | null>(null)
+  // clears it once inserted — an approval card unmounts the composer, and an
+  // unconsumed request would insert itself again the moment it comes back.
+  composerInsert = $state<{ text: string; reference?: FileBlock } | null>(null)
 
   // Bumped per worktree on any file change, so trees/diffs re-read reactively.
   fsVersion = $state<Record<string, number>>({})
@@ -287,11 +287,10 @@ export function openFileAtLine(worktreeId: string, path: string, line: number): 
 
 // Queue text for insertion into the agent composer at its caret, optionally with
 // a file slice to attach to the message it becomes. The composer picks this up
-// reactively (mounted first by the caller's ensurePane).
-let composerInsertNonce = 0
+// reactively (mounted first by the caller's ensurePane) and clears it, so the
+// request is delivered exactly once.
 export function insertIntoComposer(text: string, reference?: FileBlock): void {
-  composerInsertNonce += 1
-  store.composerInsert = { text, reference, nonce: composerInsertNonce }
+  store.composerInsert = { text, reference }
 }
 
 // Move between open editor tabs (Shift+hjkl in the editor).

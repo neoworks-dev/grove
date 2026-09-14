@@ -795,7 +795,7 @@
   --tw-prose-counters: var(--text-dim);
   color: var(--text);
 }
-.agent-markdown.prose :where(p, ul, ol, pre, blockquote, table):not(:last-child) {
+.agent-markdown.prose :where(p, ul, ol, pre, .code-fence, blockquote, table):not(:last-child) {
   margin-top: 0;
   margin-bottom: 0.5rem;
 }
@@ -805,12 +805,26 @@
   font-size: var(--text-sm);
   font-weight: 600;
 }
+/* Each fence sits in a positioned wrapper that carries the block spacing, so the
+   floating scrollbar can be overlaid on the scrolling <pre> itself. */
+.agent-markdown.prose .code-fence {
+  position: relative;
+}
+.agent-markdown.prose .code-fence > pre {
+  margin: 0;
+}
 .agent-markdown.prose pre {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: 0.5rem 0.75rem;
   font-size: var(--text-2xs);
   overflow-x: auto;
+  /* Native bar off — FloatingScrollbar draws the thumb over the block instead of
+     stealing a row of its height. */
+  scrollbar-width: none;
+}
+.agent-markdown.prose pre::-webkit-scrollbar {
+  display: none;
 }
 .agent-markdown.prose :not(pre) > code {
   background: var(--surface);

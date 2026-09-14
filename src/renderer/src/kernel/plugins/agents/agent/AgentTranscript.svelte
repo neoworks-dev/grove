@@ -10,6 +10,7 @@
   import CaretRight from 'phosphor-svelte/lib/CaretRight'
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
   import { renderMarkdown } from '../../../../lib/markdown'
+  import { floatingCodeScrollbars } from '../../../../lib/markdownScrollbars'
   import { blobUrl } from '../../../../lib/agents/api'
   import { tallyOf, toTranscriptRows, type ToolRunRow } from '../../../../lib/agents/toolRuns'
   import type { TranscriptItem } from '../../../../lib/agents/transcript'
@@ -165,7 +166,7 @@
         </details>
       {/if}
       {#if item.text}
-        <div class="agent-markdown prose max-w-none text-xs text-default">
+        <div class="agent-markdown prose max-w-none text-xs text-default" use:floatingCodeScrollbars>
           <!-- eslint-disable-next-line svelte/no-at-html-tags -->
           {@html renderMarkdown(item.text)}
         </div>

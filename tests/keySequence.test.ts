@@ -7,6 +7,7 @@ import {
   sequenceStartsWith,
   findConflicts,
   stepMatchesSequence,
+  stepLabel,
   type KeyStep
 } from '../src/renderer/src/lib/keySequence'
 
@@ -182,5 +183,28 @@ describe('stepMatchesSequence', () => {
 
   it('rejects unparseable text', () => {
     expect(stepMatchesSequence('bogus+key', step('d', { ctrl: true }))).toBe(false)
+  })
+})
+
+// Keycap labels printed on buttons that advertise a shortcut (review verdicts).
+describe('stepLabel', () => {
+  it('gives a named key its keycap glyph', () => {
+    expect(stepLabel(step('enter'))).toBe('↵')
+    expect(stepLabel(step('escape'))).toBe('Esc')
+    expect(stepLabel(step('space'))).toBe('␣')
+  })
+
+  it('prefixes the modifiers', () => {
+    expect(stepLabel(step('enter', { shift: true }))).toBe('⇧↵')
+    expect(stepLabel(step('escape', { shift: true }))).toBe('⇧Esc')
+    expect(stepLabel(step('k', { ctrl: true }))).toBe('Ctrl+k')
+  })
+
+  it('keeps a function key readable', () => {
+    expect(stepLabel(step('f5'))).toBe('F5')
+  })
+
+  it('leaves a printable character literal', () => {
+    expect(stepLabel(step('p'))).toBe('p')
   })
 })

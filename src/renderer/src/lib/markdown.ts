@@ -6,6 +6,32 @@ import DOMPurify from 'dompurify'
 
 marked.setOptions({ gfm: true, breaks: true })
 
+const HTML_ESCAPES: Record<string, string> = {
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;'
+}
+
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, (character) => HTML_ESCAPES[character])
+}
+
+// Code fences ship inside a positioned wrapper so a floating scrollbar can be
+// overlaid on the <pre> (see `floatingCodeScrollbars`). The markdown reaches the
+// DOM through {@html}, so the wrapper has to come from the HTML itself — moving
+// the <pre> afterwards would fight Svelte over nodes it owns.
+marked.use({
+  renderer: {
+    code({ text, lang, escaped }) {
+      const language = /^[\w+-]+$/.test(lang ?? '') ? ` class="language-${lang}"` : ''
+      const body = escaped ? text : escapeHtml(text)
+      return `<div class="code-fence"><pre><code${language}>${body}\n</code></pre></div>\n`
+    }
+  }
+})
+
 // marked + DOMPurify cost a few ms per message. Transcript messages are stable
 // strings, so a bounded LRU keeps remounts (view switches) and duplicate panes
 // from re-parsing the same text. Streaming produces many transient partials,

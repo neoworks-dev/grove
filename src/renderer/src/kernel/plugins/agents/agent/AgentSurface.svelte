@@ -6,6 +6,7 @@
   // failing, which is what lets the vocabulary grow without breaking us.
 
   import { renderMarkdown } from '../../../../lib/markdown'
+  import { floatingCodeScrollbars } from '../../../../lib/markdownScrollbars'
   import type { UiNode, UiTone } from '../../../../lib/agents/types'
   import AgentSurface from './AgentSurface.svelte'
 
@@ -38,7 +39,10 @@
 {:else if node.kind === 'text'}
   <p class="mb-1 whitespace-pre-wrap text-2xs {toneClass(node.tone)}">{node.text}</p>
 {:else if node.kind === 'markdown'}
-  <div class="agent-markdown prose mb-2 max-w-none text-xs text-default">
+  <div
+    class="agent-markdown prose mb-2 max-w-none text-xs text-default"
+    use:floatingCodeScrollbars
+  >
     <!-- eslint-disable-next-line svelte/no-at-html-tags -->
     {@html renderMarkdown(node.text)}
   </div>

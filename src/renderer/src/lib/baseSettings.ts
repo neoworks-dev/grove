@@ -70,6 +70,15 @@ export function registerBaseSettings(): void {
         category: 'Agents'
       },
       {
+        key: 'workbench.agentFollow',
+        type: 'boolean',
+        default: false,
+        title: 'Follow Agent Files',
+        description:
+          'Open every file the agent reads or writes in the editor as the call happens, so the editor tracks what it is doing.',
+        category: 'Agents'
+      },
+      {
         key: 'workbench.whichKeyDelay',
         type: 'number',
         default: 300,

@@ -125,6 +125,29 @@ export function pathLabelOf(label: string, root: string): PathLabel | null {
   return { directory: relative.slice(0, cut + 1), name: relative.slice(cut + 1) }
 }
 
+/**
+ * The file a call is about, or null when it is not about one.
+ *
+ * Both the clickable header and follow mode ask this. Whatever a harness named its arguments —
+ * `path`, `file_path`, something else entirely — a call whose header label reads as a path is a
+ * call about that file, so nothing here has to know any tool's schema.
+ */
+export function fileOfCall(
+  display: ToolDisplay | undefined,
+  input: unknown,
+  root: string
+): string | null {
+  // However single-token it looks, a command line is not a path.
+  if (inputViewOf(display) === 'command') {
+    return null
+  }
+  const label = labelFor(display, input)
+  if (pathLabelOf(label, root) === null) {
+    return null
+  }
+  return label.trim()
+}
+
 /** Paths inside the workspace read better without the part every row shares. */
 function relativeTo(path: string, root: string): string {
   if (root.length === 0 || !path.startsWith(`${root}/`)) {

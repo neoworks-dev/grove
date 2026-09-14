@@ -12,6 +12,7 @@
   import {
     descriptionOf,
     editsOf,
+    fileOfCall,
     inputViewOf,
     labelFor,
     languageOfInput,
@@ -73,10 +74,8 @@
     return stringOf(fields.command)
   })
 
-  // A row that leads with a file name opens that file on click. The path to open
-  // is the label itself — `pathLabel` is what decides a label reads as a path —
-  // so no tool-specific input field (`path`, `file_path`, …) has to be guessed.
-  const filePath = $derived(pathLabel === null ? null : label.trim())
+  // A row that leads with a file name opens that file on click.
+  const filePath = $derived(fileOfCall(display, input, root))
 
   const edits = $derived(inputView === 'diff' ? editsOf(input) : [])
   const diffStats = $derived.by(() => {

@@ -223,8 +223,14 @@ if (vim.uv or vim.loop).fs_stat(lazyPath) then
             typescriptreact = { 'prettierd', 'prettier', stop_after_first = true },
             json = { 'prettierd', 'prettier', stop_after_first = true },
             css = { 'prettierd', 'prettier', stop_after_first = true },
+            scss = { 'prettierd', 'prettier', stop_after_first = true },
             html = { 'prettierd', 'prettier', stop_after_first = true },
-            markdown = { 'prettierd', 'prettier', stop_after_first = true }
+            markdown = { 'prettierd', 'prettier', stop_after_first = true },
+            yaml = { 'prettierd', 'prettier', stop_after_first = true },
+            -- Svelte needs prettier-plugin-svelte, which prettier picks up from
+            -- the project being edited; without this entry .svelte buffers had
+            -- no formatter at all and format-on-save silently did nothing.
+            svelte = { 'prettierd', 'prettier', stop_after_first = true }
           },
           format_on_save = { timeout_ms = 1000, lsp_format = 'fallback' }
         }

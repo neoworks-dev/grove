@@ -12,7 +12,13 @@
   import { renderMarkdown } from '../../../../lib/markdown'
   import { floatingCodeScrollbars } from '../../../../lib/markdownScrollbars'
   import { blobUrl } from '../../../../lib/agents/api'
-  import { tallyOf, toTranscriptRows, type ToolRunRow } from '../../../../lib/agents/toolRuns'
+  import {
+    tallyOf,
+    toTranscriptRows,
+    type ToolRunRow,
+    type TranscriptRow
+  } from '../../../../lib/agents/toolRuns'
+  import { foldedCalls, foldedMessages, foldTurn } from '../../../../lib/agents/turns'
   import type { TranscriptItem } from '../../../../lib/agents/transcript'
   import type { ToolInfo } from '../../../../lib/agents/types'
   import ShimmerText from '../../../../components/ShimmerText.svelte'
@@ -26,6 +32,7 @@
     root = '',
     expandedTools,
     thinking,
+    running,
     toggleTool,
     onOpenFile,
     viewport = $bindable(),
@@ -39,6 +46,8 @@
     expandedTools: Record<string, boolean>
     /** The agent is working and has nothing on screen yet to show for it. */
     thinking: boolean
+    /** The turn in flight; its rows stay expanded so the work can be watched. */
+    running: boolean
     toggleTool: (toolUseId: string) => void
     onOpenFile: (path: string) => void
     viewport?: HTMLDivElement
@@ -78,6 +87,31 @@
   function displayOf(name: string): ToolInfo['display'] {
     return tools.find((tool) => tool.name === name)?.display
   }
+
+  // A turn that is over reads as its answer; the calls and interim messages behind
+  // it hide behind one line. Which turns the user opened back up belongs to the
+  // pane, like the runs above.
+  let expandedTurns = $state<Record<string, boolean>>({})
+
+  function toggleTurn(key: string): void {
+    expandedTurns = { ...expandedTurns, [key]: !expandedTurns[key] }
+  }
+
+  /** Only a finished turn folds — the one in flight is what the user is watching. */
+  function isSettled(index: number): boolean {
+    return index < sections.length - 1 || !running
+  }
+
+  /** What a folded turn says it hid, when it hid no tool calls to name. */
+  function stepLabel(count: number): string {
+    if (count === 1) return '1 step'
+    return `${count} steps`
+  }
+
+  function messageLabel(count: number): string {
+    if (count === 1) return '1 message'
+    return `${count} messages`
+  }
 </script>
 
 {#snippet toolRun(run: ToolRunRow)}
@@ -114,6 +148,36 @@
         {/each}
       </div>
     {/if}
+  </div>
+{/snippet}
+
+{#snippet turnSummary(key: string, hidden: TranscriptRow[], open: boolean)}
+  {@const calls = tallyOf(foldedCalls(hidden))}
+  {@const messages = foldedMessages(hidden).length}
+  <div class="mb-1">
+    <button
+      class="flex w-full min-w-0 items-center gap-2 text-left font-mono text-2xs"
+      onclick={() => toggleTurn(key)}
+      title="Show what this turn did"
+    >
+      <span
+        class="inline-flex shrink-0 text-dim transition-transform duration-200 ease-out"
+        class:rotate-90={open}
+      >
+        <CaretRight width="10" height="10" weight="bold" />
+      </span>
+      {#each calls as tally (tally.name)}
+        <span class="shrink-0 text-muted">
+          {tally.name}{#if tally.count > 1}<span class="text-dim">&nbsp;×{tally.count}</span>{/if}
+        </span>
+      {/each}
+      {#if messages > 0}
+        <span class="shrink-0 text-dim">{messageLabel(messages)}</span>
+      {/if}
+      {#if calls.length === 0 && messages === 0}
+        <span class="shrink-0 text-dim">{stepLabel(hidden.length)}</span>
+      {/if}
+    </button>
   </div>
 {/snippet}
 
@@ -216,16 +280,22 @@
 
 <FloatingScrollbar class="min-h-0 flex-1" bind:viewport {onscroll}>
   <div class="px-3 py-3 text-xs leading-relaxed">
-    {#each sections as section (section.key)}
+    {#each sections as section, index (section.key)}
       <!-- The section box is the sticky header's containing block, so the pinned
            user bubble scrolls away with its own turn instead of stacking. -->
+      {@const rows = toTranscriptRows(section.body)}
+      {@const fold = isSettled(index) ? foldTurn(rows) : { hidden: [], kept: rows }}
+      {@const open = Boolean(expandedTurns[section.key])}
       <div>
         {#if section.header}
           <div class="sticky top-0 z-10">
             {@render row(section.header)}
           </div>
         {/if}
-        {#each toTranscriptRows(section.body) as bodyRow (bodyRow.key)}
+        {#if fold.hidden.length > 0}
+          {@render turnSummary(section.key, fold.hidden, open)}
+        {/if}
+        {#each open ? rows : fold.kept as bodyRow (bodyRow.key)}
           {#if bodyRow.kind === 'toolRun'}
             {@render toolRun(bodyRow)}
           {:else}

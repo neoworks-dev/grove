@@ -2,7 +2,7 @@
 // is the last thing the agent said, plus anything that still wants the user.
 
 import { describe, expect, test } from 'bun:test'
-import { toTranscriptRows } from '../src/renderer/src/lib/agents/toolRuns'
+import { tallyOf, toTranscriptRows } from '../src/renderer/src/lib/agents/toolRuns'
 import { foldedCalls, foldedMessages, foldTurn } from '../src/renderer/src/lib/agents/turns'
 import type { ToolStatus, TranscriptItem } from '../src/renderer/src/lib/agents/transcript'
 
@@ -57,6 +57,27 @@ describe('foldTurn', () => {
     expect(fold.kept[0].kind === 'item' && fold.kept[0].item.kind === 'agent').toBe(true)
     expect(foldedMessages(fold.hidden).map((item) => item.kind)).toEqual(['agent'])
     expect(foldedCalls(fold.hidden).map((call) => call.name)).toEqual(['Read', 'Read', 'Edit'])
+  })
+
+  test('folds the calls that trail the answer into the same summary', () => {
+    const rows = toTranscriptRows([
+      toolCall('Bash'),
+      toolCall('Bash'),
+      toolCall('Bash'),
+      toolCall('Read'),
+      agentMessage('here is what I found'),
+      toolCall('Bash'),
+      toolCall('Bash'),
+      toolCall('Read'),
+      toolCall('Bash')
+    ])
+    const fold = foldTurn(rows)
+
+    expect(fold.kept).toHaveLength(1)
+    expect(tallyOf(foldedCalls(fold.hidden))).toEqual([
+      { name: 'Bash', count: 6 },
+      { name: 'Read', count: 2 }
+    ])
   })
 
   test('keeps a call that did not settle', () => {

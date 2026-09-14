@@ -71,6 +71,16 @@ export function toTranscriptRows(items: TranscriptItem[]): TranscriptRow[] {
 }
 
 /**
+ * Every item as its own row, nothing folded.
+ *
+ * What an opened turn shows: it already summarised its work in one line, and folding runs
+ * inside it again would answer "what did it do" with a second row that looks just like the first.
+ */
+export function toItemRows(items: TranscriptItem[]): TranscriptRow[] {
+  return items.map((item) => ({ kind: 'item', key: item.eventId, item }))
+}
+
+/**
  * What the run did, by tool name, in the order the names first appeared.
  *
  * Nothing here knows any tool: the harness decides what its tools are called, so the summary

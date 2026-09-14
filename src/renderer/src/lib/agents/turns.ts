@@ -24,23 +24,31 @@ function isAnswer(row: TranscriptRow): boolean {
   return row.kind === 'item' && row.item.kind === 'agent' && row.item.text.length > 0
 }
 
-/** Rows that never fold, because they are what the reader is being asked to look at. */
-function needsAttention(row: TranscriptRow): boolean {
-  if (row.kind !== 'item') {
-    return false
+/**
+ * Rows that are the turn working rather than talking: settled calls, runs of them, and the
+ * agent's interim messages.
+ *
+ * A call that is pending, running, denied or failed is not work that went well, so it stays
+ * out of the fold — as does everything the agent did not author: notices, application
+ * messages, the user's own shell commands, harness command output, extension surfaces.
+ */
+function isWork(row: TranscriptRow): boolean {
+  if (row.kind === 'toolRun') {
+    return true
   }
   const item = row.item
   if (item.kind === 'tool') {
-    return item.status !== 'ok'
+    return item.status === 'ok'
   }
-  return item.kind === 'notice' || item.kind === 'app'
+  return item.kind === 'agent'
 }
 
 /**
  * Splits a turn's rows into the ones a collapsed turn hides and the ones it keeps.
  *
- * Everything up to the turn's last agent message folds; that message and whatever follows it
- * stays. A turn that never produced an answer folds nothing — there would be nothing left.
+ * All of the turn's work folds, wherever it sits — a burst of calls after the answer is as
+ * much a detail as one before it, so the whole turn reduces to a single summary line plus the
+ * answer. A turn that never produced an answer folds nothing: there would be nothing left.
  */
 export function foldTurn(rows: TranscriptRow[]): TurnFold {
   let lastAnswer = -1
@@ -55,11 +63,11 @@ export function foldTurn(rows: TranscriptRow[]): TurnFold {
   const kept: TranscriptRow[] = []
   for (let index = 0; index < rows.length; index++) {
     const row = rows[index]
-    if (index >= lastAnswer || needsAttention(row)) {
-      kept.push(row)
+    if (index !== lastAnswer && isWork(row)) {
+      hidden.push(row)
       continue
     }
-    hidden.push(row)
+    kept.push(row)
   }
   return { hidden, kept }
 }

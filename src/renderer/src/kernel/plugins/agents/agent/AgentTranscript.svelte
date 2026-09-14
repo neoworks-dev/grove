@@ -14,6 +14,7 @@
   import { blobUrl } from '../../../../lib/agents/api'
   import {
     tallyOf,
+    toItemRows,
     toTranscriptRows,
     type ToolRunRow,
     type TranscriptRow
@@ -295,7 +296,7 @@
         {#if fold.hidden.length > 0}
           {@render turnSummary(section.key, fold.hidden, open)}
         {/if}
-        {#each open ? rows : fold.kept as bodyRow (bodyRow.key)}
+        {#each open ? toItemRows(section.body) : fold.kept as bodyRow (bodyRow.key)}
           {#if bodyRow.kind === 'toolRun'}
             {@render toolRun(bodyRow)}
           {:else}

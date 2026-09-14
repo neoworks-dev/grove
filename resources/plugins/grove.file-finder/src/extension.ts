@@ -3,11 +3,18 @@
 // plugins use.
 
 import * as grove from '@grove/plugin-sdk'
-
-const RESULT_CAP = 200
+import { rankFiles } from './rank'
 
 // File list cache, invalidated each time the overlay opens.
 let cachedFiles: string[] | null = null
+
+/** The workspace file list, walked once per overlay open and reused per keystroke. */
+async function loadFiles(): Promise<string[]> {
+  if (cachedFiles) return cachedFiles
+  const files = await grove.workspace.findFiles()
+  cachedFiles = files
+  return files
+}
 
 export function activate(context: grove.PluginContext): void {
   context.subscriptions.push(
@@ -18,14 +25,11 @@ export function activate(context: grove.PluginContext): void {
 
     grove.ui.overlays.setHandler('fileFinder', {
       async onQuery(query, emit, token) {
-        if (!cachedFiles) cachedFiles = await grove.workspace.findFiles()
+        const files = await loadFiles()
         if (token.isCancelled) return
-        const needle = query.trim().toLowerCase()
-        const hits = needle
-          ? cachedFiles.filter((file) => file.toLowerCase().includes(needle))
-          : cachedFiles
+        const hits = rankFiles(files, query)
         emit(
-          hits.slice(0, RESULT_CAP).map((file) => ({
+          hits.map((file) => ({
             id: file,
             label: file,
             icon: `file:${file}`

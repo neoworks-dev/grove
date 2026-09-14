@@ -158,6 +158,19 @@ local ns = vim.api.nvim_create_namespace('grove_inline')
 vim.api.nvim_buf_clear_namespace(vim.api.nvim_get_current_buf(), ns, 0, -1)
 `
 
+// Centre a line in the window. The line is clamped rather than trusted: a mark
+// computed against a rebuilt buffer can outrun the one actually loaded, and
+// nvim_win_set_cursor errors out instead of clamping by itself.
+const REVEAL_LINE_LUA = `
+local line = ...
+local total = vim.api.nvim_buf_line_count(0)
+if line > total then line = total end
+if line < 1 then line = 1 end
+vim.api.nvim_win_set_cursor(0, { line, 0 })
+vim.cmd('normal! zz^')
+return line
+`
+
 // Resolve the buffer path and the selected line range. While in a visual mode
 // it reads the live selection (`v` = anchor, `.` = cursor); otherwise it falls
 // back to the last visual marks (`'<`/`'>`), so the range survives leaving
@@ -374,6 +387,21 @@ export class NvimCanvasSession {
         INLINE_PAINT_LUA,
         [ranges, removed]
       ])
+    } catch {
+      // session gone
+    }
+  }
+
+  /**
+   * Put a line on screen, centred, with the cursor on it. Used when something
+   * other than the user decides what to look at — a review opening its first
+   * hunk, which otherwise renders wherever the buffer was last left.
+   */
+  async revealLine(line: number): Promise<void> {
+    const id = this.nvimId
+    if (!id) return
+    try {
+      await window.workbench.nvim.request(id, 'nvim_exec_lua', [REVEAL_LINE_LUA, [line]])
     } catch {
       // session gone
     }

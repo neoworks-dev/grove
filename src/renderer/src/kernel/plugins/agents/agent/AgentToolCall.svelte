@@ -73,11 +73,10 @@
     return stringOf(fields.command)
   })
 
-  const path = $derived.by<string | null>(() => {
-    const fields = asRecord(input)
-    if (!fields || typeof fields.path !== 'string') return null
-    return fields.path
-  })
+  // A row that leads with a file name opens that file on click. The path to open
+  // is the label itself — `pathLabel` is what decides a label reads as a path —
+  // so no tool-specific input field (`path`, `file_path`, …) has to be guessed.
+  const filePath = $derived(pathLabel === null ? null : label.trim())
 
   const edits = $derived(inputView === 'diff' ? editsOf(input) : [])
   const diffStats = $derived.by(() => {
@@ -112,8 +111,11 @@
 
 <div class="mb-1">
   <div class="flex items-center gap-2">
+    <!-- The caret and the tool name expand the call; a file name beside them is
+         its own target that opens the file, which is what a reader reaches for. -->
     <button
-      class="flex min-w-0 flex-1 items-center gap-2 text-left font-mono text-2xs"
+      class="flex min-w-0 items-center gap-2 text-left font-mono text-2xs"
+      class:flex-1={pathLabel === null}
       onclick={onToggle}
       title="Expand the call"
     >
@@ -124,13 +126,7 @@
         <CaretRight width="10" height="10" weight="bold" />
       </span>
       <span class="shrink-0 font-semibold {STATUS_COLOR[item.status]}">{item.name}</span>
-      {#if pathLabel}
-        <Icon icon={fileIcon(pathLabel.name)} width="12" height="12" class="shrink-0" />
-        <span class="shrink-0 text-default">{pathLabel.name}</span>
-        {#if pathLabel.directory}
-          <span class="truncate text-dim">{pathLabel.directory}</span>
-        {/if}
-      {:else}
+      {#if pathLabel === null}
         {#if description}<span class="min-w-0 truncate text-muted">{description}</span>{/if}
         {#if detail}
           <span
@@ -140,14 +136,26 @@
           >
         {/if}
       {/if}
-      {#if diffStats.added > 0}<span class="shrink-0 text-green">+{diffStats.added}</span>{/if}
-      {#if diffStats.removed > 0}<span class="shrink-0 text-red">−{diffStats.removed}</span>{/if}
     </button>
-    {#if path}
-      <button class="shrink-0 text-2xs text-dim hover:text-default" onclick={() => onOpenFile(path)}
-        >open ↗</button
+    {#if pathLabel && filePath}
+      <button
+        class="group flex min-w-0 flex-1 items-center gap-2 text-left font-mono text-2xs"
+        onclick={() => onOpenFile(filePath)}
+        title="Open {filePath}"
       >
+        <Icon icon={fileIcon(pathLabel.name)} width="12" height="12" class="shrink-0" />
+        <span class="shrink-0 text-default group-hover:underline">{pathLabel.name}</span>
+        {#if pathLabel.directory}
+          <span class="truncate text-dim group-hover:underline">{pathLabel.directory}</span>
+        {/if}
+      </button>
     {/if}
+    {#if diffStats.added > 0}<span class="shrink-0 font-mono text-2xs text-green"
+        >+{diffStats.added}</span
+      >{/if}
+    {#if diffStats.removed > 0}<span class="shrink-0 font-mono text-2xs text-red"
+        >−{diffStats.removed}</span
+      >{/if}
   </div>
 
   {#if item.progress && item.status === 'running'}

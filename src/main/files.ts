@@ -45,9 +45,13 @@ export async function listDir(worktreeRoot: string, relPath: string): Promise<Fi
 }
 
 // Recursively list every file (not directory) under the worktree, as paths
-// relative to the root. Used for the agent prompt's "@" file-mention menu.
-// Capped so huge trees don't flood the renderer.
-export async function listAll(worktreeRoot: string, limit = 5000): Promise<string[]> {
+// relative to the root. Used for the agent prompt's "@" file-mention menu and
+// the file finder, both of which rank the whole list — so the walk is complete
+// by default and callers cap it themselves when they want a shorter answer.
+export async function listAll(
+  worktreeRoot: string,
+  limit = Number.POSITIVE_INFINITY
+): Promise<string[]> {
   const results: string[] = []
 
   async function walk(dir: string): Promise<void> {

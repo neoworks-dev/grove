@@ -5,6 +5,7 @@
   // and what a verdict means for a batch. The batch-wide actions live in
   // ReviewHeaderBar, above the canvas.
   import { review } from '../lib/review.svelte'
+  import { keymap } from '../lib/keymap.svelte'
   import { nvimSessionFor } from '../lib/nvim/registry'
   import HunkVerdictOverlay from './HunkVerdictOverlay.svelte'
 
@@ -36,6 +37,11 @@
     review.decide(file.relPath, hunkIndex, accept ? 'accepted' : 'rejected')
   }
 
+  // Read from the registry rather than written out here, so a rebound verdict
+  // key changes what the buttons claim.
+  const acceptKeys = $derived(keymap.keysFor('review.acceptHunk'))
+  const rejectKeys = $derived(keymap.keysFor('review.rejectHunk'))
+
   function commentOf(hunkIndex: number): string {
     if (!file) return ''
     return review.commentOf(file.relPath, hunkIndex)
@@ -48,5 +54,14 @@
 </script>
 
 {#if visible}
-  <HunkVerdictOverlay {leafId} {tick} {anchors} onDecide={decide} {commentOf} onComment={comment} />
+  <HunkVerdictOverlay
+    {leafId}
+    {tick}
+    {anchors}
+    onDecide={decide}
+    {commentOf}
+    onComment={comment}
+    {acceptKeys}
+    {rejectKeys}
+  />
 {/if}

@@ -13,6 +13,7 @@ import { symbolsOutline } from './symbolsOutline.svelte'
 import { workspaceSymbols } from './workspaceSymbols.svelte'
 import { undoTree } from './undotree.svelte'
 import { dialogs } from './dialogs.svelte'
+import { review } from './review.svelte'
 import type { ReviewMode } from './inlineEditRef'
 
 // One-line descriptor shown when the review mode is cycled.
@@ -165,6 +166,45 @@ export function registerCoreBindings(): () => void {
       group: 'Code',
       description: 'Undo history',
       run: () => undoTree.toggle()
+    },
+    // Answering a review from the keyboard. Bare Enter/Escape would be the
+    // editor's own keys, so these only exist while a review is open — `when`
+    // keeps them out of the way (and out of which-key) the rest of the time.
+    {
+      id: 'review.acceptHunk',
+      keys: '<Shift-Enter>',
+      context: 'global',
+      group: 'Review',
+      description: 'Accept this change',
+      when: () => review.active !== null,
+      run: () => void review.decideCurrent('accepted')
+    },
+    {
+      id: 'review.rejectHunk',
+      keys: '<Shift-Escape>',
+      context: 'global',
+      group: 'Review',
+      description: 'Reject this change',
+      when: () => review.active !== null,
+      run: () => void review.decideCurrent('rejected')
+    },
+    {
+      id: 'review.acceptAll',
+      keys: '<Enter> <Enter>',
+      context: 'global',
+      group: 'Review',
+      description: 'Accept everything and finish',
+      when: () => review.active !== null,
+      run: () => void review.resolveAll('accepted')
+    },
+    {
+      id: 'review.rejectAll',
+      keys: '<Escape> <Escape>',
+      context: 'global',
+      group: 'Review',
+      description: 'Reject everything and finish',
+      when: () => review.active !== null,
+      run: () => void review.resolveAll('rejected')
     },
     {
       id: 'terminal.toggle',

@@ -6,7 +6,9 @@
   // Floating cost the first lines of the diff, which are exactly the lines a
   // one-hunk review is about.
   import { review } from '../lib/review.svelte'
+  import { keymap } from '../lib/keymap.svelte'
   import { nvimSessionFor } from '../lib/nvim/registry'
+  import Kbd from './Kbd.svelte'
 
   let { leafId }: { leafId: string } = $props()
 
@@ -24,6 +26,11 @@
   )
 
   const undecided = $derived(review.pendingCount)
+
+  // Keycaps come from the registry, so rebinding a verdict key relabels the
+  // buttons that advertise it.
+  const acceptAllKeys = $derived(keymap.keysFor('review.acceptAll'))
+  const rejectAllKeys = $derived(keymap.keysFor('review.rejectAll'))
 </script>
 
 {#if visible && batch && file}
@@ -61,18 +68,24 @@
     {/if}
     <span class="shrink-0 text-dim">{undecided} undecided</span>
     <button
-      class="rounded px-1.5 py-0.5 text-green hover:bg-hover"
+      class="flex items-center gap-1 rounded px-1.5 py-0.5 text-green hover:bg-hover"
       title="Keep every remaining change and submit the review"
       onclick={() => void review.resolveAll('accepted')}
     >
       ✓ All
+      {#each acceptAllKeys as key, index (index)}
+        <Kbd>{key}</Kbd>
+      {/each}
     </button>
     <button
-      class="rounded px-1.5 py-0.5 text-red hover:bg-hover"
+      class="flex items-center gap-1 rounded px-1.5 py-0.5 text-red hover:bg-hover"
       title="Revert every remaining change and submit the review"
       onclick={() => void review.resolveAll('rejected')}
     >
       ✗ All
+      {#each rejectAllKeys as key, index (index)}
+        <Kbd>{key}</Kbd>
+      {/each}
     </button>
     <button
       class="rounded border border-line px-2 py-0.5 text-default hover:bg-hover"

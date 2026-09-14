@@ -211,6 +211,36 @@ export function formatStep(step: KeyStep): string {
   return `<${[...modifiers, chordKeyName(step.key)].join('-')}>`
 }
 
+// Keycap glyphs for the named keys. Everything not listed keeps its display
+// name — "PageUp" reads better on a button than any arrow-ish symbol for it.
+const KEYCAP_GLYPHS: Record<string, string> = {
+  space: '␣',
+  enter: '↵',
+  escape: 'Esc',
+  tab: '⇥',
+  backspace: '⌫',
+  delete: 'Del',
+  up: '↑',
+  down: '↓',
+  left: '←',
+  right: '→'
+}
+
+/**
+ * A step as it is printed on a keycap: short enough to sit inside a button,
+ * unlike the canonical `<Shift-Enter>` bracket form. Shift becomes ⇧; the
+ * modifiers with no unambiguous symbol on a PC keyboard stay spelled out.
+ */
+export function stepLabel(step: KeyStep): string {
+  const key = KEYCAP_GLYPHS[step.key] || soloKeyToken(step.key).replace(/[<>]/g, '')
+  const prefix: string[] = []
+  if (step.ctrl) prefix.push('Ctrl+')
+  if (step.alt) prefix.push('Alt+')
+  if (step.meta) prefix.push('Meta+')
+  if (step.shift) prefix.push('⇧')
+  return `${prefix.join('')}${key}`
+}
+
 export function formatSequence(parsed: ParsedSequence): string {
   const steps = parsed.steps.map(formatStep).join(' ')
   if (!parsed.leader) return steps

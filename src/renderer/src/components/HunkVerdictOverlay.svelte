@@ -10,6 +10,7 @@
   // Row positions are recomputed from the viewport top on each redraw tick, so
   // the controls track the lines as the buffer scrolls.
   import { nvimSessionFor } from '../lib/nvim/registry'
+  import Kbd from './Kbd.svelte'
 
   // One control: the hunk it decides and the 1-based buffer line it sits on.
   interface HunkAnchor {
@@ -23,7 +24,9 @@
     anchors,
     onDecide,
     commentOf,
-    onComment
+    onComment,
+    acceptKeys = [],
+    rejectKeys = []
   }: {
     leafId: string
     tick: number
@@ -33,6 +36,10 @@
     // agent; a working-tree review has nobody to tell.
     commentOf?: (hunkIndex: number) => string
     onComment?: (hunkIndex: number, comment: string) => void
+    // Keycaps to print on the buttons. Only the callers whose review has
+    // keyboard verdicts pass them; the rest show the buttons bare.
+    acceptKeys?: string[]
+    rejectKeys?: string[]
   } = $props()
 
   let viewportTop = $state(1)
@@ -81,8 +88,10 @@
   }
 </script>
 
-{#each anchors as anchor (anchor.hunkIndex)}
-  <div class="absolute right-2 z-30 flex items-start gap-1" style="top: {rowY(anchor.line)}px">
+{#each anchors as anchor, index (anchor.hunkIndex)}
+  <!-- Left-anchored: the right edge is where the minimap and the scrollbar live,
+       and a verdict button sitting on them was as easy to miss as to mis-click. -->
+  <div class="absolute left-2 z-30 flex items-start gap-1" style="top: {rowY(anchor.line)}px">
     {#if commenting === anchor.hunkIndex}
       <div class="w-72 rounded-md border border-line bg-elevated/95 p-1.5 shadow-lg backdrop-blur">
         <!-- svelte-ignore a11y_autofocus -->
@@ -123,19 +132,31 @@
           ✎
         </span>
       {/if}
+      <!-- The keyboard verdicts answer the hunk the review is sitting on, so
+           only its controls advertise them. -->
       <button
-        class="rounded border border-line bg-elevated/95 px-1.5 py-0.5 text-2xs text-green shadow hover:bg-hover"
+        class="flex items-center gap-1 rounded border border-line bg-elevated/95 px-1.5 py-0.5 text-2xs text-green shadow hover:bg-hover"
         title="Keep this change"
         onclick={() => onDecide(anchor.hunkIndex, true)}
       >
         ✓
+        {#if index === 0}
+          {#each acceptKeys as key, keyIndex (keyIndex)}
+            <Kbd>{key}</Kbd>
+          {/each}
+        {/if}
       </button>
       <button
-        class="rounded border border-line bg-elevated/95 px-1.5 py-0.5 text-2xs text-red shadow hover:bg-hover"
+        class="flex items-center gap-1 rounded border border-line bg-elevated/95 px-1.5 py-0.5 text-2xs text-red shadow hover:bg-hover"
         title="Revert this change"
         onclick={() => onDecide(anchor.hunkIndex, false)}
       >
         ✗
+        {#if index === 0}
+          {#each rejectKeys as key, keyIndex (keyIndex)}
+            <Kbd>{key}</Kbd>
+          {/each}
+        {/if}
       </button>
       {#if onComment}
         <button

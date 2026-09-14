@@ -44,6 +44,7 @@ import {
   parseSequence,
   stepFromEvent,
   sequenceStartsWith,
+  stepLabel,
   isModifierKey,
   type KeyStep,
   type ParsedSequence
@@ -198,6 +199,19 @@ class Keymap {
 
   get activePaneType(): string | null {
     return this.activePaneTypeState
+  }
+
+  /**
+   * The keys a binding currently answers to, as keycap labels — one per step of
+   * the sequence. Empty when the binding is unknown or the user unbound it, so
+   * a UI hint built from this disappears with the shortcut it advertises.
+   */
+  keysFor(id: string): string[] {
+    const binding = this.effective.find((candidate) => candidate.id === id)
+    if (!binding) return []
+    const steps = binding.sequence.steps.map(stepLabel)
+    if (!binding.sequence.leader) return steps
+    return ['␣', ...steps]
   }
 
   // ── Focus model ───────────────────────────────────────────────
@@ -437,10 +451,6 @@ class Keymap {
   }
 
   private handlePendingKey(event: KeyboardEvent): boolean {
-    if (event.key === 'Escape') {
-      this.cancelPending()
-      return true
-    }
     if (event.key === 'Backspace') {
       this.pendingSteps = this.pendingSteps.slice(0, -1)
       return true
@@ -452,6 +462,12 @@ class Keymap {
     if (exact) {
       this.cancelPending()
       void exact.run()
+      return true
+    }
+    // Escape aborts the sequence — but only once nothing claims it, so a
+    // binding can still end on one (Escape Escape).
+    if (event.key === 'Escape') {
+      this.cancelPending()
       return true
     }
     if (matches.length > 0) {

@@ -31,7 +31,8 @@
     commandNames,
     placeholderHint = '',
     onSend,
-    onFocusChange
+    onFocusChange,
+    onInterrupt
   }: {
     sessionId: string
     running: boolean
@@ -39,6 +40,7 @@
     placeholderHint?: string
     onSend: (events: ClientEventBody[]) => void
     onFocusChange: (focused: boolean) => void
+    onInterrupt: () => void
   } = $props()
 
   let draft = $state('')
@@ -220,6 +222,13 @@
   function onKey(event: KeyboardEvent): void {
     if (menuOpen && handleMenuKey(event)) return
 
+    // Escape stops the turn in flight without leaving the composer, so the draft
+    // being typed survives the interrupt.
+    if (event.key === 'Escape' && running) {
+      event.preventDefault()
+      onInterrupt()
+      return
+    }
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
       submit()
@@ -373,7 +382,7 @@
       bind:value={draft}
       class="relative z-0 block h-20 w-full resize-none border-0 bg-transparent px-2 py-1.5 text-xs leading-normal text-transparent caret-default outline-none placeholder:text-dim"
       placeholder={running
-        ? 'Steer the running agent…  ( Enter send · Ctrl+C interrupt )'
+        ? 'Steer the running agent…  ( Enter send · Esc interrupt )'
         : `Prompt…  ( / commands · @ files · ! shell · ↑↓ history · Enter send${placeholderHint} )`}
       onkeydown={onKey}
       onkeyup={syncCaret}

@@ -601,6 +601,7 @@
             commandNames={catalog.completionNames()}
             onSend={send}
             onFocusChange={onComposerFocus}
+            onInterrupt={interrupt}
           />
         {/if}
 

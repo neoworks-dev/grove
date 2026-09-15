@@ -297,7 +297,8 @@
 /* ── Typography ─────────────────────────────────────────────── */
 :root {
   --font-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --font-mono: 'Geist Mono', 'JetBrainsMono Nerd Font Mono', ui-monospace, 'SF Mono', 'Roboto Mono', monospace;
+  --font-mono:
+    'Geist Mono', 'JetBrainsMono Nerd Font Mono', ui-monospace, 'SF Mono', 'Roboto Mono', monospace;
 
   --text-2xs: 11px;
   --text-xs: 12px;
@@ -652,19 +653,33 @@
     font-family: var(--font-mono);
   }
 
-  /* Active-pane marker (keyboard focus model): the focused pane keeps full
-     opacity while every other pane dims slightly toward the canvas.
-     `.pane-surface` marks every focusable pane container (split-tree leaves
-     and docked panes alike). The drag-ghost opacity utility is excluded so a
-     dragged pane keeps its own stronger fade. */
+  /* Active-pane marker (keyboard focus model): the focused pane sits on a faint
+     underglow — light pooling under its lower edge — while every other pane
+     stays flat. Dimming the rest was easy to miss and made unfocused content
+     harder to read, which is the wrong trade for panes you are still watching.
+     `.pane-surface` marks every focusable pane container (split-tree leaves and
+     docked panes alike). */
   .pane-active {
     position: relative;
   }
-  .pane-surface {
-    transition: opacity 120ms ease-out;
-  }
-  .pane-surface:not(.pane-active):not(.opacity-40) {
-    opacity: 0.85;
+  /* The glow is drawn inside the pane's lower edge rather than beneath its box:
+     the split tree clips every pane to its cell, so an outer shadow would never
+     be seen. Painted over the content, and never in its way. */
+  .pane-active::after {
+    content: '';
+    position: absolute;
+    inset-inline: 0;
+    bottom: 0;
+    height: 16px;
+    z-index: 60;
+    pointer-events: none;
+    border-bottom-left-radius: inherit;
+    border-bottom-right-radius: inherit;
+    background: linear-gradient(
+      to top,
+      color-mix(in oklab, var(--focus-ring) 16%, transparent),
+      transparent
+    );
   }
 
   /* Shadows */

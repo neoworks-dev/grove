@@ -73,7 +73,15 @@ export interface OverlayDescriptor {
   actions?: OverlayAction[]
 }
 
-const ITEM_CAP = 1000
+/**
+ * How many results are drawn.
+ *
+ * Every item is a real row — no windowing — so this is what one keystroke costs
+ * to render. Nobody scrolls past the first screen of a ranked list, and a search
+ * that matches half a monorepo used to spend two minutes drawing rows behind the
+ * ones being read.
+ */
+const ITEM_CAP = 200
 const DEFAULT_DEBOUNCE_MS = 120
 
 class OverlayController {
@@ -83,11 +91,16 @@ class OverlayController {
   activeIndex = $state(0)
   selectedIds = $state<Set<string>>(new Set())
   preview = $state<OverlayPreviewContent | null>(null)
+  /** More was found than is being shown, so the list can say so. */
+  capped = $state(false)
 
   private queryTimer: ReturnType<typeof setTimeout> | null = null
   private queryToken: CancellableToken | null = null
   private previewToken: CancellableToken | null = null
   private appliedInitialFocus = false
+  // Results waiting for the next frame, and the frame they are waiting for.
+  private incoming: OverlayItem[] = []
+  private flushHandle: number | null = null
 
   isOpen(id: string): boolean {
     return this.active?.id === id
@@ -97,7 +110,7 @@ class OverlayController {
     if (this.active) this.dismiss()
     this.active = descriptor
     this.query = descriptor.initialQuery ?? ''
-    this.items = []
+    this.clearResults()
     this.activeIndex = 0
     this.selectedIds = new Set()
     this.preview = null
@@ -118,14 +131,55 @@ class OverlayController {
     this.queryToken?.cancel()
     const token = new CancellableToken()
     this.queryToken = token
-    this.items = []
+    this.clearResults()
+
     const emit: OverlayEmit = (batch, options) => {
       if (token.isCancelled || this.active !== descriptor) return
-      const base = options?.replace ? [] : this.items
-      this.items = [...base, ...batch].slice(0, ITEM_CAP)
-      this.afterEmit(descriptor)
+      if (options?.replace) this.clearResults()
+      this.receive(batch, descriptor)
     }
     void descriptor.onQuery(query, emit, token)
+  }
+
+  /**
+   * Take a batch of results.
+   *
+   * A streaming source pushes for as long as it is finding things — ripgrep on a
+   * monorepo emits for minutes — so past the cap this does nothing but remember
+   * that there was more. Below it, batches land on the next frame together
+   * rather than each one re-rendering the list on its own.
+   */
+  private receive(batch: OverlayItem[], descriptor: OverlayDescriptor): void {
+    if (this.items.length + this.incoming.length >= ITEM_CAP) {
+      this.capped = true
+      return
+    }
+    this.incoming = [...this.incoming, ...batch]
+    if (this.flushHandle !== null) return
+    this.flushHandle = requestAnimationFrame(() => {
+      this.flushHandle = null
+      this.flush(descriptor)
+    })
+  }
+
+  private flush(descriptor: OverlayDescriptor): void {
+    if (this.active !== descriptor) return
+    const arrived = this.incoming
+    this.incoming = []
+    if (arrived.length === 0) return
+
+    const next = [...this.items, ...arrived]
+    if (next.length > ITEM_CAP) this.capped = true
+    this.items = next.slice(0, ITEM_CAP)
+    this.afterEmit(descriptor)
+  }
+
+  private clearResults(): void {
+    if (this.flushHandle !== null) cancelAnimationFrame(this.flushHandle)
+    this.flushHandle = null
+    this.incoming = []
+    this.items = []
+    this.capped = false
   }
 
   private afterEmit(descriptor: OverlayDescriptor): void {
@@ -210,8 +264,8 @@ class OverlayController {
     if (this.queryTimer) clearTimeout(this.queryTimer)
     this.queryToken?.cancel()
     this.previewToken?.cancel()
+    this.clearResults()
     this.active = null
-    this.items = []
     this.preview = null
   }
 }

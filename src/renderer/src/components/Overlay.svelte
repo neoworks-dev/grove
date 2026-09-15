@@ -166,6 +166,13 @@
           {#if overlays.items.length === 0}
             <p class="px-3 py-4 text-xs text-dim">No results.</p>
           {/if}
+          <!-- The list stops before the matches do; say so rather than letting
+               the last row read as the last match. -->
+          {#if overlays.capped}
+            <p class="px-3 py-1.5 text-2xs text-dim">
+              Showing the first {overlays.items.length} — narrow the search for the rest.
+            </p>
+          {/if}
           </div>
         </FloatingScrollbar>
 

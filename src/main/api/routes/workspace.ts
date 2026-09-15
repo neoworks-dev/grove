@@ -73,11 +73,22 @@ export function registerWorkspaceRoutes(registry: RouteRegistry): void {
     handler: (args, context) =>
       new Promise<null>((resolve) => {
         const worktree = context.worktreeFor(args)
+        // How many matches the caller wants delivered. The search itself still
+        // runs to the end of the worktree; what stops at the limit is the
+        // traffic, because every match past what a caller will look at costs a
+        // structured clone and a trip through the renderer's main thread.
+        const limit = Number(args.limit ?? Number.POSITIVE_INFINITY)
+        let delivered = 0
+
         const batcher = createStreamBatcher<search.SearchMatch>((items) => context.emit(items))
         const handle = search.ripgrepSearch(
           worktree.path,
           String(args.query ?? ''),
-          (match) => batcher.push(match),
+          (match) => {
+            if (delivered >= limit) return
+            delivered += 1
+            batcher.push(match)
+          },
           () => {
             batcher.flush()
             resolve(null)

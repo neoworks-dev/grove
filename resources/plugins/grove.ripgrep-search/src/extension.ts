@@ -11,6 +11,15 @@ interface Match {
 }
 
 const BATCH_SIZE = 50
+/**
+ * How many matches are worth asking for.
+ *
+ * The overlay draws every row it is given, and nobody reads past the first
+ * screen of them; "const" in a monorepo matches often enough that delivering all
+ * of it froze the window for minutes. The search still runs to the end — this is
+ * how much of it comes back.
+ */
+const MAX_RESULTS = 200
 const CONTEXT_BEFORE = 8
 const CONTEXT_AFTER = 8
 
@@ -22,7 +31,10 @@ export function activate(context: grove.PluginContext): void {
       async onQuery(query, emit, token) {
         if (!query.trim()) return
         let batch: grove.OverlayItem[] = []
-        for await (const match of grove.workspace.searchText(query, { token })) {
+        for await (const match of grove.workspace.searchText(query, {
+          token,
+          limit: MAX_RESULTS
+        })) {
           const typed = match as Match
           batch.push({
             id: `${typed.file}:${typed.line}:${typed.column}`,

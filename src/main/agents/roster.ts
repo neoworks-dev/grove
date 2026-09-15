@@ -1,24 +1,28 @@
 // Who else is working here, and how to reach them.
 //
 // grove's inter-agent tools need three things the session store alone does not
-// give them: a readable name per session (the model cannot address a UUID), a
-// way to put a message into another session's turn, and a way to start a new
-// session on any mounted harness. All three are session-service operations, so
-// this is the one place that knows both vocabularies.
+// give them: an address per session, a way to put a message into another
+// session's turn, and a way to start a new session on any mounted harness. All
+// three are session-service operations, so this is the one place that knows both
+// vocabularies.
 //
-// Names are session titles. Two sessions may carry the same title, so a
-// duplicate is disambiguated with the head of its id — stable for as long as the
-// session exists, which is as long as anyone can address it.
+// The address is the session's agent id, not its title: titles are edited and
+// duplicated, and an address that moved when a user renamed a tab would strand
+// every agent holding it. Titles still travel alongside, because "auth-refactor"
+// is what makes a roster readable.
 
 import type { SessionMeta } from '../../shared/agents'
 import { PARENT_LABEL } from './handoffBridge'
 import type { HarnessRegistry } from './harness'
+import { agentIdOf } from './identity'
 import type { AgentService } from './service'
 
 export interface AgentPeer {
   sessionId: string
-  /** What other agents address this session as. */
-  name: string
+  /** What other agents address this session as. Stable for the session's life. */
+  agentId: string
+  /** The session's title, for reading rather than addressing. */
+  title: string
   harness: string
   model: string
   status: SessionMeta['status']
@@ -46,38 +50,49 @@ export interface AgentRosterOptions {
 export class AgentRoster {
   constructor(private options: AgentRosterOptions) {}
 
-  /** Every session rooted in a worktree, named. */
+  /** Every session rooted in a worktree, with the id each is addressed by. */
   async peers(workspaceRoot: string): Promise<AgentPeer[]> {
     const sessions = await this.options.agents.listSessions()
-    const here = sessions.filter((session) => session.workspaceRoot === workspaceRoot)
-    return here.map((session) => this.peerOf(session, here))
+    return sessions
+      .filter((session) => session.workspaceRoot === workspaceRoot)
+      .map((session) => peerOf(session))
   }
 
-  /** The name one session is known by, for signing its own messages. */
-  async nameOf(sessionId: string): Promise<string> {
+  /** How one session signs its own messages: "title (id)", or the id alone. */
+  async signatureOf(sessionId: string): Promise<string> {
     const sessions = await this.options.agents.listSessions()
     const session = sessions.find((entry) => entry.id === sessionId)
     if (!session) return sessionId.slice(0, 8)
-    const siblings = sessions.filter((entry) => entry.workspaceRoot === session.workspaceRoot)
-    return this.peerOf(session, siblings).name
+    return signatureOf(peerOf(session))
+  }
+
+  /** The agent id of one session. */
+  async agentIdOf(sessionId: string): Promise<string> {
+    const sessions = await this.options.agents.listSessions()
+    const session = sessions.find((entry) => entry.id === sessionId)
+    if (!session) return sessionId.slice(0, 8)
+    return agentIdOf(session)
   }
 
   /**
-   * The peer an agent meant, by name or by session id. Matching is
-   * case-insensitive and ignores the disambiguating suffix, because a model that
-   * read "Reviewer #a31f0c2b" off the roster will write "Reviewer" as often as not.
+   * The peer an agent meant.
+   *
+   * An agent id is the address, so that is matched first. A title is accepted
+   * too — a model that has read one off the roster will use it — but only when
+   * exactly one session carries it, since a title says nothing about which.
    */
   async resolve(workspaceRoot: string, reference: string): Promise<AgentPeer | null> {
     const wanted = reference.trim().toLowerCase()
     if (wanted.length === 0) return null
     const peers = await this.peers(workspaceRoot)
 
-    const byId = peers.find((peer) => peer.sessionId === reference)
-    if (byId) return byId
-    const byName = peers.find((peer) => peer.name.toLowerCase() === wanted)
-    if (byName) return byName
-    const byTitle = peers.find((peer) => peer.name.toLowerCase().startsWith(`${wanted} #`))
-    if (byTitle) return byTitle
+    const byAgentId = peers.find((peer) => peer.agentId.toLowerCase() === wanted)
+    if (byAgentId) return byAgentId
+    const bySessionId = peers.find((peer) => peer.sessionId === reference)
+    if (bySessionId) return bySessionId
+
+    const byTitle = peers.filter((peer) => peer.title.trim().toLowerCase() === wanted)
+    if (byTitle.length === 1) return byTitle[0]
     return null
   }
 
@@ -106,40 +121,28 @@ export class AgentRoster {
     await this.options.agents.send(snapshot.id, [
       { type: 'app.message', label: 'Task', text: options.prompt, deliverAs: 'followUp' }
     ])
-    const peers = await this.peers(options.workspaceRoot)
-    const spawned = peers.find((peer) => peer.sessionId === snapshot.id)
-    if (spawned) return spawned
-    return {
-      sessionId: snapshot.id,
-      name: options.title,
-      harness: snapshot.harness,
-      model: snapshot.model,
-      status: snapshot.status,
-      waiting: false
-    }
+    return peerOf(snapshot)
   }
 
   /** The harnesses a spawned agent may run on. */
   harnessIds(): string[] {
     return this.options.harnesses.ids()
   }
+}
 
-  private peerOf(session: SessionMeta, siblings: SessionMeta[]): AgentPeer {
-    return {
-      sessionId: session.id,
-      name: nameFor(session, siblings),
-      harness: session.harness,
-      model: session.model,
-      status: session.status,
-      waiting: session.pendingApprovals.length > 0
-    }
+function peerOf(session: SessionMeta): AgentPeer {
+  return {
+    sessionId: session.id,
+    agentId: agentIdOf(session),
+    title: session.title.trim() || session.harness,
+    harness: session.harness,
+    model: session.model,
+    status: session.status,
+    waiting: session.pendingApprovals.length > 0
   }
 }
 
-/** A session's title, kept unique among the sessions it shares a worktree with. */
-function nameFor(session: SessionMeta, siblings: SessionMeta[]): string {
-  const title = session.title.trim() || session.harness
-  const shared = siblings.filter((entry) => (entry.title.trim() || entry.harness) === title)
-  if (shared.length < 2) return title
-  return `${title} #${session.id.slice(0, 8)}`
+/** How a peer is named when it is talking rather than being addressed. */
+export function signatureOf(peer: AgentPeer): string {
+  return `${peer.title} (${peer.agentId})`
 }

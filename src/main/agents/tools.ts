@@ -13,7 +13,7 @@ import type { OpenFileTarget } from '../../shared/agents'
 import type { WorktreeChatMessage } from '../../shared/types'
 import type { WorktreeChannel } from '../worktreeChannel'
 import type { GroveTool } from './harness'
-import type { AgentPeer, AgentRoster } from './roster'
+import { signatureOf, type AgentPeer, type AgentRoster } from './roster'
 
 // The surface id the intro pane watches. Changing it means changing
 // src/renderer/src/lib/intro.svelte.ts.
@@ -218,17 +218,17 @@ function chatTools(options: GroveToolOptions): GroveTool[] {
     summary: 'Send a message to another agent, or to everyone in this worktree.',
     description:
       "Post a message on this worktree's shared channel, which the user and every other agent " +
-      'working here can read. Name an agent in "to" (as `list_agents` reports it) and the ' +
-      'message is delivered into its conversation as well, interrupting what it is doing; leave ' +
-      '"to" out to address the room. Use this to hand work over, ask for a result, or report one ' +
-      'back — not for routine progress.',
+      'working here can read. Put an agent id in "to" (the id `list_agents` reports, not its ' +
+      "title) and the message is delivered into that agent's conversation as well, interrupting " +
+      'what it is doing; leave "to" out to address the room. Use this to hand work over, ask for ' +
+      'a result, or report one back — not for routine progress.',
     inputSchema: {
       type: 'object',
       properties: {
         text: { type: 'string', description: 'The message to send.' },
         to: {
           type: 'string',
-          description: 'The agent to address, by the name `list_agents` gives it.'
+          description: 'The agent id to address, as `list_agents` reports it.'
         }
       },
       required: ['text'],
@@ -242,7 +242,7 @@ function chatTools(options: GroveToolOptions): GroveTool[] {
         return { content: 'Rate limited: too many messages in the last minute.', isError: true }
       }
       const text = String(input.text)
-      const from = await options.roster.nameOf(context.sessionId)
+      const from = await options.roster.signatureOf(context.sessionId)
       const addressee = stringOrNothing(input.to)
 
       const target = await resolveAddressee(options.roster, context.workspaceRoot, addressee)
@@ -252,7 +252,7 @@ function chatTools(options: GroveToolOptions): GroveTool[] {
         context.workspaceRoot,
         { kind: 'agent', name: from, instanceId: context.sessionId },
         text,
-        target.kind === 'agent' ? target.peer.name : undefined
+        addresseeOf(target)
       )
       if (target.kind !== 'agent') return { content: 'Posted on the channel.' }
       if (target.peer.sessionId === context.sessionId) {
@@ -260,7 +260,7 @@ function chatTools(options: GroveToolOptions): GroveTool[] {
       }
 
       await options.roster.deliver(target.peer.sessionId, from, text)
-      return { content: `Delivered to ${target.peer.name}.` }
+      return { content: `Delivered to ${signatureOf(target.peer)}.` }
     }
   }
 
@@ -293,9 +293,10 @@ function chatTools(options: GroveToolOptions): GroveTool[] {
     name: 'list_agents',
     summary: 'List the other agents working in this worktree.',
     description:
-      'List every agent session in this worktree, with the name to address it by, the runtime ' +
-      'it runs on, its model and whether it is working, idle or held on a permission request. ' +
-      'Call this before handing work over, and again when an answer is overdue.',
+      'List every agent session in this worktree: the id to address it by, its title, the ' +
+      'runtime it runs on, its model, and whether it is working, idle or held on a permission ' +
+      'request. Address agents by id — a title can change, an id cannot. Call this before ' +
+      'handing work over, and again when an answer is overdue.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     policy: 'allow',
     display: { label: 'agents', input: 'hidden', result: 'list' },
@@ -323,16 +324,16 @@ function spawnTool(options: GroveToolOptions): GroveTool {
     summary: 'Start another agent in this worktree and give it a task.',
     description:
       'Start a new agent session in this worktree and hand it a task. Use it to run work in ' +
-      'parallel, or to put a job on a runtime better suited to it than yours. The new agent ' +
-      'shares the worktree and the message channel with you, so tell it in the prompt to report ' +
-      'back to you by name with `send_message`. It does not see this conversation: the prompt ' +
-      'has to carry everything it needs.',
+      'parallel, or to put a job on a runtime better suited to it than yours. Whatever it says ' +
+      'at the end of each of its turns is delivered back to you, and it shares the worktree and ' +
+      'the message channel with you. It does not see this conversation: the prompt has to carry ' +
+      'everything it needs.',
     inputSchema: {
       type: 'object',
       properties: {
         title: {
           type: 'string',
-          description: 'A short name for the new agent; this is what others address it by.'
+          description: 'A short title for the new agent, describing the job it is being given.'
         },
         prompt: { type: 'string', description: 'The task, in full.' },
         harness: {
@@ -370,7 +371,7 @@ function spawnTool(options: GroveToolOptions): GroveTool {
       })
       return {
         content:
-          `Started ${peer.name} on ${peer.harness}. Address it by that name; ` +
+          `Started "${peer.title}" on ${peer.harness}. Address it as ${peer.agentId}; ` +
           'what it says at the end of each of its turns is delivered to you.'
       }
     }
@@ -393,14 +394,20 @@ async function resolveAddressee(
   if (peer) return { kind: 'agent', peer }
 
   const peers = await roster.peers(workspaceRoot)
-  const known = peers.map((entry) => entry.name).join(', ') || 'none'
+  const known = peers.map(signatureOf).join(', ') || 'none'
   return {
     kind: 'unknown',
     error: {
-      content: `No agent called "${addressee}" in this worktree. Running here: ${known}.`,
+      content: `No agent "${addressee}" in this worktree. Running here: ${known}.`,
       isError: true
     }
   }
+}
+
+/** The name a message is filed under on the channel. */
+function addresseeOf(target: Addressee): string | undefined {
+  if (target.kind !== 'agent') return undefined
+  return signatureOf(target.peer)
 }
 
 /** One channel message, as the model reads it. */
@@ -411,7 +418,13 @@ function channelLine(entry: WorktreeChatMessage): string {
 
 /** One roster line, as the model reads it. */
 function describePeer(peer: AgentPeer, selfSessionId: string): string {
-  const parts = [peer.name, peer.harness, peer.model || 'default model', stateOf(peer)]
+  const parts = [
+    peer.agentId,
+    peer.title,
+    peer.harness,
+    peer.model || 'default model',
+    stateOf(peer)
+  ]
   if (peer.sessionId === selfSessionId) parts.push('you')
   return `- ${parts.join(' · ')}`
 }

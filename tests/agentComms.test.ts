@@ -10,6 +10,7 @@ import { describe, expect, test } from 'bun:test'
 import { groveTools } from '../src/main/agents/tools'
 import { AgentRoster, type AgentPeer } from '../src/main/agents/roster'
 import { AgentHandoffBridge, PARENT_LABEL } from '../src/main/agents/handoffBridge'
+import { AGENT_ID_LABEL } from '../src/main/agents/identity'
 import { groveSystemPrompt } from '../src/main/agents/systemPrompt'
 import type { GroveTool, GroveToolContext } from '../src/main/agents/harness'
 import type { SessionEvent, SessionMeta } from '../src/shared/agents'
@@ -37,7 +38,7 @@ function sessionMeta(id: string, title: string, overrides: Partial<SessionMeta> 
     thinkingLevel: 'off',
     activeTools: null,
     autoApproveTools: [],
-    labels: {},
+    labels: { [AGENT_ID_LABEL]: `id-${id}` },
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
     status: 'idle',
@@ -61,7 +62,7 @@ function testRoster(sessions: SessionMeta[]): {
     createSession: (options: { title?: string; labels?: Record<string, string> }) => {
       created.push({ title: options.title ?? '', labels: options.labels })
       const spawned = sessionMeta('spawned', options.title ?? '', {
-        labels: options.labels ?? {}
+        labels: { [AGENT_ID_LABEL]: 'id-spawned', ...options.labels }
       })
       sessions.push(spawned)
       return Promise.resolve({ ...spawned, messageCount: 0 })
@@ -107,13 +108,15 @@ describe('addressing another agent', () => {
     const posted: Posted[] = []
 
     const result = await toolNamed('send_message', roster, posted).execute(
-      { to: 'Builder', text: 'take the parser' },
+      { to: 'id-b', text: 'take the parser' },
       context('a')
     )
 
-    expect(delivered).toEqual([{ sessionId: 'b', from: 'Planner', text: 'take the parser' }])
-    expect(posted).toEqual([{ from: 'Planner', text: 'take the parser', to: 'Builder' }])
-    expect(result.content).toContain('Builder')
+    expect(delivered).toEqual([{ sessionId: 'b', from: 'Planner (id-a)', text: 'take the parser' }])
+    expect(posted).toEqual([
+      { from: 'Planner (id-a)', text: 'take the parser', to: 'Builder (id-b)' }
+    ])
+    expect(result.content).toContain('id-b')
   })
 
   test('a message with no addressee reaches the channel and nobody in particular', async () => {
@@ -143,13 +146,25 @@ describe('addressing another agent', () => {
     expect(posted).toEqual([])
   })
 
-  test('sessions sharing a title stay addressable apart', async () => {
-    const sessions = [sessionMeta('a', 'Session'), sessionMeta('b', 'Session')]
+  test('a title is accepted as an address only while it names one session', async () => {
+    const sessions = [sessionMeta('a', 'Planner'), sessionMeta('b', 'Builder')]
     const { roster } = testRoster(sessions)
 
-    const peers = await roster.peers('/repo')
+    const unique = await roster.resolve('/repo', 'Builder')
+    expect(unique?.sessionId).toBe('b')
 
-    expect(peers.map((peer) => peer.name)).toEqual(['Session #a', 'Session #b'])
+    sessions.push(sessionMeta('c', 'Builder'))
+    expect(await roster.resolve('/repo', 'Builder')).toBeNull()
+    expect((await roster.resolve('/repo', 'id-c'))?.sessionId).toBe('c')
+  })
+
+  test('an address survives the session being renamed', async () => {
+    const sessions = [sessionMeta('a', 'Planner'), sessionMeta('b', 'Builder')]
+    const { roster } = testRoster(sessions)
+
+    sessions[1] = sessionMeta('b', 'Something else entirely')
+
+    expect((await roster.resolve('/repo', 'id-b'))?.sessionId).toBe('b')
   })
 })
 
@@ -165,6 +180,7 @@ describe('the roster an agent reads', () => {
     const result = await toolNamed('list_agents', roster, posted).execute({}, context('a'))
 
     expect(result.content).toContain('held on a permission request')
+    expect(result.content).toContain('id-b')
     expect(result.content).toContain('you')
   })
 })
@@ -263,7 +279,10 @@ describe('a spawned agent finishing a turn', () => {
     emit({ ...envelope('child'), type: 'session.status_idle', stopReason: 'end_turn' })
     await settle()
 
-    expect(delivered).toEqual([{ sessionId: 'a', from: 'Reviewer', text: 'the parser is fine' }])
+    expect(delivered).toEqual([
+      // No agent-id label on this one, so the head of its session id stands in.
+      { sessionId: 'a', from: 'Reviewer (child)', text: 'the parser is fine' }
+    ])
   })
 
   test('says nothing twice: a turn that produced no new answer reports none', async () => {
@@ -306,10 +325,11 @@ describe('a spawned agent finishing a turn', () => {
 })
 
 describe('what grove tells an agent about the worktree', () => {
-  function peer(name: string): AgentPeer {
+  function peer(agentId: string, title: string): AgentPeer {
     return {
-      sessionId: name,
-      name,
+      sessionId: agentId,
+      agentId,
+      title,
       harness: 'claude',
       model: 'opus',
       status: 'idle',
@@ -317,15 +337,17 @@ describe('what grove tells an agent about the worktree', () => {
     }
   }
 
-  test('names the agent, the others, and the tools for reaching them', () => {
+  test('gives the agent its id, the others theirs, and the tools for reaching them', () => {
     const prompt = groveSystemPrompt({
-      name: 'Planner',
+      agentId: 'id-a',
+      title: 'Planner',
       workspaceRoot: '/repo',
-      peers: [peer('Planner'), peer('Builder')],
+      peers: [peer('id-a', 'Planner'), peer('id-b', 'Builder')],
       harnesses: ['claude', 'pi']
     })
 
-    expect(prompt).toContain('"Planner"')
+    expect(prompt).toContain('id-a')
+    expect(prompt).toContain('id-b')
     expect(prompt).toContain('Builder')
     expect(prompt).toContain('send_message')
     expect(prompt).toContain('spawn_agent')
@@ -333,9 +355,10 @@ describe('what grove tells an agent about the worktree', () => {
 
   test('says so when nobody else is here, rather than listing an empty roster', () => {
     const prompt = groveSystemPrompt({
-      name: 'Planner',
+      agentId: 'id-a',
+      title: 'Planner',
       workspaceRoot: '/repo',
-      peers: [peer('Planner')],
+      peers: [peer('id-a', 'Planner')],
       harnesses: ['claude']
     })
 

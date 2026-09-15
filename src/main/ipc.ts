@@ -144,24 +144,29 @@ const agents = new AgentService({
   store: sessionStore,
   harnesses,
   tools: () => groveTools({ chat: channel, roster: agentRoster }),
-  systemPrompt: (session) => buildSystemPrompt(session.id, session.workspaceRoot),
+  systemPrompt: (session) => buildSystemPrompt(session),
   publish: (event) => send('event:agent-event', event),
   defaultHarness: () => settings.get<string>('workbench.agentHarness')
 })
 
-// Names the sessions in a worktree, delivers between them, and starts new ones:
-// what grove's inter-agent tools are built on.
+// Addresses the sessions in a worktree, delivers between them, and starts new
+// ones: what grove's inter-agent tools are built on.
 const agentRoster = new AgentRoster({ agents, harnesses })
 
-/** grove's part of a session's system prompt: its name here, and who else is here. */
-async function buildSystemPrompt(sessionId: string, workspaceRoot: string): Promise<string> {
-  const [name, peers] = await Promise.all([
-    agentRoster.nameOf(sessionId),
-    agentRoster.peers(workspaceRoot)
+/** grove's part of a session's system prompt: who it is here, and who else is. */
+async function buildSystemPrompt(session: {
+  id: string
+  title: string
+  workspaceRoot: string
+}): Promise<string> {
+  const [agentId, peers] = await Promise.all([
+    agentRoster.agentIdOf(session.id),
+    agentRoster.peers(session.workspaceRoot)
   ])
   return groveSystemPrompt({
-    name,
-    workspaceRoot,
+    agentId,
+    title: session.title,
+    workspaceRoot: session.workspaceRoot,
     peers,
     harnesses: agentRoster.harnessIds()
   })

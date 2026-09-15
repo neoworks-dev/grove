@@ -64,7 +64,7 @@ export class AgentHandoffBridge {
     const parent = await this.options.store.get(parentSessionId)
     if (!parent) return
 
-    const from = await this.options.roster.nameOf(sessionId)
+    const from = await this.options.roster.signatureOf(sessionId)
     await this.options.roster.deliver(parentSessionId, from, text).catch(() => {})
   }
 }

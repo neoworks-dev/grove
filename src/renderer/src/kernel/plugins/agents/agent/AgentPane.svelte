@@ -79,6 +79,13 @@
   })
 
   const items = $derived(live ? visibleItems(live.transcript) : [])
+  // What has already been said here, oldest first: the composer steps back
+  // through the conversation itself, so history outlives the window it was
+  // typed in the way the transcript does.
+  const promptHistory = $derived.by(() => {
+    const said = items.filter((item) => item.kind === 'user')
+    return said.map((item) => item.text).filter((text) => text.trim().length > 0)
+  })
   const approvals = $derived(live ? pendingApprovals(live.transcript) : [])
   // A parked call whose input is a set of questions is one, whatever the
   // harness named the tool.
@@ -525,6 +532,15 @@
         run: () => scrollTranscriptPage(-0.9)
       },
       {
+        id: `agent.toggleFollow:${leafId}`,
+        keys: 'f',
+        context: leafId,
+        mode: 'normal',
+        group: 'Agent',
+        description: 'Follow the agent in the editor',
+        run: toggleFollow
+      },
+      {
         id: `agent.cycleMode:${leafId}`,
         keys: 'shift+tab',
         context: leafId,
@@ -607,7 +623,7 @@
         class="mr-1.5 flex h-6 shrink-0 items-center gap-1 rounded-md px-2 text-2xs {following
           ? 'bg-elevated text-blue'
           : 'text-dim hover:bg-hover hover:text-default'}"
-        title="Follow mode: open every file the agent reads or writes"
+        title="Follow mode: open every file the agent reads or writes (f)"
         aria-pressed={following}
         onclick={toggleFollow}
       >
@@ -768,6 +784,7 @@
               bind:this={composer}
               sessionId={activeId}
               {running}
+              history={promptHistory}
               commandNames={catalog.completionNames()}
               onSend={send}
               onFocusChange={onComposerFocus}

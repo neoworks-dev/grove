@@ -14,7 +14,9 @@ import type {
   ToolDefinition
 } from '@earendil-works/pi-coding-agent'
 import type {
-  ProviderModels,
+  ModelEntry,
+  ModelPricing,
+  ModelRoute,
   ServerEventBody,
   ThinkingLevel,
   ToolInfo,
@@ -411,7 +413,7 @@ async function loadOffering(groveToolNames: string[]): Promise<HarnessOffering> 
       description: skill.description,
       path: skill.filePath
     })),
-    providers: providersOf(available),
+    models: modelsOf(available),
     default: defaultModelOf(available, settings)
   }
 }
@@ -448,19 +450,43 @@ interface PiModel {
   cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }
 }
 
-function providersOf(models: readonly unknown[]): ProviderModels[] {
-  const byProvider = new Map<string, ProviderModels>()
+/**
+ * pi's models, grouped by the model rather than by who sells it.
+ *
+ * pi keys a model the same way whichever provider serves it, so the id is the
+ * grouping — one entry for `glm-5.2`, with a route for each provider pi has
+ * credentials for. Everything it reports is already credentialed, which is why
+ * no route here asks for a key.
+ */
+function modelsOf(models: readonly unknown[]): ModelEntry[] {
+  const byModel = new Map<string, ModelEntry>()
   for (const entry of models as PiModel[]) {
-    const group = byProvider.get(entry.provider) ?? { provider: entry.provider, models: [] }
-    group.models.push({
-      id: entry.id,
+    const route: ModelRoute = {
       provider: entry.provider,
-      label: entry.name,
-      contextWindow: entry.contextWindow
-    })
-    byProvider.set(entry.provider, group)
+      id: entry.id,
+      contextWindow: entry.contextWindow,
+      pricing: pricingOf(entry.cost),
+      native: true
+    }
+    const existing = byModel.get(entry.id)
+    if (existing) {
+      existing.routes.push(route)
+      continue
+    }
+    byModel.set(entry.id, { key: entry.id, label: entry.name || entry.id, routes: [route] })
   }
-  return [...byProvider.values()]
+  return [...byModel.values()]
+}
+
+/** pi reports costs per million tokens, with any field it does not know absent. */
+function pricingOf(cost: PiModel['cost']): ModelPricing | undefined {
+  if (!cost || cost.input === undefined || cost.output === undefined) return undefined
+  return {
+    input: cost.input,
+    output: cost.output,
+    cacheRead: cost.cacheRead ?? 0,
+    cacheWrite: cost.cacheWrite ?? 0
+  }
 }
 
 /**

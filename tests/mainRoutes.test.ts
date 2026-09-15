@@ -21,6 +21,7 @@ const SERVICE_STUBS: Record<string, unknown> = {
   checkpoints: {},
   review: {},
   settings: {},
+  secrets: {},
   terminals: {},
   nvim: {},
   lsp: {},

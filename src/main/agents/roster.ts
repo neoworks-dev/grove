@@ -202,15 +202,15 @@ export class AgentRoster {
   async modelsOf(harnessId: string): Promise<RuntimeModel[]> {
     const catalog = await this.options.agents.catalog(harnessId).catch(() => null)
     if (!catalog) return []
-    return catalog.providers.flatMap((entry) =>
-      entry.models.map((model) => ({ provider: entry.provider, model: model.id }))
+    return catalog.models.flatMap((entry) =>
+      entry.routes.map((route) => ({ provider: route.provider, model: route.id }))
     )
   }
 
   private async runtimeOf(harness: HarnessInfo): Promise<AgentRuntime> {
     const catalog = await this.options.agents.catalog(harness.id).catch(() => null)
-    const models = (catalog?.providers ?? []).flatMap((entry) =>
-      entry.models.map((model) => ({ provider: entry.provider, model: model.id }))
+    const models = (catalog?.models ?? []).flatMap((entry) =>
+      entry.routes.map((route) => ({ provider: route.provider, model: route.id }))
     )
     return {
       id: harness.id,

@@ -276,37 +276,58 @@ export interface ModelPricing {
   contextWindow?: number
 }
 
-export interface ModelInfo {
-  id: string
-  provider: string
-  label?: string
-  /**
-   * The wire model this row's `id` ends up talking to, when `id` is an alias.
-   * Harnesses list aliases (`default`, `opus[1m]`); this is what the alias
-   * resolves to (`claude-opus-5[1m]`), so the picker can name both.
-   */
-  resolvedId?: string
-  description?: string
-  contextWindow?: number
-  pricing?: ModelPricing
-}
-
-/** What a provider needs before a session on it can start. */
+/** What a route needs before a session can take it. */
 export interface ProviderCredential {
   /** The environment variables the harness reads the credential from. */
   env: string[]
-  /** Whether grove can see one right now, in the environment or in settings. */
+  /** Whether grove has one right now, in the environment or in its own store. */
   present: boolean
 }
 
-export interface ProviderModels {
+/**
+ * One way to reach a model: which provider serves it, under which id.
+ *
+ * The same model is usually sold by several of them — `claude-fable-5` is
+ * `claude-fable-5` at Anthropic, `us.anthropic.claude-fable-5` on Bedrock and
+ * `claude-fable-5@default` on Vertex — and a route is what a session is
+ * actually started on, so `provider` and `id` together are the selection.
+ */
+export interface ModelRoute {
   provider: string
   /** The provider's own name, when it has one worth reading. */
+  providerLabel?: string
+  /** What this provider calls the model; the id the harness is started with. */
+  id: string
+  /**
+   * How the route names itself when that differs from the model — an alias row
+   * such as Claude Code's "Default (recommended)", which follows whatever the
+   * CLI currently recommends rather than naming a model.
+   */
   label?: string
-  /** The endpoint sessions on this provider are pointed at, if not the default. */
+  /** Where the route sends the session, when it is not the harness's default. */
   endpoint?: string
   credential?: ProviderCredential
-  models: ModelInfo[]
+  contextWindow?: number
+  pricing?: ModelPricing
+  /**
+   * True when the harness itself listed the route rather than grove deriving it
+   * from a catalog: the account is known to be entitled to it.
+   */
+  native?: boolean
+}
+
+/**
+ * A model, and every way this harness can reach it.
+ *
+ * Grouped by the harness, because only it knows how its providers spell the
+ * same model. `key` is stable across restarts, so a picker can keep a selection
+ * pointed at the model even when routes come and go.
+ */
+export interface ModelEntry {
+  key: string
+  label: string
+  description?: string
+  routes: ModelRoute[]
 }
 
 export type ToolInputView = 'hidden' | 'json' | 'code' | 'command' | 'diff' | 'message'
@@ -391,6 +412,6 @@ export interface HarnessCatalog {
   tools: ToolInfo[]
   commands: CommandInfo[]
   skills: SkillInfo[]
-  providers: ProviderModels[]
+  models: ModelEntry[]
   default: { provider: string; model: string } | null
 }

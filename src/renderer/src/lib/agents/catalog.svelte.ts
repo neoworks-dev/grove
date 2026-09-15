@@ -14,7 +14,7 @@ import type {
   CommandInfo,
   HarnessCatalog,
   HarnessInfo,
-  ProviderModels,
+  ModelEntry,
   SkillInfo,
   ToolInfo
 } from './types'
@@ -23,7 +23,7 @@ const EMPTY: Omit<HarnessCatalog, 'harness'> = {
   tools: [],
   commands: [],
   skills: [],
-  providers: [],
+  models: [],
   default: null
 }
 
@@ -50,8 +50,8 @@ export class Catalog {
     return this.current().skills
   }
 
-  get providers(): ProviderModels[] {
-    return this.current().providers
+  get models(): ModelEntry[] {
+    return this.current().models
   }
 
   get defaults(): { provider: string; model: string } | null {
@@ -95,8 +95,9 @@ export class Catalog {
     return this.tools.find((tool) => tool.name === name)
   }
 
-  modelsFor(provider: string): ProviderModels['models'] {
-    return this.providers.find((entry) => entry.provider === provider)?.models ?? []
+  /** The models one provider serves, for a caller that starts from the seller. */
+  modelsFor(provider: string): ModelEntry[] {
+    return this.models.filter((entry) => entry.routes.some((route) => route.provider === provider))
   }
 
   /** Command names as a completion would offer them, skills included. */

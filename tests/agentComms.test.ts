@@ -80,7 +80,13 @@ function testRoster(sessions: SessionMeta[]): {
         tools: [],
         commands: [],
         skills: [],
-        providers: [{ provider: 'anthropic', models: [{ id: `${harnessId}-opus` }] }],
+        models: [
+          {
+            key: `${harnessId}-opus`,
+            label: `${harnessId}-opus`,
+            routes: [{ provider: 'anthropic', id: `${harnessId}-opus` }]
+          }
+        ],
         default: { provider: 'anthropic', model: `${harnessId}-opus` }
       }),
     send: (

@@ -25,7 +25,7 @@ function descriptor(id: string, available = true): HarnessDescriptor {
       tools: [],
       commands: [],
       skills: [],
-      providers: [],
+      models: [],
       default: null
     }),
     start: async () => {

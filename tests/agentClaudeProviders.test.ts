@@ -6,7 +6,7 @@
 // list, and the environment is what makes a widened pick actually run.
 
 import { describe, expect, test } from 'bun:test'
-import { providerVariables, providersOf } from '../src/main/agents/harnesses/claude'
+import { modelsOf, normalizeModelId, providerVariables } from '../src/main/agents/harnesses/claude'
 import type { CatalogProvider } from '../src/main/modelCatalog'
 import type { ModelInfo as SdkModelInfo } from '@anthropic-ai/claude-agent-sdk'
 
@@ -65,42 +65,70 @@ function model(id: string, name: string): CatalogProvider['models'][number] {
 const noCredentials = { lookup: () => null }
 const everyCredential = { lookup: () => 'token' }
 
-describe('claude harness providers', () => {
-  test("keeps the CLI's own rows and adds the models it never lists", () => {
-    const [anthropic] = providersOf(cliModels, catalog, noCredentials)
-    expect(anthropic.provider).toBe('anthropic')
-    expect(anthropic.models.map((entry) => entry.id)).toEqual([
-      'default',
-      'sonnet',
-      'claude-fable-5-1'
-    ])
-    // claude-opus-5 is what `default` resolves to, so it is not listed twice.
-    expect(anthropic.models[0].resolvedId).toBe('claude-opus-5')
+/** The entry for one model, by the id the catalog files it under. */
+function entryFor(key: string, credentials = noCredentials) {
+  return modelsOf(cliModels, catalog, credentials).find((entry) => entry.key === key)
+}
+
+describe('claude harness models', () => {
+  test('groups one model with every route that reaches it', () => {
+    const opus = entryFor('claude-opus-5')
+    expect(opus?.routes.map((route) => route.provider)).toEqual(['anthropic', 'amazon-bedrock'])
+    expect(opus?.routes[1].id).toBe('us.anthropic.claude-opus-5')
+  })
+
+  test("files the account's alias under the model it resolves to, and keeps its name", () => {
+    const opus = entryFor('claude-opus-5')
+    const anthropic = opus?.routes.find((route) => route.provider === 'anthropic')
+    expect(anthropic?.id).toBe('default')
+    expect(anthropic?.label).toBe('Default (recommended)')
+    expect(anthropic?.native).toBe(true)
+    // One route per provider: the blessed alias, not the alias and the wire id.
+    expect(opus?.routes.filter((route) => route.provider === 'anthropic')).toHaveLength(1)
+  })
+
+  test('lists a model the CLI never offers, which is the whole point', () => {
+    expect(entryFor('claude-fable-5-1')?.label).toBe('Claude Fable 5.1')
   })
 
   test('offers third-party endpoints on the Anthropic wire, and not the others', () => {
-    const ids = providersOf(cliModels, catalog, noCredentials).map((entry) => entry.provider)
-    expect(ids).toContain('kimi-for-coding')
-    expect(ids).not.toContain('deepseek')
+    const providers = modelsOf(cliModels, catalog, noCredentials).flatMap((entry) =>
+      entry.routes.map((route) => route.provider)
+    )
+    expect(providers).toContain('kimi-for-coding')
+    expect(providers).not.toContain('deepseek')
   })
 
   test('keeps only the Claude models of a platform that hosts many', () => {
-    const bedrock = providersOf(cliModels, catalog, noCredentials).find(
-      (entry) => entry.provider === 'amazon-bedrock'
+    const bedrockIds = modelsOf(cliModels, catalog, noCredentials).flatMap((entry) =>
+      entry.routes.filter((route) => route.provider === 'amazon-bedrock').map((route) => route.id)
     )
-    expect(bedrock?.models.map((entry) => entry.id)).toEqual(['us.anthropic.claude-opus-5'])
+    expect(bedrockIds).toEqual(['us.anthropic.claude-opus-5'])
   })
 
-  test('reports whether a provider has a credential yet', () => {
-    const missing = providersOf(cliModels, catalog, noCredentials).find(
-      (entry) => entry.provider === 'kimi-for-coding'
-    )
+  test('reports whether a route has a credential yet', () => {
+    const missing = entryFor('k3')?.routes[0]
     expect(missing?.credential).toEqual({ env: ['KIMI_API_KEY'], present: false })
+    expect(entryFor('k3', everyCredential)?.routes[0].credential?.present).toBe(true)
+  })
 
-    const found = providersOf(cliModels, catalog, everyCredential).find(
-      (entry) => entry.provider === 'kimi-for-coding'
+  test('puts what the account can run first', () => {
+    const entries = modelsOf(cliModels, catalog, noCredentials)
+    expect(entries[0].routes.some((route) => route.native)).toBe(true)
+  })
+})
+
+describe('model ids across platforms', () => {
+  test('reads a platform spelling as the model behind it', () => {
+    expect(normalizeModelId('us.anthropic.claude-opus-5')).toBe('claude-opus-5')
+    expect(normalizeModelId('global.anthropic.claude-haiku-4-5-20251001-v1:0')).toBe(
+      'claude-haiku-4-5-20251001'
     )
-    expect(found?.credential?.present).toBe(true)
+    expect(normalizeModelId('claude-fable-5@default')).toBe('claude-fable-5')
+  })
+
+  test('keeps a variant that is genuinely a different model to run', () => {
+    expect(normalizeModelId('claude-opus-5[1m]')).toBe('claude-opus-5[1m]')
   })
 })
 

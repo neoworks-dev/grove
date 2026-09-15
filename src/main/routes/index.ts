@@ -18,6 +18,7 @@ import { stateRoutes } from './state'
 import { agentRoutes } from './agents'
 import { pluginsRoutes } from './plugins'
 import { actionsRoutes } from './actions'
+import { secretsRoutes } from './secrets'
 import { settingsRoutes } from './settings'
 import { miscRoutes } from './misc'
 import { claudeHarness } from '../agents/harnesses/claude'
@@ -42,6 +43,7 @@ export const routePlugins = [
   agentRoutes,
   pluginsRoutes,
   actionsRoutes,
+  secretsRoutes,
   settingsRoutes,
   miscRoutes,
   // Agent harnesses. Each registers itself into the harness registry and can be

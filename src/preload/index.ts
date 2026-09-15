@@ -268,6 +268,13 @@ const workbench = {
       ipcRenderer.invoke('apps:respondPairing', id, approved),
     revoke: (appId: string) => ipcRenderer.invoke('apps:revoke', appId)
   },
+  // Provider credentials. Values only ever travel towards main: nothing here
+  // reads one back, so a key cannot leak through the renderer.
+  secrets: {
+    status: (names: string[]) => ipcRenderer.invoke('secrets:status', names),
+    set: (name: string, value: string) => ipcRenderer.invoke('secrets:set', name, value),
+    clear: (name: string) => ipcRenderer.invoke('secrets:clear', name)
+  },
   settings: {
     read: () => ipcRenderer.invoke('settings:read'),
     set: (key: string, value: unknown, scope: 'user' | 'project') =>

@@ -8,16 +8,11 @@
   // state (see lib/agents/modes.ts) rather than stored here.
 
   import Icon from '@iconify/svelte'
-  import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
   import { MODE_DESCRIPTIONS, MODE_LABELS, type AgentMode } from '../../../../lib/agents/modes'
-  import { modelName, modelWireId } from '../../../../lib/agents/modelSelection'
+  import { findRoute } from '../../../../lib/agents/modelSelection'
+  import ModelMenu from './ModelMenu.svelte'
   import { THINKING_LABELS, THINKING_LEVELS } from '../../../../lib/agents/thinking'
-  import type {
-    HarnessInfo,
-    ModelInfo,
-    ProviderModels,
-    ThinkingLevel
-  } from '../../../../lib/agents/types'
+  import type { HarnessInfo, ModelEntry, ThinkingLevel } from '../../../../lib/agents/types'
 
   let {
     harness,
@@ -27,13 +22,14 @@
     thinking,
     mode,
     running,
-    providers,
+    models,
     reviewMode,
     reviewPause,
     tokensLabel,
     contextTokens,
     onPickHarness,
     onPickModel,
+    onRequestKey,
     onPickThinking,
     onPickMode,
     onSetReview,
@@ -46,7 +42,7 @@
     thinking: ThinkingLevel
     mode: AgentMode
     running: boolean
-    providers: ProviderModels[]
+    models: ModelEntry[]
     reviewMode: string
     reviewPause: boolean
     tokensLabel: string
@@ -54,6 +50,8 @@
     contextTokens: number
     onPickHarness: (harness: string) => void
     onPickModel: (provider: string, model: string) => void
+    /** Ask the user for a credential a route needs before it can be taken. */
+    onRequestKey: (variables: string[]) => void
     onPickThinking: (level: ThinkingLevel) => void
     onPickMode: (mode: AgentMode) => void
     onSetReview: (key: string, value: string | boolean) => void
@@ -69,29 +67,16 @@
 
   type Menu = 'harness' | 'model' | 'thinking' | 'mode' | 'review'
   let openMenu = $state<Menu | null>(null)
-  let submenuProvider = $state<string | null>(null)
-  // A harness that cannot enumerate its models (Codex) takes one by name.
-  let typedModel = $state('')
 
   const current = $derived(harnesses.find((entry) => entry.id === harness))
   const capabilities = $derived(current?.capabilities)
 
-  function submitTypedModel(): void {
-    const trimmed = typedModel.trim()
-    if (trimmed.length === 0) return
-    onPickModel(provider, trimmed)
-    typedModel = ''
-    close()
-  }
-
   function toggle(menu: Menu): void {
     openMenu = openMenu === menu ? null : menu
-    if (openMenu !== 'model') submenuProvider = null
   }
 
   function close(): void {
     openMenu = null
-    submenuProvider = null
   }
 
   const reviewLabel = $derived(reviewMode === 'post' ? 'review after' : 'review first')
@@ -114,66 +99,28 @@
     return `${(tokens / 1000).toFixed(1)}k`
   }
 
-  /** The catalog row the session's model is selected from, when it lists one. */
-  const selected = $derived.by(() => {
-    for (const entry of providers) {
-      if (entry.provider !== provider) continue
-      const match = entry.models.find((candidate) => candidate.id === model)
-      if (match) return match
-    }
-    return null
-  })
+  /** The model and route the session is on, when the harness still lists them. */
+  const selected = $derived(findRoute(models, { provider, model }))
 
   /**
-   * The model, as the harness names it for people ("Opus (1M context)"): the
-   * provider is a detail of the cascade that picks it, not something worth a
-   * slot in the status line.
+   * The model, as the harness names it for people ("Claude Fable 5.1"): the
+   * route is a detail of how it is reached, not something worth a slot in the
+   * status line.
    */
   const modelLabel = $derived.by(() => {
-    if (selected) return modelName(selected)
+    if (selected) return selected.entry.label
     return model
   })
 
   /**
-   * The model the session actually talks to, shown beside the name because the
-   * name alone can be an alias — "Default (recommended)" names no model at all.
-   * Suppressed when it would only repeat the name.
+   * The id the session actually runs, shown beside the name because the name
+   * alone can be an alias — "Default (recommended)" names no model at all, and
+   * one model is spelled differently by each provider that serves it.
    */
   const modelId = $derived.by(() => {
-    if (!selected) return ''
-    const id = modelWireId(selected)
-    if (id === modelLabel) return ''
-    return id
+    if (model === modelLabel) return ''
+    return model
   })
-
-  /** The provider's own name, falling back to the id the harness keys it by. */
-  function providerLabel(entry: ProviderModels): string {
-    if (entry.label) return entry.label
-    return entry.provider
-  }
-
-  /** Whether grove has no credential for a provider that asks for one. */
-  function needsCredential(entry: ProviderModels): boolean {
-    if (!entry.credential) return false
-    return !entry.credential.present
-  }
-
-  /** Where a provider's sessions go, and what they need before they can go. */
-  function providerHint(entry: ProviderModels): string {
-    const parts: string[] = []
-    if (entry.endpoint) parts.push(entry.endpoint)
-    if (needsCredential(entry)) {
-      parts.push(`no credential — set ${entry.credential?.env.join(' or ')}`)
-    }
-    if (parts.length === 0) return entry.provider
-    return parts.join(' · ')
-  }
-
-  /** What a model row says on hover: its capabilities, or failing that its id. */
-  function modelHint(candidate: ModelInfo): string {
-    if (candidate.description) return candidate.description
-    return modelWireId(candidate)
-  }
 
   // Modes read as how far they step away from "ask": neutral, then the theme's
   // accent, then its two warning tones. Every one is a theme token, so they
@@ -243,7 +190,7 @@
     {/if}
   </div>
 
-  <!-- Provider → model cascade: each provider row flies out its own models. -->
+  <!-- Model, then the route that reaches it. -->
   <div class="relative z-20">
     <button
       class="flex items-center gap-1.5 rounded border border-line px-2 py-1 hover:bg-hover"
@@ -257,91 +204,20 @@
       <span class="text-dim">▾</span>
     </button>
     {#if openMenu === 'model'}
-      <div
-        class="absolute bottom-full left-0 z-30 mb-1 w-56 rounded-md border border-line bg-elevated py-1 shadow-lg"
-      >
-        {#if switchCostWarning}
-          <div
-            class="mx-1 mb-1 rounded border border-amber/30 bg-amber-soft px-1.5 py-1 text-2xs leading-snug text-amber"
-          >
-            {switchCostWarning}
-          </div>
-        {/if}
-        <!-- Always typeable: no runtime enumerates every model it will accept,
-             and a harness that enumerates none takes one only this way. -->
-        <div class="px-2 py-1">
-          <input
-            class="w-full rounded border border-line bg-surface px-1.5 py-1 text-2xs text-default"
-            placeholder="model id"
-            title="Run any model id this harness accepts, listed or not"
-            bind:value={typedModel}
-            onkeydown={(event) => {
-              if (event.key === 'Enter') submitTypedModel()
-            }}
-          />
-        </div>
-        {#each providers as entry (entry.provider)}
-          <div
-            class="relative"
-            role="presentation"
-            onmouseenter={() => (submenuProvider = entry.provider)}
-          >
-            <button
-              class="flex w-full items-center gap-2 px-2 py-1 text-left hover:bg-hover {entry.provider ===
-              provider
-                ? 'text-default'
-                : 'text-dim'}"
-              title={providerHint(entry)}
-            >
-              <span class="truncate">{providerLabel(entry)}</span>
-              <!-- A provider grove has no key for still lists its models; the
-                   turn is what fails, so the warning belongs on the way in. -->
-              {#if needsCredential(entry)}
-                <span class="shrink-0 text-amber">key</span>
-              {/if}
-              <span class="ml-auto text-dim">›</span>
-            </button>
-            {#if submenuProvider === entry.provider}
-              <div
-                class="absolute bottom-0 left-full z-40 ml-1 w-56 overflow-hidden rounded-md border border-line bg-elevated shadow-lg"
-              >
-                <FloatingScrollbar class="max-h-72">
-                  <div class="py-1">
-                    {#each entry.models as candidate (candidate.id)}
-                      {@const name = modelName(candidate)}
-                      {@const wireId = modelWireId(candidate)}
-                      <button
-                        class="flex w-full flex-col items-start px-2 py-1 text-left hover:bg-hover {entry.provider ===
-                          provider && candidate.id === model
-                          ? 'text-default'
-                          : 'text-dim'}"
-                        title={modelHint(candidate)}
-                        onclick={() => {
-                          onPickModel(entry.provider, candidate.id)
-                          close()
-                        }}
-                      >
-                        <!-- Two lines, because a harness names its models for
-                             humans ("Opus (1M context)") but every row can be an
-                             alias: the second line is the model it resolves to. -->
-                        <span class="max-w-full truncate">{name}</span>
-                        {#if wireId !== name}
-                          <span class="max-w-full truncate font-mono text-2xs text-dim">
-                            {wireId}
-                          </span>
-                        {/if}
-                      </button>
-                    {/each}
-                    {#if entry.models.length === 0}
-                      <div class="px-2 py-1 text-2xs text-dim">No models available</div>
-                    {/if}
-                  </div>
-                </FloatingScrollbar>
-              </div>
-            {/if}
-          </div>
-        {/each}
-      </div>
+      <ModelMenu
+        {models}
+        {provider}
+        {model}
+        {switchCostWarning}
+        onPick={(pickedProvider, pickedModel) => {
+          onPickModel(pickedProvider, pickedModel)
+          close()
+        }}
+        onRequestKey={(variables) => {
+          onRequestKey(variables)
+          close()
+        }}
+      />
     {/if}
   </div>
 

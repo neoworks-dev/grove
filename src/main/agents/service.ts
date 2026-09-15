@@ -59,8 +59,6 @@ interface Runtime extends RuntimeState {
   /** Tool calls already announced on the log, so an adapter cannot double-report. */
   announced: Set<string>
   messageCount: number
-  /** Output of shared `!` commands, waiting to ride along with the next message. */
-  pendingShell: string[]
 }
 
 export interface AgentServiceOptions {
@@ -287,9 +285,12 @@ export class AgentService {
       })
       return
     }
+    // Read before the message lands on the log: it is the message itself that
+    // ends the wait for everything run before it.
+    const pending = await this.pendingShellContext(sessionId)
     const stamped = await this.store.append(sessionId, event)
     const runtime = this.runtimeOrCreate(sessionId)
-    const text = this.withPendingShell(runtime, textOf(event))
+    const text = withPendingShell(pending, textOf(event))
     runtime.messageCount += 1
 
     if (runtime.status !== 'running') {
@@ -385,20 +386,29 @@ export class AgentService {
       outcome: result.outcome,
       share
     })
-    if (!share) return
-    const runtime = this.runtimeOrCreate(sessionId)
-    runtime.pendingShell = [...runtime.pendingShell, shellContext(command, result)]
   }
 
   /**
-   * Put whatever shared `!` commands printed in front of the message they were
-   * run for, and clear them: the model reads each result once.
+   * The shared `!` output the agent has not been given yet: everything run since
+   * the last message went out.
+   *
+   * Read off the log rather than kept in memory, so it survives a restart and so
+   * the transcript's account of what is still waiting — the same rule, applied
+   * to the same events — is the one the service acts on.
    */
-  private withPendingShell(runtime: Runtime, text: string): string {
-    if (runtime.pendingShell.length === 0) return text
-    const context = runtime.pendingShell.join('\n')
-    runtime.pendingShell = []
-    return `${context}\n${text}`
+  private async pendingShellContext(sessionId: string): Promise<string> {
+    const events = await this.store.eventsSince(sessionId, 0)
+    const runs: string[] = []
+    for (const event of events) {
+      if (event.type === 'user.message' || event.type === 'app.message') {
+        runs.length = 0
+        continue
+      }
+      if (event.type === 'session.shell_result' && event.share) {
+        runs.push(shellContext(event.command, event))
+      }
+    }
+    return runs.join('\n')
   }
 
   private async startTurn(sessionId: string, text: string): Promise<void> {
@@ -733,8 +743,7 @@ export class AgentService {
       starting: null,
       approvals: new Map(),
       announced: new Set(),
-      messageCount: 0,
-      pendingShell: []
+      messageCount: 0
     }
     this.runtimes.set(sessionId, runtime)
     return runtime
@@ -827,6 +836,12 @@ function textOf(event: Extract<ClientEventBody, { type: 'user.message' | 'app.me
  * Command and output are tagged rather than pasted in raw, so the model can tell
  * what the user ran from what the user is saying.
  */
+/** Shell output that was waiting, put in front of the message it rides along with. */
+function withPendingShell(pending: string, text: string): string {
+  if (pending.length === 0) return text
+  return `${pending}\n${text}`
+}
+
 function shellContext(command: string, result: ShellResult): string {
   const lines = [`<shell-command outcome="${result.outcome}">`, `$ ${command}`]
   if (result.output.length > 0) lines.push(result.output)

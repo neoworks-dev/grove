@@ -54,6 +54,7 @@
   import AgentTranscript from './AgentTranscript.svelte'
   import AgentWorkingBar from './AgentWorkingBar.svelte'
   import CredentialPrompt from './CredentialPrompt.svelte'
+  import EndpointEditor from './EndpointEditor.svelte'
 
   let { leafId }: { leafId: string } = $props()
 
@@ -356,6 +357,15 @@
   function closeCredentialPrompt(stored: boolean): void {
     credentialRequest = null
     if (stored) void catalog.reload()
+  }
+
+  // Whether the editor for the user's own endpoints is open.
+  let addingEndpoint = $state(false)
+
+  /** A new endpoint brings its own models, so the catalog is re-read. */
+  function closeEndpointEditor(saved: boolean): void {
+    addingEndpoint = false
+    if (saved) void catalog.reload()
   }
 
   /**
@@ -825,6 +835,7 @@
               onPickHarness={pickHarness}
               onPickModel={pickModel}
               onRequestKey={requestCredential}
+              onAddEndpoint={() => (addingEndpoint = true)}
               onPickThinking={pickThinking}
               onPickMode={pickMode}
               onSetReview={setReviewSetting}
@@ -836,6 +847,10 @@
     {/if}
   {/if}
 </div>
+
+{#if addingEndpoint}
+  <EndpointEditor onClose={closeEndpointEditor} />
+{/if}
 
 {#if credentialRequest}
   <CredentialPrompt

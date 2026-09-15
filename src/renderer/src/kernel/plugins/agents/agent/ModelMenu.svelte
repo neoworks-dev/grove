@@ -39,6 +39,8 @@
     onPick: (provider: string, model: string) => void
     /** Ask for the key a route needs before it can be taken. */
     onRequestKey: (request: { provider: string; variables: string[] }) => void
+    /** Open the editor for an endpoint of the user's own. */
+    onAddEndpoint: () => void
   } = $props()
 
   let query = $state('')
@@ -245,6 +247,15 @@
           <span class="max-w-full truncate font-mono text-2xs text-default">{typedId}</span>
         </button>
       {/if}
+
+      <!-- Whatever no catalog lists: a gateway, a company proxy, a local model
+           behind one. Grove needs the URL; the models come from the endpoint. -->
+      <button
+        class="mt-1 flex w-full items-center gap-1 border-t border-line px-2 pt-1 text-2xs text-dim hover:text-default"
+        onclick={onAddEndpoint}
+      >
+        + Add an endpoint of your own
+      </button>
     </div>
   </FloatingScrollbar>
 </div>

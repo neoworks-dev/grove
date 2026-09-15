@@ -12,6 +12,7 @@ export type {
   ContentBlock,
   ContextUsage,
   CreateSessionOptions,
+  CustomEndpoint,
   DeliverAs,
   EventBody,
   EventEnvelope,

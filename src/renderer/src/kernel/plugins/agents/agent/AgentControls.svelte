@@ -30,6 +30,7 @@
     onPickHarness,
     onPickModel,
     onRequestKey,
+    onAddEndpoint,
     onPickThinking,
     onPickMode,
     onSetReview,
@@ -52,6 +53,8 @@
     onPickModel: (provider: string, model: string) => void
     /** Ask the user for the key a route needs before it can be taken. */
     onRequestKey: (request: { provider: string; variables: string[] }) => void
+    /** Open the editor for an endpoint of the user's own. */
+    onAddEndpoint: () => void
     onPickThinking: (level: ThinkingLevel) => void
     onPickMode: (mode: AgentMode) => void
     onSetReview: (key: string, value: string | boolean) => void
@@ -215,6 +218,10 @@
         }}
         onRequestKey={(request) => {
           onRequestKey(request)
+          close()
+        }}
+        onAddEndpoint={() => {
+          onAddEndpoint()
           close()
         }}
       />

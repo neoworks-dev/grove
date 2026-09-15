@@ -325,6 +325,26 @@ export interface ModelRoute {
 }
 
 /**
+ * An endpoint the user brought themselves.
+ *
+ * Anything that speaks the Anthropic Messages API can host a session — a
+ * gateway such as OpenRouter, a LiteLLM container, a local model behind a
+ * translating proxy — and none of them is in a public catalog under the user's
+ * account. The key itself is not here: `keyVariable` names the variable it is
+ * stored under, so this record can be read without leaking one.
+ */
+export interface CustomEndpoint {
+  /** Slug, also the provider id its routes carry. */
+  id: string
+  label: string
+  baseUrl: string
+  /** The variable the key lives under, or absent when the endpoint needs none. */
+  keyVariable?: string
+  /** Model ids the user named, beside whatever the endpoint reports itself. */
+  models?: string[]
+}
+
+/**
  * A model, and every way this harness can reach it.
  *
  * Grouped by the harness, because only it knows how its providers spell the

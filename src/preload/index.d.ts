@@ -124,6 +124,15 @@ interface GrantSummaryShape {
   fsScopes: string[]
 }
 
+/** An endpoint the user brought: a base URL that speaks the Anthropic API. */
+export interface CustomEndpointShape {
+  id: string
+  label: string
+  baseUrl: string
+  keyVariable?: string
+  models?: string[]
+}
+
 export interface WorkbenchApi {
   repo: {
     pick: () => Promise<OpenRepoResult | null>
@@ -400,6 +409,12 @@ export interface WorkbenchApi {
     list: () => Promise<ExternalAppShape[]>
     respondPairing: (id: string, approved: boolean) => Promise<void>
     revoke: (appId: string) => Promise<ExternalAppShape[]>
+  }
+  endpoints: {
+    list: () => Promise<CustomEndpointShape[]>
+    save: (endpoint: CustomEndpointShape) => Promise<CustomEndpointShape[]>
+    remove: (id: string) => Promise<CustomEndpointShape[]>
+    probe: (baseUrl: string, keyVariable?: string) => Promise<{ models: string[] | null }>
   }
   secrets: {
     status: (names: string[]) => Promise<{ present: string[]; storable: boolean }>

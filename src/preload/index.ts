@@ -270,6 +270,14 @@ const workbench = {
   },
   // Provider credentials. Values only ever travel towards main: nothing here
   // reads one back, so a key cannot leak through the renderer.
+  // Gateways and local proxies the user points grove at.
+  endpoints: {
+    list: () => ipcRenderer.invoke('endpoints:list'),
+    save: (endpoint: unknown) => ipcRenderer.invoke('endpoints:save', endpoint),
+    remove: (id: string) => ipcRenderer.invoke('endpoints:remove', id),
+    probe: (baseUrl: string, keyVariable?: string) =>
+      ipcRenderer.invoke('endpoints:probe', baseUrl, keyVariable)
+  },
   secrets: {
     status: (names: string[]) => ipcRenderer.invoke('secrets:status', names),
     set: (name: string, value: string) => ipcRenderer.invoke('secrets:set', name, value),

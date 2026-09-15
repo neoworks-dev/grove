@@ -40,6 +40,7 @@ import type {
   HarnessRun,
   SubagentIdentity
 } from './harness'
+import { runShellCommand, type ShellResult } from './shell'
 import { idleRuntime, SessionStore, type RuntimeState, type StoredSession } from './store'
 import { isSubagentSession, SUBAGENT_LABEL, SubagentSessions } from './subagents'
 
@@ -58,6 +59,8 @@ interface Runtime extends RuntimeState {
   /** Tool calls already announced on the log, so an adapter cannot double-report. */
   announced: Set<string>
   messageCount: number
+  /** Output of shared `!` commands, waiting to ride along with the next message. */
+  pendingShell: string[]
 }
 
 export interface AgentServiceOptions {
@@ -258,8 +261,13 @@ export class AgentService {
       await this.runCommand(sessionId, event.name, event.args)
       return
     }
-    // Compaction, branching and shell passthrough belong to the harness; the
-    // ones that cannot do them say so rather than silently dropping the ask.
+    if (event.type === 'user.shell') {
+      await this.store.append(sessionId, event)
+      await this.runShell(sessionId, event.command, event.share === true)
+      return
+    }
+    // Compaction and branching belong to the harness; the ones that cannot do
+    // them say so rather than silently dropping the ask.
     await this.store.append(sessionId, event)
     await this.store.append(sessionId, {
       type: 'session.notice',
@@ -280,8 +288,8 @@ export class AgentService {
       return
     }
     const stamped = await this.store.append(sessionId, event)
-    const text = textOf(event)
     const runtime = this.runtimeOrCreate(sessionId)
+    const text = this.withPendingShell(runtime, textOf(event))
     runtime.messageCount += 1
 
     if (runtime.status !== 'running') {
@@ -356,6 +364,41 @@ export class AgentService {
     } catch (cause) {
       await this.reportError(sessionId, cause as Error)
     }
+  }
+
+  /**
+   * Run a `!` command in the session's worktree.
+   *
+   * The shell is grove's, not the harness's: every runtime gets the same `!`,
+   * including the ones whose SDK has no passthrough of its own. A shared command
+   * is held for the next message rather than sent on its own — running one is
+   * looking something up, not starting a turn.
+   */
+  private async runShell(sessionId: string, command: string, share: boolean): Promise<void> {
+    const session = await this.store.require(sessionId)
+    const result = await runShellCommand(command, { cwd: session.workspaceRoot })
+    await this.store.append(sessionId, {
+      type: 'session.shell_result',
+      command,
+      output: result.output,
+      exitCode: result.exitCode,
+      outcome: result.outcome,
+      share
+    })
+    if (!share) return
+    const runtime = this.runtimeOrCreate(sessionId)
+    runtime.pendingShell = [...runtime.pendingShell, shellContext(command, result)]
+  }
+
+  /**
+   * Put whatever shared `!` commands printed in front of the message they were
+   * run for, and clear them: the model reads each result once.
+   */
+  private withPendingShell(runtime: Runtime, text: string): string {
+    if (runtime.pendingShell.length === 0) return text
+    const context = runtime.pendingShell.join('\n')
+    runtime.pendingShell = []
+    return `${context}\n${text}`
   }
 
   private async startTurn(sessionId: string, text: string): Promise<void> {
@@ -690,7 +733,8 @@ export class AgentService {
       starting: null,
       approvals: new Map(),
       announced: new Set(),
-      messageCount: 0
+      messageCount: 0,
+      pendingShell: []
     }
     this.runtimes.set(sessionId, runtime)
     return runtime
@@ -775,6 +819,19 @@ function textOf(event: Extract<ClientEventBody, { type: 'user.message' | 'app.me
     .map(blockText)
     .filter((text) => text.length > 0)
     .join('\n')
+}
+
+/**
+ * One `!` command as the model reads it.
+ *
+ * Command and output are tagged rather than pasted in raw, so the model can tell
+ * what the user ran from what the user is saying.
+ */
+function shellContext(command: string, result: ShellResult): string {
+  const lines = [`<shell-command outcome="${result.outcome}">`, `$ ${command}`]
+  if (result.output.length > 0) lines.push(result.output)
+  lines.push('</shell-command>')
+  return lines.join('\n')
 }
 
 /**

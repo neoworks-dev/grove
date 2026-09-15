@@ -682,6 +682,7 @@
             {reviewMode}
             {reviewPause}
             tokensLabel={contextLabel}
+            contextTokens={snapshot.context.usedTokens}
             onPickHarness={pickHarness}
             onPickModel={pickModel}
             onPickThinking={pickThinking}

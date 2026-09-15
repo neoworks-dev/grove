@@ -25,6 +25,7 @@
     reviewMode,
     reviewPause,
     tokensLabel,
+    contextTokens,
     onPickHarness,
     onPickModel,
     onPickThinking,
@@ -43,6 +44,8 @@
     reviewMode: string
     reviewPause: boolean
     tokensLabel: string
+    /** Context the session has already built up, which a model switch re-reads. */
+    contextTokens: number
     onPickHarness: (harness: string) => void
     onPickModel: (provider: string, model: string) => void
     onPickThinking: (level: ThinkingLevel) => void
@@ -86,6 +89,24 @@
   }
 
   const reviewLabel = $derived(reviewMode === 'post' ? 'review after' : 'review first')
+
+  /**
+   * What a model switch costs.
+   *
+   * The new model has none of this conversation cached, so the first turn after
+   * a switch re-reads all of it at the full input rate — on a long session that
+   * is real money, and it is not obvious from a picker that looks like every
+   * other dropdown in the status line.
+   */
+  const switchCostWarning = $derived.by(() => {
+    if (contextTokens <= 0) return ''
+    return `Switching re-reads this conversation (~${formatTokens(contextTokens)} tokens) at full price: the new model has none of it cached.`
+  })
+
+  function formatTokens(tokens: number): string {
+    if (tokens < 1000) return String(tokens)
+    return `${(tokens / 1000).toFixed(1)}k`
+  }
 
   /**
    * The model, as the harness names it for people ("Opus 5 (1M context)"), and
@@ -178,8 +199,15 @@
     </button>
     {#if openMenu === 'model'}
       <div
-        class="absolute bottom-full left-0 z-30 mb-1 w-44 rounded-md border border-line bg-elevated py-1 shadow-lg"
+        class="absolute bottom-full left-0 z-30 mb-1 w-56 rounded-md border border-line bg-elevated py-1 shadow-lg"
       >
+        {#if switchCostWarning}
+          <div
+            class="mx-1 mb-1 rounded border border-amber/30 bg-amber-soft px-1.5 py-1 text-2xs leading-snug text-amber"
+          >
+            {switchCostWarning}
+          </div>
+        {/if}
         {#if providers.length === 0}
           <!-- Nothing to enumerate: this harness takes a model by name. -->
           <div class="px-2 py-1">

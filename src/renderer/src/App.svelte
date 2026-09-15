@@ -207,14 +207,12 @@
     {/if}
 
     <!-- No surface of its own: every pane leaf is its own rounded panel, so the
-         gutters between them read as the canvas showing through. -->
-    <div class="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+         gutters between them read as the canvas showing through. Nothing here
+         clips: each leaf clips its own content, and the focused pane's glow has
+         to fall into the gutters around it. -->
+    <div class="flex min-h-0 min-w-0 flex-1">
       {#each layout.mountedViewIds as viewId (viewId)}
-        <div
-          class="flex min-h-0 min-w-0 flex-1 overflow-hidden {viewId === layout.activeViewId
-            ? ''
-            : 'hidden'}"
-        >
+        <div class="flex min-h-0 min-w-0 flex-1 {viewId === layout.activeViewId ? '' : 'hidden'}">
           <SplitTree node={layout.trees[viewId]} />
         </div>
       {/each}

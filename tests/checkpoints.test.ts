@@ -49,6 +49,19 @@ describe('diffStats', () => {
     expect(stats.files.map((f) => f.path).sort()).toEqual(['a.txt', 'b.txt'])
     await rm(dir, { recursive: true, force: true })
   })
+
+  it('counts no lines for an untracked binary file', async () => {
+    // A compressed blob decodes as UTF-8 without throwing, so counting its
+    // newlines reported tens of thousands of "added lines" for one archive.
+    const blob = Buffer.from([0x28, 0xb5, 0x2f, 0xfd, 0x00, 0x0a, 0x0a, 0x00, 0xff, 0x0a])
+    await writeFile(join(dir, 'dump.sql.zst'), blob)
+    await writeFile(join(dir, 'b.txt'), 'x\ny\n')
+
+    const stats = await diffStats(dir)
+    expect(stats.added).toBe(2)
+    expect(stats.files.find((file) => file.path === 'dump.sql.zst')?.added).toBe(0)
+    await rm(dir, { recursive: true, force: true })
+  })
 })
 
 describe('CheckpointManager', () => {

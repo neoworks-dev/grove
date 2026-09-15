@@ -496,12 +496,30 @@ export function parseNumstat(output: string): DiffFileStat[] {
   return stats
 }
 
+// How much of a file git looks at before calling it binary.
+const BINARY_SNIFF_BYTES = 8000
+
+/**
+ * Does this content read as binary?
+ *
+ * The same test git uses: a NUL byte near the start. Decoding first and counting
+ * newlines does not work — reading a compressed archive as UTF-8 succeeds, with
+ * every invalid byte turned into a replacement character, and a 150 MB blob then
+ * reports a hundred thousand "added lines".
+ */
+function looksBinary(content: Buffer): boolean {
+  return content.subarray(0, BINARY_SNIFF_BYTES).includes(0)
+}
+
 // Count added lines for an untracked file (every line is new). Binary/unreadable
 // files contribute 0 rather than a bogus count.
 async function untrackedAddedLines(worktreePath: string, relPath: string): Promise<number> {
   try {
-    const text = await readFile(join(worktreePath, relPath), 'utf8')
-    if (text.length === 0) return 0
+    const content = await readFile(join(worktreePath, relPath))
+    if (content.length === 0) return 0
+    if (looksBinary(content)) return 0
+
+    const text = content.toString('utf8')
     const newlines = text.split('\n').length - 1
     return text.endsWith('\n') ? newlines : newlines + 1
   } catch {

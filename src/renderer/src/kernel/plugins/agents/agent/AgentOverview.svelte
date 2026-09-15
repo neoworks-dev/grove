@@ -149,11 +149,9 @@
   tabindex="-1"
   onkeydown={onKey}
 >
-  <div class="flex items-center gap-2 px-3 py-2">
-    <span class="text-2xs font-semibold uppercase tracking-caps text-dim">All sessions</span>
-    <span class="ml-auto flex items-center gap-1 text-2xs text-dim">
-      <Kbd>↵</Kbd> open · <Kbd>esc</Kbd> back
-    </span>
+  <!-- The list says what it is; only the way out of it needs saying. -->
+  <div class="flex items-center justify-end gap-1 px-3 py-1.5 text-2xs text-dim">
+    <Kbd>↵</Kbd> open · <Kbd>esc</Kbd> back
   </div>
 
   {#each groups as group (group.id)}

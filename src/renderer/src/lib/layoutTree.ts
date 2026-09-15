@@ -12,6 +12,10 @@ export interface LeafNode {
   id: string
   paneTypeId: string
   paneState?: Record<string, unknown>
+  // Pixels along the parent split's axis, for panes that hold a size instead of
+  // a share of the window (the sidebar). Its siblings absorb every change
+  // around it — the split's fraction for this child is then unused.
+  sizePx?: number
 }
 
 export interface SplitNode {
@@ -25,6 +29,37 @@ export interface SplitNode {
 export type LayoutNode = LeafNode | SplitNode
 
 export const MIN_PANE_FRACTION = 0.05
+
+// How willingly each pane changes size when a sibling opens or closes. The
+// layout store builds one from the pane registry; the pure ops fall back to
+// treating every pane alike, which is plain proportional redistribution.
+export interface SizingPolicy {
+  // Above 1 takes more of the space a closing sibling frees and gives less to
+  // one that opens; below 1 does the reverse. 0 opts out of both.
+  growthOf(node: LayoutNode): number
+}
+
+const PROPORTIONAL: SizingPolicy = { growthOf: () => 1 }
+
+// Shares of `total` for the given children, weighted so panes that want to grow
+// take more. `invert` flips it into how much each gives away instead.
+function distribute(
+  children: LayoutNode[],
+  sizes: number[],
+  total: number,
+  policy: SizingPolicy,
+  invert: boolean
+): number[] {
+  const weights = children.map((child, index) => {
+    const growth = policy.growthOf(child)
+    if (growth <= 0) return 0
+    return sizes[index] * (invert ? 1 / growth : growth)
+  })
+  const sum = weights.reduce((running, weight) => running + weight, 0)
+  // Nobody wants the space (every child opted out): fall back to even shares.
+  if (sum <= 0) return children.map(() => total / children.length)
+  return weights.map((weight) => (total * weight) / sum)
+}
 
 let nodeCounter = 0
 
@@ -85,6 +120,16 @@ export function pathToLeaf(root: LayoutNode, leafId: string): string[] | null {
   for (const child of root.children) {
     const path = pathToLeaf(child, leafId)
     if (path) return [root.id, ...path]
+  }
+  return null
+}
+
+export function findSplit(root: LayoutNode, splitId: string): SplitNode | null {
+  if (root.kind === 'leaf') return null
+  if (root.id === splitId) return root
+  for (const child of root.children) {
+    const found = findSplit(child, splitId)
+    if (found) return found
   }
   return null
 }
@@ -168,7 +213,8 @@ export function insertAtEdge(
   root: LayoutNode,
   leaf: LeafNode,
   edge: EdgeSide,
-  fraction: number
+  fraction: number,
+  policy: SizingPolicy = PROPORTIONAL
 ): LayoutNode {
   const direction: SplitDirection = edge === 'left' || edge === 'right' ? 'row' : 'column'
   const atStart = edge === 'left' || edge === 'top'
@@ -178,9 +224,12 @@ export function insertAtEdge(
     const sizes = atStart ? [size, 1 - size] : [1 - size, size]
     return createSplit(direction, children, sizes)
   }
+  // The panes already there pay for the newcomer, the readiest to shrink first.
+  const given = distribute(root.children, root.sizes, size, policy, true)
   const children = [...root.children]
-  // Everything already in the split gives up its share proportionally.
-  const sizes = root.sizes.map((existing) => existing * (1 - size))
+  const sizes = root.sizes.map((existing, index) =>
+    Math.max(MIN_PANE_FRACTION, existing - given[index])
+  )
   const insertAt = atStart ? 0 : children.length
   children.splice(insertAt, 0, leaf)
   sizes.splice(insertAt, 0, size)
@@ -190,22 +239,36 @@ export function insertAtEdge(
 // Remove a leaf, redistributing its fraction proportionally and collapsing
 // single-child splits. Returns null when the last leaf was removed — the
 // caller substitutes its fallback tree.
-export function removeLeaf(root: LayoutNode, leafId: string): LayoutNode | null {
+export function removeLeaf(
+  root: LayoutNode,
+  leafId: string,
+  policy: SizingPolicy = PROPORTIONAL
+): LayoutNode | null {
   if (root.kind === 'leaf') {
     if (root.id === leafId) return null
     return root
   }
   const children: LayoutNode[] = []
   const sizes: number[] = []
+  let freed = 0
   root.children.forEach((child, index) => {
-    const kept = removeLeaf(child, leafId)
-    if (!kept) return
+    const kept = removeLeaf(child, leafId, policy)
+    if (!kept) {
+      freed += root.sizes[index]
+      return
+    }
     children.push(kept)
     sizes.push(root.sizes[index])
   })
   if (children.length === 0) return null
   if (children.length === 1) return children[0]
-  return { ...root, children, sizes: renormalize(sizes) }
+  // The panes left behind split the vacated space, the keenest to grow first.
+  const taken = distribute(children, sizes, freed, policy, false)
+  return {
+    ...root,
+    children,
+    sizes: renormalize(sizes.map((size, index) => size + taken[index]))
+  }
 }
 
 // Adjust the boundary between children gutterIndex and gutterIndex+1 of the
@@ -259,7 +322,22 @@ export function replaceLeafType(
     if (leaf.id !== leafId) return leaf
     const next: LeafNode = { kind: 'leaf', id: leaf.id, paneTypeId }
     if (paneState) next.paneState = paneState
+    // The window keeps the size the user gave it when its content is swapped —
+    // picking another sidebar view must not resize the sidebar.
+    if (typeof leaf.sizePx === 'number') next.sizePx = leaf.sizePx
     return next
+  })
+}
+
+// Set (or with null clear) the pixel size a leaf holds along its parent's axis.
+export function setLeafSizePx(root: LayoutNode, leafId: string, px: number | null): LayoutNode {
+  return mapLeaves(root, (leaf) => {
+    if (leaf.id !== leafId) return leaf
+    if (px === null) {
+      const { sizePx: _cleared, ...rest } = leaf
+      return rest
+    }
+    return { ...leaf, sizePx: px }
   })
 }
 
@@ -277,7 +355,8 @@ export function moveLeaf(
   root: LayoutNode,
   draggedId: string,
   targetId: string,
-  zone: DropZone
+  zone: DropZone,
+  policy: SizingPolicy = PROPORTIONAL
 ): LayoutNode {
   if (draggedId === targetId) return root
   const dragged = findLeaf(root, draggedId)
@@ -285,7 +364,7 @@ export function moveLeaf(
   if (zone === 'center') {
     return normalize(swapLeaves(root, draggedId, targetId))
   }
-  const withoutDragged = removeLeaf(root, draggedId)
+  const withoutDragged = removeLeaf(root, draggedId, policy)
   if (!withoutDragged || !findLeaf(withoutDragged, targetId)) return root
   const direction: SplitDirection = zone === 'left' || zone === 'right' ? 'row' : 'column'
   const position = zone === 'left' || zone === 'top' ? 'before' : 'after'
@@ -365,6 +444,9 @@ function sanitizeLeaf(node: Record<string, unknown>, seenIds: Set<string>): Leaf
   }
   if (node.paneState && typeof node.paneState === 'object' && !Array.isArray(node.paneState)) {
     leaf.paneState = node.paneState as Record<string, unknown>
+  }
+  if (typeof node.sizePx === 'number' && Number.isFinite(node.sizePx) && node.sizePx > 0) {
+    leaf.sizePx = node.sizePx
   }
   return leaf
 }

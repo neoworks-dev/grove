@@ -33,6 +33,15 @@ export interface PaneType {
   // Enforced by split gutters while dragging (px).
   minWidth?: number
   minHeight?: number
+  // Present => this pane holds a pixel size instead of a share of the window.
+  // It keeps its width when panes open, close or the window resizes; only a
+  // drag on its own gutter changes it. The sidebar works this way.
+  fixedSize?: { defaultPx: number }
+  // How eagerly a pane takes space freed by a closing sibling, and (inversely)
+  // gives space to one that opens. 1 is proportional — the default. Above 1
+  // grows first and shrinks last (the editor); below 1 does the opposite (the
+  // agent panel). Ignored for panes with a fixed size.
+  growth?: number
   // Present => the type appears in the ActivityBar launcher rail.
   rail?: { order: number }
   // Types sharing a slot replace each other in the tree instead of opening a

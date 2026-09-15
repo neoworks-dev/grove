@@ -12,6 +12,7 @@ import {
   resizeGutter,
   swapLeaves,
   replaceLeafType,
+  setLeafSizePx,
   updateLeafState,
   normalize,
   sanitize,
@@ -326,5 +327,67 @@ describe('id generation after a restore', () => {
     const fresh = createLeaf('agent')
     const ids = leaves(insertAtEdge(restored, fresh, 'right', 0.25)).map((leaf) => leaf.id)
     expect(new Set(ids).size).toBe(ids.length)
+  })
+})
+
+describe('sizing policy', () => {
+  // The editor grows first, the agent panel yields first, the sidebar does
+  // neither — the same weights the pane registry hands the layout store.
+  const policy = {
+    growthOf(node: LayoutNode): number {
+      if (node.kind !== 'leaf') return 1
+      const growth: Record<string, number> = { editor: 2, agent: 0.5, files: 0 }
+      return growth[node.paneTypeId] ?? 1
+    }
+  }
+
+  function tree(): SplitNode {
+    return createSplit(
+      'row',
+      [createLeaf('files'), createLeaf('editor'), createLeaf('agent')],
+      [0.2, 0.5, 0.3]
+    )
+  }
+
+  it("gives a closing pane's space to the pane keenest to grow", () => {
+    const root = tree()
+    const agent = root.children[2] as LeafNode
+    const next = removeLeaf(root, agent.id, policy) as SplitNode
+    const [filesSize, editorSize] = next.sizes
+    // The sidebar opted out, so the editor takes all 0.3 and is renormalized.
+    expect(filesSize).toBeCloseTo(0.2)
+    expect(editorSize).toBeCloseTo(0.8)
+  })
+
+  it('takes space for a new pane from the pane readiest to shrink', () => {
+    const next = insertAtEdge(tree(), createLeaf('terminal'), 'right', 0.2, policy) as SplitNode
+    const [filesSize, editorSize, agentSize] = next.sizes
+    expect(filesSize).toBeCloseTo(0.2)
+    // The agent gives up more than the editor despite starting smaller.
+    expect(0.3 - agentSize).toBeGreaterThan(0.5 - editorSize)
+  })
+
+  it('leaves a fixed pane alone in both directions', () => {
+    const root = tree()
+    const grown = removeLeaf(root, (root.children[2] as LeafNode).id, policy) as SplitNode
+    const shrunk = insertAtEdge(root, createLeaf('terminal'), 'right', 0.2, policy) as SplitNode
+    expect(grown.sizes[0]).toBeCloseTo(shrunk.sizes[0])
+  })
+})
+
+describe('fixed pane sizes', () => {
+  it('keeps the pixel size when the pane type is swapped', () => {
+    const sidebar = { ...createLeaf('files'), sizePx: 300 }
+    const root = createSplit('row', [sidebar, createLeaf('editor')], [0.2, 0.8])
+    const next = replaceLeafType(root, sidebar.id, 'changes') as SplitNode
+    expect((next.children[0] as LeafNode).sizePx).toBe(300)
+  })
+
+  it('round-trips through sanitize and can be cleared', () => {
+    const root = setLeafSizePx(createLeaf('files'), 'nope', 240)
+    const sized = setLeafSizePx(root, root.id, 240) as LeafNode
+    expect(sized.sizePx).toBe(240)
+    expect((sanitize(sized) as LeafNode).sizePx).toBe(240)
+    expect((setLeafSizePx(sized, sized.id, null) as LeafNode).sizePx).toBeUndefined()
   })
 })

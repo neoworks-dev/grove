@@ -54,6 +54,9 @@ export class EditorService extends Service {
           slot: CENTER_SLOT,
           containerClass: 'bg-surface',
           minWidth: 240,
+          // The editor is what the window is for: it takes most of the space a
+          // closing pane frees, and gives up the least to one that opens.
+          growth: 2,
           // Reports the 'editor' keymap context so editor-scoped bindings (file
           // finder, etc.) match here.
           contextType: 'editor',

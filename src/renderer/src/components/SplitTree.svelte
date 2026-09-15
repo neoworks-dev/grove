@@ -3,6 +3,10 @@
   // fraction-sized children separated by gutters; leaves become PaneLeaf
   // windows. Imports itself for recursion.
   //
+  // Two sizing modes live here. Most panes take a share of the container, so
+  // they grow and shrink with it. A pane whose type declares a fixed size holds
+  // its pixels instead and its siblings absorb every change around it.
+  //
   // Focus mode folds the tree down to the branch holding the focused pane: the
   // other branches keep their DOM (hidden) so nothing remounts, and the visible
   // one takes the whole container.
@@ -14,10 +18,28 @@
 
   let { node }: { node: LayoutNode } = $props()
 
-  /** Flex basis for a child: its stored fraction, or the whole container while zoomed. */
-  function childFlex(fraction: number): string {
+  // Axis this node lays its children out on; unused when the node is a leaf.
+  const direction = $derived(node.kind === 'split' ? node.direction : 'row')
+
+  /** Flex shorthand for a child: pixels when it holds a size, else its share. */
+  function childFlex(child: LayoutNode, fraction: number): string {
     if (layout.focusMode) return '1 1 0%'
+    const fixedPx = layout.fixedSizePx(child)
+    if (fixedPx !== null) return `0 0 ${fixedPx}px`
     return `${fraction} 1 0%`
+  }
+
+  /**
+   * Hand a fixed pane the width it is already rendering at, once, when it
+   * mounts. A layout saved before fixed sizing carries no pixels, so this is
+   * what stops it from jumping to the pane type's default on first paint.
+   */
+  function adoptSize(element: HTMLElement, child: LayoutNode): void {
+    if (child.kind !== 'leaf' || layout.fixedSizePx(child) !== null) return
+    requestAnimationFrame(() => {
+      const px = direction === 'row' ? element.offsetWidth : element.offsetHeight
+      layout.adoptFixedSizePx(child.id, px)
+    })
   }
 </script>
 
@@ -38,7 +60,8 @@
       <div
         class="flex min-w-0 min-h-0"
         class:hidden={!visible}
-        style:flex={childFlex(node.sizes[index])}
+        style:flex={childFlex(child, node.sizes[index])}
+        use:adoptSize={child}
       >
         <SplitTree node={child} />
       </div>

@@ -18,6 +18,7 @@ import {
   leaves,
   findLeaf,
   findParentSplit,
+  findSplit,
   insertAtEdge,
   pathToLeaf,
   splitLeaf,
@@ -25,6 +26,7 @@ import {
   resizeGutter,
   swapLeaves,
   replaceLeafType,
+  setLeafSizePx,
   updateLeafState,
   moveLeaf,
   sanitize,
@@ -32,6 +34,7 @@ import {
   type EdgeSide,
   type LayoutNode,
   type LeafNode,
+  type SizingPolicy,
   type SplitDirection,
   type SplitNode
 } from './layoutTree'
@@ -68,7 +71,7 @@ export function buildDefaultTree(options: DefaultTreeOptions = {}): LayoutNode {
   for (const side of ['left', 'right'] as const) {
     const type = panes.edgeTypes(side)[0]
     if (!type) continue
-    tree = insertAtEdge(tree, createLeaf(type.id), side, edgeFraction(type.id))
+    tree = insertAtEdge(tree, createPaneLeaf(type.id), side, edgeFraction(type.id))
   }
   return tree
 }
@@ -78,9 +81,75 @@ function edgeFraction(paneTypeId: string): number {
   return panes.get(paneTypeId)?.preferredEdge?.fraction ?? DEFAULT_EDGE_FRACTION
 }
 
+/**
+ * A leaf for this pane type, already carrying the pixel size fixed panes start
+ * at so a sidebar opens at its own width instead of a share of the window.
+ */
+function createPaneLeaf(paneTypeId: string, paneState?: Record<string, unknown>): LeafNode {
+  const leaf = createLeaf(paneTypeId, paneState)
+  const fixed = panes.get(paneTypeId)?.fixedSize
+  if (!fixed) return leaf
+  return { ...leaf, sizePx: fixed.defaultPx }
+}
+
 // Which outer edge a pane type belongs against when nothing of it is open.
 function edgeFor(paneTypeId: string): EdgeSide | null {
   return panes.get(paneTypeId)?.preferredEdge?.side ?? null
+}
+
+// Smallest a pane may be dragged to before the gutter starts counting overshoot
+// towards closing it.
+const MIN_PANE_PX = 120
+
+/** Whether this node is a pane that holds a pixel size rather than a share. */
+function holdsFixedSize(node: LayoutNode): boolean {
+  if (node.kind !== 'leaf') return false
+  return panes.get(node.paneTypeId)?.fixedSize !== undefined
+}
+
+/**
+ * Pixels a fixed-size pane holds, or null when the pane sizes itself as a share
+ * of the window like the editor does. Also null for a fixed pane that has not
+ * been measured yet — it renders as a share for that one frame, so restoring a
+ * layout saved before fixed sizing keeps the width the user already had.
+ */
+export function fixedPaneSize(node: LayoutNode): number | null {
+  if (!holdsFixedSize(node)) return null
+  return (node as LeafNode).sizePx ?? null
+}
+
+/**
+ * Which pane makes room for a window opened in a gap, and on which side of it
+ * the newcomer goes. Normally the pane left of the gap is halved; when that one
+ * holds a fixed size it has nothing to give, so the pane on the right is halved
+ * instead and the newcomer still lands against the gap.
+ */
+function gutterAnchor(
+  split: SplitNode,
+  gutterIndex: number
+): { leaf: LeafNode; position: 'before' | 'after' } | null {
+  // Either side of the gap may be a whole subtree; the pane touching the gap is
+  // its last (left side) or first (right side) in render order.
+  const before = leaves(split.children[gutterIndex]).at(-1)
+  const after = leaves(split.children[gutterIndex + 1])[0]
+  if (before && fixedPaneSize(before) === null) return { leaf: before, position: 'after' }
+  if (after && fixedPaneSize(after) === null) return { leaf: after, position: 'before' }
+  if (before) return { leaf: before, position: 'after' }
+  return null
+}
+
+// Redistribution weights read off the pane registry: fixed panes never take or
+// give, the editor grows first, the agent panel yields first.
+const sizingPolicy: SizingPolicy = {
+  growthOf(node: LayoutNode): number {
+    if (fixedPaneSize(node) !== null) return 0
+    if (node.kind === 'leaf') return panes.get(node.paneTypeId)?.growth ?? 1
+    // A split is as eager as the panes inside it that can resize at all.
+    const flexible = leaves(node).filter((leaf) => fixedPaneSize(leaf) === null)
+    if (flexible.length === 0) return 0
+    const total = flexible.reduce((sum, leaf) => sum + (panes.get(leaf.paneTypeId)?.growth ?? 1), 0)
+    return total / flexible.length
+  }
 }
 
 class LayoutStore {
@@ -132,6 +201,50 @@ class LayoutStore {
   isNodeVisible(nodeId: string): boolean {
     if (!this.focusMode) return true
     return this.zoomPath.has(nodeId)
+  }
+
+  // ── Fixed-size panes ──────────────────────────────────────────
+  /**
+   * Pixels this leaf holds along its parent's axis, or null when it sizes
+   * itself as a share of the window. SplitTree renders the difference.
+   */
+  fixedSizePx(node: LayoutNode): number | null {
+    return fixedPaneSize(node)
+  }
+
+  /**
+   * Resize a fixed pane. Sizes below its minimum are kept (so the gutter can
+   * count how far past the stop the user dragged) but never below zero.
+   */
+  setFixedSizePx(leafId: string, px: number): void {
+    const next = Math.max(0, Math.round(px))
+    this.setActiveTree(setLeafSizePx(this.tree, leafId, next))
+    this.schedule()
+  }
+
+  /**
+   * Give a fixed pane the width it is currently rendering at, once. Called by
+   * SplitTree the first time such a pane is measured, which is what carries a
+   * layout saved before fixed sizing across without resizing anything.
+   */
+  adoptFixedSizePx(leafId: string, px: number): void {
+    const leaf = findLeaf(this.tree, leafId)
+    if (!leaf || typeof leaf.sizePx === 'number') return
+    if (!holdsFixedSize(leaf) || px <= 0) return
+    this.setFixedSizePx(leafId, px)
+  }
+
+  /**
+   * Smallest this pane may be dragged to before the gutter counts the drag as
+   * an attempt to close it.
+   */
+  minSizePx(node: LayoutNode, direction: SplitDirection): number {
+    const sizes = leaves(node).map((leaf) => {
+      const type = panes.get(leaf.paneTypeId)
+      const px = direction === 'row' ? type?.minWidth : type?.minHeight
+      return px ?? MIN_PANE_PX
+    })
+    return Math.max(MIN_PANE_PX, ...sizes)
   }
 
   // The active view's live tree. All tree ops read and write through here.
@@ -243,8 +356,26 @@ class LayoutStore {
       ? this.anchorLeafFor(paneTypeId)
       : (this.focusedLeaf() ?? leaves(this.tree)[0])
     if (!anchor) return
-    const newLeaf = createLeaf(paneTypeId ?? anchor.paneTypeId)
+    const newLeaf = createPaneLeaf(paneTypeId ?? anchor.paneTypeId)
     this.setActiveTree(splitLeaf(this.tree, anchor.id, direction, newLeaf))
+    this.focusLeafSoon(newLeaf.id)
+    this.schedule()
+  }
+
+  /**
+   * Open a pane in the gap between two siblings — what the `+` on a gutter
+   * does. The pane on the left of the gap is halved to make room, so the new
+   * window lands exactly where the button was.
+   */
+  insertAtGutter(splitId: string, gutterIndex: number, paneTypeId: string): void {
+    const split = findSplit(this.tree, splitId)
+    if (!split) return
+    const anchor = gutterAnchor(split, gutterIndex)
+    if (!anchor) return
+    const newLeaf = createPaneLeaf(paneTypeId)
+    this.setActiveTree(
+      splitLeaf(this.tree, anchor.leaf.id, split.direction, newLeaf, anchor.position)
+    )
     this.focusLeafSoon(newLeaf.id)
     this.schedule()
   }
@@ -317,7 +448,7 @@ class LayoutStore {
       this.schedule()
       return
     }
-    const next = removeLeaf(this.tree, leafId)
+    const next = removeLeaf(this.tree, leafId, sizingPolicy)
     if (!next) return
     this.setActiveTree(next)
     const fallback = leaves(next)[0]
@@ -353,7 +484,7 @@ class LayoutStore {
 
   // Relocate a leaf onto a target via drag-and-drop (see paneDrag controller).
   moveLeaf(draggedId: string, targetId: string, zone: DropZone): void {
-    const next = moveLeaf(this.tree, draggedId, targetId, zone)
+    const next = moveLeaf(this.tree, draggedId, targetId, zone, sizingPolicy)
     if (next === this.tree) return
     this.setActiveTree(next)
     this.focusLeafSoon(draggedId)
@@ -473,8 +604,8 @@ class LayoutStore {
 
   // Pin a new window for this type against an outer edge of the tree.
   private openAtEdge(paneTypeId: string, edge: EdgeSide): void {
-    const leaf = createLeaf(paneTypeId)
-    this.setActiveTree(insertAtEdge(this.tree, leaf, edge, edgeFraction(paneTypeId)))
+    const leaf = createPaneLeaf(paneTypeId)
+    this.setActiveTree(insertAtEdge(this.tree, leaf, edge, edgeFraction(paneTypeId), sizingPolicy))
     this.focusLeafSoon(leaf.id)
     this.schedule()
   }

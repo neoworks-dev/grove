@@ -7,6 +7,7 @@ import {
   findParentSplit,
   insertAtEdge,
   pathToLeaf,
+  splitChildFlex,
   splitLeaf,
   removeLeaf,
   resizeGutter,
@@ -389,5 +390,40 @@ describe('fixed pane sizes', () => {
     expect(sized.sizePx).toBe(240)
     expect((sanitize(sized) as LeafNode).sizePx).toBe(240)
     expect((setLeafSizePx(sized, sized.id, null) as LeafNode).sizePx).toBeUndefined()
+  })
+})
+
+describe('splitChildFlex', () => {
+  // The grow factors of the children sharing the container have to total 1.
+  // Under 1, flexbox hands out only that fraction of the free space and leaves
+  // the rest of the split empty.
+  function growTotal(flex: string[]): number {
+    return flex
+      .filter((value) => value.endsWith('0%'))
+      .reduce((sum, value) => sum + Number(value.split(' ')[0]), 0)
+  }
+
+  it('fills the split when a fixed pane sits among shares', () => {
+    const flex = splitChildFlex([0.05, 0.68, 0.27], [319, null, null])
+    expect(flex[0]).toBe('0 0 319px')
+    expect(growTotal(flex)).toBeCloseTo(1)
+  })
+
+  it('keeps the shares in proportion to each other', () => {
+    const flex = splitChildFlex([0.05, 0.68, 0.27], [319, null, null])
+    const [, editor, agent] = flex.map((value) => Number(value.split(' ')[0]))
+    expect(editor / agent).toBeCloseTo(0.68 / 0.27)
+  })
+
+  it('fills the split with the last pane when every child is fixed', () => {
+    const flex = splitChildFlex([0.5, 0.5], [256, 256])
+    expect(flex[0]).toBe('0 0 256px')
+    expect(flex[1]).toBe('1 1 0%')
+  })
+
+  it('leaves a split of plain shares alone', () => {
+    const flex = splitChildFlex([0.3, 0.7], [null, null])
+    expect(growTotal(flex)).toBeCloseTo(1)
+    expect(Number(flex[0].split(' ')[0])).toBeCloseTo(0.3)
   })
 })

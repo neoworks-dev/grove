@@ -144,6 +144,30 @@ export function findParentSplit(root: LayoutNode, nodeId: string): SplitNode | n
   return null
 }
 
+/**
+ * The `flex` shorthand for each child of a split, given the pixel size those
+ * children that hold one have (null for the rest).
+ *
+ * A split always covers its container — empty space inside one is a bug. That
+ * needs two corrections: the shares are scaled so their grow factors total 1
+ * (under 1, flexbox leaves the shortfall empty instead of distributing it), and
+ * when every child holds a pixel size the last one gives up its own to fill
+ * what is left.
+ */
+export function splitChildFlex(sizes: number[], fixedPx: (number | null)[]): string[] {
+  const shareTotal = sizes.reduce((sum, size, index) => {
+    if (fixedPx[index] !== null) return sum
+    return sum + size
+  }, 0)
+  const fillIndex = shareTotal > 0 ? -1 : sizes.length - 1
+  return sizes.map((size, index) => {
+    if (index === fillIndex) return '1 1 0%'
+    const px = fixedPx[index]
+    if (px !== null) return `0 0 ${px}px`
+    return `${size / shareTotal} 1 0%`
+  })
+}
+
 // ── Transformations ─────────────────────────────────────────────
 
 function mapLeaves(node: LayoutNode, transform: (leaf: LeafNode) => LeafNode): LayoutNode {

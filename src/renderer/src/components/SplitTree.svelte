@@ -14,20 +14,21 @@
   import SplitGutter from './SplitGutter.svelte'
   import PaneLeaf from './PaneLeaf.svelte'
   import { layout } from '../lib/layout.svelte'
-  import type { LayoutNode } from '../lib/layoutTree'
+  import { splitChildFlex, type LayoutNode } from '../lib/layoutTree'
 
   let { node }: { node: LayoutNode } = $props()
 
   // Axis this node lays its children out on; unused when the node is a leaf.
   const direction = $derived(node.kind === 'split' ? node.direction : 'row')
 
-  /** Flex shorthand for a child: pixels when it holds a size, else its share. */
-  function childFlex(child: LayoutNode, fraction: number): string {
-    if (layout.focusMode) return '1 1 0%'
-    const fixedPx = layout.fixedSizePx(child)
-    if (fixedPx !== null) return `0 0 ${fixedPx}px`
-    return `${fraction} 1 0%`
-  }
+  // One `flex` shorthand per child, from the shares in the tree and whichever
+  // children hold a pixel size. Zoomed, the one visible child takes everything.
+  const childFlex = $derived.by(() => {
+    if (node.kind !== 'split') return []
+    if (layout.focusMode) return node.children.map(() => '1 1 0%')
+    const fixedPx = node.children.map((child) => layout.fixedSizePx(child))
+    return splitChildFlex(node.sizes, fixedPx)
+  })
 
   /**
    * Hand a fixed pane the width it is already rendering at, once, when it
@@ -60,7 +61,7 @@
       <div
         class="flex min-w-0 min-h-0"
         class:hidden={!visible}
-        style:flex={childFlex(child, node.sizes[index])}
+        style:flex={childFlex[index]}
         use:adoptSize={child}
       >
         <SplitTree node={child} />

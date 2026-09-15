@@ -87,6 +87,32 @@ export function draftSegments(text: string): DraftSegment[] {
   return segments
 }
 
+/** A draft bound for grove's shell: the `!` marker, and the command after it. */
+export interface ShellDraft {
+  /** Whatever precedes the marker — whitespace only, kept so the layer lines up. */
+  lead: string
+  marker: '!' | '!!'
+  command: string
+}
+
+// `!!` first, so a private command is not read as a shared one starting with `!`.
+const SHELL_DRAFT = /^(\s*)(!!|!)([\s\S]*)$/
+
+/**
+ * Split a `!` draft into the parts the highlight layer paints separately: the marker as a marker,
+ * the rest as the shell command it is.
+ *
+ * Null for anything that is not a shell draft. The three parts always concatenate back to the
+ * draft, which is what keeps the painted copy in register with the textarea under it.
+ */
+export function shellDraft(draft: string): ShellDraft | null {
+  const match = SHELL_DRAFT.exec(draft)
+  if (!match) {
+    return null
+  }
+  return { lead: match[1], marker: match[2] as '!' | '!!', command: match[3] }
+}
+
 function firstBreakAfter(text: string, from: number): number {
   const match = /\s/.exec(text.slice(from))
   return match === null ? text.length : from + match.index

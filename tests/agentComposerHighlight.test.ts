@@ -2,7 +2,7 @@
 // sits under the caret, so the segments must always concatenate back to the draft.
 
 import { describe, expect, test } from 'bun:test'
-import { draftSegments } from '../src/renderer/src/lib/agents/completion'
+import { draftSegments, shellDraft } from '../src/renderer/src/lib/agents/completion'
 
 function rebuilt(text: string): string {
   return draftSegments(text)
@@ -43,6 +43,39 @@ describe('draftSegments', () => {
     const drafts = ['@a', 'a @b\n@c d', 'plain text', '\n\n@x\t@y', '@a@b @c']
     for (const draft of drafts) {
       expect(rebuilt(draft)).toBe(draft)
+    }
+  })
+})
+
+describe('shellDraft', () => {
+  test('a shared command is split at its marker', () => {
+    expect(shellDraft('!git status')).toEqual({ lead: '', marker: '!', command: 'git status' })
+  })
+
+  test('a private command keeps both marks', () => {
+    expect(shellDraft('!!echo hi')).toEqual({ lead: '', marker: '!!', command: 'echo hi' })
+  })
+
+  test('whitespace before the marker is kept, so the layer stays in register', () => {
+    expect(shellDraft('  !ls')).toEqual({ lead: '  ', marker: '!', command: 'ls' })
+  })
+
+  test('a marker on its own has no command yet', () => {
+    expect(shellDraft('!')).toEqual({ lead: '', marker: '!', command: '' })
+  })
+
+  test('a draft that is not shell has nothing to split', () => {
+    expect(shellDraft('hello')).toBeNull()
+    expect(shellDraft('/review the diff')).toBeNull()
+    expect(shellDraft('mind the ! there')).toBeNull()
+  })
+
+  test('the parts always rebuild the draft', () => {
+    const drafts = ['!ls -la', '!!grep -rn "a b" .', '  !echo hi\nand more', '!']
+    for (const draft of drafts) {
+      const parts = shellDraft(draft)
+      expect(parts).not.toBeNull()
+      expect(`${parts?.lead}${parts?.marker}${parts?.command}`).toBe(draft)
     }
   })
 })

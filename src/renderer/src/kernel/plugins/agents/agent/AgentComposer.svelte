@@ -15,8 +15,10 @@
     applyCompletion,
     draftSegments,
     parseSubmission,
+    shellDraft,
     type Completion
   } from '../../../../lib/agents/completion'
+  import { highlightCode, type HighlightedToken } from '../../../../lib/highlight'
   import { selectionRef } from '../../../../lib/inlineEditRef'
   import { store } from '../../../../lib/store.svelte'
   import type {
@@ -141,6 +143,52 @@
   }
 
   const segments = $derived(draftSegments(draft))
+
+  // A `!` draft is not a message but a command about to run in grove's shell, so
+  // the layer paints it as shell rather than as prose: the marker as a marker,
+  // the rest tokenized with the same grammar the transcript shows commands in.
+  const shell = $derived(shellDraft(draft))
+
+  let shellTokens = $state<{ source: string; lines: HighlightedToken[][] }>({
+    source: '',
+    lines: []
+  })
+
+  $effect(() => {
+    const command = shell?.command
+    if (command === undefined) {
+      return
+    }
+    const scheme = store.activeTheme.scheme
+    let current = true
+    void highlightCode(command, 'bash', scheme).then((lines) => {
+      if (current && lines) {
+        shellTokens = { source: command, lines }
+      }
+    })
+    return () => {
+      current = false
+    }
+  })
+
+  /**
+   * The coloured runs for the command being typed, or none while they belong to
+   * an older draft.
+   *
+   * Tokenizing is asynchronous, so the answer can arrive a keystroke late. The
+   * layer sits under the caret: painting runs that do not rebuild the draft
+   * character for character would show the wrong text, so they are dropped and
+   * the command is painted plain until the right ones land.
+   */
+  const shellLines = $derived.by(() => {
+    if (!shell) return []
+    if (shellTokens.source !== shell.command) return []
+    const rebuilt = shellTokens.lines
+      .map((line) => line.map((token) => token.text).join(''))
+      .join('\n')
+    if (rebuilt !== shell.command) return []
+    return shellTokens.lines
+  })
 
   /**
    * Drop an `@ref ` into the draft where the caret is, and leave the caret and
@@ -430,18 +478,22 @@
     ></textarea>
 
     <!-- The text again, painted over the (transparent) textarea so `@file`
-         mentions read as one token. Everything that decides layout — padding,
-         size, leading, wrapping — has to match the textarea exactly, or the two
-         copies drift apart as the draft grows. The zero-width space keeps a
-         draft ending in a newline the same height in both. -->
+         mentions read as one token and a `!` command reads as shell. Everything
+         that decides layout — padding, size, leading, wrapping — has to match the
+         textarea exactly, or the two copies drift apart as the draft grows. The
+         zero-width space keeps a draft ending in a newline the same height in
+         both. -->
     <div
       bind:this={highlightEl}
       aria-hidden="true"
       class="pointer-events-none absolute inset-0 z-10 overflow-hidden whitespace-pre-wrap break-words px-2 py-1.5 text-xs leading-normal text-default"
     >
-      {#each segments as segment, index (index)}{#if segment.mention}<span
-            class="rounded-sm bg-action/15 text-action">{segment.text}</span
-          >{:else}{segment.text}{/if}{/each}&#8203;
+      {#if shell}{shell.lead}<span class="rounded-sm bg-amber-soft text-amber">{shell.marker}</span
+        >{#each shellLines as line, lineIndex (lineIndex)}{#if lineIndex > 0}{'\n'}{/if}{#each line as token, tokenIndex (tokenIndex)}<span
+              style:color={token.color}>{token.text}</span
+            >{/each}{:else}{shell.command}{/each}{:else}{#each segments as segment, index (index)}{#if segment.mention}<span
+              class="rounded-sm bg-action/15 text-action">{segment.text}</span
+            >{:else}{segment.text}{/if}{/each}{/if}&#8203;
     </div>
 
     {#if !focused}

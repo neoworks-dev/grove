@@ -7,8 +7,9 @@
 //
 // Each harness adapter translates these into whatever its SDK calls a tool:
 // an in-process MCP server for Claude, `defineTool` for pi. A harness that
-// cannot host tools is given none and loses only these three features.
+// cannot host tools is given none and loses only the features they add.
 
+import type { OpenFileTarget } from '../../shared/agents'
 import type { WorktreeChannel } from '../worktreeChannel'
 import type { GroveTool } from './harness'
 
@@ -106,6 +107,88 @@ function setPhaseTool(): GroveTool {
   }
 }
 
+/**
+ * The editor handoff.
+ *
+ * An answer that names files is worth more with those files on screen, so the
+ * agent can put them there itself instead of leaving the user to open each one.
+ * The renderer opens them in the order given, so the first entry is the one it
+ * leaves focused.
+ */
+function openFilesTool(): GroveTool {
+  return {
+    name: 'open_files',
+    summary: 'Open files in the user’s editor.',
+    description:
+      'Open files in the editor the user is looking at, optionally at a line. Call this ' +
+      'whenever your answer points at code — where something is defined, where it is used, ' +
+      'what you changed — so the user lands on it instead of having to search for it. Put the ' +
+      'most relevant file first; that is the one left in view. This does not read the files, ' +
+      'so keep using your own read tools for that.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        files: {
+          type: 'array',
+          description: 'The files to open, most relevant first.',
+          items: {
+            type: 'object',
+            properties: {
+              path: {
+                type: 'string',
+                description: 'Absolute path, or relative to the workspace root.'
+              },
+              line: { type: 'number', description: 'Optional 1-based line to reveal.' }
+            },
+            required: ['path'],
+            additionalProperties: false
+          }
+        }
+      },
+      required: ['files'],
+      additionalProperties: false
+    },
+    policy: 'allow',
+    display: { label: '{files}', input: 'hidden', result: 'hidden' },
+
+    execute(input, context) {
+      const targets = openFileTargets(input.files)
+      if (targets.length === 0) return { content: 'No files to open.', isError: true }
+      context.openFiles(targets)
+      return { content: `Opened ${targets.map((target) => target.path).join(', ')}.` }
+    }
+  }
+}
+
+/** Tool inputs arrive unvalidated; entries without a usable path are dropped. */
+function openFileTargets(value: unknown): OpenFileTarget[] {
+  if (!Array.isArray(value)) return []
+  const targets: OpenFileTarget[] = []
+  for (const entry of value) {
+    const path = pathOf(entry)
+    if (path === null) continue
+    const line = lineOf(entry)
+    if (line === null) targets.push({ path })
+    else targets.push({ path, line })
+  }
+  return targets
+}
+
+function pathOf(entry: unknown): string | null {
+  if (typeof entry === 'string' && entry.length > 0) return entry
+  if (typeof entry !== 'object' || entry === null) return null
+  const path = (entry as Record<string, unknown>).path
+  if (typeof path !== 'string' || path.length === 0) return null
+  return path
+}
+
+function lineOf(entry: unknown): number | null {
+  if (typeof entry !== 'object' || entry === null) return null
+  const line = (entry as Record<string, unknown>).line
+  if (typeof line !== 'number' || !Number.isFinite(line) || line < 1) return null
+  return Math.floor(line)
+}
+
 /** The shared worktree channel: one place the user and every agent can talk. */
 function chatTools(options: GroveToolOptions): GroveTool[] {
   const now = options.now ?? ((): number => Date.now())
@@ -187,5 +270,5 @@ function stringOrNothing(value: unknown): string | undefined {
 
 /** Every tool grove contributes, in the order they are offered to a harness. */
 export function groveTools(options: GroveToolOptions): GroveTool[] {
-  return [requestReviewTool(), setPhaseTool(), ...chatTools(options)]
+  return [requestReviewTool(), setPhaseTool(), openFilesTool(), ...chatTools(options)]
 }

@@ -203,10 +203,17 @@ function firstPresent(fields: Record<string, unknown>, names: string): string {
   return ''
 }
 
+/**
+ * The first field worth reading in the header. Lists count: a call whose only
+ * argument is a set of files reads as those files rather than as nothing.
+ */
 function firstScalar(fields: Record<string, unknown>): string {
   for (const value of Object.values(fields)) {
     if (typeof value === 'string' || typeof value === 'number') {
       return String(value)
+    }
+    if (Array.isArray(value) && value.length > 0) {
+      return stringOf(value)
     }
   }
   return ''
@@ -226,7 +233,33 @@ export function stringOf(value: unknown): string {
   if (value === undefined || value === null) {
     return ''
   }
+  if (Array.isArray(value)) {
+    return value
+      .map(entryLabel)
+      .filter((text) => text.length > 0)
+      .join(', ')
+  }
   return String(value)
+}
+
+/**
+ * One entry of a list-shaped field, for a header line.
+ *
+ * A call that takes several files — grove's own `open_files`, an edit batch —
+ * reads as the files it names, not as `[object Object]`.
+ */
+function entryLabel(entry: unknown): string {
+  if (typeof entry === 'string' || typeof entry === 'number') {
+    return String(entry)
+  }
+  const fields = asRecord(entry)
+  if (fields === null) {
+    return ''
+  }
+  if (typeof fields.path === 'string') {
+    return fields.path
+  }
+  return firstScalar(fields)
 }
 
 export interface EditReplacement {

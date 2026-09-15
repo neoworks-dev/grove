@@ -22,10 +22,12 @@ import {
 import { openStream } from './stream'
 import { autoDecisionFor, type AgentMode } from './modes'
 import { settings } from '../settings.svelte'
+import { openFileAtLine, openFileInEditor, store } from '../store.svelte'
 import { applyEvent, createTranscript, pendingApprovals, type TranscriptState } from './transcript'
 import type {
   ClientEventBody,
   CreateSessionOptions,
+  OpenFileTarget,
   SessionEvent,
   SessionMeta,
   SessionSnapshot,
@@ -398,11 +400,41 @@ class AgentSessions {
       applyEvent(session.transcript, event)
       if (this.viewing !== session.id) session.unread += 1
       if (event.type === 'agent.tool_use') this.applyMode(session.id, event)
+      if (event.type === 'ui.open_files') this.openFiles(session.id, event.files)
       // Usage and the queue only live in the snapshot, so a turn boundary is
       // worth a re-read.
       if (event.type === 'session.status_idle') void this.refreshSnapshot(session.id)
     })
     this.closers.set(session.id, close)
+  }
+
+  /**
+   * Put the files an agent asked for in the editor.
+   *
+   * Only the session on screen may do this: streams stay open for sessions in
+   * other worktrees, and one of those opening files would drag the editor away
+   * from what the user is looking at. They are opened last-first, so the entry
+   * the agent put first is the one left in view.
+   */
+  private openFiles(sessionId: string, files: OpenFileTarget[]): void {
+    if (this.viewing !== sessionId) return
+    const worktree = this.worktreeOf(sessionId)
+    if (!worktree) return
+
+    for (const target of [...files].reverse()) {
+      const path = absolutePath(worktree.path, target.path)
+      if (typeof target.line === 'number') openFileAtLine(worktree.id, path, target.line)
+      else openFileInEditor(worktree.id, path)
+    }
+  }
+
+  /** The open worktree a session belongs to, or null when grove has no such tab. */
+  private worktreeOf(sessionId: string): { id: string; path: string } | null {
+    const root = this.list.find((session) => session.id === sessionId)?.workspaceRoot
+    if (!root) return null
+    const worktree = store.worktrees.find((entry) => entry.path === root)
+    if (!worktree) return null
+    return worktree
   }
 
   /** Answer an approval the session's mode says not to bother the user with. */
@@ -436,6 +468,12 @@ function liveBadge(session: LiveSession): SessionBadge {
   if (session.transcript.status === 'running') return 'running'
   if (session.transcript.stopReason === 'error' || session.error.length > 0) return 'error'
   return 'idle'
+}
+
+/** Agents name files either way; the editor only opens absolute paths. */
+function absolutePath(root: string, path: string): string {
+  if (path.startsWith('/')) return path
+  return `${root}/${path}`
 }
 
 function messageOf(cause: unknown): string {

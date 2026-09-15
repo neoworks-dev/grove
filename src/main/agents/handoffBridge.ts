@@ -10,7 +10,8 @@
 
 import type { SessionEvent } from '../../shared/agents'
 import type { AgentRoster } from './roster'
-import type { SessionStore } from './store'
+import { signatureOfSession } from './roster'
+import type { SessionStore, StoredSession } from './store'
 
 /** The label `spawn_agent` writes onto a child session. */
 export const PARENT_LABEL = 'grove.parent'
@@ -34,6 +35,8 @@ export class AgentHandoffBridge {
   private lastMessage = new Map<string, string>()
   // The answer being streamed, for harnesses that only report deltas.
   private streaming = new Map<string, string>()
+  // Sessions this bridge removed itself, whose parent has already been told.
+  private cleanedUp = new Set<string>()
 
   constructor(private options: HandoffBridgeOptions) {}
 
@@ -108,10 +111,60 @@ export class AgentHandoffBridge {
     // Disposal follows the report, never precedes it: an agent removed before
     // its answer reached the parent would have worked for nothing.
     if (session.labels[DISPOSE_LABEL] === 'whenDone') {
+      this.cleanedUp.add(sessionId)
       await this.options.roster.dispose(sessionId).catch(() => {})
     }
   }
+
+  /**
+   * A session was removed: tell the agents on either side of it.
+   *
+   * An orchestrator otherwise keeps addressing a child that no longer exists
+   * and waits for a hand-off that will never come, and a child keeps working
+   * for a parent that will never read the answer. A session the bridge cleared
+   * away itself is left alone — its parent already has the answer, and the
+   * removal is the thing it asked for.
+   */
+  async reportClosed(session: StoredSession): Promise<void> {
+    this.lastMessage.delete(session.id)
+    this.streaming.delete(session.id)
+    if (this.cleanedUp.delete(session.id)) return
+
+    const from = signatureOfSession(session)
+    await this.tellParent(session, from)
+    await this.tellChildren(session, from)
+  }
+
+  /** The agent that started it is waiting for a report that is not coming. */
+  private async tellParent(session: StoredSession, from: string): Promise<void> {
+    const parentSessionId = session.labels[PARENT_LABEL]
+    if (!parentSessionId || parentSessionId === session.id) return
+    const parent = await this.options.store.get(parentSessionId)
+    if (!parent) return
+    await this.deliver(parentSessionId, from, CLOSED_NOTICE)
+  }
+
+  /** Anything it spawned is still working for an agent that is now gone. */
+  private async tellChildren(session: StoredSession, from: string): Promise<void> {
+    const sessions = await this.options.store.list()
+    const children = sessions.filter(
+      (entry) => entry.id !== session.id && entry.labels[PARENT_LABEL] === session.id
+    )
+    for (const child of children) await this.deliver(child.id, from, REQUESTER_CLOSED_NOTICE)
+  }
+
+  private async deliver(sessionId: string, from: string, text: string): Promise<void> {
+    await this.options.roster.deliver(sessionId, from, text).catch(() => {})
+  }
 }
+
+/** What a parent is told when one of its agents is closed out from under it. */
+const CLOSED_NOTICE =
+  'This agent was closed before reporting back. Its work has stopped and its id is no longer reachable — do not send to it again.'
+
+/** What a spawned agent is told when the agent that briefed it is closed. */
+const REQUESTER_CLOSED_NOTICE =
+  'The agent that gave you this task was closed and is no longer reachable. Stop when the current step is done, and report to the user here instead.'
 
 /** The text of an assistant message, with non-text blocks left out. */
 function textOf(content: { type: string; text?: string }[]): string {

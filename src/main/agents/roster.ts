@@ -237,5 +237,24 @@ function peerOf(session: SessionMeta): AgentPeer {
 
 /** How a peer is named when it is talking rather than being addressed. */
 export function signatureOf(peer: AgentPeer): string {
-  return `${peer.title} (${peer.agentId})`
+  return nameWithId(peer.title, peer.agentId)
+}
+
+/**
+ * The same signature for a session that can no longer be looked up.
+ *
+ * A removed session is gone from the store by the time anyone announces it, so
+ * its farewell has to be signed from the record the caller still holds.
+ */
+export function signatureOfSession(session: {
+  id: string
+  title: string
+  harness: string
+  labels: Record<string, string>
+}): string {
+  return nameWithId(session.title.trim() || session.harness, agentIdOf(session))
+}
+
+function nameWithId(title: string, agentId: string): string {
+  return `${title} (${agentId})`
 }

@@ -2,6 +2,7 @@
   // The canonical window: a leaf of the split tree. Registers itself as a
   // focusable pane and renders whatever pane type it references.
   import MissingPane from './MissingPane.svelte'
+  import PaneMenu from './PaneMenu.svelte'
   import { panes } from '../lib/panes.svelte'
   import { keymap, pane } from '../lib/keymap.svelte'
   import { layout } from '../lib/layout.svelte'
@@ -17,13 +18,18 @@
   // Per-pane font zoom. Canvas panes (nvim, terminal) scale their own font, so
   // only DOM panes get the generic CSS zoom on the container.
   const fontScale = $derived(layout.fontScale(leaf.id))
-  const zoomStyle = $derived(
-    !type?.ownsFontScale && fontScale !== 1 ? `zoom: ${fontScale}` : ''
-  )
+  const zoomStyle = $derived(!type?.ownsFontScale && fontScale !== 1 ? `zoom: ${fontScale}` : '')
 
   // Each leaf paints its own panel background now that the center container has
   // none; pane types that bring their own background keep it.
   const surfaceClass = $derived(type?.containerClass ?? 'bg-surface')
+
+  // Tell the layout which window of each pane family was last focused, so the
+  // next pane of that family opens beside it rather than beside whatever
+  // unrelated pane holds focus.
+  $effect(() => {
+    if (keymap.activeSurfaceId === leaf.id) layout.noteFocusedLeaf(leaf.id)
+  })
 
   function updateState(patch: Record<string, unknown>): void {
     layout.updateLeafState(leaf.id, patch)
@@ -46,11 +52,12 @@
   data-zoom-container={leaf.id}
   style={zoomStyle}
   onpointerdown={onPointerDown}
-  class="pane-surface flex h-full w-full min-w-0 min-h-0 flex-col overflow-hidden rounded-xl border border-line-faint outline-none {surfaceClass} {keymap.activeSurfaceId ===
+  class="pane-surface relative flex h-full w-full min-w-0 min-h-0 flex-col overflow-hidden rounded-xl border border-line-faint outline-none {surfaceClass} {keymap.activeSurfaceId ===
   leaf.id
     ? 'pane-active'
     : ''} {dragged ? 'opacity-40' : ''}"
 >
+  <PaneMenu leafId={leaf.id} paneTypeId={leaf.paneTypeId} />
   {#if !type}
     <MissingPane paneTypeId={leaf.paneTypeId} />
   {:else if !available}

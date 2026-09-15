@@ -5,6 +5,8 @@ import {
   leaves,
   findLeaf,
   findParentSplit,
+  insertAtEdge,
+  pathToLeaf,
   splitLeaf,
   removeLeaf,
   resizeGutter,
@@ -14,6 +16,7 @@ import {
   normalize,
   sanitize,
   type LayoutNode,
+  type LeafNode,
   type SplitNode
 } from '../src/renderer/src/lib/layoutTree'
 
@@ -258,5 +261,70 @@ describe('findParentSplit', () => {
     expect(findParentSplit(root, b.id)?.id).toBe(inner.id)
     expect(findParentSplit(root, inner.id)?.id).toBe(root.id)
     expect(findParentSplit(root, 'missing')).toBeNull()
+  })
+})
+
+describe('insertAtEdge', () => {
+  it('wraps a lone leaf so the new pane sits on the given edge', () => {
+    const editor = createLeaf('editor')
+    const root = insertAtEdge(editor, createLeaf('files'), 'left', 0.2) as SplitNode
+    expect(root.direction).toBe('row')
+    expect((root.children[0] as LeafNode).paneTypeId).toBe('files')
+    expect(root.sizes[0]).toBeCloseTo(0.2)
+    expect(sum(root.sizes)).toBeCloseTo(1)
+  })
+
+  it('joins an existing split of the same axis instead of nesting', () => {
+    const root = createSplit('row', [createLeaf('files'), createLeaf('editor')], [0.2, 0.8])
+    const next = insertAtEdge(root, createLeaf('agent'), 'right', 0.25) as SplitNode
+    expect(next.children).toHaveLength(3)
+    expect((next.children[2] as LeafNode).paneTypeId).toBe('agent')
+    // The panes already there give up their share proportionally.
+    expect(next.sizes[0] / next.sizes[1]).toBeCloseTo(0.25)
+    expect(sum(next.sizes)).toBeCloseTo(1)
+  })
+
+  it('nests when the edge runs across the root split', () => {
+    const root = createSplit('row', [createLeaf('files'), createLeaf('editor')])
+    const next = insertAtEdge(root, createLeaf('terminal'), 'bottom', 0.3) as SplitNode
+    expect(next.direction).toBe('column')
+    expect(next.children[0].kind).toBe('split')
+    expect((next.children[1] as LeafNode).paneTypeId).toBe('terminal')
+  })
+
+  it('never lets an edge pane take more than half the tree', () => {
+    const root = insertAtEdge(createLeaf('editor'), createLeaf('files'), 'left', 0.9) as SplitNode
+    expect(root.sizes[0]).toBeCloseTo(0.5)
+  })
+})
+
+describe('pathToLeaf', () => {
+  it('returns every node from the root down to the leaf', () => {
+    const target = createLeaf('editor')
+    const inner = createSplit('column', [target, createLeaf('terminal')])
+    const root = createSplit('row', [createLeaf('files'), inner])
+    expect(pathToLeaf(root, target.id)).toEqual([root.id, inner.id, target.id])
+  })
+
+  it('returns null for a leaf that is not in the tree', () => {
+    expect(pathToLeaf(createLeaf('editor'), 'missing')).toBeNull()
+  })
+})
+
+describe('id generation after a restore', () => {
+  it('never hands a new node an id a restored node already holds', () => {
+    const restored = sanitize({
+      kind: 'split',
+      id: 'split-40',
+      direction: 'row',
+      children: [
+        { kind: 'leaf', id: 'leaf-41', paneTypeId: 'files' },
+        { kind: 'leaf', id: 'leaf-42', paneTypeId: 'editor' }
+      ],
+      sizes: [0.2, 0.8]
+    }) as SplitNode
+    const fresh = createLeaf('agent')
+    const ids = leaves(insertAtEdge(restored, fresh, 'right', 0.25)).map((leaf) => leaf.id)
+    expect(new Set(ids).size).toBe(ids.length)
   })
 })

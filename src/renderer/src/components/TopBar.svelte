@@ -12,9 +12,7 @@
 
   const projectName = $derived(store.repo?.name ?? 'Open a project…')
   const canNavigate = $derived(store.tabs.length > 1)
-  const agentsOpen = $derived(
-    layout.docks.right.open && layout.docks.right.paneType === 'agent'
-  )
+  const agentsOpen = $derived(layout.hasPaneType('agent'))
 
   // Every visible top menu with its items, flattened for the ⋯ dropdown.
   const menuSections = $derived(

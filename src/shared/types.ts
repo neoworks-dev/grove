@@ -206,12 +206,15 @@ export interface ReviewResolution {
   decisions: HunkDecision[]
 }
 
-// ── Docked side panels ──────────────────────────────────────────
+// ── Docked side panels (retired) ────────────────────────────────
+// The sidebar and the agent panel are ordinary leaves of the split tree now.
+// These types survive only so a layout saved before that can be read back once
+// and folded into the tree; nothing writes them any more.
 
 export type DockSide = 'left' | 'right'
 
-// One docked panel: which pane type it hosts, whether it's open, and its size
-// in pixels along the dock axis (width for left/right docks).
+// One docked panel: which pane type it hosted, whether it was open, and its
+// size in pixels along the dock axis (width for left/right docks).
 export interface DockPaneState {
   paneType: string
   open: boolean

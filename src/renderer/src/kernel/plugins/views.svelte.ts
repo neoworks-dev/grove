@@ -23,8 +23,8 @@ export const views = {
       'view:code'
     )
 
-    // Views define only the center split tree; the agent panel lives in the
-    // right dock, shared across views.
+    // A view owns its whole tree, edge panes included — the dashboard wants the
+    // screen to itself, so it declares a single pane and nothing else.
     ctx.effect(
       () =>
         ctx.views.register({

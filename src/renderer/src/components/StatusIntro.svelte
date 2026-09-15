@@ -3,10 +3,8 @@
   import { layout } from '../lib/layout.svelte'
   import { INTRO_PHASE_LABELS } from '../lib/intro/prompt'
 
-  // Only nag when the session runs but the setup pane isn't showing in the dock.
-  const hidden = $derived(
-    intro.active && (layout.docks.left.paneType !== 'setup' || !layout.docks.left.open)
-  )
+  // Only nag when the session runs but no window is showing the setup pane.
+  const hidden = $derived(intro.active && !layout.hasPaneType('setup'))
 </script>
 
 {#if hidden}

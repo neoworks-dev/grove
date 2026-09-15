@@ -1,7 +1,7 @@
 <script lang="ts">
-  // Placeholder shown when the center split has no real pane open (e.g. the last
-  // editor was closed). Keeps the center present instead of collapsing the docks
-  // into it, and offers quick ways to fill it again.
+  // Placeholder shown when no editor window is open (e.g. the last one was
+  // closed). Keeps the editor's place in the tree rather than letting the other
+  // panes swallow it, and offers quick ways to fill it again.
   import { layout } from '../lib/layout.svelte'
   import { store } from '../lib/store.svelte'
 

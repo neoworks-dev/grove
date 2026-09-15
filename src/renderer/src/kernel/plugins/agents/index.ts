@@ -38,6 +38,9 @@ export const agents = {
           component: AgentPane,
           containerClass: 'bg-surface',
           minWidth: 240,
+          // Opens against the right edge when nothing of it is showing; from
+          // there it drags and splits like any other window.
+          preferredEdge: { side: 'right', order: 0, fraction: 0.24 },
           // Vim-style: 'normal' scrolls the transcript and navigates instances;
           // 'i' enters 'insert', which focuses the composer; Escape returns.
           modes: ['normal', 'insert']
@@ -45,8 +48,8 @@ export const agents = {
       'pane:agent'
     )
 
-    // Right-dock utility pane (chosen from the dock picker or the worktree
-    // row's chat button); no rail entry and no sidebar slot so it docks right.
+    // Opened from a pane's own menu or the worktree row's chat button; no rail
+    // entry, and it yields the right edge to the agent panel.
     ctx.effect(
       () =>
         ctx.panes.register({
@@ -56,6 +59,7 @@ export const agents = {
           component: WorktreeChatPane,
           containerClass: 'bg-elevated',
           minWidth: 240,
+          preferredEdge: { side: 'right', order: 10, fraction: 0.24 },
           when: repoOpen
         }),
       'pane:worktree-chat'

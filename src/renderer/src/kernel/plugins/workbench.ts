@@ -34,7 +34,7 @@ export const workbench = {
           id: 'view.toggleRightDock',
           title: 'Toggle Right Panel',
           group: 'View',
-          run: () => ctx.layout.toggleDock('right')
+          run: () => ctx.layout.toggleEdgePane('right')
         }),
       'command:view.toggleRightDock'
     )

@@ -12,13 +12,12 @@
   {#each panes.railTypes() as type (type.id)}
     {@const RailIcon = type.icon}
     <button
-      class="flex h-9 w-9 items-center justify-center rounded-md {layout.docks.left.open &&
-      layout.docks.left.paneType === type.id
+      class="flex h-9 w-9 items-center justify-center rounded-md {layout.hasPaneType(type.id)
         ? 'bg-raised text-default'
         : 'text-dim hover:bg-hover hover:text-default'}"
       title={type.title}
       aria-label={type.title}
-      onclick={() => layout.showInDock('left', type.id)}
+      onclick={() => layout.togglePane(type.id)}
     >
       {#if RailIcon}<RailIcon size={20} />{/if}
     </button>

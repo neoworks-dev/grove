@@ -103,13 +103,13 @@ export function registerCoreBindings(): () => void {
     },
     {
       // The left panel is content-driven (rail / <Leader> e open it); the right
-      // panel is a utility dock with no rail, so it gets a direct toggle.
+      // panel has no rail entry, so it gets a direct toggle.
       id: 'leader.rightDock',
       keys: '<Leader> w ]',
       context: 'global',
       group: 'View',
       description: 'Toggle right panel',
-      run: () => layout.toggleDock('right')
+      run: () => layout.toggleEdgePane('right')
     },
     {
       id: 'leader.preferences',

@@ -23,10 +23,18 @@ export const WRITE_TOOLS = ['write', 'edit']
 export const MUTATING_TOOLS = [...WRITE_TOOLS, 'bash']
 
 export const MODE_LABELS: Record<AgentMode, string> = {
-  default: 'ask',
-  plan: 'plan',
-  acceptEdits: 'accept edits',
-  bypass: 'bypass'
+  default: 'Ask',
+  plan: 'Plan',
+  acceptEdits: 'Accept edits',
+  bypass: 'Bypass'
+}
+
+/** What each mode actually lets the agent do, for the picker. */
+export const MODE_DESCRIPTIONS: Record<AgentMode, string> = {
+  default: 'Every write and command is put to you first.',
+  plan: 'Read and propose only — the tools that change anything are withheld.',
+  acceptEdits: 'File edits go through on their own; commands still ask.',
+  bypass: 'Nothing is asked. Every call runs, including shell commands.'
 }
 
 /** The order shift+tab steps through, least permissive first. */

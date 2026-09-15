@@ -369,13 +369,14 @@
   }
 
   /**
-   * Switching harness restarts the conversation on the new runtime: the old one's
-   * resume key means nothing to it. The choice is remembered so new sessions
-   * start there too.
+   * Pick the harness for a session that has not started yet, and for the ones
+   * started from now on. A session another harness has already answered on
+   * keeps it — the main process refuses the change either way.
    */
   function pickHarness(next: string): void {
     void settings.set('workbench.agentHarness', next, 'user')
     if (!activeId || next === harness) return
+    if (snapshot?.started) return
     void agentSessions.update(activeId, { harness: next })
   }
 
@@ -822,6 +823,7 @@
             <AgentControls
               harness={snapshot.harness}
               harnesses={catalog.harnesses}
+              started={snapshot.started}
               provider={snapshot.provider}
               model={snapshot.model}
               thinking={snapshot.thinkingLevel}

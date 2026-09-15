@@ -233,6 +233,13 @@ export interface SessionMeta {
   pendingApprovals: string[]
   lastSeq: number
   live: boolean
+  /**
+   * Whether a harness has taken a turn on this session.
+   *
+   * A conversation belongs to the runtime that produced it, so a started
+   * session keeps the harness it started on; only the model stays open.
+   */
+  started: boolean
 }
 
 /** One session in full, which adds what only a live run knows. */

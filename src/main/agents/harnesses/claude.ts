@@ -23,6 +23,8 @@ import type {
   CommandInfo,
   ConfirmationResult,
   ContentBlock,
+  ModelInfo,
+  ProviderCredential,
   ProviderModels,
   ServerEventBody,
   ThinkingLevel,
@@ -30,6 +32,7 @@ import type {
   ToolInfo,
   ToolPolicy
 } from '../../../shared/agents'
+import { loadModelCatalog, type CatalogModel, type CatalogProvider } from '../../modelCatalog'
 import { zodShapeFromJsonSchema, type JsonSchemaObject } from '../../plugins/zodSchema'
 import type {
   GroveTool,
@@ -43,9 +46,27 @@ import type {
 
 const HARNESS_ID = 'claude'
 
-// Claude Code talks to one provider, so every model it lists is grouped under
-// this one in the picker's provider → model cascade.
+// Anthropic's own endpoint, which is what an account's own credentials reach.
+// Everything the CLI itself lists is grouped under this one in the picker's
+// provider → model cascade.
 const PROVIDER = 'anthropic'
+
+// How models.dev names the client of each wire protocol. Claude Code speaks the
+// Anthropic Messages API and nothing else, so a provider is runnable here only
+// if the catalog puts it on the Anthropic client — or on one of the two
+// platforms the CLI has a flag for.
+const ANTHROPIC_WIRE_SDK = '@ai-sdk/anthropic'
+const BEDROCK_SDK = '@ai-sdk/amazon-bedrock'
+const VERTEX_SDK = '@ai-sdk/google-vertex/anthropic'
+
+// Bedrock and Vertex host far more than Claude; only the Claude lines can be
+// driven from here, and the catalog names the line in `family`.
+const CLAUDE_FAMILY = 'claude'
+
+// Where a provider credential is looked for when the environment has none. The
+// key is the environment variable the provider names, so nothing about which
+// providers exist has to be written down here.
+const CREDENTIAL_SETTING_PREFIX = 'agents.credentials.'
 
 // The MCP server grove's own tools are published under. The model sees them as
 // `mcp__grove__<name>`, which is what the intent matcher below strips back off.
@@ -229,7 +250,10 @@ class ClaudeRun implements HarnessRun {
   // grove opens for it is named after the work rather than after a call id.
   private lanes = new Map<string, SubagentIdentity>()
 
-  constructor(private options: HarnessRunOptions) {
+  constructor(
+    private options: HarnessRunOptions,
+    private credentials: CredentialSource
+  ) {
     this.resumeKey = options.resumeKey
   }
 
@@ -293,6 +317,7 @@ class ClaudeRun implements HarnessRun {
     return {
       cwd: this.options.workspaceRoot,
       pathToClaudeCodeExecutable: resolveClaudeExecutable(),
+      env: await sessionEnvironment(this.options.provider, this.credentials),
       model: this.options.model ?? undefined,
       resume: this.options.resumeKey ?? undefined,
       includePartialMessages: true,
@@ -527,10 +552,18 @@ class ClaudeRun implements HarnessRun {
   }
 }
 
+/** Reads a provider's credential, wherever the user put it. */
+export interface CredentialSource {
+  /** The first of these environment variables that has a value, if any. */
+  lookup(variables: string[]): string | null
+}
+
 /** Probe the SDK once for what it can offer, and remember the answer. */
 class Offering {
   private cached: HarnessOffering | null = null
   private inflight: Promise<HarnessOffering> | null = null
+
+  constructor(private credentials: CredentialSource) {}
 
   async load(): Promise<HarnessOffering> {
     if (this.cached) return this.cached
@@ -569,11 +602,14 @@ class Offering {
 
     try {
       const initialization = await session.initializationResult()
+      // The catalog only widens the list, so a failed or empty one costs the
+      // extra providers and nothing else.
+      const catalog = await loadModelCatalog()
       this.cached = {
         tools: builtinTools(),
         commands: commandsOf(initialization.commands),
         skills: [],
-        providers: providersOf(initialization.models),
+        providers: providersOf(initialization.models, catalog, this.credentials),
         default: defaultModelOf(initialization.models)
       }
       return this.cached
@@ -611,18 +647,149 @@ function commandsOf(commands: SlashCommand[]): CommandInfo[] {
   }))
 }
 
-function providersOf(models: SdkModelInfo[]): ProviderModels[] {
-  if (models.length === 0) return []
-  return [
-    {
-      provider: PROVIDER,
-      models: models.map((model) => ({
-        id: model.value,
-        provider: PROVIDER,
-        label: model.displayName
-      }))
-    }
-  ]
+/**
+ * Everything a session can be pointed at, as the picker's provider → model
+ * cascade.
+ *
+ * Two sources, because neither is complete on its own. The CLI reports the
+ * aliases the signed-in account is entitled to — authoritative about the
+ * account, silent about every model it is not entitled to and every endpoint it
+ * does not sign in to. The catalog reports the models that exist. A model in
+ * both is listed once, under the CLI's own name for it.
+ */
+export function providersOf(
+  models: SdkModelInfo[],
+  catalog: CatalogProvider[],
+  credentials: CredentialSource
+): ProviderModels[] {
+  const anthropic = anthropicProvider(models, catalog)
+  const others = alternativeProviders(catalog, credentials)
+  if (anthropic.models.length === 0) return others
+  return [anthropic, ...others]
+}
+
+/**
+ * Anthropic's own endpoint: what the CLI offered, then the models the catalog
+ * knows that it did not. The extra ones are reachable with the same credentials
+ * whenever the account is entitled to them; when it is not, the turn fails and
+ * says so, which is the only place that can be known.
+ */
+function anthropicProvider(models: SdkModelInfo[], catalog: CatalogProvider[]): ProviderModels {
+  const listed = models.map(modelFromCli)
+  const known = new Set(listed.flatMap((model) => [model.id, model.resolvedId ?? model.id]))
+  const entry = catalog.find((provider) => provider.id === PROVIDER)
+  const rest = (entry?.models ?? [])
+    .filter((model) => !known.has(model.id))
+    .map((model) => modelFromCatalog(model, PROVIDER))
+  return { provider: PROVIDER, label: 'Anthropic', models: [...listed, ...rest] }
+}
+
+/**
+ * The other endpoints Claude Code can be pointed at: every provider the catalog
+ * puts on the Anthropic wire client, plus Bedrock and Vertex, whose Claude
+ * models the CLI reaches through a flag of its own.
+ */
+function alternativeProviders(
+  catalog: CatalogProvider[],
+  credentials: CredentialSource
+): ProviderModels[] {
+  const providers: ProviderModels[] = []
+  for (const entry of catalog) {
+    if (entry.id === PROVIDER) continue
+    const models = runnableModels(entry)
+    if (models.length === 0) continue
+    providers.push({
+      provider: entry.id,
+      label: entry.name,
+      endpoint: entry.api ?? undefined,
+      credential: credentialState(entry, credentials),
+      models: models.map((model) => modelFromCatalog(model, entry.id))
+    })
+  }
+  return providers.sort((left, right) => left.provider.localeCompare(right.provider))
+}
+
+/** The models of one catalog provider that Claude Code can actually drive. */
+function runnableModels(provider: CatalogProvider): CatalogModel[] {
+  if (provider.sdk === ANTHROPIC_WIRE_SDK) return provider.models
+  if (provider.sdk !== BEDROCK_SDK && provider.sdk !== VERTEX_SDK) return []
+  return provider.models.filter((model) => {
+    const family = model.family ?? model.id
+    return family.toLowerCase().includes(CLAUDE_FAMILY)
+  })
+}
+
+function credentialState(
+  provider: CatalogProvider,
+  credentials: CredentialSource
+): ProviderCredential | undefined {
+  if (provider.env.length === 0) return undefined
+  return { env: provider.env, present: credentials.lookup(provider.env) !== null }
+}
+
+/**
+ * A row the CLI listed.
+ *
+ * Every one of them is an alias (`default`, `opus[1m]`) rather than a wire model
+ * id, so `resolvedModel` is carried through: it is the only way to say which
+ * model `default` actually is.
+ */
+function modelFromCli(model: SdkModelInfo): ModelInfo {
+  return {
+    id: model.value,
+    provider: PROVIDER,
+    label: model.displayName,
+    resolvedId: model.resolvedModel,
+    description: model.description
+  }
+}
+
+/**
+ * The environment a session runs the CLI under.
+ *
+ * Anthropic's own endpoint needs nothing: the CLI already knows how the account
+ * signs in. Every other provider is reached the way Claude Code documents it —
+ * `ANTHROPIC_BASE_URL` at the endpoint, the provider's own key as
+ * `ANTHROPIC_AUTH_TOKEN`, or the platform flag for Bedrock and Vertex.
+ *
+ * The SDK replaces the child's environment with whatever is returned here, so
+ * this starts from grove's own.
+ */
+async function sessionEnvironment(
+  provider: string | null,
+  credentials: CredentialSource
+): Promise<Record<string, string | undefined> | undefined> {
+  if (!provider || provider === PROVIDER) return undefined
+  const entry = (await loadModelCatalog()).find((candidate) => candidate.id === provider)
+  if (!entry) return undefined
+  return { ...process.env, ...providerVariables(entry, credentials) }
+}
+
+export function providerVariables(
+  provider: CatalogProvider,
+  credentials: CredentialSource
+): Record<string, string | undefined> {
+  if (provider.sdk === BEDROCK_SDK) return { CLAUDE_CODE_USE_BEDROCK: '1' }
+  if (provider.sdk === VERTEX_SDK) return { CLAUDE_CODE_USE_VERTEX: '1' }
+
+  const variables: Record<string, string | undefined> = {}
+  if (provider.api) variables.ANTHROPIC_BASE_URL = provider.api
+  const token = credentials.lookup(provider.env)
+  if (token) variables.ANTHROPIC_AUTH_TOKEN = token
+  // The session is no longer talking to Anthropic, so the Anthropic credentials
+  // in grove's own environment must not travel to whoever is on the other end.
+  variables.ANTHROPIC_API_KEY = undefined
+  return variables
+}
+
+function modelFromCatalog(model: CatalogModel, provider: string): ModelInfo {
+  return {
+    id: model.id,
+    provider,
+    label: model.name,
+    contextWindow: model.contextWindow ?? undefined,
+    pricing: model.pricing ?? undefined
+  }
 }
 
 /** The CLI lists its recommended model first, which is the one to start on. */
@@ -834,8 +1001,8 @@ function editsOf(name: string, input: Record<string, unknown>): Replacement[] {
     }))
 }
 
-function createClaudeHarness(): HarnessDescriptor {
-  const offering = new Offering()
+function createClaudeHarness(credentials: CredentialSource): HarnessDescriptor {
+  const offering = new Offering(credentials)
 
   return {
     id: HARNESS_ID,
@@ -866,7 +1033,7 @@ function createClaudeHarness(): HarnessDescriptor {
     offering: () => offering.load(),
 
     async start(options) {
-      const run = new ClaudeRun(options)
+      const run = new ClaudeRun(options, credentials)
       await run.start()
       return run
     },
@@ -887,11 +1054,33 @@ function createClaudeHarness(): HarnessDescriptor {
   }
 }
 
+/**
+ * Where a provider's key comes from: the environment grove was started in
+ * first, then settings, under the provider's own variable name.
+ *
+ * Settings are plain JSON on disk, so a key written there is stored in clear —
+ * the environment is the better place for one, and is checked first.
+ */
+function credentialSource(settings: { get<T>(key: string): T | undefined }): CredentialSource {
+  return {
+    lookup(variables) {
+      for (const variable of variables) {
+        const fromEnvironment = process.env[variable]
+        if (fromEnvironment) return fromEnvironment
+        const fromSettings = settings.get<string>(`${CREDENTIAL_SETTING_PREFIX}${variable}`)
+        if (fromSettings) return fromSettings
+      }
+      return null
+    }
+  }
+}
+
 export const claudeHarness = {
   name: 'main/harness/claude',
-  inject: ['harnesses'],
+  inject: ['harnesses', 'settings'],
 
   apply(ctx: Context): void {
-    ctx.effect(() => ctx.harnesses.register(createClaudeHarness()), 'harness:claude')
+    const credentials = credentialSource(ctx.settings)
+    ctx.effect(() => ctx.harnesses.register(createClaudeHarness(credentials)), 'harness:claude')
   }
 }

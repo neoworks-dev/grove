@@ -1,8 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 import {
   decodeModelSelection,
+  describeModel,
   discoveredModelOptions,
   encodeModelSelection,
+  modelName,
+  modelWireId,
   resolveModelSelection
 } from '../src/renderer/src/lib/agents/modelSelection'
 import type { ProviderModels } from '../src/renderer/src/lib/agents/types'
@@ -32,6 +35,44 @@ describe('task model selection', () => {
       'anthropic / claude-fast',
       'anthropic / claude:deep',
       'openai / gpt-code'
+    ])
+  })
+
+  test('names an alias row by what it resolves to, not by the alias', () => {
+    const alias = {
+      provider: 'anthropic',
+      id: 'default',
+      label: 'Default (recommended)',
+      resolvedId: 'claude-opus-5'
+    }
+    expect(modelName(alias)).toBe('Default (recommended)')
+    expect(modelWireId(alias)).toBe('claude-opus-5')
+    expect(describeModel(alias)).toBe('Default (recommended) · claude-opus-5')
+  })
+
+  test('says a bare id once, with no label and nothing to resolve', () => {
+    const bare = { provider: 'openai', id: 'gpt-code' }
+    expect(modelName(bare)).toBe('gpt-code')
+    expect(modelWireId(bare)).toBe('gpt-code')
+    expect(describeModel(bare)).toBe('gpt-code')
+  })
+
+  test('carries the resolved id into selector labels', () => {
+    const aliased = [
+      {
+        provider: 'anthropic',
+        models: [
+          {
+            provider: 'anthropic',
+            id: 'opus[1m]',
+            label: 'Opus (1M context)',
+            resolvedId: 'claude-opus-5[1m]'
+          }
+        ]
+      }
+    ]
+    expect(discoveredModelOptions(aliased).map((option) => option.label)).toEqual([
+      'anthropic / Opus (1M context) · claude-opus-5[1m]'
     ])
   })
 

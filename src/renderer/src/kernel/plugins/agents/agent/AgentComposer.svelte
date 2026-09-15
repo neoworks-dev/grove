@@ -34,7 +34,8 @@
     onSend,
     onFocusChange,
     onInterrupt,
-    onCycleMode
+    onCycleMode,
+    onBack
   }: {
     sessionId: string
     running: boolean
@@ -49,6 +50,11 @@
      * unmodified keys to whatever is being typed in.
      */
     onCycleMode?: () => void
+    /**
+     * Step left out of the conversation, to the session overview. Only offered
+     * from an empty draft, so ArrowLeft stays a cursor key while typing.
+     */
+    onBack?: () => void
   } = $props()
 
   let draft = $state('')
@@ -252,6 +258,11 @@
       submit()
       return
     }
+    if (event.key === 'ArrowLeft' && draft.length === 0 && onBack) {
+      event.preventDefault()
+      onBack()
+      return
+    }
     if (event.key === 'ArrowUp' && draft.length === 0 && history.length > 0) {
       event.preventDefault()
       stepHistory(-1)
@@ -387,7 +398,7 @@
       class="relative z-0 block h-20 w-full resize-none border-0 bg-transparent px-2 py-1.5 text-xs leading-normal text-transparent caret-default outline-none placeholder:text-dim"
       placeholder={running
         ? 'Steer the running agent…  ( Enter send · Esc interrupt )'
-        : `Prompt…  ( / commands · @ files · ! shell · ↑↓ history · Enter send${placeholderHint} )`}
+        : `Prompt…  ( / commands · @ files · ! shell · ↑↓ history · ← sessions · Enter send${placeholderHint} )`}
       onkeydown={onKey}
       onkeyup={syncCaret}
       onclick={syncCaret}

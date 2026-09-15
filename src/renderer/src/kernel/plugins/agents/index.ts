@@ -41,6 +41,9 @@ export const agents = {
           // Opens against the right edge when nothing of it is showing; from
           // there it drags and splits like any other window.
           preferredEdge: { side: 'right', order: 0, fraction: 0.24 },
+          // A transcript reads fine narrow, so the agent panel is the first to
+          // give up room when another pane opens and the last to reclaim it.
+          growth: 0.5,
           // Vim-style: 'normal' scrolls the transcript and navigates instances;
           // 'i' enters 'insert', which focuses the composer; Escape returns.
           modes: ['normal', 'insert']

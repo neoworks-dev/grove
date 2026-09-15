@@ -3,16 +3,13 @@
   // the pane-type picker plus the close action. Every window carries it, so any
   // pane can become any other pane without going through the rail.
   import DotsThreeIcon from 'phosphor-svelte/lib/DotsThreeIcon'
-  import { panes } from '../lib/panes.svelte'
+  import PanePicker from './PanePicker.svelte'
   import { layout } from '../lib/layout.svelte'
 
   let { leafId, paneTypeId }: { leafId: string; paneTypeId: string } = $props()
 
   let open = $state(false)
   let menuEl = $state<HTMLDivElement>()
-
-  // The empty-center placeholder is a fallback, never something to pick.
-  const options = $derived(panes.types.filter((entry) => entry.id !== 'empty'))
 
   /** Close the menu when a pointer press lands outside it. */
   function onWindowPointerDown(event: PointerEvent): void {
@@ -48,26 +45,17 @@
     <DotsThreeIcon size={14} weight="bold" />
   </button>
   {#if open}
-    <div
-      class="mt-1 max-h-64 w-40 overflow-auto rounded-md border border-line bg-elevated py-1 shadow-lg"
-    >
-      {#each options as option (option.id)}
-        <button
-          class="block w-full px-2 py-1 text-left text-2xs hover:bg-hover"
-          class:text-default={option.id === paneTypeId}
-          class:text-dim={option.id !== paneTypeId}
-          onclick={() => choose(option.id)}
-        >
-          {option.title}
-        </button>
-      {/each}
-      <div class="my-1 border-t border-line"></div>
-      <button
-        class="block w-full px-2 py-1 text-left text-2xs text-dim hover:bg-hover hover:text-default"
-        onclick={close}
-      >
-        Close pane
-      </button>
+    <div class="mt-1">
+      <PanePicker currentTypeId={paneTypeId} onpick={choose}>
+        {#snippet footer()}
+          <button
+            class="block w-full px-2 py-1 text-left text-2xs text-dim hover:bg-hover hover:text-default"
+            onclick={close}
+          >
+            Close pane
+          </button>
+        {/snippet}
+      </PanePicker>
     </div>
   {/if}
 </div>

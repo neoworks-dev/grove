@@ -47,6 +47,9 @@ export class SidebarService extends Service {
       // Sidebar views are ordinary draggable panes; the edge is only where a
       // view lands when it is opened with none of the family already showing.
       preferredEdge: { side: 'left', order: view.order, fraction: 0.18 },
+      // The sidebar is set once and then left alone: it keeps its width when
+      // other panes open, close or the window resizes.
+      fixedSize: { defaultPx: 256 },
       containerClass: view.containerClass || 'bg-elevated',
       minWidth: view.minWidth || 180,
       when: view.when

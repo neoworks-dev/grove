@@ -46,12 +46,16 @@ function sessionMeta(id: string, title: string, overrides: Partial<SessionMeta> 
     pendingApprovals: [],
     lastSeq: 0,
     live: true,
+    started: false,
     ...overrides
   }
 }
 
 /** A roster over a fixed session list, recording what it was asked to deliver. */
-function testRoster(sessions: SessionMeta[]): {
+function testRoster(
+  sessions: SessionMeta[],
+  logs: Record<string, SessionEvent[]> = {}
+): {
   roster: AgentRoster
   delivered: Delivered[]
   created: { title: string; labels: Record<string, string> | undefined }[]
@@ -62,6 +66,7 @@ function testRoster(sessions: SessionMeta[]): {
   const removed: string[] = []
   const agents = {
     listSessions: () => Promise.resolve(sessions),
+    listEvents: (sessionId: string) => Promise.resolve(logs[sessionId] ?? []),
     createSession: (options: { title?: string; labels?: Record<string, string> }) => {
       created.push({ title: options.title ?? '', labels: options.labels })
       const spawned = sessionMeta('spawned', options.title ?? '', {
@@ -209,6 +214,100 @@ describe('addressing another agent', () => {
     sessions[1] = sessionMeta('b', 'Something else entirely')
 
     expect((await roster.resolve('/repo', 'id-b'))?.sessionId).toBe('b')
+  })
+})
+
+describe("reading another agent's transcript", () => {
+  function log(sessionId: string, lines: [string, string][]): SessionEvent[] {
+    return lines.map(([type, text], index) => {
+      const envelope = {
+        id: `${sessionId}-${index}`,
+        seq: index + 1,
+        sessionId,
+        createdAt: '2026-01-01T00:00:00.000Z'
+      }
+      if (type === 'user') {
+        return { ...envelope, type: 'user.message', content: [{ type: 'text', text }] }
+      }
+      if (type === 'tool') {
+        return {
+          ...envelope,
+          type: 'agent.tool_result',
+          toolUseId: 't',
+          name: 'bash',
+          content: text,
+          isError: false
+        }
+      }
+      return {
+        ...envelope,
+        type: 'agent.message_end',
+        content: [{ type: 'text', text }],
+        stopReason: 'end_turn'
+      }
+    }) as SessionEvent[]
+  }
+
+  const logs = {
+    a: log('a', [
+      ['user', 'why is the parser slow?'],
+      ['agent', 'the tokenizer re-reads the file on every pass'],
+      ['tool', 'cargo bench output: 4.2s']
+    ]),
+    b: log('b', [['agent', 'left the tokenizer alone, it is not the bottleneck']])
+  }
+
+  test('reads what was said, and the tool traffic only when asked', async () => {
+    const { roster } = testRoster([sessionMeta('a', 'Planner'), sessionMeta('b', 'Builder')], logs)
+    const posted: Posted[] = []
+    const read = toolNamed('read_transcript', roster, posted)
+
+    const said = await read.execute({ agent: 'id-a' }, context('b'))
+    expect(said.content).toContain('#1 user: why is the parser slow?')
+    expect(said.content).toContain('#2 agent: the tokenizer')
+    expect(said.content).not.toContain('cargo bench')
+
+    const withTools = await read.execute({ agent: 'id-a', include_tools: true }, context('b'))
+    expect(withTools.content).toContain('#3 tool (bash): cargo bench')
+  })
+
+  test('takes the last lines, and only those after a given event', async () => {
+    const { roster } = testRoster([sessionMeta('a', 'Planner')], logs)
+    const read = toolNamed('read_transcript', roster, [])
+
+    const tail = await read.execute({ agent: 'id-a', limit: 1 }, context('a'))
+    expect(tail.content).toContain('#2 agent:')
+    expect(tail.content).not.toContain('#1 user:')
+
+    const since = await read.execute({ agent: 'id-a', since: 2 }, context('a'))
+    expect(since.content).toContain('has said nothing yet')
+  })
+
+  test('searches every agent here and says which one said it', async () => {
+    const { roster } = testRoster([sessionMeta('a', 'Planner'), sessionMeta('b', 'Builder')], logs)
+    const search = toolNamed('search_transcripts', roster, [])
+
+    const hits = await search.execute({ query: 'tokenizer' }, context('a'))
+    expect(hits.content).toContain('Planner (id-a)')
+    expect(hits.content).toContain('Builder (id-b)')
+    expect(hits.content).toContain('#2 agent: the tokenizer re-reads')
+
+    const scoped = await search.execute({ query: 'tokenizer', agent: 'id-b' }, context('a'))
+    expect(scoped.content).not.toContain('Planner')
+
+    const nothing = await search.execute({ query: 'mutex' }, context('a'))
+    expect(nothing.content).toContain('No agent has mentioned')
+  })
+
+  test('an unknown agent comes back as an error, not an empty transcript', async () => {
+    const { roster } = testRoster([sessionMeta('a', 'Planner')], logs)
+    const result = await toolNamed('read_transcript', roster, []).execute(
+      { agent: 'id-zzz' },
+      context('a')
+    )
+
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('list_agents')
   })
 })
 

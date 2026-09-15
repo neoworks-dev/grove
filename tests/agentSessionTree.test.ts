@@ -31,7 +31,8 @@ function session(id: string, labels: Record<string, string> = {}): SessionMeta {
     status: 'idle',
     pendingApprovals: [],
     lastSeq: 0,
-    live: true
+    live: true,
+    started: false
   }
 }
 

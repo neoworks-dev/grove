@@ -64,6 +64,8 @@ function coordination(context: SystemPromptContext): string {
     '- `list_agents` — who is here, what they run on, and whether they are busy. Check before assuming you are alone.',
     '- `send_message` — say something to one of them by id, or to the room with no addressee. An addressed message interrupts them, so it lands whether or not they think to look.',
     '- `read_messages` — the channel so far. Messages addressed to you arrive on their own; this is for the rest.',
+    "- `search_transcripts` — every agent's conversation here, searched for a phrase. Use it before asking a question somebody has already answered, and before redoing work somebody has already tried.",
+    "- `read_transcript` — one agent's conversation in full, by id, including your own earlier turns. Reading it costs them nothing; interrupting them does.",
     `- \`spawn_agent\` — start another agent here and give it a task, on any of: ${context.harnesses.join(', ')}. The user is asked before one starts.`,
     '- `list_runtimes` — what those runtimes can run: whether each is authenticated, the models it offers and the one it defaults to. Check it before naming a model, rather than guessing an id.',
     '- `spawn_agent` with `removeWhenDone` — a one-shot helper whose conversation is cleared away once it has answered. Use it when you want the result, not a collaborator.',

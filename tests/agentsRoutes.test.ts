@@ -28,7 +28,8 @@ function session(
     provider: 'anthropic',
     model: 'claude',
     status,
-    live: true
+    live: true,
+    started: false
   }
 }
 

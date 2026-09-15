@@ -11,7 +11,7 @@
 // every agent holding it. Titles still travel alongside, because "auth-refactor"
 // is what makes a roster readable.
 
-import type { HarnessInfo, SessionMeta } from '../../shared/agents'
+import type { HarnessInfo, SessionEvent, SessionMeta } from '../../shared/agents'
 import { DISPOSE_LABEL, PARENT_LABEL } from './handoffBridge'
 import type { HarnessRegistry } from './harness'
 import { agentIdOf } from './identity'
@@ -122,6 +122,17 @@ export class AgentRoster {
     const byTitle = peers.filter((peer) => peer.title.trim().toLowerCase() === wanted)
     if (byTitle.length === 1) return byTitle[0]
     return null
+  }
+
+  /**
+   * One session's event log, for the tools that read another agent's work.
+   *
+   * The whole log, not a window of it: what an agent is looking for is usually
+   * the part nobody thought to summarize, and the fold that turns events into
+   * readable lines is where the volume is cut.
+   */
+  async transcriptOf(sessionId: string): Promise<SessionEvent[]> {
+    return this.options.agents.listEvents(sessionId)
   }
 
   /**

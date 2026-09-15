@@ -80,6 +80,14 @@ export interface ShellItem {
   exitCode: number
   outcome: string
   shared: boolean
+  /**
+   * Has the agent been given this yet?
+   *
+   * Shared output rides along with the next message rather than being sent on
+   * its own, so between running the command and writing that message it is
+   * waiting — which the row says, since nothing else would.
+   */
+  delivered: boolean
 }
 
 export interface NoticeItem {
@@ -276,6 +284,11 @@ function applyStatus(state: TranscriptState, event: SessionEvent): void {
 }
 
 function applyMessage(state: TranscriptState, event: SessionEvent): void {
+  // Both carry whatever shell output was waiting: the service prepends it to
+  // anything it delivers to the harness, whoever wrote it.
+  if (event.type === 'user.message' || event.type === 'app.message') {
+    markShellDelivered(state)
+  }
   if (event.type === 'user.message') {
     state.items.push({
       kind: 'user',
@@ -402,8 +415,21 @@ function applyShell(state: TranscriptState, event: SessionEvent): void {
     output: event.output,
     exitCode: event.exitCode,
     outcome: event.outcome,
-    shared: event.share
+    shared: event.share,
+    delivered: false
   })
+}
+
+/**
+ * Hand every shared command above this point to the agent.
+ *
+ * Grove buffers shared output and prepends it to the next message, so a message
+ * is exactly the moment the waiting ends — for all of them at once.
+ */
+function markShellDelivered(state: TranscriptState): void {
+  for (const item of state.items) {
+    if (item.kind === 'shell' && item.shared) item.delivered = true
+  }
 }
 
 /**

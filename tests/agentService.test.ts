@@ -58,6 +58,8 @@ interface Harness {
   service: AgentService
   store: SessionStore
   runs: FakeRun[]
+  /** Where the sessions live, for tests that open a second service over them. */
+  root: string
   cleanup: () => Promise<void>
 }
 
@@ -68,6 +70,14 @@ function settle(): Promise<void> {
 
 async function setup(): Promise<Harness> {
   const root = await mkdtemp(join(tmpdir(), 'grove-agent-service-'))
+  return openService(root)
+}
+
+/**
+ * A service over sessions already on disk — what grove does on every start, and
+ * what a test needs to check that something outlives a restart.
+ */
+function openService(root: string): Harness {
   const store = new SessionStore(root)
   const harnesses = new HarnessRegistry()
   const runs: FakeRun[] = []
@@ -117,6 +127,7 @@ async function setup(): Promise<Harness> {
     service,
     store,
     runs,
+    root,
     cleanup: () => rm(root, { recursive: true, force: true })
   }
 }
@@ -385,9 +396,7 @@ describe('AgentService', () => {
     const workspace = await mkdtemp(join(tmpdir(), 'grove-agent-shell-'))
     try {
       const session = await service.createSession({ workspace })
-      await service.send(session.id, [
-        { type: 'user.shell', command: 'echo hello', share: false }
-      ])
+      await service.send(session.id, [{ type: 'user.shell', command: 'echo hello', share: false }])
 
       const events = await store.eventsSince(session.id, 0)
       const result = events.find((event) => event.type === 'session.shell_result')
@@ -421,6 +430,28 @@ describe('AgentService', () => {
     } finally {
       await rm(workspace, { recursive: true, force: true })
       await cleanup()
+    }
+  })
+
+  test('shell output still waiting survives a restart', async () => {
+    const first = await setup()
+    const workspace = await mkdtemp(join(tmpdir(), 'grove-agent-shell-'))
+    try {
+      const session = await first.service.createSession({ workspace })
+      await first.service.send(session.id, [
+        { type: 'user.shell', command: 'echo hello', share: true }
+      ])
+      await settle()
+
+      // What is waiting is read off the log, so a service that has never seen
+      // the command still hands it over with the next message.
+      const second = openService(first.root)
+      await second.service.send(session.id, [say('fix it')])
+      expect(second.runs[0].prompts[0]).toContain('$ echo hello')
+      expect(second.runs[0].prompts[0]).toEndWith('fix it')
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+      await first.cleanup()
     }
   })
 

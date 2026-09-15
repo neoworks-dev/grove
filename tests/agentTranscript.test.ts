@@ -206,6 +206,26 @@ describe('transcript fold', () => {
     expect(state.items[0]).toMatchObject({ kind: 'shell', command: 'git status', shared: false })
   })
 
+  test('shared output waits for a message, and is marked until one is sent', () => {
+    const shellRun = {
+      type: 'session.shell_result' as const,
+      command: 'git status',
+      output: 'clean',
+      exitCode: 0,
+      outcome: 'exit 0',
+      share: true
+    }
+
+    const waiting = fold([shellRun])
+    expect(waiting.items[0]).toMatchObject({ kind: 'shell', shared: true, delivered: false })
+
+    const sent = fold([
+      shellRun,
+      { type: 'user.message', content: [{ type: 'text', text: 'fix' }] }
+    ])
+    expect(sent.items[0]).toMatchObject({ kind: 'shell', shared: true, delivered: true })
+  })
+
   test('a retracted message leaves the view', () => {
     const state = createTranscript()
     const message = event({ type: 'user.message', content: [{ type: 'text', text: 'never mind' }] })

@@ -286,7 +286,13 @@ class ClaudeRun implements HarnessRun {
         // grove's own tools carry the policy grove gave them, so the ones that
         // only drive its UI run without stopping the turn on an approval.
         if (this.policyFor(name) === 'allow') return { behavior: 'allow', updatedInput: input }
-        const decision = await this.options.confirm({ toolUseId: toolUseID, name, input })
+        // The same name the tool call was announced under, so the approval lands
+        // on that call rather than raising a second one beside it.
+        const decision = await this.options.confirm({
+          toolUseId: toolUseID,
+          name: bareName(name),
+          input
+        })
         if (!allows(decision.result)) {
           return { behavior: 'deny', message: decision.reason ?? 'denied by the user' }
         }
@@ -422,7 +428,9 @@ class ClaudeRun implements HarnessRun {
       this.options.emit({
         type: 'agent.tool_use',
         toolUseId: String(block.id),
-        name: String(block.name),
+        // grove's own tools travel as `mcp__grove__<name>`; the rest of grove
+        // knows them by the name it gave them, and so does the transcript.
+        name: bareName(String(block.name)),
         input: block.input,
         permission: 'allow'
       })

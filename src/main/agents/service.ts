@@ -27,6 +27,7 @@ import type {
   SessionSnapshot,
   SessionUpdate,
   ThinkingLevel,
+  ToolInfo,
   UserContentBlock
 } from '../../shared/agents'
 import * as files from '../files'
@@ -93,7 +94,11 @@ export class AgentService {
   async catalog(harnessId: string): Promise<HarnessCatalog> {
     const descriptor = this.options.harnesses.require(harnessId)
     const offering = await descriptor.offering()
-    return { harness: harnessId, ...offering }
+    // A harness reports the tools it brings; grove's own are added here, since
+    // they are the same set whichever runtime is hosting them — and without
+    // them the transcript has no `display` for the calls it shows most.
+    const tools = [...offering.tools, ...this.toolsFor(descriptor).map(toolInfoOf)]
+    return { harness: harnessId, ...offering, tools }
   }
 
   // ── Session lifecycle ───────────────────────────────────────────
@@ -640,6 +645,21 @@ export class AgentService {
   /** Queued messages for a session, for callers that only need the queue. */
   queueOf(sessionId: string): QueuedMessage[] {
     return this.runtimes.get(sessionId)?.queued ?? []
+  }
+}
+
+/** One of grove's tools as the renderer's catalog describes a tool. */
+function toolInfoOf(tool: GroveTool): ToolInfo {
+  return {
+    name: tool.name,
+    description: tool.description,
+    summary: tool.summary,
+    policy: tool.policy,
+    // Two calls to the same grove tool in one batch would race on the channel
+    // or start two sessions; none of them is worth parallelising.
+    parallelSafe: false,
+    display: tool.display,
+    inputSchema: tool.inputSchema
   }
 }
 

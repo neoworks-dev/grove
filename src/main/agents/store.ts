@@ -11,6 +11,7 @@
 import { randomUUID } from 'node:crypto'
 import { appendFile, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { AGENT_ID_LABEL, newAgentId } from './identity'
 import type {
   EventBody,
   SessionEvent,
@@ -125,7 +126,8 @@ export class SessionStore {
       thinkingLevel: options.thinkingLevel,
       activeTools: options.activeTools,
       autoApproveTools: [],
-      labels: options.labels ?? {},
+      // Every session is addressable from the moment it exists, whoever made it.
+      labels: { [AGENT_ID_LABEL]: newAgentId(), ...options.labels },
       createdAt: now,
       updatedAt: now,
       resumeKey: null,

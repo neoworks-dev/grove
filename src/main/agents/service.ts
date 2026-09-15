@@ -31,14 +31,17 @@ import type {
   UserContentBlock
 } from '../../shared/agents'
 import * as files from '../files'
+import { PARENT_LABEL } from './handoffBridge'
 import type {
   ApprovalDecision,
   ApprovalRequest,
   GroveTool,
   HarnessRegistry,
-  HarnessRun
+  HarnessRun,
+  SubagentIdentity
 } from './harness'
 import { idleRuntime, SessionStore, type RuntimeState, type StoredSession } from './store'
+import { isSubagentSession, SUBAGENT_LABEL, SubagentSessions } from './subagents'
 
 const BLOBS_DIR = 'blobs'
 
@@ -83,6 +86,16 @@ export interface AgentServiceOptions {
 
 export class AgentService {
   private runtimes = new Map<string, Runtime>()
+
+  /**
+   * The sessions standing for the agents harnesses run inside their tool calls.
+   * Opening one is the same call the `spawn_agent` tool makes, so a delegated
+   * conversation is a session whoever started it.
+   */
+  private subagents = new SubagentSessions({
+    open: (parentSessionId, agent) => this.openSubagentSession(parentSessionId, agent),
+    absorb: (sessionId, body) => this.absorb(sessionId, body)
+  })
 
   constructor(private options: AgentServiceOptions) {}
 
@@ -259,6 +272,13 @@ export class AgentService {
     sessionId: string,
     event: Extract<ClientEventBody, { type: 'user.message' | 'app.message' }>
   ): Promise<void> {
+    if (await this.isSubagentSession(sessionId)) {
+      await this.store.append(sessionId, {
+        type: 'session.notice',
+        message: 'This agent was run inside a tool call and cannot be written to.'
+      })
+      return
+    }
     const stamped = await this.store.append(sessionId, event)
     const text = textOf(event)
     const runtime = this.runtimeOrCreate(sessionId)
@@ -301,6 +321,13 @@ export class AgentService {
         message: `Stopping the agent failed: ${(cause as Error).message}`
       })
     }
+  }
+
+  /** Is this the record of an agent a harness ran, rather than a live conversation? */
+  private async isSubagentSession(sessionId: string): Promise<boolean> {
+    const session = await this.store.get(sessionId)
+    if (!session) return false
+    return isSubagentSession(session)
   }
 
   /** Take a message back out of the queue before it is delivered. */
@@ -461,6 +488,7 @@ export class AgentService {
       tools: this.toolsFor(descriptor),
       systemPrompt: await this.systemPromptFor(session),
       emit: (body) => void this.absorb(sessionId, body),
+      emitFrom: (agent, body) => void this.subagents.absorb(sessionId, agent, body),
       stats: (update) => void this.store.patch(sessionId, update),
       confirm: (request) => this.requestApproval(sessionId, request)
     })
@@ -490,6 +518,36 @@ export class AgentService {
     return this.options.tools()
   }
 
+  /**
+   * Open the session standing for an agent a harness is running.
+   *
+   * It is the session the parent would have got from `spawn_agent`: same
+   * worktree, same harness and model, labelled with who started it so the tabs
+   * show the two as one family. It has no run of its own — the parent's runtime
+   * is doing the work, and everything this session knows arrives through it.
+   */
+  private async openSubagentSession(
+    parentSessionId: string,
+    agent: SubagentIdentity
+  ): Promise<string> {
+    const parent = await this.store.require(parentSessionId)
+    const session = await this.createSession({
+      workspace: parent.workspaceRoot,
+      harness: parent.harness,
+      title: agent.title,
+      provider: parent.provider,
+      model: parent.model,
+      labels: { [PARENT_LABEL]: parentSessionId, [SUBAGENT_LABEL]: agent.toolUseId }
+    })
+    if (agent.description) {
+      await this.store.append(session.id, {
+        type: 'user.message',
+        content: [{ type: 'text', text: agent.description }]
+      })
+    }
+    return session.id
+  }
+
   /** Fold a harness event into runtime state, then put it on the log. */
   private async absorb(sessionId: string, body: ServerEventBody): Promise<void> {
     const runtime = this.runtimeOrCreate(sessionId)
@@ -497,6 +555,12 @@ export class AgentService {
     if (body.type === 'agent.tool_use') {
       if (runtime.announced.has(body.toolUseId)) return
       runtime.announced.add(body.toolUseId)
+    }
+    // The result of a call is the last word of whatever agent that call was
+    // running, so the session standing for it stops here rather than sitting in
+    // the tabs claiming to work forever.
+    if (body.type === 'agent.tool_result') {
+      await this.subagents.close(sessionId, body.toolUseId)
     }
     if (body.type === 'session.status_running') {
       runtime.status = 'running'

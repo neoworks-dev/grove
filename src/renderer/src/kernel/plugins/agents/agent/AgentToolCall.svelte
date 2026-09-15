@@ -31,7 +31,9 @@
     root = '',
     expanded,
     onToggle,
-    onOpenFile
+    onOpenFile,
+    agentSessionId = null,
+    onOpenSession
   }: {
     item: ToolItem
     display: ToolDisplay | undefined
@@ -40,6 +42,9 @@
     expanded: boolean
     onToggle: () => void
     onOpenFile: (path: string) => void
+    /** The session holding the conversation this call ran, when it ran an agent. */
+    agentSessionId?: string | null
+    onOpenSession?: (sessionId: string) => void
   } = $props()
 
   // The user may have rewritten the arguments before approving; what ran is what
@@ -156,6 +161,16 @@
         {#if pathLabel.directory}
           <span class="truncate text-dim group-hover:underline">{pathLabel.directory}</span>
         {/if}
+      </button>
+    {/if}
+    <!-- A call that ran an agent has a conversation behind it, one tab along. -->
+    {#if agentSessionId}
+      <button
+        class="shrink-0 rounded border border-line px-1.5 text-2xs text-dim hover:bg-hover hover:text-default"
+        title="Open the conversation this call ran"
+        onclick={() => onOpenSession?.(agentSessionId)}
+      >
+        open ↗
       </button>
     {/if}
     {#if diffStats.added > 0}<span class="shrink-0 font-mono text-2xs text-green"

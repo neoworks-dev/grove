@@ -35,6 +35,7 @@ import type {
   HarnessOffering,
   HarnessRun,
   HarnessRunOptions,
+  SubagentIdentity,
   ToolIntent
 } from '../harness'
 
@@ -206,6 +207,9 @@ class ClaudeRun implements HarnessRun {
   // What grove has already told the session about: a turn grove did not start
   // still has to raise the status, or the pane offers no way to stop it.
   private running = false
+  // What each tool call that is running an agent was asked to do, so the session
+  // grove opens for it is named after the work rather than after a call id.
+  private lanes = new Map<string, SubagentIdentity>()
 
   constructor(private options: HarnessRunOptions) {
     this.resumeKey = options.resumeKey
@@ -369,22 +373,75 @@ class ClaudeRun implements HarnessRun {
     if (this.handleSessionChange(message)) return
     if (signalsWork(message)) this.markRunning()
     if (message.type === 'stream_event') {
-      for (const event of streamEvents(message.event, message.parent_tool_use_id)) {
-        this.options.emit(event)
-      }
+      this.report(message.parent_tool_use_id, streamEvents(message.event))
       return
     }
     if (message.type === 'assistant') {
-      for (const event of assistantEvents(message.message.content, message.parent_tool_use_id)) {
-        this.options.emit(event)
-      }
+      this.rememberLanes(message.message.content)
+      this.nameLane(message.parent_tool_use_id, message.subagent_type, message.task_description)
+      this.report(message.parent_tool_use_id, assistantEvents(message.message.content))
       return
     }
     if (message.type === 'user') {
-      this.handleToolResults(message.message.content)
+      this.report(message.parent_tool_use_id, toolResultEvents(message.message.content))
       return
     }
     if (message.type === 'result') this.handleResult(message)
+  }
+
+  /**
+   * Put events on the conversation they belong to.
+   *
+   * A `parentToolUseId` means an agent the runtime is running inside that call,
+   * which grove gives a session of its own; everything else is the conversation
+   * the user is reading.
+   */
+  private report(parentToolUseId: string | null, events: ServerEventBody[]): void {
+    if (!parentToolUseId) {
+      for (const event of events) this.options.emit(event)
+      return
+    }
+    const agent = this.laneOf(parentToolUseId)
+    for (const event of events) this.options.emitFrom(agent, event)
+  }
+
+  /**
+   * Keep what each tool call was asked to do.
+   *
+   * A subagent's own messages say almost nothing about it — the task it was
+   * given is in the call that started it, and that call goes past before any of
+   * its work does.
+   */
+  private rememberLanes(content: unknown): void {
+    for (const block of blocksOf(content)) {
+      if (block.type !== 'tool_use') continue
+      const input = asInput(block.input) ?? {}
+      this.lanes.set(String(block.id), {
+        toolUseId: String(block.id),
+        title: subagentTitle(input, String(block.name)),
+        description: subagentDescription(input)
+      })
+    }
+  }
+
+  /** The subagent type, once a message from it says which one it is. */
+  private nameLane(
+    parentToolUseId: string | null,
+    subagentType: string | undefined,
+    taskDescription: string | undefined
+  ): void {
+    if (!parentToolUseId) return
+    const known = this.laneOf(parentToolUseId)
+    this.lanes.set(parentToolUseId, {
+      ...known,
+      title: subagentType || known.title,
+      description: known.description || taskDescription
+    })
+  }
+
+  /** What grove should call the agent running in one tool call. */
+  private laneOf(toolUseId: string): SubagentIdentity {
+    return this.lanes.get(toolUseId) ?? { toolUseId, title: 'Agent' }
   }
 
   /**
@@ -425,19 +482,6 @@ class ClaudeRun implements HarnessRun {
       return true
     }
     return false
-  }
-
-  private handleToolResults(content: unknown): void {
-    for (const block of blocksOf(content)) {
-      if (block.type !== 'tool_result') continue
-      this.options.emit({
-        type: 'agent.tool_result',
-        toolUseId: String(block.tool_use_id),
-        name: '',
-        content: textOf(block.content),
-        isError: block.is_error === true
-      })
-    }
   }
 
   private handleResult(message: Extract<SDKMessage, { type: 'result' }>): void {
@@ -580,15 +624,8 @@ export function signalsWork(message: SDKMessage): boolean {
   return message.type === 'stream_event' || message.type === 'assistant' || message.type === 'user'
 }
 
-/**
- * The transcript events a partial message carries.
- *
- * A subagent streams its own answer under the tool call that started it.
- * Those fragments belong to a conversation of their own, so folding them in
- * would splice them into whatever the main agent is in the middle of saying.
- */
-export function streamEvents(rawEvent: unknown, parentToolUseId: string | null): ServerEventBody[] {
-  if (parentToolUseId) return []
+/** The transcript events a partial message carries. */
+export function streamEvents(rawEvent: unknown): ServerEventBody[] {
   const event = rawEvent as { type: string; delta?: Record<string, unknown> }
   if (event.type === 'message_start') return [{ type: 'agent.message_start' }]
   if (event.type !== 'content_block_delta') return []
@@ -603,21 +640,10 @@ export function streamEvents(rawEvent: unknown, parentToolUseId: string | null):
   return []
 }
 
-/**
- * The transcript events an assistant message carries: its tool calls, and the
- * block it closes.
- *
- * A subagent's message ends nothing here. Its calls still count — they are what
- * the working bar counts — but ending the block would cut the main agent's
- * message in two, one bubble stopping mid-word and the rest opening another.
- * What the subagent concluded arrives as its tool call's result either way.
- */
-export function assistantEvents(
-  content: unknown,
-  parentToolUseId: string | null
-): ServerEventBody[] {
+/** The transcript events an assistant message carries: its tool calls, and the block it closes. */
+export function assistantEvents(content: unknown): ServerEventBody[] {
   const blocks = blocksOf(content)
-  const events: ServerEventBody[] = blocks
+  const calls: ServerEventBody[] = blocks
     .filter((block) => block.type === 'tool_use')
     .map((block) => ({
       type: 'agent.tool_use',
@@ -629,11 +655,49 @@ export function assistantEvents(
       permission: 'allow'
     }))
 
-  if (parentToolUseId) return events
   return [
-    ...events,
+    ...calls,
     { type: 'agent.message_end', content: blocks as ContentBlock[], stopReason: 'end_turn' }
   ]
+}
+
+/** The transcript events a user message carries: what the tools it ran answered. */
+export function toolResultEvents(content: unknown): ServerEventBody[] {
+  return blocksOf(content)
+    .filter((block) => block.type === 'tool_result')
+    .map((block) => ({
+      type: 'agent.tool_result',
+      toolUseId: String(block.tool_use_id),
+      name: '',
+      content: textOf(block.content),
+      isError: block.is_error === true
+    }))
+}
+
+// What Claude's Task tool names the agent it starts, and the work it gives it.
+// A harness that spawns agents some other way names them some other way; this is
+// only what this one's calls look like.
+const SUBAGENT_TYPE_FIELDS = ['subagent_type', 'agent_type', 'agent']
+const SUBAGENT_TASK_FIELDS = ['description', 'prompt', 'task']
+
+/** What to call the agent a tool call starts: the agent type it names, else the tool. */
+function subagentTitle(input: Record<string, unknown>, toolName: string): string {
+  const named = firstString(input, SUBAGENT_TYPE_FIELDS)
+  if (named) return named
+  return bareName(toolName)
+}
+
+/** The task a tool call hands its agent, shown as the first thing in its transcript. */
+function subagentDescription(input: Record<string, unknown>): string | undefined {
+  return firstString(input, SUBAGENT_TASK_FIELDS)
+}
+
+function firstString(input: Record<string, unknown>, fields: string[]): string | undefined {
+  for (const field of fields) {
+    const value = input[field]
+    if (typeof value === 'string' && value.trim().length > 0) return value
+  }
+  return undefined
 }
 
 function userMessage(text: string): SDKUserMessage {

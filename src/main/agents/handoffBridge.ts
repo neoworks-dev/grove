@@ -12,6 +12,7 @@ import type { SessionEvent } from '../../shared/agents'
 import type { AgentRoster } from './roster'
 import { signatureOfSession } from './roster'
 import type { SessionStore, StoredSession } from './store'
+import { isSubagentSession } from './subagents'
 
 /** The label `spawn_agent` writes onto a child session. */
 export const PARENT_LABEL = 'grove.parent'
@@ -102,6 +103,9 @@ export class AgentHandoffBridge {
     const parentSessionId = session?.labels[PARENT_LABEL]
     if (!session || !parentSessionId) return
     if (parentSessionId === sessionId) return
+    // An agent the harness ran itself already reports back: its answer is the
+    // result of the tool call that started it, which the parent is waiting on.
+    if (isSubagentSession(session)) return
 
     const parent = await this.options.store.get(parentSessionId)
     if (!parent) return
@@ -148,7 +152,10 @@ export class AgentHandoffBridge {
   private async tellChildren(session: StoredSession, from: string): Promise<void> {
     const sessions = await this.options.store.list()
     const children = sessions.filter(
-      (entry) => entry.id !== session.id && entry.labels[PARENT_LABEL] === session.id
+      (entry) =>
+        entry.id !== session.id &&
+        entry.labels[PARENT_LABEL] === session.id &&
+        !isSubagentSession(entry)
     )
     for (const child of children) await this.deliver(child.id, from, REQUESTER_CLOSED_NOTICE)
   }

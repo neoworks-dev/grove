@@ -16,6 +16,7 @@ import { DISPOSE_LABEL, PARENT_LABEL } from './handoffBridge'
 import type { HarnessRegistry } from './harness'
 import { agentIdOf } from './identity'
 import type { AgentService } from './service'
+import { isSubagentSession } from './subagents'
 
 export interface AgentPeer {
   sessionId: string
@@ -70,11 +71,18 @@ export interface AgentRosterOptions {
 export class AgentRoster {
   constructor(private options: AgentRosterOptions) {}
 
-  /** Every session rooted in a worktree, with the id each is addressed by. */
+  /**
+   * Every session rooted in a worktree, with the id each is addressed by.
+   *
+   * An agent a harness ran inside a tool call is left out: it is on screen like
+   * any other session, but there is nothing behind it to take a message, so
+   * listing it would only offer an address that goes nowhere.
+   */
   async peers(workspaceRoot: string): Promise<AgentPeer[]> {
     const sessions = await this.options.agents.listSessions()
     return sessions
       .filter((session) => session.workspaceRoot === workspaceRoot)
+      .filter((session) => !isSubagentSession(session))
       .map((session) => peerOf(session))
   }
 

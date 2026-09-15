@@ -7,7 +7,9 @@ import {
   liveAgentIds,
   parentIdOf,
   sessionByAgentId,
-  sessionFamilies
+  sessionFamilies,
+  subagentOf,
+  subagentSessions
 } from '../src/renderer/src/lib/agents/sessionTree'
 import { agentIdIn, senderOf, type AppItem } from '../src/renderer/src/lib/agents/transcript'
 import type { SessionMeta } from '../src/renderer/src/lib/agents/types'
@@ -135,5 +137,34 @@ describe('telling a live sender from a closed one', () => {
     const live = liveAgentIds([session('a', { 'grove.agentId': '155a4e' })])
 
     expect(live.has('721e1d')).toBe(false)
+  })
+})
+
+describe('an agent a harness ran inside a tool call', () => {
+  test('names the call it was run by', () => {
+    expect(subagentOf(session('a', { 'grove.subagentOf': 'toolu_1' }))).toBe('toolu_1')
+    expect(subagentOf(session('b', { 'grove.parent': 'a' }))).toBeNull()
+  })
+
+  test('a tool call leads to the conversation it ran', () => {
+    const sessions = [
+      session('parent'),
+      session('child', { 'grove.parent': 'parent', 'grove.subagentOf': 'toolu_1' }),
+      session('spawned', { 'grove.parent': 'parent' })
+    ]
+
+    const byCall = subagentSessions(sessions)
+    expect(byCall.get('toolu_1')).toBe('child')
+    // A session spawned by the agent itself belongs to no call.
+    expect(byCall.size).toBe(1)
+  })
+
+  test('it sits in the family of the session that ran it', () => {
+    const sessions = [
+      session('parent'),
+      session('child', { 'grove.parent': 'parent', 'grove.subagentOf': 'toolu_1' })
+    ]
+
+    expect(shape(sessions)).toEqual([['parent@0', 'child@1']])
   })
 })

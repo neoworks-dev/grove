@@ -39,6 +39,8 @@
     toggleTool,
     onOpenFile,
     onOpenAgent,
+    onOpenSession,
+    subagentSessions,
     liveAgentIds,
     viewport = $bindable(),
     onscroll
@@ -57,6 +59,10 @@
     onOpenFile: (path: string) => void
     /** Show the conversation of the agent a message came from. */
     onOpenAgent: (agentId: string) => void
+    /** Show one session: the conversation a tool call ran, from the call itself. */
+    onOpenSession: (sessionId: string) => void
+    /** The session each tool call that ran an agent produced, by tool-use id. */
+    subagentSessions: Map<string, string>
     /** Every agent that still exists; a sender missing from it has been closed. */
     liveAgentIds: Set<string>
     viewport?: HTMLDivElement
@@ -153,6 +159,8 @@
             expanded={Boolean(expandedTools[call.toolUseId])}
             onToggle={() => toggleTool(call.toolUseId)}
             {onOpenFile}
+            agentSessionId={subagentSessions.get(call.toolUseId) ?? null}
+            {onOpenSession}
           />
         {/each}
       </div>
@@ -308,6 +316,8 @@
       expanded={Boolean(expandedTools[item.toolUseId])}
       onToggle={() => toggleTool(item.toolUseId)}
       {onOpenFile}
+      agentSessionId={subagentSessions.get(item.toolUseId) ?? null}
+      {onOpenSession}
     />
   {:else if item.kind === 'shell'}
     <!-- A `!` command the user ran. `shared` decides whether the model saw it. -->

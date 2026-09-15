@@ -21,7 +21,13 @@
     type SessionBadge
   } from '../../../../lib/agents/sessions.svelte'
   import { pendingApprovals, visibleItems } from '../../../../lib/agents/transcript'
-  import { liveAgentIds, sessionByAgentId } from '../../../../lib/agents/sessionTree'
+  import {
+    liveAgentIds,
+    parentIdOf,
+    sessionByAgentId,
+    subagentOf,
+    subagentSessions
+  } from '../../../../lib/agents/sessionTree'
   import { fileOfCall } from '../../../../lib/agents/tools'
   import { questionsOf } from '../../../../lib/agents/questions'
   import {
@@ -78,6 +84,20 @@
   // harness named the tool.
   const questions = $derived(approvals[0] ? questionsOf(approvals[0].input) : null)
   const running = $derived(live?.transcript.status === 'running')
+  // A session standing for an agent the harness ran inside a tool call. It is a
+  // record of that conversation: the runtime is the only thing that ever spoke
+  // there, so there is nothing to write to.
+  const subagent = $derived(activeMeta ? subagentOf(activeMeta) : null)
+  // Every tool call in this worktree that ran an agent, so a call in the
+  // transcript can lead to the conversation it ran.
+  const agentCallSessions = $derived(subagentSessions(agentSessions.list))
+  // The session that started this one, for the way back out of a subagent's.
+  const parentSession = $derived.by(() => {
+    if (!activeMeta) return null
+    const parentId = parentIdOf(activeMeta)
+    if (!parentId) return null
+    return sessionList.find((session) => session.id === parentId) ?? null
+  })
   const queued = $derived(snapshot?.queued ?? [])
 
   // The chosen mode leads the session state: accept-edits and bypass are entered
@@ -617,6 +637,8 @@
         toggleTool={(id) => (expandedTools = { ...expandedTools, [id]: !expandedTools[id] })}
         onOpenFile={openFile}
         onOpenAgent={openAgent}
+        onOpenSession={selectSession}
+        subagentSessions={agentCallSessions}
         liveAgentIds={liveAgents}
         bind:viewport={transcriptViewport}
         onscroll={onTranscriptScroll}
@@ -722,6 +744,24 @@
               onShowChange={showChange}
             />
           {/key}
+        {:else if subagent}
+          <!-- Nothing can be said here: the agent this session holds was run by
+               another one, and ended when its tool call returned. -->
+          <div
+            class="flex items-center gap-2 rounded-md border border-line bg-elevated px-2 py-1.5 text-2xs text-dim"
+          >
+            <span class="min-w-0 flex-1">
+              Run by another agent inside a tool call. Reply in the session that started it.
+            </span>
+            {#if parentSession}
+              <button
+                class="shrink-0 rounded border border-line px-2 py-0.5 text-default hover:bg-hover"
+                onclick={() => selectSession(parentSession.id)}
+              >
+                Go there
+              </button>
+            {/if}
+          </div>
         {:else}
           {#if activeId}
             <AgentComposer

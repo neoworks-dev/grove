@@ -80,6 +80,22 @@ export interface ApprovalDecision {
   input?: unknown
 }
 
+/**
+ * An agent a runtime is running inside one of its own tool calls.
+ *
+ * The tool call is the identity: it is what started the agent, what its work is
+ * reported under, and what ends it, so grove needs nothing else to keep one
+ * agent's events apart from the next one's.
+ */
+export interface SubagentIdentity {
+  /** The tool call that started it, and the lane its events travel in. */
+  toolUseId: string
+  /** What to call it — the subagent type, or the tool that started it. */
+  title: string
+  /** The task it was given, shown as the first thing in its transcript. */
+  description?: string
+}
+
 /** Everything an adapter needs to start one session's run. */
 export interface HarnessRunOptions {
   sessionId: string
@@ -101,6 +117,17 @@ export interface HarnessRunOptions {
   systemPrompt: string
   /** Report progress. The store stamps and persists whatever is emitted. */
   emit(body: ServerEventBody): void
+  /**
+   * Report progress from an agent this runtime is running inside a tool call.
+   *
+   * Runtimes that delegate — Claude's Task calls, anything a third-party harness
+   * spawns — produce a second conversation that has nothing to do with the one
+   * the user is reading. Reported here, grove gives it what it gives an agent of
+   * its own: a session, a tab inside the family of the one that started it, its
+   * own transcript and its own status. Reported through `emit`, it would splice
+   * itself into the middle of whatever the main agent is saying.
+   */
+  emitFrom(agent: SubagentIdentity, body: ServerEventBody): void
   /**
    * Report token usage, cost and context window for the session so far. Kept off
    * the event log because it is a running total rather than something that

@@ -10,6 +10,7 @@ import type { SessionMeta } from './types'
 
 const PARENT_LABEL = 'grove.parent'
 const AGENT_ID_LABEL = 'grove.agentId'
+const SUBAGENT_LABEL = 'grove.subagentOf'
 
 export interface SessionRow {
   session: SessionMeta
@@ -20,6 +21,28 @@ export interface SessionRow {
 /** The agent that spawned this session, if one did. */
 export function parentIdOf(session: SessionMeta): string | null {
   return session.labels[PARENT_LABEL] || null
+}
+
+/**
+ * The tool call this session's agent was run inside, if it was run inside one.
+ *
+ * A harness that delegates — Claude's Task calls, anything a third-party one
+ * spawns — gets a session per agent, the same as `spawn_agent` gives. The
+ * difference is that nobody can write to it: the runtime that started it is the
+ * only thing that ever speaks there, and it stops when the call returns.
+ */
+export function subagentOf(session: SessionMeta): string | null {
+  return session.labels[SUBAGENT_LABEL] || null
+}
+
+/** Every tool call that ran an agent, mapped to the session holding it. */
+export function subagentSessions(sessions: SessionMeta[]): Map<string, string> {
+  const byToolUseId = new Map<string, string>()
+  for (const session of sessions) {
+    const toolUseId = subagentOf(session)
+    if (toolUseId) byToolUseId.set(toolUseId, session.id)
+  }
+  return byToolUseId
 }
 
 /** The id other agents address this session by. */

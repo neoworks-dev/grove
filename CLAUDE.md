@@ -6,31 +6,55 @@ You're allowed to use git. Every time you make a big change, commit the current 
 
 Never launch the app yourself. I run it, and I run it with `GROVE_DEBUG=1`.
 
-Once it's running you can attach to it and drive it yourself instead of asking me what I see. Don't inspect the UI via tmux, and don't guess at UI behaviour from reading code — attach and look.
+Once it's running, attach to it and drive it yourself instead of asking me what I see — read the `grove-debug` skill (`.claude/skills/grove-debug/SKILL.md`) for the commands, the renderer state they reach, and the on-disk agent event log. Don't inspect the UI via tmux, and don't guess at UI behaviour from reading code.
 
-```
-bun scripts/grove-debug.ts ping                  # is it reachable
-bun scripts/grove-debug.ts state                 # review + editor state
-bun scripts/grove-debug.ts windows               # nvim tabs/windows/buffers/diff flags
-bun scripts/grove-debug.ts eval '<js>'           # anything in the renderer
-bun scripts/grove-debug.ts lua '<lua>'           # anything in the editor
-
-bun scripts/grove-debug.ts harnesses list         # mounted agent runtimes, and which can run
-bun scripts/grove-debug.ts agent start '<prompt>'
-bun scripts/grove-debug.ts agent permissions | allow | deny '<why>'
-bun scripts/grove-debug.ts review list | open | decide | comment | finish
-
-bun scripts/grove-debug.ts scenarios             # replayable end-to-end flows
-bun scripts/grove-debug.ts scenario review-e2e   # drives a whole gated review
-```
-
-`debug.renderer.eval` reaches `window.__grove_debug` (ctx, store, review, keymap, layout, inlineEdit, nvimRegistry) and `window.workbench.*`, so you can read any app state and call any IPC the UI calls.
-
-`ctx` is the renderer's kernel context. `ctx.fiber.getEffects()` lists everything currently installed, `ctx.registry.values()` lists the mounted plugins, and `ctx.panes` / `ctx.commands` / `ctx.sidebar` / `ctx.editor` / `ctx.panel` reach the services they contribute into.
+If a UI bug is reported, reproduce it through the harness and confirm the mechanism before proposing a fix. Guessing from source has been wrong more often than right.
 
 Ask me to restart the app after changing main-process code; the renderer hot-reloads on its own.
 
-If a UI bug is reported, reproduce it through the harness and confirm the mechanism before proposing a fix. Guessing from source has been wrong more often than right.
+## Directory structure
+
+Electron's three processes are the top-level split, and nothing crosses it except types.
+
+```
+src/main/        the Node side: git, nvim RPC, agents, LSP, settings, checkpoints
+src/preload/     the bridge; the only place `contextBridge` is touched
+src/renderer/    the Svelte 5 app
+src/shared/      types that cross IPC, and nothing else — no runtime behaviour
+sdk/             the public client SDK (`@grove/plugin-sdk`): protocol, frames, node client
+scripts/         bun scripts — plugin build, nvim fetch, icons, the debug harness
+resources/       what ships beside the app: bundled nvim, its config, built plugins
+tests/           `bun test`; one file per subject, named after it
+```
+
+Inside `src/main`:
+
+- `kernel/` — the root context, the service contracts, route registration.
+- `routes/` — the IPC surface, one file per domain (`git`, `agents`, `review`, …).
+  Adding an IPC method means adding it here, not in `index.ts`.
+- `agents/` — the agent runtime: `store.ts` (sessions + the append-only event log),
+  `service.ts` (what the renderer drives), `reviewBridge.ts`, `tools.ts` (grove's own
+  tools), `roster.ts` + `handoffBridge.ts` (agents talking to each other).
+  `harnesses/` holds one plugin per coding agent; see the extension-system section.
+- `api/` — the external API: socket, dispatcher, pairing, per-scope routes under
+  `api/routes/` (including `debug.ts`, which only mounts under `GROVE_DEBUG=1`).
+- Flat files at the root of `src/main` are the services themselves (`git.ts`,
+  `nvimRpc.ts`, `lsp.ts`, `review.ts`, …) — routes stay thin and call into these.
+
+Inside `src/renderer/src`:
+
+- `kernel/` — the renderer root context and the core feature plugins; `kernel/plugins/`
+  is where a feature lives, `kernel/services/` is what hosts it.
+- `lib/` — the non-visual half: stores (`*.svelte.ts`), keymap and binding
+  resolution, and `lib/agents/` (the transcript fold, session store, catalogs,
+  tool rendering — the logic behind the agent pane).
+- `components/` — components shared across features. A component only one feature
+  renders belongs in that feature's plugin directory instead.
+- `plugins/` — the sandboxed third-party host (one Worker per plugin record), not
+  to be confused with `kernel/plugins/`, which is grove's own features.
+
+Where a given plugin, service or sidebar view lives is spelled out in the next
+section.
 
 ## Extension system
 

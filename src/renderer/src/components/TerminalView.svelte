@@ -5,6 +5,7 @@
   import { onMount, onDestroy } from 'svelte'
   import { Terminal } from '@xterm/xterm'
   import { FitAddon } from '@xterm/addon-fit'
+  import { WebglAddon } from '@xterm/addon-webgl'
   import '@xterm/xterm/css/xterm.css'
   import { layout } from '../lib/layout.svelte'
   import { keymap } from '../lib/keymap.svelte'
@@ -40,6 +41,7 @@
   let term: Terminal | null = null
   let fit: FitAddon | null = null
   let ptyId: string | null = null
+  let webgl: WebglAddon | null = null
   let stopData: (() => void) | null = null
   let stopExit: (() => void) | null = null
   let stopTitle: (() => void) | null = null
@@ -121,6 +123,31 @@
     }
   }
 
+  /**
+   * Draw the grid on the GPU instead of rebuilding a DOM row per line.
+   *
+   * xterm's default DOM renderer repaints every visible row as elements, which a
+   * full-screen TUI redrawing at 60Hz turns into thousands of node mutations a
+   * second. The WebGL renderer uploads a glyph atlas once and blits from it.
+   *
+   * The context can be lost (driver reset, GPU process restart); disposing the
+   * addon is what puts the DOM renderer back, so the terminal keeps working
+   * rather than going blank.
+   */
+  function enableGpuRenderer(terminal: Terminal): void {
+    try {
+      const addon = new WebglAddon()
+      addon.onContextLoss(() => {
+        addon.dispose()
+        if (webgl === addon) webgl = null
+      })
+      terminal.loadAddon(addon)
+      webgl = addon
+    } catch (cause) {
+      console.warn('[terminal] WebGL renderer unavailable, falling back to DOM:', cause)
+    }
+  }
+
   onMount(() => {
     if (!hostEl) return
     term = new Terminal({
@@ -133,6 +160,8 @@
     fit = new FitAddon()
     term.loadAddon(fit)
     term.open(hostEl)
+    // Must follow open(): the addon needs the terminal's element to exist.
+    enableGpuRenderer(term)
     term.attachCustomKeyEventHandler(createTerminalEscapeHandler(enterNormalMode))
     // Semantic-prompt markers (OSC 133, emitted by fish and configured shells):
     // "C" fires when a command starts executing, "D;<status>" when it finishes.
@@ -234,6 +263,7 @@
     stopExit?.()
     stopTitle?.()
     observer?.disconnect()
+    webgl?.dispose()
     term?.dispose()
   })
 </script>

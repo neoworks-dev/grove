@@ -576,3 +576,30 @@ describe('who an app message came from', () => {
     expect(senderOf(appItem('Review feedback'))).toBeNull()
   })
 })
+
+describe('a spawn that names a model', () => {
+  test('carries the provider that serves it, which pi needs to honour the choice', async () => {
+    const sessions = [sessionMeta('a', 'Planner')]
+    const { roster } = testRoster(sessions)
+    const created: { model?: string; provider?: string }[] = []
+    const spy = roster as unknown as {
+      options: { agents: { createSession: (options: Record<string, unknown>) => unknown } }
+    }
+    const original = spy.options.agents.createSession
+    spy.options.agents.createSession = (options): unknown => {
+      created.push({ model: options.model as string, provider: options.provider as string })
+      return original(options)
+    }
+
+    await roster.spawn({
+      workspaceRoot: '/repo',
+      title: 'Reader',
+      harness: 'pi',
+      model: 'pi-opus',
+      prompt: 'read it',
+      parentSessionId: 'a'
+    })
+
+    expect(created).toEqual([{ model: 'pi-opus', provider: 'anthropic' }])
+  })
+})

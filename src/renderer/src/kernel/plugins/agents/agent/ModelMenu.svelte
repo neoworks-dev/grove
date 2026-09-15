@@ -3,9 +3,9 @@
   //
   // Models come first because that is what a person means — "Fable 5.1" — while
   // the route (Anthropic, Bedrock, Vertex, a coding-plan endpoint) is which
-  // seller serves it, under an id only that seller uses. Almost every model has
-  // one route worth taking, so routes are drawn for the model a session is on
-  // and nowhere else; picking any other model takes its best route.
+  // seller serves it, under an id only that seller uses. Picking a model takes
+  // its best route; the others sit behind a per-model fold that prices each
+  // one, since the same weights cost different money from different sellers.
   //
   // What separates the list from the fold is whose account pays. Everything on
   // the sign-in grove already has is shown, whether or not the harness listed
@@ -17,8 +17,10 @@
   import {
     matchesQuery,
     preferredRoute,
+    routeDetail,
     routeNeedsKey,
-    routeUsesOwnSignIn
+    routeUsesOwnSignIn,
+    sortedRoutes
   } from '../../../../lib/agents/modelSelection'
   import type { ModelEntry, ModelRoute } from '../../../../lib/agents/types'
 
@@ -46,6 +48,18 @@
 
   let query = $state('')
   let showAll = $state(false)
+
+  /** The menu itself, which the endpoint flyout is positioned against. */
+  let root = $state<HTMLDivElement | null>(null)
+
+  /** The model whose endpoints are showing, and where beside the menu. */
+  let flyout = $state<{ entry: ModelEntry; top: number; onLeft: boolean } | null>(null)
+
+  /** Matches `max-h-60` on the flyout; the anchor is clamped so it fits. */
+  const FLYOUT_MAX_HEIGHT = 240
+
+  /** Matches `w-72` plus its margin, for deciding which side it opens on. */
+  const FLYOUT_WIDTH = 292
 
   const matching = $derived(models.filter((entry) => matchesQuery(entry, query)))
 
@@ -119,17 +133,25 @@
   }
 
   /**
-   * Whether a route is worth quoting its own price next to.
+   * Open the endpoint list beside the row the pointer is on.
    *
-   * Only when it differs from what this row already says, which is how a
-   * cheaper or dearer seller becomes visible without pricing every route on
-   * every row.
+   * The flyout hangs off the menu rather than the row so the list it scrolls
+   * inside cannot clip it; the row only contributes where it sits.
    */
-  function showsOwnPrice(entry: ModelEntry, route: ModelRoute): boolean {
-    const preferred = preferredRoute(entry)
-    if (!preferred || preferred === route) return false
-    if (!route.pricing) return false
-    return priceLabel(route) !== priceLabel(preferred)
+  function showEndpoints(entry: ModelEntry, rowElement: HTMLElement): void {
+    if (entry.routes.length < 2) {
+      flyout = null
+      return
+    }
+    const bounds = root?.getBoundingClientRect()
+    if (!bounds) return
+    const offset = rowElement.getBoundingClientRect().top - bounds.top
+    const highest = Math.max(0, bounds.height - FLYOUT_MAX_HEIGHT)
+    flyout = {
+      entry,
+      top: Math.max(0, Math.min(offset, highest)),
+      onLeft: bounds.right + FLYOUT_WIDTH > window.innerWidth
+    }
   }
 
   function contextLabel(tokens: number): string {
@@ -152,9 +174,40 @@
   }
 </script>
 
+{#snippet endpointRow(entry: ModelEntry, route: ModelRoute)}
+  {@const detail = routeDetail(entry, route)}
+  <button
+    class="flex w-full items-baseline gap-2 px-2 py-0.5 text-left text-2xs hover:bg-hover {isActive(
+      route
+    )
+      ? 'text-accent'
+      : 'text-dim'}"
+    title={routeTitle(route)}
+    onclick={() => pickRoute(route)}
+  >
+    <span class="truncate">{route.providerLabel ?? route.provider}</span>
+    {#if detail}
+      <span class="shrink-0 font-mono opacity-70">{detail}</span>
+    {/if}
+    {#if routeNeedsKey(route)}
+      <span class="shrink-0 text-amber">+key</span>
+    {:else if route.credential?.kind === 'platform'}
+      <span class="shrink-0 opacity-70">cloud sign-in</span>
+    {/if}
+    <span class="ml-auto shrink-0 font-mono">{routeMeta(route)}</span>
+  </button>
+{/snippet}
+
 {#snippet row(entry: ModelEntry)}
   {@const active = entryIsActive(entry)}
-  <div class="px-2 hover:bg-hover" class:bg-hover={active}>
+  {@const open = flyout?.entry.key === entry.key}
+  <!-- Hovering a row opens its endpoints, the way a submenu does; the marker
+       says how many there are, so a row with one seller stays a plain row. -->
+  <div
+    class="px-2 hover:bg-hover"
+    class:bg-hover={active || open}
+    onmouseenter={(event) => showEndpoints(entry, event.currentTarget)}
+  >
     <button
       class="flex w-full items-baseline gap-3 py-1 text-left {active ? 'text-default' : 'text-dim'}"
       title={entry.key}
@@ -162,33 +215,21 @@
     >
       <span class="truncate">{entry.label}</span>
       <span class="ml-auto shrink-0 font-mono text-2xs text-dim">{metaLabel(entry)}</span>
+      {#if entry.routes.length > 1}
+        <span class="shrink-0 text-2xs text-dim">{entry.routes.length} ›</span>
+      {/if}
     </button>
 
-    <!-- Only the running model has to be exact about which seller and which id,
-         and only it offers the others: everywhere else one line is enough. -->
     {#if active}
-      <div class="flex flex-wrap items-baseline gap-x-2 pb-1 text-2xs">
-        <span class="truncate font-mono text-dim">{model}</span>
-        {#each entry.routes as route (route.provider + route.id)}
-          <button
-            class="truncate {isActive(route) ? 'text-accent' : 'text-dim hover:text-default'}"
-            title={routeTitle(route)}
-            onclick={() => pickRoute(route)}
-          >
-            {#if routeNeedsKey(route)}<span class="text-amber">+key</span>{/if}
-            {route.provider}
-            {#if showsOwnPrice(entry, route)}
-              <span class="text-dim">{priceLabel(route)}</span>
-            {/if}
-          </button>
-        {/each}
-      </div>
+      <div class="truncate pb-1 font-mono text-2xs text-dim">{model}</div>
     {/if}
   </div>
 {/snippet}
 
 <div
   class="absolute bottom-full left-0 z-30 mb-1 flex w-80 flex-col rounded-md border border-line bg-elevated shadow-lg"
+  bind:this={root}
+  onmouseleave={() => (flyout = null)}
 >
   {#if switchCostWarning}
     <div
@@ -214,7 +255,7 @@
     />
   </div>
 
-  <FloatingScrollbar class="max-h-96">
+  <FloatingScrollbar class="max-h-96" onscroll={() => (flyout = null)}>
     <div class="py-1">
       {#each account as entry (entry.key)}
         {@render row(entry)}
@@ -259,4 +300,26 @@
       </button>
     </div>
   </FloatingScrollbar>
+
+  <!-- The endpoints of the hovered model, priced one by one: the same weights
+       cost different money from Bedrock, a gateway and Anthropic itself. -->
+  {#if flyout}
+    <div
+      class="absolute z-40 w-72 rounded-md border border-line bg-elevated shadow-lg {flyout.onLeft
+        ? 'right-full mr-1'
+        : 'left-full ml-1'}"
+      style="top: {flyout.top}px"
+    >
+      <div class="truncate border-b border-line px-2 py-1 text-2xs text-dim">
+        {flyout.entry.label} · {flyout.entry.routes.length} endpoints
+      </div>
+      <FloatingScrollbar class="max-h-60">
+        <div class="py-1">
+          {#each sortedRoutes(flyout.entry) as route (route.provider + route.id)}
+            {@render endpointRow(flyout.entry, route)}
+          {/each}
+        </div>
+      </FloatingScrollbar>
+    </div>
+  {/if}
 </div>

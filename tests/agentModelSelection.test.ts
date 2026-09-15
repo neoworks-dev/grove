@@ -13,7 +13,9 @@ import {
   matchesQuery,
   preferredRoute,
   resolveModelSelection,
-  routeReady
+  routeDetail,
+  routeReady,
+  sortedRoutes
 } from '../src/renderer/src/lib/agents/modelSelection'
 import type { ModelEntry } from '../src/renderer/src/lib/agents/types'
 
@@ -106,5 +108,67 @@ describe('model selection', () => {
     expect(matchesQuery(models[0], 'bedrock')).toBe(true)
     expect(matchesQuery(models[0], 'minimax')).toBe(false)
     expect(matchesQuery(models[0], '')).toBe(true)
+  })
+})
+
+describe('endpoint list', () => {
+  test('leads with the route a pick takes, then what runs, then the cheapest', () => {
+    const entry: ModelEntry = {
+      key: 'claude-opus-5',
+      label: 'Claude Opus 5',
+      routes: [
+        {
+          provider: 'gateway',
+          id: 'anthropic/claude-opus-5',
+          pricing: { input: 1, output: 5, cacheRead: 0, cacheWrite: 0 },
+          credential: { kind: 'key', env: ['GATEWAY_KEY'], present: false }
+        },
+        {
+          provider: 'amazon-bedrock',
+          id: 'eu.anthropic.claude-opus-5',
+          pricing: { input: 5.5, output: 27.5, cacheRead: 0, cacheWrite: 0 },
+          credential: { kind: 'platform', env: ['AWS_PROFILE'], present: false }
+        },
+        {
+          provider: 'amazon-bedrock',
+          id: 'us.anthropic.claude-opus-5',
+          pricing: { input: 5, output: 25, cacheRead: 0, cacheWrite: 0 },
+          credential: { kind: 'platform', env: ['AWS_PROFILE'], present: false }
+        },
+        { provider: 'anthropic', id: 'claude-opus-5', native: true }
+      ]
+    }
+
+    expect(sortedRoutes(entry).map((route) => route.id)).toEqual([
+      'claude-opus-5',
+      'us.anthropic.claude-opus-5',
+      'eu.anthropic.claude-opus-5',
+      'anthropic/claude-opus-5'
+    ])
+  })
+
+  test('names the region when one seller lists a model several times', () => {
+    const entry: ModelEntry = {
+      key: 'claude-opus-5',
+      label: 'Claude Opus 5',
+      routes: [
+        { provider: 'amazon-bedrock', id: 'us.anthropic.claude-opus-5-v1' },
+        { provider: 'amazon-bedrock', id: 'eu.anthropic.claude-opus-5-v1' },
+        { provider: 'amazon-bedrock', id: 'anthropic.claude-opus-5-v1' },
+        { provider: 'anthropic', id: 'claude-opus-5' }
+      ]
+    }
+
+    const detailOf = (id: string): string =>
+      routeDetail(entry, entry.routes.find((route) => route.id === id)!)
+
+    expect(detailOf('us.anthropic.claude-opus-5-v1')).toBe('us')
+    expect(detailOf('eu.anthropic.claude-opus-5-v1')).toBe('eu')
+
+    // The id the others are variations of has nothing of its own to show.
+    expect(detailOf('anthropic.claude-opus-5-v1')).toBe('')
+
+    // A seller with one endpoint for the model is already named by its row.
+    expect(detailOf('claude-opus-5')).toBe('')
   })
 })

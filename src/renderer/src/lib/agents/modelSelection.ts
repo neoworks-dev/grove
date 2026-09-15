@@ -113,6 +113,67 @@ export function routeLabel(route: ModelRoute): string {
   return route.id
 }
 
+/**
+ * The endpoints of a model, in the order worth reading them.
+ *
+ * The route a pick would take leads, then the ones that run without grove
+ * asking for anything, then the cheapest input price — which is the whole
+ * reason for listing thirty sellers of one model rather than one.
+ */
+export function sortedRoutes(entry: ModelEntry): ModelRoute[] {
+  const preferred = preferredRoute(entry)
+  return [...entry.routes].sort((left, right) => {
+    if (left === preferred) return -1
+    if (right === preferred) return 1
+    const readiness = Number(routeReady(right)) - Number(routeReady(left))
+    if (readiness !== 0) return readiness
+    return inputPrice(left) - inputPrice(right)
+  })
+}
+
+/** Sorting key only: an unpriced route sorts last rather than free. */
+function inputPrice(route: ModelRoute): number {
+  if (!route.pricing) return Number.POSITIVE_INFINITY
+  return route.pricing.input
+}
+
+/**
+ * What tells two endpoints of the same seller apart.
+ *
+ * Bedrock sells one model under five regional ids that differ in one word, so
+ * a row shows that word rather than repeating the seller five times. Empty when
+ * the seller has one endpoint for this model, and for the id the others are
+ * variations of — the unmarked row is the plain one.
+ */
+export function routeDetail(entry: ModelEntry, route: ModelRoute): string {
+  const ids = entry.routes
+    .filter((candidate) => candidate.provider === route.provider)
+    .map((candidate) => candidate.id)
+  if (ids.length < 2) return ''
+
+  const start = commonPrefixLength(ids)
+  const end = commonSuffixLength(ids)
+  if (start + end >= route.id.length) return ''
+  return route.id.slice(start, route.id.length - end).replace(/^[.\-/_]+|[.\-/_]+$/g, '')
+}
+
+function commonPrefixLength(values: string[]): number {
+  let length = 0
+  while (values.every((value) => length < value.length && value[length] === values[0][length])) {
+    length += 1
+  }
+  return length
+}
+
+function commonSuffixLength(values: string[]): number {
+  let length = 0
+  const at = (value: string): string => value[value.length - 1 - length]
+  while (values.every((value) => length < value.length && at(value) === at(values[0]))) {
+    length += 1
+  }
+  return length
+}
+
 /** Every route of every model, flattened for a one-line enum such as a setting. */
 export function discoveredModelOptions(models: ModelEntry[]): ModelOption[] {
   return models.flatMap((entry) =>

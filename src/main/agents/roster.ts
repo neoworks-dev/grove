@@ -12,7 +12,7 @@
 // is what makes a roster readable.
 
 import type { HarnessInfo, SessionMeta } from '../../shared/agents'
-import { PARENT_LABEL } from './handoffBridge'
+import { DISPOSE_LABEL, PARENT_LABEL } from './handoffBridge'
 import type { HarnessRegistry } from './harness'
 import { agentIdOf } from './identity'
 import type { AgentService } from './service'
@@ -58,6 +58,8 @@ export interface SpawnOptions {
   prompt: string
   /** The session that asked for it; its closing words are reported back there. */
   parentSessionId: string
+  /** Remove the session once it has reported back, rather than leaving it open. */
+  removeWhenDone?: boolean
 }
 
 export interface AgentRosterOptions {
@@ -134,7 +136,7 @@ export class AgentRoster {
       title: options.title,
       harness: options.harness,
       model: options.model,
-      labels: { [PARENT_LABEL]: options.parentSessionId }
+      labels: labelsFor(options)
     })
     // The brief is the parent talking, so it arrives as the parent talking: the
     // child's transcript opens on a message from the agent that started it
@@ -144,6 +146,11 @@ export class AgentRoster {
       { type: 'app.message', label: 'Task', from, text: options.prompt, deliverAs: 'followUp' }
     ])
     return peerOf(snapshot)
+  }
+
+  /** Remove a session and everything it recorded. */
+  async dispose(sessionId: string): Promise<void> {
+    await this.options.agents.deleteSession(sessionId)
   }
 
   /** The harnesses a spawned agent may run on. */
@@ -193,6 +200,13 @@ export class AgentRoster {
       default: catalog?.default ?? null
     }
   }
+}
+
+/** What a spawned session is marked with: who started it, and whether it stays. */
+function labelsFor(options: SpawnOptions): Record<string, string> {
+  const labels: Record<string, string> = { [PARENT_LABEL]: options.parentSessionId }
+  if (options.removeWhenDone) labels[DISPOSE_LABEL] = 'whenDone'
+  return labels
 }
 
 function peerOf(session: SessionMeta): AgentPeer {

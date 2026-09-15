@@ -12,11 +12,11 @@ let cachedFiles: string[] | null = null
  * How many hits are worth sending.
  *
  * A fuzzy match is a subsequence, so a short query matches most of a workspace —
- * "x" hits 700 of 5,600 files here, and every one of them is posted across the
- * worker boundary and turned into a row. Nobody scrolls past the first screen of
- * a ranked list; the rest only costs a frame.
+ * "x" hits 700 of 5,600 files here. The overlay holds what it is sent and draws a
+ * screenful at a time, so this is how far scrolling can reach; past it, a ranked
+ * list is answering a different question than the one being typed.
  */
-const MAX_RESULTS = 200
+const MAX_RESULTS = 2000
 
 /** The workspace file list, walked once per overlay open and reused per keystroke. */
 async function loadFiles(): Promise<string[]> {

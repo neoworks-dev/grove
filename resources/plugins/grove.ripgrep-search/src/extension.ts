@@ -14,12 +14,14 @@ const BATCH_SIZE = 50
 /**
  * How many matches are worth asking for.
  *
- * The overlay draws every row it is given, and nobody reads past the first
- * screen of them; "const" in a monorepo matches often enough that delivering all
- * of it froze the window for minutes. The search still runs to the end — this is
- * how much of it comes back.
+ * The overlay holds what arrives and draws a screenful at a time, so this is how
+ * far scrolling can reach rather than how much is shown. The search still runs to
+ * the end of the worktree; past this, delivering more only costs a trip across
+ * the worker boundary for rows nobody will scroll to — "const" in a monorepo
+ * matches tens of thousands of times, and delivering all of it froze the window
+ * for minutes.
  */
-const MAX_RESULTS = 200
+const MAX_RESULTS = 2000
 // Enough context to fill the preview pane at any window height; the overlay
 // centres the matched line, so the rest is there to be scrolled through rather
 // than to be counted.

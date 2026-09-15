@@ -21,6 +21,7 @@
     sessionsFor,
     sessionStatusColor
   } from '../../../../lib/worktreeStatus'
+  import { agentIdOf, sessionFamilies, type SessionRow } from '../../../../lib/agents/sessionTree'
   import WaveSpinner from '../../../../components/WaveSpinner.svelte'
   import Kbd from '../../../../components/Kbd.svelte'
   import type { SessionMeta } from '../../../../lib/agents/types'
@@ -39,7 +40,8 @@
     id: string
     name: string
     branch: string
-    sessions: SessionMeta[]
+    /** Sessions in family order: a spawned one follows the agent that spawned it. */
+    sessions: SessionRow[]
   }
 
   const groups = $derived<WorktreeGroup[]>(
@@ -47,14 +49,20 @@
       id: worktree.id,
       name: worktree.name,
       branch: worktree.branch,
-      sessions: sessionsFor(worktree.id)
+      sessions: sessionFamilies(sessionsFor(worktree.id)).flat()
     }))
   )
 
   // The selectable rows, flattened: only sessions are landable, worktree headers
   // are dividers.
   const rows = $derived(
-    groups.flatMap((group) => group.sessions.map((session) => ({ worktreeId: group.id, session })))
+    groups.flatMap((group) =>
+      group.sessions.map((row) => ({
+        worktreeId: group.id,
+        session: row.session,
+        depth: row.depth
+      }))
+    )
   )
 
   let selected = $state(0)
@@ -165,7 +173,7 @@
       {#if group.sessions.length === 0}
         <div class="px-3 pb-1.5 pl-5 text-2xs text-dim">idle — no sessions</div>
       {:else}
-        {#each group.sessions as session (session.id)}
+        {#each group.sessions as { session, depth } (session.id)}
           {@const index = indexOfSession(session.id)}
           {@const icon = iconOf(session)}
           {@const line = lastAgentLineFor(session.id)}
@@ -177,12 +185,17 @@
             onclick={() => onOpen(group.id, session.id)}
             onmouseenter={() => (selected = index)}
           >
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2" style:padding-left="{depth * 12}px">
+              {#if depth > 0}
+                <!-- Spawned by the session above it. -->
+                <span class="shrink-0 font-mono text-2xs text-blue" title="Spawned agent">↳</span>
+              {/if}
               <span class="h-2 w-2 shrink-0 rounded-full {sessionStatusColor(session)}"></span>
               {#if icon}
                 <Icon {icon} class="size-3.5 shrink-0 text-dim" />
               {/if}
               <span class="truncate text-xs font-medium text-default">{titleOf(session)}</span>
+              <span class="shrink-0 font-mono text-2xs text-dim">{agentIdOf(session)}</span>
               <span class="truncate text-2xs text-muted">{session.model}</span>
               {#if session.status === 'running'}
                 <span class="text-green"><WaveSpinner count={3} /></span>

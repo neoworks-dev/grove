@@ -21,7 +21,7 @@
     type TranscriptRow
   } from '../../../../lib/agents/toolRuns'
   import { foldedCalls, foldedMessages, foldTurn } from '../../../../lib/agents/turns'
-  import { senderOf } from '../../../../lib/agents/transcript'
+  import { agentIdIn, senderOf } from '../../../../lib/agents/transcript'
   import type { TranscriptItem } from '../../../../lib/agents/transcript'
   import type { ToolInfo } from '../../../../lib/agents/types'
   import ShimmerText from '../../../../components/ShimmerText.svelte'
@@ -38,6 +38,7 @@
     running,
     toggleTool,
     onOpenFile,
+    onOpenAgent,
     viewport = $bindable(),
     onscroll
   }: {
@@ -53,6 +54,8 @@
     running: boolean
     toggleTool: (toolUseId: string) => void
     onOpenFile: (path: string) => void
+    /** Show the conversation of the agent a message came from. */
+    onOpenAgent: (agentId: string) => void
     viewport?: HTMLDivElement
     onscroll: () => void
   } = $props()
@@ -213,19 +216,39 @@
       {/if}
     </div>
   {:else if item.kind === 'app' && senderOf(item)}
+    {@const sender = senderOf(item) ?? ''}
+    {@const agentId = agentIdIn(sender)}
     <!-- Another agent talking: read as a message, with the sender leading it and
          the words themselves in the same weight as an answer. Marked with a rule
          rather than a card, so a conversation between agents reads as a thread
-         instead of as a stack of boxes. -->
-    <div class="mb-3 flex gap-2 border-l-2 border-blue pl-2.5">
-      <span class="mt-0.5 shrink-0 text-blue">
+         instead of as a stack of boxes. Clicking it opens that agent's own
+         conversation, which is where the rest of what it did can be read. -->
+    <button
+      class="group/message mb-3 flex w-full gap-2 border-l-2 border-blue/50 pl-2.5 text-left transition-all duration-150 ease-out"
+      class:cursor-default={agentId === null}
+      class:cursor-pointer={agentId !== null}
+      class:hover:border-blue={agentId !== null}
+      class:hover:pl-3.5={agentId !== null}
+      disabled={agentId === null}
+      title={agentId ? `Open ${sender}` : undefined}
+      onclick={() => agentId && onOpenAgent(agentId)}
+    >
+      <!-- The plane leans into the hover, so the row reads as a way through to
+           the conversation it came from rather than as a static note. -->
+      <span
+        class="mt-0.5 shrink-0 text-blue transition-transform duration-150 ease-out group-hover/message:translate-x-0.5"
+      >
         <PaperPlaneTilt width="12" height="12" weight="fill" />
       </span>
       <div class="min-w-0 flex-1">
-        <div class="mb-0.5 font-mono text-2xs text-blue">{senderOf(item)}</div>
+        <div
+          class="mb-0.5 font-mono text-2xs text-blue/80 transition-colors duration-150 group-hover/message:text-blue"
+        >
+          {sender}
+        </div>
         <div class="whitespace-pre-wrap text-xs text-default">{item.text}</div>
       </div>
-    </div>
+    </button>
   {:else if item.kind === 'app'}
     <!-- grove itself talking — review feedback, a task brief — which is
          model-visible but authored by neither side of the conversation. -->

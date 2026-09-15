@@ -65,6 +65,7 @@ function coordination(context: SystemPromptContext): string {
     '- `send_message` — say something to one of them by id, or to the room with no addressee. An addressed message interrupts them, so it lands whether or not they think to look.',
     '- `read_messages` — the channel so far. Messages addressed to you arrive on their own; this is for the rest.',
     `- \`spawn_agent\` — start another agent here and give it a task, on any of: ${context.harnesses.join(', ')}. The user is asked before one starts.`,
+    '- `list_runtimes` — what those runtimes can run: whether each is authenticated, the models it offers and the one it defaults to. Check it before naming a model, rather than guessing an id.',
     '',
     `When work spans several agents: say who does what before starting, address them by the id \`list_agents\` reports — titles are the user's to change, ids are not — and report your result back to whoever asked for it. An agent you spawn cannot see this conversation, so put everything it needs in its prompt; what it says at the end of each of its turns reaches you on its own, and it can also message you at ${context.agentId}.`
   ].join('\n')

@@ -68,6 +68,15 @@ function testRoster(sessions: SessionMeta[]): {
       sessions.push(spawned)
       return Promise.resolve({ ...spawned, messageCount: 0 })
     },
+    catalog: (harnessId: string) =>
+      Promise.resolve({
+        harness: harnessId,
+        tools: [],
+        commands: [],
+        skills: [],
+        providers: [{ provider: 'anthropic', models: [{ id: `${harnessId}-opus` }] }],
+        default: { provider: 'anthropic', model: `${harnessId}-opus` }
+      }),
     send: (
       sessionId: string,
       events: { type: string; label?: string; from?: string; text?: string }[]
@@ -79,7 +88,30 @@ function testRoster(sessions: SessionMeta[]): {
       return Promise.resolve({ lastSeq: 0 })
     }
   }
-  const harnesses = { ids: () => ['claude', 'pi'] }
+  const harnesses = {
+    ids: () => ['claude', 'pi'],
+    describe: () =>
+      Promise.resolve([
+        {
+          id: 'claude',
+          label: 'Claude',
+          description: '',
+          icon: '',
+          capabilities: { groveTools: true },
+          available: true,
+          detail: null
+        },
+        {
+          id: 'pi',
+          label: 'pi',
+          description: '',
+          icon: '',
+          capabilities: { groveTools: true },
+          available: false,
+          detail: 'not signed in'
+        }
+      ])
+  }
   const roster = new AgentRoster({ agents: agents as never, harnesses: harnesses as never })
   return { roster, delivered, created }
 }
@@ -214,6 +246,47 @@ describe('starting another agent', () => {
     // The brief is the spawning agent talking, so the child opens on a message
     // from it rather than on an unattributed task.
     expect(delivered[0].from).toBe('Planner (id-a)')
+  })
+
+  test('reports which runtimes can run, and on what', async () => {
+    const { roster } = testRoster([sessionMeta('a', 'Planner')])
+    const posted: Posted[] = []
+
+    const result = await toolNamed('list_runtimes', roster, posted).execute({}, context('a'))
+
+    expect(result.content).toContain('claude · ready')
+    expect(result.content).toContain('claude-opus')
+    // A runtime nobody has signed into says so rather than looking spawnable.
+    expect(result.content).toContain('unavailable (not signed in)')
+  })
+
+  test('refuses a model the chosen runtime cannot run, before a session exists', async () => {
+    const sessions = [sessionMeta('a', 'Planner')]
+    const { roster, created } = testRoster(sessions)
+    const posted: Posted[] = []
+
+    const result = await toolNamed('spawn_agent', roster, posted).execute(
+      { title: 'Reviewer', prompt: 'review it', harness: 'pi', model: 'claude-opus' },
+      context('a')
+    )
+
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('pi-opus')
+    expect(created).toEqual([])
+  })
+
+  test('takes a model the runtime does offer', async () => {
+    const sessions = [sessionMeta('a', 'Planner')]
+    const { roster, created } = testRoster(sessions)
+    const posted: Posted[] = []
+
+    const result = await toolNamed('spawn_agent', roster, posted).execute(
+      { title: 'Reviewer', prompt: 'review it', harness: 'pi', model: 'pi-opus' },
+      context('a')
+    )
+
+    expect(result.isError).toBeUndefined()
+    expect(created).toHaveLength(1)
   })
 
   test('refuses a harness that is not mounted, rather than starting the default', async () => {

@@ -125,14 +125,14 @@ class SetupSession {
     this.advance()
   }
 
-  // Persist dismissal and hand the dock back. Mirrors intro.dismiss(), which
-  // stays responsible for its own flag so a repo that only finished AGENTS.md
-  // is still offered the config stage later.
+  // Persist dismissal and hand the window back to the explorer. Mirrors
+  // intro.dismiss(), which stays responsible for its own flag so a repo that
+  // only finished AGENTS.md is still offered the config stage later.
   async dismiss(): Promise<void> {
     this.stage = 'done'
     await window.workbench.state.update({ setupDismissed: true })
-    if (layout.docks.left.paneType === 'setup') {
-      layout.openDock('left', 'files')
+    if (layout.hasPaneType('setup')) {
+      layout.ensurePane('files')
     }
   }
 }

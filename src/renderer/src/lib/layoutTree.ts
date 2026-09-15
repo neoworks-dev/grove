@@ -75,6 +75,20 @@ export function findLeaf(root: LayoutNode, leafId: string): LeafNode | null {
   return found ?? null
 }
 
+// Ids of every node from the root down to the given leaf, inclusive. Null when
+// the leaf isn't in the tree. Focus mode uses it to render just that branch.
+export function pathToLeaf(root: LayoutNode, leafId: string): string[] | null {
+  if (root.kind === 'leaf') {
+    if (root.id !== leafId) return null
+    return [root.id]
+  }
+  for (const child of root.children) {
+    const path = pathToLeaf(child, leafId)
+    if (path) return [root.id, ...path]
+  }
+  return null
+}
+
 export function findParentSplit(root: LayoutNode, nodeId: string): SplitNode | null {
   if (root.kind === 'leaf') return null
   for (const child of root.children) {
@@ -140,6 +154,37 @@ function insertSibling(
   children.splice(insertAt, 0, newLeaf)
   sizes.splice(insertAt, 0, half)
   return { ...split, children, sizes }
+}
+
+// The outer edges of the whole tree a pane can be pinned against.
+export type EdgeSide = 'left' | 'right' | 'top' | 'bottom'
+
+// Insert a leaf against one outer edge of the tree, taking `fraction` of the
+// root's extent from the panes already there. This is how a pane that declares
+// a preferred edge (the sidebar family, the agent panel) comes back after being
+// closed or dragged elsewhere — it returns to its edge, not beside whatever
+// happens to be focused.
+export function insertAtEdge(
+  root: LayoutNode,
+  leaf: LeafNode,
+  edge: EdgeSide,
+  fraction: number
+): LayoutNode {
+  const direction: SplitDirection = edge === 'left' || edge === 'right' ? 'row' : 'column'
+  const atStart = edge === 'left' || edge === 'top'
+  const size = Math.min(0.5, Math.max(MIN_PANE_FRACTION, fraction))
+  if (root.kind !== 'split' || root.direction !== direction) {
+    const children = atStart ? [leaf, root] : [root, leaf]
+    const sizes = atStart ? [size, 1 - size] : [1 - size, size]
+    return createSplit(direction, children, sizes)
+  }
+  const children = [...root.children]
+  // Everything already in the split gives up its share proportionally.
+  const sizes = root.sizes.map((existing) => existing * (1 - size))
+  const insertAt = atStart ? 0 : children.length
+  children.splice(insertAt, 0, leaf)
+  sizes.splice(insertAt, 0, size)
+  return { ...root, children, sizes: renormalize(sizes) }
 }
 
 // Remove a leaf, redistributing its fraction proportionally and collapsing
@@ -313,7 +358,11 @@ function sanitizeNode(value: unknown, seenIds: Set<string>): LayoutNode | null {
 
 function sanitizeLeaf(node: Record<string, unknown>, seenIds: Set<string>): LeafNode | null {
   if (typeof node.paneTypeId !== 'string' || node.paneTypeId.length === 0) return null
-  const leaf: LeafNode = { kind: 'leaf', id: claimId(node.id, 'leaf', seenIds), paneTypeId: node.paneTypeId }
+  const leaf: LeafNode = {
+    kind: 'leaf',
+    id: claimId(node.id, 'leaf', seenIds),
+    paneTypeId: node.paneTypeId
+  }
   if (node.paneState && typeof node.paneState === 'object' && !Array.isArray(node.paneState)) {
     leaf.paneState = node.paneState as Record<string, unknown>
   }
@@ -350,7 +399,23 @@ function sanitizeSize(value: unknown): number {
 
 function claimId(value: unknown, prefix: 'leaf' | 'split', seenIds: Set<string>): string {
   const usable = typeof value === 'string' && value.length > 0 && !seenIds.has(value)
-  const id = usable ? (value as string) : nextNodeId(prefix)
+  if (!usable) {
+    const fresh = nextNodeId(prefix)
+    seenIds.add(fresh)
+    return fresh
+  }
+  const id = value as string
+  reserveGeneratedId(id)
   seenIds.add(id)
   return id
+}
+
+// Keep the generator ahead of every id restored from disk. The counter restarts
+// at zero each launch, so without this a pane created after a restore (an edge
+// pane returning, a new split) would be handed an id a restored leaf already
+// holds — and two leaves sharing an id collapse into one in the keyed render.
+function reserveGeneratedId(id: string): void {
+  const match = /^(?:leaf|split)-(\d+)$/.exec(id)
+  if (!match) return
+  nodeCounter = Math.max(nodeCounter, Number(match[1]))
 }

@@ -3,7 +3,7 @@
   // worktree (one step per directory, file-tree icon on the file) plus the
   // treesitter code scopes enclosing the cursor. Lives in the status bar but
   // pins itself horizontally under the nvim pane, re-measuring whenever the
-  // layout (splits, docks, window) changes. Clicking a path step opens the
+  // layout (splits, window) changes. Clicking a path step opens the
   // explorer revealed at that exact path.
   import { onMount } from 'svelte'
   import Icon from '@iconify/svelte'
@@ -71,10 +71,7 @@
   $effect(() => {
     void layout.tree
     void Object.values(layout.paneSizes)
-    void layout.docks.left.open
-    void layout.docks.left.size
-    void layout.docks.right.open
-    void layout.docks.right.size
+    void layout.focusMode
     void segments
     void rootEl
     requestAnimationFrame(measure)

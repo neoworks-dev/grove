@@ -1,5 +1,5 @@
-// The sidebar as a host: it owns the left rail and the left dock, and other
-// plugins contribute views into it. A contributor declares `inject: ['sidebar']`,
+// The sidebar as a host: it owns the left rail and the sidebar pane family, and
+// other plugins contribute views into it. A contributor declares `inject: ['sidebar']`,
 // so it only runs while the sidebar exists and its view disappears with it.
 //
 // The whole surface lives in this directory: this service, the rail-launcher
@@ -44,6 +44,9 @@ export class SidebarService extends Service {
       component: view.component,
       rail: { order: view.order },
       slot: SIDEBAR_SLOT,
+      // Sidebar views are ordinary draggable panes; the edge is only where a
+      // view lands when it is opened with none of the family already showing.
+      preferredEdge: { side: 'left', order: view.order, fraction: 0.18 },
       containerClass: view.containerClass || 'bg-elevated',
       minWidth: view.minWidth || 180,
       when: view.when
@@ -55,9 +58,9 @@ export class SidebarService extends Service {
     return railLaunchers.register(launcher)
   }
 
-  /** Reveal a registered view in the left dock. */
+  /** Reveal a registered view, reusing the window a sibling view already holds. */
   show(viewId: string): void {
-    layout.showInDock('left', viewId)
+    layout.ensurePane(viewId)
   }
 }
 

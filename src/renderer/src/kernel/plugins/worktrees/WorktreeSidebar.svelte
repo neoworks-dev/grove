@@ -30,16 +30,16 @@
     layout.ensurePane('agent')
   }
 
-  // Open the worktree's shared chat in the right dock (like the agent pane).
+  // Open the worktree's shared chat (arrives beside the agent panel).
   function openChat(worktree: Worktree): void {
     selectWorktree(worktree.id)
-    layout.openDock('right', 'worktree-chat')
+    layout.ensurePane('worktree-chat')
   }
 
-  // Reveal the checkpoints timeline in the left sidebar for this worktree.
+  // Reveal the checkpoints timeline in the sidebar for this worktree.
   function openCheckpoints(worktree: Worktree): void {
     selectWorktree(worktree.id)
-    layout.showInDock('left', 'checkpoints')
+    layout.ensurePane('checkpoints')
   }
 
   function serviceSummary(worktreeId: string): { running: number; total: number } {

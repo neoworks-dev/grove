@@ -1,18 +1,25 @@
 // Reactive owner of the split-tree layout. All tree mutations funnel through
 // here (thin wrappers over the pure layoutTree ops) so persistence and focus
 // stay in one place. Restored on repo open, saved debounced to per-repo state.
+//
+// There is exactly one layout model: every window — the sidebar, the editor,
+// the agent panel — is a leaf of the split tree, so all of them drag, split,
+// resize and close the same way.
 
 import { store } from './store.svelte'
 import { keymap } from './keymap.svelte'
 import { panes } from './panes.svelte'
 import { views } from './views.svelte'
+import { CENTER_SLOT } from './paneSlots'
 import { clampFontScale, steppedFontScale, FONT_SCALE_DEFAULT } from './fontScale'
-import type { DockLayoutState, DockPaneState, DockSide } from '../../../shared/types'
+import type { DockLayoutState, DockSide } from '../../../shared/types'
 import {
   createLeaf,
   leaves,
   findLeaf,
   findParentSplit,
+  insertAtEdge,
+  pathToLeaf,
   splitLeaf,
   removeLeaf,
   resizeGutter,
@@ -22,6 +29,7 @@ import {
   moveLeaf,
   sanitize,
   type DropZone,
+  type EdgeSide,
   type LayoutNode,
   type LeafNode,
   type SplitDirection,
@@ -45,72 +53,47 @@ const EDITOR_TYPE = 'nvim'
 // center never collapses to nothing.
 const EMPTY_CENTER_TYPE = 'empty'
 
-// Default docked panels: file explorer on the left, agent panel on the right.
-// Docks live outside the split tree and stay attached; only the center splits.
-const DEFAULT_DOCKS: DockLayoutState = {
-  left: { paneType: 'files', open: true, size: 256 },
-  right: { paneType: 'agent', open: true, size: 340 }
-}
-
-const MIN_DOCK_PX = 160
-// Dragging this far below the min width collapses the dock instead of clamping.
-const DOCK_COLLAPSE_SLOP_PX = 48
-// Per-side max width: the left explorer should stay compact; the right utility
-// dock (agent chat / terminal) may grow wider.
-const MAX_DOCK_PX: Record<DockSide, number> = { left: 420, right: 720 }
+// Share of the tree an edge pane takes when it has no preference of its own.
+const DEFAULT_EDGE_FRACTION = 0.2
 
 interface DefaultTreeOptions {
   centerType?: string
 }
 
-// The center split tree. Sidebar (left dock) and agent (right dock) now live in
-// docks, so the default tree is just the center editor. Exported for the base
-// "code" view definition.
+// The starting layout: the center pane flanked by whichever pane types asked
+// for the left and right edges (the explorer and the agent panel, as they
+// register themselves). Exported for the base "code" view definition.
 export function buildDefaultTree(options: DefaultTreeOptions = {}): LayoutNode {
-  return createLeaf(options.centerType ?? 'nvim')
-}
-
-function clampDockPx(side: DockSide, px: number): number {
-  return Math.min(MAX_DOCK_PX[side], Math.max(MIN_DOCK_PX, px))
-}
-
-function cloneDocks(source: DockLayoutState): DockLayoutState {
-  return {
-    left: { ...source.left },
-    right: { ...source.right }
+  let tree: LayoutNode = createLeaf(options.centerType ?? 'nvim')
+  for (const side of ['left', 'right'] as const) {
+    const type = panes.edgeTypes(side)[0]
+    if (!type) continue
+    tree = insertAtEdge(tree, createLeaf(type.id), side, edgeFraction(type.id))
   }
+  return tree
 }
 
-// Stable focusable-pane id for a dock (registered by DockPane via use:pane).
-export function dockLeafId(side: DockSide): string {
-  return `dock:${side}`
+// How much of the tree a pane type claims when it arrives at its edge.
+function edgeFraction(paneTypeId: string): number {
+  return panes.get(paneTypeId)?.preferredEdge?.fraction ?? DEFAULT_EDGE_FRACTION
 }
 
-// Panes registered with this slot are navigation sidebars → left dock.
-const SIDEBAR_SLOT_ID = 'sidebar'
-
-// Which dock (if any) a pane type belongs in when it isn't already open in the
-// center tree: sidebar panes dock left, the agent panel docks right.
-function dockSideFor(paneTypeId: string): DockSide | null {
-  if (panes.get(paneTypeId)?.slot === SIDEBAR_SLOT_ID) return 'left'
-  if (paneTypeId === 'agent' || paneTypeId === 'worktree-chat') return 'right'
-  return null
+// Which outer edge a pane type belongs against when nothing of it is open.
+function edgeFor(paneTypeId: string): EdgeSide | null {
+  return panes.get(paneTypeId)?.preferredEdge?.side ?? null
 }
 
 class LayoutStore {
   activeViewId = $state<string>('code')
   paneSizes = $state<Record<string, number>>({ ...DEFAULT_PANEL_SIZES })
 
-  // Per-pane font zoom, keyed by split-tree leaf id or dock id ('dock:left' /
-  // 'dock:right'). Absent key means unscaled (1). Panes read this to size their
-  // content (CSS zoom for DOM panes, own font for canvas panes).
+  // Per-pane font zoom, keyed by split-tree leaf id. Absent key means unscaled
+  // (1). Panes read this to size their content (CSS zoom for DOM panes, own
+  // font for canvas panes).
   paneFontScale = $state<Record<string, number>>({})
 
-  // Docked side panels, shared across all views (they stay attached; only the
-  // center split tree is per-view and freely splittable).
-  docks = $state<DockLayoutState>(cloneDocks(DEFAULT_DOCKS))
-
-  // Distraction-free focus mode: hide the docks + rail and float the center.
+  // Distraction-free focus mode: hide the rail and show only the focused pane,
+  // the rest of the tree staying mounted behind it.
   focusMode = $state<boolean>(false)
 
   // Live tree per MOUNTED view. Views the user has visited stay in the DOM
@@ -127,6 +110,29 @@ class LayoutStore {
   private storedTrees: Record<string, LayoutNode> = {}
   private ready = false
   private timer: ReturnType<typeof setTimeout> | null = null
+
+  // Most recently focused leaf per pane slot, so opening a pane anchors on the
+  // window of its own family — a second editor lands beside the editor you were
+  // last in, never beside the sidebar that happens to hold focus. Deliberately
+  // not reactive: it is bookkeeping read inside event handlers.
+  private lastLeafBySlot: Record<string, string> = {}
+
+  // Nodes on the path from the root to the focused leaf. Focus mode renders
+  // only this branch, so the focused pane fills the body while everything else
+  // stays mounted (hidden) instead of being torn down and rebuilt.
+  zoomPath = $derived.by<Set<string>>(() => {
+    if (!this.focusMode) return new Set<string>()
+    const leafId = keymap.activeLeafId ?? leaves(this.tree)[0]?.id
+    if (!leafId) return new Set<string>()
+    return new Set(pathToLeaf(this.tree, leafId) ?? [])
+  })
+
+  // Whether a node renders at all — false only for the branches focus mode
+  // folds away.
+  isNodeVisible(nodeId: string): boolean {
+    if (!this.focusMode) return true
+    return this.zoomPath.has(nodeId)
+  }
 
   // The active view's live tree. All tree ops read and write through here.
   get tree(): LayoutNode {
@@ -181,56 +187,6 @@ class LayoutStore {
     this.setFontScale(containerId, FONT_SCALE_DEFAULT)
   }
 
-  // ── Docks ─────────────────────────────────────────────────────
-  dock(side: DockSide): DockPaneState {
-    return this.docks[side]
-  }
-
-  private setDock(side: DockSide, patch: Partial<DockPaneState>): void {
-    this.docks = { ...this.docks, [side]: { ...this.docks[side], ...patch } }
-    this.schedule()
-  }
-
-  // Show a pane type in a dock, opening it. Clicking the type already shown in
-  // an open dock toggles it closed (rail behaviour).
-  showInDock(side: DockSide, paneType: string): void {
-    const current = this.docks[side]
-    if (current.open && current.paneType === paneType) {
-      this.setDock(side, { open: false })
-      return
-    }
-    this.setDock(side, { paneType, open: true })
-    this.focusLeafSoon(dockLeafId(side))
-  }
-
-  // Open a dock showing a pane type and focus it (no toggle) — used by
-  // ensurePane and commands that must reveal, not flip.
-  openDock(side: DockSide, paneType?: string): void {
-    const next = paneType ?? this.docks[side].paneType
-    this.setDock(side, { paneType: next, open: true })
-    this.focusLeafSoon(dockLeafId(side))
-  }
-
-  toggleDock(side: DockSide): void {
-    this.setDock(side, { open: !this.docks[side].open })
-  }
-
-  setDockOpen(side: DockSide, open: boolean): void {
-    if (this.docks[side].open === open) return
-    this.setDock(side, { open })
-  }
-
-  // Resize a dock, or collapse it when dragged well below the min width. The
-  // center can't collapse this way — its gutters are fraction-clamped and the
-  // never-empty guard keeps a pane present.
-  resizeDock(side: DockSide, px: number): void {
-    if (px < MIN_DOCK_PX - DOCK_COLLAPSE_SLOP_PX) {
-      this.setDockOpen(side, false)
-      return
-    }
-    this.setDock(side, { size: clampDockPx(side, px) })
-  }
-
   toggleFocusMode(): void {
     this.focusMode = !this.focusMode
     this.schedule()
@@ -247,12 +203,48 @@ class LayoutStore {
     requestAnimationFrame(() => keymap.focusPane(leafId))
   }
 
+  /**
+   * Record that a leaf took focus, so the next pane of its family opens beside
+   * it. Called by PaneLeaf when it becomes the active surface.
+   */
+  noteFocusedLeaf(leafId: string): void {
+    const leaf = findLeaf(this.tree, leafId)
+    if (!leaf) return
+    const slot = panes.get(leaf.paneTypeId)?.slot
+    if (!slot) return
+    this.lastLeafBySlot[slot] = leafId
+  }
+
+  /**
+   * The leaf a new pane of this type should grow out of. Panes belong to a slot
+   * family (the editor family, the sidebar family); a pane with no family of its
+   * own opens beside the editor. Within a family the focused leaf wins, then the
+   * one focused most recently, then any leaf of the family.
+   */
+  private anchorLeafFor(paneTypeId: string): LeafNode | null {
+    const slot = panes.get(paneTypeId)?.slot ?? CENTER_SLOT
+    const focused = this.focusedLeaf()
+    if (focused && panes.get(focused.paneTypeId)?.slot === slot) return focused
+    const remembered = this.lastLeafBySlot[slot]
+    const rememberedLeaf = remembered ? findLeaf(this.tree, remembered) : null
+    if (rememberedLeaf && panes.get(rememberedLeaf.paneTypeId)?.slot === slot) return rememberedLeaf
+    const familyLeaf = this.slotLeaf(slot)
+    if (familyLeaf) return familyLeaf
+    if (focused) return focused
+    return leaves(this.tree)[0] ?? null
+  }
+
   // ── Tree operations ───────────────────────────────────────────
+  // Split a pane in two. With a pane type given the split grows out of that
+  // type's anchor (a second editor lands beside the editor, not beside whatever
+  // chrome pane holds focus); without one it duplicates the focused pane.
   splitFocused(direction: SplitDirection, paneTypeId?: string): void {
-    const focused = this.focusedLeaf() ?? leaves(this.tree)[0]
-    if (!focused) return
-    const newLeaf = createLeaf(paneTypeId ?? focused.paneTypeId)
-    this.setActiveTree(splitLeaf(this.tree, focused.id, direction, newLeaf))
+    const anchor = paneTypeId
+      ? this.anchorLeafFor(paneTypeId)
+      : (this.focusedLeaf() ?? leaves(this.tree)[0])
+    if (!anchor) return
+    const newLeaf = createLeaf(paneTypeId ?? anchor.paneTypeId)
+    this.setActiveTree(splitLeaf(this.tree, anchor.id, direction, newLeaf))
     this.focusLeafSoon(newLeaf.id)
     this.schedule()
   }
@@ -314,14 +306,15 @@ class LayoutStore {
   }
 
   closeLeaf(leafId: string): void {
-    // Never let the center collapse to nothing: closing the last pane swaps it
-    // for an empty-state placeholder instead of removing it.
-    if (leaves(this.tree).length <= 1) {
-      const only = leaves(this.tree)[0]
-      if (only && only.id === leafId && only.paneTypeId !== EMPTY_CENTER_TYPE) {
-        this.setActiveTree(replaceLeafType(this.tree, only.id, EMPTY_CENTER_TYPE))
-        this.schedule()
-      }
+    const leaf = findLeaf(this.tree, leafId)
+    if (!leaf) return
+    // Neither the tree nor the center may collapse to nothing: closing the last
+    // window, or the last center window, swaps in an empty-state placeholder
+    // instead of removing it.
+    if (this.isLastCenterLeaf(leaf) || leaves(this.tree).length <= 1) {
+      if (leaf.paneTypeId === EMPTY_CENTER_TYPE) return
+      this.setActiveTree(replaceLeafType(this.tree, leaf.id, EMPTY_CENTER_TYPE))
+      this.schedule()
       return
     }
     const next = removeLeaf(this.tree, leafId)
@@ -330,6 +323,15 @@ class LayoutStore {
     const fallback = leaves(next)[0]
     if (keymap.activeLeafId === leafId && fallback) this.focusLeafSoon(fallback.id)
     this.schedule()
+  }
+
+  // Whether this leaf is the only window of the editor family left open.
+  private isLastCenterLeaf(leaf: LeafNode): boolean {
+    if (panes.get(leaf.paneTypeId)?.slot !== CENTER_SLOT) return false
+    const centerLeaves = leaves(this.tree).filter(
+      (entry) => panes.get(entry.paneTypeId)?.slot === CENTER_SLOT
+    )
+    return centerLeaves.length <= 1
   }
 
   closeFocused(): void {
@@ -417,9 +419,9 @@ class LayoutStore {
     return found ?? null
   }
 
-  // Reveal a pane of this type: focus it if already open in the center tree,
-  // route sidebar/agent types to their dock, otherwise swap it into the center
-  // slot or split the focused leaf.
+  // Reveal a pane of this type: focus it if a window already shows it, take
+  // over the window of a same-family pane, pin it against its preferred edge,
+  // or split the pane it anchors on.
   ensurePane(paneTypeId: string): void {
     // Prefer the invoking pane: when the focused leaf already has this type
     // (e.g. the editor split that opened the file finder), stay in it instead
@@ -434,42 +436,64 @@ class LayoutStore {
       this.focusLeafSoon(existing.id)
       return
     }
-    // Not already in the center tree: sidebar panes dock left, agent docks right.
-    const side = dockSideFor(paneTypeId)
-    if (side) {
-      this.openDock(side, paneTypeId)
-      return
-    }
-    // Aux panes that declare an orientation split the current pane rather than
+    // Aux panes that declare an orientation split their anchor rather than
     // replacing it, so the editor stays open beside/below them.
     const definition = panes.get(paneTypeId)
     if (definition?.preferredOrientation) {
       this.splitFocused(definition.preferredOrientation, paneTypeId)
       return
     }
-    const slotMate = definition?.slot ? this.slotLeaf(definition.slot) : null
-    if (slotMate && slotMate.paneTypeId === EDITOR_TYPE) {
-      this.splitFocused('row', paneTypeId)
-      return
-    }
-    if (slotMate) {
-      this.setActiveTree(replaceLeafType(this.tree, slotMate.id, paneTypeId))
-      this.focusLeafSoon(slotMate.id)
-      this.schedule()
+    if (this.takeOverSlotMate(paneTypeId)) return
+    const edge = edgeFor(paneTypeId)
+    if (edge) {
+      this.openAtEdge(paneTypeId, edge)
       return
     }
     this.splitFocused('row', paneTypeId)
   }
 
-  togglePane(paneTypeId: string): void {
-    // A docked type toggles its dock, unless the user has also opened it in the
-    // center tree (handled below).
-    const side = dockSideFor(paneTypeId)
-    const inTree = leaves(this.tree).find((leaf) => leaf.paneTypeId === paneTypeId)
-    if (side && this.docks[side].paneType === paneTypeId && !inTree) {
-      this.toggleDock(side)
+  // Swap this type into the open window of its own family (one sidebar view
+  // replacing another). Returns false when there is no such window, or when it
+  // holds the editor — losing the editor to a pane with no way back stranded
+  // the user, so the editor is split beside instead.
+  private takeOverSlotMate(paneTypeId: string): boolean {
+    const slot = panes.get(paneTypeId)?.slot
+    if (!slot) return false
+    const slotMate = this.slotLeaf(slot)
+    if (!slotMate) return false
+    if (slotMate.paneTypeId === EDITOR_TYPE) {
+      this.splitFocused('row', paneTypeId)
+      return true
+    }
+    this.setActiveTree(replaceLeafType(this.tree, slotMate.id, paneTypeId))
+    this.focusLeafSoon(slotMate.id)
+    this.schedule()
+    return true
+  }
+
+  // Pin a new window for this type against an outer edge of the tree.
+  private openAtEdge(paneTypeId: string, edge: EdgeSide): void {
+    const leaf = createLeaf(paneTypeId)
+    this.setActiveTree(insertAtEdge(this.tree, leaf, edge, edgeFraction(paneTypeId)))
+    this.focusLeafSoon(leaf.id)
+    this.schedule()
+  }
+
+  // Toggle the pane that owns an outer edge: close whichever edge pane is open
+  // there, or bring back the type that asked for that edge first. Keeps the
+  // "toggle the right panel" command working without naming a pane type.
+  toggleEdgePane(edge: EdgeSide): void {
+    const open = leaves(this.tree).find((leaf) => edgeFor(leaf.paneTypeId) === edge)
+    if (open) {
+      this.closeLeaf(open.id)
       return
     }
+    const type = panes.edgeTypes(edge)[0]
+    if (type) this.ensurePane(type.id)
+  }
+
+  togglePane(paneTypeId: string): void {
+    const inTree = leaves(this.tree).find((leaf) => leaf.paneTypeId === paneTypeId)
     if (!inTree) {
       this.ensurePane(paneTypeId)
       return
@@ -526,9 +550,8 @@ class LayoutStore {
     this.ready = false
     this.paneSizes = { ...DEFAULT_PANEL_SIZES, ...(state.paneSizes || {}) }
     this.paneFontScale = { ...(state.paneFontScale || {}) }
-    this.docks = this.restoreDocks(state)
     this.focusMode = state.focusMode === true
-    this.storedTrees = restoreViewTrees(state.viewLayouts)
+    this.storedTrees = adoptDocks(restoreViewTrees(state.viewLayouts), state.docks)
     const activeId = this.restoreActiveViewId(state.activeLayoutView)
     this.activeViewId = activeId
     // Mount only the active view; others mount lazily on first switch.
@@ -536,35 +559,9 @@ class LayoutStore {
     this.trees = { [activeId]: activeTree }
     this.mountedViewIds = [activeId]
     this.ready = true
-  }
-
-  // Restore dock state, falling back to defaults and migrating legacy sidebar/
-  // agent pixel sizes (from the pre-dock split-tree layout) into dock widths.
-  private restoreDocks(state: {
-    docks?: DockLayoutState | null
-    paneSizes?: Record<string, number>
-    panelsOpen?: Record<string, boolean>
-  }): DockLayoutState {
-    if (state.docks && state.docks.left && state.docks.right) {
-      return {
-        left: { ...DEFAULT_DOCKS.left, ...state.docks.left },
-        right: { ...DEFAULT_DOCKS.right, ...state.docks.right }
-      }
-    }
-    const legacy = state.paneSizes || {}
-    const panels = state.panelsOpen || {}
-    return {
-      left: {
-        ...DEFAULT_DOCKS.left,
-        size: clampDockPx('left', legacy.sidebar ?? DEFAULT_DOCKS.left.size),
-        open: panels.sidebar ?? true
-      },
-      right: {
-        ...DEFAULT_DOCKS.right,
-        size: clampDockPx('right', legacy.agent ?? DEFAULT_DOCKS.right.size),
-        open: panels.agent ?? true
-      }
-    }
+    // Adopting the old docks is a one-shot: persist immediately so the next
+    // launch reads them back as null and leaves the tree alone.
+    if (state.docks) this.schedule()
   }
 
   private restoreActiveViewId(stored: string | null | undefined): string {
@@ -578,8 +575,8 @@ class LayoutStore {
       centerView?: string | null
     }
   ): LayoutNode {
-    // Legacy pre-tree state only carries a preferred center pane now; sidebar
-    // and agent sizing migrate into docks (see restoreDocks).
+    // Legacy pre-tree state only carries a preferred center pane; the default
+    // tree brings its own edge panes back.
     if (viewId === 'code' && state.centerView) {
       const centerView = state.centerView
       return buildDefaultTree({
@@ -615,7 +612,9 @@ class LayoutStore {
         activeLayoutView: this.activeViewId,
         paneSizes: $state.snapshot(this.paneSizes),
         paneFontScale: $state.snapshot(this.paneFontScale),
-        docks: $state.snapshot(this.docks) as DockLayoutState,
+        // Docks are gone — the sidebar and agent panel are leaves of the tree
+        // above. Writing null retires the legacy field so it is adopted once.
+        docks: null,
         focusMode: this.focusMode,
         // Tabs are per worktree; persist the full maps (paths only). Scratch
         // buffers are ephemeral (backed by a live nvim buffer) — never persist
@@ -658,6 +657,36 @@ function stripTransientNvimGrids(node: LayoutNode): LayoutNode | null {
   const sizes = projected.filter((entry) => entry.child !== null).map((entry) => entry.size)
   const total = sizes.reduce((sum, size) => sum + size, 0)
   return { ...node, children: kept, sizes: sizes.map((size) => size / total) }
+}
+
+// Fold the retired left/right docks into every stored tree as ordinary leaves,
+// keeping roughly the width they had. Runs once: the next save writes
+// `docks: null`, after which stored trees already carry these panes.
+function adoptDocks(
+  trees: Record<string, LayoutNode>,
+  docks: DockLayoutState | null | undefined
+): Record<string, LayoutNode> {
+  if (!docks) return trees
+  const adopted: Record<string, LayoutNode> = {}
+  for (const [viewId, tree] of Object.entries(trees)) {
+    adopted[viewId] = (['left', 'right'] as DockSide[]).reduce(
+      (node, side) => adoptDock(node, docks[side], side),
+      tree
+    )
+  }
+  return adopted
+}
+
+function adoptDock(
+  tree: LayoutNode,
+  dock: { paneType: string; open: boolean; size: number } | undefined,
+  side: DockSide
+): LayoutNode {
+  if (!dock || !dock.open) return tree
+  if (leaves(tree).some((leaf) => leaf.paneTypeId === dock.paneType)) return tree
+  // Dock widths were pixels; the tree sizes in fractions of the window.
+  const fraction = dock.size / Math.max(640, window.innerWidth)
+  return insertAtEdge(tree, createLeaf(dock.paneType), side, fraction)
 }
 
 // Sanitize every stored view tree; the phase-2 'default' key maps to 'code'.

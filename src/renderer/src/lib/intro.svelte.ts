@@ -169,10 +169,10 @@ class IntroSession {
   async dismiss(): Promise<void> {
     await window.workbench.state.update({ introDismissed: true })
     this.active = false
-    // Hand the left dock back to the explorer when the setup pane, which hosts
+    // Hand the window back to the explorer when the setup pane, which hosts
     // this flow as its AGENTS.md stage, still occupies it.
-    if (layout.docks.left.paneType === 'setup') {
-      layout.openDock('left', 'files')
+    if (layout.hasPaneType('setup')) {
+      layout.ensurePane('files')
     }
   }
 

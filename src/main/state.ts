@@ -47,14 +47,16 @@ export interface RepoState {
   // Legacy pre-tree layout fields, kept as migration input. paneSizes still
   // carries sizes for panels nested inside panes (tree, diffList).
   paneSizes: Record<string, number> // pane key -> px
-  // Per-pane font zoom multiplier, keyed by split-tree leaf id or dock id.
+  // Per-pane font zoom multiplier, keyed by split-tree leaf id.
   paneFontScale: Record<string, number>
   panelsOpen: Record<string, boolean> // panel key -> open
   centerView: string | null
   activeView: string | null // active sidebar view (activity bar)
-  // Docked left/right side panels (outside the moveable split tree) and the
-  // distraction-free focus mode that floats the center.
+  // Retired left/right docks, kept as migration input: the renderer folds them
+  // into the split tree once and writes null back.
   docks: DockLayoutState | null
+  // Distraction-free focus mode: the rail hides and the focused pane fills the
+  // window.
   focusMode: boolean
 }
 

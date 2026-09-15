@@ -5,6 +5,17 @@
 // missing type renders a placeholder until its plugin loads.
 
 import type { Component } from 'svelte'
+import type { EdgeSide } from './layoutTree'
+
+// Where a pane type lands when it is revealed and no leaf of it is open: pinned
+// against an outer edge of the tree. `order` breaks ties when several types
+// want the same edge (lowest wins, and it picks the type the default layout
+// puts there); `fraction` is the share of the tree it takes on arrival.
+export interface PaneEdge {
+  side: EdgeSide
+  order?: number
+  fraction?: number
+}
 
 export interface PaneTypeContext {
   leafId: string
@@ -27,6 +38,10 @@ export interface PaneType {
   // Types sharing a slot replace each other in the tree instead of opening a
   // second window (e.g. the sidebar family, or the editor/diff/preview group).
   slot?: string
+  // Present => revealing this pane with no leaf of it open pins it against this
+  // edge of the tree instead of splitting the anchor pane. The sidebar family
+  // and the agent panel use it; both are ordinary draggable leaves otherwise.
+  preferredEdge?: PaneEdge
   // When set, revealing this pane (ensurePane) splits the focused leaf in this
   // orientation instead of replacing the slot occupant — 'row' spawns it to the
   // side, 'column' below. Used by aux center panes (diagnostics, markdown).
@@ -63,6 +78,15 @@ class PaneRegistry {
 
   get(id: string): PaneType | null {
     return this.types.find((entry) => entry.id === id) || null
+  }
+
+  // Types that want the given edge, most-preferred first. The default layout
+  // takes the head of this list, so which pane occupies an edge stays a
+  // registration detail rather than a hardcoded id in the layout store.
+  edgeTypes(side: EdgeSide): PaneType[] {
+    return this.types
+      .filter((entry) => entry.preferredEdge?.side === side)
+      .sort((a, b) => (a.preferredEdge?.order ?? 0) - (b.preferredEdge?.order ?? 0))
   }
 
   railTypes(): PaneType[] {

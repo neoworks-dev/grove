@@ -45,7 +45,10 @@ export interface GroveClientWorkspace {
     options?: { worktreeId?: string }
   ): Promise<{ n: number; text: string }[]>
   writeFile(path: string, content: string, options?: { worktreeId?: string }): Promise<void>
-  searchText(query: string, options?: { worktreeId?: string }): AsyncIterable<SearchMatch>
+  searchText(
+    query: string,
+    options?: { worktreeId?: string; limit?: number }
+  ): AsyncIterable<SearchMatch>
 }
 
 export interface GroveClient {

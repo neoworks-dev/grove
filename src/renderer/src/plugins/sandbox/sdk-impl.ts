@@ -208,7 +208,8 @@ export function buildGroveApi(rpc: RpcEndpoint, pluginId: string): GroveApi {
           'main.workspace.searchText',
           {
             query,
-            worktreeId: options?.worktreeId
+            worktreeId: options?.worktreeId,
+            limit: options?.limit
           },
           options?.token
         )

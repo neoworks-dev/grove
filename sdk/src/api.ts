@@ -211,9 +211,15 @@ export interface WorkspaceApi {
   getCurrentWorktree(): Promise<WorktreeInfo | null>
   // 'workspace.read'. Relative paths, capped by the host.
   findFiles(options?: { worktreeId?: string }): Promise<string[]>
+  /**
+   * Matches across the worktree, as they are found. `limit` stops the delivery
+   * (not the search) once that many have arrived — worth setting for anything
+   * that renders results, since a common word matches a monorepo thousands of
+   * times over.
+   */
   searchText(
     query: string,
-    options?: { worktreeId?: string; token?: CancellationToken }
+    options?: { worktreeId?: string; token?: CancellationToken; limit?: number }
   ): AsyncIterable<SearchMatch>
   readFile(path: string, options?: { worktreeId?: string }): Promise<string>
   readExcerpt(

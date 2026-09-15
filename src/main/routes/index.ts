@@ -18,6 +18,7 @@ import { stateRoutes } from './state'
 import { agentRoutes } from './agents'
 import { pluginsRoutes } from './plugins'
 import { actionsRoutes } from './actions'
+import { endpointRoutes } from './endpoints'
 import { secretsRoutes } from './secrets'
 import { settingsRoutes } from './settings'
 import { miscRoutes } from './misc'
@@ -43,6 +44,7 @@ export const routePlugins = [
   agentRoutes,
   pluginsRoutes,
   actionsRoutes,
+  endpointRoutes,
   secretsRoutes,
   settingsRoutes,
   miscRoutes,

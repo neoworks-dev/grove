@@ -23,6 +23,7 @@ import type {
   CommandInfo,
   ConfirmationResult,
   ContentBlock,
+  CustomEndpoint,
   ModelEntry,
   ModelRoute,
   ProviderCredential,
@@ -32,6 +33,7 @@ import type {
   ToolInfo,
   ToolPolicy
 } from '../../../shared/agents'
+import type { EndpointsService } from '../../endpoints'
 import { loadModelCatalog, type CatalogModel, type CatalogProvider } from '../../modelCatalog'
 import { zodShapeFromJsonSchema, type JsonSchemaObject } from '../../plugins/zodSchema'
 import type {
@@ -251,7 +253,8 @@ class ClaudeRun implements HarnessRun {
 
   constructor(
     private options: HarnessRunOptions,
-    private credentials: CredentialSource
+    private credentials: CredentialSource,
+    private endpoints: EndpointsService
   ) {
     this.resumeKey = options.resumeKey
   }
@@ -316,7 +319,7 @@ class ClaudeRun implements HarnessRun {
     return {
       cwd: this.options.workspaceRoot,
       pathToClaudeCodeExecutable: resolveClaudeExecutable(),
-      env: await sessionEnvironment(this.options.provider, this.credentials),
+      env: await sessionEnvironment(this.options.provider, this.credentials, this.endpoints),
       model: this.options.model ?? undefined,
       resume: this.options.resumeKey ?? undefined,
       includePartialMessages: true,
@@ -562,7 +565,32 @@ class Offering {
   private cached: HarnessOffering | null = null
   private inflight: Promise<HarnessOffering> | null = null
 
-  constructor(private credentials: CredentialSource) {}
+  constructor(
+    private credentials: CredentialSource,
+    private endpoints: EndpointsService
+  ) {}
+
+  /**
+   * The user's own endpoints, with whatever each one serves.
+   *
+   * Asked for here rather than built from a stored list, because a gateway's
+   * catalog is its own to change: OpenRouter gains models weekly, and a local
+   * proxy serves whatever has been pulled onto the machine that day.
+   */
+  private async customRoutes(): Promise<EndpointModels[]> {
+    await this.endpoints.load()
+    return Promise.all(
+      this.endpoints.list().map(async (endpoint) => ({
+        endpoint,
+        models: await this.endpoints.modelsOf(endpoint, this.keyFor(endpoint))
+      }))
+    )
+  }
+
+  private keyFor(endpoint: CustomEndpoint): string | null {
+    if (!endpoint.keyVariable) return null
+    return this.credentials.lookup([endpoint.keyVariable])
+  }
 
   async load(): Promise<HarnessOffering> {
     if (this.cached) return this.cached
@@ -604,11 +632,12 @@ class Offering {
       // The catalog only widens the list, so a failed or empty one costs the
       // extra providers and nothing else.
       const catalog = await loadModelCatalog()
+      const custom = await this.customRoutes()
       this.cached = {
         tools: builtinTools(),
         commands: commandsOf(initialization.commands),
         skills: [],
-        models: modelsOf(initialization.models, catalog, this.credentials),
+        models: modelsOf(initialization.models, catalog, this.credentials, custom),
         default: defaultModelOf(initialization.models)
       }
       return this.cached
@@ -659,13 +688,14 @@ function commandsOf(commands: SlashCommand[]): CommandInfo[] {
 export function modelsOf(
   models: SdkModelInfo[],
   catalog: CatalogProvider[],
-  credentials: CredentialSource
+  credentials: CredentialSource,
+  custom: EndpointModels[] = []
 ): ModelEntry[] {
   const entries = new Map<string, ModelEntry>()
   // How good the name each entry currently carries is, so a better one can
   // replace it without the order routes arrive in deciding anything.
   const ranks = new Map<string, number>()
-  for (const keyed of collectRoutes(models, catalog, credentials)) {
+  for (const keyed of collectRoutes(models, catalog, credentials, custom)) {
     addRoute(entries, ranks, keyed)
   }
   return [...entries.values()].sort(byNativeThenName)
@@ -693,10 +723,17 @@ const RANK_RECOMMENDED_ALIAS = 1
 const RANK_NATIVE = 2
 const RANK_ANTHROPIC = 3
 
+/** One of the user's endpoints, with the models it turned out to serve. */
+export interface EndpointModels {
+  endpoint: CustomEndpoint
+  models: string[]
+}
+
 function collectRoutes(
   models: SdkModelInfo[],
   catalog: CatalogProvider[],
-  credentials: CredentialSource
+  credentials: CredentialSource,
+  custom: EndpointModels[]
 ): KeyedRoute[] {
   // The CLI's own rows first: a native route displaces a derived one, and the
   // model the account is entitled to is the one worth defaulting to.
@@ -707,7 +744,52 @@ function collectRoutes(
       routes.push(routeFromCatalog(model, provider, credential))
     }
   }
+  for (const entry of custom) {
+    for (const id of entry.models) {
+      routes.push(routeFromEndpoint(id, entry.endpoint, credentials))
+    }
+  }
   return routes
+}
+
+/**
+ * A model on an endpoint the user brought.
+ *
+ * Its ids are the gateway's own — `moonshotai/kimi-k2` on OpenRouter, whatever
+ * a local proxy calls what it has loaded — so they are filed under the last
+ * segment: the same model reached through three gateways is one row, and the
+ * route says which gateway.
+ */
+function routeFromEndpoint(
+  id: string,
+  endpoint: CustomEndpoint,
+  credentials: CredentialSource
+): KeyedRoute {
+  return {
+    key: normalizeModelId(id.split('/').pop() ?? id),
+    label: null,
+    labelRank: RANK_PLATFORM,
+    route: {
+      provider: endpoint.id,
+      providerLabel: endpoint.label,
+      id,
+      endpoint: endpoint.baseUrl,
+      credential: endpointCredential(endpoint, credentials)
+    }
+  }
+}
+
+/** An endpoint with no key named needs none — a local proxy usually does not. */
+function endpointCredential(
+  endpoint: CustomEndpoint,
+  credentials: CredentialSource
+): ProviderCredential | undefined {
+  if (!endpoint.keyVariable) return undefined
+  return {
+    kind: 'key',
+    env: [endpoint.keyVariable],
+    present: credentials.lookup([endpoint.keyVariable]) !== null
+  }
 }
 
 /**
@@ -918,12 +1000,34 @@ function credentialState(
  */
 async function sessionEnvironment(
   provider: string | null,
-  credentials: CredentialSource
+  credentials: CredentialSource,
+  endpoints: EndpointsService
 ): Promise<Record<string, string | undefined> | undefined> {
   if (!provider || provider === PROVIDER) return undefined
+
+  await endpoints.load()
+  const own = endpoints.find(provider)
+  if (own) return { ...process.env, ...endpointVariables(own, credentials) }
+
   const entry = (await loadModelCatalog()).find((candidate) => candidate.id === provider)
   if (!entry) return undefined
   return { ...process.env, ...providerVariables(entry, credentials) }
+}
+
+/** What running against one of the user's own endpoints takes. */
+export function endpointVariables(
+  endpoint: CustomEndpoint,
+  credentials: CredentialSource
+): Record<string, string | undefined> {
+  const variables: Record<string, string | undefined> = {
+    ANTHROPIC_BASE_URL: endpoint.baseUrl,
+    // Not Anthropic on the other end, so grove's own key must not travel there.
+    ANTHROPIC_API_KEY: undefined
+  }
+  if (!endpoint.keyVariable) return variables
+  const key = credentials.lookup([endpoint.keyVariable])
+  if (key) variables.ANTHROPIC_AUTH_TOKEN = key
+  return variables
 }
 
 export function providerVariables(
@@ -1152,8 +1256,11 @@ function editsOf(name: string, input: Record<string, unknown>): Replacement[] {
     }))
 }
 
-function createClaudeHarness(credentials: CredentialSource): HarnessDescriptor {
-  const offering = new Offering(credentials)
+function createClaudeHarness(
+  credentials: CredentialSource,
+  endpoints: EndpointsService
+): HarnessDescriptor {
+  const offering = new Offering(credentials, endpoints)
 
   return {
     id: HARNESS_ID,
@@ -1184,7 +1291,7 @@ function createClaudeHarness(credentials: CredentialSource): HarnessDescriptor {
     offering: () => offering.load(),
 
     async start(options) {
-      const run = new ClaudeRun(options, credentials)
+      const run = new ClaudeRun(options, credentials, endpoints)
       await run.start()
       return run
     },
@@ -1207,11 +1314,14 @@ function createClaudeHarness(credentials: CredentialSource): HarnessDescriptor {
 
 export const claudeHarness = {
   name: 'main/harness/claude',
-  inject: ['harnesses', 'secrets'],
+  inject: ['harnesses', 'secrets', 'endpoints'],
 
   apply(ctx: Context): void {
     // The secrets store is the credential source: it reads grove's environment
     // first and its own encrypted file second, so an exported key needs no UI.
-    ctx.effect(() => ctx.harnesses.register(createClaudeHarness(ctx.secrets)), 'harness:claude')
+    ctx.effect(
+      () => ctx.harnesses.register(createClaudeHarness(ctx.secrets, ctx.endpoints)),
+      'harness:claude'
+    )
   }
 }

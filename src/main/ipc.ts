@@ -20,6 +20,7 @@ import { WorktreeWatcher } from './watcher'
 import { WorktreeChannel } from './worktreeChannel'
 import { ReviewService } from './review'
 import { getRepoState, updateRepoState, setLastRepo } from './state'
+import { EndpointsService } from './endpoints'
 import { SecretsService } from './secrets'
 import { SettingsService } from './settings'
 import { ActionRunner } from './actions'
@@ -135,6 +136,9 @@ const settings = new SettingsService({
 // Provider keys, encrypted with the OS keychain. Kept apart from settings on
 // purpose: those files are human-editable and one of them lives in the repo.
 const secrets = new SecretsService()
+
+// Gateways and local proxies the user pointed grove at themselves.
+const endpoints = new EndpointsService()
 
 // Agent sessions. The harnesses themselves are mounted as plugins, so the only
 // thing constructed here is the state they share: the registry they register
@@ -614,6 +618,7 @@ const mainServices = {
     ctx.provide('review', review)
     ctx.provide('settings', settings)
     ctx.provide('secrets', secrets)
+    ctx.provide('endpoints', endpoints)
     ctx.provide('terminals', terminals)
     ctx.provide('lsp', lsp)
     ctx.provide('watcher', watcher)
@@ -636,6 +641,7 @@ const mainServices = {
     startApiSocket()
     void settings.loadUser()
     void secrets.load()
+    void endpoints.load()
   }
 }
 

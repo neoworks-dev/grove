@@ -171,6 +171,18 @@ export function senderOf(item: AppItem): string | null {
   return null
 }
 
+/**
+ * The agent id inside a sender, as `signatureOf` writes it: `Echo (155a4e)`.
+ *
+ * The id is what identifies the session; the title in front of it is only there
+ * to be read. A sender grove wrote by hand has none, and is not clickable.
+ */
+export function agentIdIn(sender: string): string | null {
+  const match = /\(([^()]+)\)\s*$/.exec(sender.trim())
+  if (!match) return null
+  return match[1]
+}
+
 /** The tool calls the agent is blocked on. */
 export function pendingApprovals(state: TranscriptState): ToolItem[] {
   return visibleItems(state).filter(

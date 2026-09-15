@@ -21,6 +21,7 @@
     type SessionBadge
   } from '../../../../lib/agents/sessions.svelte'
   import { pendingApprovals, visibleItems } from '../../../../lib/agents/transcript'
+  import { sessionByAgentId } from '../../../../lib/agents/sessionTree'
   import { fileOfCall } from '../../../../lib/agents/tools'
   import { questionsOf } from '../../../../lib/agents/questions'
   import {
@@ -249,6 +250,19 @@
   /** The composer only exists once the transcript is back on screen. */
   function focusComposerNextFrame(): void {
     requestAnimationFrame(() => composer?.focus())
+  }
+
+  /**
+   * Show the conversation of the agent that sent a message.
+   *
+   * Its session is usually in this worktree — an agent can only address the
+   * agents it shares one with — but the listing is searched whole, so a session
+   * whose worktree has since been switched away from is still reachable.
+   */
+  function openAgent(agentId: string): void {
+    const session = sessionByAgentId(agentSessions.list, agentId)
+    if (!session) return
+    void openFromOverview(session.workspaceRoot, session.id)
   }
 
   function badgeFor(session: SessionMeta): SessionBadge {
@@ -599,6 +613,7 @@
         {running}
         toggleTool={(id) => (expandedTools = { ...expandedTools, [id]: !expandedTools[id] })}
         onOpenFile={openFile}
+        onOpenAgent={openAgent}
         bind:viewport={transcriptViewport}
         onscroll={onTranscriptScroll}
       />

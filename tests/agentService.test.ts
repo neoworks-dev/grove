@@ -332,15 +332,20 @@ describe('AgentService', () => {
     }
   })
 
-  test('changing harness drops the run and the id that belonged to it', async () => {
-    const { service, store, runs, cleanup } = await setup()
+  test('lets an untouched session change harness, and pins one that has answered', async () => {
+    const { service, store, cleanup } = await setup()
     try {
-      const session = await service.createSession({ workspace: '/tmp/worktree' })
-      await service.send(session.id, [say('go')])
-      await service.updateSession(session.id, { harness: 'other' })
+      const fresh = await service.createSession({ workspace: '/tmp/worktree' })
+      await service.updateSession(fresh.id, { harness: 'other' })
+      expect((await store.require(fresh.id)).harness).toBe('other')
 
-      expect(runs[0].disposed).toBe(1)
-      expect((await store.require(session.id)).resumeKey).toBeNull()
+      const started = await service.createSession({ workspace: '/tmp/worktree' })
+      await service.send(started.id, [say('go')])
+
+      await expect(service.updateSession(started.id, { harness: 'other' })).rejects.toThrow(
+        'once a session has started'
+      )
+      expect((await store.require(started.id)).harness).toBe(started.harness)
     } finally {
       await cleanup()
     }

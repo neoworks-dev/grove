@@ -42,7 +42,13 @@ import type {
   SubagentIdentity
 } from './harness'
 import { runShellCommand, type ShellResult } from './shell'
-import { idleRuntime, SessionStore, type RuntimeState, type StoredSession } from './store'
+import {
+  hasStarted,
+  idleRuntime,
+  SessionStore,
+  type RuntimeState,
+  type StoredSession
+} from './store'
 import { isSubagentSession, SUBAGENT_LABEL, SubagentSessions } from './subagents'
 
 const BLOBS_DIR = 'blobs'
@@ -196,6 +202,12 @@ export class AgentService {
       (key) => (changes as Record<string, unknown>)[key] !== undefined
     )
     if (changes.harness && changes.harness !== before.harness) {
+      // The transcript belongs to the runtime that produced it: another harness
+      // cannot resume it, and re-reading it as plain text would lose the tool
+      // calls. So a started session keeps its harness; only the model is open.
+      if (hasStarted(before)) {
+        throw new Error('The harness cannot be changed once a session has started')
+      }
       await this.stopRun(sessionId)
       await this.store.patch(sessionId, { resumeKey: null })
     }

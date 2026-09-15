@@ -17,6 +17,7 @@
   let {
     harness,
     harnesses,
+    started,
     provider,
     model,
     thinking,
@@ -38,6 +39,8 @@
   }: {
     harness: string
     harnesses: HarnessInfo[]
+    /** Whether the harness has already answered, which fixes the choice. */
+    started: boolean
     provider: string
     model: string
     thinking: ThinkingLevel
@@ -147,18 +150,23 @@
     ></button>
   {/if}
 
-  <!-- Harness: which runtime drives this session. -->
+  <!-- Harness: which runtime drives this session, and only until it answers. -->
   <div class="relative z-20">
     <button
-      class="flex items-center gap-1 rounded border border-line px-2 py-1 hover:bg-hover"
-      title="The agent runtime this session runs on"
+      class="flex items-center gap-1 rounded border border-line px-2 py-1 hover:bg-hover disabled:cursor-default disabled:hover:bg-transparent"
+      title={started
+        ? 'The harness is fixed once a session has started — start a new session to use another'
+        : 'The agent runtime this session runs on'}
+      disabled={started}
       onclick={() => toggle('harness')}
     >
       {#if current}
         <Icon icon={current.icon} class="size-3.5 shrink-0" />
       {/if}
       <span class="font-medium text-default">{current?.label ?? harness ?? 'harness'}</span>
-      <span class="text-dim">▾</span>
+      {#if !started}
+        <span class="text-dim">▾</span>
+      {/if}
     </button>
     {#if openMenu === 'harness'}
       <div

@@ -58,6 +58,18 @@ export interface CreateRecordOptions {
 const META_FILE = 'meta.json'
 const EVENTS_FILE = 'events.jsonl'
 
+/**
+ * Whether a harness has already taken a turn on a session.
+ *
+ * A resume key is the harness's own conversation id, which only exists once it
+ * has answered; tokens are the same evidence for a harness that resumes without
+ * one. Either way the transcript now belongs to that runtime.
+ */
+export function hasStarted(session: StoredSession): boolean {
+  if (session.resumeKey !== null) return true
+  return session.usage.inputTokens + session.usage.outputTokens > 0
+}
+
 function emptyUsage(): Usage {
   return { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }
 }
@@ -225,7 +237,8 @@ export class SessionStore {
       stopReason: runtime.stopReason,
       pendingApprovals: runtime.pendingApprovals,
       lastSeq: session.lastSeq,
-      live
+      live,
+      started: hasStarted(session)
     }
   }
 

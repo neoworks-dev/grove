@@ -4,6 +4,7 @@
 import { describe, expect, test } from 'bun:test'
 import {
   agentIdOf,
+  liveAgentIds,
   parentIdOf,
   sessionByAgentId,
   sessionFamilies
@@ -118,5 +119,21 @@ describe('reading a sender back into an address', () => {
   test('has none for a sender grove wrote itself', () => {
     expect(agentIdIn('Review feedback')).toBeNull()
     expect(senderOf(appItem('Review feedback'))).toBeNull()
+  })
+})
+
+describe('telling a live sender from a closed one', () => {
+  test('holds every agent that still has a session, however it is addressed', () => {
+    const live = liveAgentIds([session('aaaaaaaa11'), session('b', { 'grove.agentId': '155a4e' })])
+
+    expect(live.has('155a4e')).toBe(true)
+    // No label on the first one, so the head of its session id is its address.
+    expect(live.has('aaaaaaaa')).toBe(true)
+  })
+
+  test('has nothing for an agent whose session was removed', () => {
+    const live = liveAgentIds([session('a', { 'grove.agentId': '155a4e' })])
+
+    expect(live.has('721e1d')).toBe(false)
   })
 })

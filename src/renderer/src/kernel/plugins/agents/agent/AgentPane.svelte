@@ -21,7 +21,7 @@
     type SessionBadge
   } from '../../../../lib/agents/sessions.svelte'
   import { pendingApprovals, visibleItems } from '../../../../lib/agents/transcript'
-  import { sessionByAgentId } from '../../../../lib/agents/sessionTree'
+  import { liveAgentIds, sessionByAgentId } from '../../../../lib/agents/sessionTree'
   import { fileOfCall } from '../../../../lib/agents/tools'
   import { questionsOf } from '../../../../lib/agents/questions'
   import {
@@ -55,6 +55,9 @@
 
   const sessionList = $derived(worktreePath ? agentSessions.forWorktree(worktreePath) : [])
   const activeId = $derived(worktreePath ? agentSessions.resolveActive(worktreePath) : null)
+  // Every session there is, not just this worktree's: a message quotes whoever
+  // sent it, and a sender still running elsewhere is not a closed one.
+  const liveAgents = $derived(liveAgentIds(agentSessions.list))
   const live = $derived<LiveSession | undefined>(
     activeId ? agentSessions.live[activeId] : undefined
   )
@@ -614,6 +617,7 @@
         toggleTool={(id) => (expandedTools = { ...expandedTools, [id]: !expandedTools[id] })}
         onOpenFile={openFile}
         onOpenAgent={openAgent}
+        liveAgentIds={liveAgents}
         bind:viewport={transcriptViewport}
         onscroll={onTranscriptScroll}
       />

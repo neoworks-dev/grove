@@ -12,6 +12,7 @@ import { AgentRoster, type AgentPeer } from '../src/main/agents/roster'
 import { AgentHandoffBridge, PARENT_LABEL } from '../src/main/agents/handoffBridge'
 import { AGENT_ID_LABEL } from '../src/main/agents/identity'
 import { groveSystemPrompt } from '../src/main/agents/systemPrompt'
+import { senderOf, type AppItem } from '../src/renderer/src/lib/agents/transcript'
 import type { GroveTool, GroveToolContext } from '../src/main/agents/harness'
 import type { SessionEvent, SessionMeta } from '../src/shared/agents'
 
@@ -364,5 +365,23 @@ describe('what grove tells an agent about the worktree', () => {
     })
 
     expect(prompt).toContain('No other agent')
+  })
+})
+
+describe('who an app message came from', () => {
+  function appItem(label: string, from?: string): AppItem {
+    return { kind: 'app', seq: 1, eventId: 'e', label, text: 'pong', from }
+  }
+
+  test('is the sender the event names', () => {
+    expect(senderOf(appItem('Agent message', 'Echo (155a4e)'))).toBe('Echo (155a4e)')
+  })
+
+  test('is read off the label for messages recorded before events carried one', () => {
+    expect(senderOf(appItem('Message from Echo (155a4e)'))).toBe('Echo (155a4e)')
+  })
+
+  test('is nobody when grove sent it itself', () => {
+    expect(senderOf(appItem('Review feedback'))).toBeNull()
   })
 })

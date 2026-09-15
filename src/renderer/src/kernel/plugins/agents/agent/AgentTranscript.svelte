@@ -21,6 +21,7 @@
     type TranscriptRow
   } from '../../../../lib/agents/toolRuns'
   import { foldedCalls, foldedMessages, foldTurn } from '../../../../lib/agents/turns'
+  import { senderOf } from '../../../../lib/agents/transcript'
   import type { TranscriptItem } from '../../../../lib/agents/transcript'
   import type { ToolInfo } from '../../../../lib/agents/types'
   import ShimmerText from '../../../../components/ShimmerText.svelte'
@@ -211,7 +212,7 @@
         </div>
       {/if}
     </div>
-  {:else if item.kind === 'app' && item.from}
+  {:else if item.kind === 'app' && senderOf(item)}
     <!-- Another agent talking: read as a message, with the sender leading it and
          the words themselves in the same weight as an answer. Marked with a rule
          rather than a card, so a conversation between agents reads as a thread
@@ -221,7 +222,7 @@
         <PaperPlaneTilt width="12" height="12" weight="fill" />
       </span>
       <div class="min-w-0 flex-1">
-        <div class="mb-0.5 font-mono text-2xs text-blue">{item.from}</div>
+        <div class="mb-0.5 font-mono text-2xs text-blue">{senderOf(item)}</div>
         <div class="whitespace-pre-wrap text-xs text-default">{item.text}</div>
       </div>
     </div>

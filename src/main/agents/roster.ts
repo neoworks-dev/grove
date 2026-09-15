@@ -118,8 +118,12 @@ export class AgentRoster {
       model: options.model,
       labels: { [PARENT_LABEL]: options.parentSessionId }
     })
+    // The brief is the parent talking, so it arrives as the parent talking: the
+    // child's transcript opens on a message from the agent that started it
+    // rather than on an unattributed task card.
+    const from = await this.signatureOf(options.parentSessionId)
     await this.options.agents.send(snapshot.id, [
-      { type: 'app.message', label: 'Task', text: options.prompt, deliverAs: 'followUp' }
+      { type: 'app.message', label: 'Task', from, text: options.prompt, deliverAs: 'followUp' }
     ])
     return peerOf(snapshot)
   }

@@ -18,7 +18,7 @@
     shellDraft,
     type Completion
   } from '../../../../lib/agents/completion'
-  import { highlightCode, type HighlightedToken } from '../../../../lib/highlight'
+  import { highlightCodeSync, warmLanguage } from '../../../../lib/highlight'
   import { selectionRef } from '../../../../lib/inlineEditRef'
   import { store } from '../../../../lib/store.svelte'
   import type {
@@ -149,45 +149,23 @@
   // the rest tokenized with the same grammar the transcript shows commands in.
   const shell = $derived(shellDraft(draft))
 
-  let shellTokens = $state<{ source: string; lines: HighlightedToken[][] }>({
-    source: '',
-    lines: []
-  })
+  // The bash grammar is loaded once, up front. Tokenizing per keystroke has to
+  // land in the same frame as the character that caused it: awaiting a promise
+  // for each one paints the draft plain and then colours it, which is the flash.
+  let shellGrammarReady = $state(false)
 
   $effect(() => {
-    const command = shell?.command
-    if (command === undefined) {
-      return
-    }
-    const scheme = store.activeTheme.scheme
-    let current = true
-    void highlightCode(command, 'bash', scheme).then((lines) => {
-      if (current && lines) {
-        shellTokens = { source: command, lines }
-      }
+    void warmLanguage('bash').then((ready) => {
+      shellGrammarReady = ready
     })
-    return () => {
-      current = false
-    }
   })
 
-  /**
-   * The coloured runs for the command being typed, or none while they belong to
-   * an older draft.
-   *
-   * Tokenizing is asynchronous, so the answer can arrive a keystroke late. The
-   * layer sits under the caret: painting runs that do not rebuild the draft
-   * character for character would show the wrong text, so they are dropped and
-   * the command is painted plain until the right ones land.
-   */
+  /** The coloured runs for the command being typed; empty until the grammar is in. */
   const shellLines = $derived.by(() => {
-    if (!shell) return []
-    if (shellTokens.source !== shell.command) return []
-    const rebuilt = shellTokens.lines
-      .map((line) => line.map((token) => token.text).join(''))
-      .join('\n')
-    if (rebuilt !== shell.command) return []
-    return shellTokens.lines
+    if (!shell || !shellGrammarReady) return []
+    const lines = highlightCodeSync(shell.command, 'bash', store.activeTheme.scheme)
+    if (!lines) return []
+    return lines
   })
 
   /**

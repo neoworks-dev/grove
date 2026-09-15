@@ -164,17 +164,20 @@ const actionRunner = new ActionRunner({
 // routes register below).
 let terminalsTap: TerminalsTap | null = null
 
-const terminals = new TerminalManager({
-  onData: (id, data) => {
-    send('event:terminal-data', { id, data })
-    terminalsTap?.onData(id, data)
+const terminals = new TerminalManager(
+  {
+    onData: (id, data) => {
+      send('event:terminal-data', { id, data })
+      terminalsTap?.onData(id, data)
+    },
+    onExit: (id, exitCode) => {
+      send('event:terminal-exit', { id, exitCode })
+      terminalsTap?.onExit(id, exitCode)
+    },
+    onTitle: (id, title) => send('event:terminal-title', { id, title })
   },
-  onExit: (id, exitCode) => {
-    send('event:terminal-exit', { id, exitCode })
-    terminalsTap?.onExit(id, exitCode)
-  },
-  onTitle: (id, title) => send('event:terminal-title', { id, title })
-})
+  { socketPath: join(app.getPath('userData'), 'terminals.sock') }
+)
 
 // Session → worktree tracking so the editor API can pick the canonical
 // (most recently active) nvim session for a worktree.
@@ -644,7 +647,9 @@ export async function shutdown(): Promise<void> {
   await watcher.closeAll()
   channel.closeAll()
   lsp.stopAll()
-  terminals.killAll()
+  // Terminals outlive grove on purpose — the daemon keeps them running, so
+  // shutdown only drops the connection to it.
+  terminals.detach()
   nvims.killAll()
   settings.close()
   actionRunner.stopAll()

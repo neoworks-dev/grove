@@ -13,7 +13,18 @@ const bundledDeps = ['@neoworks/extension-system']
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin({ exclude: bundledDeps })]
+    plugins: [externalizeDepsPlugin({ exclude: bundledDeps })],
+    build: {
+      rollupOptions: {
+        // The terminal daemon is its own process: grove spawns it detached so
+        // the shells it owns survive the app quitting. It ships as a second
+        // chunk beside the main bundle and runs on Electron's node runtime.
+        input: {
+          index: 'src/main/index.ts',
+          terminalDaemon: 'src/main/terminalDaemon.ts'
+        }
+      }
+    }
   },
   preload: {
     plugins: [externalizeDepsPlugin({ exclude: bundledDeps })]

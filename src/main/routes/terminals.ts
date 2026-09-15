@@ -26,12 +26,18 @@ export const terminalsRoutes = {
       // with zero config.
       const socketPath = ctx.apps.socketPath()
       if (socketPath) vars.GROVE_SOCK = socketPath
-      return ctx.terminals.create({ cwd, env: spawnEnv(vars), cols, rows })
+      return ctx.terminals.create({ cwd, env: spawnEnv(vars), cols, rows, worktreeId })
     })
     route(ctx, 'terminal:write', (_e, id: string, data: string) => ctx.terminals.write(id, data))
     route(ctx, 'terminal:resize', (_e, id: string, cols: number, rows: number) =>
       ctx.terminals.resize(id, cols, rows)
     )
     route(ctx, 'terminal:kill', (_e, id: string) => ctx.terminals.kill(id))
+    // The shells outlive grove, so a fresh window asks what is still running and
+    // takes those terminals over instead of opening new ones.
+    route(ctx, 'terminal:list', () => ctx.terminals.list())
+    route(ctx, 'terminal:attach', (_e, id: string, cols: number, rows: number) =>
+      ctx.terminals.attach(id, cols, rows)
+    )
   }
 }

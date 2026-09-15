@@ -10,7 +10,13 @@
 // every arrow key, and re-tokenizing the same excerpt per keypress would undo
 // the point of it.
 
-import { codeToTokens, bundledLanguages } from 'shiki'
+import {
+  codeToTokens,
+  bundledLanguages,
+  createHighlighter,
+  type BundledLanguage,
+  type Highlighter
+} from 'shiki'
 
 /** One run of characters that share a colour. */
 export interface HighlightedToken {
@@ -82,11 +88,84 @@ async function tokenize(
       lang: language,
       theme: THEMES[scheme]
     } as Parameters<typeof codeToTokens>[1])
-    return result.tokens.map((line) =>
-      line.map((token) => ({ text: token.content, color: token.color ?? '' }))
-    )
+    return runsOf(result.tokens)
   } catch {
     // An unknown or broken grammar must not cost the caller its content.
+    return null
+  }
+}
+
+/** Shiki's themed tokens as the coloured runs callers render. */
+function runsOf(lines: { content: string; color?: string }[][]): HighlightedToken[][] {
+  return lines.map((line) =>
+    line.map((token) => ({ text: token.content, color: token.color ?? '' }))
+  )
+}
+
+// ── Tokenizing without awaiting ─────────────────────────────────
+//
+// Text being typed cannot wait for a promise. The composer repaints its
+// highlight layer on every keystroke, and one microtask per character is enough
+// to show the text plain for a frame and then colour it — which reads as a
+// flash. A highlighter instance tokenizes synchronously once its grammar is in
+// memory, so callers warm the language once and paint in the same frame after.
+
+let highlighterPromise: Promise<Highlighter> | null = null
+let readyHighlighter: Highlighter | null = null
+const loadedLanguages = new Set<string>()
+
+function sharedHighlighter(): Promise<Highlighter> {
+  if (highlighterPromise) return highlighterPromise
+  highlighterPromise = createHighlighter({
+    themes: [THEMES.dark, THEMES.light],
+    langs: []
+  }).then((highlighter) => {
+    readyHighlighter = highlighter
+    return highlighter
+  })
+  return highlighterPromise
+}
+
+/**
+ * Load a grammar so `highlightCodeSync` can answer for it.
+ *
+ * True once the language is ready, false for one shiki does not know or cannot
+ * load — callers that get false keep painting plain text.
+ */
+export async function warmLanguage(language: string | undefined): Promise<boolean> {
+  if (!isHighlightable(language)) return false
+  const name = language as string
+  if (loadedLanguages.has(name)) return true
+  try {
+    const highlighter = await sharedHighlighter()
+    await highlighter.loadLanguage(name as BundledLanguage)
+    loadedLanguages.add(name)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Tokenize in this frame, or not at all.
+ *
+ * Null until `warmLanguage` has the grammar loaded, so the first paint is plain
+ * and every one after it is coloured — no flicker between the two.
+ */
+export function highlightCodeSync(
+  code: string,
+  language: string | undefined,
+  scheme: ColorScheme
+): HighlightedToken[][] | null {
+  const highlighter = readyHighlighter
+  if (!highlighter || !language || !loadedLanguages.has(language)) return null
+  try {
+    const result = highlighter.codeToTokens(code, {
+      lang: language as BundledLanguage,
+      theme: THEMES[scheme]
+    })
+    return runsOf(result.tokens)
+  } catch {
     return null
   }
 }

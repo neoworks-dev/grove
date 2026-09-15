@@ -20,8 +20,11 @@ const BATCH_SIZE = 50
  * how much of it comes back.
  */
 const MAX_RESULTS = 200
-const CONTEXT_BEFORE = 8
-const CONTEXT_AFTER = 8
+// Enough context to fill the preview pane at any window height; the overlay
+// centres the matched line, so the rest is there to be scrolled through rather
+// than to be counted.
+const CONTEXT_BEFORE = 40
+const CONTEXT_AFTER = 40
 
 export function activate(context: grove.PluginContext): void {
   context.subscriptions.push(

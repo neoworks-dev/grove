@@ -9,6 +9,9 @@
   import { overlays } from '../lib/overlays.svelte'
   import { stepFromEvent, stepMatchesSequence } from '../lib/keySequence'
   import { fileIcon } from '../lib/icons'
+  import { highlightCode, type HighlightedToken } from '../lib/highlight'
+  import { languageOfPath } from '../lib/agents/tools'
+  import { store } from '../lib/store.svelte'
 
   // 'file:<name>' resolves through the active icon pack (plugins can't call
   // fileIcon themselves).
@@ -19,6 +22,7 @@
 
   let inputEl = $state<HTMLInputElement>()
   let listViewport = $state<HTMLDivElement>()
+  let previewViewport = $state<HTMLDivElement>()
 
   const descriptor = $derived(overlays.active)
   const hasPreview = $derived(descriptor?.onPreview !== undefined)
@@ -38,8 +42,42 @@
     const index = overlays.activeIndex
     void index
     if (!listViewport) return
-    const active = listViewport.querySelector('[data-active="true"]') as HTMLElement | null
+    const active = listViewport.querySelector<HTMLElement>('[data-active="true"]')
     active?.scrollIntoView({ block: 'nearest' })
+  })
+
+  // The excerpt's lines, coloured. Empty until shiki has the grammar, so the
+  // code is readable from the first frame and gains colour a tick later.
+  let highlighted = $state<HighlightedToken[][]>([])
+
+  $effect(() => {
+    const preview = overlays.preview
+    if (preview?.kind !== 'excerpt') {
+      highlighted = []
+      return
+    }
+    const code = preview.lines.map((line) => line.text).join('\n')
+    const language = languageOfPath(preview.file)
+    const scheme = store.activeTheme.scheme
+    let current = true
+    void highlightCode(code, language, scheme).then((lines) => {
+      if (current) highlighted = lines ?? []
+    })
+    return () => {
+      current = false
+    }
+  })
+
+  // An excerpt is longer than the pane on purpose, so the code around a match
+  // fills the space rather than floating in the middle of it. Centring the line
+  // the match is on is what makes the extra lines read as context.
+  $effect(() => {
+    const preview = overlays.preview
+    if (preview?.kind !== 'excerpt' || !previewViewport) return
+    queueMicrotask(() => {
+      const line = previewViewport?.querySelector<HTMLElement>('[data-highlight="true"]')
+      line?.scrollIntoView({ block: 'center' })
+    })
   })
 
   function onKeyDown(event: KeyboardEvent): void {
@@ -177,16 +215,19 @@
         </FloatingScrollbar>
 
         {#if hasPreview}
-          <FloatingScrollbar class="min-h-0 w-1/2">
+          <FloatingScrollbar class="min-h-0 w-1/2" bind:viewport={previewViewport}>
             <div>
             {#if overlays.preview?.kind === 'excerpt'}
               <div class="border-b border-line px-3 py-1.5 font-mono text-2xs text-dim">
                 {overlays.preview.file}
               </div>
-              <pre class="p-0 font-mono text-2xs leading-relaxed">{#each overlays.preview.lines as line (line.n)}<span
+              <pre class="p-0 font-mono text-2xs leading-relaxed">{#each overlays.preview.lines as line, index (line.n)}<span
+                    data-highlight={line.n === overlays.preview.highlightLine}
                     class="block px-3 {line.n === overlays.preview.highlightLine
-                      ? 'bg-hover text-default'
-                      : 'text-muted'}"><span class="mr-3 inline-block w-8 text-right text-faint">{line.n}</span>{line.text}</span>{/each}</pre>
+                      ? 'bg-hover'
+                      : ''}"><span class="mr-3 inline-block w-8 text-right text-faint">{line.n}</span>{#if highlighted[index]}{#each highlighted[index] as token, tokenIndex (tokenIndex)}<span
+                        style:color={token.color}>{token.text}</span>{/each}{:else}<span class="text-muted"
+                      >{line.text}</span>{/if}</span>{/each}</pre>
             {:else if overlays.preview?.kind === 'text'}
               <pre class="whitespace-pre-wrap p-3 font-mono text-2xs text-muted">{overlays.preview.text}</pre>
             {:else if overlays.preview?.kind === 'component'}

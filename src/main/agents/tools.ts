@@ -13,7 +13,7 @@ import type { OpenFileTarget } from '../../shared/agents'
 import type { WorktreeChatMessage } from '../../shared/types'
 import type { WorktreeChannel } from '../worktreeChannel'
 import type { GroveTool } from './harness'
-import { signatureOf, type AgentPeer, type AgentRoster } from './roster'
+import { signatureOf, type AgentPeer, type AgentRoster, type AgentRuntime } from './roster'
 
 // The surface id the intro pane watches. Changing it means changing
 // src/renderer/src/lib/intro.svelte.ts.
@@ -308,7 +308,34 @@ function chatTools(options: GroveToolOptions): GroveTool[] {
     }
   }
 
-  return [send, read, list, spawnTool(options)]
+  return [send, read, list, runtimesTool(options), spawnTool(options)]
+}
+
+/**
+ * What a spawned agent could be run on.
+ *
+ * Asked for rather than described: which runtimes are authenticated and which
+ * models they offer changes while grove runs, and a list written into
+ * `spawn_agent`'s description when the session started would go stale.
+ */
+function runtimesTool(options: GroveToolOptions): GroveTool {
+  return {
+    name: 'list_runtimes',
+    summary: 'List the runtimes and models a new agent can be started on.',
+    description:
+      'List every agent runtime grove has mounted: whether it can run right now, whether it can ' +
+      'talk back to you, the models it offers and the one it would pick for itself. Call this ' +
+      'before `spawn_agent` when you care which runtime or model does the work.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    policy: 'allow',
+    display: { label: 'runtimes', input: 'hidden', result: 'list' },
+
+    async execute() {
+      const runtimes = await options.roster.runtimes()
+      if (runtimes.length === 0) return { content: 'No runtimes are mounted.', isError: true }
+      return { content: runtimes.map(describeRuntime).join('\n') }
+    }
+  }
 }
 
 /**
@@ -340,7 +367,12 @@ function spawnTool(options: GroveToolOptions): GroveTool {
           type: 'string',
           description: `The runtime to run it on. One of: ${options.roster.harnessIds().join(', ')}.`
         },
-        model: { type: 'string', description: 'Optional model id for the new session.' }
+        model: {
+          type: 'string',
+          description:
+            'Optional model id, as `list_runtimes` reports it for the chosen runtime. The ' +
+            "runtime's own default is used when this is left out."
+        }
       },
       required: ['title', 'prompt'],
       additionalProperties: false
@@ -361,11 +393,15 @@ function spawnTool(options: GroveToolOptions): GroveTool {
         return { content: `Unknown harness "${harness}". Mounted: ${known}.`, isError: true }
       }
 
+      const model = stringOrNothing(input.model)
+      const modelError = await checkModel(options.roster, context.sessionId, harness, model)
+      if (modelError) return modelError
+
       const peer = await options.roster.spawn({
         workspaceRoot: context.workspaceRoot,
         title,
         harness,
-        model: stringOrNothing(input.model),
+        model,
         prompt,
         parentSessionId: context.sessionId
       })
@@ -402,6 +438,44 @@ async function resolveAddressee(
       isError: true
     }
   }
+}
+
+/**
+ * A model the chosen runtime cannot run is refused before a session exists.
+ *
+ * Spawning on one and letting it fail leaves a dead session in the strip for the
+ * user to clear up, and tells the agent nothing about what it should have asked
+ * for.
+ */
+async function checkModel(
+  roster: AgentRoster,
+  sessionId: string,
+  harness: string | undefined,
+  model: string | undefined
+): Promise<{ content: string; isError: true } | null> {
+  if (!model) return null
+  const target = harness ?? (await roster.agentHarnessOf(sessionId))
+  if (!target) return null
+
+  const models = await roster.modelsOf(target)
+  if (models.length === 0) return null
+  if (models.some((entry) => entry.model === model)) return null
+
+  const known = models.map((entry) => entry.model).join(', ')
+  return {
+    content: `${target} cannot run "${model}". It offers: ${known}.`,
+    isError: true
+  }
+}
+
+/** One runtime, as the model reads it. */
+function describeRuntime(runtime: AgentRuntime): string {
+  const state = runtime.available ? 'ready' : `unavailable (${runtime.detail ?? 'not set up'})`
+  const models = runtime.models.map((entry) => entry.model).join(', ') || 'none reported'
+  const parts = [`${runtime.id} · ${state}`, `models: ${models}`]
+  if (runtime.default) parts.push(`default: ${runtime.default.model}`)
+  if (!runtime.talks) parts.push('cannot message you back')
+  return `- ${parts.join(' · ')}`
 }
 
 /** The name a message is filed under on the channel. */

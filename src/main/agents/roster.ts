@@ -11,7 +11,7 @@
 // every agent holding it. Titles still travel alongside, because "auth-refactor"
 // is what makes a roster readable.
 
-import type { SessionMeta } from '../../shared/agents'
+import type { HarnessInfo, SessionMeta } from '../../shared/agents'
 import { PARENT_LABEL } from './handoffBridge'
 import type { HarnessRegistry } from './harness'
 import { agentIdOf } from './identity'
@@ -28,6 +28,24 @@ export interface AgentPeer {
   status: SessionMeta['status']
   /** Parked on a tool approval, so it is not going to answer until that is decided. */
   waiting: boolean
+}
+
+/** A runtime a spawned agent can be put on, and what it can be run with. */
+export interface AgentRuntime {
+  id: string
+  label: string
+  /** Installed and authenticated: a runtime that is not cannot be spawned onto. */
+  available: boolean
+  detail: string | null
+  /** Can it host grove's tools? One that cannot can be given work but cannot answer. */
+  talks: boolean
+  models: RuntimeModel[]
+  default: RuntimeModel | null
+}
+
+export interface RuntimeModel {
+  provider: string
+  model: string
 }
 
 export interface SpawnOptions {
@@ -131,6 +149,49 @@ export class AgentRoster {
   /** The harnesses a spawned agent may run on. */
   harnessIds(): string[] {
     return this.options.harnesses.ids()
+  }
+
+  /**
+   * Every runtime and what it can be run with.
+   *
+   * Asked for on demand rather than built into the tool's description: models
+   * come and go with what the user has authenticated, and a list baked in when
+   * the session started would be wrong by the time an agent read it.
+   */
+  async runtimes(): Promise<AgentRuntime[]> {
+    const described = await this.options.harnesses.describe()
+    return Promise.all(described.map((harness) => this.runtimeOf(harness)))
+  }
+
+  /** The runtime one session is running on, for defaulting a spawn to the same. */
+  async agentHarnessOf(sessionId: string): Promise<string | null> {
+    const sessions = await this.options.agents.listSessions()
+    return sessions.find((session) => session.id === sessionId)?.harness ?? null
+  }
+
+  /** The models one runtime can be started on; empty when it cannot say. */
+  async modelsOf(harnessId: string): Promise<RuntimeModel[]> {
+    const catalog = await this.options.agents.catalog(harnessId).catch(() => null)
+    if (!catalog) return []
+    return catalog.providers.flatMap((entry) =>
+      entry.models.map((model) => ({ provider: entry.provider, model: model.id }))
+    )
+  }
+
+  private async runtimeOf(harness: HarnessInfo): Promise<AgentRuntime> {
+    const catalog = await this.options.agents.catalog(harness.id).catch(() => null)
+    const models = (catalog?.providers ?? []).flatMap((entry) =>
+      entry.models.map((model) => ({ provider: entry.provider, model: model.id }))
+    )
+    return {
+      id: harness.id,
+      label: harness.label,
+      available: harness.available,
+      detail: harness.detail,
+      talks: harness.capabilities.groveTools,
+      models,
+      default: catalog?.default ?? null
+    }
   }
 }
 

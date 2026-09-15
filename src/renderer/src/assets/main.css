@@ -659,27 +659,18 @@
      harder to read, which is the wrong trade for panes you are still watching.
      `.pane-surface` marks every focusable pane container (split-tree leaves and
      docked panes alike). */
+  .pane-surface {
+    transition: box-shadow 140ms ease-out;
+  }
+  /* The glow sits under the pane and spreads into the gutters around it. The
+     z-index is what makes it visible: panes are siblings, so without one the
+     neighbour painted after this pane would cover the light falling on it. */
   .pane-active {
     position: relative;
-  }
-  /* The glow is drawn inside the pane's lower edge rather than beneath its box:
-     the split tree clips every pane to its cell, so an outer shadow would never
-     be seen. Painted over the content, and never in its way. */
-  .pane-active::after {
-    content: '';
-    position: absolute;
-    inset-inline: 0;
-    bottom: 0;
-    height: 16px;
-    z-index: 60;
-    pointer-events: none;
-    border-bottom-left-radius: inherit;
-    border-bottom-right-radius: inherit;
-    background: linear-gradient(
-      to top,
-      color-mix(in oklab, var(--focus-ring) 16%, transparent),
-      transparent
-    );
+    z-index: 5;
+    box-shadow:
+      0 14px 28px -14px color-mix(in oklab, var(--focus-ring) 55%, transparent),
+      0 0 16px -6px color-mix(in oklab, var(--focus-ring) 22%, transparent);
   }
 
   /* Shadows */

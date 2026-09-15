@@ -8,6 +8,18 @@ export interface Rect {
   height: number
 }
 
+/**
+ * The mode a pane is actually in: its last report, clamped to the modes it
+ * declared, and its first declared mode when it has not reported one yet.
+ *
+ * A pane that declares no modes is mode-less (null) — nothing keys off its mode.
+ */
+export function clampMode(supported: string[] | undefined, reported: string | undefined): string | null {
+  if (!supported || supported.length === 0) return null
+  if (reported && supported.includes(reported)) return reported
+  return supported[0]
+}
+
 // Whether `seq` begins with every token in `prefix`.
 export function startsWith(seq: string[], prefix: string[]): boolean {
   if (prefix.length > seq.length) return false

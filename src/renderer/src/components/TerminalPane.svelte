@@ -60,6 +60,20 @@
     focusActive()
   }
 
+  /**
+   * Where pane navigation (ctrl+hjkl) should land inside this pane.
+   *
+   * In 'terminal' mode the shell is the key target, so focus has to reach
+   * xterm's textarea — the pane element itself would swallow the keystrokes.
+   * In 'normal' mode the pane element is the right target: that is what makes
+   * the nav chords and the `i` binding below resolve, so the delegate declines.
+   */
+  function focusFromNavigation(): boolean {
+    if (keymap.paneMode(leafId) !== 'terminal') return false
+    focusActive()
+    return true
+  }
+
   function newTerminal(): void {
     counter += 1
     const session: TerminalSession = {
@@ -157,9 +171,11 @@
   })
 
   let unregisterBindings: (() => void) | null = null
+  let unregisterFocus: (() => void) | null = null
 
   onMount(() => {
     void restoreTerminals()
+    unregisterFocus = keymap.registerPaneFocus(leafId, focusFromNavigation)
     // Vim-style: in 'normal' the terminal keeps focus for pane nav; 'i' hands
     // the keyboard back to the active shell.
     unregisterBindings = keymap.registerBindings([
@@ -179,6 +195,7 @@
   // daemon — so its claims are handed back for the next pane to adopt.
   onDestroy(() => {
     unregisterBindings?.()
+    unregisterFocus?.()
     for (const session of sessions) {
       if (session.ptyId) releaseTerminal(session.ptyId)
     }

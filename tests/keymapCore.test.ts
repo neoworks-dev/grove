@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { startsWith, pickNeighbor, type Rect } from '../src/renderer/src/lib/keymapCore'
+import { startsWith, pickNeighbor, clampMode, type Rect } from '../src/renderer/src/lib/keymapCore'
 
 describe('startsWith', () => {
   it('matches an exact prefix', () => {
@@ -33,5 +33,24 @@ describe('pickNeighbor', () => {
   })
   it('returns null when nothing lies that way', () => {
     expect(pickNeighbor(center, others, 'k')).toBeNull()
+  })
+})
+
+describe('clampMode', () => {
+  // The terminal declares these two, in this order.
+  const terminalModes = ['terminal', 'normal']
+
+  it('is mode-less when the pane declares nothing', () => {
+    expect(clampMode(undefined, 'terminal')).toBeNull()
+    expect(clampMode([], 'terminal')).toBeNull()
+  })
+  it('falls back to the first declared mode before the pane reports one', () => {
+    expect(clampMode(terminalModes, undefined)).toBe('terminal')
+  })
+  it('honours a reported mode the pane declared', () => {
+    expect(clampMode(terminalModes, 'normal')).toBe('normal')
+  })
+  it('ignores a reported mode the pane never declared', () => {
+    expect(clampMode(terminalModes, 'visual')).toBe('terminal')
   })
 })

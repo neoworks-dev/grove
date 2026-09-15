@@ -39,6 +39,7 @@
     toggleTool,
     onOpenFile,
     onOpenAgent,
+    liveAgentIds,
     viewport = $bindable(),
     onscroll
   }: {
@@ -56,6 +57,8 @@
     onOpenFile: (path: string) => void
     /** Show the conversation of the agent a message came from. */
     onOpenAgent: (agentId: string) => void
+    /** Every agent that still exists; a sender missing from it has been closed. */
+    liveAgentIds: Set<string>
     viewport?: HTMLDivElement
     onscroll: () => void
   } = $props()
@@ -218,37 +221,57 @@
   {:else if item.kind === 'app' && senderOf(item)}
     {@const sender = senderOf(item) ?? ''}
     {@const agentId = agentIdIn(sender)}
-    <!-- Another agent talking: read as a message, with the sender leading it and
-         the words themselves in the same weight as an answer. Marked with a rule
-         rather than a card, so a conversation between agents reads as a thread
-         instead of as a stack of boxes. Clicking it opens that agent's own
-         conversation, which is where the rest of what it did can be read. -->
-    <button
-      class="group/message mb-3 flex w-full gap-2 border-l-2 border-blue/50 pl-2.5 text-left transition-all duration-150 ease-out"
-      class:cursor-default={agentId === null}
-      class:cursor-pointer={agentId !== null}
-      class:hover:border-blue={agentId !== null}
-      class:hover:pl-3.5={agentId !== null}
-      disabled={agentId === null}
-      title={agentId ? `Open ${sender}` : undefined}
-      onclick={() => agentId && onOpenAgent(agentId)}
-    >
-      <!-- The plane leans into the hover, so the row reads as a way through to
-           the conversation it came from rather than as a static note. -->
-      <span
-        class="mt-0.5 shrink-0 text-blue transition-transform duration-150 ease-out group-hover/message:translate-x-0.5"
-      >
-        <PaperPlaneTilt width="12" height="12" weight="fill" />
-      </span>
-      <div class="min-w-0 flex-1">
-        <div
-          class="mb-0.5 font-mono text-2xs text-blue/80 transition-colors duration-150 group-hover/message:text-blue"
-        >
-          {sender}
+    {@const closed = agentId !== null && !liveAgentIds.has(agentId)}
+    {#if closed}
+      <!-- The agent that said this has since been closed. The message stays —
+           it is part of what happened here — but the colour and the click go:
+           there is no conversation left to open, and a row that still looked
+           like a way through to one would be a dead end. -->
+      <div class="mb-3 flex w-full gap-2 border-l-2 border-line pl-2.5">
+        <span class="mt-0.5 shrink-0 text-dim">
+          <PaperPlaneTilt width="12" height="12" weight="fill" />
+        </span>
+        <div class="min-w-0 flex-1">
+          <div class="mb-0.5 flex items-center gap-1.5 font-mono text-2xs text-dim">
+            <span class="truncate">{sender}</span>
+            <span class="shrink-0 rounded-sm bg-elevated px-1">closed</span>
+          </div>
+          <div class="whitespace-pre-wrap text-xs text-muted">{item.text}</div>
         </div>
-        <div class="whitespace-pre-wrap text-xs text-default">{item.text}</div>
       </div>
-    </button>
+    {:else}
+      <!-- Another agent talking: read as a message, with the sender leading it and
+           the words themselves in the same weight as an answer. Marked with a rule
+           rather than a card, so a conversation between agents reads as a thread
+           instead of as a stack of boxes. Clicking it opens that agent's own
+           conversation, which is where the rest of what it did can be read. -->
+      <button
+        class="group/message mb-3 flex w-full gap-2 border-l-2 border-blue/50 pl-2.5 text-left transition-all duration-150 ease-out"
+        class:cursor-default={agentId === null}
+        class:cursor-pointer={agentId !== null}
+        class:hover:border-blue={agentId !== null}
+        class:hover:pl-3.5={agentId !== null}
+        disabled={agentId === null}
+        title={agentId ? `Open ${sender}` : undefined}
+        onclick={() => agentId && onOpenAgent(agentId)}
+      >
+        <!-- The plane leans into the hover, so the row reads as a way through to
+             the conversation it came from rather than as a static note. -->
+        <span
+          class="mt-0.5 shrink-0 text-blue transition-transform duration-150 ease-out group-hover/message:translate-x-0.5"
+        >
+          <PaperPlaneTilt width="12" height="12" weight="fill" />
+        </span>
+        <div class="min-w-0 flex-1">
+          <div
+            class="mb-0.5 font-mono text-2xs text-blue/80 transition-colors duration-150 group-hover/message:text-blue"
+          >
+            {sender}
+          </div>
+          <div class="whitespace-pre-wrap text-xs text-default">{item.text}</div>
+        </div>
+      </button>
+    {/if}
   {:else if item.kind === 'app'}
     <!-- grove itself talking — review feedback, a task brief — which is
          model-visible but authored by neither side of the conversation. -->

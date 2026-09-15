@@ -36,6 +36,17 @@ export function sessionByAgentId(
 }
 
 /**
+ * The ids of every agent that still exists.
+ *
+ * A transcript outlives the agents it quotes: a message from one that has since
+ * been closed stays in the log forever, and this is what lets it be shown as
+ * what it is rather than as a live conversation one click away.
+ */
+export function liveAgentIds(sessions: SessionMeta[]): Set<string> {
+  return new Set(sessions.map((session) => agentIdOf(session)))
+}
+
+/**
  * Sessions grouped into families, each led by one the user started.
  *
  * A spawned session follows the one that spawned it, however far apart the two

@@ -280,12 +280,32 @@ export interface ModelInfo {
   id: string
   provider: string
   label?: string
+  /**
+   * The wire model this row's `id` ends up talking to, when `id` is an alias.
+   * Harnesses list aliases (`default`, `opus[1m]`); this is what the alias
+   * resolves to (`claude-opus-5[1m]`), so the picker can name both.
+   */
+  resolvedId?: string
+  description?: string
   contextWindow?: number
   pricing?: ModelPricing
 }
 
+/** What a provider needs before a session on it can start. */
+export interface ProviderCredential {
+  /** The environment variables the harness reads the credential from. */
+  env: string[]
+  /** Whether grove can see one right now, in the environment or in settings. */
+  present: boolean
+}
+
 export interface ProviderModels {
   provider: string
+  /** The provider's own name, when it has one worth reading. */
+  label?: string
+  /** The endpoint sessions on this provider are pointed at, if not the default. */
+  endpoint?: string
+  credential?: ProviderCredential
   models: ModelInfo[]
 }
 

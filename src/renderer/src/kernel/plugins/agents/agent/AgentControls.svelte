@@ -10,8 +10,14 @@
   import Icon from '@iconify/svelte'
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
   import { MODE_DESCRIPTIONS, MODE_LABELS, type AgentMode } from '../../../../lib/agents/modes'
+  import { modelName, modelWireId } from '../../../../lib/agents/modelSelection'
   import { THINKING_LABELS, THINKING_LEVELS } from '../../../../lib/agents/thinking'
-  import type { HarnessInfo, ProviderModels, ThinkingLevel } from '../../../../lib/agents/types'
+  import type {
+    HarnessInfo,
+    ModelInfo,
+    ProviderModels,
+    ThinkingLevel
+  } from '../../../../lib/agents/types'
 
   let {
     harness,
@@ -108,19 +114,66 @@
     return `${(tokens / 1000).toFixed(1)}k`
   }
 
-  /**
-   * The model, as the harness names it for people ("Opus 5 (1M context)"), and
-   * nothing else: the provider is a detail of the cascade that picks it, not
-   * something worth a slot in the status line.
-   */
-  const modelLabel = $derived.by(() => {
+  /** The catalog row the session's model is selected from, when it lists one. */
+  const selected = $derived.by(() => {
     for (const entry of providers) {
       if (entry.provider !== provider) continue
       const match = entry.models.find((candidate) => candidate.id === model)
-      if (match?.label) return match.label
+      if (match) return match
     }
+    return null
+  })
+
+  /**
+   * The model, as the harness names it for people ("Opus (1M context)"): the
+   * provider is a detail of the cascade that picks it, not something worth a
+   * slot in the status line.
+   */
+  const modelLabel = $derived.by(() => {
+    if (selected) return modelName(selected)
     return model
   })
+
+  /**
+   * The model the session actually talks to, shown beside the name because the
+   * name alone can be an alias — "Default (recommended)" names no model at all.
+   * Suppressed when it would only repeat the name.
+   */
+  const modelId = $derived.by(() => {
+    if (!selected) return ''
+    const id = modelWireId(selected)
+    if (id === modelLabel) return ''
+    return id
+  })
+
+  /** The provider's own name, falling back to the id the harness keys it by. */
+  function providerLabel(entry: ProviderModels): string {
+    if (entry.label) return entry.label
+    return entry.provider
+  }
+
+  /** Whether grove has no credential for a provider that asks for one. */
+  function needsCredential(entry: ProviderModels): boolean {
+    if (!entry.credential) return false
+    return !entry.credential.present
+  }
+
+  /** Where a provider's sessions go, and what they need before they can go. */
+  function providerHint(entry: ProviderModels): string {
+    const parts: string[] = []
+    if (entry.endpoint) parts.push(entry.endpoint)
+    if (needsCredential(entry)) {
+      parts.push(`no credential — set ${entry.credential?.env.join(' or ')}`)
+    }
+    if (parts.length === 0) return entry.provider
+    return parts.join(' · ')
+  }
+
+  /** What a model row says on hover: its capabilities, or failing that its id. */
+  function modelHint(candidate: ModelInfo): string {
+    if (candidate.description) return candidate.description
+    return modelWireId(candidate)
+  }
 
   // Modes read as how far they step away from "ask": neutral, then the theme's
   // accent, then its two warning tones. Every one is a theme token, so they
@@ -198,6 +251,9 @@
       onclick={() => toggle('model')}
     >
       <span class="max-w-[12rem] truncate font-medium text-default">{modelLabel}</span>
+      {#if modelId}
+        <span class="max-w-[12rem] truncate font-mono text-dim">{modelId}</span>
+      {/if}
       <span class="text-dim">▾</span>
     </button>
     {#if openMenu === 'model'}
@@ -211,19 +267,19 @@
             {switchCostWarning}
           </div>
         {/if}
-        {#if providers.length === 0}
-          <!-- Nothing to enumerate: this harness takes a model by name. -->
-          <div class="px-2 py-1">
-            <input
-              class="w-full rounded border border-line bg-surface px-1.5 py-1 text-2xs text-default"
-              placeholder="model id"
-              bind:value={typedModel}
-              onkeydown={(event) => {
-                if (event.key === 'Enter') submitTypedModel()
-              }}
-            />
-          </div>
-        {/if}
+        <!-- Always typeable: no runtime enumerates every model it will accept,
+             and a harness that enumerates none takes one only this way. -->
+        <div class="px-2 py-1">
+          <input
+            class="w-full rounded border border-line bg-surface px-1.5 py-1 text-2xs text-default"
+            placeholder="model id"
+            title="Run any model id this harness accepts, listed or not"
+            bind:value={typedModel}
+            onkeydown={(event) => {
+              if (event.key === 'Enter') submitTypedModel()
+            }}
+          />
+        </div>
         {#each providers as entry (entry.provider)}
           <div
             class="relative"
@@ -235,8 +291,14 @@
               provider
                 ? 'text-default'
                 : 'text-dim'}"
+              title={providerHint(entry)}
             >
-              <span class="truncate">{entry.provider}</span>
+              <span class="truncate">{providerLabel(entry)}</span>
+              <!-- A provider grove has no key for still lists its models; the
+                   turn is what fails, so the warning belongs on the way in. -->
+              {#if needsCredential(entry)}
+                <span class="shrink-0 text-amber">key</span>
+              {/if}
               <span class="ml-auto text-dim">›</span>
             </button>
             {#if submenuProvider === entry.provider}
@@ -246,20 +308,28 @@
                 <FloatingScrollbar class="max-h-72">
                   <div class="py-1">
                     {#each entry.models as candidate (candidate.id)}
+                      {@const name = modelName(candidate)}
+                      {@const wireId = modelWireId(candidate)}
                       <button
-                        class="flex w-full items-center px-2 py-1 text-left hover:bg-hover {entry.provider ===
+                        class="flex w-full flex-col items-start px-2 py-1 text-left hover:bg-hover {entry.provider ===
                           provider && candidate.id === model
                           ? 'text-default'
                           : 'text-dim'}"
-                        title={candidate.id}
+                        title={modelHint(candidate)}
                         onclick={() => {
                           onPickModel(entry.provider, candidate.id)
                           close()
                         }}
                       >
-                        <!-- Harnesses label their models for humans ("Opus (1M
-                             context)"); the id stays in the tooltip. -->
-                        <span class="truncate">{candidate.label || candidate.id}</span>
+                        <!-- Two lines, because a harness names its models for
+                             humans ("Opus (1M context)") but every row can be an
+                             alias: the second line is the model it resolves to. -->
+                        <span class="max-w-full truncate">{name}</span>
+                        {#if wireId !== name}
+                          <span class="max-w-full truncate font-mono text-2xs text-dim">
+                            {wireId}
+                          </span>
+                        {/if}
                       </button>
                     {/each}
                     {#if entry.models.length === 0}

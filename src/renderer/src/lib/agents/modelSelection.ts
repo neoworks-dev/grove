@@ -2,7 +2,7 @@
 // are discovered from the harness and remain open strings; the persisted JSON
 // tuple avoids assuming either side excludes separators such as ':' or '/'.
 
-import type { ProviderModels } from './types'
+import type { ModelInfo, ProviderModels } from './types'
 
 export interface ModelSelection {
   provider: string
@@ -32,6 +32,36 @@ export function decodeModelSelection(value: unknown): ModelSelection | null {
   }
 }
 
+/**
+ * What the model is called, the way its harness writes it for people.
+ *
+ * Falls back to the id, which is all a harness that only lists ids can offer.
+ */
+export function modelName(model: ModelInfo): string {
+  if (model.label) return model.label
+  return model.id
+}
+
+/**
+ * The model id worth showing: the wire model an alias resolves to, when the
+ * harness said so, and otherwise the id itself.
+ *
+ * Claude Code lists aliases (`default`, `opus[1m]`), so without this the picker
+ * can only say "Default (recommended)" and never which model that is.
+ */
+export function modelWireId(model: ModelInfo): string {
+  if (model.resolvedId) return model.resolvedId
+  return model.id
+}
+
+/** Name and id together, for a single-line slot such as a settings dropdown. */
+export function describeModel(model: ModelInfo): string {
+  const name = modelName(model)
+  const id = modelWireId(model)
+  if (name === id) return name
+  return `${name} · ${id}`
+}
+
 export function discoveredModelOptions(providers: ProviderModels[]): ModelOption[] {
   return providers.flatMap((entry) =>
     entry.models.map((model) => {
@@ -39,7 +69,7 @@ export function discoveredModelOptions(providers: ProviderModels[]): ModelOption
       return {
         ...selection,
         key: encodeModelSelection(selection),
-        label: `${entry.provider} / ${model.id}`
+        label: `${entry.provider} / ${describeModel(model)}`
       }
     })
   )

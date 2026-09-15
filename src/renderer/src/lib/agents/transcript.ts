@@ -158,6 +158,19 @@ function active(state: TranscriptState): TranscriptItem[] {
   return state.items.filter((item) => state.activeSeqs.has(item.seq))
 }
 
+// How an inter-agent message was labelled before `app.message` carried its
+// sender. Kept so transcripts recorded then still read as messages.
+const AGENT_LABEL_PREFIX = 'Message from '
+
+/** The agent an app message came from, or null when grove itself sent it. */
+export function senderOf(item: AppItem): string | null {
+  if (item.from) return item.from
+  if (item.label.startsWith(AGENT_LABEL_PREFIX)) {
+    return item.label.slice(AGENT_LABEL_PREFIX.length)
+  }
+  return null
+}
+
 /** The tool calls the agent is blocked on. */
 export function pendingApprovals(state: TranscriptState): ToolItem[] {
   return visibleItems(state).filter(

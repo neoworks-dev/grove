@@ -61,6 +61,13 @@ export interface AgentServiceOptions {
   harnesses: HarnessRegistry
   /** grove's own tools, offered to every harness that can host them. */
   tools: () => GroveTool[]
+  /**
+   * What grove adds to the harness's own system prompt for one session — who
+   * the agent is in this worktree and who else is in it. Built per run, since
+   * the answer changes as sessions come and go. A service without one runs the
+   * harness on its own prompt alone.
+   */
+  systemPrompt?: (session: StoredSession) => Promise<string>
   /** Push an event to the renderer. */
   publish(event: SessionEvent): void
   /** The harness to use when a session does not name one. */
@@ -112,7 +119,8 @@ export class AgentService {
       provider: model.provider,
       model: model.model,
       thinkingLevel: options.thinkingLevel ?? 'off',
-      activeTools: options.activeTools ?? null
+      activeTools: options.activeTools ?? null,
+      labels: options.labels
     })
     return this.snapshot(session)
   }
@@ -409,6 +417,7 @@ export class AgentService {
       activeTools: session.activeTools,
       resumeKey: session.resumeKey,
       tools: this.toolsFor(descriptor),
+      systemPrompt: await this.systemPromptFor(session),
       emit: (body) => void this.absorb(sessionId, body),
       stats: (update) => void this.store.patch(sessionId, update),
       confirm: (request) => this.requestApproval(sessionId, request)
@@ -419,6 +428,18 @@ export class AgentService {
       await this.store.patch(sessionId, { resumeKey: run.resumeKey })
     }
     return run
+  }
+
+  /**
+   * grove's part of the system prompt for one session.
+   *
+   * Failing to build it must not stop the run: an agent that is not told who
+   * else is in the worktree still works, it just works alone.
+   */
+  private async systemPromptFor(session: StoredSession): Promise<string> {
+    const build = this.options.systemPrompt
+    if (!build) return ''
+    return build(session).catch(() => '')
   }
 
   /** grove's own tools, for a harness that can host them. */

@@ -246,6 +246,8 @@ export interface CreateSessionOptions {
   model?: string
   thinkingLevel?: ThinkingLevel
   activeTools?: string[]
+  /** Free-form marks on the session; `grove.parent` names the agent that spawned it. */
+  labels?: Record<string, string>
 }
 
 export interface SessionUpdate {
@@ -256,6 +258,7 @@ export interface SessionUpdate {
   thinkingLevel?: ThinkingLevel
   activeTools?: string[] | null
   autoApproveTools?: string[]
+  labels?: Record<string, string>
 }
 
 export interface ModelPricing {
@@ -279,7 +282,7 @@ export interface ProviderModels {
   models: ModelInfo[]
 }
 
-export type ToolInputView = 'hidden' | 'json' | 'code' | 'command' | 'diff'
+export type ToolInputView = 'hidden' | 'json' | 'code' | 'command' | 'diff' | 'message'
 
 export type ToolResultView = 'hidden' | 'text' | 'list' | 'file' | 'markdown' | 'code'
 

@@ -12,7 +12,13 @@
   import PencilSimple from 'phosphor-svelte/lib/PencilSimple'
   import { fileIcon } from '../../../../lib/icons'
   import { diffLines, statsOf } from '../../../../lib/agents/diff'
-  import { asRecord, descriptionOf, labelFor, stringOf } from '../../../../lib/agents/tools'
+  import {
+    asRecord,
+    descriptionOf,
+    labelFor,
+    messageOf,
+    stringOf
+  } from '../../../../lib/agents/tools'
   import type { ToolItem } from '../../../../lib/agents/transcript'
   import type { ConfirmationResult, ToolInfo } from '../../../../lib/agents/types'
   import type { ReviewBatch } from '../../../../../../shared/types'
@@ -54,6 +60,15 @@
     return stringOf(fields.command)
   })
   const reason = $derived(tool?.summary || tool?.description || 'This tool needs your approval')
+
+  // Only a tool that asked to be rendered as a message gets the message card;
+  // everything else keeps the argument dump it had.
+  const message = $derived.by(() => {
+    if (tool?.display?.input !== 'message') return null
+    const parsed = messageOf(item.input)
+    if (parsed.text.length === 0) return null
+    return parsed
+  })
 
   /** The file the call would change, with what it adds and removes. */
   const change = $derived.by(() => {
@@ -161,8 +176,21 @@
     {/if}
   </div>
 
+  <!-- A call that carries a message — starting another agent is the one that
+       asks — is decided on what it says, so the body is shown in full. -->
+  {#if message}
+    <div
+      class="mt-1.5 max-h-40 overflow-auto rounded-md border border-blue/25 bg-blue-soft px-2 py-1.5"
+    >
+      {#if message.to}
+        <div class="mb-1 font-mono text-2xs text-blue">{message.to}</div>
+      {/if}
+      <div class="whitespace-pre-wrap text-2xs text-muted">{message.text}</div>
+    </div>
+  {/if}
+
   <!-- The arguments themselves, once the description has said what they are for. -->
-  {#if description && detail}
+  {#if !message && description && detail}
     <pre
       class="mt-1.5 max-h-24 overflow-auto whitespace-pre-wrap rounded border border-line bg-canvas px-2 py-1 font-mono text-2xs text-muted">{detail}</pre>
   {/if}

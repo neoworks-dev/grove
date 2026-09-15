@@ -50,6 +50,8 @@ export interface CreateRecordOptions {
   model: string
   thinkingLevel: ThinkingLevel
   activeTools: string[] | null
+  /** Marks the session is created with, such as the agent that spawned it. */
+  labels?: Record<string, string>
 }
 
 const META_FILE = 'meta.json'
@@ -123,7 +125,7 @@ export class SessionStore {
       thinkingLevel: options.thinkingLevel,
       activeTools: options.activeTools,
       autoApproveTools: [],
-      labels: {},
+      labels: options.labels ?? {},
       createdAt: now,
       updatedAt: now,
       resumeKey: null,

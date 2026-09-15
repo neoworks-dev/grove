@@ -16,6 +16,7 @@
     inputViewOf,
     labelFor,
     languageOfInput,
+    messageOf,
     pathLabelOf,
     resultViewOf,
     stringOf,
@@ -77,6 +78,10 @@
   // A row that leads with a file name opens that file on click.
   const filePath = $derived(fileOfCall(display, input, root))
 
+  // A message between agents: the addressee and the body, shown as a note
+  // rather than as arguments.
+  const message = $derived(messageOf(input))
+
   const edits = $derived(inputView === 'diff' ? editsOf(input) : [])
   const diffStats = $derived.by(() => {
     let added = 0
@@ -125,6 +130,10 @@
         <CaretRight width="10" height="10" weight="bold" />
       </span>
       <span class="shrink-0 font-semibold {STATUS_COLOR[item.status]}">{item.name}</span>
+      {#if inputView === 'message' && message.to}
+        <!-- Who the message is for reads better than the tool's arguments do. -->
+        <span class="shrink-0 rounded bg-blue-soft px-1 text-blue">→ {message.to}</span>
+      {/if}
       {#if pathLabel === null}
         {#if description}<span class="min-w-0 truncate text-muted">{description}</span>{/if}
         {#if detail}
@@ -179,6 +188,15 @@
             </div>
           {/each}
         {/each}
+      </div>
+    {:else if inputView === 'message'}
+      <!-- A message, laid out as one: the addressee above the body, on a card
+           tinted like the channel it travels on. -->
+      <div class="mt-1 rounded-md border border-blue/25 bg-blue-soft px-2 py-1.5">
+        {#if message.to}
+          <div class="mb-1 font-mono text-2xs text-blue">to {message.to}</div>
+        {/if}
+        <div class="whitespace-pre-wrap text-2xs text-muted">{message.text}</div>
       </div>
     {:else if inputView === 'code' || inputView === 'command'}
       <pre

@@ -273,6 +273,14 @@ class ClaudeRun implements HarnessRun {
       includePartialMessages: true,
       maxThinkingTokens: budget === 0 ? undefined : budget,
       allowedTools: this.options.activeTools ?? undefined,
+      // The CLI's own prompt still leads; grove's part is appended to it, so a
+      // session keeps every Claude Code behaviour and gains the worktree it is
+      // working in and the agents it shares that worktree with.
+      systemPrompt: {
+        type: 'preset',
+        preset: 'claude_code',
+        append: this.options.systemPrompt || undefined
+      },
       mcpServers: await this.groveServer(),
       canUseTool: async (name, input, { toolUseID }) => {
         // grove's own tools carry the policy grove gave them, so the ones that

@@ -10,8 +10,10 @@
 // cannot host tools is given none and loses only the features they add.
 
 import type { OpenFileTarget } from '../../shared/agents'
+import type { WorktreeChatMessage } from '../../shared/types'
 import type { WorktreeChannel } from '../worktreeChannel'
 import type { GroveTool } from './harness'
+import type { AgentPeer, AgentRoster } from './roster'
 
 // The surface id the intro pane watches. Changing it means changing
 // src/renderer/src/lib/intro.svelte.ts.
@@ -26,6 +28,8 @@ const MINUTE_MS = 60_000
 
 export interface GroveToolOptions {
   chat: WorktreeChannel
+  /** Who else is working in this worktree, and how to reach or start one. */
+  roster: AgentRoster
   now?: () => number
 }
 
@@ -189,7 +193,14 @@ function lineOf(entry: unknown): number | null {
   return Math.floor(line)
 }
 
-/** The shared worktree channel: one place the user and every agent can talk. */
+/**
+ * Talking to the other agents.
+ *
+ * Everything goes through the worktree's shared channel, so the user reads the
+ * same conversation the agents do. A message with a named addressee is also
+ * pushed straight into that agent's session — waiting for it to think of calling
+ * `read_messages` would make handing work over a matter of luck.
+ */
 function chatTools(options: GroveToolOptions): GroveTool[] {
   const now = options.now ?? ((): number => Date.now())
   const sendTimes: number[] = []
@@ -204,34 +215,52 @@ function chatTools(options: GroveToolOptions): GroveTool[] {
 
   const send: GroveTool = {
     name: 'send_message',
-    summary: 'Send a message to the other agents and the user in this worktree.',
+    summary: 'Send a message to another agent, or to everyone in this worktree.',
     description:
-      "Post a message on this worktree's shared channel, which the user and any other agents " +
-      'working here can read. Use it to coordinate, not to report routine progress. Address one ' +
-      'agent with "to".',
+      "Post a message on this worktree's shared channel, which the user and every other agent " +
+      'working here can read. Name an agent in "to" (as `list_agents` reports it) and the ' +
+      'message is delivered into its conversation as well, interrupting what it is doing; leave ' +
+      '"to" out to address the room. Use this to hand work over, ask for a result, or report one ' +
+      'back — not for routine progress.',
     inputSchema: {
       type: 'object',
       properties: {
         text: { type: 'string', description: 'The message to send.' },
-        to: { type: 'string', description: 'Optional agent or session to address.' }
+        to: {
+          type: 'string',
+          description: 'The agent to address, by the name `list_agents` gives it.'
+        }
       },
       required: ['text'],
       additionalProperties: false
     },
     policy: 'allow',
-    display: { label: '{text}', input: 'hidden', result: 'hidden' },
+    display: { label: '{text}', input: 'message', result: 'text' },
 
     async execute(input, context) {
       if (!withinRateLimit()) {
         return { content: 'Rate limited: too many messages in the last minute.', isError: true }
       }
+      const text = String(input.text)
+      const from = await options.roster.nameOf(context.sessionId)
+      const addressee = stringOrNothing(input.to)
+
+      const target = await resolveAddressee(options.roster, context.workspaceRoot, addressee)
+      if (target.kind === 'unknown') return target.error
+
       await options.chat.post(
         context.workspaceRoot,
-        { kind: 'agent', name: context.sessionId },
-        String(input.text),
-        stringOrNothing(input.to)
+        { kind: 'agent', name: from, instanceId: context.sessionId },
+        text,
+        target.kind === 'agent' ? target.peer.name : undefined
       )
-      return { content: 'Message sent.' }
+      if (target.kind !== 'agent') return { content: 'Posted on the channel.' }
+      if (target.peer.sessionId === context.sessionId) {
+        return { content: 'That is you; the message was posted on the channel only.' }
+      }
+
+      await options.roster.deliver(target.peer.sessionId, from, text)
+      return { content: `Delivered to ${target.peer.name}.` }
     }
   }
 
@@ -240,7 +269,8 @@ function chatTools(options: GroveToolOptions): GroveTool[] {
     summary: "Read recent messages from this worktree's shared channel.",
     description:
       "Read what the user and any other agents have posted on this worktree's shared channel. " +
-      'Pass "since" to read only what is new to you.',
+      'Pass "since" to read only what is new to you. Messages addressed to you are delivered ' +
+      'into this conversation as they are sent, so this is for catching up on the rest.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -249,22 +279,152 @@ function chatTools(options: GroveToolOptions): GroveTool[] {
       additionalProperties: false
     },
     policy: 'allow',
-    display: { label: 'channel', input: 'hidden', result: 'text' },
+    display: { label: 'channel', input: 'hidden', result: 'list' },
 
     async execute(input, context) {
       const since = typeof input.since === 'number' ? input.since : undefined
       const messages = await options.chat.list(context.workspaceRoot, since)
       if (messages.length === 0) return { content: 'No messages.' }
-      return { content: messages.map((entry) => `[${entry.from.name}] ${entry.text}`).join('\n') }
+      return { content: messages.map(channelLine).join('\n') }
     }
   }
 
-  return [send, read]
+  const list: GroveTool = {
+    name: 'list_agents',
+    summary: 'List the other agents working in this worktree.',
+    description:
+      'List every agent session in this worktree, with the name to address it by, the runtime ' +
+      'it runs on, its model and whether it is working, idle or held on a permission request. ' +
+      'Call this before handing work over, and again when an answer is overdue.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    policy: 'allow',
+    display: { label: 'agents', input: 'hidden', result: 'list' },
+
+    async execute(_input, context) {
+      const peers = await options.roster.peers(context.workspaceRoot)
+      if (peers.length === 0) return { content: 'No agents are running in this worktree.' }
+      return { content: peers.map((peer) => describePeer(peer, context.sessionId)).join('\n') }
+    }
+  }
+
+  return [send, read, list, spawnTool(options)]
+}
+
+/**
+ * Starting another agent.
+ *
+ * The only grove tool that asks before it runs: a spawned agent costs tokens and
+ * writes files on its own account, so the user decides whether one starts, the
+ * same way they decide on any other consequential call.
+ */
+function spawnTool(options: GroveToolOptions): GroveTool {
+  return {
+    name: 'spawn_agent',
+    summary: 'Start another agent in this worktree and give it a task.',
+    description:
+      'Start a new agent session in this worktree and hand it a task. Use it to run work in ' +
+      'parallel, or to put a job on a runtime better suited to it than yours. The new agent ' +
+      'shares the worktree and the message channel with you, so tell it in the prompt to report ' +
+      'back to you by name with `send_message`. It does not see this conversation: the prompt ' +
+      'has to carry everything it needs.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: {
+          type: 'string',
+          description: 'A short name for the new agent; this is what others address it by.'
+        },
+        prompt: { type: 'string', description: 'The task, in full.' },
+        harness: {
+          type: 'string',
+          description: `The runtime to run it on. One of: ${options.roster.harnessIds().join(', ')}.`
+        },
+        model: { type: 'string', description: 'Optional model id for the new session.' }
+      },
+      required: ['title', 'prompt'],
+      additionalProperties: false
+    },
+    policy: 'ask',
+    display: { label: '{title}', input: 'message', result: 'text' },
+
+    async execute(input, context) {
+      const title = String(input.title).trim()
+      const prompt = String(input.prompt)
+      if (title.length === 0 || prompt.length === 0) {
+        return { content: 'A spawned agent needs both a title and a prompt.', isError: true }
+      }
+
+      const harness = stringOrNothing(input.harness)
+      if (harness && !options.roster.harnessIds().includes(harness)) {
+        const known = options.roster.harnessIds().join(', ')
+        return { content: `Unknown harness "${harness}". Mounted: ${known}.`, isError: true }
+      }
+
+      const peer = await options.roster.spawn({
+        workspaceRoot: context.workspaceRoot,
+        title,
+        harness,
+        model: stringOrNothing(input.model),
+        prompt,
+        parentSessionId: context.sessionId
+      })
+      return {
+        content:
+          `Started ${peer.name} on ${peer.harness}. Address it by that name; ` +
+          'what it says at the end of each of its turns is delivered to you.'
+      }
+    }
+  }
+}
+
+type Addressee =
+  | { kind: 'everyone' }
+  | { kind: 'agent'; peer: AgentPeer }
+  | { kind: 'unknown'; error: { content: string; isError: true } }
+
+/** Who a message is for, or an error naming the agents that do exist. */
+async function resolveAddressee(
+  roster: AgentRoster,
+  workspaceRoot: string,
+  addressee: string | undefined
+): Promise<Addressee> {
+  if (!addressee) return { kind: 'everyone' }
+  const peer = await roster.resolve(workspaceRoot, addressee)
+  if (peer) return { kind: 'agent', peer }
+
+  const peers = await roster.peers(workspaceRoot)
+  const known = peers.map((entry) => entry.name).join(', ') || 'none'
+  return {
+    kind: 'unknown',
+    error: {
+      content: `No agent called "${addressee}" in this worktree. Running here: ${known}.`,
+      isError: true
+    }
+  }
+}
+
+/** One channel message, as the model reads it. */
+function channelLine(entry: WorktreeChatMessage): string {
+  if (!entry.to) return `[${entry.from.name}] ${entry.text}`
+  return `[${entry.from.name} → ${entry.to}] ${entry.text}`
+}
+
+/** One roster line, as the model reads it. */
+function describePeer(peer: AgentPeer, selfSessionId: string): string {
+  const parts = [peer.name, peer.harness, peer.model || 'default model', stateOf(peer)]
+  if (peer.sessionId === selfSessionId) parts.push('you')
+  return `- ${parts.join(' · ')}`
+}
+
+function stateOf(peer: AgentPeer): string {
+  if (peer.waiting) return 'held on a permission request'
+  if (peer.status === 'running') return 'working'
+  return peer.status
 }
 
 /** Tool inputs arrive unvalidated; an addressee that is not a string has none. */
 function stringOrNothing(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined
+  if (typeof value !== 'string' || value.trim().length === 0) return undefined
   return value
 }
 

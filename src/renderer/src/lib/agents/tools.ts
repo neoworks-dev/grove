@@ -286,3 +286,26 @@ export function editsOf(input: unknown): EditReplacement[] {
   }
   return edits
 }
+
+export interface MessageCall {
+  /** The agent being addressed, or null when the message is for the room. */
+  to: string | null
+  text: string
+}
+
+/**
+ * A call that is really a message: one addressee and one body.
+ *
+ * Covers both shapes grove's inter-agent tools use — `to`/`text` for a message
+ * and `title`/`prompt` for a spawned agent's brief — so the transcript can show
+ * either as what it is rather than as a blob of JSON.
+ */
+export function messageOf(input: unknown): MessageCall {
+  const fields = asRecord(input)
+  if (fields === null) {
+    return { to: null, text: '' }
+  }
+  const to = stringOf(fields.to) || stringOf(fields.title)
+  const text = stringOf(fields.text) || stringOf(fields.prompt)
+  return { to: to.length > 0 ? to : null, text }
+}

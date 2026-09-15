@@ -50,8 +50,8 @@
     contextTokens: number
     onPickHarness: (harness: string) => void
     onPickModel: (provider: string, model: string) => void
-    /** Ask the user for a credential a route needs before it can be taken. */
-    onRequestKey: (variables: string[]) => void
+    /** Ask the user for the key a route needs before it can be taken. */
+    onRequestKey: (request: { provider: string; variables: string[] }) => void
     onPickThinking: (level: ThinkingLevel) => void
     onPickMode: (mode: AgentMode) => void
     onSetReview: (key: string, value: string | boolean) => void
@@ -213,8 +213,8 @@
           onPickModel(pickedProvider, pickedModel)
           close()
         }}
-        onRequestKey={(variables) => {
-          onRequestKey(variables)
+        onRequestKey={(request) => {
+          onRequestKey(request)
           close()
         }}
       />

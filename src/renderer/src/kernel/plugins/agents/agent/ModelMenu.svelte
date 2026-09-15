@@ -7,15 +7,18 @@
   // one route worth taking, so routes are drawn for the model a session is on
   // and nowhere else; picking any other model takes its best route.
   //
-  // What the account itself can run is a handful of models. The catalog knows
-  // fifty more, which is worth having and not worth scrolling past, so they sit
-  // behind a fold that any search opens.
+  // What separates the list from the fold is whose account pays. Everything on
+  // the sign-in grove already has is shown, whether or not the harness listed
+  // it: the harness lists a handful of aliases, the same endpoint serves the
+  // rest of the plan, and both run. Models that would be billed to somebody
+  // else's account sit behind a fold that any search opens.
 
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
   import {
     matchesQuery,
     preferredRoute,
-    routeNeedsKey
+    routeNeedsKey,
+    routeUsesOwnSignIn
   } from '../../../../lib/agents/modelSelection'
   import type { ModelEntry, ModelRoute } from '../../../../lib/agents/types'
 
@@ -34,8 +37,8 @@
     /** What a switch costs, when there is a conversation to re-read. */
     switchCostWarning: string
     onPick: (provider: string, model: string) => void
-    /** Ask for a credential a route needs before it can be taken. */
-    onRequestKey: (variables: string[]) => void
+    /** Ask for the key a route needs before it can be taken. */
+    onRequestKey: (request: { provider: string; variables: string[] }) => void
   } = $props()
 
   let query = $state('')
@@ -43,11 +46,11 @@
 
   const matching = $derived(models.filter((entry) => matchesQuery(entry, query)))
 
-  /** What the signed-in account can run: the short list, always shown. */
-  const account = $derived(matching.filter((entry) => entry.routes.some((route) => route.native)))
+  /** Reachable on the sign-in grove already has: shown, harness-listed first. */
+  const account = $derived(matching.filter((entry) => entry.routes.some(routeUsesOwnSignIn)))
 
-  /** Everything else the catalog knows, behind the fold until it is asked for. */
-  const rest = $derived(matching.filter((entry) => !entry.routes.some((route) => route.native)))
+  /** Models that would be billed to another account, behind the fold. */
+  const rest = $derived(matching.filter((entry) => !entry.routes.some(routeUsesOwnSignIn)))
 
   // A search is a request to look past the account's own models.
   const restOpen = $derived(showAll || query.trim().length > 0)
@@ -78,20 +81,52 @@
 
   function pickRoute(route: ModelRoute): void {
     if (routeNeedsKey(route) && route.credential) {
-      onRequestKey(route.credential.env)
+      onRequestKey({
+        provider: route.providerLabel ?? route.provider,
+        variables: route.credential.env
+      })
       return
     }
     onPick(route.provider, route.id)
   }
 
-  /** Context window and price, the way model cards quote them. */
+  /**
+   * Context window and price for the route a row would take.
+   *
+   * Both belong to the route rather than the model: Bedrock and a coding-plan
+   * endpoint charge their own rates for the same weights, so the number shown
+   * is the one the session would actually be billed at.
+   */
   function metaLabel(entry: ModelEntry): string {
     const route = preferredRoute(entry)
     if (!route) return ''
+    return routeMeta(route)
+  }
+
+  function routeMeta(route: ModelRoute): string {
     const parts: string[] = []
     if (route.contextWindow) parts.push(contextLabel(route.contextWindow))
-    if (route.pricing) parts.push(`$${route.pricing.input}/$${route.pricing.output}`)
+    if (route.pricing) parts.push(priceLabel(route))
     return parts.join('  ')
+  }
+
+  function priceLabel(route: ModelRoute): string {
+    if (!route.pricing) return ''
+    return `$${route.pricing.input}/$${route.pricing.output}`
+  }
+
+  /**
+   * Whether a route is worth quoting its own price next to.
+   *
+   * Only when it differs from what this row already says, which is how a
+   * cheaper or dearer seller becomes visible without pricing every route on
+   * every row.
+   */
+  function showsOwnPrice(entry: ModelEntry, route: ModelRoute): boolean {
+    const preferred = preferredRoute(entry)
+    if (!preferred || preferred === route) return false
+    if (!route.pricing) return false
+    return priceLabel(route) !== priceLabel(preferred)
   }
 
   function contextLabel(tokens: number): string {
@@ -101,6 +136,8 @@
 
   function routeTitle(route: ModelRoute): string {
     const parts = [route.id]
+    const meta = routeMeta(route)
+    if (meta) parts.push(meta)
     if (route.endpoint) parts.push(route.endpoint)
     if (route.credential?.kind === 'platform') {
       parts.push(`signs in with your ${route.credential.env[0]?.split('_')[0]} credentials`)
@@ -137,6 +174,9 @@
           >
             {#if routeNeedsKey(route)}<span class="text-amber">+key</span>{/if}
             {route.provider}
+            {#if showsOwnPrice(entry, route)}
+              <span class="text-dim">{priceLabel(route)}</span>
+            {/if}
           </button>
         {/each}
       </div>
@@ -183,7 +223,7 @@
           onclick={() => (showAll = !restOpen)}
         >
           <span>{restOpen ? '▾' : '▸'}</span>
-          <span>{rest.length} more from other providers</span>
+          <span>{rest.length} more, billed to another account</span>
         </button>
         {#if restOpen}
           {#each rest as entry (entry.key)}

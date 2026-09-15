@@ -52,6 +52,9 @@ import { HarnessRegistry } from './agents/harness'
 import { SessionStore } from './agents/store'
 import { AgentService } from './agents/service'
 import { AgentReviewBridge } from './agents/reviewBridge'
+import { AgentHandoffBridge } from './agents/handoffBridge'
+import { AgentRoster } from './agents/roster'
+import { groveSystemPrompt } from './agents/systemPrompt'
 import { groveTools } from './agents/tools'
 
 interface RepoContext {
@@ -140,10 +143,32 @@ const sessionStore = new SessionStore(join(app.getPath('userData'), 'agents'), (
 const agents = new AgentService({
   store: sessionStore,
   harnesses,
-  tools: () => groveTools({ chat: channel }),
+  tools: () => groveTools({ chat: channel, roster: agentRoster }),
+  systemPrompt: (session) => buildSystemPrompt(session.id, session.workspaceRoot),
   publish: (event) => send('event:agent-event', event),
   defaultHarness: () => settings.get<string>('workbench.agentHarness')
 })
+
+// Names the sessions in a worktree, delivers between them, and starts new ones:
+// what grove's inter-agent tools are built on.
+const agentRoster = new AgentRoster({ agents, harnesses })
+
+/** grove's part of a session's system prompt: its name here, and who else is here. */
+async function buildSystemPrompt(sessionId: string, workspaceRoot: string): Promise<string> {
+  const [name, peers] = await Promise.all([
+    agentRoster.nameOf(sessionId),
+    agentRoster.peers(workspaceRoot)
+  ])
+  return groveSystemPrompt({
+    name,
+    workspaceRoot,
+    peers,
+    harnesses: agentRoster.harnessIds()
+  })
+}
+
+// Hands a spawned agent's closing words back to the agent that started it.
+const agentHandoffBridge = new AgentHandoffBridge({ store: sessionStore, roster: agentRoster })
 
 // Watches the event log so a review keeps blocking the agent whether or not the
 // agent pane is open.
@@ -589,6 +614,10 @@ const mainServices = {
     // The review bridge follows the log for the life of the process: a gated
     // write blocks the agent whether or not any pane is watching.
     ctx.effect(() => agentReviewBridge.watch(), 'agents:review-bridge')
+
+    // A spawned agent reports back when it finishes a turn, whether or not
+    // anyone is looking at either pane.
+    ctx.effect(() => agentHandoffBridge.watch(), 'agents:handoff-bridge')
 
     // One-time startup work that belongs to no single route domain: the local
     // API socket external apps connect over, and the user settings file.

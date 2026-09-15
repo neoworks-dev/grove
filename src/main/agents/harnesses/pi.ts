@@ -50,6 +50,7 @@ class PiRun implements HarnessRun {
   private session: AgentSession | null = null
   private unsubscribe: (() => void) | null = null
   private policies: Map<string, ToolPolicy>
+  private contextSent = false
 
   constructor(
     private options: HarnessRunOptions,
@@ -94,7 +95,21 @@ class PiRun implements HarnessRun {
     const session = this.session
     if (!session) throw new Error('the pi harness is not running')
     this.options.emit({ type: 'session.status_running' })
-    await session.prompt(text)
+    await session.prompt(this.withGroveContext(text))
+  }
+
+  /**
+   * grove's system prompt, carried on the first turn.
+   *
+   * pi builds its system prompt from its own resources and exposes no way to
+   * append to it, so what grove has to say rides along with the opening message
+   * instead. Sent once per run: everything after it is in the conversation.
+   */
+  private withGroveContext(text: string): string {
+    const context = this.options.systemPrompt
+    if (!context || this.contextSent) return text
+    this.contextSent = true
+    return `<grove-context>\n${context}\n</grove-context>\n\n${text}`
   }
 
   async steer(text: string, deliverAs: 'steer' | 'followUp'): Promise<void> {

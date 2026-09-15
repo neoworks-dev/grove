@@ -19,8 +19,19 @@ const CHANNEL = {
   }
 }
 
+const ROSTER = {
+  peers(): Promise<[]> {
+    return Promise.resolve([])
+  },
+  harnessIds(): string[] {
+    return ['claude']
+  }
+}
+
 function openFilesTool(): GroveTool {
-  const tool = groveTools({ chat: CHANNEL as never }).find((entry) => entry.name === 'open_files')
+  const tool = groveTools({ chat: CHANNEL as never, roster: ROSTER as never }).find(
+    (entry) => entry.name === 'open_files'
+  )
   if (!tool) throw new Error('open_files is not offered')
   return tool
 }

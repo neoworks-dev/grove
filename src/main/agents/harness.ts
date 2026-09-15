@@ -92,6 +92,13 @@ export interface HarnessRunOptions {
   /** The harness-native conversation id from a previous grove run, if any. */
   resumeKey: string | null
   tools: GroveTool[]
+  /**
+   * What grove has to say about the worktree this session runs in — its name
+   * among the agents working there and the tools for talking to them. Appended
+   * to whatever system prompt the runtime brings; a harness that cannot append
+   * one ignores it and loses only the coordination.
+   */
+  systemPrompt: string
   /** Report progress. The store stamps and persists whatever is emitted. */
   emit(body: ServerEventBody): void
   /**

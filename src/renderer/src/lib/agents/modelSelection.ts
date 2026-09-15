@@ -61,10 +61,24 @@ export function findRoute(
   return null
 }
 
-/** Whether a route can be taken right now, or is waiting for a credential. */
+/**
+ * Whether a route can be taken without grove asking for anything first.
+ *
+ * A cloud sign-in counts: an AWS profile or application-default credentials are
+ * resolved outside grove, so there is nothing to ask for and nothing to check —
+ * if they are missing, the turn is where that shows.
+ */
 export function routeReady(route: ModelRoute): boolean {
   if (!route.credential) return true
+  if (route.credential.kind === 'platform') return true
   return route.credential.present
+}
+
+/** Whether taking this route means asking the user for a key first. */
+export function routeNeedsKey(route: ModelRoute): boolean {
+  if (!route.credential) return false
+  if (route.credential.kind !== 'key') return false
+  return !route.credential.present
 }
 
 /**

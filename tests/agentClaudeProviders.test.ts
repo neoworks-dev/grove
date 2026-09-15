@@ -106,10 +106,30 @@ describe('claude harness models', () => {
     expect(bedrockIds).toEqual(['us.anthropic.claude-opus-5'])
   })
 
-  test('reports whether a route has a credential yet', () => {
+  test('reports whether a route has a key yet', () => {
     const missing = entryFor('k3')?.routes[0]
-    expect(missing?.credential).toEqual({ env: ['KIMI_API_KEY'], present: false })
+    expect(missing?.credential).toEqual({ kind: 'key', env: ['KIMI_API_KEY'], present: false })
     expect(entryFor('k3', everyCredential)?.routes[0].credential?.present).toBe(true)
+  })
+
+  test("asks for nothing on Anthropic's own endpoint, which the CLI signs into", () => {
+    const anthropic = entryFor('claude-opus-5')?.routes.find(
+      (route) => route.provider === 'anthropic'
+    )
+    expect(anthropic?.credential).toBeUndefined()
+  })
+
+  test('calls a cloud platform a sign-in rather than a key to paste', () => {
+    const bedrock = entryFor('claude-opus-5')?.routes.find(
+      (route) => route.provider === 'amazon-bedrock'
+    )
+    expect(bedrock?.credential?.kind).toBe('platform')
+  })
+
+  test('reads a regional platform listing as the model it is', () => {
+    // Bedrock lists this per region; without normalising the region away it is
+    // a separate model in the picker, named after the region.
+    expect(normalizeModelId('au.anthropic.claude-opus-4-6-v1')).toBe('claude-opus-4-6')
   })
 
   test('puts what the account can run first', () => {

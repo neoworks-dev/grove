@@ -276,11 +276,19 @@ export interface ModelPricing {
   contextWindow?: number
 }
 
-/** What a route needs before a session can take it. */
+/**
+ * What a route needs before a session can take it.
+ *
+ * `key` is a single secret grove can hold and hand over. `platform` is a cloud
+ * sign-in resolved outside grove — an AWS profile, instance role or Google
+ * application-default credentials — which grove can neither store nor check, so
+ * it is stated rather than demanded.
+ */
 export interface ProviderCredential {
-  /** The environment variables the harness reads the credential from. */
+  kind: 'key' | 'platform'
+  /** The environment variables the credential is read from. */
   env: string[]
-  /** Whether grove has one right now, in the environment or in its own store. */
+  /** Whether grove has one right now. Always false for a `platform` sign-in. */
   present: boolean
 }
 

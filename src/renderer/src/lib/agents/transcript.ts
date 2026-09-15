@@ -183,6 +183,20 @@ export function agentIdIn(sender: string): string | null {
   return match[1]
 }
 
+/**
+ * Is this event something a person would call new?
+ *
+ * A session running in the background produces dozens of events a turn —
+ * statuses, tool calls, one per streamed fragment — and counting them all turned
+ * the unread badge into an event counter: "31 new" for a single answer. Only
+ * what someone would read as a message counts.
+ */
+export function isUnreadEvent(event: SessionEvent): boolean {
+  if (event.type === 'agent.message_end') return true
+  if (event.type === 'app.message') return true
+  return false
+}
+
 /** The tool calls the agent is blocked on. */
 export function pendingApprovals(state: TranscriptState): ToolItem[] {
   return visibleItems(state).filter(

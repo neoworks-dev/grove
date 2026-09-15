@@ -51,6 +51,8 @@ class PiRun implements HarnessRun {
   private unsubscribe: (() => void) | null = null
   private policies: Map<string, ToolPolicy>
   private contextSent = false
+  // Set when a message came back as a failed request, so the turn can end saying so.
+  private turnFailed = false
 
   constructor(
     private options: HarnessRunOptions,
@@ -227,8 +229,19 @@ class PiRun implements HarnessRun {
       return
     }
     if (event.type === 'agent_end') {
-      this.options.emit({ type: 'session.status_idle', stopReason: 'end_turn' })
+      this.endTurn()
     }
+  }
+
+  /** A turn that ended on a failed request must not read as one that answered. */
+  private endTurn(): void {
+    const failed = this.turnFailed
+    this.turnFailed = false
+    if (failed) {
+      this.options.emit({ type: 'session.status_idle', stopReason: 'error' })
+      return
+    }
+    this.options.emit({ type: 'session.status_idle', stopReason: 'end_turn' })
   }
 
   /**
@@ -240,6 +253,12 @@ class PiRun implements HarnessRun {
    * delta stream alone leaves them with nothing to quote.
    */
   private handleMessageEnd(message: unknown): void {
+    const failure = failureOf(message)
+    if (failure) {
+      this.turnFailed = true
+      this.options.emit({ type: 'session.error', message: failure })
+      return
+    }
     const text = assistantTextOf(message)
     if (!text) return
     this.options.emit({
@@ -316,6 +335,24 @@ export function proposedContent(
     text = text.replace(entry.oldText, entry.newText)
   }
   return text
+}
+
+/**
+ * Why a message failed, or nothing when it did not.
+ *
+ * pi reports a failed provider request as an assistant message that stopped on
+ * `error` and carries the reason — an expired token, a model the account cannot
+ * use. Without this the run simply went quiet: an empty answer, an idle session
+ * and nothing anywhere saying why.
+ */
+function failureOf(message: unknown): string | null {
+  if (typeof message !== 'object' || message === null) return null
+  const record = message as { stopReason?: unknown; errorMessage?: unknown }
+  if (record.stopReason !== 'error') return null
+  if (typeof record.errorMessage === 'string' && record.errorMessage.length > 0) {
+    return record.errorMessage
+  }
+  return 'the runtime ended the turn with an error'
 }
 
 /**

@@ -23,7 +23,13 @@ import { openStream } from './stream'
 import { autoDecisionFor, type AgentMode } from './modes'
 import { settings } from '../settings.svelte'
 import { openFileAtLine, openFileInEditor, store } from '../store.svelte'
-import { applyEvent, createTranscript, pendingApprovals, type TranscriptState } from './transcript'
+import {
+  applyEvent,
+  createTranscript,
+  isUnreadEvent,
+  pendingApprovals,
+  type TranscriptState
+} from './transcript'
 import type {
   ClientEventBody,
   CreateSessionOptions,
@@ -398,7 +404,7 @@ class AgentSessions {
   private attach(session: LiveSession): void {
     const close = openStream(session.id, session.transcript.lastSeq, (event) => {
       applyEvent(session.transcript, event)
-      if (this.viewing !== session.id) session.unread += 1
+      if (this.viewing !== session.id && isUnreadEvent(event)) session.unread += 1
       if (event.type === 'agent.tool_use') this.applyMode(session.id, event)
       if (event.type === 'ui.open_files') this.openFiles(session.id, event.files)
       // Usage and the queue only live in the snapshot, so a turn boundary is

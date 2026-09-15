@@ -690,7 +690,7 @@
     {/if}
 
     {#if running && !overviewOpen}
-      <AgentWorkingBar message="Working…" tokensLabel={contextLabel} />
+      <AgentWorkingBar tokensLabel={contextLabel} />
     {/if}
 
     {#if queued.length > 0 && !overviewOpen}

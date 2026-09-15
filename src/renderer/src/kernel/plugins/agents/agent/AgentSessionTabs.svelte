@@ -10,7 +10,7 @@
   // of the one that started it rather than as an unrelated tab beside it.
 
   import AgentLogo from '../../../../components/AgentLogo.svelte'
-  import WaveSpinner from '../../../../components/WaveSpinner.svelte'
+  import BusySpark from '../../../../components/BusySpark.svelte'
   import { sessionFamilies } from '../../../../lib/agents/sessionTree'
   import type { SessionBadge } from '../../../../lib/agents/sessions.svelte'
   import type { SessionMeta } from '../../../../lib/agents/types'
@@ -84,7 +84,7 @@
             <AgentLogo harness={session.harness} size={13} {active} />
             <span class="max-w-[12rem] truncate">{titleOf(session)}</span>
             {#if badge === 'running'}
-              <span class="text-green"><WaveSpinner count={3} /></span>
+              <span class="text-green"><BusySpark size={10} /></span>
             {:else if badge === 'requires_action'}
               <span class="text-amber" title="Waiting for you">●</span>
             {:else if badge === 'error'}

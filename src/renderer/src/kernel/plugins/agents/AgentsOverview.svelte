@@ -15,7 +15,7 @@
     sessionStatusColor,
     diffStatLabel
   } from '../../../lib/worktreeStatus'
-  import WaveSpinner from '../../../components/WaveSpinner.svelte'
+  import BusySpark from '../../../components/BusySpark.svelte'
   import type { SessionMeta } from '../../../lib/agents/types'
 
   // The session listing is polled centrally; this keeps it live while the
@@ -86,7 +86,7 @@
                 <span class="truncate text-xs font-medium text-default">{titleOf(session)}</span>
                 <span class="truncate text-2xs text-muted">{session.model}</span>
                 {#if working}
-                  <span class="text-green"><WaveSpinner count={3} /></span>
+                  <span class="text-green"><BusySpark size={10} /></span>
                 {/if}
                 {#if perm}
                   <span class="ml-auto shrink-0 text-2xs text-amber" title="Waiting on permission"

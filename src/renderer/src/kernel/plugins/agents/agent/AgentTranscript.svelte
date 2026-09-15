@@ -25,7 +25,6 @@
   import { agentIdIn, senderOf } from '../../../../lib/agents/transcript'
   import type { TranscriptItem } from '../../../../lib/agents/transcript'
   import type { ToolInfo } from '../../../../lib/agents/types'
-  import ShimmerText from '../../../../components/ShimmerText.svelte'
   import AgentToolCall from './AgentToolCall.svelte'
   import AgentSurface from './AgentSurface.svelte'
 
@@ -380,10 +379,6 @@
         {/each}
       </div>
     {/each}
-    {#if thinking}
-      <!-- Sits at the end of the conversation, where the answer will appear. -->
-      <div class="mb-3"><ShimmerText text="Thinking…" class="text-xs" /></div>
-    {/if}
     {#if items.length === 0 && !thinking}
       <p class="text-dim">Nothing yet. Write a prompt below.</p>
     {/if}

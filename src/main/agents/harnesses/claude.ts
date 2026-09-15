@@ -768,7 +768,7 @@ function addRoute(
     ranks.set(key, label ? labelRank : -1)
     return
   }
-  if (label && labelRank > (ranks.get(key) ?? -1)) {
+  if (label && isBetterLabel(entry.label, label, labelRank, ranks.get(key) ?? -1)) {
     entry.label = label
     ranks.set(key, labelRank)
   }
@@ -779,6 +779,24 @@ function addRoute(
     return
   }
   entry.routes[existing] = mergeRoutes(entry.routes[existing], route)
+}
+
+/**
+ * Whether a name should replace the one an entry carries.
+ *
+ * Rank decides it, and where two sources rank the same the shorter name wins:
+ * the catalog lists a moving id and the snapshot it points at as "Claude Haiku
+ * 4.5 (latest)" and "Claude Haiku 4.5", and they are the same model.
+ */
+function isBetterLabel(
+  current: string,
+  candidate: string,
+  candidateRank: number,
+  currentRank: number
+): boolean {
+  if (candidateRank > currentRank) return true
+  if (candidateRank < currentRank) return false
+  return candidate.length < current.length
 }
 
 /** The blessed route, told whatever the other one knew about the model. */
@@ -801,12 +819,17 @@ function mergeRoutes(left: ModelRoute, right: ModelRoute): ModelRoute {
  * survive: they are a different model to run.
  */
 export function normalizeModelId(id: string): string {
-  return id
-    .replace(/^[a-z0-9-]+\.anthropic\./, '')
-    .replace(/^anthropic\./, '')
-    .replace(/@.*$/, '')
-    .replace(/-v\d+(?::\d+)?$/, '')
-    .toLowerCase()
+  return (
+    id
+      .replace(/^[a-z0-9-]+\.anthropic\./, '')
+      .replace(/^anthropic\./, '')
+      .replace(/@.*$/, '')
+      .replace(/-v\d+(?::\d+)?$/, '')
+      // A dated snapshot is the same model as the moving id that points at it:
+      // `claude-haiku-4-5-20251001` and `claude-haiku-4-5` are one row, not two.
+      .replace(/-\d{8}$/, '')
+      .toLowerCase()
+  )
 }
 
 /** Entries the account can run come first; the rest read alphabetically. */

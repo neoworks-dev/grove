@@ -63,6 +63,10 @@ const VERTEX_SDK = '@ai-sdk/google-vertex/anthropic'
 // driven from here, and the catalog names the line in `family`.
 const CLAUDE_FAMILY = 'claude'
 
+// The CLI's alias for "whatever is recommended right now". It is a way to reach
+// a model rather than a name for one, so it never names an entry.
+const RECOMMENDED_ALIAS = 'default'
+
 // The MCP server grove's own tools are published under. The model sees them as
 // `mcp__grove__<name>`, which is what the intent matcher below strips back off.
 const GROVE_SERVER = 'grove'
@@ -680,11 +684,14 @@ interface KeyedRoute {
   route: ModelRoute
 }
 
-// Label ranks, lowest first: a platform's own listing name, then the name the
-// account's CLI uses, then Anthropic's.
+// Label ranks, lowest first: a platform's own listing name ("AU Anthropic
+// Claude Opus 4.6"), then the recommendation alias, which names no model at
+// all, then the alias that does name one ("Opus (1M context)"), then
+// Anthropic's own name for it.
 const RANK_PLATFORM = 0
-const RANK_NATIVE = 1
-const RANK_ANTHROPIC = 2
+const RANK_RECOMMENDED_ALIAS = 1
+const RANK_NATIVE = 2
+const RANK_ANTHROPIC = 3
 
 function collectRoutes(
   models: SdkModelInfo[],
@@ -714,10 +721,11 @@ function routeFromCli(model: SdkModelInfo): KeyedRoute {
   const resolved = model.resolvedModel ?? model.value
   return {
     key: normalizeModelId(resolved),
-    // An alias names itself, not the model, so it cannot name the entry. When
-    // the CLI reports no wire model, the alias is all there is to go on.
-    label: model.resolvedModel ? null : model.displayName,
-    labelRank: RANK_NATIVE,
+    // An alias mostly names the model well enough to stand in until the catalog
+    // offers Anthropic's own name — except `default`, which names only the fact
+    // that the CLI recommends it, and would still read that way next release.
+    label: model.displayName,
+    labelRank: model.value === RECOMMENDED_ALIAS ? RANK_RECOMMENDED_ALIAS : RANK_NATIVE,
     route: {
       provider: PROVIDER,
       providerLabel: 'Anthropic',
@@ -750,11 +758,16 @@ function routeFromCatalog(
 }
 
 /**
- * File one route under its model, keeping at most one route per provider.
+ * File one route under its model.
  *
- * A model reachable both through the account's own alias and through the
- * catalog's wire id is one route, not two: the alias is what the CLI blesses,
- * so it wins and the catalog's copy only fills in what it knows.
+ * Every route the CLI itself listed is kept, even when two of them reach the
+ * same model: `default` and `opus[1m]` both resolve to Claude Opus 5 with a 1M
+ * window, and they are two things a person can pick — one follows whatever the
+ * CLI recommends, the other names the model. Dropping either loses a choice the
+ * account has.
+ *
+ * What is dropped is the catalog's own copy of a route the CLI already covers:
+ * the same endpoint under the wire id, which would list Anthropic twice.
  */
 function addRoute(
   entries: Map<string, ModelEntry>,
@@ -773,12 +786,28 @@ function addRoute(
     ranks.set(key, labelRank)
   }
 
-  const existing = entry.routes.findIndex((candidate) => candidate.provider === route.provider)
-  if (existing === -1) {
-    entry.routes.push(route)
+  const sameRoute = entry.routes.findIndex(
+    (candidate) => candidate.provider === route.provider && candidate.id === route.id
+  )
+  if (sameRoute !== -1) {
+    entry.routes[sameRoute] = mergeRoutes(entry.routes[sameRoute], route)
     return
   }
-  entry.routes[existing] = mergeRoutes(entry.routes[existing], route)
+
+  // A catalog row for a provider the CLI already reaches this model through is
+  // that same route under another name; the blessed one keeps the slot, and
+  // learns the price and context window the catalog knows.
+  if (!route.native) {
+    const native = entry.routes.findIndex(
+      (candidate) => candidate.native && candidate.provider === route.provider
+    )
+    if (native !== -1) {
+      entry.routes[native] = mergeRoutes(entry.routes[native], route)
+      return
+    }
+  }
+
+  entry.routes.push(route)
 }
 
 /**

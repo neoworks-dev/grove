@@ -7,9 +7,12 @@
   // reads a stored key back — the renderer only ever learns that one exists.
 
   let {
+    provider,
     variables,
     onClose
   }: {
+    /** Whose key this is — the keys differ per provider, so the name matters. */
+    provider: string
     /** The environment variable names the route will accept, in order. */
     variables: string[]
     /** Told whether anything was stored, so the catalog can be re-read. */
@@ -50,10 +53,12 @@
 
 <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
   <div class="w-96 rounded-md border border-line bg-elevated p-3 shadow-lg">
-    <div class="text-xs font-medium text-default">Credential needed</div>
+    <div class="text-xs font-medium text-default">{provider} needs a key</div>
     <p class="mt-1 text-2xs leading-snug text-dim">
-      This route signs in with <span class="font-mono text-default">{name}</span>. Grove stores it
-      encrypted with the OS keychain, and never reads it back into the interface.
+      Sessions on this provider sign in with
+      <span class="font-mono text-default">{name}</span>, which is that provider's own key and no
+      other's. Grove stores it encrypted with the OS keychain, and never reads it back into the
+      interface.
     </p>
 
     {#if storable}

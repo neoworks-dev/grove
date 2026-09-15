@@ -74,6 +74,18 @@ export function routeReady(route: ModelRoute): boolean {
   return route.credential.present
 }
 
+/**
+ * Whether a route rides on the sign-in the harness already has.
+ *
+ * A route that asks grove for nothing is one the account is already logged in
+ * for — Claude Code's own endpoint, whether or not the CLI happened to list the
+ * model. That, not what the CLI enumerates, is what separates "models I can run
+ * now" from "models that need another account".
+ */
+export function routeUsesOwnSignIn(route: ModelRoute): boolean {
+  return route.credential === undefined
+}
+
 /** Whether taking this route means asking the user for a key first. */
 export function routeNeedsKey(route: ModelRoute): boolean {
   if (!route.credential) return false

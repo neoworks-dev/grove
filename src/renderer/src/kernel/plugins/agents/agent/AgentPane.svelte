@@ -345,11 +345,11 @@
     void agentSessions.update(activeId, { provider, model })
   }
 
-  // The variables a route asked for, while the dialog collecting one is open.
-  let credentialRequest = $state<string[] | null>(null)
+  // The provider and variables a route asked for, while its dialog is open.
+  let credentialRequest = $state<{ provider: string; variables: string[] } | null>(null)
 
-  function requestCredential(variables: string[]): void {
-    credentialRequest = variables
+  function requestCredential(request: { provider: string; variables: string[] }): void {
+    credentialRequest = request
   }
 
   /** A stored key changes which routes are ready, so the catalog is re-read. */
@@ -838,5 +838,9 @@
 </div>
 
 {#if credentialRequest}
-  <CredentialPrompt variables={credentialRequest} onClose={closeCredentialPrompt} />
+  <CredentialPrompt
+    provider={credentialRequest.provider}
+    variables={credentialRequest.variables}
+    onClose={closeCredentialPrompt}
+  />
 {/if}

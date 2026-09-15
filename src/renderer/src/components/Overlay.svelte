@@ -10,7 +10,7 @@
   import { stepFromEvent, stepMatchesSequence } from '../lib/keySequence'
   import { fileIcon } from '../lib/icons'
   import { highlightCode, type HighlightedToken } from '../lib/highlight'
-  import { languageOfPath } from '../lib/agents/tools'
+  import { languageOfPath, pathLabelOf } from '../lib/agents/tools'
   import { store } from '../lib/store.svelte'
 
   // 'file:<name>' resolves through the active icon pack (plugins can't call
@@ -34,6 +34,22 @@
       // Prefilled query (e.g. rename): select it so typing replaces the name.
       if (descriptor.initialQuery) inputEl?.select()
     })
+  })
+
+  // Scrolling to the end of the list draws the next page of what has already
+  // arrived. The margin is a screenful, so the rows are there before the scroll
+  // reaches them.
+  const REVEAL_MARGIN_PX = 400
+
+  $effect(() => {
+    const viewport = listViewport
+    if (!viewport) return
+    const onScroll = (): void => {
+      const remaining = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight
+      if (remaining <= REVEAL_MARGIN_PX) overlays.revealMore()
+    }
+    viewport.addEventListener('scroll', onScroll, { passive: true })
+    return () => viewport.removeEventListener('scroll', onScroll)
   })
 
   // Keep the active result visible as arrow keys move the selection; the list
@@ -186,12 +202,29 @@
                 {#if item.icon}
                   <Icon icon={resolveIcon(item.icon)} width="16" height="16" class="shrink-0" />
                 {/if}
-                <span class="min-w-0 flex-1 truncate text-xs {active ? 'text-default' : 'text-muted'}">
-                  {item.label}
-                  {#if item.description}
-                    <span class="text-dim">{item.description}</span>
-                  {/if}
-                </span>
+                <!-- A path leads with its file name: truncating a label cuts the
+                     end off, and the end of a path is the part being looked for. -->
+                {@const path = pathLabelOf(item.label, '')}
+                {#if path && path.directory}
+                  <span class="flex min-w-0 flex-1 items-baseline gap-1.5">
+                    <span class="shrink-0 text-xs {active ? 'text-default' : 'text-muted'}">
+                      {path.name}
+                    </span>
+                    {#if item.description}
+                      <span class="shrink-0 text-2xs text-dim">{item.description}</span>
+                    {/if}
+                    <span class="truncate text-2xs text-faint">{path.directory}</span>
+                  </span>
+                {:else}
+                  <span
+                    class="min-w-0 flex-1 truncate text-xs {active ? 'text-default' : 'text-muted'}"
+                  >
+                    {item.label}
+                    {#if item.description}
+                      <span class="text-dim">{item.description}</span>
+                    {/if}
+                  </span>
+                {/if}
                 {#if item.detail}
                   <span class="max-w-[45%] shrink-0 truncate text-2xs text-dim">{item.detail}</span>
                 {/if}
@@ -204,11 +237,11 @@
           {#if overlays.items.length === 0}
             <p class="px-3 py-4 text-xs text-dim">No results.</p>
           {/if}
-          <!-- The list stops before the matches do; say so rather than letting
-               the last row read as the last match. -->
-          {#if overlays.capped}
+          <!-- Scrolling draws more of what arrived; past what is held, there is
+               nothing to scroll to and the search wants narrowing instead. -->
+          {#if overlays.capped && !overlays.hasMore}
             <p class="px-3 py-1.5 text-2xs text-dim">
-              Showing the first {overlays.items.length} — narrow the search for the rest.
+              More was found than is kept — narrow the search for the rest.
             </p>
           {/if}
           </div>
@@ -218,14 +251,21 @@
           <FloatingScrollbar class="min-h-0 w-1/2" bind:viewport={previewViewport}>
             <div>
             {#if overlays.preview?.kind === 'excerpt'}
-              <div class="border-b border-line px-3 py-1.5 font-mono text-2xs text-dim">
+              <!-- The excerpt scrolls; which file it is from does not. -->
+              <div
+                class="sticky top-0 z-10 truncate border-b border-line bg-surface px-3 py-1.5 font-mono text-2xs text-dim"
+              >
                 {overlays.preview.file}
               </div>
               <pre class="p-0 font-mono text-2xs leading-relaxed">{#each overlays.preview.lines as line, index (line.n)}<span
                     data-highlight={line.n === overlays.preview.highlightLine}
-                    class="block px-3 {line.n === overlays.preview.highlightLine
-                      ? 'bg-hover'
-                      : ''}"><span class="mr-3 inline-block w-8 text-right text-faint">{line.n}</span>{#if highlighted[index]}{#each highlighted[index] as token, tokenIndex (tokenIndex)}<span
+                    class="block border-l-2 pl-1 pr-3 {line.n === overlays.preview.highlightLine
+                      ? 'border-amber bg-amber-soft'
+                      : 'border-transparent'}"><span
+                      class="mr-3 inline-block w-8 text-right {line.n ===
+                      overlays.preview.highlightLine
+                        ? 'text-amber'
+                        : 'text-faint'}">{line.n}</span>{#if highlighted[index]}{#each highlighted[index] as token, tokenIndex (tokenIndex)}<span
                         style:color={token.color}>{token.text}</span>{/each}{:else}<span class="text-muted"
                       >{line.text}</span>{/if}</span>{/each}</pre>
             {:else if overlays.preview?.kind === 'text'}

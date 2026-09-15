@@ -74,30 +74,47 @@ export interface OverlayDescriptor {
 }
 
 /**
- * How many results are drawn.
+ * How many results are drawn to begin with.
  *
  * Every item is a real row — no windowing — so this is what one keystroke costs
- * to render. Nobody scrolls past the first screen of a ranked list, and a search
- * that matches half a monorepo used to spend two minutes drawing rows behind the
- * ones being read.
+ * to render, and a search that matches half a monorepo used to spend two minutes
+ * drawing rows nobody had scrolled to yet.
  */
-const ITEM_CAP = 200
+const INITIAL_ROWS = 200
+
+/** How many more are drawn each time the list is scrolled to its end. */
+const ROWS_PER_PAGE = 50
+
+/**
+ * How many results are held at all.
+ *
+ * Everything past this is genuinely dropped rather than waiting to be scrolled
+ * to: holding a hundred thousand matches for a query about to be retyped costs
+ * memory for nothing, and a search that deep wants narrowing, not scrolling.
+ */
+const BUFFER_CAP = 2000
+
 const DEFAULT_DEBOUNCE_MS = 120
 
 class OverlayController {
   active = $state<OverlayDescriptor | null>(null)
   query = $state('')
+  /** The rows on screen: the head of what has arrived, grown by scrolling. */
   items = $state<OverlayItem[]>([])
   activeIndex = $state(0)
   selectedIds = $state<Set<string>>(new Set())
   preview = $state<OverlayPreviewContent | null>(null)
-  /** More was found than is being shown, so the list can say so. */
+  /** More was found than is being held, so the list can say the rest is unseen. */
   capped = $state(false)
+  /** Results are in hand that are not drawn yet; scrolling reveals them. */
+  hasMore = $state(false)
 
   private queryTimer: ReturnType<typeof setTimeout> | null = null
   private queryToken: CancellableToken | null = null
   private previewToken: CancellableToken | null = null
   private appliedInitialFocus = false
+  // Everything received for the current query, drawn or not.
+  private buffered: OverlayItem[] = []
   // Results waiting for the next frame, and the frame they are waiting for.
   private incoming: OverlayItem[] = []
   private flushHandle: number | null = null
@@ -145,12 +162,12 @@ class OverlayController {
    * Take a batch of results.
    *
    * A streaming source pushes for as long as it is finding things — ripgrep on a
-   * monorepo emits for minutes — so past the cap this does nothing but remember
-   * that there was more. Below it, batches land on the next frame together
-   * rather than each one re-rendering the list on its own.
+   * monorepo emits for minutes — so what arrives is held and only the first
+   * screenful is drawn. Batches land on the next frame together rather than each
+   * one re-rendering the list on its own.
    */
   private receive(batch: OverlayItem[], descriptor: OverlayDescriptor): void {
-    if (this.items.length + this.incoming.length >= ITEM_CAP) {
+    if (this.buffered.length + this.incoming.length >= BUFFER_CAP) {
       this.capped = true
       return
     }
@@ -168,18 +185,40 @@ class OverlayController {
     this.incoming = []
     if (arrived.length === 0) return
 
-    const next = [...this.items, ...arrived]
-    if (next.length > ITEM_CAP) this.capped = true
-    this.items = next.slice(0, ITEM_CAP)
+    const next = [...this.buffered, ...arrived]
+    if (next.length > BUFFER_CAP) this.capped = true
+    this.buffered = next.slice(0, BUFFER_CAP)
+    // Rows already on screen stay; a first batch fills the screen, and later
+    // ones only make more available to scroll to.
+    this.draw(Math.max(this.items.length, INITIAL_ROWS))
     this.afterEmit(descriptor)
+  }
+
+  /**
+   * Draw more of what has already arrived.
+   *
+   * Called as the list is scrolled to its end, and as the selection reaches the
+   * last row — a list that grows under the keyboard as readily as under the
+   * mouse is the difference between a cap and a page.
+   */
+  revealMore(): void {
+    if (!this.hasMore) return
+    this.draw(this.items.length + ROWS_PER_PAGE)
+  }
+
+  private draw(count: number): void {
+    this.items = this.buffered.slice(0, count)
+    this.hasMore = this.items.length < this.buffered.length
   }
 
   private clearResults(): void {
     if (this.flushHandle !== null) cancelAnimationFrame(this.flushHandle)
     this.flushHandle = null
     this.incoming = []
+    this.buffered = []
     this.items = []
     this.capped = false
+    this.hasMore = false
   }
 
   private afterEmit(descriptor: OverlayDescriptor): void {
@@ -203,6 +242,9 @@ class OverlayController {
   }
 
   move(delta: number): void {
+    // Walking onto the last row draws the next page, so the keyboard reaches
+    // everything the mouse can scroll to.
+    if (delta > 0 && this.activeIndex + delta >= this.items.length - 1) this.revealMore()
     this.focusIndex(this.activeIndex + delta)
   }
 

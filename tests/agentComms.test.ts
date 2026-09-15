@@ -324,10 +324,14 @@ describe('starting another agent', () => {
   })
 })
 
-describe('a spawned agent finishing a turn', () => {
+describe('a spawned agent finishing a turn, or being closed', () => {
   /** A store stub that only does what the bridge asks of it. */
   function testStore(sessions: SessionMeta[]): {
-    store: { subscribe: (listener: (event: SessionEvent) => void) => () => void; get: unknown }
+    store: {
+      subscribe: (listener: (event: SessionEvent) => void) => () => void
+      get: unknown
+      list: unknown
+    }
     emit: (event: SessionEvent) => void
   } {
     let listener: ((event: SessionEvent) => void) | null = null
@@ -340,7 +344,8 @@ describe('a spawned agent finishing a turn', () => {
           }
         },
         get: (sessionId: string) =>
-          Promise.resolve(sessions.find((session) => session.id === sessionId))
+          Promise.resolve(sessions.find((session) => session.id === sessionId)),
+        list: () => Promise.resolve(sessions)
       },
       emit: (event) => listener?.(event)
     }
@@ -512,6 +517,74 @@ describe('a spawned agent finishing a turn', () => {
     })
     emit({ ...envelope('solo'), type: 'session.status_idle', stopReason: 'end_turn' })
     await settle()
+
+    expect(delivered).toEqual([])
+  })
+
+  test('a closed agent tells the one that started it that it is gone', async () => {
+    const child = sessionMeta('child', 'Reviewer', { labels: { [PARENT_LABEL]: 'a' } })
+    const sessions = [sessionMeta('a', 'Planner'), child]
+    const { roster, delivered } = testRoster(sessions)
+    const { store } = testStore(sessions)
+    const bridge = new AgentHandoffBridge({ store: store as never, roster })
+
+    await bridge.reportClosed(child as never)
+
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0].sessionId).toBe('a')
+    expect(delivered[0].from).toBe('Reviewer (child)')
+    expect(delivered[0].text).toContain('no longer reachable')
+  })
+
+  test('a closed agent tells the agents it spawned that their requester is gone', async () => {
+    const parent = sessionMeta('a', 'Planner')
+    const child = sessionMeta('child', 'Reviewer', { labels: { [PARENT_LABEL]: 'a' } })
+    const sessions = [parent, child]
+    const { roster, delivered } = testRoster(sessions)
+    const { store } = testStore(sessions)
+    const bridge = new AgentHandoffBridge({ store: store as never, roster })
+
+    await bridge.reportClosed(parent as never)
+
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0].sessionId).toBe('child')
+    expect(delivered[0].from).toBe('Planner (id-a)')
+    expect(delivered[0].text).toContain('closed')
+  })
+
+  test('an agent removed after reporting back says goodbye only once', async () => {
+    const child = sessionMeta('child', 'Reader', {
+      labels: { [PARENT_LABEL]: 'a', [DISPOSE_LABEL]: 'whenDone' }
+    })
+    const sessions = [sessionMeta('a', 'Planner'), child]
+    const { roster, delivered } = testRoster(sessions)
+    const { store, emit } = testStore(sessions)
+    const bridge = new AgentHandoffBridge({ store: store as never, roster })
+    bridge.watch()
+
+    emit({
+      ...envelope('child'),
+      type: 'agent.message_end',
+      content: [{ type: 'text', text: 'the file says hello' }],
+      stopReason: 'end_turn'
+    })
+    emit({ ...envelope('child'), type: 'session.status_idle', stopReason: 'end_turn' })
+    await settle()
+    await bridge.reportClosed(child as never)
+
+    expect(delivered).toEqual([
+      { sessionId: 'a', from: 'Reader (child)', text: 'the file says hello' }
+    ])
+  })
+
+  test('closing a session nobody is working with tells nobody', async () => {
+    const solo = sessionMeta('solo', 'Solo')
+    const sessions = [sessionMeta('a', 'Planner'), solo]
+    const { roster, delivered } = testRoster(sessions)
+    const { store } = testStore(sessions)
+    const bridge = new AgentHandoffBridge({ store: store as never, roster })
+
+    await bridge.reportClosed(solo as never)
 
     expect(delivered).toEqual([])
   })

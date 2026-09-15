@@ -145,6 +145,7 @@ const agents = new AgentService({
   harnesses,
   tools: () => groveTools({ chat: channel, roster: agentRoster }),
   systemPrompt: (session) => buildSystemPrompt(session),
+  sessionRemoved: (session) => agentHandoffBridge.reportClosed(session),
   publish: (event) => send('event:agent-event', event),
   defaultHarness: () => settings.get<string>('workbench.agentHarness')
 })

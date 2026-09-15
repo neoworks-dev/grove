@@ -68,6 +68,8 @@ function coordination(context: SystemPromptContext): string {
     '- `list_runtimes` — what those runtimes can run: whether each is authenticated, the models it offers and the one it defaults to. Check it before naming a model, rather than guessing an id.',
     '- `spawn_agent` with `removeWhenDone` — a one-shot helper whose conversation is cleared away once it has answered. Use it when you want the result, not a collaborator.',
     '',
+    'Agents can also be closed by the user at any time. You are told when one you are working with is, and its id stops working from that moment — plan the rest of the work without it rather than waiting on it.',
+    '',
     `When work spans several agents: say who does what before starting, address them by the id \`list_agents\` reports — titles are the user's to change, ids are not — and report your result back to whoever asked for it. An agent you spawn cannot see this conversation, so put everything it needs in its prompt; what it says at the end of each of its turns reaches you on its own, and it can also message you at ${context.agentId}.`
   ].join('\n')
 }

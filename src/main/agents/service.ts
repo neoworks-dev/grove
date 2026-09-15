@@ -69,6 +69,12 @@ export interface AgentServiceOptions {
    * harness on its own prompt alone.
    */
   systemPrompt?: (session: StoredSession) => Promise<string>
+  /**
+   * Told about a session that has just been removed, with the record it had
+   * while it still existed. Whoever was depending on it — an agent waiting for
+   * it to report back — hears about the removal here.
+   */
+  sessionRemoved?: (session: StoredSession) => Promise<void>
   /** Push an event to the renderer. */
   publish(event: SessionEvent): void
   /** The harness to use when a session does not name one. */
@@ -188,9 +194,17 @@ export class AgentService {
   }
 
   async deleteSession(sessionId: string): Promise<void> {
+    const session = await this.store.get(sessionId)
     await this.stopRun(sessionId)
     this.runtimes.delete(sessionId)
     await this.store.remove(sessionId)
+    if (session) await this.announceRemoval(session)
+  }
+
+  /** Announcing a removal must not be able to fail the removal itself. */
+  private async announceRemoval(session: StoredSession): Promise<void> {
+    if (!this.options.sessionRemoved) return
+    await this.options.sessionRemoved(session).catch(() => {})
   }
 
   listEvents(sessionId: string, after = 0): Promise<SessionEvent[]> {

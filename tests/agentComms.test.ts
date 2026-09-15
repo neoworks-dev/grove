@@ -67,14 +67,13 @@ function testRoster(sessions: SessionMeta[]): {
       sessions.push(spawned)
       return Promise.resolve({ ...spawned, messageCount: 0 })
     },
-    send: (sessionId: string, events: { type: string; label?: string; text?: string }[]) => {
+    send: (
+      sessionId: string,
+      events: { type: string; label?: string; from?: string; text?: string }[]
+    ) => {
       for (const event of events) {
         if (event.type !== 'app.message') continue
-        delivered.push({
-          sessionId,
-          from: (event.label ?? '').replace('Message from ', ''),
-          text: event.text ?? ''
-        })
+        delivered.push({ sessionId, from: event.from ?? '', text: event.text ?? '' })
       }
       return Promise.resolve({ lastSeq: 0 })
     }
@@ -211,6 +210,8 @@ describe('starting another agent', () => {
 
     expect(created[0].labels).toEqual({ [PARENT_LABEL]: 'a' })
     expect(delivered[0].text).toBe('review the parser')
+    // The brief comes from grove, not from another agent, so it names no sender.
+    expect(delivered[0].from).toBe('')
   })
 
   test('refuses a harness that is not mounted, rather than starting the default', async () => {

@@ -664,7 +664,12 @@ function toolInfoOf(tool: GroveTool): ToolInfo {
 }
 
 function textOf(event: Extract<ClientEventBody, { type: 'user.message' | 'app.message' }>): string {
-  if (event.type === 'app.message') return `[${event.label}]\n${event.text}`
+  if (event.type === 'app.message') {
+    // A message from another agent is read as being from that agent; everything
+    // else grove sends is read as what it is.
+    if (event.from) return `[Message from ${event.from}]\n${event.text}`
+    return `[${event.label}]\n${event.text}`
+  }
   return event.content
     .map(blockText)
     .filter((text) => text.length > 0)

@@ -8,6 +8,7 @@
   // only while its own turn is on screen and scrolls away with it.
 
   import CaretRight from 'phosphor-svelte/lib/CaretRight'
+  import PaperPlaneTilt from 'phosphor-svelte/lib/PaperPlaneTilt'
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
   import { renderMarkdown } from '../../../../lib/markdown'
   import { floatingCodeScrollbars } from '../../../../lib/markdownScrollbars'
@@ -210,13 +211,23 @@
         </div>
       {/if}
     </div>
-  {:else if item.kind === 'app'}
-    <!-- app.message is model-visible but explicitly application-authored, so it
-         belongs in a neutral card rather than a sticky user-authored bubble. -->
-    <div class="-mx-1 mb-3 rounded-md border border-amber/30 bg-amber-soft px-2.5 py-2">
-      <div class="mb-1 text-2xs font-medium uppercase tracking-wide text-amber">
-        {item.label}
+  {:else if item.kind === 'app' && item.from}
+    <!-- Another agent talking: read as a message, with the sender leading it and
+         the words themselves in the same weight as an answer. -->
+    <div class="-mx-1 mb-3 flex gap-2 rounded-md border border-line bg-elevated px-2.5 py-2">
+      <span class="mt-0.5 shrink-0 text-blue">
+        <PaperPlaneTilt width="12" height="12" weight="fill" />
+      </span>
+      <div class="min-w-0 flex-1">
+        <div class="mb-0.5 font-mono text-2xs text-blue">{item.from}</div>
+        <div class="whitespace-pre-wrap text-xs text-default">{item.text}</div>
       </div>
+    </div>
+  {:else if item.kind === 'app'}
+    <!-- grove itself talking — review feedback, a task brief — which is
+         model-visible but authored by neither side of the conversation. -->
+    <div class="-mx-1 mb-3 rounded-md border border-amber/30 bg-amber-soft px-2.5 py-2">
+      <div class="mb-0.5 text-2xs font-medium text-amber">{item.label}</div>
       <div class="whitespace-pre-wrap text-xs text-muted">{item.text}</div>
     </div>
   {:else if item.kind === 'agent'}
@@ -231,7 +242,10 @@
         </details>
       {/if}
       {#if item.text}
-        <div class="agent-markdown prose max-w-none text-xs text-default" use:floatingCodeScrollbars>
+        <div
+          class="agent-markdown prose max-w-none text-xs text-default"
+          use:floatingCodeScrollbars
+        >
           <!-- eslint-disable-next-line svelte/no-at-html-tags -->
           {@html renderMarkdown(item.text)}
         </div>

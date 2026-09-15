@@ -68,7 +68,14 @@ export interface EventEnvelope {
 
 export type ClientEventBody =
   | { type: 'user.message'; content: UserContentBlock[]; deliverAs?: DeliverAs }
-  | { type: 'app.message'; label: string; text: string; deliverAs?: DeliverAs }
+  | {
+      type: 'app.message'
+      label: string
+      text: string
+      deliverAs?: DeliverAs
+      /** The agent that sent it, when the message came from one rather than from grove. */
+      from?: string
+    }
   | {
       type: 'user.tool_confirmation'
       toolUseId: string

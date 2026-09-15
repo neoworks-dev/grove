@@ -105,7 +105,7 @@ export class AgentRoster {
    */
   async deliver(sessionId: string, from: string, text: string): Promise<void> {
     await this.options.agents.send(sessionId, [
-      { type: 'app.message', label: `Message from ${from}`, text, deliverAs: 'steer' }
+      { type: 'app.message', label: 'Agent message', from, text, deliverAs: 'steer' }
     ])
   }
 

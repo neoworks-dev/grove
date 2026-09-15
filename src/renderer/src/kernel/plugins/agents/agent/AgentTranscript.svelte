@@ -12,6 +12,7 @@
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
   import { renderMarkdown } from '../../../../lib/markdown'
   import { floatingCodeScrollbars } from '../../../../lib/markdownScrollbars'
+  import { highlightCodeFences } from '../../../../lib/markdownHighlight'
   import { blobUrl } from '../../../../lib/agents/api'
   import {
     tallyOf,
@@ -302,6 +303,7 @@
         <div
           class="agent-markdown prose max-w-none text-xs text-default"
           use:floatingCodeScrollbars
+          use:highlightCodeFences
         >
           <!-- eslint-disable-next-line svelte/no-at-html-tags -->
           {@html renderMarkdown(item.text)}

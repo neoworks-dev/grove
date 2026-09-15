@@ -128,6 +128,17 @@ export type ServerEventBody =
     }
   | { type: 'ui.surface'; surfaceId: string; slot: UiSlot; view: UiNode }
   | { type: 'ui.surface'; surfaceId: string; view: null }
+  /** Files the agent wants on screen, opened in the editor as the event arrives. */
+  | { type: 'ui.open_files'; files: OpenFileTarget[] }
+
+/**
+ * One file the agent asked grove to show. The path is absolute or relative to
+ * the session's workspace root, and the line — when there is one — is 1-based.
+ */
+export interface OpenFileTarget {
+  path: string
+  line?: number
+}
 
 /**
  * Harness-contributed UI.

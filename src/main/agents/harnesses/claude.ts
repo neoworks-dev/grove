@@ -25,7 +25,8 @@ import type {
   ContentBlock,
   ProviderModels,
   ServerEventBody,
-  ThinkingLevel
+  ThinkingLevel,
+  ToolPolicy
 } from '../../../shared/agents'
 import { zodShapeFromJsonSchema, type JsonSchemaObject } from '../../plugins/zodSchema'
 import type {
@@ -274,6 +275,9 @@ class ClaudeRun implements HarnessRun {
       allowedTools: this.options.activeTools ?? undefined,
       mcpServers: await this.groveServer(),
       canUseTool: async (name, input, { toolUseID }) => {
+        // grove's own tools carry the policy grove gave them, so the ones that
+        // only drive its UI run without stopping the turn on an approval.
+        if (this.policyFor(name) === 'allow') return { behavior: 'allow', updatedInput: input }
         const decision = await this.options.confirm({ toolUseId: toolUseID, name, input })
         if (!allows(decision.result)) {
           return { behavior: 'deny', message: decision.reason ?? 'denied by the user' }
@@ -283,6 +287,16 @@ class ClaudeRun implements HarnessRun {
         return { behavior: 'allow', updatedInput: asInput(decision.input) ?? input }
       }
     }
+  }
+
+  /**
+   * The policy grove attached to a tool. Only its own tools have one; everything
+   * the CLI brings is asked about, which is what the review flow hangs on.
+   */
+  private policyFor(name: string): ToolPolicy {
+    const definition = this.options.tools.find((tool) => tool.name === bareName(name))
+    if (!definition) return 'ask'
+    return definition.policy
   }
 
   /** grove's own tools, published as an in-process MCP server. */
@@ -310,7 +324,8 @@ class ClaudeRun implements HarnessRun {
           sessionId: this.options.sessionId,
           workspaceRoot: this.options.workspaceRoot,
           surface: (surfaceId, slot, view) =>
-            this.options.emit({ type: 'ui.surface', surfaceId, slot, view } as ServerEventBody)
+            this.options.emit({ type: 'ui.surface', surfaceId, slot, view } as ServerEventBody),
+          openFiles: (files) => this.options.emit({ type: 'ui.open_files', files })
         })
         return { content: [{ type: 'text' as const, text: result.content }] }
       }

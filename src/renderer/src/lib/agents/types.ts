@@ -24,6 +24,7 @@ export type {
   ImageBlock,
   ModelInfo,
   ModelPricing,
+  OpenFileTarget,
   ProviderModels,
   QueuedMessage,
   ServerEventBody,

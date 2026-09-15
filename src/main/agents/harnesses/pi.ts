@@ -174,7 +174,8 @@ class PiRun implements HarnessRun {
           sessionId: this.options.sessionId,
           workspaceRoot: this.options.workspaceRoot,
           surface: (surfaceId, slot, view) =>
-            this.options.emit({ type: 'ui.surface', surfaceId, slot, view } as ServerEventBody)
+            this.options.emit({ type: 'ui.surface', surfaceId, slot, view } as ServerEventBody),
+          openFiles: (files) => this.options.emit({ type: 'ui.open_files', files })
         })
         return { content: [{ type: 'text', text: result.content }], isError: result.isError }
       }

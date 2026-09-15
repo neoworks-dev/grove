@@ -14,6 +14,7 @@ import type {
   DeliverAs,
   HarnessCapabilities,
   HarnessInfo,
+  OpenFileTarget,
   ProviderModels,
   ServerEventBody,
   SkillInfo,
@@ -30,6 +31,8 @@ export interface GroveToolContext {
   workspaceRoot: string
   /** Publish a declarative view under a surface id the renderer watches. */
   surface(surfaceId: string, slot: 'transcript' | 'panel', view: unknown): void
+  /** Ask the renderer to open files in the editor. */
+  openFiles(files: OpenFileTarget[]): void
 }
 
 export interface GroveToolResult {

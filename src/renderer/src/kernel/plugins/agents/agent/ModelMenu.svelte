@@ -28,7 +28,8 @@
     model,
     switchCostWarning,
     onPick,
-    onRequestKey
+    onRequestKey,
+    onAddEndpoint
   }: {
     models: ModelEntry[]
     /** The provider and id of the route the session is on. */

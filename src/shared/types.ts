@@ -387,6 +387,22 @@ export type AgentDialogDecision =
 
 export type ServiceStatus = 'stopped' | 'starting' | 'running' | 'unhealthy'
 
+/**
+ * A terminal the daemon is running.
+ *
+ * Shells outlive grove, so a window that opens asks what is still there and
+ * takes those over; this is what it gets back per terminal.
+ */
+export interface TerminalSessionInfo {
+  id: string
+  title: string
+  cwd: string
+  worktreeId: string | null
+  cols: number
+  rows: number
+  startedAt: number
+}
+
 export interface ServiceRuntime {
   worktreeId: string
   name: string

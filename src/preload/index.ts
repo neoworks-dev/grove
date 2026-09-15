@@ -205,7 +205,10 @@ const workbench = {
     write: (id: string, data: string) => ipcRenderer.invoke('terminal:write', id, data),
     resize: (id: string, cols: number, rows: number) =>
       ipcRenderer.invoke('terminal:resize', id, cols, rows),
-    kill: (id: string) => ipcRenderer.invoke('terminal:kill', id)
+    kill: (id: string) => ipcRenderer.invoke('terminal:kill', id),
+    list: () => ipcRenderer.invoke('terminal:list'),
+    attach: (id: string, cols: number, rows: number) =>
+      ipcRenderer.invoke('terminal:attach', id, cols, rows)
   },
   nvim: {
     spawn: (worktreeId: string | null) => ipcRenderer.invoke('nvim:spawn', worktreeId),

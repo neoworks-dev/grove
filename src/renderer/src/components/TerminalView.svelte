@@ -1,5 +1,5 @@
 <script lang="ts">
-  // A single xterm view bound to one node-pty session in main. Owned by
+  // A single xterm view bound to one shell in the terminal daemon. Owned by
   // TerminalPane, which mounts one per open terminal and keeps inactive ones
   // hidden (so their pty keeps streaming and scrollback survives tab switches).
   import { onMount, onDestroy } from 'svelte'
@@ -13,14 +13,20 @@
   let {
     leafId,
     worktreeId,
+    attachId,
     active,
+    onSession,
     onExit,
     onTitle,
     onStatus
   }: {
     leafId: string
     worktreeId: string
+    /** A shell that is already running; the view takes it over instead of spawning one. */
+    attachId?: string
     active: boolean
+    /** The daemon's id for this view's shell, once it is known. */
+    onSession?: (ptyId: string) => void
     onExit: () => void
     onTitle: (title: string) => void
     onStatus?: (status: { running: boolean; exitCode?: number }) => void
@@ -150,6 +156,20 @@
     observer.observe(hostEl)
   })
 
+  /**
+   * The shell this view talks to: the one it was handed, or a new one.
+   *
+   * Taking one over replays what it printed while no window was showing it,
+   * which is what makes a restored tab read as the terminal it was rather than
+   * an empty prompt.
+   */
+  async function openSession(cols: number, rows: number): Promise<string> {
+    if (!attachId) return window.workbench.terminal.create(worktreeId, cols, rows)
+    const scrollback = await window.workbench.terminal.attach(attachId, cols, rows)
+    if (scrollback) term?.write(scrollback)
+    return attachId
+  }
+
   async function start(): Promise<void> {
     if (!term || !fit || !hostEl) return
     lastWidth = hostEl.clientWidth
@@ -159,7 +179,8 @@
     } catch {
       // ignore
     }
-    ptyId = await window.workbench.terminal.create(worktreeId, term.cols, term.rows)
+    ptyId = await openSession(term.cols, term.rows)
+    onSession?.(ptyId)
 
     term.onData((data) => {
       if (ptyId) void window.workbench.terminal.write(ptyId, data)
@@ -205,12 +226,14 @@
     term.focus()
   })
 
+  // Unmounting drops the view, not the shell: the daemon keeps it running so a
+  // pane that comes back — or the next launch of grove — can take it over
+  // again. Closing the tab is what kills it, and TerminalPane does that.
   onDestroy(() => {
     stopData?.()
     stopExit?.()
     stopTitle?.()
     observer?.disconnect()
-    if (ptyId) void window.workbench.terminal.kill(ptyId)
     term?.dispose()
   })
 </script>

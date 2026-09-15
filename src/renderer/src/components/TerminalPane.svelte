@@ -4,11 +4,16 @@
   // its scrollback survives switching. A tab strip along the top — styled like
   // the editor buffer tabs — lists all launched terminals and lets the user
   // add, select, and close them.
+  //
+  // The shells themselves live in the terminal daemon rather than in grove, so
+  // mounting starts by adopting whatever is still running in this worktree —
+  // from a closed panel, or from the last time grove was open.
   import { onMount, onDestroy } from 'svelte'
   import TerminalView from './TerminalView.svelte'
   import { store } from '../lib/store.svelte'
   import { layout } from '../lib/layout.svelte'
   import { keymap } from '../lib/keymap.svelte'
+  import { claimTerminal, releaseTerminal } from '../lib/terminalClaims'
 
   let { leafId }: { leafId: string } = $props()
 
@@ -16,6 +21,10 @@
     key: string
     title: string
     worktreeId: string
+    /** Set for a shell that was already running: the view attaches instead of spawning. */
+    attachId?: string
+    /** The daemon's id for the shell behind this tab, once it has one. */
+    ptyId: string | null
   }
 
   let sessions = $state<TerminalSession[]>([])
@@ -56,10 +65,49 @@
     const session: TerminalSession = {
       key: `term-${counter}`,
       title: `Terminal ${counter}`,
-      worktreeId: store.selectedWorktreeId
+      worktreeId: store.selectedWorktreeId,
+      ptyId: null
     }
     sessions = [...sessions, session]
     activeKey = session.key
+  }
+
+  /**
+   * Adopt the shells that are still running in this worktree, and only open a
+   * new one when there are none.
+   *
+   * The daemon owns the ptys, so a grove restart — or just closing and reopening
+   * the panel — finds the same lazygit or build still going. Terminals another
+   * pane has already taken are left alone.
+   */
+  async function restoreTerminals(): Promise<void> {
+    const running = await window.workbench.terminal.list().catch(() => [])
+    const mine = running
+      .filter((info) => info.worktreeId === store.selectedWorktreeId)
+      .filter((info) => claimTerminal(info.id))
+      .sort((a, b) => a.startedAt - b.startedAt)
+
+    if (mine.length === 0) {
+      newTerminal()
+      return
+    }
+    sessions = mine.map((info) => ({
+      key: info.id,
+      title: info.title,
+      worktreeId: info.worktreeId ?? store.selectedWorktreeId,
+      attachId: info.id,
+      ptyId: info.id
+    }))
+    activeKey = sessions[0].key
+  }
+
+  /** A view reports the shell it ended up with, which is what close kills. */
+  function bindSession(key: string, ptyId: string): void {
+    claimTerminal(ptyId)
+    sessions = sessions.map((session) => {
+      if (session.key !== key) return session
+      return { ...session, ptyId }
+    })
   }
 
   // Name each terminal after its running foreground process (falls back to the
@@ -74,11 +122,17 @@
     requestAnimationFrame(() => views[key]?.focus())
   }
 
-  // Remove a terminal from the panel. Its TerminalView unmounts and kills the
-  // pty. Closing the last one closes the whole pane.
+  // Remove a terminal from the panel, and end the shell with it: closing a tab
+  // is the one way a terminal dies now that quitting grove no longer does it.
+  // Closing the last one closes the whole pane.
   function closeTerminal(key: string): void {
     const index = sessions.findIndex((session) => session.key === key)
     if (index < 0) return
+    const closing = sessions[index]
+    if (closing.ptyId) {
+      void window.workbench.terminal.kill(closing.ptyId)
+      releaseTerminal(closing.ptyId)
+    }
     delete views[key]
     sessions = sessions.filter((session) => session.key !== key)
     if (sessions.length === 0) {
@@ -105,7 +159,7 @@
   let unregisterBindings: (() => void) | null = null
 
   onMount(() => {
-    newTerminal()
+    void restoreTerminals()
     // Vim-style: in 'normal' the terminal keeps focus for pane nav; 'i' hands
     // the keyboard back to the active shell.
     unregisterBindings = keymap.registerBindings([
@@ -121,7 +175,14 @@
     ])
   })
 
-  onDestroy(() => unregisterBindings?.())
+  // The pane going away leaves the shells running — that is the point of the
+  // daemon — so its claims are handed back for the next pane to adopt.
+  onDestroy(() => {
+    unregisterBindings?.()
+    for (const session of sessions) {
+      if (session.ptyId) releaseTerminal(session.ptyId)
+    }
+  })
 </script>
 
 {#snippet terminalTab(session: TerminalSession)}
@@ -198,7 +259,9 @@
           bind:this={views[session.key]}
           {leafId}
           worktreeId={session.worktreeId}
+          attachId={session.attachId}
           active={session.key === activeKey}
+          onSession={(ptyId) => bindSession(session.key, ptyId)}
           onExit={() => closeTerminal(session.key)}
           onTitle={(title) => setTitle(session.key, title)}
           onStatus={(status) => setStatus(session.key, status)}

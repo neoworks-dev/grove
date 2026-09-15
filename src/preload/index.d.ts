@@ -49,7 +49,8 @@ import type {
   LspPosition,
   LspCompletion,
   LspRange,
-  LspDiagnostic
+  LspDiagnostic,
+  TerminalSessionInfo
 } from '../shared/types'
 import type {
   BlobDescriptor,
@@ -349,6 +350,10 @@ export interface WorkbenchApi {
     write: (id: string, data: string) => Promise<void>
     resize: (id: string, cols: number, rows: number) => Promise<void>
     kill: (id: string) => Promise<void>
+    /** Terminals still running, including those started before this window. */
+    list: () => Promise<TerminalSessionInfo[]>
+    /** Take one over; resolves with the output printed while grove was away. */
+    attach: (id: string, cols: number, rows: number) => Promise<string>
   }
   nvim: {
     spawn: (worktreeId: string | null) => Promise<string>

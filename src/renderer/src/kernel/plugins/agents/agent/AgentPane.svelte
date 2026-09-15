@@ -23,7 +23,13 @@
   import { pendingApprovals, visibleItems } from '../../../../lib/agents/transcript'
   import { fileOfCall } from '../../../../lib/agents/tools'
   import { questionsOf } from '../../../../lib/agents/questions'
-  import { activeToolsFor, effectiveMode, type AgentMode } from '../../../../lib/agents/modes'
+  import {
+    activeToolsFor,
+    effectiveMode,
+    nextMode,
+    type AgentMode
+  } from '../../../../lib/agents/modes'
+  import { nextThinkingLevel } from '../../../../lib/agents/thinking'
   import type {
     ClientEventBody,
     ConfirmationResult,
@@ -91,6 +97,13 @@
     settings.get<string>('workbench.agentHarness') || (catalog.available[0]?.id ?? '')
   )
 
+  // The effort a new session opens on. Chosen levels are remembered here as
+  // well as on the session, so the next one starts where the last was left
+  // instead of back at "off".
+  const rememberedThinking = $derived(
+    settings.get<ThinkingLevel>('workbench.agentThinking') ?? 'off'
+  )
+
   const reviewMode = $derived(settings.get<string>('workbench.reviewMode') ?? 'pre')
   const reviewPause = $derived(settings.get<boolean>('workbench.reviewPause') ?? false)
 
@@ -135,13 +148,31 @@
   })
 
   // Keep the newest output in view unless the user has scrolled away from it.
+  //
+  // Watching the transcript grow, rather than the item list, is what makes this
+  // follow a streaming answer: a turn's text arrives as deltas into the row that
+  // is already there, so the list stops changing long before the content does.
+  // The same observer covers markdown and images that lay out a frame late.
   $effect(() => {
-    void items.length
-    if (!stickToBottom || !transcriptViewport) return
-    queueMicrotask(() => {
-      if (transcriptViewport) transcriptViewport.scrollTop = transcriptViewport.scrollHeight
-    })
+    const content = transcriptViewport?.firstElementChild
+    if (!content) return
+
+    const observer = new ResizeObserver(scrollToBottom)
+    observer.observe(content)
+    return () => observer.disconnect()
   })
+
+  // A session switched in brings a whole transcript with it, which is a jump to
+  // the bottom rather than a growth the observer would see.
+  $effect(() => {
+    void activeId
+    scrollToBottom()
+  })
+
+  function scrollToBottom(): void {
+    if (!stickToBottom || !transcriptViewport) return
+    transcriptViewport.scrollTop = transcriptViewport.scrollHeight
+  }
 
   function onTranscriptScroll(): void {
     if (!transcriptViewport) return
@@ -162,7 +193,8 @@
     if (!worktreePath) return
     await agentSessions.create(worktreePath, {
       title: `Session ${sessionList.length + 1}`,
-      harness: newSessionHarness || undefined
+      harness: newSessionHarness || undefined,
+      thinkingLevel: rememberedThinking
     })
   }
 
@@ -245,8 +277,23 @@
   }
 
   function pickThinking(thinkingLevel: ThinkingLevel): void {
+    void settings.set('workbench.agentThinking', thinkingLevel, 'user')
     if (!activeId) return
     void agentSessions.update(activeId, { thinkingLevel })
+  }
+
+  // ── Cycling from the keyboard ───────────────────────────────────
+  //
+  // Both step through their list in place, so the setting can be changed while
+  // typing a prompt without reaching for the menus under the composer.
+
+  function cycleMode(): void {
+    pickMode(nextMode(mode))
+  }
+
+  function cycleThinking(): void {
+    const current = snapshot?.thinkingLevel ?? rememberedThinking
+    pickThinking(nextThinkingLevel(current))
   }
 
   /**
@@ -404,6 +451,22 @@
         group: 'Agent',
         description: 'Scroll page up',
         run: () => scrollTranscriptPage(-0.9)
+      },
+      {
+        id: `agent.cycleMode:${leafId}`,
+        keys: 'shift+tab',
+        context: leafId,
+        group: 'Agent',
+        description: 'Cycle permission mode',
+        run: cycleMode
+      },
+      {
+        id: `agent.cycleThinking:${leafId}`,
+        keys: 'ctrl+tab',
+        context: leafId,
+        group: 'Agent',
+        description: 'Cycle reasoning effort',
+        run: cycleThinking
       },
       {
         id: `agent.prevSession:${leafId}`,
@@ -602,6 +665,7 @@
             onSend={send}
             onFocusChange={onComposerFocus}
             onInterrupt={interrupt}
+            onCycleMode={cycleMode}
           />
         {/if}
 

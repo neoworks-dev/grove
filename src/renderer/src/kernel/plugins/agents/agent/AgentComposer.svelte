@@ -33,7 +33,8 @@
     placeholderHint = '',
     onSend,
     onFocusChange,
-    onInterrupt
+    onInterrupt,
+    onCycleMode
   }: {
     sessionId: string
     running: boolean
@@ -42,6 +43,12 @@
     onSend: (events: ClientEventBody[]) => void
     onFocusChange: (focused: boolean) => void
     onInterrupt: () => void
+    /**
+     * Step the permission mode on. Handled here as well as in the pane's
+     * bindings because shift+tab carries no ctrl/alt/meta, and the keymap leaves
+     * unmodified keys to whatever is being typed in.
+     */
+    onCycleMode?: () => void
   } = $props()
 
   let draft = $state('')
@@ -226,6 +233,11 @@
   }
 
   function onKey(event: KeyboardEvent): void {
+    if (event.key === 'Tab' && event.shiftKey) {
+      event.preventDefault()
+      onCycleMode?.()
+      return
+    }
     if (menuOpen && handleMenuKey(event)) return
 
     // Escape stops the turn in flight without leaving the composer, so the draft
@@ -403,9 +415,11 @@
       bind:this={highlightEl}
       aria-hidden="true"
       class="pointer-events-none absolute inset-0 z-10 overflow-hidden whitespace-pre-wrap break-words px-2 py-1.5 text-xs leading-normal text-default"
-    >{#each segments as segment, index (index)}{#if segment.mention}<span
+    >
+      {#each segments as segment, index (index)}{#if segment.mention}<span
             class="rounded-sm bg-action/15 text-action">{segment.text}</span
-          >{:else}{segment.text}{/if}{/each}&#8203;</div>
+          >{:else}{segment.text}{/if}{/each}&#8203;
+    </div>
 
     {#if !focused}
       <!-- Normal-mode hint: press i (or click) to focus the composer. -->

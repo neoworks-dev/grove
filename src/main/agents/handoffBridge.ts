@@ -23,6 +23,8 @@ export interface HandoffBridgeOptions {
 export class AgentHandoffBridge {
   // The last thing each session said, kept until its turn ends.
   private lastMessage = new Map<string, string>()
+  // The answer being streamed, for harnesses that only report deltas.
+  private streaming = new Map<string, string>()
 
   constructor(private options: HandoffBridgeOptions) {}
 
@@ -31,12 +33,40 @@ export class AgentHandoffBridge {
     return this.options.store.subscribe((event) => void this.handle(event))
   }
 
+  /**
+   * Follow what a session is saying.
+   *
+   * Harnesses differ on how an answer arrives: Claude and Codex close each
+   * message with the blocks it was made of, pi only ever streams deltas. Both
+   * are followed, and a closing message wins over what was streamed towards it.
+   */
   private async handle(event: SessionEvent): Promise<void> {
+    if (event.type === 'agent.message_start') {
+      this.streaming.delete(event.sessionId)
+      return
+    }
+    if (event.type === 'agent.message_delta') {
+      const sofar = this.streaming.get(event.sessionId) ?? ''
+      this.streaming.set(event.sessionId, sofar + event.text)
+      return
+    }
     if (event.type === 'agent.message_end') {
+      this.streaming.delete(event.sessionId)
       this.remember(event.sessionId, textOf(event.content))
       return
     }
-    if (event.type === 'session.status_idle') await this.reportBack(event.sessionId)
+    if (event.type === 'session.status_idle') {
+      this.settleStreamed(event.sessionId)
+      await this.reportBack(event.sessionId)
+    }
+  }
+
+  /** Whatever was streamed and never closed is still the session's last word. */
+  private settleStreamed(sessionId: string): void {
+    const streamed = this.streaming.get(sessionId)
+    this.streaming.delete(sessionId)
+    if (!streamed) return
+    this.remember(sessionId, streamed.trim())
   }
 
   private remember(sessionId: string, text: string): void {

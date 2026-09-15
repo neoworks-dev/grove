@@ -211,8 +211,9 @@ describe('starting another agent', () => {
 
     expect(created[0].labels).toEqual({ [PARENT_LABEL]: 'a' })
     expect(delivered[0].text).toBe('review the parser')
-    // The brief comes from grove, not from another agent, so it names no sender.
-    expect(delivered[0].from).toBe('')
+    // The brief is the spawning agent talking, so the child opens on a message
+    // from it rather than on an unattributed task.
+    expect(delivered[0].from).toBe('Planner (id-a)')
   })
 
   test('refuses a harness that is not mounted, rather than starting the default', async () => {
@@ -305,6 +306,45 @@ describe('a spawned agent finishing a turn', () => {
     await settle()
 
     expect(delivered).toHaveLength(1)
+  })
+
+  test('reports what a delta-only harness streamed, since pi closes no message', async () => {
+    const child = sessionMeta('child', 'PiEcho', { labels: { [PARENT_LABEL]: 'a' } })
+    const sessions = [sessionMeta('a', 'Planner'), child]
+    const { roster, delivered } = testRoster(sessions)
+    const { store, emit } = testStore(sessions)
+    new AgentHandoffBridge({ store: store as never, roster }).watch()
+
+    emit({ ...envelope('child'), type: 'agent.message_start' })
+    emit({ ...envelope('child'), type: 'agent.message_delta', text: 'pi-' })
+    emit({ ...envelope('child'), type: 'agent.message_delta', text: 'pong' })
+    emit({ ...envelope('child'), type: 'session.status_idle', stopReason: 'end_turn' })
+    await settle()
+
+    expect(delivered).toEqual([{ sessionId: 'a', from: 'PiEcho (child)', text: 'pi-pong' }])
+  })
+
+  test('a closing message wins over the deltas that streamed towards it', async () => {
+    const child = sessionMeta('child', 'Reviewer', { labels: { [PARENT_LABEL]: 'a' } })
+    const sessions = [sessionMeta('a', 'Planner'), child]
+    const { roster, delivered } = testRoster(sessions)
+    const { store, emit } = testStore(sessions)
+    new AgentHandoffBridge({ store: store as never, roster }).watch()
+
+    emit({ ...envelope('child'), type: 'agent.message_start' })
+    emit({ ...envelope('child'), type: 'agent.message_delta', text: 'half an ans' })
+    emit({
+      ...envelope('child'),
+      type: 'agent.message_end',
+      content: [{ type: 'text', text: 'the whole answer' }],
+      stopReason: 'end_turn'
+    })
+    emit({ ...envelope('child'), type: 'session.status_idle', stopReason: 'end_turn' })
+    await settle()
+
+    expect(delivered).toEqual([
+      { sessionId: 'a', from: 'Reviewer (child)', text: 'the whole answer' }
+    ])
   })
 
   test('a session nobody spawned reports to nobody', async () => {

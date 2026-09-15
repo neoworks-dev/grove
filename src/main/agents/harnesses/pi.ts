@@ -300,13 +300,14 @@ function summaryOf(input: Record<string, unknown>): string {
 
 /** Everything pi can offer, plus the policy grove applies to each tool. */
 async function loadOffering(groveToolNames: string[]): Promise<HarnessOffering> {
-  const { DefaultResourceLoader, ModelRuntime, getAgentDir } =
+  const { DefaultResourceLoader, ModelRuntime, SettingsManager, getAgentDir } =
     await import('@earendil-works/pi-coding-agent')
 
   const modelRuntime = await ModelRuntime.create()
   const available = await modelRuntime.getAvailable()
   const loader = new DefaultResourceLoader({ cwd: process.cwd(), agentDir: getAgentDir() })
   await loader.reload()
+  const settings = SettingsManager.create(process.cwd(), getAgentDir())
 
   return {
     tools: toolInfos(groveToolNames),
@@ -321,7 +322,7 @@ async function loadOffering(groveToolNames: string[]): Promise<HarnessOffering> 
       path: skill.filePath
     })),
     providers: providersOf(available),
-    default: defaultModelOf(available)
+    default: defaultModelOf(available, settings)
   }
 }
 
@@ -341,6 +342,12 @@ function toolInfos(groveToolNames: string[]): ToolInfo[] {
     inputSchema: {}
   }))
   return [...builtins, ...grove]
+}
+
+/** The part of pi's settings grove reads: which model it was told to prefer. */
+interface PiSettings {
+  getDefaultProvider(): string | undefined
+  getDefaultModel(): string | undefined
 }
 
 interface PiModel {
@@ -366,10 +373,43 @@ function providersOf(models: readonly unknown[]): ProviderModels[] {
   return [...byProvider.values()]
 }
 
-function defaultModelOf(models: readonly unknown[]): { provider: string; model: string } | null {
-  const first = (models as PiModel[])[0]
+/**
+ * What a new pi session should open on.
+ *
+ * pi's own configured default first — that is the model the user chose for pi,
+ * and starting somewhere else because it happens to sort first in the runtime's
+ * list is how a session ends up on a model nobody asked for. Whatever is
+ * available stands in when there is no default, or when it names a model this
+ * install cannot reach.
+ */
+function defaultModelOf(
+  models: readonly unknown[],
+  settings: PiSettings
+): { provider: string; model: string } | null {
+  const available = models as PiModel[]
+  const configured = configuredModel(available, settings)
+  if (configured) return configured
+
+  const first = available[0]
   if (!first) return null
   return { provider: first.provider, model: first.id }
+}
+
+/** pi's configured default, when this install can actually run it. */
+function configuredModel(
+  available: PiModel[],
+  settings: PiSettings
+): { provider: string; model: string } | null {
+  const model = settings.getDefaultModel()
+  if (!model) return null
+  const provider = settings.getDefaultProvider()
+
+  const match = available.find((entry) => {
+    if (entry.id !== model) return false
+    return !provider || entry.provider === provider
+  })
+  if (!match) return null
+  return { provider: match.provider, model: match.id }
 }
 
 function createPiHarness(): HarnessDescriptor {

@@ -658,8 +658,11 @@ export function modelsOf(
   credentials: CredentialSource
 ): ModelEntry[] {
   const entries = new Map<string, ModelEntry>()
-  for (const route of collectRoutes(models, catalog, credentials)) {
-    addRoute(entries, route.key, route.label, route.route)
+  // How good the name each entry currently carries is, so a better one can
+  // replace it without the order routes arrive in deciding anything.
+  const ranks = new Map<string, number>()
+  for (const keyed of collectRoutes(models, catalog, credentials)) {
+    addRoute(entries, ranks, keyed)
   }
   return [...entries.values()].sort(byNativeThenName)
 }
@@ -668,8 +671,20 @@ interface KeyedRoute {
   key: string
   /** What to call the model this route reaches, if the route knows. */
   label: string | null
+  /**
+   * How much the label is worth. Bedrock lists the same model as "AU Anthropic
+   * Claude Opus 4.6", one row per region; Anthropic calls it "Claude Opus 4.6".
+   * The higher rank wins, so a model reads as its maker names it.
+   */
+  labelRank: number
   route: ModelRoute
 }
+
+// Label ranks, lowest first: a platform's own listing name, then the name the
+// account's CLI uses, then Anthropic's.
+const RANK_PLATFORM = 0
+const RANK_NATIVE = 1
+const RANK_ANTHROPIC = 2
 
 function collectRoutes(
   models: SdkModelInfo[],
@@ -702,6 +717,7 @@ function routeFromCli(model: SdkModelInfo): KeyedRoute {
     // An alias names itself, not the model, so it cannot name the entry. When
     // the CLI reports no wire model, the alias is all there is to go on.
     label: model.resolvedModel ? null : model.displayName,
+    labelRank: RANK_NATIVE,
     route: {
       provider: PROVIDER,
       providerLabel: 'Anthropic',
@@ -720,6 +736,7 @@ function routeFromCatalog(
   return {
     key: normalizeModelId(model.id),
     label: model.name,
+    labelRank: provider.id === PROVIDER ? RANK_ANTHROPIC : RANK_PLATFORM,
     route: {
       provider: provider.id,
       providerLabel: provider.name,
@@ -741,16 +758,20 @@ function routeFromCatalog(
  */
 function addRoute(
   entries: Map<string, ModelEntry>,
-  key: string,
-  label: string | null,
-  route: ModelRoute
+  ranks: Map<string, number>,
+  keyed: KeyedRoute
 ): void {
+  const { key, label, labelRank, route } = keyed
   const entry = entries.get(key)
   if (!entry) {
     entries.set(key, { key, label: label ?? route.label ?? key, routes: [route] })
+    ranks.set(key, label ? labelRank : -1)
     return
   }
-  if (label && entry.label === entry.key) entry.label = label
+  if (label && labelRank > (ranks.get(key) ?? -1)) {
+    entry.label = label
+    ranks.set(key, labelRank)
+  }
 
   const existing = entry.routes.findIndex((candidate) => candidate.provider === route.provider)
   if (existing === -1) {
@@ -781,10 +802,10 @@ function mergeRoutes(left: ModelRoute, right: ModelRoute): ModelRoute {
  */
 export function normalizeModelId(id: string): string {
   return id
-    .replace(/^(?:us|eu|apac|global)\./, '')
+    .replace(/^[a-z0-9-]+\.anthropic\./, '')
     .replace(/^anthropic\./, '')
     .replace(/@.*$/, '')
-    .replace(/-v\d+:\d+$/, '')
+    .replace(/-v\d+(?::\d+)?$/, '')
     .toLowerCase()
 }
 
@@ -806,12 +827,30 @@ function runnableModels(provider: CatalogProvider): CatalogModel[] {
   })
 }
 
+/**
+ * What a route asks for before it can be taken.
+ *
+ * Anthropic's own endpoint asks for nothing: the CLI signs itself in, and the
+ * account behind that sign-in is exactly what makes a route native. Bedrock and
+ * Vertex sign in through their own cloud tooling — a profile, an instance role,
+ * application-default credentials — which grove cannot see, so they are
+ * reported as a platform sign-in instead of a key to be typed. Everything else
+ * is one key, which grove can hold.
+ */
 function credentialState(
   provider: CatalogProvider,
   credentials: CredentialSource
 ): ProviderCredential | undefined {
+  if (provider.id === PROVIDER) return undefined
   if (provider.env.length === 0) return undefined
-  return { env: provider.env, present: credentials.lookup(provider.env) !== null }
+  if (provider.sdk === BEDROCK_SDK || provider.sdk === VERTEX_SDK) {
+    return { kind: 'platform', env: provider.env, present: false }
+  }
+  return {
+    kind: 'key',
+    env: provider.env,
+    present: credentials.lookup(provider.env) !== null
+  }
 }
 
 /**

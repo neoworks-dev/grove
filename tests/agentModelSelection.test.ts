@@ -27,7 +27,7 @@ const models: ModelEntry[] = [
       {
         provider: 'kimi-for-coding',
         id: 'claude-fable-5-1',
-        credential: { env: ['KIMI_API_KEY'], present: false }
+        credential: { kind: 'key' as const, env: ['KIMI_API_KEY'], present: false }
       }
     ]
   },
@@ -38,7 +38,7 @@ const models: ModelEntry[] = [
       {
         provider: 'minimax',
         id: 'MiniMax-M3',
-        credential: { env: ['MINIMAX_API_KEY'], present: true }
+        credential: { kind: 'key' as const, env: ['MINIMAX_API_KEY'], present: true }
       }
     ]
   }

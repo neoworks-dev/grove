@@ -3,16 +3,15 @@
   //
   // Models come first because that is what a person means — "Fable 5.1" — while
   // the route (Anthropic, Bedrock, Vertex, a coding-plan endpoint) is which
-  // seller serves it, under an id only that seller uses. A model with one route
-  // shows it as a caption; a model with several offers them as chips, and the
-  // one a session is on is the one lit.
+  // seller serves it, under an id only that seller uses. A row is therefore one
+  // model, one line of sellers, and nothing else: the exact id is shown only for
+  // the model actually running, since that is the only place it has to be read.
 
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
   import {
     matchesQuery,
     preferredRoute,
-    routeLabel,
-    routeReady
+    routeNeedsKey
   } from '../../../../lib/agents/modelSelection'
   import type { ModelEntry, ModelRoute } from '../../../../lib/agents/types'
 
@@ -36,6 +35,11 @@
   } = $props()
 
   let query = $state('')
+  // The row whose routes are all showing, if any.
+  let expanded = $state<string | null>(null)
+
+  // How many routes a row shows before it collapses the rest behind a count.
+  const VISIBLE_ROUTES = 3
 
   const matching = $derived(models.filter((entry) => matchesQuery(entry, query)))
 
@@ -66,11 +70,27 @@
   }
 
   function pickRoute(route: ModelRoute): void {
-    if (!routeReady(route) && route.credential) {
+    if (routeNeedsKey(route) && route.credential) {
       onRequestKey(route.credential.env)
       return
     }
     onPick(route.provider, route.id)
+  }
+
+  /**
+   * Which routes are worth drawing on a row nobody has opened.
+   *
+   * A model reachable eight ways is still one model; the rest are one more
+   * click away rather than four more lines of chips.
+   */
+  function shownRoutes(entry: ModelEntry): ModelRoute[] {
+    if (expanded === entry.key) return entry.routes
+    return entry.routes.slice(0, VISIBLE_ROUTES)
+  }
+
+  function hiddenCount(entry: ModelEntry): number {
+    if (expanded === entry.key) return 0
+    return Math.max(0, entry.routes.length - VISIBLE_ROUTES)
   }
 
   /** The context window, said the way model cards say it. */
@@ -95,7 +115,10 @@
   function routeTitle(route: ModelRoute): string {
     const parts = [`${route.provider} · ${route.id}`]
     if (route.endpoint) parts.push(route.endpoint)
-    if (!routeReady(route) && route.credential) {
+    if (route.credential?.kind === 'platform') {
+      parts.push(`signs in with your ${route.credential.env[0]?.split('_')[0]} credentials`)
+    }
+    if (routeNeedsKey(route) && route.credential) {
       parts.push(`needs ${route.credential.env.join(' or ')}`)
     }
     return parts.join('\n')
@@ -131,36 +154,44 @@
   <FloatingScrollbar class="max-h-96">
     <div class="py-1">
       {#each matching as entry (entry.key)}
+        {@const routes = shownRoutes(entry)}
+        {@const hidden = hiddenCount(entry)}
         <div class="px-2 py-1 hover:bg-hover" class:bg-hover={entryIsActive(entry)}>
           <button
             class="flex w-full items-baseline gap-2 text-left {entryIsActive(entry)
               ? 'text-default'
               : 'text-dim'}"
+            title={entry.key}
             onclick={() => pickEntry(entry)}
           >
             <span class="truncate">{entry.label}</span>
             <span class="ml-auto shrink-0 text-2xs text-dim">{metaLabel(entry)}</span>
           </button>
 
-          {#if entry.routes.length === 1}
-            <!-- Nothing to choose between: the id is the only thing left to say. -->
-            <div class="truncate font-mono text-2xs text-dim">{routeLabel(entry.routes[0])}</div>
-          {:else}
-            <div class="mt-0.5 flex flex-wrap gap-1">
-              {#each entry.routes as route (route.provider + route.id)}
-                <button
-                  class="rounded border px-1 text-2xs {isActive(route)
-                    ? 'border-accent text-accent'
-                    : 'border-line text-dim hover:text-default'}"
-                  class:opacity-60={!routeReady(route)}
-                  title={routeTitle(route)}
-                  onclick={() => pickRoute(route)}
-                >
-                  {#if !routeReady(route)}<span class="text-amber">⚠</span>{/if}
-                  {route.provider}
-                </button>
-              {/each}
-            </div>
+          <!-- Routes stay on one quiet line: which sellers serve this model,
+               not their ids, which only the picked one has to be exact about. -->
+          <div class="flex flex-wrap items-baseline gap-x-1.5 text-2xs">
+            {#each routes as route (route.provider + route.id)}
+              <button
+                class="truncate {isActive(route) ? 'text-accent' : 'text-dim hover:text-default'}"
+                class:opacity-60={routeNeedsKey(route)}
+                title={routeTitle(route)}
+                onclick={() => pickRoute(route)}
+              >
+                {#if routeNeedsKey(route)}<span class="text-amber">+key</span>{/if}
+                {route.provider}
+              </button>
+            {/each}
+            {#if hidden > 0}
+              <button class="text-dim hover:text-default" onclick={() => (expanded = entry.key)}>
+                +{hidden}
+              </button>
+            {/if}
+          </div>
+
+          <!-- The exact id matters for the model actually running, and nowhere else. -->
+          {#if entryIsActive(entry)}
+            <div class="truncate font-mono text-2xs text-dim">{model}</div>
           {/if}
         </div>
       {/each}

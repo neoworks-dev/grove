@@ -228,9 +228,7 @@ export class AgentService {
     }
     if (event.type === 'user.interrupt') {
       await this.store.append(sessionId, event)
-      await this.runtimeOrCreate(sessionId)
-        .run?.interrupt()
-        .catch(() => {})
+      await this.interruptRun(sessionId)
       return
     }
     if (event.type === 'user.unqueue') {
@@ -278,6 +276,31 @@ export class AgentService {
       return
     }
     runtime.queued = [...runtime.queued, { id: stamped.id, text, deliverAs }]
+  }
+
+  /**
+   * Stop the turn in flight.
+   *
+   * A stop that cannot land says so in the conversation: silence here reads as a
+   * dead button, which is the one thing someone pressing Stop cannot act on.
+   */
+  private async interruptRun(sessionId: string): Promise<void> {
+    const run = this.runtimeOrCreate(sessionId).run
+    if (!run) {
+      await this.store.append(sessionId, {
+        type: 'session.notice',
+        message: 'Nothing to stop: this session has no run.'
+      })
+      return
+    }
+    try {
+      await run.interrupt()
+    } catch (cause) {
+      await this.store.append(sessionId, {
+        type: 'session.notice',
+        message: `Stopping the agent failed: ${(cause as Error).message}`
+      })
+    }
   }
 
   /** Take a message back out of the queue before it is delivered. */

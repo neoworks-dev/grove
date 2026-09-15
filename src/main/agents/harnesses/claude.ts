@@ -203,6 +203,9 @@ class ClaudeRun implements HarnessRun {
   private query: Query | null = null
   private queue = new MessageQueue()
   private disposed = false
+  // What grove has already told the session about: a turn grove did not start
+  // still has to raise the status, or the pane offers no way to stop it.
+  private running = false
 
   constructor(private options: HarnessRunOptions) {
     this.resumeKey = options.resumeKey
@@ -220,7 +223,7 @@ class ClaudeRun implements HarnessRun {
 
   prompt(text: string): Promise<void> {
     if (!this.query) throw new Error('the Claude harness is not running')
-    this.options.emit({ type: 'session.status_running' })
+    this.markRunning()
     this.queue.push(userMessage(text))
     return Promise.resolve()
   }
@@ -236,7 +239,7 @@ class ClaudeRun implements HarnessRun {
    */
   command(name: string, args: string): Promise<void> {
     if (!this.query) throw new Error('the Claude harness is not running')
-    this.options.emit({ type: 'session.status_running' })
+    this.markRunning()
     this.queue.push(userMessage(commandLine(name, args)))
     return Promise.resolve()
   }
@@ -352,6 +355,7 @@ class ClaudeRun implements HarnessRun {
       for await (const message of this.query) this.handle(message)
     } catch (cause) {
       if (this.disposed) return
+      this.running = false
       this.options.emit({ type: 'session.error', message: (cause as Error).message })
       this.options.emit({ type: 'session.status_idle', stopReason: 'error' })
     }
@@ -363,12 +367,17 @@ class ClaudeRun implements HarnessRun {
       return
     }
     if (this.handleSessionChange(message)) return
+    if (signalsWork(message)) this.markRunning()
     if (message.type === 'stream_event') {
-      this.handleStreamEvent(message.event)
+      for (const event of streamEvents(message.event, message.parent_tool_use_id)) {
+        this.options.emit(event)
+      }
       return
     }
     if (message.type === 'assistant') {
-      this.handleAssistant(message.message.content)
+      for (const event of assistantEvents(message.message.content, message.parent_tool_use_id)) {
+        this.options.emit(event)
+      }
       return
     }
     if (message.type === 'user') {
@@ -376,6 +385,20 @@ class ClaudeRun implements HarnessRun {
       return
     }
     if (message.type === 'result') this.handleResult(message)
+  }
+
+  /**
+   * Say the session is working, once per turn.
+   *
+   * Only some turns are ones grove asked for: a background agent finishing hands
+   * the conversation back to the model on its own, and the stream simply starts
+   * producing again. Raising the status from the stream rather than from the
+   * prompt is what keeps the Stop button on screen for those.
+   */
+  private markRunning(): void {
+    if (this.running) return
+    this.running = true
+    this.options.emit({ type: 'session.status_running' })
   }
 
   /**
@@ -404,44 +427,6 @@ class ClaudeRun implements HarnessRun {
     return false
   }
 
-  /** Partial messages carry the deltas the transcript streams. */
-  private handleStreamEvent(rawEvent: unknown): void {
-    const event = rawEvent as { type: string; delta?: Record<string, unknown> }
-    if (event.type === 'message_start') {
-      this.options.emit({ type: 'agent.message_start' })
-      return
-    }
-    if (event.type !== 'content_block_delta') return
-    const delta = event.delta as { type?: string; text?: string; thinking?: string } | undefined
-    if (delta?.type === 'text_delta' && delta.text) {
-      this.options.emit({ type: 'agent.message_delta', text: delta.text })
-    }
-    if (delta?.type === 'thinking_delta' && delta.thinking) {
-      this.options.emit({ type: 'agent.thinking_delta', text: delta.thinking })
-    }
-  }
-
-  private handleAssistant(content: unknown): void {
-    const blocks = blocksOf(content)
-    for (const block of blocks) {
-      if (block.type !== 'tool_use') continue
-      this.options.emit({
-        type: 'agent.tool_use',
-        toolUseId: String(block.id),
-        // grove's own tools travel as `mcp__grove__<name>`; the rest of grove
-        // knows them by the name it gave them, and so does the transcript.
-        name: bareName(String(block.name)),
-        input: block.input,
-        permission: 'allow'
-      })
-    }
-    this.options.emit({
-      type: 'agent.message_end',
-      content: blocks as ContentBlock[],
-      stopReason: 'end_turn'
-    })
-  }
-
   private handleToolResults(content: unknown): void {
     for (const block of blocksOf(content)) {
       if (block.type !== 'tool_result') continue
@@ -468,6 +453,7 @@ class ClaudeRun implements HarnessRun {
         contextWindow: 0
       })
     }
+    this.running = false
     const failed = message.subtype !== 'success'
     if (failed) {
       this.options.emit({ type: 'session.error', message: `run ended: ${message.subtype}` })
@@ -580,6 +566,74 @@ function compactionNotice(message: Extract<SDKMessage, { subtype: 'compact_bound
     return `Context compacted (${trigger}) from ${before.toLocaleString()} tokens.`
   }
   return `Context compacted (${trigger}): ${before.toLocaleString()} → ${after.toLocaleString()} tokens.`
+}
+
+/**
+ * Is this message the session doing work?
+ *
+ * Not every turn starts with a prompt grove sent: a background agent finishing
+ * hands the conversation back to the model on its own, and the only sign of it
+ * is the stream producing again. A session that does not notice reads as idle
+ * while it writes, which leaves nothing on screen to stop it with.
+ */
+export function signalsWork(message: SDKMessage): boolean {
+  return message.type === 'stream_event' || message.type === 'assistant' || message.type === 'user'
+}
+
+/**
+ * The transcript events a partial message carries.
+ *
+ * A subagent streams its own answer under the tool call that started it.
+ * Those fragments belong to a conversation of their own, so folding them in
+ * would splice them into whatever the main agent is in the middle of saying.
+ */
+export function streamEvents(rawEvent: unknown, parentToolUseId: string | null): ServerEventBody[] {
+  if (parentToolUseId) return []
+  const event = rawEvent as { type: string; delta?: Record<string, unknown> }
+  if (event.type === 'message_start') return [{ type: 'agent.message_start' }]
+  if (event.type !== 'content_block_delta') return []
+
+  const delta = event.delta as { type?: string; text?: string; thinking?: string } | undefined
+  if (delta?.type === 'text_delta' && delta.text) {
+    return [{ type: 'agent.message_delta', text: delta.text }]
+  }
+  if (delta?.type === 'thinking_delta' && delta.thinking) {
+    return [{ type: 'agent.thinking_delta', text: delta.thinking }]
+  }
+  return []
+}
+
+/**
+ * The transcript events an assistant message carries: its tool calls, and the
+ * block it closes.
+ *
+ * A subagent's message ends nothing here. Its calls still count — they are what
+ * the working bar counts — but ending the block would cut the main agent's
+ * message in two, one bubble stopping mid-word and the rest opening another.
+ * What the subagent concluded arrives as its tool call's result either way.
+ */
+export function assistantEvents(
+  content: unknown,
+  parentToolUseId: string | null
+): ServerEventBody[] {
+  const blocks = blocksOf(content)
+  const events: ServerEventBody[] = blocks
+    .filter((block) => block.type === 'tool_use')
+    .map((block) => ({
+      type: 'agent.tool_use',
+      toolUseId: String(block.id),
+      // grove's own tools travel as `mcp__grove__<name>`; the rest of grove
+      // knows them by the name it gave them, and so does the transcript.
+      name: bareName(String(block.name)),
+      input: block.input,
+      permission: 'allow'
+    }))
+
+  if (parentToolUseId) return events
+  return [
+    ...events,
+    { type: 'agent.message_end', content: blocks as ContentBlock[], stopReason: 'end_turn' }
+  ]
 }
 
 function userMessage(text: string): SDKUserMessage {

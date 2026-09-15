@@ -222,19 +222,48 @@ class PiRun implements HarnessRun {
       })
       return
     }
+    if (event.type === 'message_end') {
+      this.handleMessageEnd(event.message)
+      return
+    }
     if (event.type === 'agent_end') {
       this.options.emit({ type: 'session.status_idle', stopReason: 'end_turn' })
     }
   }
 
+  /**
+   * The finished message, as the blocks it was made of.
+   *
+   * pi streams its answer as deltas and closes the message with the whole of it.
+   * Reporting the close as well is what gives grove an answer it can hand on —
+   * the review flow and the agent hand-off both read closed messages, and a
+   * delta stream alone leaves them with nothing to quote.
+   */
+  private handleMessageEnd(message: unknown): void {
+    const text = assistantTextOf(message)
+    if (!text) return
+    this.options.emit({
+      type: 'agent.message_end',
+      content: [{ type: 'text', text }],
+      stopReason: 'end_turn'
+    })
+  }
+
+  /**
+   * One streamed fragment.
+   *
+   * pi names its stream events for its own provider layer rather than for grove,
+   * and the names have changed between releases, so what counts is that the
+   * event carries a delta and whether it is reasoning or answer.
+   */
   private handleDelta(assistantEvent: { type: string; delta?: string }): void {
-    if (assistantEvent.type === 'text_delta' && assistantEvent.delta) {
-      this.options.emit({ type: 'agent.message_delta', text: assistantEvent.delta })
+    const delta = assistantEvent.delta
+    if (typeof delta !== 'string' || delta.length === 0) return
+    if (assistantEvent.type.includes('thinking') || assistantEvent.type.includes('reasoning')) {
+      this.options.emit({ type: 'agent.thinking_delta', text: delta })
       return
     }
-    if (assistantEvent.type === 'thinking_delta' && assistantEvent.delta) {
-      this.options.emit({ type: 'agent.thinking_delta', text: assistantEvent.delta })
-    }
+    this.options.emit({ type: 'agent.message_delta', text: delta })
   }
 
   /**
@@ -287,6 +316,30 @@ export function proposedContent(
     text = text.replace(entry.oldText, entry.newText)
   }
   return text
+}
+
+/**
+ * The assistant text of one pi message.
+ *
+ * pi's message type is not published, and its content has been both a string and
+ * a list of blocks, so both are read and anything else is treated as having no
+ * text rather than as an error.
+ */
+function assistantTextOf(message: unknown): string {
+  if (typeof message !== 'object' || message === null) return ''
+  const record = message as { role?: unknown; content?: unknown }
+  if (record.role !== 'assistant') return ''
+  if (typeof record.content === 'string') return record.content.trim()
+  if (!Array.isArray(record.content)) return ''
+
+  const parts: string[] = []
+  for (const block of record.content) {
+    if (typeof block === 'string') parts.push(block)
+    if (typeof block !== 'object' || block === null) continue
+    const entry = block as { type?: unknown; text?: unknown }
+    if (entry.type === 'text' && typeof entry.text === 'string') parts.push(entry.text)
+  }
+  return parts.join('').trim()
 }
 
 /** A model pi can be started on; `undefined` lets pi choose for itself. */

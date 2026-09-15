@@ -136,6 +136,10 @@ export class AgentRoster {
       title: options.title,
       harness: options.harness,
       model: options.model,
+      // A model without the provider that serves it is not enough to start a
+      // session on: pi, for one, ignores a half-named model and falls back to
+      // its own default, which is not what the spawning agent asked for.
+      provider: await this.providerOf(options.harness, options.model),
       labels: labelsFor(options)
     })
     // The brief is the parent talking, so it arrives as the parent talking: the
@@ -146,6 +150,16 @@ export class AgentRoster {
       { type: 'app.message', label: 'Task', from, text: options.prompt, deliverAs: 'followUp' }
     ])
     return peerOf(snapshot)
+  }
+
+  /** Which provider serves a model on a runtime, when the caller named one. */
+  private async providerOf(
+    harnessId: string | undefined,
+    model: string | undefined
+  ): Promise<string | undefined> {
+    if (!harnessId || !model) return undefined
+    const models = await this.modelsOf(harnessId)
+    return models.find((entry) => entry.model === model)?.provider
   }
 
   /** Remove a session and everything it recorded. */

@@ -10,6 +10,7 @@
   import Icon from '@iconify/svelte'
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
   import { MODE_LABELS, type AgentMode } from '../../../../lib/agents/modes'
+  import { THINKING_LABELS, THINKING_LEVELS } from '../../../../lib/agents/thinking'
   import type { HarnessInfo, ProviderModels, ThinkingLevel } from '../../../../lib/agents/types'
 
   let {
@@ -50,7 +51,6 @@
     onInterrupt: () => void
   } = $props()
 
-  const THINKING_LEVELS: ThinkingLevel[] = ['off', 'low', 'medium', 'high', 'xhigh', 'max']
   const MODES: AgentMode[] = ['default', 'plan', 'acceptEdits', 'bypass']
 
   const REVIEW_MODES = [
@@ -86,6 +86,20 @@
   }
 
   const reviewLabel = $derived(reviewMode === 'post' ? 'review after' : 'review first')
+
+  /**
+   * The model, as the harness names it for people ("Opus 5 (1M context)"), and
+   * nothing else: the provider is a detail of the cascade that picks it, not
+   * something worth a slot in the status line.
+   */
+  const modelLabel = $derived.by(() => {
+    for (const entry of providers) {
+      if (entry.provider !== provider) continue
+      const match = entry.models.find((candidate) => candidate.id === model)
+      if (match?.label) return match.label
+    }
+    return model
+  })
 
   const MODE_COLOR: Record<AgentMode, string> = {
     default: 'text-muted',
@@ -156,12 +170,10 @@
   <div class="relative z-20">
     <button
       class="flex items-center gap-1.5 rounded border border-line px-2 py-1 hover:bg-hover"
-      title="Provider and model for this session"
+      title={provider ? `${provider} · ${model}` : model}
       onclick={() => toggle('model')}
     >
-      <span class="font-medium text-default">{provider}</span>
-      <span class="text-dim">·</span>
-      <span class="max-w-[10rem] truncate text-muted">{model}</span>
+      <span class="max-w-[12rem] truncate font-medium text-default">{modelLabel}</span>
       <span class="text-dim">▾</span>
     </button>
     {#if openMenu === 'model'}
@@ -236,7 +248,7 @@
   <div class="relative z-20">
     <button
       class="flex items-center gap-1 rounded border border-line px-2 py-1 hover:bg-hover"
-      title="How much the agent may do without asking"
+      title="How much the agent may do without asking (shift+tab)"
       onclick={() => toggle('mode')}
     >
       <span class="font-medium {MODE_COLOR[mode]}">{MODE_LABELS[mode]}</span>
@@ -314,10 +326,10 @@
   <div class="relative z-20 ml-auto" class:hidden={capabilities?.thinking === false}>
     <button
       class="flex items-center gap-1 rounded border border-line px-2 py-1 hover:bg-hover"
-      title="Thinking level"
+      title="Reasoning effort (ctrl+tab)"
       onclick={() => toggle('thinking')}
     >
-      <span class="font-medium text-default">{thinking}</span>
+      <span class="font-medium text-default">{THINKING_LABELS[thinking]}</span>
       <span class="text-dim">▾</span>
     </button>
     {#if openMenu === 'thinking'}
@@ -334,7 +346,7 @@
               close()
             }}
           >
-            {level}
+            {THINKING_LABELS[level]}
           </button>
         {/each}
       </div>

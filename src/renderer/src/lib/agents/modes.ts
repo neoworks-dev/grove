@@ -29,6 +29,14 @@ export const MODE_LABELS: Record<AgentMode, string> = {
   bypass: 'bypass'
 }
 
+/** The order shift+tab steps through, least permissive first. */
+export const MODE_ORDER: AgentMode[] = ['default', 'plan', 'acceptEdits', 'bypass']
+
+export function nextMode(current: AgentMode): AgentMode {
+  const index = MODE_ORDER.indexOf(current)
+  return MODE_ORDER[(index + 1) % MODE_ORDER.length]
+}
+
 /**
  * The mode a session is already in, read back off its own state — so reopening a
  * session in a new window reports what it is actually doing rather than a

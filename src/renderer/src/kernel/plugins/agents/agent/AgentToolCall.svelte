@@ -7,7 +7,9 @@
 
   import CaretRight from 'phosphor-svelte/lib/CaretRight'
   import Icon from '@iconify/svelte'
+  import CodeBlock from '../../../../components/CodeBlock.svelte'
   import { fileIcon } from '../../../../lib/icons'
+  import { formatShellCommand } from '../../../../lib/shellFormat'
   import { diffLines, statsOf } from '../../../../lib/agents/diff'
   import {
     descriptionOf,
@@ -108,6 +110,19 @@
     if (view === 'command') return stringOf(record.command)
     return stringOf(record.content)
   }
+
+  // A command as written is one long line — four greps and a pipeline, past the
+  // width of any pane it lands in. Broken at its own operators it can be read;
+  // what runs is untouched.
+  const shownInput = $derived.by(() => {
+    if (inputView === 'command') return formatShellCommand(contentOf('command'))
+    if (inputView === 'code') return contentOf('code')
+    return ''
+  })
+
+  // A command is shell whatever the tool called the field; anything else names
+  // its own language, or has none and stays plain.
+  const inputLanguage = $derived(inputView === 'command' ? 'shell' : language)
 
   const STATUS_COLOR: Record<ToolStatus, string> = {
     pending: 'text-amber',
@@ -214,9 +229,11 @@
         <div class="whitespace-pre-wrap text-2xs text-muted">{message.text}</div>
       </div>
     {:else if inputView === 'code' || inputView === 'command'}
-      <pre
+      <CodeBlock
+        code={shownInput}
+        language={inputLanguage}
         class="mt-1 max-h-72 overflow-auto whitespace-pre-wrap rounded border border-line px-2 py-1 font-mono text-2xs text-muted"
-        data-language={language}>{contentOf(inputView)}</pre>
+      />
     {:else if inputView === 'json'}
       <pre
         class="mt-1 max-h-72 overflow-auto whitespace-pre-wrap py-1 pl-4 font-mono text-2xs text-muted">{JSON.stringify(
@@ -234,6 +251,14 @@
             <li class="truncate font-mono text-2xs text-dim">{line}</li>
           {/each}
         </ul>
+      {:else if resultView === 'code' && item.status !== 'error'}
+        <!-- A file the agent read: the contents are the whole point of the call,
+             so they are shown the way the editor would show them. -->
+        <CodeBlock
+          code={item.result}
+          {language}
+          class="mb-1 mt-1 max-h-60 overflow-auto whitespace-pre-wrap py-1 pl-4 font-mono text-2xs text-dim"
+        />
       {:else}
         <pre
           class="mb-1 mt-1 max-h-60 overflow-auto whitespace-pre-wrap py-1 pl-4 font-mono text-2xs {item.status ===

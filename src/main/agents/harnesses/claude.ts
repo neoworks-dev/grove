@@ -26,6 +26,8 @@ import type {
   ProviderModels,
   ServerEventBody,
   ThinkingLevel,
+  ToolDisplay,
+  ToolInfo,
   ToolPolicy
 } from '../../../shared/agents'
 import { zodShapeFromJsonSchema, type JsonSchemaObject } from '../../plugins/zodSchema'
@@ -60,6 +62,22 @@ const WRITE_TOOLS: Record<string, string> = {
   Edit: 'file_path',
   MultiEdit: 'file_path',
   NotebookEdit: 'notebook_path'
+}
+
+/**
+ * How Claude Code's own tools want their calls shown.
+ *
+ * The CLI describes its commands and models but not its tools, so the adapter
+ * answers for them the same way it answers what a write would leave on disk. A
+ * tool that is not named here renders the way any unknown tool does — this only
+ * says which calls are worth reading as code rather than as arguments.
+ */
+const TOOL_DISPLAY: Record<string, ToolDisplay> = {
+  // A command, laid out and highlighted as shell.
+  Bash: { input: 'command' },
+  BashOutput: { input: 'hidden' },
+  // The file is already the header; its contents are the point.
+  Read: { input: 'hidden', result: 'code', languageFrom: 'file_path' }
 }
 
 /** Thinking levels mapped onto the SDK's token budget. `off` disables it. */
@@ -552,7 +570,7 @@ class Offering {
     try {
       const initialization = await session.initializationResult()
       this.cached = {
-        tools: [],
+        tools: builtinTools(),
         commands: commandsOf(initialization.commands),
         skills: [],
         providers: providersOf(initialization.models),
@@ -565,6 +583,23 @@ class Offering {
       await session.return(undefined).catch(() => {})
     }
   }
+}
+
+/**
+ * The built-in tools grove has something to say about.
+ *
+ * Only their display matters here: the CLI owns what they do, their schemas and
+ * whether they may run, so everything else is left at what an unknown tool gets.
+ */
+function builtinTools(): ToolInfo[] {
+  return Object.entries(TOOL_DISPLAY).map(([name, display]) => ({
+    name,
+    description: '',
+    policy: 'ask' as ToolPolicy,
+    parallelSafe: false,
+    display,
+    inputSchema: {}
+  }))
 }
 
 function commandsOf(commands: SlashCommand[]): CommandInfo[] {

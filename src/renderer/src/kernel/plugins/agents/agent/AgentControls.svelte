@@ -9,7 +9,7 @@
 
   import Icon from '@iconify/svelte'
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
-  import { MODE_LABELS, type AgentMode } from '../../../../lib/agents/modes'
+  import { MODE_DESCRIPTIONS, MODE_LABELS, type AgentMode } from '../../../../lib/agents/modes'
   import { THINKING_LABELS, THINKING_LEVELS } from '../../../../lib/agents/thinking'
   import type { HarnessInfo, ProviderModels, ThinkingLevel } from '../../../../lib/agents/types'
 
@@ -122,9 +122,12 @@
     return model
   })
 
+  // Modes read as how far they step away from "ask": neutral, then the theme's
+  // accent, then its two warning tones. Every one is a theme token, so they
+  // change with the palette instead of sitting on top of it.
   const MODE_COLOR: Record<AgentMode, string> = {
     default: 'text-muted',
-    plan: 'text-blue',
+    plan: 'text-violet',
     acceptEdits: 'text-amber',
     bypass: 'text-red'
   }
@@ -284,19 +287,23 @@
     </button>
     {#if openMenu === 'mode'}
       <div
-        class="absolute bottom-full left-0 z-30 mb-1 w-44 rounded-md border border-line bg-elevated py-1 shadow-lg"
+        class="absolute bottom-full left-0 z-30 mb-1 w-64 rounded-md border border-line bg-elevated py-1 shadow-lg"
       >
         {#each MODES as candidate (candidate)}
           <button
-            class="flex w-full items-center px-2 py-1 text-left hover:bg-hover {candidate === mode
-              ? 'text-default'
-              : 'text-dim'}"
+            class="flex w-full flex-col items-start gap-0.5 px-2 py-1.5 text-left hover:bg-hover"
             onclick={() => {
               onPickMode(candidate)
               close()
             }}
           >
-            <span class={MODE_COLOR[candidate]}>{MODE_LABELS[candidate]}</span>
+            <span class="flex w-full items-center gap-1.5">
+              <span class={MODE_COLOR[candidate]}>{MODE_LABELS[candidate]}</span>
+              {#if candidate === mode}
+                <span class="ml-auto text-dim">✓</span>
+              {/if}
+            </span>
+            <span class="leading-snug text-dim">{MODE_DESCRIPTIONS[candidate]}</span>
           </button>
         {/each}
       </div>

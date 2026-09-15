@@ -1,11 +1,15 @@
 <script lang="ts">
-  // The model picker: one row per model, with the routes that reach it.
+  // The model picker: one line per model.
   //
   // Models come first because that is what a person means — "Fable 5.1" — while
   // the route (Anthropic, Bedrock, Vertex, a coding-plan endpoint) is which
-  // seller serves it, under an id only that seller uses. A row is therefore one
-  // model, one line of sellers, and nothing else: the exact id is shown only for
-  // the model actually running, since that is the only place it has to be read.
+  // seller serves it, under an id only that seller uses. Almost every model has
+  // one route worth taking, so routes are drawn for the model a session is on
+  // and nowhere else; picking any other model takes its best route.
+  //
+  // What the account itself can run is a handful of models. The catalog knows
+  // fifty more, which is worth having and not worth scrolling past, so they sit
+  // behind a fold that any search opens.
 
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
   import {
@@ -35,21 +39,24 @@
   } = $props()
 
   let query = $state('')
-  // The row whose routes are all showing, if any.
-  let expanded = $state<string | null>(null)
-
-  // How many routes a row shows before it collapses the rest behind a count.
-  const VISIBLE_ROUTES = 3
+  let showAll = $state(false)
 
   const matching = $derived(models.filter((entry) => matchesQuery(entry, query)))
+
+  /** What the signed-in account can run: the short list, always shown. */
+  const account = $derived(matching.filter((entry) => entry.routes.some((route) => route.native)))
+
+  /** Everything else the catalog knows, behind the fold until it is asked for. */
+  const rest = $derived(matching.filter((entry) => !entry.routes.some((route) => route.native)))
+
+  // A search is a request to look past the account's own models.
+  const restOpen = $derived(showAll || query.trim().length > 0)
 
   /** What was typed, when it names no model grove knows — run it anyway. */
   const typedId = $derived.by(() => {
     const trimmed = query.trim()
     if (trimmed.length === 0) return ''
-    const known = models.some((entry) =>
-      entry.routes.some((route) => route.id === trimmed && route.provider === provider)
-    )
+    const known = models.some((entry) => entry.routes.some((route) => route.id === trimmed))
     if (known) return ''
     return trimmed
   })
@@ -62,7 +69,7 @@
     return entry.routes.some(isActive)
   }
 
-  /** Picking the model takes its best route; picking a chip takes that one. */
+  /** Picking a model takes its best route; picking a route takes that one. */
   function pickEntry(entry: ModelEntry): void {
     const route = preferredRoute(entry)
     if (!route) return
@@ -77,43 +84,23 @@
     onPick(route.provider, route.id)
   }
 
-  /**
-   * Which routes are worth drawing on a row nobody has opened.
-   *
-   * A model reachable eight ways is still one model; the rest are one more
-   * click away rather than four more lines of chips.
-   */
-  function shownRoutes(entry: ModelEntry): ModelRoute[] {
-    if (expanded === entry.key) return entry.routes
-    return entry.routes.slice(0, VISIBLE_ROUTES)
-  }
-
-  function hiddenCount(entry: ModelEntry): number {
-    if (expanded === entry.key) return 0
-    return Math.max(0, entry.routes.length - VISIBLE_ROUTES)
-  }
-
-  /** The context window, said the way model cards say it. */
-  function contextLabel(route: ModelRoute): string {
-    if (!route.contextWindow) return ''
-    if (route.contextWindow >= 1_000_000) return `${Math.round(route.contextWindow / 1_000_000)}M`
-    return `${Math.round(route.contextWindow / 1_000)}K`
-  }
-
-  /** Input and output price per million tokens, which is how they are quoted. */
-  function priceLabel(route: ModelRoute): string {
-    if (!route.pricing) return ''
-    return `$${route.pricing.input}/$${route.pricing.output}`
-  }
-
+  /** Context window and price, the way model cards quote them. */
   function metaLabel(entry: ModelEntry): string {
     const route = preferredRoute(entry)
     if (!route) return ''
-    return [contextLabel(route), priceLabel(route)].filter(Boolean).join(' · ')
+    const parts: string[] = []
+    if (route.contextWindow) parts.push(contextLabel(route.contextWindow))
+    if (route.pricing) parts.push(`$${route.pricing.input}/$${route.pricing.output}`)
+    return parts.join('  ')
+  }
+
+  function contextLabel(tokens: number): string {
+    if (tokens >= 1_000_000) return `${Math.round(tokens / 1_000_000)}M`
+    return `${Math.round(tokens / 1_000)}K`
   }
 
   function routeTitle(route: ModelRoute): string {
-    const parts = [`${route.provider} · ${route.id}`]
+    const parts = [route.id]
     if (route.endpoint) parts.push(route.endpoint)
     if (route.credential?.kind === 'platform') {
       parts.push(`signs in with your ${route.credential.env[0]?.split('_')[0]} credentials`)
@@ -124,6 +111,38 @@
     return parts.join('\n')
   }
 </script>
+
+{#snippet row(entry: ModelEntry)}
+  {@const active = entryIsActive(entry)}
+  <div class="px-2 hover:bg-hover" class:bg-hover={active}>
+    <button
+      class="flex w-full items-baseline gap-3 py-1 text-left {active ? 'text-default' : 'text-dim'}"
+      title={entry.key}
+      onclick={() => pickEntry(entry)}
+    >
+      <span class="truncate">{entry.label}</span>
+      <span class="ml-auto shrink-0 font-mono text-2xs text-dim">{metaLabel(entry)}</span>
+    </button>
+
+    <!-- Only the running model has to be exact about which seller and which id,
+         and only it offers the others: everywhere else one line is enough. -->
+    {#if active}
+      <div class="flex flex-wrap items-baseline gap-x-2 pb-1 text-2xs">
+        <span class="truncate font-mono text-dim">{model}</span>
+        {#each entry.routes as route (route.provider + route.id)}
+          <button
+            class="truncate {isActive(route) ? 'text-accent' : 'text-dim hover:text-default'}"
+            title={routeTitle(route)}
+            onclick={() => pickRoute(route)}
+          >
+            {#if routeNeedsKey(route)}<span class="text-amber">+key</span>{/if}
+            {route.provider}
+          </button>
+        {/each}
+      </div>
+    {/if}
+  </div>
+{/snippet}
 
 <div
   class="absolute bottom-full left-0 z-30 mb-1 flex w-80 flex-col rounded-md border border-line bg-elevated shadow-lg"
@@ -146,57 +165,34 @@
       onkeydown={(event) => {
         if (event.key !== 'Enter') return
         if (typedId) onPick(provider, typedId)
-        else if (matching[0]) pickEntry(matching[0])
+        else if (account[0]) pickEntry(account[0])
+        else if (rest[0]) pickEntry(rest[0])
       }}
     />
   </div>
 
   <FloatingScrollbar class="max-h-96">
     <div class="py-1">
-      {#each matching as entry (entry.key)}
-        {@const routes = shownRoutes(entry)}
-        {@const hidden = hiddenCount(entry)}
-        <div class="px-2 py-1 hover:bg-hover" class:bg-hover={entryIsActive(entry)}>
-          <button
-            class="flex w-full items-baseline gap-2 text-left {entryIsActive(entry)
-              ? 'text-default'
-              : 'text-dim'}"
-            title={entry.key}
-            onclick={() => pickEntry(entry)}
-          >
-            <span class="truncate">{entry.label}</span>
-            <span class="ml-auto shrink-0 text-2xs text-dim">{metaLabel(entry)}</span>
-          </button>
-
-          <!-- Routes stay on one quiet line: which sellers serve this model,
-               not their ids, which only the picked one has to be exact about. -->
-          <div class="flex flex-wrap items-baseline gap-x-1.5 text-2xs">
-            {#each routes as route (route.provider + route.id)}
-              <button
-                class="truncate {isActive(route) ? 'text-accent' : 'text-dim hover:text-default'}"
-                class:opacity-60={routeNeedsKey(route)}
-                title={routeTitle(route)}
-                onclick={() => pickRoute(route)}
-              >
-                {#if routeNeedsKey(route)}<span class="text-amber">+key</span>{/if}
-                {route.provider}
-              </button>
-            {/each}
-            {#if hidden > 0}
-              <button class="text-dim hover:text-default" onclick={() => (expanded = entry.key)}>
-                +{hidden}
-              </button>
-            {/if}
-          </div>
-
-          <!-- The exact id matters for the model actually running, and nowhere else. -->
-          {#if entryIsActive(entry)}
-            <div class="truncate font-mono text-2xs text-dim">{model}</div>
-          {/if}
-        </div>
+      {#each account as entry (entry.key)}
+        {@render row(entry)}
       {/each}
 
-      {#if matching.length === 0 && !typedId}
+      {#if rest.length > 0}
+        <button
+          class="mt-1 flex w-full items-center gap-1 border-t border-line px-2 pt-1 text-2xs text-dim hover:text-default"
+          onclick={() => (showAll = !restOpen)}
+        >
+          <span>{restOpen ? '▾' : '▸'}</span>
+          <span>{rest.length} more from other providers</span>
+        </button>
+        {#if restOpen}
+          {#each rest as entry (entry.key)}
+            {@render row(entry)}
+          {/each}
+        {/if}
+      {/if}
+
+      {#if account.length === 0 && rest.length === 0 && !typedId}
         <div class="px-2 py-1 text-2xs text-dim">No models available</div>
       {/if}
 

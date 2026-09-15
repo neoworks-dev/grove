@@ -142,13 +142,19 @@ describe('model ids across platforms', () => {
   test('reads a platform spelling as the model behind it', () => {
     expect(normalizeModelId('us.anthropic.claude-opus-5')).toBe('claude-opus-5')
     expect(normalizeModelId('global.anthropic.claude-haiku-4-5-20251001-v1:0')).toBe(
-      'claude-haiku-4-5-20251001'
+      'claude-haiku-4-5'
     )
     expect(normalizeModelId('claude-fable-5@default')).toBe('claude-fable-5')
   })
 
   test('keeps a variant that is genuinely a different model to run', () => {
     expect(normalizeModelId('claude-opus-5[1m]')).toBe('claude-opus-5[1m]')
+  })
+
+  test('folds a dated snapshot into the moving id that points at it', () => {
+    // The catalog lists both, as "Claude Haiku 4.5 (latest)" and "Claude Haiku
+    // 4.5"; they are one model, and two rows for it is what made the list long.
+    expect(normalizeModelId('claude-haiku-4-5-20251001')).toBe(normalizeModelId('claude-haiku-4-5'))
   })
 })
 

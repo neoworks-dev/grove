@@ -380,6 +380,65 @@ describe('AgentService', () => {
     }
   })
 
+  test('a shell command runs in grove and lands on the log, whatever the harness', async () => {
+    const { service, store, runs, cleanup } = await setup()
+    const workspace = await mkdtemp(join(tmpdir(), 'grove-agent-shell-'))
+    try {
+      const session = await service.createSession({ workspace })
+      await service.send(session.id, [
+        { type: 'user.shell', command: 'echo hello', share: false }
+      ])
+
+      const events = await store.eventsSince(session.id, 0)
+      const result = events.find((event) => event.type === 'session.shell_result')
+      expect(result).toMatchObject({ command: 'echo hello', exitCode: 0, share: false })
+      expect((result as { output: string }).output.trim()).toBe('hello')
+      // A private command is the user looking something up: no run, no turn.
+      expect(runs).toHaveLength(0)
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+      await cleanup()
+    }
+  })
+
+  test('a shared shell command rides along with the next message, once', async () => {
+    const { service, runs, cleanup } = await setup()
+    const workspace = await mkdtemp(join(tmpdir(), 'grove-agent-shell-'))
+    try {
+      const session = await service.createSession({ workspace })
+      await service.send(session.id, [{ type: 'user.shell', command: 'echo hello', share: true }])
+      expect(runs).toHaveLength(0)
+
+      await service.send(session.id, [say('fix it')])
+      expect(runs[0].prompts[0]).toBe(
+        '<shell-command outcome="exit 0">\n$ echo hello\nhello\n\n</shell-command>\nfix it'
+      )
+
+      runs[0].finish()
+      await settle()
+      await service.send(session.id, [say('and again')])
+      expect(runs[0].prompts[1]).toBe('and again')
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+      await cleanup()
+    }
+  })
+
+  test('a private shell command is kept from the model', async () => {
+    const { service, runs, cleanup } = await setup()
+    const workspace = await mkdtemp(join(tmpdir(), 'grove-agent-shell-'))
+    try {
+      const session = await service.createSession({ workspace })
+      await service.send(session.id, [{ type: 'user.shell', command: 'echo secret', share: false }])
+      await service.send(session.id, [say('carry on')])
+
+      expect(runs[0].prompts).toEqual(['carry on'])
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+      await cleanup()
+    }
+  })
+
   test('a session without a workspace is refused', async () => {
     const { service, cleanup } = await setup()
     try {

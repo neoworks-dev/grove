@@ -15,7 +15,7 @@ import type {
   HarnessCapabilities,
   HarnessInfo,
   OpenFileTarget,
-  ProviderModels,
+  ModelEntry,
   ServerEventBody,
   SkillInfo,
   ThinkingLevel,
@@ -169,7 +169,7 @@ export interface HarnessOffering {
   tools: ToolInfo[]
   commands: CommandInfo[]
   skills: SkillInfo[]
-  providers: ProviderModels[]
+  models: ModelEntry[]
   default: { provider: string; model: string } | null
 }
 

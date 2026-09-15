@@ -401,6 +401,11 @@ export interface WorkbenchApi {
     respondPairing: (id: string, approved: boolean) => Promise<void>
     revoke: (appId: string) => Promise<ExternalAppShape[]>
   }
+  secrets: {
+    status: (names: string[]) => Promise<{ present: string[]; storable: boolean }>
+    set: (name: string, value: string) => Promise<void>
+    clear: (name: string) => Promise<void>
+  }
   settings: {
     read: () => Promise<SettingsSnapshotShape>
     set: (key: string, value: unknown, scope: 'user' | 'project') => Promise<SettingsSnapshotShape>

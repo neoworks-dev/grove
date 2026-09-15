@@ -74,7 +74,9 @@ async function setup(): Promise<Fixture> {
       tools: [],
       commands: [],
       skills: [],
-      providers: [{ provider: 'fake', models: [{ id: 'fake-model', provider: 'fake' }] }],
+      models: [
+        { key: 'fake-model', label: 'fake-model', routes: [{ provider: 'fake', id: 'fake-model' }] }
+      ],
       default: { provider: 'fake', model: 'fake-model' }
     }),
     start: async (options) => {

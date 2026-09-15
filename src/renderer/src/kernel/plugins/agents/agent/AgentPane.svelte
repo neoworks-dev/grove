@@ -53,6 +53,7 @@
   import AgentSessionTabs from './AgentSessionTabs.svelte'
   import AgentTranscript from './AgentTranscript.svelte'
   import AgentWorkingBar from './AgentWorkingBar.svelte'
+  import CredentialPrompt from './CredentialPrompt.svelte'
 
   let { leafId }: { leafId: string } = $props()
 
@@ -342,6 +343,19 @@
   function pickModel(provider: string, model: string): void {
     if (!activeId) return
     void agentSessions.update(activeId, { provider, model })
+  }
+
+  // The variables a route asked for, while the dialog collecting one is open.
+  let credentialRequest = $state<string[] | null>(null)
+
+  function requestCredential(variables: string[]): void {
+    credentialRequest = variables
+  }
+
+  /** A stored key changes which routes are ready, so the catalog is re-read. */
+  function closeCredentialPrompt(stored: boolean): void {
+    credentialRequest = null
+    if (stored) void catalog.reload()
   }
 
   /**
@@ -803,13 +817,14 @@
               thinking={snapshot.thinkingLevel}
               {mode}
               {running}
-              providers={catalog.providers}
+              models={catalog.models}
               {reviewMode}
               {reviewPause}
               tokensLabel={contextLabel}
               contextTokens={snapshot.context.usedTokens}
               onPickHarness={pickHarness}
               onPickModel={pickModel}
+              onRequestKey={requestCredential}
               onPickThinking={pickThinking}
               onPickMode={pickMode}
               onSetReview={setReviewSetting}
@@ -821,3 +836,7 @@
     {/if}
   {/if}
 </div>
+
+{#if credentialRequest}
+  <CredentialPrompt variables={credentialRequest} onClose={closeCredentialPrompt} />
+{/if}

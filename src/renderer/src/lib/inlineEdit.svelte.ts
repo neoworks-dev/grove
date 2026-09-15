@@ -129,7 +129,7 @@ class InlineEdit {
     await catalog.load()
     const options = this.modelOptions
     if (options.length === 0) return
-    const fallback = resolveModelSelection('', catalog.defaults, catalog.providers)
+    const fallback = resolveModelSelection('', catalog.defaults, catalog.models)
     const signature = JSON.stringify({ options: options.map((option) => option.key), fallback })
     if (signature === this.modelSchemaSignature) return
     this.modelSchemaSignature = signature
@@ -152,11 +152,11 @@ class InlineEdit {
   }
 
   get modelOptions(): ModelOption[] {
-    return discoveredModelOptions(catalog.providers)
+    return discoveredModelOptions(catalog.models)
   }
 
   get modelSelection(): ModelSelection | null {
-    return resolveModelSelection(settings.get(MODEL_SETTING), catalog.defaults, catalog.providers)
+    return resolveModelSelection(settings.get(MODEL_SETTING), catalog.defaults, catalog.models)
   }
 
   get modelKey(): string {

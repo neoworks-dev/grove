@@ -20,6 +20,7 @@ import type {
   FileMatch,
   HarnessCatalog,
   HarnessInfo,
+  ModelEntry,
   QueuedMessage,
   ServerEventBody,
   SessionEvent,
@@ -787,9 +788,9 @@ export class AgentService {
       this.options.harnesses.list().map(async (descriptor) => {
         const offering = await descriptor.offering().catch(() => null)
         if (!offering) return []
-        return offering.providers.map((entry) => ({
-          provider: `${descriptor.id}/${entry.provider}`,
-          models: entry.models.map((model) => ({ id: model.id }))
+        return groupRoutesByProvider(offering.models).map(([provider, ids]) => ({
+          provider: `${descriptor.id}/${provider}`,
+          models: ids.map((id) => ({ id }))
         }))
       })
     )
@@ -836,6 +837,25 @@ function textOf(event: Extract<ClientEventBody, { type: 'user.message' | 'app.me
  * Command and output are tagged rather than pasted in raw, so the model can tell
  * what the user ran from what the user is saying.
  */
+/**
+ * Model entries flattened back to one list of ids per provider.
+ *
+ * The picker wants a model and the routes that serve it; the plugin API wants
+ * the older provider → ids listing, which is this same data read the other way
+ * round.
+ */
+function groupRoutesByProvider(models: ModelEntry[]): [string, string[]][] {
+  const byProvider = new Map<string, string[]>()
+  for (const entry of models) {
+    for (const route of entry.routes) {
+      const ids = byProvider.get(route.provider)
+      if (ids) ids.push(route.id)
+      else byProvider.set(route.provider, [route.id])
+    }
+  }
+  return [...byProvider.entries()]
+}
+
 /** Shell output that was waiting, put in front of the message it rides along with. */
 function withPendingShell(pending: string, text: string): string {
   if (pending.length === 0) return text

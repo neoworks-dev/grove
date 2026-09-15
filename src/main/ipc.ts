@@ -20,6 +20,7 @@ import { WorktreeWatcher } from './watcher'
 import { WorktreeChannel } from './worktreeChannel'
 import { ReviewService } from './review'
 import { getRepoState, updateRepoState, setLastRepo } from './state'
+import { SecretsService } from './secrets'
 import { SettingsService } from './settings'
 import { ActionRunner } from './actions'
 import { TerminalManager } from './terminals'
@@ -130,6 +131,10 @@ const review = new ReviewService(
 const settings = new SettingsService({
   onChange: (snapshot) => send('event:settings-changed', snapshot)
 })
+
+// Provider keys, encrypted with the OS keychain. Kept apart from settings on
+// purpose: those files are human-editable and one of them lives in the repo.
+const secrets = new SecretsService()
 
 // Agent sessions. The harnesses themselves are mounted as plugins, so the only
 // thing constructed here is the state they share: the registry they register
@@ -608,6 +613,7 @@ const mainServices = {
     ctx.provide('checkpoints', checkpoints)
     ctx.provide('review', review)
     ctx.provide('settings', settings)
+    ctx.provide('secrets', secrets)
     ctx.provide('terminals', terminals)
     ctx.provide('lsp', lsp)
     ctx.provide('watcher', watcher)
@@ -629,6 +635,7 @@ const mainServices = {
     // API socket external apps connect over, and the user settings file.
     startApiSocket()
     void settings.loadUser()
+    void secrets.load()
   }
 }
 

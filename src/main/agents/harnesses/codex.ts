@@ -9,12 +9,7 @@
 import { spawn } from 'node:child_process'
 import type { Context } from '@neoworks/extension-system'
 import type { Codex, Thread, ThreadEvent, ThreadItem } from '@openai/codex-sdk'
-import type {
-  ProviderModels,
-  ServerEventBody,
-  ThinkingLevel,
-  UiNode
-} from '../../../shared/agents'
+import type { ModelEntry, ServerEventBody, ThinkingLevel, UiNode } from '../../../shared/agents'
 import type { HarnessDescriptor, HarnessRun, HarnessRunOptions } from '../harness'
 
 const HARNESS_ID = 'codex'
@@ -305,7 +300,10 @@ const APP_SERVER_TIMEOUT_MS = 30_000
 function appServerRequest<T>(method: string, params: Record<string, unknown>): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const server = spawn('codex', ['app-server'], { stdio: ['pipe', 'pipe', 'ignore'] })
-    const timer = setTimeout(() => finish(new Error(`codex ${method} timed out`)), APP_SERVER_TIMEOUT_MS)
+    const timer = setTimeout(
+      () => finish(new Error(`codex ${method} timed out`)),
+      APP_SERVER_TIMEOUT_MS
+    )
 
     function finish(error: Error | null, value?: T): void {
       clearTimeout(timer)
@@ -326,7 +324,8 @@ function appServerRequest<T>(method: string, params: Record<string, unknown>): P
         return
       }
       if (message.id !== 2) return
-      if (message.error) finish(new Error(String(message.error.message ?? `codex ${method} failed`)))
+      if (message.error)
+        finish(new Error(String(message.error.message ?? `codex ${method} failed`)))
       else finish(null, message.result as T)
     })
 
@@ -391,18 +390,16 @@ function codexInstalled(): Promise<{ available: boolean; detail: string | null }
 }
 
 /** Every provider Codex can reach is OpenAI's, so the cascade has one row. */
-function providersOf(models: CodexModel[]): ProviderModels[] {
-  if (models.length === 0) return []
-  return [
-    {
-      provider: PROVIDER,
-      models: models.map((model) => ({
-        id: model.id,
-        provider: PROVIDER,
-        label: model.displayName
-      }))
-    }
-  ]
+/**
+ * Codex serves every model it lists itself, so each one is a model with exactly
+ * one route: no platform sells the same Codex model under another id.
+ */
+function modelsOf(models: CodexModel[]): ModelEntry[] {
+  return models.map((model) => ({
+    key: model.id,
+    label: model.displayName || model.id,
+    routes: [{ provider: PROVIDER, id: model.id, native: true }]
+  }))
 }
 
 function defaultModelOf(models: CodexModel[]): { provider: string; model: string } | null {
@@ -466,7 +463,7 @@ function createCodexHarness(): HarnessDescriptor {
         tools: [],
         commands: [],
         skills: [],
-        providers: providersOf(models),
+        models: modelsOf(models),
         default: defaultModelOf(models)
       }
     },

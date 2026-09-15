@@ -6,6 +6,7 @@ import type { Worktree, WorkbenchConfig, RepoInfo } from '../../shared/types'
 import type { ServiceSupervisor } from '../services'
 import type { CheckpointManager } from '../checkpoints'
 import type { ReviewService } from '../review'
+import type { SecretsService } from '../secrets'
 import type { SettingsService } from '../settings'
 import type { TerminalManager } from '../terminals'
 import type { NeovimManager } from '../nvim'
@@ -79,6 +80,7 @@ declare module '@neoworks/extension-system' {
     checkpoints: CheckpointManager
     review: ReviewService
     settings: SettingsService
+    secrets: SecretsService
     terminals: TerminalManager
     nvim: NvimService
     lsp: LspManager

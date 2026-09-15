@@ -103,7 +103,13 @@ function openService(root: string): Harness {
         tools: [],
         commands: [],
         skills: [],
-        providers: [{ provider: id, models: [{ id: `${id}-model`, provider: id }] }],
+        models: [
+          {
+            key: `${id}-model`,
+            label: `${id}-model`,
+            routes: [{ provider: id, id: `${id}-model` }]
+          }
+        ],
         default: { provider: id, model: `${id}-model` }
       }),
       start: async (options) => {

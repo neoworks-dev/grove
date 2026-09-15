@@ -23,9 +23,9 @@ import type {
   CommandInfo,
   ConfirmationResult,
   ContentBlock,
-  ModelInfo,
+  ModelEntry,
+  ModelRoute,
   ProviderCredential,
-  ProviderModels,
   ServerEventBody,
   ThinkingLevel,
   ToolDisplay,
@@ -62,11 +62,6 @@ const VERTEX_SDK = '@ai-sdk/google-vertex/anthropic'
 // Bedrock and Vertex host far more than Claude; only the Claude lines can be
 // driven from here, and the catalog names the line in `family`.
 const CLAUDE_FAMILY = 'claude'
-
-// Where a provider credential is looked for when the environment has none. The
-// key is the environment variable the provider names, so nothing about which
-// providers exist has to be written down here.
-const CREDENTIAL_SETTING_PREFIX = 'agents.credentials.'
 
 // The MCP server grove's own tools are published under. The model sees them as
 // `mcp__grove__<name>`, which is what the intent matcher below strips back off.
@@ -609,7 +604,7 @@ class Offering {
         tools: builtinTools(),
         commands: commandsOf(initialization.commands),
         skills: [],
-        providers: providersOf(initialization.models, catalog, this.credentials),
+        models: modelsOf(initialization.models, catalog, this.credentials),
         default: defaultModelOf(initialization.models)
       }
       return this.cached
@@ -648,65 +643,157 @@ function commandsOf(commands: SlashCommand[]): CommandInfo[] {
 }
 
 /**
- * Everything a session can be pointed at, as the picker's provider → model
- * cascade.
+ * Every model a session can run, with each way of reaching it.
  *
  * Two sources, because neither is complete on its own. The CLI reports the
  * aliases the signed-in account is entitled to — authoritative about the
  * account, silent about every model it is not entitled to and every endpoint it
- * does not sign in to. The catalog reports the models that exist. A model in
- * both is listed once, under the CLI's own name for it.
+ * does not sign in to. The catalog reports the models that exist, and who
+ * serves them. The same model arrives from both under three or four different
+ * ids, so routes are grouped by what the id normalises to.
  */
-export function providersOf(
+export function modelsOf(
   models: SdkModelInfo[],
   catalog: CatalogProvider[],
   credentials: CredentialSource
-): ProviderModels[] {
-  const anthropic = anthropicProvider(models, catalog)
-  const others = alternativeProviders(catalog, credentials)
-  if (anthropic.models.length === 0) return others
-  return [anthropic, ...others]
+): ModelEntry[] {
+  const entries = new Map<string, ModelEntry>()
+  for (const route of collectRoutes(models, catalog, credentials)) {
+    addRoute(entries, route.key, route.label, route.route)
+  }
+  return [...entries.values()].sort(byNativeThenName)
 }
 
-/**
- * Anthropic's own endpoint: what the CLI offered, then the models the catalog
- * knows that it did not. The extra ones are reachable with the same credentials
- * whenever the account is entitled to them; when it is not, the turn fails and
- * says so, which is the only place that can be known.
- */
-function anthropicProvider(models: SdkModelInfo[], catalog: CatalogProvider[]): ProviderModels {
-  const listed = models.map(modelFromCli)
-  const known = new Set(listed.flatMap((model) => [model.id, model.resolvedId ?? model.id]))
-  const entry = catalog.find((provider) => provider.id === PROVIDER)
-  const rest = (entry?.models ?? [])
-    .filter((model) => !known.has(model.id))
-    .map((model) => modelFromCatalog(model, PROVIDER))
-  return { provider: PROVIDER, label: 'Anthropic', models: [...listed, ...rest] }
+interface KeyedRoute {
+  key: string
+  /** What to call the model this route reaches, if the route knows. */
+  label: string | null
+  route: ModelRoute
 }
 
-/**
- * The other endpoints Claude Code can be pointed at: every provider the catalog
- * puts on the Anthropic wire client, plus Bedrock and Vertex, whose Claude
- * models the CLI reaches through a flag of its own.
- */
-function alternativeProviders(
+function collectRoutes(
+  models: SdkModelInfo[],
   catalog: CatalogProvider[],
   credentials: CredentialSource
-): ProviderModels[] {
-  const providers: ProviderModels[] = []
-  for (const entry of catalog) {
-    if (entry.id === PROVIDER) continue
-    const models = runnableModels(entry)
-    if (models.length === 0) continue
-    providers.push({
-      provider: entry.id,
-      label: entry.name,
-      endpoint: entry.api ?? undefined,
-      credential: credentialState(entry, credentials),
-      models: models.map((model) => modelFromCatalog(model, entry.id))
-    })
+): KeyedRoute[] {
+  // The CLI's own rows first: a native route displaces a derived one, and the
+  // model the account is entitled to is the one worth defaulting to.
+  const routes = models.map(routeFromCli)
+  for (const provider of catalog) {
+    const credential = credentialState(provider, credentials)
+    for (const model of runnableModels(provider)) {
+      routes.push(routeFromCatalog(model, provider, credential))
+    }
   }
-  return providers.sort((left, right) => left.provider.localeCompare(right.provider))
+  return routes
+}
+
+/**
+ * A row the CLI listed.
+ *
+ * Every one of them is an alias (`default`, `opus[1m]`) rather than a wire model
+ * id, so the route is filed under `resolvedModel`: it is the only way to know
+ * which model `default` is a way of reaching.
+ */
+function routeFromCli(model: SdkModelInfo): KeyedRoute {
+  const resolved = model.resolvedModel ?? model.value
+  return {
+    key: normalizeModelId(resolved),
+    // An alias names itself, not the model, so it cannot name the entry. When
+    // the CLI reports no wire model, the alias is all there is to go on.
+    label: model.resolvedModel ? null : model.displayName,
+    route: {
+      provider: PROVIDER,
+      providerLabel: 'Anthropic',
+      id: model.value,
+      label: model.displayName,
+      native: true
+    }
+  }
+}
+
+function routeFromCatalog(
+  model: CatalogModel,
+  provider: CatalogProvider,
+  credential: ProviderCredential | undefined
+): KeyedRoute {
+  return {
+    key: normalizeModelId(model.id),
+    label: model.name,
+    route: {
+      provider: provider.id,
+      providerLabel: provider.name,
+      id: model.id,
+      endpoint: provider.api ?? undefined,
+      credential,
+      contextWindow: model.contextWindow ?? undefined,
+      pricing: model.pricing ?? undefined
+    }
+  }
+}
+
+/**
+ * File one route under its model, keeping at most one route per provider.
+ *
+ * A model reachable both through the account's own alias and through the
+ * catalog's wire id is one route, not two: the alias is what the CLI blesses,
+ * so it wins and the catalog's copy only fills in what it knows.
+ */
+function addRoute(
+  entries: Map<string, ModelEntry>,
+  key: string,
+  label: string | null,
+  route: ModelRoute
+): void {
+  const entry = entries.get(key)
+  if (!entry) {
+    entries.set(key, { key, label: label ?? route.label ?? key, routes: [route] })
+    return
+  }
+  if (label && entry.label === entry.key) entry.label = label
+
+  const existing = entry.routes.findIndex((candidate) => candidate.provider === route.provider)
+  if (existing === -1) {
+    entry.routes.push(route)
+    return
+  }
+  entry.routes[existing] = mergeRoutes(entry.routes[existing], route)
+}
+
+/** The blessed route, told whatever the other one knew about the model. */
+function mergeRoutes(left: ModelRoute, right: ModelRoute): ModelRoute {
+  const [kept, other] = left.native ? [left, right] : [right, left]
+  return {
+    ...kept,
+    contextWindow: kept.contextWindow ?? other.contextWindow,
+    pricing: kept.pricing ?? other.pricing,
+    credential: kept.credential ?? other.credential
+  }
+}
+
+/**
+ * The id a provider uses, as the model behind it.
+ *
+ * Platforms spell the same model their own way — Bedrock prefixes a region and
+ * `anthropic.` and suffixes a version, Vertex suffixes `@default` — and none of
+ * that is part of the model. Variants that genuinely differ, `[1m]` above all,
+ * survive: they are a different model to run.
+ */
+export function normalizeModelId(id: string): string {
+  return id
+    .replace(/^(?:us|eu|apac|global)\./, '')
+    .replace(/^anthropic\./, '')
+    .replace(/@.*$/, '')
+    .replace(/-v\d+:\d+$/, '')
+    .toLowerCase()
+}
+
+/** Entries the account can run come first; the rest read alphabetically. */
+function byNativeThenName(left: ModelEntry, right: ModelEntry): number {
+  const leftNative = left.routes.some((route) => route.native)
+  const rightNative = right.routes.some((route) => route.native)
+  if (leftNative !== rightNative) return leftNative ? -1 : 1
+  return left.label.localeCompare(right.label)
 }
 
 /** The models of one catalog provider that Claude Code can actually drive. */
@@ -725,23 +812,6 @@ function credentialState(
 ): ProviderCredential | undefined {
   if (provider.env.length === 0) return undefined
   return { env: provider.env, present: credentials.lookup(provider.env) !== null }
-}
-
-/**
- * A row the CLI listed.
- *
- * Every one of them is an alias (`default`, `opus[1m]`) rather than a wire model
- * id, so `resolvedModel` is carried through: it is the only way to say which
- * model `default` actually is.
- */
-function modelFromCli(model: SdkModelInfo): ModelInfo {
-  return {
-    id: model.value,
-    provider: PROVIDER,
-    label: model.displayName,
-    resolvedId: model.resolvedModel,
-    description: model.description
-  }
 }
 
 /**
@@ -780,16 +850,6 @@ export function providerVariables(
   // in grove's own environment must not travel to whoever is on the other end.
   variables.ANTHROPIC_API_KEY = undefined
   return variables
-}
-
-function modelFromCatalog(model: CatalogModel, provider: string): ModelInfo {
-  return {
-    id: model.id,
-    provider,
-    label: model.name,
-    contextWindow: model.contextWindow ?? undefined,
-    pricing: model.pricing ?? undefined
-  }
 }
 
 /** The CLI lists its recommended model first, which is the one to start on. */
@@ -1054,33 +1114,13 @@ function createClaudeHarness(credentials: CredentialSource): HarnessDescriptor {
   }
 }
 
-/**
- * Where a provider's key comes from: the environment grove was started in
- * first, then settings, under the provider's own variable name.
- *
- * Settings are plain JSON on disk, so a key written there is stored in clear —
- * the environment is the better place for one, and is checked first.
- */
-function credentialSource(settings: { get<T>(key: string): T | undefined }): CredentialSource {
-  return {
-    lookup(variables) {
-      for (const variable of variables) {
-        const fromEnvironment = process.env[variable]
-        if (fromEnvironment) return fromEnvironment
-        const fromSettings = settings.get<string>(`${CREDENTIAL_SETTING_PREFIX}${variable}`)
-        if (fromSettings) return fromSettings
-      }
-      return null
-    }
-  }
-}
-
 export const claudeHarness = {
   name: 'main/harness/claude',
-  inject: ['harnesses', 'settings'],
+  inject: ['harnesses', 'secrets'],
 
   apply(ctx: Context): void {
-    const credentials = credentialSource(ctx.settings)
-    ctx.effect(() => ctx.harnesses.register(createClaudeHarness(credentials)), 'harness:claude')
+    // The secrets store is the credential source: it reads grove's environment
+    // first and its own encrypted file second, so an exported key needs no UI.
+    ctx.effect(() => ctx.harnesses.register(createClaudeHarness(ctx.secrets)), 'harness:claude')
   }
 }

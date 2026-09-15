@@ -52,6 +52,8 @@ export interface AppItem {
   eventId: string
   label: string
   text: string
+  /** The agent that sent it, when it came from one rather than from grove itself. */
+  from?: string
 }
 
 export interface ToolItem {
@@ -263,7 +265,8 @@ function applyMessage(state: TranscriptState, event: SessionEvent): void {
       seq: event.seq,
       eventId: event.id,
       label: event.label,
-      text: event.text
+      text: event.text,
+      from: event.from
     })
   }
   if (event.type === 'user.unqueue') {

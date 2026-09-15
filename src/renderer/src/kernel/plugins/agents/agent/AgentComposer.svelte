@@ -30,6 +30,7 @@
     sessionId,
     running,
     commandNames,
+    history,
     placeholderHint = '',
     onSend,
     onFocusChange,
@@ -40,6 +41,13 @@
     sessionId: string
     running: boolean
     commandNames: string[]
+    /**
+     * Everything already said in this session, oldest last. It comes from the
+     * transcript rather than from what this composer has typed, so stepping back
+     * through it reaches the whole conversation — including the part that
+     * happened before the app was last restarted.
+     */
+    history: string[]
     placeholderHint?: string
     onSend: (events: ClientEventBody[]) => void
     onFocusChange: (focused: boolean) => void
@@ -71,9 +79,14 @@
   // the model reads the code rather than resolving a path itself.
   let references = $state<FileBlock[]>([])
 
-  // Sent messages, newest last, stepped through with the arrow keys.
-  let history = $state<string[]>([])
+  // How far back through `history` the arrow keys have stepped; -1 is the draft
+  // being written. Reset on a session change, since the history is another one's.
   let historyIndex = $state(-1)
+
+  $effect(() => {
+    sessionId
+    historyIndex = -1
+  })
 
   const completion = $derived(activeCompletion(draft, caret))
   let suggestions = $state<string[]>([])
@@ -202,7 +215,6 @@
     if (events.length === 0) return
 
     onSend(events)
-    if (draft.trim().length > 0) history = [...history, draft]
     draft = ''
     attachments = []
     references = []

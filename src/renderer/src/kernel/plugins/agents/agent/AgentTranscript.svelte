@@ -213,8 +213,10 @@
     </div>
   {:else if item.kind === 'app' && item.from}
     <!-- Another agent talking: read as a message, with the sender leading it and
-         the words themselves in the same weight as an answer. -->
-    <div class="-mx-1 mb-3 flex gap-2 rounded-md border border-line bg-elevated px-2.5 py-2">
+         the words themselves in the same weight as an answer. Marked with a rule
+         rather than a card, so a conversation between agents reads as a thread
+         instead of as a stack of boxes. -->
+    <div class="mb-3 flex gap-2 border-l-2 border-blue pl-2.5">
       <span class="mt-0.5 shrink-0 text-blue">
         <PaperPlaneTilt width="12" height="12" weight="fill" />
       </span>

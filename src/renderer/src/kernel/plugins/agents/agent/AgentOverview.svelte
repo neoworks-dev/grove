@@ -22,7 +22,7 @@
     sessionStatusColor
   } from '../../../../lib/worktreeStatus'
   import { agentIdOf, sessionFamilies, type SessionRow } from '../../../../lib/agents/sessionTree'
-  import WaveSpinner from '../../../../components/WaveSpinner.svelte'
+  import BusySpark from '../../../../components/BusySpark.svelte'
   import Kbd from '../../../../components/Kbd.svelte'
   import type { SessionMeta } from '../../../../lib/agents/types'
 
@@ -196,7 +196,7 @@
               <span class="shrink-0 font-mono text-2xs text-dim">{agentIdOf(session)}</span>
               <span class="truncate text-2xs text-muted">{session.model}</span>
               {#if session.status === 'running'}
-                <span class="text-green"><WaveSpinner count={3} /></span>
+                <span class="text-green"><BusySpark size={10} /></span>
               {/if}
               {#if session.pendingApprovals.length > 0}
                 <span class="ml-auto shrink-0 text-2xs text-amber" title="Waiting on permission">

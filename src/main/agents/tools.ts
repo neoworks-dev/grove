@@ -354,7 +354,8 @@ function spawnTool(options: GroveToolOptions): GroveTool {
       'parallel, or to put a job on a runtime better suited to it than yours. Whatever it says ' +
       'at the end of each of its turns is delivered back to you, and it shares the worktree and ' +
       'the message channel with you. It does not see this conversation: the prompt has to carry ' +
-      'everything it needs.',
+      'everything it needs. Set `removeWhenDone` for a one-shot helper, so its conversation is ' +
+      'cleared away once it has answered.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -372,6 +373,13 @@ function spawnTool(options: GroveToolOptions): GroveTool {
           description:
             'Optional model id, as `list_runtimes` reports it for the chosen runtime. The ' +
             "runtime's own default is used when this is left out."
+        },
+        removeWhenDone: {
+          type: 'boolean',
+          description:
+            'Delete the agent once it has reported back, instead of leaving its conversation ' +
+            'open. Use it for one-shot work you will not need to follow up on; the agent is ' +
+            'gone after its first answer, so you cannot message it afterwards.'
         }
       },
       required: ['title', 'prompt'],
@@ -403,8 +411,16 @@ function spawnTool(options: GroveToolOptions): GroveTool {
         harness,
         model,
         prompt,
-        parentSessionId: context.sessionId
+        parentSessionId: context.sessionId,
+        removeWhenDone: input.removeWhenDone === true
       })
+      if (input.removeWhenDone === true) {
+        return {
+          content:
+            `Started "${peer.title}" on ${peer.harness}. Its answer is delivered to you and ` +
+            'the agent is removed afterwards, so do not plan on messaging it.'
+        }
+      }
       return {
         content:
           `Started "${peer.title}" on ${peer.harness}. Address it as ${peer.agentId}; ` +

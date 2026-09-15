@@ -15,6 +15,15 @@ import type { SessionStore } from './store'
 /** The label `spawn_agent` writes onto a child session. */
 export const PARENT_LABEL = 'grove.parent'
 
+/**
+ * Set on a session that should not outlive the work it was started for.
+ *
+ * A one-shot helper — "read this file and tell me what it says" — leaves a tab
+ * nobody will open again, so the agent that started it can say up front that it
+ * is a throwaway.
+ */
+export const DISPOSE_LABEL = 'grove.dispose'
+
 export interface HandoffBridgeOptions {
   store: SessionStore
   roster: AgentRoster
@@ -96,6 +105,11 @@ export class AgentHandoffBridge {
 
     const from = await this.options.roster.signatureOf(sessionId)
     await this.options.roster.deliver(parentSessionId, from, text).catch(() => {})
+    // Disposal follows the report, never precedes it: an agent removed before
+    // its answer reached the parent would have worked for nothing.
+    if (session.labels[DISPOSE_LABEL] === 'whenDone') {
+      await this.options.roster.dispose(sessionId).catch(() => {})
+    }
   }
 }
 

@@ -9,7 +9,7 @@
 import { describe, expect, test } from 'bun:test'
 import { groveTools } from '../src/main/agents/tools'
 import { AgentRoster, type AgentPeer } from '../src/main/agents/roster'
-import { AgentHandoffBridge, PARENT_LABEL } from '../src/main/agents/handoffBridge'
+import { AgentHandoffBridge, DISPOSE_LABEL, PARENT_LABEL } from '../src/main/agents/handoffBridge'
 import { AGENT_ID_LABEL } from '../src/main/agents/identity'
 import { groveSystemPrompt } from '../src/main/agents/systemPrompt'
 import { senderOf, type AppItem } from '../src/renderer/src/lib/agents/transcript'
@@ -55,9 +55,11 @@ function testRoster(sessions: SessionMeta[]): {
   roster: AgentRoster
   delivered: Delivered[]
   created: { title: string; labels: Record<string, string> | undefined }[]
+  removed: string[]
 } {
   const delivered: Delivered[] = []
   const created: { title: string; labels: Record<string, string> | undefined }[] = []
+  const removed: string[] = []
   const agents = {
     listSessions: () => Promise.resolve(sessions),
     createSession: (options: { title?: string; labels?: Record<string, string> }) => {
@@ -67,6 +69,10 @@ function testRoster(sessions: SessionMeta[]): {
       })
       sessions.push(spawned)
       return Promise.resolve({ ...spawned, messageCount: 0 })
+    },
+    deleteSession: (sessionId: string) => {
+      removed.push(sessionId)
+      return Promise.resolve()
     },
     catalog: (harnessId: string) =>
       Promise.resolve({
@@ -113,7 +119,7 @@ function testRoster(sessions: SessionMeta[]): {
       ])
   }
   const roster = new AgentRoster({ agents: agents as never, harnesses: harnesses as never })
-  return { roster, delivered, created }
+  return { roster, delivered, created, removed }
 }
 
 function toolNamed(name: string, roster: AgentRoster, posted: Posted[]): GroveTool {
@@ -289,6 +295,21 @@ describe('starting another agent', () => {
     expect(created).toHaveLength(1)
   })
 
+  test('marks a one-shot helper for removal when asked to', async () => {
+    const sessions = [sessionMeta('a', 'Planner')]
+    const { roster, created } = testRoster(sessions)
+    const posted: Posted[] = []
+
+    const result = await toolNamed('spawn_agent', roster, posted).execute(
+      { title: 'Reader', prompt: 'read it', removeWhenDone: true },
+      context('a')
+    )
+
+    expect(created[0].labels).toEqual({ [PARENT_LABEL]: 'a', [DISPOSE_LABEL]: 'whenDone' })
+    // The caller is told not to plan on talking to it.
+    expect(result.content).toContain('removed')
+  })
+
   test('refuses a harness that is not mounted, rather than starting the default', async () => {
     const { roster } = testRoster([sessionMeta('a', 'Planner')])
     const posted: Posted[] = []
@@ -418,6 +439,63 @@ describe('a spawned agent finishing a turn', () => {
     expect(delivered).toEqual([
       { sessionId: 'a', from: 'Reviewer (child)', text: 'the whole answer' }
     ])
+  })
+
+  test('a one-shot helper is removed once its answer has been delivered', async () => {
+    const child = sessionMeta('child', 'Reader', {
+      labels: { [PARENT_LABEL]: 'a', [DISPOSE_LABEL]: 'whenDone' }
+    })
+    const sessions = [sessionMeta('a', 'Planner'), child]
+    const { roster, delivered, removed } = testRoster(sessions)
+    const { store, emit } = testStore(sessions)
+    new AgentHandoffBridge({ store: store as never, roster }).watch()
+
+    emit({
+      ...envelope('child'),
+      type: 'agent.message_end',
+      content: [{ type: 'text', text: 'the file says hello' }],
+      stopReason: 'end_turn'
+    })
+    emit({ ...envelope('child'), type: 'session.status_idle', stopReason: 'end_turn' })
+    await settle()
+
+    expect(delivered).toHaveLength(1)
+    expect(removed).toEqual(['child'])
+  })
+
+  test('an agent that answered nothing is left alone rather than removed unheard', async () => {
+    const child = sessionMeta('child', 'Reader', {
+      labels: { [PARENT_LABEL]: 'a', [DISPOSE_LABEL]: 'whenDone' }
+    })
+    const sessions = [sessionMeta('a', 'Planner'), child]
+    const { roster, delivered, removed } = testRoster(sessions)
+    const { store, emit } = testStore(sessions)
+    new AgentHandoffBridge({ store: store as never, roster }).watch()
+
+    emit({ ...envelope('child'), type: 'session.status_idle', stopReason: 'aborted' })
+    await settle()
+
+    expect(delivered).toEqual([])
+    expect(removed).toEqual([])
+  })
+
+  test('an agent nobody asked to remove stays', async () => {
+    const child = sessionMeta('child', 'Reviewer', { labels: { [PARENT_LABEL]: 'a' } })
+    const sessions = [sessionMeta('a', 'Planner'), child]
+    const { roster, removed } = testRoster(sessions)
+    const { store, emit } = testStore(sessions)
+    new AgentHandoffBridge({ store: store as never, roster }).watch()
+
+    emit({
+      ...envelope('child'),
+      type: 'agent.message_end',
+      content: [{ type: 'text', text: 'done' }],
+      stopReason: 'end_turn'
+    })
+    emit({ ...envelope('child'), type: 'session.status_idle', stopReason: 'end_turn' })
+    await settle()
+
+    expect(removed).toEqual([])
   })
 
   test('a session nobody spawned reports to nobody', async () => {

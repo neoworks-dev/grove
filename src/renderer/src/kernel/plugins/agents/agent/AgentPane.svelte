@@ -9,7 +9,7 @@
   import Icon from '@iconify/svelte'
   import Eye from 'phosphor-svelte/lib/Eye'
   import { onDestroy, onMount } from 'svelte'
-  import { openFileInEditor, store } from '../../../../lib/store.svelte'
+  import { openFileInEditor, selectWorktree, store } from '../../../../lib/store.svelte'
   import { keymap } from '../../../../lib/keymap.svelte'
   import { settings } from '../../../../lib/settings.svelte'
   import { review } from '../../../../lib/review.svelte'
@@ -41,6 +41,7 @@
   import AgentComposer from './AgentComposer.svelte'
   import AgentQuestion from './AgentQuestion.svelte'
   import AgentControls from './AgentControls.svelte'
+  import AgentOverview from './AgentOverview.svelte'
   import AgentQueue from './AgentQueue.svelte'
   import AgentSessionTabs from './AgentSessionTabs.svelte'
   import AgentTranscript from './AgentTranscript.svelte'
@@ -83,6 +84,8 @@
     activeId ? effectiveMode(agentSessions.modeFor(activeId), snapshot) : 'default'
   )
 
+  // The fleet view, reached by stepping left out of an empty composer.
+  let overviewOpen = $state(false)
   let expandedTools = $state<Record<string, boolean>>({})
   let transcriptViewport = $state<HTMLDivElement>()
   let composer = $state<{ focus: () => void }>()
@@ -214,6 +217,38 @@
     const current = sessionList.findIndex((session) => session.id === activeId)
     const next = (current + step + sessionList.length) % sessionList.length
     selectSession(sessionList[next].id)
+  }
+
+  // ── Overview ────────────────────────────────────────────────────
+  //
+  // Sessions in other worktrees are reachable without leaving the pane, which is
+  // what makes watching several agents at once a matter of stepping left and
+  // picking the one that wants attention.
+
+  function showOverview(): void {
+    overviewOpen = true
+    // The list drives itself from the keyboard, so the pane's normal-mode keys
+    // (j/k scrolling a transcript that is no longer on screen) stay out of its way.
+    keymap.setPaneMode(leafId, 'insert')
+  }
+
+  /** Leave the overview for the session the pane was already on. */
+  function closeOverview(): void {
+    overviewOpen = false
+    focusComposerNextFrame()
+  }
+
+  /** Jump the pane to a session from the overview, selecting its worktree. */
+  async function openFromOverview(worktreeId: string, sessionId: string): Promise<void> {
+    overviewOpen = false
+    agentSessions.setActive(worktreeId, sessionId)
+    if (worktreeId !== store.selectedWorktreeId) await selectWorktree(worktreeId)
+    focusComposerNextFrame()
+  }
+
+  /** The composer only exists once the transcript is back on screen. */
+  function focusComposerNextFrame(): void {
+    requestAnimationFrame(() => composer?.focus())
   }
 
   function badgeFor(session: SessionMeta): SessionBadge {
@@ -469,6 +504,15 @@
         run: cycleThinking
       },
       {
+        id: `agent.overview:${leafId}`,
+        keys: 'left',
+        context: leafId,
+        mode: 'normal',
+        group: 'Agent',
+        description: 'Session overview',
+        run: showOverview
+      },
+      {
         id: `agent.prevSession:${leafId}`,
         keys: 'alt+h',
         context: leafId,
@@ -541,7 +585,10 @@
       </div>
     {/if}
 
-    {#if activeId && live}
+    {#if overviewOpen}
+      <!-- The fleet replaces the conversation: picking one is what returns. -->
+      <AgentOverview activeSessionId={activeId} onOpen={openFromOverview} onClose={closeOverview} />
+    {:else if activeId && live}
       <AgentTranscript
         sessionId={activeId}
         {items}
@@ -585,113 +632,116 @@
       </div>
     {/if}
 
-    {#if running}
+    {#if running && !overviewOpen}
       <AgentWorkingBar message="Working…" tokensLabel={contextLabel} />
     {/if}
 
-    {#if queued.length > 0}
+    {#if queued.length > 0 && !overviewOpen}
       <AgentQueue messages={queued} onCancel={unqueue} />
     {/if}
 
-    <div class="relative shrink-0 p-2">
-      {#if postReviews.length > 0}
-        <!-- Post-approve reviews: the writes are already on disk, so nothing is
+    {#if !overviewOpen}
+      <div class="relative shrink-0 p-2">
+        {#if postReviews.length > 0}
+          <!-- Post-approve reviews: the writes are already on disk, so nothing is
              blocked on these. Opening one shows its diff in the editor. -->
-        {#each postReviews as batch (batch.id)}
+          {#each postReviews as batch (batch.id)}
+            <div
+              class="mb-2 flex items-center gap-2 rounded-md border border-amber/30 bg-amber-soft px-2 py-1.5 text-2xs text-amber"
+            >
+              <span class="min-w-0 flex-1 truncate">
+                {batch.summary || 'Changes ready for review'}
+                <span class="text-dim">
+                  · {batch.files.length} file{batch.files.length === 1 ? '' : 's'}
+                </span>
+              </span>
+              <button
+                class="shrink-0 rounded bg-amber px-2 py-0.5 text-action-fg"
+                onclick={() => void review.open(batch.id)}
+              >
+                Review
+              </button>
+            </div>
+          {/each}
+        {/if}
+
+        {#if approvals[0] && reviewIsOpen}
+          <!-- The review's own controls in the editor are answering this one. -->
           <div
-            class="mb-2 flex items-center gap-2 rounded-md border border-amber/30 bg-amber-soft px-2 py-1.5 text-2xs text-amber"
+            class="mb-2 flex items-center gap-2 rounded-md border border-line bg-elevated px-2 py-1.5 text-2xs text-muted"
           >
             <span class="min-w-0 flex-1 truncate">
-              {batch.summary || 'Changes ready for review'}
-              <span class="text-dim">
-                · {batch.files.length} file{batch.files.length === 1 ? '' : 's'}
-              </span>
+              Reviewing {gatedReview?.files[0]?.relPath} in the editor
             </span>
             <button
-              class="shrink-0 rounded bg-amber px-2 py-0.5 text-action-fg"
-              onclick={() => void review.open(batch.id)}
+              class="shrink-0 rounded border border-line px-2 py-0.5 text-default hover:bg-hover"
+              onclick={showChange}
             >
-              Review
+              Go to diff
             </button>
           </div>
-        {/each}
-      {/if}
-
-      {#if approvals[0] && reviewIsOpen}
-        <!-- The review's own controls in the editor are answering this one. -->
-        <div
-          class="mb-2 flex items-center gap-2 rounded-md border border-line bg-elevated px-2 py-1.5 text-2xs text-muted"
-        >
-          <span class="min-w-0 flex-1 truncate">
-            Reviewing {gatedReview?.files[0]?.relPath} in the editor
-          </span>
-          <button
-            class="shrink-0 rounded border border-line px-2 py-0.5 text-default hover:bg-hover"
-            onclick={showChange}
-          >
-            Go to diff
-          </button>
-        </div>
-      {:else if approvals[0] && questions}
-        <!-- The call is a question, not an operation to approve: answering it is
+        {:else if approvals[0] && questions}
+          <!-- The call is a question, not an operation to approve: answering it is
              what lets it run, so the card asks rather than asking permission. -->
-        {#key approvals[0].toolUseId}
-          <AgentQuestion
-            {questions}
-            input={approvals[0].input}
-            onAnswer={answerQuestion}
-            onDecline={() => void decide(approvals[0].toolUseId, 'deny', 'no answer given')}
-          />
-        {/key}
-      {:else if approvals[0]}
-        <!-- An approval blocks the agent, so it replaces the composer until it is
+          {#key approvals[0].toolUseId}
+            <AgentQuestion
+              {questions}
+              input={approvals[0].input}
+              onAnswer={answerQuestion}
+              onDecline={() => void decide(approvals[0].toolUseId, 'deny', 'no answer given')}
+            />
+          {/key}
+        {:else if approvals[0]}
+          <!-- An approval blocks the agent, so it replaces the composer until it is
              answered. Keyed so its selection state resets per request. -->
-        {#key approvals[0].toolUseId}
-          <AgentApproval
-            item={approvals[0]}
-            tool={catalog.toolNamed(approvals[0].name)}
-            batch={gatedReview}
-            onDecide={(result, reason) => void decide(approvals[0].toolUseId, result, reason)}
-            onShowChange={showChange}
-          />
-        {/key}
-      {:else}
-        {#if activeId}
-          <AgentComposer
-            bind:this={composer}
-            sessionId={activeId}
-            {running}
-            commandNames={catalog.completionNames()}
-            onSend={send}
-            onFocusChange={onComposerFocus}
-            onInterrupt={interrupt}
-            onCycleMode={cycleMode}
-          />
-        {/if}
+          {#key approvals[0].toolUseId}
+            <AgentApproval
+              item={approvals[0]}
+              tool={catalog.toolNamed(approvals[0].name)}
+              batch={gatedReview}
+              onDecide={(result, reason) => void decide(approvals[0].toolUseId, result, reason)}
+              onShowChange={showChange}
+            />
+          {/key}
+        {:else}
+          {#if activeId}
+            <AgentComposer
+              bind:this={composer}
+              sessionId={activeId}
+              {running}
+              commandNames={catalog.completionNames()}
+              onSend={send}
+              onFocusChange={onComposerFocus}
+              onInterrupt={interrupt}
+              onCycleMode={cycleMode}
+              onBack={showOverview}
+            />
+          {/if}
 
-        {#if snapshot}
-          <AgentControls
-            harness={snapshot.harness}
-            harnesses={catalog.harnesses}
-            provider={snapshot.provider}
-            model={snapshot.model}
-            thinking={snapshot.thinkingLevel}
-            {mode}
-            {running}
-            providers={catalog.providers}
-            {reviewMode}
-            {reviewPause}
-            tokensLabel={contextLabel}
-            contextTokens={snapshot.context.usedTokens}
-            onPickHarness={pickHarness}
-            onPickModel={pickModel}
-            onPickThinking={pickThinking}
-            onPickMode={pickMode}
-            onSetReview={setReviewSetting}
-            onInterrupt={interrupt}
-          />
+          {#if snapshot}
+            <AgentControls
+              harness={snapshot.harness}
+              harnesses={catalog.harnesses}
+              provider={snapshot.provider}
+              model={snapshot.model}
+              thinking={snapshot.thinkingLevel}
+              {mode}
+              {running}
+              providers={catalog.providers}
+              {reviewMode}
+              {reviewPause}
+              tokensLabel={contextLabel}
+              contextTokens={snapshot.context.usedTokens}
+              onPickHarness={pickHarness}
+              onPickModel={pickModel}
+              onPickThinking={pickThinking}
+              onPickMode={pickMode}
+              onSetReview={setReviewSetting}
+              onInterrupt={interrupt}
+            />
+          {/if}
         {/if}
-      {/if}
-    </div>
+      </div>
+    {/if}
   {/if}
 </div>

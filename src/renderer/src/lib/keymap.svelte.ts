@@ -39,7 +39,7 @@ export interface HintEntry {
   description: string
 }
 
-import { pickNeighbor } from './keymapCore'
+import { clampMode, pickNeighbor } from './keymapCore'
 import {
   parseSequence,
   stepFromEvent,
@@ -107,16 +107,17 @@ class Keymap {
   get mode(): string | null {
     const id = this.activePane
     if (!id) return null
-    const supported = this.supportedModes[id]
-    if (!supported || supported.length === 0) return null
-    const reported = this.reportedModes[id]
-    if (reported && supported.includes(reported)) return reported
-    return supported[0]
+    return this.paneMode(id)
   }
 
   setPaneMode(id: PaneId, mode: string): void {
     if (this.reportedModes[id] === mode) return
     this.reportedModes = { ...this.reportedModes, [id]: mode }
+  }
+
+  /** The mode of any pane, not just the active one. */
+  paneMode(id: PaneId): string | null {
+    return clampMode(this.supportedModes[id], this.reportedModes[id])
   }
 
   // ── Transient hints ────────────────────────────────────────────
@@ -161,6 +162,7 @@ class Keymap {
   // Pane elements are plain (geometry is read on demand, not reactive).
   private panes = new Map<PaneId, HTMLElement>()
   private paneTypes = new Map<PaneId, string>()
+  private focusDelegates = new Map<PaneId, () => boolean>()
   private leaderTimer: ReturnType<typeof setTimeout> | null = null
 
   // Effective bindings: registered defaults with user/project overrides from
@@ -261,14 +263,33 @@ class Keymap {
     this.activeSurfaceId = surfaceEl?.dataset.surface ?? null
   }
 
+  /**
+   * Say where a pane's keyboard focus really belongs.
+   *
+   * Most panes are their own key target, but a terminal's keys are read by a
+   * hidden textarea xterm owns; focusing the pane wrapper instead leaves the
+   * shell deaf, so pane navigation lands on a pane that answers to nothing. The
+   * handler returns false to decline and let the wrapper take focus as usual —
+   * which is how a terminal left in 'normal' mode keeps its pane bindings.
+   */
+  registerPaneFocus(id: PaneId, focus: () => boolean): () => void {
+    this.focusDelegates.set(id, focus)
+    return () => {
+      // Guard against clobbering a delegate a later registration replaced.
+      if (this.focusDelegates.get(id) === focus) this.focusDelegates.delete(id)
+    }
+  }
+
   focusPane(id: PaneId): void {
     const el = this.panes.get(id)
     if (!el) return
     // Focus the innermost nested pane (e.g. the file tree inside the sidebar
     // wrapper) so its key handler receives hjkl, not the non-handling wrapper.
     const target = this.innermostPane(id, el)
-    target.el.focus({ preventScroll: true })
     this.activePane = target.id
+    const delegate = this.focusDelegates.get(target.id)
+    if (delegate && delegate()) return
+    target.el.focus({ preventScroll: true })
   }
 
   // ── Focus follows mouse ────────────────────────────────────────

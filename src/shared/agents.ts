@@ -23,6 +23,21 @@ export type DeliverAs = 'steer' | 'followUp'
 
 export type ConfirmationResult = 'allow' | 'deny' | 'always_session' | 'always_project'
 
+/**
+ * How much a session is allowed to do without asking.
+ *
+ * This is stored on the session rather than held in the window that set it.
+ * The main process is what gates tool calls and raises reviews, so a mode it
+ * cannot see is a mode that does not take effect — and a mode held in the
+ * renderer would not survive reopening the session either.
+ *
+ *   default      every write and command is put to the user
+ *   plan         the tools that change anything are withheld by the harness
+ *   acceptEdits  writes go through; commands still ask
+ *   bypass       nothing is asked
+ */
+export type AgentMode = 'default' | 'plan' | 'acceptEdits' | 'bypass'
+
 export interface TextBlock {
   type: 'text'
   text: string
@@ -207,6 +222,8 @@ export interface QueuedMessage {
   id: string
   text: string
   deliverAs: DeliverAs
+  /** Images attached to the message, by blob reference. */
+  attachments?: ImageBlock[]
 }
 
 /**
@@ -225,6 +242,8 @@ export interface SessionMeta {
   thinkingLevel: ThinkingLevel
   activeTools: string[] | null
   autoApproveTools: string[]
+  /** How much this session may do without asking. */
+  permissionMode: AgentMode
   labels: Record<string, string>
   createdAt: string
   updatedAt: string
@@ -260,6 +279,7 @@ export interface CreateSessionOptions {
   model?: string
   thinkingLevel?: ThinkingLevel
   activeTools?: string[]
+  permissionMode?: AgentMode
   /** Free-form marks on the session; `grove.parent` names the agent that spawned it. */
   labels?: Record<string, string>
 }
@@ -272,6 +292,7 @@ export interface SessionUpdate {
   thinkingLevel?: ThinkingLevel
   activeTools?: string[] | null
   autoApproveTools?: string[]
+  permissionMode?: AgentMode
   labels?: Record<string, string>
 }
 
@@ -426,7 +447,18 @@ export interface HarnessCapabilities {
   steering: boolean
   /** grove's own tools (review, chat, onboarding) can be injected. */
   groveTools: boolean
+  /** Images attached to a message reach the model. */
+  attachments: boolean
 }
+
+/**
+ * The image media types a harness may be handed.
+ *
+ * The composer takes whatever the file picker gives it, but the model APIs
+ * accept a fixed set — anything else is rejected for the whole turn, so it is
+ * filtered out and reported instead of being sent.
+ */
+export const ATTACHABLE_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
 
 /** A harness as the UI sees it: what it is, whether it can run, what it can do. */
 export interface HarnessInfo {

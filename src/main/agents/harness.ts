@@ -9,6 +9,7 @@
 // and the store stamps sequence numbers, persists them and fans them out.
 
 import type {
+  AgentMode,
   CommandInfo,
   ConfirmationResult,
   DeliverAs,
@@ -105,6 +106,8 @@ export interface HarnessRunOptions {
   thinkingLevel: ThinkingLevel
   /** The tool allow-list, or null for "no allow-list". */
   activeTools: string[] | null
+  /** How much the session may do without asking, as stored on it. */
+  permissionMode: AgentMode
   /** The harness-native conversation id from a previous grove run, if any. */
   resumeKey: string | null
   tools: GroveTool[]
@@ -142,6 +145,19 @@ export interface HarnessRunOptions {
   confirm(request: ApprovalRequest): Promise<ApprovalDecision>
 }
 
+/**
+ * An image travelling with a prompt, already read off the session's blob store.
+ *
+ * The bytes are carried as base64 because that is the shape every model API
+ * takes them in; resolving the reference here rather than in each harness keeps
+ * blob storage the service's business.
+ */
+export interface PromptAttachment {
+  mediaType: string
+  /** base64, without a data: prefix. */
+  data: string
+}
+
 /** One live conversation with a harness. */
 export interface HarnessRun {
   /**
@@ -149,8 +165,14 @@ export interface HarnessRun {
    * survives a grove restart.
    */
   readonly resumeKey: string | null
-  /** Start a turn. Only called while the session is idle. */
-  prompt(text: string): Promise<void>
+  /**
+   * Start a turn. Only called while the session is idle.
+   *
+   * `attachments` is only ever non-empty for a harness whose capabilities claim
+   * `attachments`; the service reports the images as dropped rather than
+   * handing them to a run that would ignore them.
+   */
+  prompt(text: string, attachments?: PromptAttachment[]): Promise<void>
   /**
    * Run one of the commands `offering()` listed. Harnesses that leave this out
    * get told they cannot, rather than having the ask silently dropped.
@@ -161,6 +183,14 @@ export interface HarnessRun {
   interrupt(): Promise<void>
   setModel?(provider: string | null, model: string): Promise<void>
   setThinkingLevel?(level: ThinkingLevel): Promise<void>
+  /**
+   * Switch the mode on a live run.
+   *
+   * Only plan mode really needs this — withholding the mutating tools is
+   * something only the harness can do. grove answers the permissive modes in
+   * its own approval layer, so a harness without this still honours them.
+   */
+  setPermissionMode?(mode: AgentMode): Promise<void>
   dispose(): Promise<void>
 }
 

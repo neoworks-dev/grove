@@ -30,12 +30,7 @@
   } from '../../../../lib/agents/sessionTree'
   import { fileOfCall } from '../../../../lib/agents/tools'
   import { questionsOf } from '../../../../lib/agents/questions'
-  import {
-    activeToolsFor,
-    effectiveMode,
-    nextMode,
-    type AgentMode
-  } from '../../../../lib/agents/modes'
+  import { modeOf, nextMode, type AgentMode } from '../../../../lib/agents/modes'
   import { nextThinkingLevel } from '../../../../lib/agents/thinking'
   import type {
     ClientEventBody,
@@ -109,13 +104,9 @@
   })
   const queued = $derived(snapshot?.queued ?? [])
 
-  // The chosen mode leads the session state: accept-edits and bypass are entered
-  // by answering approvals, so a session that has not seen one yet still reports
-  // "default". The choice itself lives in the session store, because approvals
-  // have to be answered whoever started the run.
-  const mode = $derived(
-    activeId ? effectiveMode(agentSessions.modeFor(activeId), snapshot) : 'default'
-  )
+  // Read straight off the session: the mode is stored there, so it is the same
+  // answer in every window and after a restart.
+  const mode = $derived(modeOf(snapshot))
 
   // The fleet view, reached by stepping left out of an empty composer.
   let overviewOpen = $state(false)
@@ -401,14 +392,15 @@
   }
 
   /**
-   * Plan mode is a session change (it withholds tools); the other two only
-   * decide how approvals get answered, so they take effect as calls arrive.
+   * Put the session into a mode.
+   *
+   * One patch, because the mode is stored on the session — the main process
+   * answers approvals from it, and the harness is told when plan mode needs it
+   * to withhold tools.
    */
   function pickMode(next: AgentMode): void {
     if (!activeId) return
-    agentSessions.setMode(activeId, next)
-    const allTools = catalog.tools.map((tool) => tool.name)
-    void agentSessions.update(activeId, { activeTools: activeToolsFor(next, allTools) })
+    void agentSessions.setMode(activeId, next)
   }
 
   // ── Editor handoff ──────────────────────────────────────────────

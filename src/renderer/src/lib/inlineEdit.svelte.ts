@@ -253,10 +253,10 @@ class InlineEdit {
       return
     }
     // The review style decides whether the edit is put to the user before it
-    // lands, so it has to be set before the run that produces it. Keep the
-    // background session streamed too: auto/inline modes answer write approvals
-    // from that stream even when no Agent pane is mounted.
-    agentSessions.setMode(sessionId, pickAgentMode(this.mode))
+    // lands, so it is stored on the session before the run that produces it —
+    // awaited, because the main process answers the write approvals from it and
+    // the prompt below is what triggers them.
+    await agentSessions.setMode(sessionId, pickAgentMode(this.mode))
     await agentSessions.open(sessionId)
     await agentSessions.send(sessionId, [
       { type: 'user.message', content: [{ type: 'text', text }], deliverAs: 'steer' }

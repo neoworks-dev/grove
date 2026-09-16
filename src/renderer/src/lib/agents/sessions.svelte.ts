@@ -20,8 +20,7 @@ import {
   updateSession
 } from './api'
 import { openStream } from './stream'
-import { autoDecisionFor, type AgentMode } from './modes'
-import { settings } from '../settings.svelte'
+import type { AgentMode } from './modes'
 import { openFileAtLine, openFileInEditor, store } from '../store.svelte'
 import {
   applyEvent,
@@ -71,11 +70,6 @@ class AgentSessions {
   // Which session is on screen, per worktree path, so switching worktrees and
   // back lands where you left off.
   activeByWorktree = $state<Record<string, string>>({})
-  // The permission mode chosen for a session, keyed by session id. Held here
-  // rather than in the pane because it decides how approvals are answered, and
-  // an approval has to be answered whoever started the run — an inline edit
-  // dispatched from the editor is not going to answer its own prompts.
-  modes = $state<Record<string, AgentMode>>({})
   // Set when the server itself is unreachable, as opposed to one session failing.
   serverError = $state('')
 
@@ -114,12 +108,20 @@ class AgentSessions {
     return sessions[sessions.length - 1]?.id ?? null
   }
 
+  /** The mode a session is in, as the main process has it stored. */
   modeFor(sessionId: string): AgentMode {
-    return this.modes[sessionId] ?? 'default'
+    return this.live[sessionId]?.snapshot?.permissionMode ?? 'default'
   }
 
-  setMode(sessionId: string, mode: AgentMode): void {
-    this.modes = { ...this.modes, [sessionId]: mode }
+  /**
+   * Put a session into a mode.
+   *
+   * The mode is a property of the session, not of this window: the main process
+   * is what answers approvals and raises reviews, so it has to be told. The
+   * snapshot comes back from the patch and is what `modeFor` then reads.
+   */
+  async setMode(sessionId: string, mode: AgentMode): Promise<void> {
+    await this.update(sessionId, { permissionMode: mode })
   }
 
   setActive(worktreePath: string, sessionId: string | null): void {
@@ -405,7 +407,6 @@ class AgentSessions {
     const close = openStream(session.id, session.transcript.lastSeq, (event) => {
       applyEvent(session.transcript, event)
       if (this.viewing !== session.id && isUnreadEvent(event)) session.unread += 1
-      if (event.type === 'agent.tool_use') this.applyMode(session.id, event)
       if (event.type === 'ui.open_files') this.openFiles(session.id, event.files)
       // Usage and the queue only live in the snapshot, so a turn boundary is
       // worth a re-read.
@@ -443,16 +444,6 @@ class AgentSessions {
     return worktree
   }
 
-  /** Answer an approval the session's mode says not to bother the user with. */
-  private applyMode(sessionId: string, event: SessionEvent): void {
-    if (event.type !== 'agent.tool_use' || event.permission !== 'ask') return
-    const reviewMode = settings.get<string>('workbench.reviewMode') ?? 'pre'
-    const result = autoDecisionFor(this.modeFor(sessionId), event.name, reviewMode)
-    if (!result) return
-    void this.send(sessionId, [
-      { type: 'user.tool_confirmation', toolUseId: event.toolUseId, result }
-    ])
-  }
 }
 
 /**

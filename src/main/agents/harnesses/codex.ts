@@ -446,7 +446,8 @@ function createCodexHarness(): HarnessDescriptor {
       liveModelSwitch: false,
       thinking: true,
       steering: false,
-      groveTools: false
+      groveTools: false,
+      attachments: false
     },
 
     probe: codexInstalled,

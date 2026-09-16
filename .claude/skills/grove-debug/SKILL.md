@@ -68,6 +68,23 @@ how you ask for a clean one.
   is not a typo — a plain pattern matches the killing shell's own command line
   and takes it down with the app.
 
+## The e2e suite
+
+Playwright drives the built app through the same profile machinery
+(`tests/e2e/`, run with `bun run test:e2e`; `test:e2e:fast` reuses the last
+build). Each test launches its own Electron on a throwaway profile in `/tmp`.
+
+Reach for it when a fix should stay fixed. The harness above is for finding out
+what is broken; a spec is for making sure it is not broken again — and the two
+kinds of assertion are worth keeping apart:
+
+- `page.evaluate(...)` reaches `window.workbench.*` and `window.__grove_debug`.
+  That is the IPC surface, not the UI, and a suite made only of these can pass
+  while nothing on screen works.
+- `page.getByRole(...).click()` is a real event through the real renderer. Use
+  this for the behaviour under test, and keep `evaluate` for setup and for
+  reading back across the process boundary.
+
 ## Is it reachable
 
 ```

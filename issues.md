@@ -38,3 +38,5 @@
 - **Diagnostics only underline** — no inline virtual text. Should render the message at the end of the line in the severity colour with a leading dot, like the user's own nvim.
 - **Diagnostics panel font is wrong** — should be the nerd font. More generally, every monospaced surface in the app should use exactly the same font as nvim so the UI matches stylistically.
 - **Nvim right-click menu is drawn inside the grid** — the context menu renders as nvim cells rather than a real HTML popup, so its entries can't be clicked.
+- **Cursor gone after `:qa` and reopening the editor** — the nvim cursor stops rendering in the fresh editor pane.
+- **Git view is ugly and unhelpful** — model it on GitLens in VS Code, feature for feature.

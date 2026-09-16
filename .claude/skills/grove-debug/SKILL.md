@@ -85,6 +85,31 @@ kinds of assertion are worth keeping apart:
   this for the behaviour under test, and keep `evaluate` for setup and for
   reading back across the process boundary.
 
+The suite runs on a virtual X display, created and torn down by
+`scripts/e2e.ts` (Xvfb, or Xvnc where that is what is installed). Two dozen
+windows opening on the desktop is unusable, and the alternatives do not work:
+a window that is never shown has a hidden document, so Chromium stops
+`requestAnimationFrame` and the editor's canvas never paints, and a window
+parked at negative coordinates is moved back by the compositor.
+
+Two things that display needs told to it, both already in the fixture:
+
+- **Electron follows Wayland, not `DISPLAY`.** `ELECTRON_OZONE_PLATFORM_HINT`
+  is `auto` in this session, which finds the compositor's socket and ignores
+  the virtual display entirely. The runner sets it to `x11` and drops
+  `WAYLAND_DISPLAY`.
+- **There is no pointer device on it**, so Chromium reports `hover: none` and
+  every Tailwind `hover:`/`group-hover:` rule is dead — a tab's close button
+  stays zero-width and unclickable. The launch args declare a mouse through
+  `--blink-settings=...HoverType...`.
+
+Testing the editor means driving nvim: click a file in the explorer, then
+`page.keyboard`. The buffer's text is not in the DOM (the editor is a canvas),
+so assert on the mode in the status bar, the unsaved dot on the tab
+(`[title="Unsaved changes"]`), and the file on disk after `:w`. Wait on the
+status bar between steps — the tab appears before nvim owns the buffer, and
+keys sent early are motions, not text.
+
 ## Is it reachable
 
 ```

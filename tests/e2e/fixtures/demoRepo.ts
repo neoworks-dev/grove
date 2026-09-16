@@ -82,6 +82,7 @@ async function writeHistory(root: string): Promise<void> {
   await commit(root, 'feat: add entry point')
 
   await write(root, 'src/util.ts', UTIL_TS)
+  await write(root, 'src/clean.ts', CLEAN_TS)
   await commit(root, 'feat: add a greeting helper')
 }
 
@@ -130,6 +131,12 @@ export function main(): void {
 }
 
 main()
+`
+
+// Committed and left alone, so a test that edits it starts from a file git has
+// nothing to say about: anything the git view then reports came from the editor.
+const CLEAN_TS = `/** Untouched by the fixture. Tests that edit a file use this one. */
+export const CLEAN = true
 `
 
 const UTIL_TS = `/** Build the greeting the demo prints on start-up. */

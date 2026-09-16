@@ -5,11 +5,9 @@
 // The window is handed over once grove has finished opening the repo, because
 // almost everything worth asserting on needs a worktree to exist first.
 
-import { execFile } from 'node:child_process'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { promisify } from 'node:util'
 import {
   expect,
   test as base,
@@ -29,8 +27,6 @@ import type {
 } from '../../../src/shared/agents'
 import type { DemoRepo } from './demoRepo'
 import { prepareProfile, profileAt, type GroveProfile } from './profile'
-
-const execFileAsync = promisify(execFile)
 
 // Playwright transpiles to CommonJS and runs from the repo root; see build.ts.
 const repoRoot = process.cwd()
@@ -55,7 +51,15 @@ export const test = base.extend<{ grove: GroveApp }>({
       // moves userData to $XDG_CONFIG_HOME/Electron and hands the app an empty
       // profile that has never heard of the demo repo. Pointing at the root
       // picks up `name: "grove"` and its `main` field, which is that same file.
-      args: [repoRoot],
+      args: [
+        repoRoot,
+        // Tailwind puts its hover variants behind `@media (hover: hover)`, and
+        // the virtual display the suite runs on (scripts/e2e.ts) has no pointer
+        // device — Chromium then reports `hover: none`, and controls that
+        // appear on hover, like a tab's close button, never do. Declare the
+        // mouse that a user has: hover, and a fine pointer.
+        '--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4'
+      ],
       cwd: repoRoot,
       env: { ...process.env, ...profile.env } as Record<string, string>
     })
@@ -87,8 +91,7 @@ async function shutDown(electron: ElectronApplication, page: Page): Promise<void
 
   // Closing the window is grove's own way out: `window-all-closed` quits the
   // app. `electron.close()` is deliberately not used — it adds ten seconds per
-  // test and changes nothing, because Playwright's worker teardown waits on
-  // grove either way (see the known issue in the e2e README).
+  // test and never returns, whether the process is still alive or already gone.
   await page.close().catch(() => {})
   if (await Promise.race([exited(app), after(5_000)])) return
 
@@ -100,20 +103,38 @@ async function shutDown(electron: ElectronApplication, page: Page): Promise<void
 }
 
 /**
- * Kill the helper processes the main one leaves behind.
+ * Kill the processes the main one leaves behind.
  *
- * Electron's renderer and network-service helpers do not die with their parent:
- * they are reparented to init and keep the stdio pipes they inherited from the
- * test worker, which then cannot exit — the run reports every test as passed
- * and the worker teardown as timed out.
+ * Two families outlive it. Electron's renderer and network-service helpers are
+ * reparented to init, and so are the children grove spawns — the embedded
+ * Neovim, the language servers, the API socket's helpers. All of them keep the
+ * stdio pipes they inherited from the test worker, which then cannot exit: the
+ * run reports every test as passed and the worker teardown as timed out.
  *
- * Matching on the profile path is what makes this safe. It is a unique temp
- * directory per test, so this cannot reach an instance the user is running.
+ * `pkill -f` only reaches the first family; `nvim --embed` has nothing in its
+ * command line to match on. The environment does: every one of them inherited
+ * this test's profile directories, and those are a fresh temp path per test, so
+ * matching on them cannot reach an instance the user is running.
  */
 async function killStragglers(profile: GroveProfile): Promise<void> {
-  await execFileAsync('pkill', ['-9', '-f', `user-data-dir=${profile.userData}`]).catch(() => {
-    // pkill exits non-zero when nothing matched, which is the good case.
-  })
+  for (const pid of await processesUnder(profile)) {
+    process.kill(pid, 'SIGKILL')
+  }
+}
+
+/** The pids whose environment carries this profile, via /proc. */
+async function processesUnder(profile: GroveProfile): Promise<number[]> {
+  const marker = `XDG_CONFIG_HOME=${profile.configHome}`
+  const entries = await readdir('/proc').catch(() => [] as string[])
+  const found: number[] = []
+
+  for (const entry of entries) {
+    const pid = Number(entry)
+    if (!Number.isInteger(pid) || pid === process.pid) continue
+    const environ = await readFile(`/proc/${pid}/environ`, 'utf8').catch(() => '')
+    if (environ.includes(marker)) found.push(pid)
+  }
+  return found
 }
 
 function after(ms: number): Promise<false> {

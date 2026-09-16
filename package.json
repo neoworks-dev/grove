@@ -20,7 +20,7 @@
     "lint:svelte": "eslint .",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "svelte-check": "svelte-check --tsconfig ./tsconfig.json",
-    "typecheck": "npm run typecheck:node && npm run svelte-check",
+    "typecheck": "bun run typecheck:node && bun run svelte-check",
     "test": "bun test",
     "test:e2e": "playwright test",
     "test:e2e:fast": "GROVE_E2E_SKIP_BUILD=1 playwright test",
@@ -29,13 +29,13 @@
     "fetch:nvim": "bun scripts/fetch-nvim.ts",
     "icons": "bun scripts/generate-icons.ts",
     "start": "electron-vite preview",
-    "dev": "npm run build:plugins && npm run fetch:nvim && electron-vite dev",
-    "build": "npm run typecheck && npm run build:plugins && npm run fetch:nvim && electron-vite build",
+    "dev": "bun run build:plugins && bun run fetch:nvim && electron-vite dev",
+    "build": "bun run typecheck && bun run build:plugins && bun run fetch:nvim && electron-vite build",
     "postinstall": "electron-builder install-app-deps && bun scripts/fetch-nvim.ts",
-    "build:unpack": "npm run build && electron-builder --dir",
-    "build:win": "npm run build && electron-builder --win",
-    "build:mac": "npm run build && electron-builder --mac",
-    "build:linux": "npm run build && electron-builder --linux"
+    "build:unpack": "bun run build && electron-builder --dir",
+    "build:win": "bun run build && electron-builder --win",
+    "build:mac": "bun run build && electron-builder --mac",
+    "build:linux": "bun run build && electron-builder --linux"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.204",

@@ -21,7 +21,7 @@ export default async function build(): Promise<void> {
     return
   }
   console.log('e2e: building the app (GROVE_E2E_SKIP_BUILD=1 to reuse the last one)…')
-  await run('npm', ['run', 'build'], { cwd: repoRoot, maxBuffer: 64 * 1024 * 1024 })
+  await run('bun', ['run', 'build'], { cwd: repoRoot, maxBuffer: 64 * 1024 * 1024 })
 }
 
 async function hasBuild(): Promise<boolean> {

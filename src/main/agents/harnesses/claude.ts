@@ -13,6 +13,7 @@ import type { Context } from '@neoworks/extension-system'
 import type {
   ModelInfo as SdkModelInfo,
   Options,
+  PermissionMode,
   Query,
   SDKMessage,
   SDKUserMessage,
@@ -20,6 +21,7 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk'
 import { commandLine } from '../../../shared/agents'
 import type {
+  AgentMode,
   CommandInfo,
   ConfirmationResult,
   ContentBlock,
@@ -42,6 +44,7 @@ import type {
   HarnessOffering,
   HarnessRun,
   HarnessRunOptions,
+  PromptAttachment,
   SubagentIdentity,
   ToolIntent
 } from '../harness'
@@ -269,10 +272,10 @@ class ClaudeRun implements HarnessRun {
     void this.consume()
   }
 
-  prompt(text: string): Promise<void> {
+  prompt(text: string, attachments: PromptAttachment[] = []): Promise<void> {
     if (!this.query) throw new Error('the Claude harness is not running')
     this.markRunning()
-    this.queue.push(userMessage(text))
+    this.queue.push(userMessage(text, attachments))
     return Promise.resolve()
   }
 
@@ -305,6 +308,10 @@ class ClaudeRun implements HarnessRun {
     await this.query?.setMaxThinkingTokens(budget)
   }
 
+  async setPermissionMode(mode: AgentMode): Promise<void> {
+    await this.query?.setPermissionMode(sdkPermissionMode(mode))
+  }
+
   async dispose(): Promise<void> {
     this.disposed = true
     this.queue.close()
@@ -324,7 +331,11 @@ class ClaudeRun implements HarnessRun {
       resume: this.options.resumeKey ?? undefined,
       includePartialMessages: true,
       maxThinkingTokens: budget === 0 ? undefined : budget,
-      allowedTools: this.options.activeTools ?? undefined,
+      // `tools`, not `allowedTools`: grove's activeTools is a restriction, and
+      // `allowedTools` is the SDK's auto-approve list — passing it there let
+      // every listed tool run unasked while restricting nothing.
+      tools: this.options.activeTools ?? undefined,
+      permissionMode: sdkPermissionMode(this.options.permissionMode),
       // The CLI's own prompt still leads; grove's part is appended to it, so a
       // session keeps every Claude Code behaviour and gains the worktree it is
       // working in and the agents it shares that worktree with.
@@ -1157,12 +1168,41 @@ function firstString(input: Record<string, unknown>, fields: string[]): string |
   return undefined
 }
 
-function userMessage(text: string): SDKUserMessage {
+/**
+ * One turn's input, as the SDK takes it.
+ *
+ * Images lead and the text follows: the model reads a prompt that refers to
+ * "this screenshot" better when the image is already in front of it, which is
+ * the ordering Anthropic's own guidance gives.
+ */
+function userMessage(text: string, attachments: PromptAttachment[] = []): SDKUserMessage {
+  const images = attachments.map((attachment) => ({
+    type: 'image' as const,
+    source: {
+      type: 'base64' as const,
+      media_type: attachment.mediaType as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
+      data: attachment.data
+    }
+  }))
   return {
     type: 'user',
     parent_tool_use_id: null,
-    message: { role: 'user', content: [{ type: 'text', text }] }
+    message: { role: 'user', content: [...images, { type: 'text', text }] }
   }
+}
+
+/**
+ * grove's mode as the SDK's own.
+ *
+ * Only plan mode is handed over. Plan mode is the one grove cannot implement
+ * itself — it withholds the mutating tools and adds the plan-mode protocol to
+ * the system prompt, both of which live inside the harness. The permissive
+ * modes stay grove's: answering them in `canUseTool` is what keeps every call
+ * on the event log, and what lets the review flow see the ones it gates.
+ */
+function sdkPermissionMode(mode: AgentMode): PermissionMode {
+  if (mode === 'plan') return 'plan'
+  return 'default'
 }
 
 function allows(result: ConfirmationResult): boolean {
@@ -1273,7 +1313,8 @@ function createClaudeHarness(
       liveModelSwitch: true,
       thinking: true,
       steering: true,
-      groveTools: true
+      groveTools: true,
+      attachments: true
     },
 
     // Availability is only "is there a CLI to spawn". Loading the offering here

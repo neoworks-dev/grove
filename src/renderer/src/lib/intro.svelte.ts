@@ -84,7 +84,7 @@ class IntroSession {
       this.chatId = sessionId
       // Onboarding writes AGENTS.md and example files as it goes; stopping to
       // approve each one is not what this flow is for.
-      agentSessions.setMode(sessionId, 'acceptEdits')
+      await agentSessions.setMode(sessionId, 'acceptEdits')
       await agentSessions.open(sessionId)
       await agentSessions.send(sessionId, [
         {

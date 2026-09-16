@@ -544,7 +544,8 @@ function createPiHarness(): HarnessDescriptor {
       liveModelSwitch: true,
       thinking: true,
       steering: true,
-      groveTools: true
+      groveTools: true,
+      attachments: false
     },
 
     async probe() {

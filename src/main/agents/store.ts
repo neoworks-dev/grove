@@ -17,6 +17,7 @@ import type {
   SessionEvent,
   SessionMeta,
   SessionSnapshot,
+  AgentMode,
   ThinkingLevel,
   Usage
 } from '../../shared/agents'
@@ -32,6 +33,7 @@ export interface StoredSession {
   thinkingLevel: ThinkingLevel
   activeTools: string[] | null
   autoApproveTools: string[]
+  permissionMode: AgentMode
   labels: Record<string, string>
   createdAt: string
   updatedAt: string
@@ -51,6 +53,7 @@ export interface CreateRecordOptions {
   model: string
   thinkingLevel: ThinkingLevel
   activeTools: string[] | null
+  permissionMode?: AgentMode
   /** Marks the session is created with, such as the agent that spawned it. */
   labels?: Record<string, string>
 }
@@ -138,6 +141,7 @@ export class SessionStore {
       thinkingLevel: options.thinkingLevel,
       activeTools: options.activeTools,
       autoApproveTools: [],
+      permissionMode: options.permissionMode ?? 'default',
       // Every session is addressable from the moment it exists, whoever made it.
       labels: { [AGENT_ID_LABEL]: newAgentId(), ...options.labels },
       createdAt: now,
@@ -230,6 +234,7 @@ export class SessionStore {
       thinkingLevel: session.thinkingLevel,
       activeTools: session.activeTools,
       autoApproveTools: session.autoApproveTools,
+      permissionMode: session.permissionMode,
       labels: session.labels,
       createdAt: session.createdAt,
       updatedAt: session.updatedAt,
@@ -339,8 +344,16 @@ function parseJson<T>(text: string): T {
   return JSON.parse(text)
 }
 
+/**
+ * A stored session, with the fields added after it was written filled in.
+ *
+ * Sessions are long-lived on disk, so a record from before `permissionMode`
+ * existed has to read back as the mode it was actually running under, which is
+ * the asking one.
+ */
 function parseSession(text: string): StoredSession {
-  return parseJson<StoredSession>(text)
+  const session = parseJson<StoredSession>(text)
+  return { ...session, permissionMode: session.permissionMode ?? 'default' }
 }
 
 function parseEvent(line: string): SessionEvent {

@@ -96,7 +96,8 @@ function openService(root: string): Harness {
         liveModelSwitch: true,
         thinking: true,
         steering: true,
-        groveTools: true
+        groveTools: true,
+        attachments: true
       },
       probe: async () => ({ available: true, detail: null }),
       offering: async () => ({

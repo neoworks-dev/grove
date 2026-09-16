@@ -5,6 +5,7 @@
 // pane and its components have one local module to import from.
 
 export type {
+  AgentMode,
   BlobDescriptor,
   ClientEventBody,
   CommandInfo,

@@ -20,6 +20,7 @@ import type {
   FileMatch,
   HarnessCatalog,
   HarnessInfo,
+  ImageBlock,
   ModelEntry,
   QueuedMessage,
   ServerEventBody,
@@ -31,6 +32,7 @@ import type {
   ToolInfo,
   UserContentBlock
 } from '../../shared/agents'
+import { ATTACHABLE_IMAGE_TYPES } from '../../shared/agents'
 import * as files from '../files'
 import { PARENT_LABEL } from './handoffBridge'
 import type {
@@ -39,6 +41,7 @@ import type {
   GroveTool,
   HarnessRegistry,
   HarnessRun,
+  PromptAttachment,
   SubagentIdentity
 } from './harness'
 import { runShellCommand, type ShellResult } from './shell'
@@ -304,10 +307,11 @@ export class AgentService {
     const stamped = await this.store.append(sessionId, event)
     const runtime = this.runtimeOrCreate(sessionId)
     const text = withPendingShell(pending, textOf(event))
+    const attachments = await this.attachmentsFor(sessionId, event)
     runtime.messageCount += 1
 
     if (runtime.status !== 'running') {
-      await this.startTurn(sessionId, text)
+      await this.startTurn(sessionId, text, attachments)
       return
     }
 
@@ -317,7 +321,70 @@ export class AgentService {
       await run.steer(text, deliverAs).catch((cause: Error) => this.reportError(sessionId, cause))
       return
     }
-    runtime.queued = [...runtime.queued, { id: stamped.id, text, deliverAs }]
+    runtime.queued = [...runtime.queued, { id: stamped.id, text, deliverAs, attachments }]
+  }
+
+  /**
+   * The images on a message, or none when this harness cannot take them.
+   *
+   * A harness that ignores attachments is told about in a notice rather than
+   * being handed bytes it will drop: an image that silently never reaches the
+   * model looks to the user exactly like one that did.
+   */
+  private async attachmentsFor(
+    sessionId: string,
+    event: Extract<ClientEventBody, { type: 'user.message' | 'app.message' }>
+  ): Promise<ImageBlock[]> {
+    if (event.type !== 'user.message') return []
+    const images = event.content.filter((block): block is ImageBlock => block.type === 'image')
+    if (images.length === 0) return []
+
+    const session = await this.store.require(sessionId)
+    const descriptor = this.options.harnesses.get(session.harness)
+    if (descriptor?.capabilities.attachments !== true) {
+      await this.noticeDroppedAttachments(sessionId, images.length, session.harness)
+      return []
+    }
+
+    const attachable = images.filter((image) => ATTACHABLE_IMAGE_TYPES.includes(image.mediaType))
+    if (attachable.length < images.length) {
+      await this.store.append(sessionId, {
+        type: 'session.notice',
+        message: `${images.length - attachable.length} attachment(s) were left out: only ${ATTACHABLE_IMAGE_TYPES.join(', ')} can be sent.`
+      })
+    }
+    return attachable
+  }
+
+  private async noticeDroppedAttachments(
+    sessionId: string,
+    count: number,
+    harness: string
+  ): Promise<void> {
+    await this.store.append(sessionId, {
+      type: 'session.notice',
+      message: `${count} attachment(s) were not sent: the ${harness} harness does not accept images.`
+    })
+  }
+
+  /** Read the attached blobs back as base64, ready for the harness. */
+  private async resolveAttachments(
+    sessionId: string,
+    images: ImageBlock[]
+  ): Promise<PromptAttachment[]> {
+    const resolved: PromptAttachment[] = []
+    for (const image of images) {
+      try {
+        const bytes = await this.readBlob(sessionId, image.ref)
+        resolved.push({ mediaType: image.mediaType, data: bytes.toString('base64') })
+      } catch (cause) {
+        await this.store.append(sessionId, {
+          type: 'session.notice',
+          message: `an attachment could not be read: ${(cause as Error).message}`
+        })
+      }
+    }
+    return resolved
   }
 
   /**
@@ -424,10 +491,16 @@ export class AgentService {
     return runs.join('\n')
   }
 
-  private async startTurn(sessionId: string, text: string): Promise<void> {
+  private async startTurn(
+    sessionId: string,
+    text: string,
+    attachments: ImageBlock[] = []
+  ): Promise<void> {
     try {
       const run = await this.ensureRun(sessionId)
-      await run.prompt(text)
+      // Read late, so a blob is only loaded into memory for a turn that runs.
+      const resolved = await this.resolveAttachments(sessionId, attachments)
+      await run.prompt(text, resolved)
     } catch (cause) {
       await this.reportError(sessionId, cause as Error)
     }
@@ -450,9 +523,10 @@ export class AgentService {
     const fresh = !runtime.announced.has(request.toolUseId)
     runtime.announced.add(request.toolUseId)
 
-    if (this.autoApproves(sessionId, request.name)) {
+    const automatic = this.autoDecisionFor(sessionId, request)
+    if (automatic) {
       if (fresh) void this.recordToolUse(sessionId, request, 'allow')
-      return Promise.resolve({ result: 'allow' as ConfirmationResult })
+      return Promise.resolve({ result: automatic })
     }
 
     runtime.pendingApprovals = [...runtime.pendingApprovals, request.toolUseId]
@@ -467,9 +541,41 @@ export class AgentService {
     })
   }
 
-  /** Has this session already been told to stop asking about this tool? */
-  private autoApproves(sessionId: string, toolName: string): boolean {
-    return this.store.peek(sessionId)?.autoApproveTools.includes(toolName) === true
+  /**
+   * How this session answers an approval by itself, or null to put it to the
+   * user.
+   *
+   * This is where a permission mode actually takes effect. It has to be here
+   * rather than in the window that chose the mode: an approval blocks the
+   * harness, and the gated review is raised from the same event, so a decision
+   * made in the renderer arrives after the diff it was meant to prevent.
+   *
+   * Answering here also keeps the review flow consistent for free — an
+   * auto-approved call is logged as `allow`, and the review bridge only gates
+   * calls logged as `ask`.
+   */
+  private autoDecisionFor(sessionId: string, request: ApprovalRequest): ConfirmationResult | null {
+    const session = this.store.peek(sessionId)
+    if (!session) return null
+    if (session.permissionMode === 'bypass') return 'allow'
+    // "Don't ask again" for this tool, answered earlier in the session.
+    if (session.autoApproveTools.includes(request.name)) return 'allow'
+    if (session.permissionMode !== 'acceptEdits') return null
+    return this.writesAFile(session.harness, request) ? 'allow' : null
+  }
+
+  /**
+   * Whether a call writes a file, as the harness itself reports it.
+   *
+   * `intentOf` is the same answer the review flow reads, so accept-edits covers
+   * exactly the calls that would have been raised as a diff — and a harness
+   * that names its tools differently needs no change here.
+   */
+  private writesAFile(harnessId: string, request: ApprovalRequest): boolean {
+    const descriptor = this.options.harnesses.get(harnessId)
+    if (!descriptor) return false
+    const input = (request.input as Record<string, unknown>) ?? {}
+    return descriptor.intentOf(request.name, input)?.kind === 'write'
   }
 
   /**
@@ -550,6 +656,7 @@ export class AgentService {
       model: session.model || null,
       thinkingLevel: session.thinkingLevel,
       activeTools: session.activeTools,
+      permissionMode: session.permissionMode,
       resumeKey: session.resumeKey,
       tools: this.toolsFor(descriptor),
       systemPrompt: await this.systemPromptFor(session),
@@ -654,7 +761,7 @@ export class AgentService {
     const next = runtime.queued[0]
     if (!next) return
     runtime.queued = runtime.queued.slice(1)
-    await this.startTurn(sessionId, next.text)
+    await this.startTurn(sessionId, next.text, next.attachments)
   }
 
   /**
@@ -680,6 +787,12 @@ export class AgentService {
     }
     if (changes.thinkingLevel && run.setThinkingLevel) {
       await run.setThinkingLevel(changes.thinkingLevel).catch(() => {})
+    }
+    // Only plan mode needs the harness told: it withholds tools, which grove's
+    // approval layer cannot do on its own. The permissive modes are answered
+    // here, so the harness keeps asking and grove keeps logging the calls.
+    if (changes.permissionMode && run.setPermissionMode) {
+      await run.setPermissionMode(changes.permissionMode).catch(() => {})
     }
   }
 

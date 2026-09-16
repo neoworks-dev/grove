@@ -239,6 +239,7 @@
   <!-- Mode -->
   <div class="relative z-20">
     <button
+      data-testid="agent-mode-trigger"
       class="flex items-center gap-1 rounded border border-line px-2 py-1 hover:bg-hover"
       title="How much the agent may do without asking (shift+tab)"
       onclick={() => toggle('mode')}
@@ -252,6 +253,8 @@
       >
         {#each MODES as candidate (candidate)}
           <button
+            data-testid="agent-mode-option"
+            data-mode={candidate}
             class="flex w-full flex-col items-start gap-0.5 px-2 py-1.5 text-left hover:bg-hover"
             onclick={() => {
               onPickMode(candidate)

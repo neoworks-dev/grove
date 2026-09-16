@@ -34,6 +34,6 @@
     {/each}
   </div>
   {#if !store.repo}
-    <div class="text-2xs">Open a repository to begin.</div>
+    <div class="text-2xs">Open a folder to begin.</div>
   {/if}
 </div>

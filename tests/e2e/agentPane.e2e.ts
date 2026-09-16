@@ -6,53 +6,56 @@
 // while the session it named was still in the asking one. Only a test that
 // changes the mode through the control and then reads the session can see them
 // disagree.
+//
+// The control is addressed by data-testid rather than by its label. Every mode
+// name appears twice over — once on the trigger and once in the menu — so a
+// by-name locator matches both and resolves to nothing.
 
-import { test, expect, type GroveWindow } from './fixtures/groveApp'
+import { test, expect, type Page, type GroveWindow } from './fixtures/groveApp'
 
-/** The mode control under the composer, found by the tooltip it carries. */
-const MODE_BUTTON_TITLE = 'How much the agent may do without asking (shift+tab)'
+const trigger = (page: Page) => page.getByTestId('agent-mode-trigger')
+
+/** The menu entry for a mode, matched on the mode itself rather than its label. */
+function modeOption(page: Page, mode: string) {
+  return page.locator(`[data-testid="agent-mode-option"][data-mode="${mode}"]`)
+}
 
 /**
- * Open the agent pane on a session of its own.
+ * Start a session the way the pane offers it, and hand back its id.
  *
- * Setup goes through the API on purpose — getting a pane on screen is not what
- * these tests are about, and clicking through the rail to reach it would make
- * every one of them a test of the sidebar as well.
+ * The pane is already on screen when grove opens, so this is the same two
+ * clicks a user makes. The id is read afterwards rather than being handed in,
+ * which is what lets the assertions check the session the UI actually made.
  */
-async function openAgentPane(page: import('@playwright/test').Page): Promise<string> {
+async function startSession(page: Page): Promise<string> {
+  await page.getByRole('button', { name: 'New session' }).click()
+  await expect(trigger(page)).toBeVisible()
+
   return page.evaluate(async () => {
     const view = window as unknown as GroveWindow
-    const workspace = view.__grove_debug?.store?.selectedWorktree?.path
-    const session = await view.workbench.agents.createSession({ workspace, title: 'pane' })
-
-    const sessions = view.__grove_debug?.agentSessions
-    await sessions?.refreshList?.()
-    await sessions?.open?.(session.id)
-    view.__grove_debug?.layout?.ensurePane('agent')
-    return session.id
+    const sessions = await view.workbench.agents.listSessions()
+    return sessions[sessions.length - 1].id
   })
 }
 
-test('the mode control opens and offers every mode', async ({ grove }) => {
-  await openAgentPane(grove.page)
+test('the mode control offers every mode', async ({ grove }) => {
+  await startSession(grove.page)
+  await trigger(grove.page).click()
 
-  const button = grove.page.getByTitle(MODE_BUTTON_TITLE)
-  await expect(button).toBeVisible()
-  await button.click()
-
-  for (const label of ['Ask', 'Plan', 'Accept edits', 'Bypass']) {
-    await expect(grove.page.getByRole('button', { name: label, exact: false })).toBeVisible()
+  for (const mode of ['default', 'plan', 'acceptEdits', 'bypass']) {
+    await expect(modeOption(grove.page, mode)).toBeVisible()
   }
+  await expect(modeOption(grove.page, 'acceptEdits')).toContainText('Accept edits')
 })
 
 test('picking accept-edits in the UI puts the session into it', async ({ grove }) => {
-  const sessionId = await openAgentPane(grove.page)
+  const sessionId = await startSession(grove.page)
 
-  await grove.page.getByTitle(MODE_BUTTON_TITLE).click()
-  await grove.page.getByRole('button', { name: 'Accept edits' }).click()
+  await trigger(grove.page).click()
+  await modeOption(grove.page, 'acceptEdits').click()
 
   // The control has to agree...
-  await expect(grove.page.getByTitle(MODE_BUTTON_TITLE)).toContainText('Accept edits')
+  await expect(trigger(grove.page)).toContainText('Accept edits')
 
   // ...and so does the session the main process is gating. This is the pair
   // that used to come apart: the label changed and the session did not.
@@ -63,12 +66,12 @@ test('picking accept-edits in the UI puts the session into it', async ({ grove }
   expect(stored).toBe('acceptEdits')
 })
 
-test('the mode the control shows survives reopening the pane', async ({ grove }) => {
-  const sessionId = await openAgentPane(grove.page)
+test('the mode the control shows survives reopening the session', async ({ grove }) => {
+  const sessionId = await startSession(grove.page)
 
-  await grove.page.getByTitle(MODE_BUTTON_TITLE).click()
-  await grove.page.getByRole('button', { name: 'Bypass' }).click()
-  await expect(grove.page.getByTitle(MODE_BUTTON_TITLE)).toContainText('Bypass')
+  await trigger(grove.page).click()
+  await modeOption(grove.page, 'bypass').click()
+  await expect(trigger(grove.page)).toContainText('Bypass')
 
   // Drop the session from the renderer and load it again, which is what
   // switching worktrees and coming back does.
@@ -78,5 +81,5 @@ test('the mode the control shows survives reopening the pane', async ({ grove })
     return sessions?.open?.(id)
   }, sessionId)
 
-  await expect(grove.page.getByTitle(MODE_BUTTON_TITLE)).toContainText('Bypass')
+  await expect(trigger(grove.page)).toContainText('Bypass')
 })

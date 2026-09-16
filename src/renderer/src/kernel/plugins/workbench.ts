@@ -21,7 +21,7 @@ export const workbench = {
       () =>
         ctx.commands.register({
           id: 'repo.open',
-          title: 'Open Repository…',
+          title: 'Open Folder…',
           group: 'Repository',
           run: pickRepo
         }),

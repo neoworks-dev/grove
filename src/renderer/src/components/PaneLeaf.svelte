@@ -62,7 +62,7 @@
     <MissingPane paneTypeId={leaf.paneTypeId} />
   {:else if !available}
     <div class="flex flex-1 items-center justify-center text-dim">
-      Open a Git repository to begin.
+      Open a folder to begin.
     </div>
   {:else}
     {#key leaf.paneTypeId}

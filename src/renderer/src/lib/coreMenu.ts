@@ -13,7 +13,7 @@ export function registerCoreMenu(): () => void {
     {
       id: 'file.openRepo',
       menuId: 'file',
-      label: 'Open Repository…',
+      label: 'Open Folder…',
       group: '1-open',
       order: 1,
       commandId: 'repo.open'

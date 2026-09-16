@@ -5,24 +5,74 @@ description: Attach to the running Grove app and inspect or drive it — rendere
 
 # Driving a running Grove
 
-Grove is not launched from here. The user runs it themselves, with `GROVE_DEBUG=1`
-— that flag is what registers the `debug.*` routes; without it nothing below
-connects. Everything here talks to that running instance.
+Everything here talks to a running Grove over the `debug.*` routes, which only
+exist when the app was started with `GROVE_DEBUG=1`.
 
-- **Renderer changes hot-reload.** Edit and re-check immediately.
-- **Main-process changes do not.** After touching `src/main`, ask the user to
-  restart before you trust anything the harness reports.
-- On the first connection Grove shows a pairing dialog; the user approves it once
-  and the token is reused from `~/.config/grove/tokens/grove-debug`.
+There are two instances you might be talking to, and they are not the same thing:
+
+- **The test instance** — yours to launch and restart freely. Isolated profile,
+  its own demo repo, nothing of the user's in it. **Launch this one by default.**
+- **The user's own instance** — theirs. Never launch or restart it; ask.
 
 The rule this exists for: **reproduce a reported bug through the harness and
 confirm the mechanism before proposing a fix.** Guessing from source has been
 wrong more often than right. Do not read the UI through tmux — attach and look.
 
+## The test environment
+
+`scripts/test-env.ts` keeps a scratch profile under `.grove-test/` (gitignored)
+and launches the app into it:
+
+```
+bun scripts/test-env.ts dev        # prepare, then launch — run in a background shell
+bun scripts/test-env.ts debug …    # grove-debug, pointed at that instance
+bun scripts/test-env.ts prepare    # profile + demo repo, without launching
+bun scripts/test-env.ts reset      # throw the profile and the demo repo away
+```
+
+Launch it in a **background shell** so it keeps running while you drive it, and
+drive it through `test-env.ts debug`, which is `grove-debug` with the profile's
+environment already set:
+
+```bash
+bun scripts/test-env.ts debug scenario ping
+bun scripts/test-env.ts debug eval 'window.__grove_debug.store.selectedWorktree.path'
+```
+
+Everything below works the same against it — `debug` forwards its arguments
+verbatim, so `test-env.ts debug <anything>` is `grove-debug.ts <anything>`.
+
+**Why it is isolated.** Every path Grove persists to hangs off Electron's
+`userData`, which on Linux is `$XDG_CONFIG_HOME/grove`. The script redirects
+that one variable, which moves the settings, the agent event log, blob storage,
+pairing tokens, the API socket and the nvim runtime together. The user's
+`~/.config/grove` is never opened, so their sessions and editor state survive a
+test run happening beside them.
+
+**What is seeded.** `prepare` writes `lastRepoPath` so the app opens the demo
+repo, and pre-answers both permission gates — the pairing token in
+`external-apps.json`, and every capability in `plugin-grants.json`. Without the
+second one the first `debug.nvim.lua` call sits on a dialog nobody can click.
+Grove caches both files in memory on first use, so **seeding only takes effect
+on the next launch.**
+
+**The demo repo** (`tests/e2e/fixtures/demoRepo.ts`) is a real git repository:
+three commits, one staged and one unstaged change, a `feature/greeting` branch
+and a linked worktree. `prepare` reuses it if it is already there; `reset` is
+how you ask for a clean one.
+
+- **Renderer changes hot-reload.** Edit and re-check immediately.
+- **Main-process changes do not.** Restart the test instance yourself; for the
+  user's instance, ask them.
+- Killing the test instance: `pkill -f '[g]rove-test/config/grove'`. The `[g]`
+  is not a typo — a plain pattern matches the killing shell's own command line
+  and takes it down with the app.
+
 ## Is it reachable
 
 ```
-bun scripts/grove-debug.ts scenario ping
+bun scripts/test-env.ts debug scenario ping     # the test instance
+bun scripts/grove-debug.ts scenario ping        # the user's instance
 ```
 
 `ping` is a scenario, not a top-level command. It checks both halves: nvim and
@@ -113,9 +163,10 @@ repo this shell is in. Check it first when the answers look unrelated:
 bun scripts/grove-debug.ts eval 'window.__grove_debug.store.selectedWorktree.path'
 ```
 
-`agent start` spends the user's tokens and runs a real model in their app. Use a
-small prompt, and prefer reading the existing session's log (below) when the bug
-has already happened once.
+`agent start` spends the user's tokens and runs a real model — the test instance
+is isolated from their profile, but not from their account. Use a small prompt,
+and prefer reading an existing session's log (below) when the bug has already
+happened once.
 
 ## Reviews
 

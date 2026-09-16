@@ -11,3 +11,7 @@ out
 resources/plugins/*/dist/
 resources/nvim/dist/
 resources/nib/dist/
+
+# Isolated profile + demo repo for the e2e/test environment (scripts/test-env.ts)
+.grove-test/
+.grove-test-*/

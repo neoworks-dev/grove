@@ -8,21 +8,30 @@
   // would report an absence that was never measured.
   import Checkbox from '@neoworks-dev/ui/Checkbox'
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
+  import BellIcon from 'phosphor-svelte/lib/BellIcon'
+  import BellSlashIcon from 'phosphor-svelte/lib/BellSlashIcon'
   import GearIcon from 'phosphor-svelte/lib/GearIcon'
+  import GitBranchIcon from 'phosphor-svelte/lib/GitBranchIcon'
   import GithubAvatar from './GithubAvatar.svelte'
   import GithubLabelPill from './GithubLabelPill.svelte'
   import GithubLabelPicker from './GithubLabelPicker.svelte'
   import GithubMenu from './GithubMenu.svelte'
+  import GithubStateIcon from './GithubStateIcon.svelte'
+  import { branchNameFor } from './branches'
   import { issueTypeColour } from './filter'
   import {
     github,
     applyAssignees,
     applyLabels,
     applyMilestone,
+    isSubscribed,
     loadMentionables,
-    loadMilestones
+    loadMilestones,
+    openReference,
+    startWorkOnIssue,
+    toggleSubscription
   } from './store.svelte'
-  import type { GithubItemDetail } from '../../../../../shared/types'
+  import type { GithubItemDetail, GithubItemRef } from '../../../../../shared/types'
 
   let { detail }: { detail: GithubItemDetail } = $props()
 
@@ -73,7 +82,38 @@
     if (dueOn === null) return null
     return `Due ${new Date(dueOn).toLocaleDateString()}`
   }
+
+  // Relationships only exist on issues, and only when the schema has them.
+  const showsRelationships = $derived(github.capabilities.subIssues && detail.kind === 'issue')
+
+  const subIssues = $derived.by<GithubItemRef[]>(() => {
+    if (!detail.subIssues) return []
+    return detail.subIssues
+  })
+
+  const linkedBranches = $derived.by<string[]>(() => {
+    if (!detail.linkedBranches) return []
+    return detail.linkedBranches
+  })
+
+  /** "3 of 7 done", or null when nothing hangs off this issue. */
+  const subIssueProgress = $derived.by<string | null>(() => {
+    const progress = detail.subIssueProgress
+    if (!progress || progress.total === 0) return null
+    return `${progress.completed} of ${progress.total} done`
+  })
 </script>
+
+{#snippet refRow(ref: GithubItemRef)}
+  <button
+    class="flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left hover:bg-hover"
+    onclick={() => openReference('issue', ref.number)}
+  >
+    <GithubStateIcon item={{ kind: 'issue', state: ref.state }} size={11} />
+    <span class="shrink-0 text-dim">#{ref.number}</span>
+    <span class="truncate text-default" title={ref.title}>{ref.title}</span>
+  </button>
+{/snippet}
 
 <div class="flex flex-col gap-4 text-2xs">
   <section class="flex flex-col gap-1.5">
@@ -230,4 +270,80 @@
       </p>
     </section>
   {/if}
+
+  {#if detail.kind === 'issue'}
+    <section class="flex flex-col gap-1.5">
+      <h3 class="font-medium text-default">Development</h3>
+      {#if linkedBranches.length > 0}
+        {#each linkedBranches as branch (branch)}
+          <p class="truncate font-mono text-dim" title={branch}>{branch}</p>
+        {/each}
+      {/if}
+      <button
+        class="flex items-center gap-1.5 self-start rounded-md border border-line px-1.5 py-0.5 text-2xs text-dim transition-colors hover:border-line-strong hover:text-default disabled:opacity-50"
+        disabled={github.busy}
+        title="Create a worktree on {branchNameFor(detail.number, detail.title)}"
+        onclick={startWorkOnIssue}
+      >
+        <GitBranchIcon size={11} />
+        Create a worktree
+      </button>
+    </section>
+  {/if}
+
+  {#if showsRelationships}
+    <section class="flex flex-col gap-1.5">
+      <h3 class="font-medium text-default">Relationships</h3>
+      {#if detail.parent}
+        <p class="text-dim">Parent</p>
+        {@render refRow(detail.parent)}
+      {/if}
+      {#if subIssueProgress}
+        <p class="text-dim">Sub-issues · {subIssueProgress}</p>
+        {#each subIssues as child (child.number)}
+          {@render refRow(child)}
+        {/each}
+      {/if}
+      {#if !detail.parent && !subIssueProgress}
+        <p class="text-dim">None yet</p>
+      {/if}
+    </section>
+  {/if}
+
+  <section class="flex flex-col gap-1.5">
+    <h3 class="font-medium text-default">Notifications</h3>
+    <button
+      class="flex items-center gap-1.5 self-start rounded-md border border-line px-1.5 py-0.5 text-2xs text-dim transition-colors hover:border-line-strong hover:text-default disabled:opacity-50"
+      disabled={github.busy}
+      onclick={toggleSubscription}
+    >
+      {#if isSubscribed(detail)}
+        <BellSlashIcon size={11} />
+        Unsubscribe
+      {:else}
+        <BellIcon size={11} />
+        Subscribe
+      {/if}
+    </button>
+    <p class="text-dim">
+      {#if isSubscribed(detail)}
+        You are notified about this thread.
+      {:else}
+        You are not notified about this thread.
+      {/if}
+    </p>
+  </section>
+
+  <section class="flex flex-col gap-1.5">
+    <h3 class="font-medium text-default">Participants</h3>
+    {#if github.participants.length > 0}
+      <div class="flex flex-wrap gap-1">
+        {#each github.participants as actor (actor.login)}
+          <GithubAvatar {actor} size={18} />
+        {/each}
+      </div>
+    {:else}
+      <p class="text-dim">No one yet</p>
+    {/if}
+  </section>
 </div>

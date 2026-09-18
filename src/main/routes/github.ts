@@ -60,6 +60,11 @@ export const githubRoutes = {
       }
     )
 
+    route(ctx, 'github:setSubscription', (_e, nodeId: string, subscribed: boolean) => {
+      const { repoPath } = ctx.workbench.requireRepo()
+      return dashboard.setSubscription(repoPath, nodeId, subscribed)
+    })
+
     route(ctx, 'github:mentionables', () => {
       const { repoPath } = ctx.workbench.requireRepo()
       return dashboard.fetchMentionables(repoPath)

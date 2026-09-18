@@ -299,6 +299,26 @@ export interface GithubProjectRef {
 export interface GithubCapabilities {
   projects: boolean
   issueTypes: boolean
+  /** Sub-issues and the parent an issue hangs off. */
+  subIssues: boolean
+  /** The branches GitHub has linked to an issue. */
+  linkedBranches: boolean
+}
+
+/** A pointer to another issue, as a relationship carries one. */
+export interface GithubItemRef {
+  number: number
+  title: string
+  /** OPEN | CLOSED. */
+  state: string
+  url: string
+}
+
+/** How far down its sub-issues a tracking issue is. */
+export interface GithubSubIssueProgress {
+  total: number
+  completed: number
+  percentCompleted: number
 }
 
 /** A new issue, as composed in the pane and handed to `gh issue create`. */
@@ -428,12 +448,22 @@ export type GithubTimelineEntry =
 
 export interface GithubItemDetail extends GithubItemShared {
   kind: GithubItemKind
+  /** The GraphQL node id, which the subscription mutation is addressed to. */
+  id: string
   body: string
   /** Who opened it, for the first card of the thread. */
   authorActor: GithubActor
   authorAssociation: string
   /** Comments and events in one time-ordered list. */
   timeline: GithubTimelineEntry[]
+  /** SUBSCRIBED | UNSUBSCRIBED | IGNORED, or null when GitHub has no opinion. */
+  viewerSubscription?: string | null
+  /** The issue this one hangs off, or null when it hangs off nothing. */
+  parent?: GithubItemRef | null
+  subIssues?: GithubItemRef[]
+  subIssueProgress?: GithubSubIssueProgress
+  /** Branch names GitHub has linked to the issue. */
+  linkedBranches?: string[]
   // Pull-request-only fields.
   isDraft?: boolean
   additions?: number

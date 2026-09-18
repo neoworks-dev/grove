@@ -111,7 +111,6 @@ describe('item state vocabulary', () => {
     expect(reviewLabel('CHANGES_REQUESTED')).toBe('changes')
     expect(reviewLabel(null)).toBe(null)
   })
-
 })
 
 describe('availableActions', () => {

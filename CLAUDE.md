@@ -10,6 +10,8 @@ Anything more than a tiny change: open an issue (`gh issue create`) with the lab
 
 Straight to `main`, no issue and no branch: typos, one-liners, and anything that only touches how we work rather than the app — this file, `.claude/skills/`, editor config. Moving the extension-system rules into the `grove-plugins` skill was one of those.
 
+No issue either when the work is still undefined — building out a surface we're feeling our way through, where the shape comes from what we find as we go. An issue describes a known outcome, and there isn't one yet; writing it up front would be a guess, and keeping it current would cost more than it tells anyone. Still branch, and still open a PR — just without a `Closes`. File issues once the exploration has left something specific and unfixed behind.
+
 Labels are two axes. Type is GitHub's default `bug` or `enhancement`. Area is exactly one of:
 
 - `area:editor` — nvim surface: buffers, rendering, bundled config

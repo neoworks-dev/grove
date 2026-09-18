@@ -3,15 +3,8 @@
   // signals that decide whether an item needs attention (labels, checks, review,
   // diff size, comment count, age).
   import GithubBadge from './GithubBadge.svelte'
-  import {
-    checkGlyph,
-    checkTone,
-    labelIsDark,
-    relativeTime,
-    reviewLabel,
-    reviewTone,
-    stateTone
-  } from './filter'
+  import GithubLabelPill from './GithubLabelPill.svelte'
+  import { checkGlyph, checkTone, relativeTime, reviewLabel, reviewTone, stateTone } from './filter'
   import type { GithubItem } from '../../../../../shared/types'
 
   let {
@@ -83,14 +76,7 @@
 
       <span class="flex min-w-0 flex-1 justify-end gap-1 overflow-hidden">
         {#each item.labels.slice(0, 3) as label (label.name)}
-          <span
-            class="shrink-0 truncate rounded-full px-1.5 text-2xs"
-            class:text-white={labelIsDark(label.color)}
-            class:text-black={!labelIsDark(label.color)}
-            style:background-color="#{label.color}"
-          >
-            {label.name}
-          </span>
+          <GithubLabelPill {label} />
         {/each}
       </span>
     </div>

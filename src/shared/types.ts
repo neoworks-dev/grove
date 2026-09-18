@@ -321,20 +321,75 @@ export interface GithubDashboard {
   fetchedAt: number
 }
 
+/** Whoever did a thing, with what the UI needs to show them. */
+export interface GithubActor {
+  login: string
+  /** GitHub's avatar URL, or null for the deleted-user placeholder. */
+  avatarUrl: string | null
+}
+
 export interface GithubComment {
   id: string
-  author: string
+  author: GithubActor
   body: string
   createdAt: string
   url: string
+  /** OWNER | MEMBER | COLLABORATOR | CONTRIBUTOR | NONE — the badge GitHub puts
+   *  beside a name to say how the author relates to the repository. */
+  authorAssociation: string
   /** Review summaries are shown inline with issue comments, tagged by state. */
   reviewState?: string
 }
 
+/**
+ * Everything that is not a comment: the state changes, labellings and renames
+ * GitHub draws as one-line entries down the timeline's rail.
+ */
+export type GithubEventKind =
+  | 'labeled'
+  | 'unlabeled'
+  | 'closed'
+  | 'reopened'
+  | 'merged'
+  | 'assigned'
+  | 'unassigned'
+  | 'renamed'
+  | 'referenced'
+  | 'review_requested'
+
+export interface GithubTimelineEvent {
+  id: string
+  kind: GithubEventKind
+  actor: GithubActor
+  createdAt: string
+  /** labeled / unlabeled. */
+  label?: GithubLabel
+  /** assigned / unassigned / review_requested. */
+  subject?: string
+  /** renamed. */
+  previousTitle?: string
+  currentTitle?: string
+  /** closed, when GitHub gives a reason (completed / not planned). */
+  stateReason?: string
+  /** merged. */
+  mergeRefName?: string
+  /** referenced — the issue or pull request that mentioned this one. */
+  source?: { number: number; title: string; url: string }
+}
+
+/** One entry of the thread, before the UI folds runs of them together. */
+export type GithubTimelineEntry =
+  | { type: 'comment'; at: string; comment: GithubComment }
+  | { type: 'event'; at: string; event: GithubTimelineEvent }
+
 export interface GithubItemDetail extends GithubItemShared {
   kind: GithubItemKind
   body: string
-  comments: GithubComment[]
+  /** Who opened it, for the first card of the thread. */
+  authorActor: GithubActor
+  authorAssociation: string
+  /** Comments and events in one time-ordered list. */
+  timeline: GithubTimelineEntry[]
   // Pull-request-only fields.
   isDraft?: boolean
   additions?: number
@@ -344,6 +399,12 @@ export interface GithubItemDetail extends GithubItemShared {
   baseRefName?: string
   reviewDecision?: string | null
   mergeStateStatus?: string
+}
+
+/** A relabelling of an item that already exists. */
+export interface GithubLabelChange {
+  add: string[]
+  remove: string[]
 }
 
 /** Where a freshly created issue landed. */

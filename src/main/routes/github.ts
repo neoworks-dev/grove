@@ -11,6 +11,7 @@ import * as dashboard from '../githubDashboard'
 import type {
   GithubIssueDraft,
   GithubItemAction,
+  GithubLabelChange,
   GithubItemKind,
   GithubStateFilter,
   MergePrOptions,
@@ -43,10 +44,24 @@ export const githubRoutes = {
       return dashboard.fetchLabels(repoPath)
     })
 
+    route(ctx, 'github:mentionables', () => {
+      const { repoPath } = ctx.workbench.requireRepo()
+      return dashboard.fetchMentionables(repoPath)
+    })
+
     route(ctx, 'github:createIssue', (_e, draft: GithubIssueDraft) => {
       const { repoPath } = ctx.workbench.requireRepo()
       return dashboard.createIssue(repoPath, draft)
     })
+
+    route(
+      ctx,
+      'github:changeLabels',
+      (_e, kind: GithubItemKind, number: number, change: GithubLabelChange) => {
+        const { repoPath } = ctx.workbench.requireRepo()
+        return dashboard.changeLabels(repoPath, kind, number, change)
+      }
+    )
 
     route(ctx, 'github:comment', (_e, kind: GithubItemKind, number: number, body: string) => {
       const { repoPath } = ctx.workbench.requireRepo()

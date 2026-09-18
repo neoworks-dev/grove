@@ -4,18 +4,24 @@
 //
 // Everything goes through the `gh` CLI, but with an argv array instead of a
 // shell string — bodies are arbitrary user text and must never be quoted into a
-// command line. The list is one GraphQL round trip so a refresh costs a single
-// process spawn; details and writes use the porcelain commands.
+// command line. The two reads are each one GraphQL round trip, so opening the
+// pane or an item costs a single process spawn; writes use the porcelain
+// commands, which is where gh does the work of resolving the repository.
 
 import { spawn } from 'child_process'
 import { ensureGhReady } from './github'
 import type {
+  GithubActor,
   GithubComment,
   GithubCreatedIssue,
   GithubDashboard,
+  GithubEventKind,
   GithubIssueDraft,
   GithubIssueItem,
   GithubItemAction,
+  GithubLabelChange,
+  GithubTimelineEntry,
+  GithubTimelineEvent,
   GithubItemDetail,
   GithubItemKind,
   GithubLabel,
@@ -270,58 +276,179 @@ export async function fetchDashboard(
   }
 }
 
-const SHARED_DETAIL_FIELDS = [
-  'number',
-  'title',
-  'url',
-  'state',
-  'author',
-  'createdAt',
-  'updatedAt',
-  'body',
-  'labels',
-  'assignees',
-  'comments'
+// Timeline entries worth a row: the ones that say how an item got where it is.
+// GitHub has many more (subscriptions, mentions, pins) that only add noise.
+const ISSUE_TIMELINE_TYPES = [
+  'ISSUE_COMMENT',
+  'LABELED_EVENT',
+  'UNLABELED_EVENT',
+  'CLOSED_EVENT',
+  'REOPENED_EVENT',
+  'ASSIGNED_EVENT',
+  'UNASSIGNED_EVENT',
+  'RENAMED_TITLE_EVENT',
+  'CROSS_REFERENCED_EVENT'
 ]
 
-const PULL_DETAIL_FIELDS = [
-  ...SHARED_DETAIL_FIELDS,
-  'isDraft',
-  'additions',
-  'deletions',
-  'changedFiles',
-  'headRefName',
-  'baseRefName',
-  'reviewDecision',
-  'mergeStateStatus',
-  'reviews'
+// Reviews, merges and review requests only exist in a pull request's timeline,
+// and naming them against an issue is a query error rather than an empty list.
+const PULL_TIMELINE_TYPES = [
+  ...ISSUE_TIMELINE_TYPES,
+  'PULL_REQUEST_REVIEW',
+  'MERGED_EVENT',
+  'REVIEW_REQUESTED_EVENT'
 ]
 
-interface ViewComment {
+// Timeline pages cap at 100 like every other connection; a thread longer than
+// that shows its most recent 100 entries.
+const MAX_TIMELINE = 100
+
+const ACTOR_FIELDS = 'login avatarUrl'
+
+/**
+ * The inline fragments for the entry kinds a timeline can hold. The pull-only
+ * ones are a separate set: GraphQL rejects a fragment on PullRequestReview
+ * inside IssueTimelineItems outright, rather than returning an empty list.
+ */
+function timelineNodeFields(includePullOnly: boolean): string {
+  const pullOnly = !includePullOnly
+    ? ''
+    : `
+      ... on PullRequestReview {
+        id createdAt submittedAt url body state authorAssociation
+        author { ${ACTOR_FIELDS} }
+      }
+      ... on MergedEvent {
+        id createdAt mergeRefName
+        actor { ${ACTOR_FIELDS} }
+      }
+      ... on ReviewRequestedEvent {
+        id createdAt
+        actor { ${ACTOR_FIELDS} }
+        requestedReviewer { ... on User { login } ... on Team { name } }
+      }`
+  return `
+      __typename
+      ... on IssueComment {
+        id createdAt url body authorAssociation
+        author { ${ACTOR_FIELDS} }
+      }
+      ... on LabeledEvent {
+        id createdAt label { name color }
+        actor { ${ACTOR_FIELDS} }
+      }
+      ... on UnlabeledEvent {
+        id createdAt label { name color }
+        actor { ${ACTOR_FIELDS} }
+      }
+      ... on ClosedEvent {
+        id createdAt stateReason
+        actor { ${ACTOR_FIELDS} }
+      }
+      ... on ReopenedEvent {
+        id createdAt
+        actor { ${ACTOR_FIELDS} }
+      }
+      ... on AssignedEvent {
+        id createdAt
+        actor { ${ACTOR_FIELDS} }
+        assignee { ... on User { login } ... on Bot { login } }
+      }
+      ... on UnassignedEvent {
+        id createdAt
+        actor { ${ACTOR_FIELDS} }
+        assignee { ... on User { login } ... on Bot { login } }
+      }
+      ... on RenamedTitleEvent {
+        id createdAt previousTitle currentTitle
+        actor { ${ACTOR_FIELDS} }
+      }
+      ... on CrossReferencedEvent {
+        id createdAt
+        actor { ${ACTOR_FIELDS} }
+        source {
+          ... on Issue { number title url }
+          ... on PullRequest { number title url }
+        }
+      }${pullOnly}`
+}
+
+/**
+ * The one query behind opening an item: its body, its metadata and its whole
+ * timeline. `issueOrPullRequest` resolves either kind, so the caller's `kind` is
+ * only used to shape the result rather than to pick a query.
+ */
+export function itemDetailQuery(): string {
+  const shared = `number title url state createdAt updatedAt body authorAssociation
+        author { ${ACTOR_FIELDS} }
+        labels(first: 20) { nodes { name color } }
+        assignees(first: 10) { nodes { login } }`
+  return `
+query($owner: String!, $name: String!, $number: Int!, $limit: Int!) {
+  repository(owner: $owner, name: $name) {
+    issueOrPullRequest(number: $number) {
+      __typename
+      ... on Issue {
+        ${shared}
+        timelineItems(first: $limit, itemTypes: [${ISSUE_TIMELINE_TYPES.join(', ')}]) {
+          nodes {${timelineNodeFields(false)}
+          }
+        }
+      }
+      ... on PullRequest {
+        ${shared}
+        isDraft additions deletions changedFiles
+        headRefName baseRefName reviewDecision mergeStateStatus
+        timelineItems(first: $limit, itemTypes: [${PULL_TIMELINE_TYPES.join(', ')}]) {
+          nodes {${timelineNodeFields(true)}
+          }
+        }
+      }
+    }
+  }
+}`.trim()
+}
+
+interface GraphqlActor {
+  login?: string
+  avatarUrl?: string
+}
+
+interface TimelineNode {
+  __typename: string
   id: string
-  author: GraphqlAuthor | null
-  body: string
   createdAt: string
-  url: string
+  submittedAt?: string
+  url?: string
+  body?: string
+  state?: string
+  authorAssociation?: string
+  author?: GraphqlActor | null
+  actor?: GraphqlActor | null
+  label?: GithubLabel
+  assignee?: { login?: string } | null
+  requestedReviewer?: { login?: string; name?: string } | null
+  previousTitle?: string
+  currentTitle?: string
+  stateReason?: string | null
+  mergeRefName?: string
+  source?: { number?: number; title?: string; url?: string } | null
 }
 
-interface ViewReview extends ViewComment {
-  state: string
-  submittedAt: string
-}
-
-interface ViewResponse {
+interface DetailNode {
+  __typename: string
   number: number
   title: string
   url: string
   state: string
-  author: GraphqlAuthor | null
   createdAt: string
   updatedAt: string
   body: string
-  labels: GithubLabel[]
-  assignees: { login: string }[]
-  comments: ViewComment[]
+  authorAssociation: string
+  author: GraphqlActor | null
+  labels: { nodes: GithubLabel[] }
+  assignees: { nodes: { login: string }[] }
+  timelineItems: { nodes: TimelineNode[] }
   isDraft?: boolean
   additions?: number
   deletions?: number
@@ -330,68 +457,157 @@ interface ViewResponse {
   baseRefName?: string
   reviewDecision?: string | null
   mergeStateStatus?: string
-  reviews?: ViewReview[]
 }
 
-function toComment(comment: ViewComment): GithubComment {
+interface DetailResponse {
+  data: {
+    repository: { issueOrPullRequest: DetailNode | null } | null
+  }
+}
+
+// A deleted account has no login and no avatar; GitHub calls it "ghost".
+const GHOST: GithubActor = { login: 'ghost', avatarUrl: null }
+
+function toActor(actor: GraphqlActor | null | undefined): GithubActor {
+  if (!actor || !actor.login) return GHOST
+  return { login: actor.login, avatarUrl: actor.avatarUrl ?? null }
+}
+
+/** Which of our event kinds a GraphQL timeline type is, or null to skip it. */
+function eventKindOf(typename: string): GithubEventKind | null {
+  const kinds: Record<string, GithubEventKind> = {
+    LabeledEvent: 'labeled',
+    UnlabeledEvent: 'unlabeled',
+    ClosedEvent: 'closed',
+    ReopenedEvent: 'reopened',
+    MergedEvent: 'merged',
+    AssignedEvent: 'assigned',
+    UnassignedEvent: 'unassigned',
+    RenamedTitleEvent: 'renamed',
+    CrossReferencedEvent: 'referenced',
+    ReviewRequestedEvent: 'review_requested'
+  }
+  return kinds[typename] ?? null
+}
+
+/** The person an assignment or review request is about. */
+function subjectOf(node: TimelineNode): string | undefined {
+  if (node.assignee && node.assignee.login) return node.assignee.login
+  if (!node.requestedReviewer) return undefined
+  return node.requestedReviewer.login ?? node.requestedReviewer.name
+}
+
+function toEvent(node: TimelineNode, kind: GithubEventKind): GithubTimelineEvent {
+  const event: GithubTimelineEvent = {
+    id: node.id,
+    kind,
+    actor: toActor(node.actor),
+    createdAt: node.createdAt
+  }
+  if (node.label) event.label = node.label
+  const subject = subjectOf(node)
+  if (subject) event.subject = subject
+  if (node.previousTitle) event.previousTitle = node.previousTitle
+  if (node.currentTitle) event.currentTitle = node.currentTitle
+  if (node.stateReason) event.stateReason = node.stateReason
+  if (node.mergeRefName) event.mergeRefName = node.mergeRefName
+  if (node.source && node.source.number !== undefined) {
+    event.source = {
+      number: node.source.number,
+      title: node.source.title ?? '',
+      url: node.source.url ?? ''
+    }
+  }
+  return event
+}
+
+function toComment(node: TimelineNode): GithubComment {
   return {
-    id: comment.id,
-    author: authorLogin(comment.author),
-    body: comment.body,
-    createdAt: comment.createdAt,
-    url: comment.url
+    id: node.id,
+    author: toActor(node.author),
+    body: node.body ?? '',
+    createdAt: node.createdAt,
+    url: node.url ?? '',
+    authorAssociation: node.authorAssociation ?? 'NONE'
   }
 }
 
 /**
- * Review summaries read as comments in the thread; only the ones carrying a
- * verdict or a body are worth a row (gh emits an empty PENDING/COMMENTED shell
- * for reviews that exist solely to hold inline comments).
+ * One timeline node as an entry, or null when it carries nothing to show. A
+ * review that holds only inline comments arrives as an empty COMMENTED shell,
+ * which GitHub does not draw either.
  */
-function reviewComments(view: ViewResponse): GithubComment[] {
-  if (!view.reviews) return []
-  return view.reviews
-    .filter((review) => review.body.trim().length > 0 || review.state !== 'COMMENTED')
-    .map((review) => ({
-      ...toComment(review),
-      createdAt: review.submittedAt || review.createdAt,
-      reviewState: review.state
-    }))
+function toEntry(node: TimelineNode): GithubTimelineEntry | null {
+  if (node.__typename === 'IssueComment') {
+    return { type: 'comment', at: node.createdAt, comment: toComment(node) }
+  }
+  if (node.__typename === 'PullRequestReview') {
+    const body = node.body ?? ''
+    if (body.trim().length === 0 && node.state === 'COMMENTED') return null
+    const at = node.submittedAt || node.createdAt
+    return {
+      type: 'comment',
+      at,
+      comment: { ...toComment(node), createdAt: at, reviewState: node.state }
+    }
+  }
+  const kind = eventKindOf(node.__typename)
+  if (!kind) return null
+  return { type: 'event', at: node.createdAt, event: toEvent(node, kind) }
 }
 
-/** One issue or pull request with its body and full comment thread. */
+/** One issue or pull request with its body and its whole timeline. */
 export async function fetchItem(
   repoPath: string,
   kind: GithubItemKind,
   number: number
 ): Promise<GithubItemDetail> {
-  const fields = kind === 'pull' ? PULL_DETAIL_FIELDS : SHARED_DETAIL_FIELDS
-  const command = kind === 'pull' ? 'pr' : 'issue'
-  const raw = await runGh(repoPath, [command, 'view', String(number), '--json', fields.join(',')])
-  const view = parseJson<ViewResponse>(raw)
-  const comments = view.comments.map(toComment)
-  const reviews = reviewComments(view)
+  const repo = await repoRef(repoPath)
+  const [owner, name] = repo.nameWithOwner.split('/')
+  const raw = await runGh(repoPath, [
+    'api',
+    'graphql',
+    '-F',
+    `owner=${owner}`,
+    '-F',
+    `name=${name}`,
+    '-F',
+    `number=${number}`,
+    '-F',
+    `limit=${MAX_TIMELINE}`,
+    '-f',
+    `query=${itemDetailQuery()}`
+  ])
+  const payload = parseJson<DetailResponse>(raw)
+  const node = payload.data.repository?.issueOrPullRequest
+  if (!node) throw new Error(`GitHub has no #${number} in ${repo.nameWithOwner}`)
+  const timeline = node.timelineItems.nodes
+    .map(toEntry)
+    .filter((entry): entry is GithubTimelineEntry => entry !== null)
+    .sort((a, b) => a.at.localeCompare(b.at))
   return {
     kind,
-    number: view.number,
-    title: view.title,
-    url: view.url,
-    state: view.state,
-    author: authorLogin(view.author),
-    createdAt: view.createdAt,
-    updatedAt: view.updatedAt,
-    body: view.body,
-    labels: view.labels,
-    assignees: view.assignees.map((assignee) => assignee.login),
-    comments: [...comments, ...reviews].sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
-    isDraft: view.isDraft,
-    additions: view.additions,
-    deletions: view.deletions,
-    changedFiles: view.changedFiles,
-    headRefName: view.headRefName,
-    baseRefName: view.baseRefName,
-    reviewDecision: view.reviewDecision,
-    mergeStateStatus: view.mergeStateStatus
+    number: node.number,
+    title: node.title,
+    url: node.url,
+    state: node.state,
+    author: toActor(node.author).login,
+    authorActor: toActor(node.author),
+    authorAssociation: node.authorAssociation,
+    createdAt: node.createdAt,
+    updatedAt: node.updatedAt,
+    body: node.body,
+    labels: node.labels.nodes,
+    assignees: node.assignees.nodes.map((assignee) => assignee.login),
+    timeline,
+    isDraft: node.isDraft,
+    additions: node.additions,
+    deletions: node.deletions,
+    changedFiles: node.changedFiles,
+    headRefName: node.headRefName,
+    baseRefName: node.baseRefName,
+    reviewDecision: node.reviewDecision,
+    mergeStateStatus: node.mergeStateStatus
   }
 }
 
@@ -423,6 +639,18 @@ export async function fetchLabels(repoPath: string): Promise<GithubLabelDefiniti
     'name,color,description'
   ])
   return parseJson<GithubLabelDefinition[]>(raw)
+}
+
+/**
+ * People a mention can name: whoever may be assigned an issue here. GitHub's
+ * own picker also offers recent participants, which the thread already knows,
+ * so the two are merged in the renderer rather than fetched twice.
+ */
+export async function fetchMentionables(repoPath: string): Promise<GithubActor[]> {
+  const repo = await repoRef(repoPath)
+  const raw = await runGh(repoPath, ['api', `repos/${repo.nameWithOwner}/assignees`, '--paginate'])
+  const parsed = parseJson<{ login: string; avatar_url?: string }[]>(raw)
+  return parsed.map((entry) => ({ login: entry.login, avatarUrl: entry.avatar_url ?? null }))
 }
 
 /** Build the gh argv for creating an issue (pure, for testing/reuse). */
@@ -458,6 +686,36 @@ export async function createIssue(
   const url = output.trim().split('\n').pop()
   if (url === undefined) throw new Error('gh issue create printed nothing')
   return { number: issueNumberFromUrl(url), url }
+}
+
+/** Build the gh argv for relabelling an item (pure, for testing/reuse). */
+export function labelChangeArgs(
+  kind: GithubItemKind,
+  number: number,
+  change: GithubLabelChange
+): string[] {
+  if (change.add.length === 0 && change.remove.length === 0) {
+    throw new Error('No label change to make')
+  }
+  const command = kind === 'pull' ? 'pr' : 'issue'
+  const args = [command, 'edit', String(number)]
+  for (const label of change.add) {
+    args.push('--add-label', label)
+  }
+  for (const label of change.remove) {
+    args.push('--remove-label', label)
+  }
+  return args
+}
+
+/** Add and remove labels on an item that already exists. */
+export async function changeLabels(
+  repoPath: string,
+  kind: GithubItemKind,
+  number: number,
+  change: GithubLabelChange
+): Promise<void> {
+  await runGh(repoPath, labelChangeArgs(kind, number, change))
 }
 
 /** Build the gh argv for a state-changing action (pure, for testing/reuse). */

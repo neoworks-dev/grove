@@ -3,6 +3,7 @@
 
 import { describe, it, expect } from 'bun:test'
 import {
+  ageLabel,
   availableActions,
   filterItems,
   labelIsDark,
@@ -84,6 +85,11 @@ describe('relativeTime', () => {
 
   it('degrades to a dash on an unparseable date', () => {
     expect(relativeTime('not-a-date', now)).toBe('—')
+  })
+
+  it('reads as a sentence in the thread, without "now ago"', () => {
+    expect(ageLabel('2026-09-18T11:59:30Z', now)).toBe('just now')
+    expect(ageLabel('2026-09-18T07:00:00Z', now)).toBe('5h ago')
   })
 })
 

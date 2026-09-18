@@ -6,7 +6,7 @@
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
   import { github, postComment, runAction } from './store.svelte'
   import GithubBadge from './GithubBadge.svelte'
-  import { availableActions, labelIsDark, relativeTime, reviewLabel, reviewTone } from './filter'
+  import { ageLabel, availableActions, labelIsDark, reviewLabel, reviewTone } from './filter'
   import { renderMarkdown } from '../../../lib/markdown'
   import type { GithubItemAction } from '../../../../../shared/types'
 
@@ -67,7 +67,7 @@
         <span class="font-mono">#{detail.number}</span>
         <span>{detail.state.toLowerCase()}</span>
         <span>by {detail.author}</span>
-        <span>opened {relativeTime(detail.createdAt)} ago</span>
+        <span>opened {ageLabel(detail.createdAt)}</span>
         {#if detail.kind === 'pull'}
           <span class="font-mono">{detail.headRefName} → {detail.baseRefName}</span>
           <GithubBadge tone="green">+{detail.additions}</GithubBadge>
@@ -125,7 +125,7 @@
           <div class="mt-4 border-t border-line pt-3">
             <div class="mb-1 flex items-center gap-2 text-2xs text-dim">
               <span class="text-default">{comment.author}</span>
-              <span>{relativeTime(comment.createdAt)} ago</span>
+              <span>{ageLabel(comment.createdAt)}</span>
               {#if comment.reviewState}
                 <GithubBadge tone={reviewTone(comment.reviewState)}>
                   {comment.reviewState.toLowerCase().replace('_', ' ')}

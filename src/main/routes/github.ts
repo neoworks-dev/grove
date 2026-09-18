@@ -154,13 +154,18 @@ export const githubRoutes = {
     // servers and the agents all pointed at it.
     route(ctx, 'github:checkoutPr', async (_e, number: number, baseRefName: string) => {
       const { repoPath, config } = ctx.workbench.requireRepo()
-      await git.fetchPullRequestRefs(repoPath, number, baseRefName)
 
+      // Before the fetch: opening a file asks for the checkout every time, and
+      // two network round trips in front of every click is what that costs. A
+      // worktree that is already there is not re-fetched, so it does not follow
+      // the pull request either — see #69.
       const name = `pr-${number}`
       const existing = (await ctx.workbench.refreshWorktrees()).find(
         (worktree: Worktree) => worktree.branch === name
       )
       if (existing) return existing
+
+      await git.fetchPullRequestRefs(repoPath, number, baseRefName)
 
       // A branch left behind by a worktree that was removed: check it out again
       // rather than failing on the name, and leave whatever is on it alone —

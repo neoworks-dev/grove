@@ -314,6 +314,52 @@ export function removeLeaf(
   }
 }
 
+/**
+ * Remove a leaf and give its space to one named pane rather than to everything
+ * around it.
+ *
+ * `removeLeaf` shares the vacated fraction out by growth, which is right for a
+ * pane the user closed and wrong for one that only ever borrowed from a single
+ * neighbour. `splitLeaf` takes the newcomer's share out of the pane it splits,
+ * but `normalize` then flattens the pair into its parent, so by the time the
+ * newcomer goes the pairing is gone and the lender is just another sibling. A
+ * pane that is split and unsplit repeatedly — the editor, every time a diff
+ * window opens beside it — loses half its width on each split and gets a
+ * fraction of it back, until it is a sliver.
+ */
+export function removeLeafInto(
+  root: LayoutNode,
+  leafId: string,
+  recipientLeafId: string
+): LayoutNode | null {
+  if (root.kind === 'leaf') {
+    if (root.id === leafId) return null
+    return root
+  }
+  const children: LayoutNode[] = []
+  const sizes: number[] = []
+  let freed = 0
+  root.children.forEach((child, index) => {
+    const kept = removeLeafInto(child, leafId, recipientLeafId)
+    if (!kept) {
+      freed += root.sizes[index]
+      return
+    }
+    children.push(kept)
+    sizes.push(root.sizes[index])
+  })
+  if (children.length === 0) return null
+  if (children.length === 1) return children[0]
+  if (freed > 0) {
+    // The recipient is the child holding it, which after a flatten may be the
+    // leaf itself or a split it ended up inside.
+    const index = children.findIndex((child) => findLeaf(child, recipientLeafId) !== null)
+    if (index >= 0) sizes[index] += freed
+    else sizes[0] += freed
+  }
+  return { ...root, children, sizes: renormalize(sizes) }
+}
+
 // Adjust the boundary between children gutterIndex and gutterIndex+1 of the
 // target split. Delta is a fraction of the split; both sides stay above min.
 export function resizeGutter(

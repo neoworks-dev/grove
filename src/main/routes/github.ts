@@ -1,0 +1,75 @@
+// GitHub: the issue / pull-request dashboard, and the worktree ship-it calls
+// (`gh pr create` / `gh pr merge`) that belong to the same CLI.
+//
+// Dashboard calls run against the repository root — gh resolves the repository
+// from its remotes, and every worktree shares them.
+
+import type { Context } from '@neoworks/extension-system'
+import { route } from '../kernel/route'
+import * as github from '../github'
+import * as dashboard from '../githubDashboard'
+import type {
+  GithubItemAction,
+  GithubItemKind,
+  GithubStateFilter,
+  MergePrOptions,
+  OpenPrOptions
+} from '../../shared/types'
+
+export const githubRoutes = {
+  name: 'main/routes/github',
+  inject: ['workbench'],
+
+  apply(ctx: Context): void {
+    // ── Dashboard (issues + pull requests) ────────────────────────
+    route(ctx, 'github:status', () => {
+      const { repoPath } = ctx.workbench.requireRepo()
+      return dashboard.fetchStatus(repoPath)
+    })
+
+    route(
+      ctx,
+      'github:dashboard',
+      (_e, options: { state: GithubStateFilter; limit: number }) => {
+        const { repoPath } = ctx.workbench.requireRepo()
+        return dashboard.fetchDashboard(repoPath, options)
+      }
+    )
+
+    route(ctx, 'github:item', (_e, kind: GithubItemKind, number: number) => {
+      const { repoPath } = ctx.workbench.requireRepo()
+      return dashboard.fetchItem(repoPath, kind, number)
+    })
+
+    route(ctx, 'github:comment', (_e, kind: GithubItemKind, number: number, body: string) => {
+      const { repoPath } = ctx.workbench.requireRepo()
+      return dashboard.addComment(repoPath, kind, number, body)
+    })
+
+    route(
+      ctx,
+      'github:action',
+      (
+        _e,
+        kind: GithubItemKind,
+        number: number,
+        action: GithubItemAction,
+        merge?: MergePrOptions
+      ) => {
+        const { repoPath } = ctx.workbench.requireRepo()
+        return dashboard.runItemAction(repoPath, kind, number, action, merge)
+      }
+    )
+
+    // ── Ship-it (the PR of the selected worktree) ─────────────────
+    route(ctx, 'github:openPr', (_e, worktreeId: string, options: OpenPrOptions) => {
+      const worktree = ctx.workbench.findWorktree(worktreeId)
+      return github.openPr(worktree.path, options)
+    })
+
+    route(ctx, 'github:mergePr', (_e, worktreeId: string, options: MergePrOptions) => {
+      const worktree = ctx.workbench.findWorktree(worktreeId)
+      return github.mergePr(worktree.path, options)
+    })
+  }
+}

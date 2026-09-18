@@ -4,6 +4,7 @@
 import { repoRoutes } from './repo'
 import { worktreesRoutes } from './worktrees'
 import { gitRoutes } from './git'
+import { githubRoutes } from './github'
 import { checkpointsRoutes } from './checkpoints'
 import { configRoutes } from './config'
 import { servicesRoutes } from './services'
@@ -30,6 +31,7 @@ export const routePlugins = [
   repoRoutes,
   worktreesRoutes,
   gitRoutes,
+  githubRoutes,
   checkpointsRoutes,
   configRoutes,
   servicesRoutes,

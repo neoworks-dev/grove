@@ -62,7 +62,14 @@ const workbench = {
     openPr: (worktreeId: string, options: unknown) =>
       ipcRenderer.invoke('github:openPr', worktreeId, options),
     mergePr: (worktreeId: string, options: unknown) =>
-      ipcRenderer.invoke('github:mergePr', worktreeId, options)
+      ipcRenderer.invoke('github:mergePr', worktreeId, options),
+    status: () => ipcRenderer.invoke('github:status'),
+    dashboard: (options: unknown) => ipcRenderer.invoke('github:dashboard', options),
+    item: (kind: string, number: number) => ipcRenderer.invoke('github:item', kind, number),
+    comment: (kind: string, number: number, body: string) =>
+      ipcRenderer.invoke('github:comment', kind, number, body),
+    action: (kind: string, number: number, action: string, merge?: unknown) =>
+      ipcRenderer.invoke('github:action', kind, number, action, merge)
   },
   checkpoints: {
     list: (worktreeId: string) => ipcRenderer.invoke('checkpoints:list', worktreeId),

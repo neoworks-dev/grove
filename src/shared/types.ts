@@ -246,6 +246,104 @@ export interface ArchiveOptions {
   force: boolean
 }
 
+// ── GitHub dashboard (issues + pull requests) ───────────────────
+
+export type GithubItemKind = 'issue' | 'pull'
+
+/** Which states the dashboard asks GitHub for. */
+export type GithubStateFilter = 'open' | 'closed' | 'all'
+
+export interface GithubLabel {
+  name: string
+  /** Six-digit hex, no leading '#', as GitHub stores it. */
+  color: string
+}
+
+interface GithubItemShared {
+  number: number
+  title: string
+  url: string
+  /** OPEN | CLOSED for issues; OPEN | CLOSED | MERGED for pull requests. */
+  state: string
+  author: string
+  createdAt: string
+  updatedAt: string
+  labels: GithubLabel[]
+  assignees: string[]
+}
+
+export interface GithubIssueItem extends GithubItemShared {
+  kind: 'issue'
+  commentCount: number
+}
+
+export interface GithubPullItem extends GithubItemShared {
+  kind: 'pull'
+  commentCount: number
+  isDraft: boolean
+  additions: number
+  deletions: number
+  headRefName: string
+  baseRefName: string
+  /** APPROVED | CHANGES_REQUESTED | REVIEW_REQUIRED, or null when unset. */
+  reviewDecision: string | null
+  /** Rollup of the head commit's checks: SUCCESS | FAILURE | PENDING | …, or null. */
+  checks: string | null
+}
+
+export type GithubItem = GithubIssueItem | GithubPullItem
+
+export interface GithubRepoRef {
+  nameWithOwner: string
+  url: string
+}
+
+export interface GithubDashboard {
+  repo: GithubRepoRef
+  /** Login of the authenticated user, so the UI can mark "yours". */
+  viewer: string | null
+  issues: GithubIssueItem[]
+  pulls: GithubPullItem[]
+  /** Epoch ms of the fetch, for the "updated Xs ago" hint. */
+  fetchedAt: number
+}
+
+export interface GithubComment {
+  id: string
+  author: string
+  body: string
+  createdAt: string
+  url: string
+  /** Review summaries are shown inline with issue comments, tagged by state. */
+  reviewState?: string
+}
+
+export interface GithubItemDetail extends GithubItemShared {
+  kind: GithubItemKind
+  body: string
+  comments: GithubComment[]
+  // Pull-request-only fields.
+  isDraft?: boolean
+  additions?: number
+  deletions?: number
+  changedFiles?: number
+  headRefName?: string
+  baseRefName?: string
+  reviewDecision?: string | null
+  mergeStateStatus?: string
+}
+
+/** Non-comment actions the dashboard can run against an item. */
+export type GithubItemAction = 'close' | 'reopen' | 'ready' | 'merge'
+
+export interface GithubStatus {
+  installed: boolean
+  authenticated: boolean
+  repo: GithubRepoRef | null
+  /** Why the dashboard cannot load, phrased for the UI. */
+  error: string | null
+}
+
 // ── Config schema (repo-root YAML) ──────────────────────────────
 
 export interface WorkbenchConfig {

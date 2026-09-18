@@ -2,6 +2,12 @@
 
 Commit the worktree first if it's dirty, then write your changes. Short, to-the-point commit title; a body explaining the change when the title doesn't carry it; ask if you're unsure what to write. Always say the commit was made by you, not a human. On a feature branch, only commit what that branch is for.
 
+No trailers, ever: no `Co-Authored-By` on a commit, no "Generated with Claude Code" on a PR.
+
+## Writing
+
+Commits, issues and pull requests carry only what matters. Say the thing, explain what a reader won't see for themselves, stop. No restating the diff, no summarising what you just said, no section that exists because the format seemed to want one.
+
 ## Issues and branches
 
 Work lives in GitHub issues on `neoworks-dev/grove`, not in a file in the repo.

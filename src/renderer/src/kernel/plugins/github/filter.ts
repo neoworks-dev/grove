@@ -25,9 +25,42 @@ export function matchesQuery(item: GithubItem, query: string): boolean {
   return haystack.some((field) => field.toLowerCase().includes(needle))
 }
 
+/** The narrowing the list bar applies on top of the search box. */
+export interface ItemFilters {
+  query: string
+  /** Logins; empty means every author. */
+  authors: string[]
+  /** Label names; an item must carry all of them, which is what GitHub does. */
+  labels: string[]
+}
+
+export const NO_FILTERS: ItemFilters = { query: '', authors: [], labels: [] }
+
+/** Whether an item survives every active narrowing. */
+export function matchesFilters(item: GithubItem, filters: ItemFilters): boolean {
+  if (!matchesQuery(item, filters.query)) return false
+  if (filters.authors.length > 0 && !filters.authors.includes(item.author)) return false
+  if (filters.labels.length > 0) {
+    const carried = item.labels.map((label) => label.name)
+    if (!filters.labels.every((name) => carried.includes(name))) return false
+  }
+  return true
+}
+
 /** Search a list, keeping GitHub's most-recently-updated-first order. */
-export function filterItems<T extends GithubItem>(items: T[], query: string): T[] {
-  return items.filter((item) => matchesQuery(item, query))
+export function filterItems<T extends GithubItem>(items: T[], filters: ItemFilters | string): T[] {
+  const active = typeof filters === 'string' ? { ...NO_FILTERS, query: filters } : filters
+  return items.filter((item) => matchesFilters(item, active))
+}
+
+/** Every author present in a list, alphabetical — the options the menu offers. */
+export function authorsOf(items: GithubItem[]): string[] {
+  const collected: string[] = []
+  for (const item of items) {
+    if (collected.includes(item.author)) continue
+    collected.push(item.author)
+  }
+  return collected.sort((left, right) => left.localeCompare(right))
 }
 
 const MINUTE = 60_000
@@ -88,19 +121,6 @@ export function stateTone(item: { kind: GithubItemKind; state: string; isDraft?:
   if (item.state === 'MERGED') return 'violet'
   if (item.state === 'CLOSED') return 'red'
   return 'green'
-}
-
-/**
- * Whether a label chip needs light or dark text over GitHub's background
- * colour, using the standard luminance cutoff.
- */
-export function labelIsDark(color: string): boolean {
-  const hex = color.replace('#', '')
-  if (hex.length !== 6) return true
-  const red = parseInt(hex.slice(0, 2), 16)
-  const green = parseInt(hex.slice(2, 4), 16)
-  const blue = parseInt(hex.slice(4, 6), 16)
-  return (red * 299 + green * 587 + blue * 114) / 1000 < 140
 }
 
 /** Actions offered for an item, given its kind and current state. */

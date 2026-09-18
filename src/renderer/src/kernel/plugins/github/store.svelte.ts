@@ -6,12 +6,13 @@
 // has already navigated away from is dropped instead of overwriting the view.
 
 import { dialogs } from '../../../lib/dialogs.svelte'
-import { filterItems } from './filter'
+import { authorsOf, filterItems } from './filter'
 import type {
   GithubActor,
   GithubDashboard,
   GithubIssueDraft,
   GithubItem,
+  GithubCloseReason,
   GithubItemAction,
   GithubItemDetail,
   GithubItemKind,
@@ -41,6 +42,10 @@ class GithubStore {
   tab = $state<GithubItemKind>('pull')
   stateFilter = $state<GithubStateFilter>('open')
   query = $state('')
+  /** Logins picked in the Author menu; empty means every author. */
+  authorFilter = $state<string[]>([])
+  /** Label names picked in the Labels menu; an item must carry all of them. */
+  labelFilter = $state<string[]>([])
 
   selection = $state<GithubSelection | null>(null)
   detail = $state<GithubItemDetail | null>(null)
@@ -93,11 +98,30 @@ class GithubStore {
     return collected
   }
 
-  /** The active tab's items, after the search box. */
+  /** The active tab's items, after the search box and the filter menus. */
   get items(): GithubItem[] {
+    return filterItems(this.tabItems, {
+      query: this.query,
+      authors: this.authorFilter,
+      labels: this.labelFilter
+    })
+  }
+
+  /** The active tab before any narrowing — what the menus offer options from. */
+  get tabItems(): GithubItem[] {
     if (!this.dashboard) return []
-    const source: GithubItem[] = this.tab === 'pull' ? this.dashboard.pulls : this.dashboard.issues
-    return filterItems(source, this.query)
+    if (this.tab === 'pull') return this.dashboard.pulls
+    return this.dashboard.issues
+  }
+
+  /** Every author on this tab, for the Author menu. */
+  get authorOptions(): string[] {
+    return authorsOf(this.tabItems)
+  }
+
+  /** Whether anything is narrowing the list beyond the state filter. */
+  get filtersActive(): boolean {
+    return this.authorFilter.length > 0 || this.labelFilter.length > 0
   }
 
   get counts(): { pull: number; issue: number } {
@@ -171,6 +195,12 @@ export async function selectItem(selection: GithubSelection | null): Promise<voi
   await loadDetail(selection, { silent: false })
 }
 
+/** Drop every narrowing the menus applied. */
+export function clearFilters(): void {
+  github.authorFilter = []
+  github.labelFilter = []
+}
+
 /** Tick or untick one row. */
 export function toggleChecked(number: number): void {
   if (github.checked.includes(number)) {
@@ -194,7 +224,10 @@ export function checkAllVisible(checkedState: boolean): void {
  * collected rather than thrown one at a time — half a bulk edit going through
  * is worth reporting as a whole.
  */
-export async function runBulkAction(action: GithubItemAction): Promise<void> {
+export async function runBulkAction(
+  action: GithubItemAction,
+  reason?: GithubCloseReason
+): Promise<void> {
   const numbers = [...github.checked]
   if (numbers.length === 0) return
   const kind = github.tab
@@ -203,7 +236,7 @@ export async function runBulkAction(action: GithubItemAction): Promise<void> {
   try {
     for (const number of numbers) {
       try {
-        await window.workbench.github.action(kind, number, action)
+        await window.workbench.github.action(kind, number, action, undefined, reason)
       } catch {
         failed.push(number)
       }
@@ -214,6 +247,48 @@ export async function runBulkAction(action: GithubItemAction): Promise<void> {
   reportBulkOutcome(ACTION_TITLES[action], numbers.length, failed)
   github.checked = []
   await refreshDashboard(github.stateFilter, { silent: true })
+}
+
+/** Assign people to every ticked row. */
+export async function assignChecked(logins: string[]): Promise<void> {
+  const numbers = [...github.checked]
+  if (numbers.length === 0 || logins.length === 0) return
+  const kind = github.tab
+  github.busy = true
+  const failed: number[] = []
+  try {
+    for (const number of numbers) {
+      try {
+        await window.workbench.github.changeAssignees(kind, number, { add: logins, remove: [] })
+      } catch {
+        failed.push(number)
+      }
+    }
+  } finally {
+    github.busy = false
+  }
+  reportBulkOutcome('Assigned', numbers.length, failed)
+  await refreshDashboard(github.stateFilter, { silent: true })
+}
+
+/** Change who is assigned on the open item. */
+export async function applyAssignees(next: string[]): Promise<void> {
+  const selection = github.selection
+  const detail = github.detail
+  if (!selection || !detail) return
+  const add = next.filter((login) => !detail.assignees.includes(login))
+  const remove = detail.assignees.filter((login) => !next.includes(login))
+  if (add.length === 0 && remove.length === 0) return
+  github.busy = true
+  try {
+    await window.workbench.github.changeAssignees(selection.kind, selection.number, { add, remove })
+    await loadDetail(selection, { silent: true })
+    void refreshDashboard(github.stateFilter, { silent: true })
+  } catch (err) {
+    dialogs.notify({ level: 'error', message: (err as Error).message })
+  } finally {
+    github.busy = false
+  }
 }
 
 /** Add labels to every ticked row. */

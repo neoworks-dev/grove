@@ -416,6 +416,18 @@ export interface GithubCreatedIssue {
 /** Non-comment actions the dashboard can run against an item. */
 export type GithubItemAction = 'close' | 'reopen' | 'ready' | 'merge'
 
+/**
+ * Why an issue was closed. GitHub distinguishes the two in its own UI and shows
+ * a different icon for each, so closing here has to be able to say which.
+ */
+export type GithubCloseReason = 'completed' | 'not planned'
+
+/** An assignment change on an item that already exists. */
+export interface GithubAssigneeChange {
+  add: string[]
+  remove: string[]
+}
+
 export interface GithubStatus {
   installed: boolean
   authenticated: boolean

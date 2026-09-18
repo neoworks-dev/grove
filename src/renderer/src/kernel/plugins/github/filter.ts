@@ -25,59 +25,9 @@ export function matchesQuery(item: GithubItem, query: string): boolean {
   return haystack.some((field) => field.toLowerCase().includes(needle))
 }
 
-/** The narrowing the list bar applies on top of the search box. */
-export interface ItemFilters {
-  query: string
-  /** Logins; empty means every author. */
-  authors: string[]
-  /** Label names; an item must carry all of them, which is what GitHub does. */
-  labels: string[]
-  /** Milestone titles; an item on any one of them matches. */
-  milestones: string[]
-  /** Issue type names; an item of any one of them matches. */
-  types: string[]
-  /** Project titles; an item on any one of those boards matches. */
-  projects: string[]
-}
-
-export const NO_FILTERS: ItemFilters = {
-  query: '',
-  authors: [],
-  labels: [],
-  milestones: [],
-  types: [],
-  projects: []
-}
-
-/** Whether an item survives every active narrowing. */
-export function matchesFilters(item: GithubItem, filters: ItemFilters): boolean {
-  if (!matchesQuery(item, filters.query)) return false
-  if (filters.authors.length > 0 && !filters.authors.includes(item.author)) return false
-  if (filters.labels.length > 0) {
-    const carried = item.labels.map((label) => label.name)
-    if (!filters.labels.every((name) => carried.includes(name))) return false
-  }
-  if (filters.milestones.length > 0) {
-    if (!item.milestone) return false
-    if (!filters.milestones.includes(item.milestone.title)) return false
-  }
-  if (filters.types.length > 0) {
-    if (!item.issueType) return false
-    if (!filters.types.includes(item.issueType.name)) return false
-  }
-  if (filters.projects.length > 0) {
-    const boards = item.projects
-    if (!boards) return false
-    if (!boards.some((project) => filters.projects.includes(project.title))) return false
-  }
-  return true
-}
-
-/** Search a list, keeping GitHub's most-recently-updated-first order. */
-export function filterItems<T extends GithubItem>(items: T[], filters: ItemFilters | string): T[] {
-  const active = typeof filters === 'string' ? { ...NO_FILTERS, query: filters } : filters
-  return items.filter((item) => matchesFilters(item, active))
-}
+// The narrowing that used to live here — an ItemFilters record of arrays, one
+// per menu — is now search.ts: the query string is the only place a filter is
+// written down, so the menus and the box cannot disagree.
 
 /** Every author present in a list, alphabetical — the options the menu offers. */
 export function authorsOf(items: GithubItem[]): string[] {

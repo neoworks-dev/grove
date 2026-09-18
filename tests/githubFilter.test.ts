@@ -5,11 +5,8 @@ import { describe, it, expect } from 'bun:test'
 import {
   ageLabel,
   availableActions,
-  filterItems,
   issueTypeColour,
-  matchesFilters,
   authorsOf,
-  NO_FILTERS,
   matchesQuery,
   projectsOf,
   relativeTime,
@@ -70,11 +67,6 @@ describe('matchesQuery', () => {
     expect(matchesQuery(issue(), '#42')).toBe(true)
     expect(matchesQuery(issue(), '#43')).toBe(false)
   })
-
-  it('keeps the incoming order when filtering', () => {
-    const items = [issue({ number: 1 }), issue({ number: 2, title: 'Other' }), issue({ number: 3 })]
-    expect(filterItems(items, 'crash').map((item) => item.number)).toEqual([1, 3])
-  })
 })
 
 describe('relativeTime', () => {
@@ -132,107 +124,6 @@ describe('availableActions', () => {
       'merge',
       'close'
     ])
-  })
-})
-
-// The list bar narrows by author and label on top of the search box. Which
-// items survive is decided here rather than in the component, so the rules can
-// be pinned without a DOM.
-describe('matchesFilters', () => {
-  const base = {
-    kind: 'issue' as const,
-    url: '',
-    state: 'OPEN',
-    createdAt: '2026-09-18T10:00:00Z',
-    updatedAt: '2026-09-18T10:00:00Z',
-    assignees: [],
-    commentCount: 0
-  }
-  const bug = {
-    ...base,
-    number: 1,
-    title: 'Terminal takes no mouse input',
-    author: 'Letsmoe',
-    labels: [
-      { name: 'bug', color: 'ff0000' },
-      { name: 'area:terminal', color: '00ff00' }
-    ]
-  }
-  const feature = {
-    ...base,
-    number: 2,
-    title: 'Smooth scrolling',
-    author: 'claude',
-    labels: [{ name: 'enhancement', color: '0000ff' }]
-  }
-
-  it('keeps everything when nothing is narrowed', () => {
-    expect(filterItems([bug, feature], NO_FILTERS)).toHaveLength(2)
-  })
-
-  it('narrows to the chosen authors', () => {
-    const kept = filterItems([bug, feature], { ...NO_FILTERS, authors: ['claude'] })
-    expect(kept.map((item) => item.number)).toEqual([2])
-  })
-
-  it('offers several authors at once', () => {
-    const kept = filterItems([bug, feature], { ...NO_FILTERS, authors: ['claude', 'Letsmoe'] })
-    expect(kept).toHaveLength(2)
-  })
-
-  it('requires every chosen label, not any of them', () => {
-    const both = filterItems([bug, feature], {
-      ...NO_FILTERS,
-      labels: ['bug', 'area:terminal']
-    })
-    expect(both.map((item) => item.number)).toEqual([1])
-    const impossible = filterItems([bug, feature], {
-      ...NO_FILTERS,
-      labels: ['bug', 'enhancement']
-    })
-    expect(impossible).toEqual([])
-  })
-
-  it('applies the search box alongside the menus', () => {
-    const kept = filterItems([bug, feature], {
-      ...NO_FILTERS,
-      authors: ['Letsmoe'],
-      query: 'scrolling'
-    })
-    expect(kept).toEqual([])
-  })
-
-  it('still accepts a bare query string', () => {
-    expect(filterItems([bug, feature], 'terminal').map((item) => item.number)).toEqual([1])
-  })
-
-  // Milestones, types and boards are OR — GitHub narrows to any of the chosen
-  // ones, unlike labels — and an item that carries none of them drops out.
-  const milestoned = {
-    ...feature,
-    number: 3,
-    milestone: { number: 1, title: 'v1.0', state: 'open', dueOn: null },
-    issueType: { name: 'Feature', color: 'BLUE' },
-    projects: [{ number: 4, title: 'Roadmap', url: '' }]
-  }
-
-  it('narrows to any of the chosen milestones', () => {
-    const kept = filterItems([bug, milestoned], { ...NO_FILTERS, milestones: ['v1.0', 'v2.0'] })
-    expect(kept.map((item) => item.number)).toEqual([3])
-  })
-
-  it('narrows to any of the chosen issue types', () => {
-    const kept = filterItems([bug, milestoned], { ...NO_FILTERS, types: ['Feature'] })
-    expect(kept.map((item) => item.number)).toEqual([3])
-  })
-
-  it('narrows to any of the chosen boards', () => {
-    const kept = filterItems([bug, milestoned], { ...NO_FILTERS, projects: ['Roadmap'] })
-    expect(kept.map((item) => item.number)).toEqual([3])
-  })
-
-  it('drops an item the query could not ask about', () => {
-    expect(filterItems([bug], { ...NO_FILTERS, projects: ['Roadmap'] })).toEqual([])
   })
 })
 

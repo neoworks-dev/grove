@@ -18,15 +18,30 @@
   import GithubSelectionBar from './GithubSelectionBar.svelte'
   import GithubFilterBar from './GithubFilterBar.svelte'
   import { ageLabel } from './filter'
+  import { DEFAULT_QUERY, setStateQualifier } from './search'
   import type { GithubItemKind, GithubStateFilter } from '../../../../../shared/types'
 
   // Below this the pane shows one column at a time: the list, or the thread with
   // a way back.
   const NARROW_PX = 720
 
+  // The box takes GitHub's syntax, so it needs somewhere to say what that is.
+  // A hover title rather than a panel: it is read once and then never again.
+  const SEARCH_HELP = [
+    'GitHub search qualifiers:',
+    'is:open  is:closed  is:merged  is:draft  is:pr  is:issue',
+    'author:  assignee:  (use @me for yourself)',
+    'label:  milestone:  type:  project:  head:  base:',
+    'no:label  no:assignee  no:milestone  no:type  no:project',
+    'Put - in front to exclude, and "quotes" around names with spaces.'
+  ].join('\n')
+
   let width = $state(0)
   const narrow = $derived(width > 0 && width < NARROW_PX)
   const items = $derived(github.items)
+  // An empty list under the query it started with is "nothing here", not "your
+  // search found nothing" — `is:open` is not something the user typed.
+  const narrowed = $derived(github.query.trim() !== DEFAULT_QUERY && github.query.trim().length > 0)
   const counts = $derived(github.counts)
   const viewer = $derived.by<string | null>(() => {
     if (!github.dashboard) return null
@@ -54,8 +69,11 @@
     void selectItem(null)
   }
 
+  // The dropdown is a shortcut for writing `is:` into the query, not a filter
+  // beside it — there is one place a narrowing is written down.
   function setStateFilter(event: Event): void {
-    github.stateFilter = (event.currentTarget as HTMLSelectElement).value as GithubStateFilter
+    const state = (event.currentTarget as HTMLSelectElement).value as GithubStateFilter
+    github.query = setStateQualifier(github.query, state)
   }
 
   // The right-hand column carries either the composer or the selected thread;
@@ -134,8 +152,10 @@
           </button>
 
           <input
-            class="min-w-0 flex-1 rounded-md border border-line bg-input px-2 py-0.5 text-xs text-default outline-none placeholder:text-dim focus:border-line-strong"
-            placeholder="Filter"
+            class="min-w-0 flex-1 rounded-md border border-line bg-input px-2 py-0.5 font-mono text-2xs text-default outline-none placeholder:font-sans placeholder:text-xs placeholder:text-dim focus:border-line-strong"
+            placeholder="is:open label:bug"
+            title={SEARCH_HELP}
+            spellcheck="false"
             bind:value={github.query}
           />
 
@@ -177,8 +197,8 @@
               <p class="px-3 py-4 text-xs text-dim">
                 {#if github.loading}
                   Loading…
-                {:else if github.query.trim().length > 0}
-                  Nothing matches "{github.query}".
+                {:else if narrowed}
+                  Nothing matches <span class="font-mono">{github.query}</span>.
                 {:else}
                   Nothing here.
                 {/if}

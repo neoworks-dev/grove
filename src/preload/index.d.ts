@@ -23,6 +23,12 @@ import type {
   AppliedRange,
   OpenPrOptions,
   MergePrOptions,
+  GithubStatus,
+  GithubStateFilter,
+  GithubDashboard,
+  GithubItemKind,
+  GithubItemDetail,
+  GithubItemAction,
   ArchiveOptions,
   DockLayoutState,
   WorkbenchConfig,
@@ -182,6 +188,19 @@ export interface WorkbenchApi {
   github: {
     openPr: (worktreeId: string, options: OpenPrOptions) => Promise<string>
     mergePr: (worktreeId: string, options: MergePrOptions) => Promise<string>
+    status: () => Promise<GithubStatus>
+    dashboard: (options: {
+      state: GithubStateFilter
+      limit: number
+    }) => Promise<GithubDashboard>
+    item: (kind: GithubItemKind, number: number) => Promise<GithubItemDetail>
+    comment: (kind: GithubItemKind, number: number, body: string) => Promise<string>
+    action: (
+      kind: GithubItemKind,
+      number: number,
+      action: GithubItemAction,
+      merge?: MergePrOptions
+    ) => Promise<string>
   }
   checkpoints: {
     list: (worktreeId: string) => Promise<CheckpointMeta[]>

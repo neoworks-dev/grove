@@ -26,7 +26,7 @@ async function runGh(worktreePath: string, args: string[]): Promise<string> {
 
 // Verify gh is installed and authenticated. Cached failures are not persisted —
 // state can change between calls (user runs `gh auth login`).
-async function ensureGhReady(worktreePath: string): Promise<void> {
+export async function ensureGhReady(worktreePath: string): Promise<void> {
   try {
     await execAsync('gh --version', { cwd: worktreePath })
   } catch {

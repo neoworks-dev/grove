@@ -1,12 +1,12 @@
-// Everything git: branches, diffs, the inline edit review, and the ship-it chain.
+// Everything git: branches, diffs, the inline edit review, and the local half of
+// the ship-it chain. The GitHub half lives in `routes/github.ts`.
 
 import type { Context } from '@neoworks/extension-system'
 import { route } from '../kernel/route'
 import * as git from '../git'
-import * as github from '../github'
 import * as inlineDiff from '../inlineDiff'
 import * as worktrees from '../worktrees'
-import type { DiffFile, InlineHunk, OpenPrOptions, MergePrOptions } from '../../shared/types'
+import type { DiffFile, InlineHunk } from '../../shared/types'
 
 export const gitRoutes = {
   name: 'main/routes/git',
@@ -161,16 +161,6 @@ export const gitRoutes = {
     route(ctx, 'git:mergeConflicts', (_e, targetWorktreeId: string) => {
       const target = ctx.workbench.findWorktree(targetWorktreeId)
       return git.conflictedFiles(target.path)
-    })
-
-    route(ctx, 'github:openPr', (_e, worktreeId: string, options: OpenPrOptions) => {
-      const worktree = ctx.workbench.findWorktree(worktreeId)
-      return github.openPr(worktree.path, options)
-    })
-
-    route(ctx, 'github:mergePr', (_e, worktreeId: string, options: MergePrOptions) => {
-      const worktree = ctx.workbench.findWorktree(worktreeId)
-      return github.mergePr(worktree.path, options)
     })
 
     route(

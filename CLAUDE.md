@@ -1,6 +1,25 @@
 ## Git
 
-You're allowed to use git. Every time you make a big change, commit the current worktree if it's dirty before changing anything, then write your changes, choose a short to-the-point commit message, and push to the remote repository. If you are unsure about what to write in the commit message, ask for help. Write an explanation of the change in the body of the commit message if it is not obvious from the title. Always mention that a commit was made by you and not an actual human. In case you ever find yourself in a feature branch only commit the changes this branch was for and then merge it back into main.
+You're allowed to use git. Every time you make a big change, commit the current worktree if it's dirty before changing anything, then write your changes, choose a short to-the-point commit message, and push to the remote repository. If you are unsure about what to write in the commit message, ask for help. Write an explanation of the change in the body of the commit message if it is not obvious from the title. Always mention that a commit was made by you and not an actual human. In a feature branch, only commit the changes that branch was for.
+
+## Issues and branches
+
+Work lives in GitHub issues on `neoworks-dev/grove`, not in a file in the repo.
+
+Anything more than a tiny change: open an issue (`gh issue create`) with the labels below, branch off `main` as `<issue-number>-<slug>` (e.g. `12-tab-strip-overflow`), then open a PR towards `main` with `Closes #12` in the body. Typos, one-liners and doc tweaks go straight to `main`.
+
+Labels are two axes. Type is GitHub's default `bug` or `enhancement`. Area is exactly one of:
+
+- `area:editor` — nvim surface: buffers, rendering, bundled config
+- `area:agents` — agent runtime, chat pane, composer, review flow
+- `area:panes` — layout, splits, dividers, pane chrome
+- `area:sidebar` — the rail and its views
+- `area:git` — git changes, worktrees, checkpoints
+- `area:terminal` — terminal pane
+- `area:extensions` — plugin host, extensions view
+- `area:ui` — app shell: top bar, menus, theming
+
+Two areas is fine when an issue genuinely spans them; three means split it.
 
 ## Validation
 

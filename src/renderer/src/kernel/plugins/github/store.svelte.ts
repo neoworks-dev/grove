@@ -164,6 +164,17 @@ export async function selectItem(selection: GithubSelection | null): Promise<voi
   await loadDetail(selection, { silent: false })
 }
 
+/**
+ * Follow a reference from one item to another. The tab has to move with it —
+ * opening a pull request while the issue list is showing would leave the thread
+ * and the list disagreeing about what is selected.
+ */
+export async function openReference(kind: GithubItemKind, number: number): Promise<void> {
+  github.composing = false
+  github.tab = kind
+  await selectItem({ kind, number })
+}
+
 /** (Re)load the open item's thread. */
 async function loadDetail(selection: GithubSelection, options: { silent: boolean }): Promise<void> {
   githubInternals.detailToken += 1

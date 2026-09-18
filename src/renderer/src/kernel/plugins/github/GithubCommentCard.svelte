@@ -30,8 +30,8 @@
   const empty = $derived(body.trim().length === 0)
 </script>
 
-<div class="overflow-hidden rounded-md border border-line">
-  <div class="flex items-center gap-2 border-b border-line bg-raised px-3 py-1.5">
+<div class="overflow-hidden rounded-md border border-line-strong bg-surface">
+  <div class="flex items-center gap-2 border-b border-line-strong bg-elevated px-3 py-1.5">
     <GithubAvatar actor={author} size={20} />
     <span class="truncate text-2xs font-medium text-default">{author.login}</span>
     <span class="truncate text-2xs text-dim">{verb} {ageLabel(at)}</span>

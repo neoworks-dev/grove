@@ -374,7 +374,7 @@ export interface GithubTimelineEvent {
   /** merged. */
   mergeRefName?: string
   /** referenced — the issue or pull request that mentioned this one. */
-  source?: { number: number; title: string; url: string }
+  source?: { kind: GithubItemKind; number: number; title: string; url: string }
 }
 
 /** One entry of the thread, before the UI folds runs of them together. */

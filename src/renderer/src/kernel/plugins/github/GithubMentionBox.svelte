@@ -21,6 +21,8 @@
     disabled?: boolean
     /** Cmd/Ctrl+Enter, when the suggestion list is not taking the key. */
     onsubmit?: () => void
+    onfocus?: () => void
+    onblur?: () => void
   } = $props()
 
   const MAX_SUGGESTIONS = 6
@@ -120,7 +122,11 @@
     onkeyup={syncMention}
     onclick={syncMention}
     onkeydown={onKeydown}
-    onblur={() => (mention = null)}
+    onfocus={() => onfocus?.()}
+    onblur={() => {
+      mention = null
+      onblur?.()
+    }}
   ></textarea>
 
   {#if open}

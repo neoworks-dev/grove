@@ -3,12 +3,19 @@
   // side with the selected item's thread. Loads on mount, then polls in the
   // background; the poll stops with the pane.
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
-  import { github, refreshDashboard, selectItem, startAutoRefresh } from './store.svelte'
+  import {
+    github,
+    refreshDashboard,
+    selectItem,
+    startAutoRefresh,
+    toggleChecked
+  } from './store.svelte'
   import GithubItemRow from './GithubItemRow.svelte'
   import GithubThread from './GithubThread.svelte'
   import GithubCompose from './GithubCompose.svelte'
   import ArrowClockwiseIcon from 'phosphor-svelte/lib/ArrowClockwiseIcon'
   import PlusIcon from 'phosphor-svelte/lib/PlusIcon'
+  import GithubSelectionBar from './GithubSelectionBar.svelte'
   import { ageLabel } from './filter'
   import type { GithubItemKind, GithubStateFilter } from '../../../../../shared/types'
 
@@ -41,6 +48,8 @@
 
   function switchTab(kind: GithubItemKind): void {
     github.tab = kind
+    // Numbers are per kind, so a selection does not survive the switch.
+    github.checked = []
     void selectItem(null)
   }
 
@@ -94,10 +103,16 @@
   <div class="flex min-h-0 flex-1">
     {#if !narrow || !detailColumnShown}
       <div class="flex min-h-0 min-w-0 shrink-0 flex-col" style:width={listWidth}>
+        {#if github.checked.length > 0}
+          <GithubSelectionBar />
+        {/if}
         <!-- The list's own header, not the pane's: a full-width strip left the
              thread beside it with a second header under an empty half. Each
              column carries its own, so they share one line. -->
-        <div class="flex shrink-0 items-center gap-1.5 border-b border-line px-2 py-1.5">
+        <div
+          class="flex shrink-0 items-center gap-1.5 border-b border-line px-2 py-1.5"
+          class:hidden={github.checked.length > 0}
+        >
           <button
             class="shrink-0 rounded-md px-1.5 py-0.5 text-xs hover:bg-hover"
             class:text-default={github.tab === 'pull'}
@@ -158,8 +173,10 @@
               <GithubItemRow
                 {item}
                 selected={isSelected(item.number, item.kind)}
+                checked={github.checked.includes(item.number)}
                 isViewer={item.author === viewer}
                 onselect={() => openItem(item.kind, item.number)}
+                ontoggle={() => toggleChecked(item.number)}
               />
             {/each}
 

@@ -85,7 +85,13 @@ const workbench = {
     action: (kind: string, number: number, action: string, merge?: unknown, reason?: string) =>
       ipcRenderer.invoke('github:action', kind, number, action, merge, reason),
     changeAssignees: (kind: string, number: number, change: unknown) =>
-      ipcRenderer.invoke('github:changeAssignees', kind, number, change)
+      ipcRenderer.invoke('github:changeAssignees', kind, number, change),
+    prDiff: (number: number, baseRefName: string) =>
+      ipcRenderer.invoke('github:prDiff', number, baseRefName),
+    prBaseFile: (baseOid: string, file: unknown) =>
+      ipcRenderer.invoke('github:prBaseFile', baseOid, file),
+    checkoutPr: (number: number, baseRefName: string) =>
+      ipcRenderer.invoke('github:checkoutPr', number, baseRefName)
   },
   checkpoints: {
     list: (worktreeId: string) => ipcRenderer.invoke('checkpoints:list', worktreeId),

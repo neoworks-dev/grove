@@ -7,8 +7,15 @@
 
 import { dialogs } from '../../../lib/dialogs.svelte'
 import type { DialogOptions } from '../../../lib/dialogs.svelte'
-import { store, refreshWorktrees, selectWorktree } from '../../../lib/store.svelte'
+import {
+  store,
+  openFileInEditor,
+  refreshWorktrees,
+  selectWorktree
+} from '../../../lib/store.svelte'
+import { layout } from '../../../lib/layout.svelte'
 import { branchNameFor } from './branches'
+import { diffAgainstBase, showPrBaseOnly } from './prDiff'
 import { clearRefusals, loadOnce, newReferenceLoads } from './referenceLoads'
 import { authorsOf, projectsOf, typesOf } from './filter'
 import {
@@ -34,6 +41,8 @@ import type {
   GithubItemDetail,
   GithubItemKind,
   GithubLabelDefinition,
+  GithubPrDiff,
+  GithubPrFile,
   GithubStateFilter,
   GithubStatus,
   MergePrOptions
@@ -49,6 +58,9 @@ export interface GithubSelection {
   kind: GithubItemKind
   number: number
 }
+
+/** The two halves of a pull request's thread, as GitHub names them. */
+export type GithubThreadTab = 'conversation' | 'files'
 
 class GithubStore {
   status = $state<GithubStatus | null>(null)
@@ -95,6 +107,22 @@ class GithubStore {
 
   /** People the repository can assign, for @mention completion. */
   mentionables = $state<GithubActor[]>([])
+
+  /**
+   * Which half of a pull request's thread is showing. Issues have no Files tab,
+   * so this is only read for pull requests — but it is held per pane rather than
+   * per item, the way GitHub does it, so walking a list of pull requests stays
+   * on Files once you have gone there.
+   */
+  threadTab = $state<GithubThreadTab>('conversation')
+
+  /**
+   * Changed-file lists already fetched, keyed by pull-request number. The first
+   * load fetches the pull request into the local object store, which is the slow
+   * part; everything after it is read from there.
+   */
+  prDiffs = $state<Record<number, GithubPrDiff>>({})
+  prDiffLoading = $state(false)
 
   /**
    * Numbers ticked in the list, for acting on several at once. Held per tab,
@@ -474,6 +502,84 @@ async function loadDetail(selection: GithubSelection, options: { silent: boolean
   } finally {
     if (token === githubInternals.detailToken) github.detailLoading = false
   }
+}
+
+/**
+ * Load a pull request's changed files once. The first call fetches the pull
+ * request's head and base into the repository, which for a large repository is
+ * seconds rather than milliseconds — so it runs on opening the Files tab and not
+ * on selecting the item, and never twice for the same number.
+ */
+export async function loadPrDiff(number: number, baseRefName: string): Promise<void> {
+  if (github.prDiffs[number]) return
+  github.prDiffLoading = true
+  try {
+    await loadReference(`pr-diff:${number}`, async () => {
+      const diff = await window.workbench.github.prDiff(number, baseRefName)
+      github.prDiffs = { ...github.prDiffs, [number]: diff }
+    })
+  } finally {
+    github.prDiffLoading = false
+  }
+}
+
+/**
+ * Check a pull request out as its own worktree and select it, so the whole tree
+ * is there to read rather than the changed files alone. Existing worktrees are
+ * reused — the branch is named after the pull request, so a second call finds
+ * the first one's.
+ */
+export async function checkoutPr(detail: GithubItemDetail): Promise<string | null> {
+  if (!detail.baseRefName) return null
+  github.busy = true
+  try {
+    const worktree = await window.workbench.github.checkoutPr(detail.number, detail.baseRefName)
+    // Selecting re-reads the worktree's services and diff stats, which is a
+    // round trip per file opened if it is done unconditionally.
+    if (store.selectedWorktreeId !== worktree.id) {
+      await refreshWorktrees()
+      await selectWorktree(worktree.id)
+    }
+    return worktree.id
+  } catch (err) {
+    dialogs.notify({ level: 'error', message: (err as Error).message })
+    return null
+  } finally {
+    github.busy = false
+  }
+}
+
+/**
+ * Open one of a pull request's changed files: its worktree, then the file, then
+ * the merge base's copy of it beside the file in Neovim's diff mode. The right
+ * side is the real file in the real worktree, so it has its language server,
+ * its git state and everything else the editor gives a file — the diff is a
+ * second window onto it, not a copy of it.
+ */
+export async function openPrFile(detail: GithubItemDetail, file: GithubPrFile): Promise<void> {
+  const diff = github.prDiffs[detail.number]
+  if (!diff) return
+  const worktreeId = await checkoutPr(detail)
+  if (!worktreeId) return
+
+  const worktree = store.worktrees.find((entry) => entry.id === worktreeId)
+  if (!worktree) return
+
+  // The editor is where both halves are read, and in the GitHub view it may not
+  // be open at all.
+  layout.ensurePane('nvim')
+
+  // The file comes out of `prDiffs`, so it is a reactive proxy — and a proxy
+  // cannot cross IPC ("An object could not be cloned"). Send the plain object.
+  const base = await window.workbench.github.prBaseFile(diff.baseOid, $state.snapshot(file))
+  // A deleted file has nothing to open beside the base copy, so the base copy is
+  // the whole view.
+  if (file.changeType === 'deleted') {
+    await showPrBaseOnly(file, base)
+    return
+  }
+  openFileInEditor(worktreeId, `${worktree.path}/${file.path}`)
+  await diffAgainstBase(file, base)
 }
 
 /** Post a comment on the open item, then pull the thread back in. */

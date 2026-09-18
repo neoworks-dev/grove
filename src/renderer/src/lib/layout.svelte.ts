@@ -24,6 +24,7 @@ import {
   pathToLeaf,
   splitLeaf,
   removeLeaf,
+  removeLeafInto,
   resizeGutter,
   swapLeaves,
   replaceLeafType,
@@ -415,7 +416,9 @@ class LayoutStore {
     const desiredWins = new Set(normal.slice(1).map((entry) => entry.win))
     for (const leaf of existing) {
       if (desiredWins.has(Number(leaf.paneState?.win))) continue
-      next = removeLeaf(next, leaf.id) ?? next
+      // Back to the owner it was split out of, not shared around: see
+      // removeLeafInto for what sharing it costs the editor.
+      next = removeLeafInto(next, leaf.id, ownerLeafId) ?? next
     }
     const existingWins = new Set(
       leaves(next)

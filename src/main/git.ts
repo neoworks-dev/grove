@@ -16,6 +16,7 @@ import type {
   DiffChangeType,
   DiffHunk,
   DiffHunks,
+  GithubPrFile,
   MergeMode,
   MergePreview,
   MergeResult,
@@ -475,6 +476,98 @@ export function parseHunks(diff: string): DiffHunk[] {
     match = header.exec(diff)
   }
   return hunks
+}
+
+// ── Pull-request diffs ──────────────────────────────────────────
+// A pull request's head is not a local branch, and for a fork it is not in the
+// repository at all. GitHub publishes it as `pull/<n>/head` on the base remote,
+// so one fetch into a grove-owned ref namespace puts both sides in the object
+// store and everything after it is local — no API calls per file, and nothing
+// that can trip a rate limiter.
+
+/** The remote a pull request is fetched from: `origin` when there is one. */
+async function pullRemote(repoPath: string): Promise<string> {
+  const remotes = await gitFor(repoPath).getRemotes()
+  if (remotes.length === 0) throw new Error('This repository has no remote to fetch from.')
+  const origin = remotes.find((remote) => remote.name === 'origin')
+  if (origin) return origin.name
+  return remotes[0].name
+}
+
+/**
+ * Fetch a pull request's head and its base branch, and resolve the two commits
+ * its diff runs between. The base side is the merge base, which is what GitHub
+ * compares against — using the base branch tip would fold in every commit that
+ * landed there after the pull request was opened.
+ */
+export async function fetchPullRequestRefs(
+  repoPath: string,
+  number: number,
+  baseRefName: string
+): Promise<{ baseOid: string; headOid: string }> {
+  const git = gitFor(repoPath)
+  const remote = await pullRemote(repoPath)
+  const headRef = `refs/grove/pr/${number}/head`
+  const baseRef = `refs/grove/pr/${number}/base`
+
+  await git.raw(['fetch', '--force', remote, `pull/${number}/head:${headRef}`])
+  await git.raw(['fetch', '--force', remote, `${baseRefName}:${baseRef}`])
+
+  const headOid = (await git.raw(['rev-parse', headRef])).trim()
+  const baseOid = (await git.raw(['merge-base', baseRef, headRef])).trim()
+  return { baseOid, headOid }
+}
+
+/**
+ * The files changed between two commits, with their line counts.
+ *
+ * `--name-status` and `--numstat` describe the same diff in the same order, so
+ * the two are zipped by position. Matching them by path instead would have to
+ * undo numstat's `old => new` rename spelling, which is lossy for paths that
+ * contain the arrow.
+ */
+export async function changedFilesBetween(
+  repoPath: string,
+  baseOid: string,
+  headOid: string
+): Promise<GithubPrFile[]> {
+  const git = gitFor(repoPath)
+  const range = `${baseOid}..${headOid}`
+  const nameStatus = await git.raw(['diff', '--name-status', '-z', '-M', range])
+  const numstat = await git.raw(['diff', '--numstat', '-M', range])
+  return zipFilesWithStats(parseNameStatusZ(nameStatus, false), parseNumstat(numstat))
+}
+
+/** Pair each changed file with the line counts git reported for it. */
+export function zipFilesWithStats(files: DiffFile[], stats: DiffFileStat[]): GithubPrFile[] {
+  return files.map((file, index) => {
+    const stat = stats[index]
+    const binary = stat === undefined || stat.added < 0 || stat.removed < 0
+    const entry: GithubPrFile = {
+      path: file.path,
+      changeType: file.changeType,
+      added: binary ? 0 : stat.added,
+      removed: binary ? 0 : stat.removed,
+      binary
+    }
+    if (file.oldPath) entry.oldPath = file.oldPath
+    return entry
+  })
+}
+
+/**
+ * A file as the merge base had it — the left side of the diff. The right side is
+ * the file in the checked-out worktree, so only this one has to be read out of
+ * the object store. A file the pull request added has no base version, and comes
+ * back empty.
+ */
+export async function pullRequestBaseFile(
+  repoPath: string,
+  baseOid: string,
+  file: GithubPrFile
+): Promise<string> {
+  if (file.changeType === 'added') return ''
+  return fileAtRef(repoPath, baseOid, file.oldPath || file.path)
 }
 
 // ── Diff stats (added/removed line counts) ──────────────────────

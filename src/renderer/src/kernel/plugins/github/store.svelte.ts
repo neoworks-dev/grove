@@ -9,7 +9,17 @@ import { dialogs } from '../../../lib/dialogs.svelte'
 import type { DialogOptions } from '../../../lib/dialogs.svelte'
 import { store, refreshWorktrees, selectWorktree } from '../../../lib/store.svelte'
 import { branchNameFor } from './branches'
-import { authorsOf, filterItems, projectsOf, typesOf } from './filter'
+import { authorsOf, projectsOf, typesOf } from './filter'
+import {
+  DEFAULT_QUERY,
+  filterItems,
+  parseSearch,
+  stateFilterFor,
+  stringifySearch,
+  toggleQualifier,
+  valuesOf
+} from './search'
+import type { QualifierKey, SearchQuery } from './search'
 import type {
   GithubActor,
   GithubCapabilities,
@@ -46,18 +56,13 @@ class GithubStore {
   error = $state<string | null>(null)
 
   tab = $state<GithubItemKind>('pull')
-  stateFilter = $state<GithubStateFilter>('open')
-  query = $state('')
-  /** Logins picked in the Author menu; empty means every author. */
-  authorFilter = $state<string[]>([])
-  /** Label names picked in the Labels menu; an item must carry all of them. */
-  labelFilter = $state<string[]>([])
-  /** Milestone titles picked in the Milestone menu; any one of them matches. */
-  milestoneFilter = $state<string[]>([])
-  /** Issue type names picked in the Type menu; any one of them matches. */
-  typeFilter = $state<string[]>([])
-  /** Project titles picked in the Projects menu; any one of them matches. */
-  projectFilter = $state<string[]>([])
+
+  /**
+   * The whole filter, in GitHub's own syntax. The menus write into this and
+   * read their ticks back out of it, so there is exactly one place a narrowing
+   * is written down and nothing on screen can disagree with the box.
+   */
+  query = $state(DEFAULT_QUERY)
 
   selection = $state<GithubSelection | null>(null)
   detail = $state<GithubItemDetail | null>(null)
@@ -127,16 +132,28 @@ class GithubStore {
     return collected
   }
 
-  /** The active tab's items, after the search box and the filter menus. */
+  /** The query as qualifiers, which everything below reads rather than the string. */
+  search: SearchQuery = $derived(parseSearch(this.query))
+
+  /**
+   * Which states the fetch has to cover. Read off `is:` rather than held beside
+   * it, so the dropdown and the query cannot disagree about what is on screen.
+   *
+   * Derived rather than a getter on purpose: the refresh effect watches this,
+   * and a getter would make it depend on the query string itself — one fetch
+   * per keystroke, when only `is:` can actually change what has to be fetched.
+   */
+  stateFilter: GithubStateFilter = $derived(stateFilterFor(this.search))
+
+  /** The active tab's items, after the whole query. */
   get items(): GithubItem[] {
-    return filterItems(this.tabItems, {
-      query: this.query,
-      authors: this.authorFilter,
-      labels: this.labelFilter,
-      milestones: this.milestoneFilter,
-      types: this.typeFilter,
-      projects: this.projectFilter
-    })
+    return filterItems(this.tabItems, this.search, this.viewer)
+  }
+
+  /** The authenticated user, for `@me`. */
+  get viewer(): string | null {
+    if (!this.dashboard) return null
+    return this.dashboard.viewer
   }
 
   /** The active tab before any narrowing — what the menus offer options from. */
@@ -173,14 +190,12 @@ class GithubStore {
     return this.dashboard.capabilities
   }
 
-  /** Whether anything is narrowing the list beyond the state filter. */
+  /** Whether anything is narrowing the list beyond the state the fetch covers. */
   get filtersActive(): boolean {
-    return (
-      this.authorFilter.length > 0 ||
-      this.labelFilter.length > 0 ||
-      this.milestoneFilter.length > 0 ||
-      this.typeFilter.length > 0 ||
-      this.projectFilter.length > 0
+    const search = this.search
+    if (search.text.length > 0) return true
+    return search.qualifiers.some(
+      (qualifier) => qualifier.key !== 'is' && qualifier.key !== 'state'
     )
   }
 
@@ -255,13 +270,32 @@ export async function selectItem(selection: GithubSelection | null): Promise<voi
   await loadDetail(selection, { silent: false })
 }
 
-/** Drop every narrowing the menus applied. */
+/**
+ * Put a qualifier in the query, or take it out when it is already there. Every
+ * filter menu goes through here, which is why picking one from a menu and
+ * typing it by hand end in the same query.
+ */
+export function toggleFilter(key: QualifierKey, value: string): void {
+  github.query = toggleQualifier(github.query, key, value)
+}
+
+/** What a menu ticks: the values the query already names under its key. */
+export function filterValues(key: QualifierKey): string[] {
+  return valuesOf(github.search, key)
+}
+
+/**
+ * Drop every narrowing but the state, which is what the dropdown beside this
+ * owns — clearing the filters should not silently widen the fetch.
+ */
 export function clearFilters(): void {
-  github.authorFilter = []
-  github.labelFilter = []
-  github.milestoneFilter = []
-  github.typeFilter = []
-  github.projectFilter = []
+  const search = github.search
+  github.query = stringifySearch({
+    text: '',
+    qualifiers: search.qualifiers.filter(
+      (qualifier) => qualifier.key === 'is' || qualifier.key === 'state'
+    )
+  })
 }
 
 /** Tick or untick one row. */

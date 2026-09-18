@@ -20,6 +20,12 @@
     empty: string
     ontoggle: (value: string) => void
   } = $props()
+
+  // The selection is read out of the query, which is typed by hand, so a tick
+  // cannot depend on the case matching what the menu happens to list.
+  function ticked(value: string): boolean {
+    return selected.some((entry) => entry.toLowerCase() === value.toLowerCase())
+  }
 </script>
 
 <GithubMenu {label} count={selected.length}>
@@ -30,7 +36,7 @@
           class="flex items-center gap-2 rounded px-1.5 py-1 text-left text-2xs text-default hover:bg-hover"
           onclick={() => ontoggle(option)}
         >
-          <Checkbox size="sm" checked={selected.includes(option)} />
+          <Checkbox size="sm" checked={ticked(option)} />
           <span class="truncate">{option}</span>
         </button>
       {/each}

@@ -9,7 +9,14 @@
   import GithubChoiceMenu from './GithubChoiceMenu.svelte'
   import GithubLabelPill from './GithubLabelPill.svelte'
   import GithubMenu from './GithubMenu.svelte'
-  import { github, clearFilters, loadLabels, loadMilestones } from './store.svelte'
+  import {
+    github,
+    clearFilters,
+    filterValues,
+    loadLabels,
+    loadMilestones,
+    toggleFilter
+  } from './store.svelte'
 
   let { setStateFilter }: { setStateFilter: (event: Event) => void } = $props()
 
@@ -19,6 +26,19 @@
     void loadLabels()
     void loadMilestones()
   })
+
+  // Every menu ticks off the query rather than off state of its own, so typing
+  // `label:bug` and picking it from the menu are the same act seen twice.
+  const authors = $derived(filterValues('author'))
+  const labels = $derived(filterValues('label'))
+  const milestones = $derived(filterValues('milestone'))
+  const types = $derived(filterValues('type'))
+  const projects = $derived(filterValues('project'))
+
+  /** Case-insensitive, because the query is typed by hand and GitHub is too. */
+  function ticked(values: string[], value: string): boolean {
+    return values.some((entry) => entry.toLowerCase() === value.toLowerCase())
+  }
 
   // Milestones come from the repository, so one nothing is filed against yet is
   // still offered. Types and boards come from the loaded items instead — see
@@ -30,12 +50,6 @@
     if (needle.length === 0) return github.labels
     return github.labels.filter((label) => label.name.toLowerCase().includes(needle))
   })
-
-  /** The list with `value` added if it was missing, or taken out if it was not. */
-  function toggled(list: string[], value: string): string[] {
-    if (list.includes(value)) return list.filter((entry) => entry !== value)
-    return [...list, value]
-  }
 
   function avatarFor(login: string): string | null {
     if (login === 'ghost' || login.includes('[')) return null
@@ -54,15 +68,15 @@
     <option value="all">All</option>
   </select>
 
-  <GithubMenu label="Author" count={github.authorFilter.length}>
+  <GithubMenu label="Author" count={authors.length}>
     <FloatingScrollbar class="max-h-56">
       <div class="flex flex-col">
         {#each github.authorOptions as login (login)}
           <button
             class="flex items-center gap-2 rounded px-1.5 py-1 text-left text-2xs text-default hover:bg-hover"
-            onclick={() => (github.authorFilter = toggled(github.authorFilter, login))}
+            onclick={() => toggleFilter('author', login)}
           >
-            <Checkbox size="sm" checked={github.authorFilter.includes(login)} />
+            <Checkbox size="sm" checked={ticked(authors, login)} />
             <GithubAvatar actor={{ login, avatarUrl: avatarFor(login) }} size={14} />
             <span class="truncate">{login}</span>
           </button>
@@ -74,7 +88,7 @@
     </FloatingScrollbar>
   </GithubMenu>
 
-  <GithubMenu label="Labels" count={github.labelFilter.length}>
+  <GithubMenu label="Labels" count={labels.length}>
     <input
       class="mb-1 w-full rounded-md border border-line bg-input px-2 py-0.5 text-2xs text-default outline-none placeholder:text-dim focus:border-line-strong"
       placeholder="Filter labels"
@@ -85,9 +99,9 @@
         {#each labelOptions as label (label.name)}
           <button
             class="flex items-center gap-2 rounded px-1.5 py-1 text-left hover:bg-hover"
-            onclick={() => (github.labelFilter = toggled(github.labelFilter, label.name))}
+            onclick={() => toggleFilter('label', label.name)}
           >
-            <Checkbox size="sm" checked={github.labelFilter.includes(label.name)} />
+            <Checkbox size="sm" checked={ticked(labels, label.name)} />
             <GithubLabelPill {label} />
           </button>
         {/each}
@@ -101,18 +115,18 @@
   <GithubChoiceMenu
     label="Milestone"
     options={milestoneOptions}
-    selected={github.milestoneFilter}
+    selected={milestones}
     empty="This repository has no milestones."
-    ontoggle={(title) => (github.milestoneFilter = toggled(github.milestoneFilter, title))}
+    ontoggle={(title) => toggleFilter('milestone', title)}
   />
 
   {#if github.capabilities.issueTypes}
     <GithubChoiceMenu
       label="Type"
       options={github.typeOptions}
-      selected={github.typeFilter}
+      selected={types}
       empty="Nothing here carries a type."
-      ontoggle={(name) => (github.typeFilter = toggled(github.typeFilter, name))}
+      ontoggle={(name) => toggleFilter('type', name)}
     />
   {/if}
 
@@ -120,9 +134,9 @@
     <GithubChoiceMenu
       label="Projects"
       options={github.projectOptions}
-      selected={github.projectFilter}
+      selected={projects}
       empty="Nothing here is on a board."
-      ontoggle={(title) => (github.projectFilter = toggled(github.projectFilter, title))}
+      ontoggle={(title) => toggleFilter('project', title)}
     />
   {/if}
 

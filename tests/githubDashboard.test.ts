@@ -9,11 +9,13 @@ import {
   createIssueArgs,
   dashboardQuery,
   itemActionArgs,
+  isRateLimited,
   itemCommandArgs,
   transferArgs,
   itemDetailQuery,
   milestoneChangeArgs,
   optionalFields,
+  rateLimitMessage,
   relationshipFields,
   scopeHint
 } from '../src/main/githubDashboard'
@@ -160,6 +162,42 @@ describe('adminHint', () => {
     expect(adminHint(refusal, 'lock')).toBe(refusal)
     const missing = new Error('gh issue delete failed: could not resolve to an Issue')
     expect(adminHint(missing, 'delete')).toBe(missing)
+  })
+})
+
+describe('rate limits', () => {
+  // Both of GitHub's limits arrive as a 403 with a wall of text. The hourly one
+  // and the secondary limiter that answers a burst want different things said,
+  // and neither is an answer about the request that tripped it.
+  const secondary = new Error(
+    'gh api repos/x/y/milestones failed: gh: You have exceeded a secondary rate limit (HTTP 403)'
+  )
+  const hourly = new Error(
+    'gh api repos/x/y/milestones failed: gh: API rate limit exceeded for user ID 62291876. If you reach out to GitHub Support for help, please include the request ID E5B6 and timestamp 2026-09-18 16:05:08 UTC. For more on scraping GitHub ... (HTTP 403)'
+  )
+
+  it('recognises both', () => {
+    expect(isRateLimited(secondary)).toBe(true)
+    expect(isRateLimited(hourly)).toBe(true)
+    expect(isRateLimited(new Error('gh: could not resolve to an Issue'))).toBe(false)
+  })
+
+  it('says which one it is, and drops the request ID nobody needs', () => {
+    expect(rateLimitMessage(secondary)).toBe(
+      'GitHub rate limit: Grove asked too quickly. It clears in about a minute.'
+    )
+    expect(rateLimitMessage(hourly)).toBe(
+      'GitHub rate limit: this token is out of requests. It clears when the hour does.'
+    )
+  })
+
+  it('still reads as a rate limit after being rewritten', () => {
+    expect(isRateLimited(new Error(rateLimitMessage(secondary)))).toBe(true)
+  })
+
+  it('leaves anything else exactly as it was', () => {
+    const other = new Error('gh: could not resolve to an Issue')
+    expect(rateLimitMessage(other)).toBe(other.message)
   })
 })
 

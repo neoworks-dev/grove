@@ -67,7 +67,14 @@ function runGh(cwd: string, args: string[], input?: string): Promise<string> {
         return
       }
       const detail = stderr.trim() || `exited with code ${code}`
-      reject(new Error(`gh ${args.join(' ')} failed: ${detail}`))
+      const failure = new Error(`gh ${args.join(' ')} failed: ${detail}`)
+      // A rate limit is about pace, not about the command, so the command is
+      // not what the reader needs to see.
+      if (isRateLimited(failure)) {
+        reject(new Error(rateLimitMessage(failure)))
+        return
+      }
+      reject(failure)
     })
     if (input === undefined) {
       child.stdin.end()
@@ -75,6 +82,21 @@ function runGh(cwd: string, args: string[], input?: string): Promise<string> {
     }
     child.stdin.end(input)
   })
+}
+
+/**
+ * gh hands GitHub's refusal through whole, which for a rate limit is a request
+ * ID, a timestamp and a link to the Terms of Service — none of it the thing the
+ * reader needs, which is that this was about pace rather than about them.
+ */
+export function rateLimitMessage(error: Error): string {
+  if (!isRateLimited(error)) return error.message
+  // Both keep the words "rate limit", so rewriting one twice is harmless and
+  // anything downstream can still recognise what it is holding.
+  if (error.message.includes('secondary rate limit')) {
+    return 'GitHub rate limit: Grove asked too quickly. It clears in about a minute.'
+  }
+  return 'GitHub rate limit: this token is out of requests. It clears when the hour does.'
 }
 
 /** JSON.parse with the shape named by the caller, instead of a cast per site. */
@@ -129,11 +151,33 @@ export async function fetchStatus(repoPath: string): Promise<GithubStatus> {
 // the probes run once per repository per session.
 const capabilityCache = new Map<string, GithubCapabilities>()
 
+/** Nothing extra: what a probe run that never got an answer has to report. */
+const NO_CAPABILITIES: GithubCapabilities = {
+  projects: false,
+  issueTypes: false,
+  subIssues: false,
+  linkedBranches: false
+}
+
+/**
+ * Whether GitHub refused for rate rather than on the merits. Its own wording
+ * covers both the hourly limit and the secondary limiter that answers bursts,
+ * and the difference that matters here is not which one — it is that neither is
+ * an answer about the request.
+ */
+export function isRateLimited(error: Error): boolean {
+  return error.message.includes('rate limit')
+}
+
 /**
  * Whether a selection can be asked for at all: run it as a one-node query of its
  * own and see whether GitHub accepts it. A missing scope and a missing schema
  * field look the same from here, and both mean the same thing — leave it out of
  * the real query — so both answer false.
+ *
+ * A rate limit is not one of those. It is GitHub declining to decide, and
+ * writing it down as "no" would disable projects and issue types for the rest
+ * of the session over a burst that clears in a minute, so it is thrown on.
  */
 async function probeSelection(
   repoPath: string,
@@ -157,7 +201,8 @@ query($owner: String!, $name: String!) {
       `query=${query}`
     ])
     return true
-  } catch {
+  } catch (error) {
+    if (isRateLimited(error as Error)) throw error
     return false
   }
 }
@@ -167,31 +212,46 @@ query($owner: String!, $name: String!) {
  * needs the `read:project` scope and `issueType` is not in every schema, and
  * either one, asked for without being allowed, fails the whole document and
  * takes the pane down with it.
+ *
+ * The probes run one after another rather than together. They happen once per
+ * repository per session and nothing is waiting on them, so there is nothing to
+ * win by firing four requests at once — and firing four at once is the shape of
+ * traffic GitHub's secondary limiter exists to refuse.
  */
 export async function fetchCapabilities(repoPath: string): Promise<GithubCapabilities> {
   const cached = capabilityCache.get(repoPath)
   if (cached) return cached
   const repo = await repoRef(repoPath)
   const [owner, name] = repo.nameWithOwner.split('/')
-  const [projects, issueTypes, subIssues, linkedBranches] = await Promise.all([
-    probeSelection(repoPath, owner, name, 'projectsV2(first: 1) { totalCount }'),
-    probeSelection(repoPath, owner, name, 'issues(first: 1) { nodes { issueType { name } } }'),
-    probeSelection(
-      repoPath,
-      owner,
-      name,
-      'issues(first: 1) { nodes { subIssuesSummary { total } } }'
-    ),
-    probeSelection(
-      repoPath,
-      owner,
-      name,
-      'issues(first: 1) { nodes { linkedBranches(first: 1) { totalCount } } }'
-    )
-  ])
-  const capabilities: GithubCapabilities = { projects, issueTypes, subIssues, linkedBranches }
-  capabilityCache.set(repoPath, capabilities)
-  return capabilities
+  try {
+    const capabilities: GithubCapabilities = {
+      projects: await probeSelection(repoPath, owner, name, 'projectsV2(first: 1) { totalCount }'),
+      issueTypes: await probeSelection(
+        repoPath,
+        owner,
+        name,
+        'issues(first: 1) { nodes { issueType { name } } }'
+      ),
+      subIssues: await probeSelection(
+        repoPath,
+        owner,
+        name,
+        'issues(first: 1) { nodes { subIssuesSummary { total } } }'
+      ),
+      linkedBranches: await probeSelection(
+        repoPath,
+        owner,
+        name,
+        'issues(first: 1) { nodes { linkedBranches(first: 1) { totalCount } } }'
+      )
+    }
+    capabilityCache.set(repoPath, capabilities)
+    return capabilities
+  } catch {
+    // Nothing is cached, so the next refresh asks again. The list still loads;
+    // it just loads without the metadata nobody could confirm was there.
+    return NO_CAPABILITIES
+  }
 }
 
 // Sub-issues cap at 100 like every other connection, and a tracking issue with

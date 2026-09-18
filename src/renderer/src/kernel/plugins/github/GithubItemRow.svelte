@@ -35,7 +35,7 @@
 <button
   class="flex w-full items-center gap-2 border-b border-line px-3 py-2 text-left hover:bg-hover"
   class:bg-hover={selected}
-  aria-selected={selected}
+  aria-current={selected}
   onclick={onselect}
 >
   <span

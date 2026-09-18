@@ -45,6 +45,13 @@ export function relativeTime(iso: string, now: number = Date.now()): string {
   return `${Math.floor(elapsed / (30 * DAY))}mo`
 }
 
+/** The same age as a sentence: "just now", "4h ago". */
+export function ageLabel(iso: string, now: number = Date.now()): string {
+  const age = relativeTime(iso, now)
+  if (age === 'now') return 'just now'
+  return `${age} ago`
+}
+
 /** Colour for a check rollup state. */
 export function checkTone(state: string | null): Tone {
   if (state === 'SUCCESS') return 'green'

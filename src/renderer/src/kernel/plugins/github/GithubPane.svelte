@@ -6,7 +6,7 @@
   import { github, refreshDashboard, selectItem, startAutoRefresh } from './store.svelte'
   import GithubItemRow from './GithubItemRow.svelte'
   import GithubThread from './GithubThread.svelte'
-  import { relativeTime } from './filter'
+  import { ageLabel } from './filter'
   import type { GithubItemKind, GithubStateFilter } from '../../../../../shared/types'
 
   // Below this the pane shows one column at a time: the list, or the thread with
@@ -91,7 +91,7 @@
 
     {#if github.dashboard}
       <span class="shrink-0 text-2xs text-dim" title={github.dashboard.repo.nameWithOwner}>
-        updated {relativeTime(new Date(github.dashboard.fetchedAt).toISOString())} ago
+        updated {ageLabel(new Date(github.dashboard.fetchedAt).toISOString())}
       </span>
     {/if}
     <button

@@ -71,6 +71,13 @@ class GithubStore {
   /** People the repository can assign, for @mention completion. */
   mentionables = $state<GithubActor[]>([])
 
+  /**
+   * Numbers ticked in the list, for acting on several at once. Held per tab,
+   * because a pull request and an issue with the same number are different
+   * things and the actions that apply to them differ.
+   */
+  checked = $state<number[]>([])
+
   /** Everyone already on the open thread — offered ahead of the repository. */
   get threadActors(): GithubActor[] {
     const detail = this.detail
@@ -162,6 +169,86 @@ export async function selectItem(selection: GithubSelection | null): Promise<voi
   }
   github.detail = null
   await loadDetail(selection, { silent: false })
+}
+
+/** Tick or untick one row. */
+export function toggleChecked(number: number): void {
+  if (github.checked.includes(number)) {
+    github.checked = github.checked.filter((entry) => entry !== number)
+    return
+  }
+  github.checked = [...github.checked, number]
+}
+
+/** Tick every row the filter is currently showing, or clear them all. */
+export function checkAllVisible(checkedState: boolean): void {
+  if (!checkedState) {
+    github.checked = []
+    return
+  }
+  github.checked = github.items.map((item) => item.number)
+}
+
+/**
+ * Run one action across every ticked row, then reload once. Failures are
+ * collected rather than thrown one at a time — half a bulk edit going through
+ * is worth reporting as a whole.
+ */
+export async function runBulkAction(action: GithubItemAction): Promise<void> {
+  const numbers = [...github.checked]
+  if (numbers.length === 0) return
+  const kind = github.tab
+  github.busy = true
+  const failed: number[] = []
+  try {
+    for (const number of numbers) {
+      try {
+        await window.workbench.github.action(kind, number, action)
+      } catch {
+        failed.push(number)
+      }
+    }
+  } finally {
+    github.busy = false
+  }
+  reportBulkOutcome(ACTION_TITLES[action], numbers.length, failed)
+  github.checked = []
+  await refreshDashboard(github.stateFilter, { silent: true })
+}
+
+/** Add labels to every ticked row. */
+export async function addLabelsToChecked(labels: string[]): Promise<void> {
+  const numbers = [...github.checked]
+  if (numbers.length === 0 || labels.length === 0) return
+  const kind = github.tab
+  github.busy = true
+  const failed: number[] = []
+  try {
+    for (const number of numbers) {
+      try {
+        await window.workbench.github.changeLabels(kind, number, { add: labels, remove: [] })
+      } catch {
+        failed.push(number)
+      }
+    }
+  } finally {
+    github.busy = false
+  }
+  reportBulkOutcome('Labelled', numbers.length, failed)
+  await refreshDashboard(github.stateFilter, { silent: true })
+}
+
+/** One notification for a whole bulk run, naming what did not go through. */
+function reportBulkOutcome(verb: string, total: number, failed: number[]): void {
+  if (failed.length === 0) {
+    dialogs.notify({ level: 'info', message: `${verb} ${total} item${total === 1 ? '' : 's'}` })
+    return
+  }
+  const names = failed.map((number) => `#${number}`).join(', ')
+  dialogs.notify({
+    level: 'error',
+    message: `${verb} ${total - failed.length} of ${total}. Failed: ${names}`
+  })
 }
 
 /**

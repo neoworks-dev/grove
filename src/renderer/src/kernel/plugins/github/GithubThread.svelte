@@ -24,6 +24,19 @@
   // Below this the metadata moves above the timeline instead of beside it.
   const SIDEBAR_PX = 620
 
+  // Prose does not get more readable past a point, it gets harder — a comment
+  // run across a 1400px monitor is a line the eye loses its place in. The
+  // timeline caps here and the composer matches it, so the two stay aligned;
+  // the metadata rail sits outside the cap rather than eating into it.
+  const READING_PX = 800
+  const SIDEBAR_WIDTH_PX = 208
+  const COLUMN_GAP_PX = 16
+
+  const contentWidth = $derived.by<string>(() => {
+    if (!wide) return `${READING_PX}px`
+    return `${READING_PX + COLUMN_GAP_PX + SIDEBAR_WIDTH_PX}px`
+  })
+
   let draft = $state('')
   let width = $state(0)
   let composerFocused = $state(false)
@@ -156,10 +169,14 @@
     </div>
 
     <FloatingScrollbar class="min-h-0 flex-1">
-      <div class="flex gap-4 px-4 py-3" class:flex-col={!wide}>
+      <div
+        class="mx-auto flex w-full gap-4 px-4 py-3"
+        class:flex-col={!wide}
+        style:max-width={contentWidth}
+      >
         <!-- Everything hangs off one rail, the opening body included, so the
              thread reads as a single sequence rather than stacked blocks. -->
-        <div class="flex min-w-0 flex-1 flex-col">
+        <div class="flex min-w-0 flex-1 flex-col" style:max-width="{READING_PX}px">
           <GithubTimelineRow last={rows.length === 0}>
             <GithubCommentCard
               author={detail.authorActor}
@@ -199,26 +216,28 @@
     <!-- Collapsed to a line until it is being used: an empty comment box was
          taking a fifth of the pane away from the thread it belongs to. -->
     <div class="border-t border-line px-3 py-2">
-      <GithubMentionBox
-        bind:value={draft}
-        rows={composerOpen ? 4 : 1}
-        disabled={github.busy}
-        placeholder="Comment on #{detail.number} — @ to mention, ⌘/Ctrl+Enter to send"
-        onfocus={() => (composerFocused = true)}
-        onblur={() => (composerFocused = false)}
-        onsubmit={submitComment}
-      />
-      {#if composerOpen}
-        <div class="mt-2 flex justify-end">
-          <button
-            class="rounded-md bg-action px-3 py-1 text-2xs text-action-fg hover:opacity-90 disabled:opacity-50"
-            disabled={github.busy || draft.trim().length === 0}
-            onclick={submitComment}
-          >
-            {github.busy ? 'Sending…' : 'Comment'}
-          </button>
-        </div>
-      {/if}
+      <div class="mx-auto w-full" style:max-width="{READING_PX}px">
+        <GithubMentionBox
+          bind:value={draft}
+          rows={composerOpen ? 4 : 1}
+          disabled={github.busy}
+          placeholder="Comment on #{detail.number} — @ to mention, ⌘/Ctrl+Enter to send"
+          onfocus={() => (composerFocused = true)}
+          onblur={() => (composerFocused = false)}
+          onsubmit={submitComment}
+        />
+        {#if composerOpen}
+          <div class="mt-2 flex justify-end">
+            <button
+              class="rounded-md bg-action px-3 py-1 text-2xs text-action-fg hover:opacity-90 disabled:opacity-50"
+              disabled={github.busy || draft.trim().length === 0}
+              onclick={submitComment}
+            >
+              {github.busy ? 'Sending…' : 'Comment'}
+            </button>
+          </div>
+        {/if}
+      </div>
     </div>
   {/if}
 </div>

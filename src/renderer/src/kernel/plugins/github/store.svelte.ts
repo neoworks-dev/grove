@@ -534,8 +534,12 @@ export async function checkoutPr(detail: GithubItemDetail): Promise<string | nul
   github.busy = true
   try {
     const worktree = await window.workbench.github.checkoutPr(detail.number, detail.baseRefName)
-    await refreshWorktrees()
-    await selectWorktree(worktree.id)
+    // Selecting re-reads the worktree's services and diff stats, which is a
+    // round trip per file opened if it is done unconditionally.
+    if (store.selectedWorktreeId !== worktree.id) {
+      await refreshWorktrees()
+      await selectWorktree(worktree.id)
+    }
     return worktree.id
   } catch (err) {
     dialogs.notify({ level: 'error', message: (err as Error).message })

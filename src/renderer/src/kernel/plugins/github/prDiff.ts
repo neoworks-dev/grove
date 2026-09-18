@@ -17,31 +17,51 @@ import type { GithubPrFile } from '../../../../../shared/types'
 const DIFF_LUA = `
 local args = ...
 
-for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-  local buf = vim.api.nvim_win_get_buf(win)
-  if vim.b[buf].grove_pr_base then pcall(vim.api.nvim_win_close, win, true) end
+local function base_window()
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if vim.b[vim.api.nvim_win_get_buf(win)].grove_pr_base then return win end
+  end
+  return nil
+end
+
+local function base_buffer(name, path, lines)
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.bo[buf].buftype = 'nofile'
+  vim.bo[buf].swapfile = false
+  vim.bo[buf].bufhidden = 'wipe'
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  pcall(vim.api.nvim_buf_set_name, buf, name)
+  -- The buffer's own name ends in ' @ base', so the filetype is matched from
+  -- the real path instead. Neovim's own matcher, not a table kept here.
+  local filetype = vim.filetype.match({ filename = path })
+  if filetype then vim.bo[buf].filetype = filetype end
+  vim.bo[buf].modifiable = false
+  vim.b[buf].grove_pr_base = true
+  return buf
 end
 
 pcall(function() vim.opt.diffopt:append('linematch:60') end)
 
-local base = vim.api.nvim_create_buf(false, true)
-vim.bo[base].buftype = 'nofile'
-vim.bo[base].swapfile = false
-vim.bo[base].bufhidden = 'wipe'
-vim.api.nvim_buf_set_lines(base, 0, -1, false, args.lines)
-pcall(vim.api.nvim_buf_set_name, base, args.name)
--- The buffer's own name ends in ' @ base', so the filetype is matched from the
--- real path instead. Neovim's own matcher, not a table kept here.
-local filetype = vim.filetype.match({ filename = args.path })
-if filetype then vim.bo[base].filetype = filetype end
-vim.bo[base].modifiable = false
-vim.b[base].grove_pr_base = true
+local file = vim.api.nvim_get_current_win()
+local base = base_buffer(args.name, args.path, args.lines)
+local existing = base_window()
 
 vim.cmd('diffthis')
-vim.cmd('leftabove vsplit')
-vim.api.nvim_win_set_buf(0, base)
-vim.cmd('diffthis')
-vim.cmd('wincmd l')
+
+-- Reuse the window the last file's base copy was in rather than closing it and
+-- splitting again. Grove mirrors every Neovim window as a pane, so closing one
+-- and opening another is a pane closing and another opening in its place — and
+-- the editor pays for the new split each time.
+if existing then
+  vim.api.nvim_win_set_buf(existing, base)
+  vim.api.nvim_win_call(existing, function() vim.cmd('diffthis') end)
+else
+  vim.cmd('leftabove vsplit')
+  vim.api.nvim_win_set_buf(0, base)
+  vim.cmd('diffthis')
+end
+
+vim.api.nvim_set_current_win(file)
 vim.cmd('silent! normal! gg]c')
 `
 

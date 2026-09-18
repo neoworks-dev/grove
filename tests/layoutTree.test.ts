@@ -11,6 +11,7 @@ import {
   splitChildFlex,
   splitLeaf,
   removeLeaf,
+  removeLeafInto,
   resizeGutter,
   swapLeaves,
   replaceLeafType,
@@ -472,5 +473,40 @@ describe('paneTypesInSlot', () => {
     expect(leaves(evicted).some((leaf) => centre.includes(leaf.paneTypeId))).toBe(false)
     const split = createSplit('row', [createLeaf('github'), createLeaf('nvim')])
     expect(leaves(split).some((leaf) => centre.includes(leaf.paneTypeId))).toBe(true)
+  })
+})
+
+describe('removeLeafInto', () => {
+  it('gives the vacated space back to the named pane, not to everything', () => {
+    const tree = createSplit('row', [createLeaf('files'), createLeaf('nvim'), createLeaf('github')])
+    const editor = leaves(tree)[1]
+    const withDiff = splitLeaf(tree, editor.id, 'row', createLeaf('nvim-grid'), 'before')
+    const diff = leaves(withDiff).find((leaf) => leaf.paneTypeId === 'nvim-grid')!
+
+    const after = removeLeafInto(withDiff, diff.id, editor.id) as SplitNode
+    const index = after.children.findIndex((child) => findLeaf(child, editor.id) !== null)
+    expect(after.sizes[index]).toBeCloseTo(1 / 3, 5)
+    expect(sum(after.sizes)).toBeCloseTo(1, 5)
+  })
+
+  it('survives repeated split/remove without shrinking the pane that lends', () => {
+    let tree: LayoutNode = createSplit('row', [
+      createLeaf('files'),
+      createLeaf('nvim'),
+      createLeaf('github')
+    ])
+    const editor = leaves(tree)[1]
+
+    // What opening ten diffs in a row does: each one splits the editor and each
+    // close hands the space back.
+    for (let round = 0; round < 10; round += 1) {
+      tree = splitLeaf(tree, editor.id, 'row', createLeaf('nvim-grid'), 'before')
+      const diff = leaves(tree).find((leaf) => leaf.paneTypeId === 'nvim-grid')!
+      tree = removeLeafInto(tree, diff.id, editor.id) as LayoutNode
+    }
+
+    const split = tree as SplitNode
+    const index = split.children.findIndex((child) => findLeaf(child, editor.id) !== null)
+    expect(split.sizes[index]).toBeCloseTo(1 / 3, 5)
   })
 })

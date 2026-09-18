@@ -521,6 +521,29 @@ export interface GithubStatus {
   error: string | null
 }
 
+/** One file a pull request changes. */
+export interface GithubPrFile {
+  path: string
+  /** Where the file was before it was renamed. */
+  oldPath?: string
+  changeType: DiffChangeType
+  added: number
+  removed: number
+  /** Binary files have no line counts and no side-by-side view. */
+  binary: boolean
+}
+
+/**
+ * A pull request's changed files, and the two commits its diff runs between.
+ * `baseOid` is the merge base rather than the base branch tip, so the diff shows
+ * what the pull request did and not what landed on the base branch beside it.
+ */
+export interface GithubPrDiff {
+  baseOid: string
+  headOid: string
+  files: GithubPrFile[]
+}
+
 // ── Config schema (repo-root YAML) ──────────────────────────────
 
 export interface WorkbenchConfig {

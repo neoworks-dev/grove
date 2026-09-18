@@ -23,6 +23,8 @@ import type {
   AppliedRange,
   OpenPrOptions,
   MergePrOptions,
+  GithubPrDiff,
+  GithubPrFile,
   GithubStatus,
   GithubStateFilter,
   GithubDashboard,
@@ -222,6 +224,9 @@ export interface WorkbenchApi {
       number: number,
       change: GithubAssigneeChange
     ) => Promise<void>
+    prDiff: (number: number, baseRefName: string) => Promise<GithubPrDiff>
+    prBaseFile: (baseOid: string, file: GithubPrFile) => Promise<string>
+    checkoutPr: (number: number, baseRefName: string) => Promise<Worktree>
   }
   checkpoints: {
     list: (worktreeId: string) => Promise<CheckpointMeta[]>

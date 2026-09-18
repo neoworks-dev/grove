@@ -11,6 +11,7 @@
   import GithubTimelineRow from './GithubTimelineRow.svelte'
   import GithubSidebar from './GithubSidebar.svelte'
   import GithubMentionBox from './GithubMentionBox.svelte'
+  import GithubPrFiles from './GithubPrFiles.svelte'
   import ArrowSquareOutIcon from 'phosphor-svelte/lib/ArrowSquareOutIcon'
   import XCircleIcon from 'phosphor-svelte/lib/XCircleIcon'
   import ArrowCounterClockwiseIcon from 'phosphor-svelte/lib/ArrowCounterClockwiseIcon'
@@ -19,6 +20,7 @@
   import { dialogs } from '../../../lib/dialogs.svelte'
   import { ageLabel, availableActions, reviewLabel, reviewTone, stateTone } from './filter'
   import { foldTimeline } from './timeline'
+  import type { GithubThreadTab } from './store.svelte'
   import type { GithubItemAction } from '../../../../../shared/types'
 
   // Below this the metadata moves above the timeline instead of beside it.
@@ -47,6 +49,15 @@
 
   const detail = $derived(github.detail)
   const wide = $derived(width > 0 && width >= SIDEBAR_PX)
+
+  const threadTabs: Array<{ id: GithubThreadTab; label: string }> = [
+    { id: 'conversation', label: 'Conversation' },
+    { id: 'files', label: 'Files' }
+  ]
+
+  // Only a pull request has a second half; the tab is remembered across items, so
+  // an issue opened after one still shows its conversation.
+  const showFiles = $derived(detail?.kind === 'pull' && github.threadTab === 'files')
   const rows = $derived.by(() => {
     if (!detail) return []
     return foldTimeline(detail.timeline)
@@ -166,79 +177,104 @@
           {/if}
         {/if}
       </div>
-    </div>
 
-    <FloatingScrollbar class="min-h-0 flex-1">
-      <div
-        class="mx-auto flex w-full gap-4 px-4 py-3"
-        class:flex-col={!wide}
-        style:max-width={contentWidth}
-      >
-        <!-- Everything hangs off one rail, the opening body included, so the
-             thread reads as a single sequence rather than stacked blocks. -->
-        <div class="flex min-w-0 flex-1 flex-col" style:max-width="{READING_PX}px">
-          <GithubTimelineRow last={rows.length === 0}>
-            <GithubCommentCard
-              author={detail.authorActor}
-              association={detail.authorAssociation}
-              body={detail.body}
-              at={detail.createdAt}
-              verb="opened"
-            />
-          </GithubTimelineRow>
-
-          {#each rows as row, index (row.id)}
-            <GithubTimelineRow last={index === rows.length - 1}>
-              {#snippet icon()}
-                <GithubEventIcon {row} />
-              {/snippet}
-              {#if row.kind === 'comment'}
-                <GithubCommentCard
-                  author={row.entry.comment.author}
-                  association={row.entry.comment.authorAssociation}
-                  body={row.entry.comment.body}
-                  at={row.entry.comment.createdAt}
-                  reviewState={row.entry.comment.reviewState}
-                />
-              {:else}
-                <GithubEventRow {row} />
+      <!-- A pull request has two halves; an issue has one, so it gets no tabs. -->
+      {#if detail.kind === 'pull'}
+        <div class="mt-2 flex gap-3 text-2xs">
+          {#each threadTabs as tab (tab.id)}
+            <button
+              class="border-b-2 pb-1 hover:text-default"
+              class:border-action={github.threadTab === tab.id}
+              class:text-default={github.threadTab === tab.id}
+              class:border-transparent={github.threadTab !== tab.id}
+              class:text-dim={github.threadTab !== tab.id}
+              onclick={() => (github.threadTab = tab.id)}
+            >
+              {tab.label}
+              {#if tab.id === 'files' && detail.changedFiles}
+                <span class="font-mono text-dim">{detail.changedFiles}</span>
               {/if}
-            </GithubTimelineRow>
+            </button>
           {/each}
         </div>
-
-        <aside class="shrink-0" class:w-52={wide}>
-          <GithubSidebar {detail} />
-        </aside>
-      </div>
-    </FloatingScrollbar>
-
-    <!-- Collapsed to a line until it is being used: an empty comment box was
-         taking a fifth of the pane away from the thread it belongs to. -->
-    <div class="border-t border-line px-3 py-2">
-      <div class="mx-auto w-full" style:max-width="{READING_PX}px">
-        <GithubMentionBox
-          bind:value={draft}
-          rows={composerOpen ? 5 : 1}
-          chrome={composerOpen}
-          disabled={github.busy}
-          placeholder="Comment on #{detail.number} — @ to mention, ⌘/Ctrl+Enter to send"
-          onfocus={() => (composerFocused = true)}
-          onblur={() => (composerFocused = false)}
-          onsubmit={submitComment}
-        />
-        {#if composerOpen}
-          <div class="mt-2 flex justify-end">
-            <button
-              class="rounded-md bg-action px-3 py-1 text-2xs text-action-fg hover:opacity-90 disabled:opacity-50"
-              disabled={github.busy || draft.trim().length === 0}
-              onclick={submitComment}
-            >
-              {github.busy ? 'Sending…' : 'Comment'}
-            </button>
-          </div>
-        {/if}
-      </div>
+      {/if}
     </div>
+
+    {#if showFiles}
+      <GithubPrFiles {detail} />
+    {:else}
+      <FloatingScrollbar class="min-h-0 flex-1">
+        <div
+          class="mx-auto flex w-full gap-4 px-4 py-3"
+          class:flex-col={!wide}
+          style:max-width={contentWidth}
+        >
+          <!-- Everything hangs off one rail, the opening body included, so the
+             thread reads as a single sequence rather than stacked blocks. -->
+          <div class="flex min-w-0 flex-1 flex-col" style:max-width="{READING_PX}px">
+            <GithubTimelineRow last={rows.length === 0}>
+              <GithubCommentCard
+                author={detail.authorActor}
+                association={detail.authorAssociation}
+                body={detail.body}
+                at={detail.createdAt}
+                verb="opened"
+              />
+            </GithubTimelineRow>
+
+            {#each rows as row, index (row.id)}
+              <GithubTimelineRow last={index === rows.length - 1}>
+                {#snippet icon()}
+                  <GithubEventIcon {row} />
+                {/snippet}
+                {#if row.kind === 'comment'}
+                  <GithubCommentCard
+                    author={row.entry.comment.author}
+                    association={row.entry.comment.authorAssociation}
+                    body={row.entry.comment.body}
+                    at={row.entry.comment.createdAt}
+                    reviewState={row.entry.comment.reviewState}
+                  />
+                {:else}
+                  <GithubEventRow {row} />
+                {/if}
+              </GithubTimelineRow>
+            {/each}
+          </div>
+
+          <aside class="shrink-0" class:w-52={wide}>
+            <GithubSidebar {detail} />
+          </aside>
+        </div>
+      </FloatingScrollbar>
+
+      <!-- Collapsed to a line until it is being used: an empty comment box was
+         taking a fifth of the pane away from the thread it belongs to. -->
+      <div class="border-t border-line px-3 py-2">
+        <div class="mx-auto w-full" style:max-width="{READING_PX}px">
+          <GithubMentionBox
+            bind:value={draft}
+            rows={composerOpen ? 5 : 1}
+            chrome={composerOpen}
+            disabled={github.busy}
+            placeholder="Comment on #{detail.number} — @ to mention, ⌘/Ctrl+Enter to send"
+            onfocus={() => (composerFocused = true)}
+            onblur={() => (composerFocused = false)}
+            onsubmit={submitComment}
+          />
+          {#if composerOpen}
+            <div class="mt-2 flex justify-end">
+              <button
+                class="rounded-md bg-action px-3 py-1 text-2xs text-action-fg hover:opacity-90 disabled:opacity-50"
+                disabled={github.busy || draft.trim().length === 0}
+                onclick={submitComment}
+              >
+                {github.busy ? 'Sending…' : 'Comment'}
+              </button>
+            </div>
+          {/if}
+        </div>
+      </div>
+    {/if}
   {/if}
 </div>

@@ -12,6 +12,8 @@ import type {
   GithubIssueDraft,
   GithubItemAction,
   GithubLabelChange,
+  GithubCloseReason,
+  GithubAssigneeChange,
   GithubItemKind,
   GithubStateFilter,
   MergePrOptions,
@@ -63,6 +65,15 @@ export const githubRoutes = {
       }
     )
 
+    route(
+      ctx,
+      'github:changeAssignees',
+      (_e, kind: GithubItemKind, number: number, change: GithubAssigneeChange) => {
+        const { repoPath } = ctx.workbench.requireRepo()
+        return dashboard.changeAssignees(repoPath, kind, number, change)
+      }
+    )
+
     route(ctx, 'github:comment', (_e, kind: GithubItemKind, number: number, body: string) => {
       const { repoPath } = ctx.workbench.requireRepo()
       return dashboard.addComment(repoPath, kind, number, body)
@@ -76,10 +87,11 @@ export const githubRoutes = {
         kind: GithubItemKind,
         number: number,
         action: GithubItemAction,
-        merge?: MergePrOptions
+        merge?: MergePrOptions,
+        reason?: GithubCloseReason
       ) => {
         const { repoPath } = ctx.workbench.requireRepo()
-        return dashboard.runItemAction(repoPath, kind, number, action, merge)
+        return dashboard.runItemAction(repoPath, kind, number, action, merge, reason)
       }
     )
 

@@ -16,6 +16,7 @@
   import ArrowClockwiseIcon from 'phosphor-svelte/lib/ArrowClockwiseIcon'
   import PlusIcon from 'phosphor-svelte/lib/PlusIcon'
   import GithubSelectionBar from './GithubSelectionBar.svelte'
+  import GithubFilterBar from './GithubFilterBar.svelte'
   import { ageLabel } from './filter'
   import type { GithubItemKind, GithubStateFilter } from '../../../../../shared/types'
 
@@ -138,16 +139,6 @@
             bind:value={github.query}
           />
 
-          <select
-            class="shrink-0 rounded-md border border-line bg-input px-1 py-0.5 text-2xs text-dim outline-none"
-            value={github.stateFilter}
-            onchange={setStateFilter}
-          >
-            <option value="open">Open</option>
-            <option value="closed">Closed</option>
-            <option value="all">All</option>
-          </select>
-
           <button
             class="shrink-0 rounded p-1 text-dim hover:bg-hover hover:text-default disabled:opacity-50"
             disabled={github.loading}
@@ -166,6 +157,8 @@
             <PlusIcon size={13} />
           </button>
         </div>
+
+        <GithubFilterBar {setStateFilter} />
 
         <FloatingScrollbar class="min-h-0 flex-1">
           <div>

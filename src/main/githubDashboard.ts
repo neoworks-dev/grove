@@ -20,6 +20,8 @@ import type {
   GithubIssueItem,
   GithubItemAction,
   GithubLabelChange,
+  GithubCloseReason,
+  GithubAssigneeChange,
   GithubTimelineEntry,
   GithubTimelineEvent,
   GithubItemDetail,
@@ -727,11 +729,16 @@ export function itemActionArgs(
   kind: GithubItemKind,
   number: number,
   action: GithubItemAction,
-  merge?: MergePrOptions
+  merge?: MergePrOptions,
+  reason?: GithubCloseReason
 ): string[] {
   if (kind === 'issue') {
     if (action !== 'close' && action !== 'reopen') {
       throw new Error(`Issues support close and reopen, not "${action}"`)
+    }
+    // Only closing takes a reason, and only GitHub's two words are accepted.
+    if (action === 'close' && reason) {
+      return ['issue', 'close', String(number), '--reason', reason]
     }
     return ['issue', action, String(number)]
   }
@@ -748,8 +755,39 @@ export async function runItemAction(
   kind: GithubItemKind,
   number: number,
   action: GithubItemAction,
-  merge?: MergePrOptions
+  merge?: MergePrOptions,
+  reason?: GithubCloseReason
 ): Promise<string> {
-  const output = await runGh(repoPath, itemActionArgs(kind, number, action, merge))
+  const output = await runGh(repoPath, itemActionArgs(kind, number, action, merge, reason))
   return output.trim()
+}
+
+/** Build the gh argv for an assignment change (pure, for testing/reuse). */
+export function assigneeChangeArgs(
+  kind: GithubItemKind,
+  number: number,
+  change: GithubAssigneeChange
+): string[] {
+  if (change.add.length === 0 && change.remove.length === 0) {
+    throw new Error('No assignment change to make')
+  }
+  const command = kind === 'pull' ? 'pr' : 'issue'
+  const args = [command, 'edit', String(number)]
+  for (const login of change.add) {
+    args.push('--add-assignee', login)
+  }
+  for (const login of change.remove) {
+    args.push('--remove-assignee', login)
+  }
+  return args
+}
+
+/** Assign and unassign people on an item that already exists. */
+export async function changeAssignees(
+  repoPath: string,
+  kind: GithubItemKind,
+  number: number,
+  change: GithubAssigneeChange
+): Promise<void> {
+  await runGh(repoPath, assigneeChangeArgs(kind, number, change))
 }

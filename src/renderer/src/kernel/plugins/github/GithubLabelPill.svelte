@@ -1,13 +1,12 @@
 <script lang="ts">
-  // A label as GitHub draws it: the label's own colour, with the text flipped to
-  // stay readable on it. The one place that decision is made, so the list, the
-  // thread, the timeline and the picker cannot drift apart.
+  // A label, drawn as a tint rather than a slab.
   //
-  // Deliberately smaller than body text. At the shared 2xs a pill sat within a
-  // pixel of the title beside it and the two competed; a label is an annotation
-  // on a title, and should read as one. The picker's pills are a step larger,
-  // because there they are the thing being clicked.
-  import { labelIsDark } from './filter'
+  // A solid fill at full saturation made every label shout over the title it
+  // annotates — five labels on a row and the title was the quietest thing in
+  // it. The colour is kept, at a fraction of its strength: a wash for the
+  // background, a little more for the border, and the text mixed toward the
+  // theme's own foreground so it stays readable in both light and dark without
+  // this having to know which is on.
   import type { GithubLabel } from '../../../../../shared/types'
 
   let {
@@ -19,25 +18,25 @@
     label: GithubLabel
     /** Renders as a button rather than a static pill. */
     interactive?: boolean
-    /** Only meaningful when interactive: an unselected pill shows as an outline. */
+    /** Only meaningful when interactive: an unselected pill drops to an outline. */
     selected?: boolean
     onclick?: () => void
   } = $props()
 
-  const dark = $derived(labelIsDark(label.color))
-  const filled = $derived(!interactive || selected)
+  const colour = $derived(`#${label.color.replace('#', '')}`)
+  const on = $derived(!interactive || selected)
+
+  const background = $derived(on ? `color-mix(in srgb, ${colour} 18%, transparent)` : 'transparent')
+  const border = $derived(`color-mix(in srgb, ${colour} ${on ? 38 : 16}%, transparent)`)
+  const text = $derived(on ? `color-mix(in srgb, ${colour} 70%, var(--text))` : 'var(--text-dim)')
 </script>
 
 {#if interactive}
   <button
-    class="max-w-full shrink-0 truncate rounded-full border px-2 py-0.5 text-[10px] leading-4 transition-colors"
-    class:text-white={filled && dark}
-    class:text-black={filled && !dark}
-    class:text-dim={!filled}
-    class:border-transparent={filled}
-    class:border-line={!filled}
-    class:hover:border-line-strong={!filled}
-    style:background-color={filled ? `#${label.color}` : 'transparent'}
+    class="max-w-full shrink-0 truncate rounded-full border px-1.5 py-0 text-[10px] leading-[16px] transition-colors"
+    style:background-color={background}
+    style:border-color={border}
+    style:color={text}
     aria-pressed={selected}
     title={label.name}
     {onclick}
@@ -46,10 +45,10 @@
   </button>
 {:else}
   <span
-    class="max-w-full shrink-0 truncate rounded-full px-1.5 py-0 text-[9px] font-medium leading-[15px]"
-    class:text-white={dark}
-    class:text-black={!dark}
-    style:background-color="#{label.color}"
+    class="max-w-full shrink-0 truncate rounded-full border px-1 py-0 text-[9px] leading-[14px]"
+    style:background-color={background}
+    style:border-color={border}
+    style:color={text}
     title={label.name}
   >
     {label.name}

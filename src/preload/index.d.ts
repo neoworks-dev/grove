@@ -33,6 +33,8 @@ import type {
   GithubIssueDraft,
   GithubCreatedIssue,
   GithubLabelChange,
+  GithubCloseReason,
+  GithubAssigneeChange,
   GithubActor,
   ArchiveOptions,
   DockLayoutState,
@@ -205,8 +207,14 @@ export interface WorkbenchApi {
       kind: GithubItemKind,
       number: number,
       action: GithubItemAction,
-      merge?: MergePrOptions
+      merge?: MergePrOptions,
+      reason?: GithubCloseReason
     ) => Promise<string>
+    changeAssignees: (
+      kind: GithubItemKind,
+      number: number,
+      change: GithubAssigneeChange
+    ) => Promise<void>
   }
   checkpoints: {
     list: (worktreeId: string) => Promise<CheckpointMeta[]>

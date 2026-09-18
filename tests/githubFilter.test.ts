@@ -6,7 +6,9 @@ import {
   ageLabel,
   availableActions,
   filterItems,
-  labelIsDark,
+  matchesFilters,
+  authorsOf,
+  NO_FILTERS,
   matchesQuery,
   relativeTime,
   reviewLabel,
@@ -107,10 +109,6 @@ describe('item state vocabulary', () => {
     expect(reviewLabel(null)).toBe(null)
   })
 
-  it('picks readable text for a label chip', () => {
-    expect(labelIsDark('0b0b0d')).toBe(true)
-    expect(labelIsDark('d4c5f9')).toBe(false)
-  })
 })
 
 describe('availableActions', () => {
@@ -132,5 +130,88 @@ describe('availableActions', () => {
       'merge',
       'close'
     ])
+  })
+})
+
+// The list bar narrows by author and label on top of the search box. Which
+// items survive is decided here rather than in the component, so the rules can
+// be pinned without a DOM.
+describe('matchesFilters', () => {
+  const base = {
+    kind: 'issue' as const,
+    url: '',
+    state: 'OPEN',
+    createdAt: '2026-09-18T10:00:00Z',
+    updatedAt: '2026-09-18T10:00:00Z',
+    assignees: [],
+    commentCount: 0
+  }
+  const bug = {
+    ...base,
+    number: 1,
+    title: 'Terminal takes no mouse input',
+    author: 'Letsmoe',
+    labels: [
+      { name: 'bug', color: 'ff0000' },
+      { name: 'area:terminal', color: '00ff00' }
+    ]
+  }
+  const feature = {
+    ...base,
+    number: 2,
+    title: 'Smooth scrolling',
+    author: 'claude',
+    labels: [{ name: 'enhancement', color: '0000ff' }]
+  }
+
+  it('keeps everything when nothing is narrowed', () => {
+    expect(filterItems([bug, feature], NO_FILTERS)).toHaveLength(2)
+  })
+
+  it('narrows to the chosen authors', () => {
+    const kept = filterItems([bug, feature], { ...NO_FILTERS, authors: ['claude'] })
+    expect(kept.map((item) => item.number)).toEqual([2])
+  })
+
+  it('offers several authors at once', () => {
+    const kept = filterItems([bug, feature], { ...NO_FILTERS, authors: ['claude', 'Letsmoe'] })
+    expect(kept).toHaveLength(2)
+  })
+
+  it('requires every chosen label, not any of them', () => {
+    const both = filterItems([bug, feature], {
+      ...NO_FILTERS,
+      labels: ['bug', 'area:terminal']
+    })
+    expect(both.map((item) => item.number)).toEqual([1])
+    const impossible = filterItems([bug, feature], {
+      ...NO_FILTERS,
+      labels: ['bug', 'enhancement']
+    })
+    expect(impossible).toEqual([])
+  })
+
+  it('applies the search box alongside the menus', () => {
+    const kept = filterItems([bug, feature], {
+      ...NO_FILTERS,
+      authors: ['Letsmoe'],
+      query: 'scrolling'
+    })
+    expect(kept).toEqual([])
+  })
+
+  it('still accepts a bare query string', () => {
+    expect(filterItems([bug, feature], 'terminal').map((item) => item.number)).toEqual([1])
+  })
+})
+
+describe('authorsOf', () => {
+  it('lists each author once, alphabetically', () => {
+    const items = [
+      { author: 'zoe' },
+      { author: 'adam' },
+      { author: 'zoe' }
+    ] as unknown as Parameters<typeof authorsOf>[0]
+    expect(authorsOf(items)).toEqual(['adam', 'zoe'])
   })
 })

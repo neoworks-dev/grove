@@ -73,8 +73,10 @@ const workbench = {
       ipcRenderer.invoke('github:changeLabels', kind, number, change),
     comment: (kind: string, number: number, body: string) =>
       ipcRenderer.invoke('github:comment', kind, number, body),
-    action: (kind: string, number: number, action: string, merge?: unknown) =>
-      ipcRenderer.invoke('github:action', kind, number, action, merge)
+    action: (kind: string, number: number, action: string, merge?: unknown, reason?: string) =>
+      ipcRenderer.invoke('github:action', kind, number, action, merge, reason),
+    changeAssignees: (kind: string, number: number, change: unknown) =>
+      ipcRenderer.invoke('github:changeAssignees', kind, number, change)
   },
   checkpoints: {
     list: (worktreeId: string) => ipcRenderer.invoke('checkpoints:list', worktreeId),

@@ -6,6 +6,7 @@
   import { github, refreshDashboard, selectItem, startAutoRefresh } from './store.svelte'
   import GithubItemRow from './GithubItemRow.svelte'
   import GithubThread from './GithubThread.svelte'
+  import GithubCompose from './GithubCompose.svelte'
   import { ageLabel } from './filter'
   import type { GithubItemKind, GithubStateFilter } from '../../../../../shared/types'
 
@@ -43,6 +44,29 @@
 
   function setStateFilter(event: Event): void {
     github.stateFilter = (event.currentTarget as HTMLSelectElement).value as GithubStateFilter
+  }
+
+  // The right-hand column carries either the composer or the selected thread;
+  // on a narrow pane it takes the whole width, and the list steps aside.
+  const detailColumnShown = $derived(github.composing || github.selection !== null)
+
+  function startCompose(): void {
+    github.composing = true
+  }
+
+  // Opening a thread puts the composer away; the draft is kept in the store, so
+  // coming back to it loses nothing.
+  function openItem(kind: GithubItemKind, number: number): void {
+    github.composing = false
+    void selectItem({ kind, number })
+  }
+
+  function backToList(): void {
+    if (github.composing) {
+      github.composing = false
+      return
+    }
+    void selectItem(null)
   }
 
   function isSelected(number: number, kind: GithubItemKind): boolean {
@@ -101,6 +125,12 @@
     >
       Refresh
     </button>
+    <button
+      class="shrink-0 rounded-md bg-action px-2 py-1 text-2xs text-action-fg hover:opacity-90"
+      onclick={startCompose}
+    >
+      New issue
+    </button>
   </div>
 
   {#if github.error}
@@ -108,7 +138,7 @@
   {/if}
 
   <div class="flex min-h-0 flex-1">
-    {#if !narrow || !github.selection}
+    {#if !narrow || !detailColumnShown}
       <div class="flex min-h-0 min-w-0 shrink-0 flex-col" style:width={listWidth}>
         <FloatingScrollbar class="min-h-0 flex-1">
           <div>
@@ -117,7 +147,7 @@
                 {item}
                 selected={isSelected(item.number, item.kind)}
                 isViewer={item.author === viewer}
-                onselect={() => selectItem({ kind: item.kind, number: item.number })}
+                onselect={() => openItem(item.kind, item.number)}
               />
             {/each}
 
@@ -137,18 +167,22 @@
       </div>
     {/if}
 
-    {#if !narrow || github.selection}
+    {#if !narrow || detailColumnShown}
       <div class="flex min-h-0 min-w-0 flex-1 flex-col border-line" class:border-l={!narrow}>
-        {#if narrow && github.selection}
+        {#if narrow && detailColumnShown}
           <button
             class="border-b border-line px-3 py-1.5 text-left text-2xs text-dim hover:bg-hover"
-            onclick={() => selectItem(null)}
+            onclick={backToList}
           >
             ← Back to list
           </button>
         {/if}
         <div class="min-h-0 flex-1">
-          <GithubThread />
+          {#if github.composing}
+            <GithubCompose />
+          {:else}
+            <GithubThread />
+          {/if}
         </div>
       </div>
     {/if}

@@ -29,6 +29,9 @@ import type {
   GithubItemKind,
   GithubItemDetail,
   GithubItemAction,
+  GithubLabelDefinition,
+  GithubIssueDraft,
+  GithubCreatedIssue,
   ArchiveOptions,
   DockLayoutState,
   WorkbenchConfig,
@@ -189,11 +192,10 @@ export interface WorkbenchApi {
     openPr: (worktreeId: string, options: OpenPrOptions) => Promise<string>
     mergePr: (worktreeId: string, options: MergePrOptions) => Promise<string>
     status: () => Promise<GithubStatus>
-    dashboard: (options: {
-      state: GithubStateFilter
-      limit: number
-    }) => Promise<GithubDashboard>
+    dashboard: (options: { state: GithubStateFilter; limit: number }) => Promise<GithubDashboard>
     item: (kind: GithubItemKind, number: number) => Promise<GithubItemDetail>
+    labels: () => Promise<GithubLabelDefinition[]>
+    createIssue: (draft: GithubIssueDraft) => Promise<GithubCreatedIssue>
     comment: (kind: GithubItemKind, number: number, body: string) => Promise<string>
     action: (
       kind: GithubItemKind,

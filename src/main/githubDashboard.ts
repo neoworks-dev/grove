@@ -11,12 +11,15 @@ import { spawn } from 'child_process'
 import { ensureGhReady } from './github'
 import type {
   GithubComment,
+  GithubCreatedIssue,
   GithubDashboard,
+  GithubIssueDraft,
   GithubIssueItem,
   GithubItemAction,
   GithubItemDetail,
   GithubItemKind,
   GithubLabel,
+  GithubLabelDefinition,
   GithubPullItem,
   GithubRepoRef,
   GithubStateFilter,
@@ -401,12 +404,60 @@ export async function addComment(
 ): Promise<string> {
   if (body.trim().length === 0) throw new Error('Comment body is empty')
   const command = kind === 'pull' ? 'pr' : 'issue'
-  const url = await runGh(
-    repoPath,
-    [command, 'comment', String(number), '--body-file', '-'],
-    body
-  )
+  const url = await runGh(repoPath, [command, 'comment', String(number), '--body-file', '-'], body)
   return url.trim()
+}
+
+/**
+ * The labels this repository defines, for the composer's picker. Read from the
+ * repository rather than listed here, so a repo that renames or adds one needs
+ * no change in Grove.
+ */
+export async function fetchLabels(repoPath: string): Promise<GithubLabelDefinition[]> {
+  const raw = await runGh(repoPath, [
+    'label',
+    'list',
+    '--limit',
+    String(MAX_ITEMS),
+    '--json',
+    'name,color,description'
+  ])
+  return parseJson<GithubLabelDefinition[]>(raw)
+}
+
+/** Build the gh argv for creating an issue (pure, for testing/reuse). */
+export function createIssueArgs(draft: GithubIssueDraft): string[] {
+  const title = draft.title.trim()
+  if (title.length === 0) throw new Error('An issue needs a title')
+  // The body goes over stdin; the title is safe as argv, which is never a
+  // shell string here.
+  const args = ['issue', 'create', '--title', title, '--body-file', '-']
+  for (const label of draft.labels) {
+    args.push('--label', label)
+  }
+  return args
+}
+
+/**
+ * gh prints the new issue's URL, which is the only place its number appears.
+ * Throws rather than guessing, so a changed output format is not silently
+ * turned into issue 0.
+ */
+function issueNumberFromUrl(url: string): number {
+  const match = /\/issues\/(\d+)\s*$/.exec(url)
+  if (!match) throw new Error(`gh issue create printed no issue URL: ${url}`)
+  return Number(match[1])
+}
+
+/** Create an issue and report where it landed. */
+export async function createIssue(
+  repoPath: string,
+  draft: GithubIssueDraft
+): Promise<GithubCreatedIssue> {
+  const output = await runGh(repoPath, createIssueArgs(draft), draft.body)
+  const url = output.trim().split('\n').pop()
+  if (url === undefined) throw new Error('gh issue create printed nothing')
+  return { number: issueNumberFromUrl(url), url }
 }
 
 /** Build the gh argv for a state-changing action (pure, for testing/reuse). */

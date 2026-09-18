@@ -259,6 +259,19 @@ export interface GithubLabel {
   color: string
 }
 
+/** A label as the repository defines it, for the pickers that offer them. */
+export interface GithubLabelDefinition extends GithubLabel {
+  description: string
+}
+
+/** A new issue, as composed in the pane and handed to `gh issue create`. */
+export interface GithubIssueDraft {
+  title: string
+  body: string
+  /** Label names, which must already exist on the repository. */
+  labels: string[]
+}
+
 interface GithubItemShared {
   number: number
   title: string
@@ -331,6 +344,12 @@ export interface GithubItemDetail extends GithubItemShared {
   baseRefName?: string
   reviewDecision?: string | null
   mergeStateStatus?: string
+}
+
+/** Where a freshly created issue landed. */
+export interface GithubCreatedIssue {
+  number: number
+  url: string
 }
 
 /** Non-comment actions the dashboard can run against an item. */

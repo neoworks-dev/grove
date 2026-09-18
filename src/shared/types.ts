@@ -264,6 +264,43 @@ export interface GithubLabelDefinition extends GithubLabel {
   description: string
 }
 
+/** A repository milestone, as the sidebar shows one and the filter menu lists it. */
+export interface GithubMilestone {
+  number: number
+  title: string
+  /** OPEN | CLOSED, as GitHub stores it. */
+  state: string
+  /** ISO timestamp the milestone is due, or null when it has no date. */
+  dueOn: string | null
+}
+
+/** An organisation's issue type — Bug, Feature, Task, whatever it defines. */
+export interface GithubIssueType {
+  name: string
+  /** GitHub's palette name for the type: RED, BLUE, GRAY, … */
+  color: string
+}
+
+/** A ProjectV2 board an item sits on. */
+export interface GithubProjectRef {
+  number: number
+  title: string
+  url: string
+}
+
+/**
+ * Which optional GraphQL selections this token and this schema allow.
+ *
+ * Projects are ProjectV2 and need the `read:project` scope; issue types are not
+ * in every schema. A selection that is not allowed fails the *whole* document
+ * rather than coming back empty, so each is probed once and then either
+ * included in the queries or left out of them entirely.
+ */
+export interface GithubCapabilities {
+  projects: boolean
+  issueTypes: boolean
+}
+
 /** A new issue, as composed in the pane and handed to `gh issue create`. */
 export interface GithubIssueDraft {
   title: string
@@ -283,6 +320,11 @@ interface GithubItemShared {
   updatedAt: string
   labels: GithubLabel[]
   assignees: string[]
+  /** Null when the item has none. Absent when the query could not ask. */
+  milestone?: GithubMilestone | null
+  issueType?: GithubIssueType | null
+  /** Boards the item sits on; absent without the `read:project` scope. */
+  projects?: GithubProjectRef[]
 }
 
 export interface GithubIssueItem extends GithubItemShared {
@@ -317,6 +359,8 @@ export interface GithubDashboard {
   viewer: string | null
   issues: GithubIssueItem[]
   pulls: GithubPullItem[]
+  /** What this token could be asked for, so the UI hides what is not there. */
+  capabilities: GithubCapabilities
   /** Epoch ms of the fetch, for the "updated Xs ago" hint. */
   fetchedAt: number
 }

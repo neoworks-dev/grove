@@ -46,6 +46,20 @@ export const githubRoutes = {
       return dashboard.fetchLabels(repoPath)
     })
 
+    route(ctx, 'github:milestones', () => {
+      const { repoPath } = ctx.workbench.requireRepo()
+      return dashboard.fetchMilestones(repoPath)
+    })
+
+    route(
+      ctx,
+      'github:changeMilestone',
+      (_e, kind: GithubItemKind, number: number, title: string | null) => {
+        const { repoPath } = ctx.workbench.requireRepo()
+        return dashboard.changeMilestone(repoPath, kind, number, title)
+      }
+    )
+
     route(ctx, 'github:mentionables', () => {
       const { repoPath } = ctx.workbench.requireRepo()
       return dashboard.fetchMentionables(repoPath)

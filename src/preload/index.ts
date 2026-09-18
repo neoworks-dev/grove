@@ -67,6 +67,9 @@ const workbench = {
     dashboard: (options: unknown) => ipcRenderer.invoke('github:dashboard', options),
     item: (kind: string, number: number) => ipcRenderer.invoke('github:item', kind, number),
     labels: () => ipcRenderer.invoke('github:labels'),
+    milestones: () => ipcRenderer.invoke('github:milestones'),
+    changeMilestone: (kind: string, number: number, title: string | null) =>
+      ipcRenderer.invoke('github:changeMilestone', kind, number, title),
     mentionables: () => ipcRenderer.invoke('github:mentionables'),
     createIssue: (draft: unknown) => ipcRenderer.invoke('github:createIssue', draft),
     changeLabels: (kind: string, number: number, change: unknown) =>

@@ -6,13 +6,16 @@ import {
   ageLabel,
   availableActions,
   filterItems,
+  issueTypeColour,
   matchesFilters,
   authorsOf,
   NO_FILTERS,
   matchesQuery,
+  projectsOf,
   relativeTime,
   reviewLabel,
-  stateTone
+  stateTone,
+  typesOf
 } from '../src/renderer/src/kernel/plugins/github/filter'
 import type { GithubIssueItem, GithubPullItem } from '../src/shared/types'
 
@@ -202,6 +205,86 @@ describe('matchesFilters', () => {
 
   it('still accepts a bare query string', () => {
     expect(filterItems([bug, feature], 'terminal').map((item) => item.number)).toEqual([1])
+  })
+
+  // Milestones, types and boards are OR — GitHub narrows to any of the chosen
+  // ones, unlike labels — and an item that carries none of them drops out.
+  const milestoned = {
+    ...feature,
+    number: 3,
+    milestone: { number: 1, title: 'v1.0', state: 'open', dueOn: null },
+    issueType: { name: 'Feature', color: 'BLUE' },
+    projects: [{ number: 4, title: 'Roadmap', url: '' }]
+  }
+
+  it('narrows to any of the chosen milestones', () => {
+    const kept = filterItems([bug, milestoned], { ...NO_FILTERS, milestones: ['v1.0', 'v2.0'] })
+    expect(kept.map((item) => item.number)).toEqual([3])
+  })
+
+  it('narrows to any of the chosen issue types', () => {
+    const kept = filterItems([bug, milestoned], { ...NO_FILTERS, types: ['Feature'] })
+    expect(kept.map((item) => item.number)).toEqual([3])
+  })
+
+  it('narrows to any of the chosen boards', () => {
+    const kept = filterItems([bug, milestoned], { ...NO_FILTERS, projects: ['Roadmap'] })
+    expect(kept.map((item) => item.number)).toEqual([3])
+  })
+
+  it('drops an item the query could not ask about', () => {
+    expect(filterItems([bug], { ...NO_FILTERS, projects: ['Roadmap'] })).toEqual([])
+  })
+})
+
+describe('typesOf and projectsOf', () => {
+  const base = {
+    kind: 'issue' as const,
+    url: '',
+    state: 'OPEN',
+    createdAt: '2026-09-18T10:00:00Z',
+    updatedAt: '2026-09-18T10:00:00Z',
+    assignees: [],
+    labels: [],
+    commentCount: 0,
+    author: 'claude',
+    title: ''
+  }
+
+  it('lists each type and board once, alphabetically', () => {
+    const items = [
+      { ...base, number: 1, issueType: { name: 'Task', color: 'GRAY' }, projects: [] },
+      {
+        ...base,
+        number: 2,
+        issueType: { name: 'Bug', color: 'RED' },
+        projects: [{ number: 1, title: 'Roadmap', url: '' }]
+      },
+      {
+        ...base,
+        number: 3,
+        issueType: { name: 'Bug', color: 'RED' },
+        projects: [{ number: 1, title: 'Roadmap', url: '' }]
+      }
+    ]
+    expect(typesOf(items)).toEqual(['Bug', 'Task'])
+    expect(projectsOf(items)).toEqual(['Roadmap'])
+  })
+
+  it('skips items the query could not ask about', () => {
+    expect(typesOf([{ ...base, number: 1 }])).toEqual([])
+    expect(projectsOf([{ ...base, number: 1 }])).toEqual([])
+  })
+})
+
+describe('issueTypeColour', () => {
+  it('resolves GitHub palette names to hex', () => {
+    expect(issueTypeColour('RED')).toBe('d1242f')
+    expect(issueTypeColour('blue')).toBe('0969da')
+  })
+
+  it('falls back to grey for a name it does not know', () => {
+    expect(issueTypeColour('CHARTREUSE')).toBe('59636e')
   })
 })
 

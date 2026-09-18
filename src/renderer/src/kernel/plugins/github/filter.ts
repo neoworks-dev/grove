@@ -32,9 +32,22 @@ export interface ItemFilters {
   authors: string[]
   /** Label names; an item must carry all of them, which is what GitHub does. */
   labels: string[]
+  /** Milestone titles; an item on any one of them matches. */
+  milestones: string[]
+  /** Issue type names; an item of any one of them matches. */
+  types: string[]
+  /** Project titles; an item on any one of those boards matches. */
+  projects: string[]
 }
 
-export const NO_FILTERS: ItemFilters = { query: '', authors: [], labels: [] }
+export const NO_FILTERS: ItemFilters = {
+  query: '',
+  authors: [],
+  labels: [],
+  milestones: [],
+  types: [],
+  projects: []
+}
 
 /** Whether an item survives every active narrowing. */
 export function matchesFilters(item: GithubItem, filters: ItemFilters): boolean {
@@ -43,6 +56,19 @@ export function matchesFilters(item: GithubItem, filters: ItemFilters): boolean 
   if (filters.labels.length > 0) {
     const carried = item.labels.map((label) => label.name)
     if (!filters.labels.every((name) => carried.includes(name))) return false
+  }
+  if (filters.milestones.length > 0) {
+    if (!item.milestone) return false
+    if (!filters.milestones.includes(item.milestone.title)) return false
+  }
+  if (filters.types.length > 0) {
+    if (!item.issueType) return false
+    if (!filters.types.includes(item.issueType.name)) return false
+  }
+  if (filters.projects.length > 0) {
+    const boards = item.projects
+    if (!boards) return false
+    if (!boards.some((project) => filters.projects.includes(project.title))) return false
   }
   return true
 }
@@ -55,10 +81,54 @@ export function filterItems<T extends GithubItem>(items: T[], filters: ItemFilte
 
 /** Every author present in a list, alphabetical — the options the menu offers. */
 export function authorsOf(items: GithubItem[]): string[] {
+  return uniqueSorted(items.map((item) => item.author))
+}
+
+/**
+ * Every issue type present in a list, alphabetical. Types and projects are read
+ * off the loaded items rather than from the repository: the menu only narrows
+ * what is on screen, so offering one nothing here carries would filter to
+ * nothing and say nothing about why.
+ */
+export function typesOf(items: GithubItem[]): string[] {
+  return uniqueSorted(items.flatMap((item) => (item.issueType ? [item.issueType.name] : [])))
+}
+
+/** Every project board present in a list, alphabetical. */
+export function projectsOf(items: GithubItem[]): string[] {
+  const titles = items.flatMap((item) => {
+    if (!item.projects) return []
+    return item.projects.map((project) => project.title)
+  })
+  return uniqueSorted(titles)
+}
+
+// GitHub gives an issue type a colour by name from its own palette rather than
+// as a hex, so these are what those names resolve to. With one, a type can be
+// drawn through the same pill a label uses.
+const ISSUE_TYPE_COLOURS: Record<string, string> = {
+  RED: 'd1242f',
+  ORANGE: 'bc4c00',
+  YELLOW: '9a6700',
+  GREEN: '1a7f37',
+  BLUE: '0969da',
+  PURPLE: '8250df',
+  PINK: 'bf3989',
+  GRAY: '59636e'
+}
+
+/** Six-digit hex for an issue type's palette name; grey when it is unknown. */
+export function issueTypeColour(palette: string): string {
+  const hex = ISSUE_TYPE_COLOURS[palette.toUpperCase()]
+  if (hex === undefined) return ISSUE_TYPE_COLOURS.GRAY
+  return hex
+}
+
+function uniqueSorted(values: string[]): string[] {
   const collected: string[] = []
-  for (const item of items) {
-    if (collected.includes(item.author)) continue
-    collected.push(item.author)
+  for (const value of values) {
+    if (collected.includes(value)) continue
+    collected.push(value)
   }
   return collected.sort((left, right) => left.localeCompare(right))
 }

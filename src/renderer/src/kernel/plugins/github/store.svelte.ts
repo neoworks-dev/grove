@@ -6,10 +6,12 @@
 // has already navigated away from is dropped instead of overwriting the view.
 
 import { dialogs } from '../../../lib/dialogs.svelte'
-import { authorsOf, filterItems } from './filter'
+import { authorsOf, filterItems, projectsOf, typesOf } from './filter'
 import type {
   GithubActor,
+  GithubCapabilities,
   GithubDashboard,
+  GithubMilestone,
   GithubIssueDraft,
   GithubItem,
   GithubCloseReason,
@@ -46,6 +48,12 @@ class GithubStore {
   authorFilter = $state<string[]>([])
   /** Label names picked in the Labels menu; an item must carry all of them. */
   labelFilter = $state<string[]>([])
+  /** Milestone titles picked in the Milestone menu; any one of them matches. */
+  milestoneFilter = $state<string[]>([])
+  /** Issue type names picked in the Type menu; any one of them matches. */
+  typeFilter = $state<string[]>([])
+  /** Project titles picked in the Projects menu; any one of them matches. */
+  projectFilter = $state<string[]>([])
 
   selection = $state<GithubSelection | null>(null)
   detail = $state<GithubItemDetail | null>(null)
@@ -65,6 +73,8 @@ class GithubStore {
   draft = $state<GithubIssueDraft>({ title: '', body: '', labels: [] })
   /** The repository's own labels, for the pickers. Loaded on demand. */
   labels = $state<GithubLabelDefinition[]>([])
+  /** The repository's own milestones, for the sidebar picker. On demand too. */
+  milestones = $state<GithubMilestone[]>([])
 
   /**
    * Threads already fetched this session, keyed `kind:number`. Reselecting an
@@ -103,7 +113,10 @@ class GithubStore {
     return filterItems(this.tabItems, {
       query: this.query,
       authors: this.authorFilter,
-      labels: this.labelFilter
+      labels: this.labelFilter,
+      milestones: this.milestoneFilter,
+      types: this.typeFilter,
+      projects: this.projectFilter
     })
   }
 
@@ -119,9 +132,35 @@ class GithubStore {
     return authorsOf(this.tabItems)
   }
 
+  /** Every issue type on this tab, for the Type menu. */
+  get typeOptions(): string[] {
+    return typesOf(this.tabItems)
+  }
+
+  /** Every project board on this tab, for the Projects menu. */
+  get projectOptions(): string[] {
+    return projectsOf(this.tabItems)
+  }
+
+  /**
+   * What this token was allowed to ask GitHub for. Absent until the first load,
+   * which reads as "not available" — the menus appear once the answer is in
+   * rather than flickering on and off.
+   */
+  get capabilities(): GithubCapabilities {
+    if (!this.dashboard) return { projects: false, issueTypes: false }
+    return this.dashboard.capabilities
+  }
+
   /** Whether anything is narrowing the list beyond the state filter. */
   get filtersActive(): boolean {
-    return this.authorFilter.length > 0 || this.labelFilter.length > 0
+    return (
+      this.authorFilter.length > 0 ||
+      this.labelFilter.length > 0 ||
+      this.milestoneFilter.length > 0 ||
+      this.typeFilter.length > 0 ||
+      this.projectFilter.length > 0
+    )
   }
 
   get counts(): { pull: number; issue: number } {
@@ -199,6 +238,9 @@ export async function selectItem(selection: GithubSelection | null): Promise<voi
 export function clearFilters(): void {
   github.authorFilter = []
   github.labelFilter = []
+  github.milestoneFilter = []
+  github.typeFilter = []
+  github.projectFilter = []
 }
 
 /** Tick or untick one row. */
@@ -388,6 +430,41 @@ export async function loadLabels(): Promise<void> {
     github.labels = await window.workbench.github.labels()
   } catch (err) {
     dialogs.notify({ level: 'error', message: `Could not load labels: ${(err as Error).message}` })
+  }
+}
+
+/**
+ * Load the repository's milestones once. A failure leaves the picker empty and
+ * says so there, rather than taking down the rail it sits in.
+ */
+export async function loadMilestones(): Promise<void> {
+  if (github.milestones.length > 0) return
+  try {
+    github.milestones = await window.workbench.github.milestones()
+  } catch (err) {
+    dialogs.notify({
+      level: 'error',
+      message: `Could not load milestones: ${(err as Error).message}`
+    })
+  }
+}
+
+/** Put the open item on a milestone, or take it off one. */
+export async function applyMilestone(title: string | null): Promise<void> {
+  const selection = github.selection
+  const detail = github.detail
+  if (!selection || !detail) return
+  const current = detail.milestone ? detail.milestone.title : null
+  if (current === title) return
+  github.busy = true
+  try {
+    await window.workbench.github.changeMilestone(selection.kind, selection.number, title)
+    await loadDetail(selection, { silent: true })
+    void refreshDashboard(github.stateFilter, { silent: true })
+  } catch (err) {
+    dialogs.notify({ level: 'error', message: (err as Error).message })
+  } finally {
+    github.busy = false
   }
 }
 

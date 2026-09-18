@@ -4,31 +4,96 @@
 // here (the network calls themselves are not exercised).
 
 import { describe, it, expect } from 'bun:test'
-import { createIssueArgs, dashboardQuery, itemActionArgs } from '../src/main/githubDashboard'
+import {
+  createIssueArgs,
+  dashboardQuery,
+  itemActionArgs,
+  itemDetailQuery,
+  milestoneChangeArgs,
+  optionalFields
+} from '../src/main/githubDashboard'
+
+// What a token with nothing extra granted can ask for, which is the case the
+// optional selections exist to protect.
+const PLAIN = { projects: false, issueTypes: false }
+const FULL = { projects: true, issueTypes: true }
 
 describe('dashboardQuery', () => {
   it('asks for open items only under the open filter', () => {
-    const query = dashboardQuery('open')
+    const query = dashboardQuery('open', PLAIN)
     expect(query).toContain('issues(first: $limit, states: [OPEN]')
     expect(query).toContain('pullRequests(first: $limit, states: [OPEN]')
   })
 
   it('counts merged pull requests as closed', () => {
-    const query = dashboardQuery('closed')
+    const query = dashboardQuery('closed', PLAIN)
     expect(query).toContain('issues(first: $limit, states: [CLOSED]')
     expect(query).toContain('pullRequests(first: $limit, states: [CLOSED, MERGED]')
   })
 
   it('covers every state under the all filter', () => {
-    const query = dashboardQuery('all')
+    const query = dashboardQuery('all', PLAIN)
     expect(query).toContain('states: [OPEN, CLOSED]')
     expect(query).toContain('states: [OPEN, CLOSED, MERGED]')
   })
 
   it('fetches both sides and the viewer in one request', () => {
-    const query = dashboardQuery('open')
+    const query = dashboardQuery('open', PLAIN)
     expect(query).toContain('viewer { login }')
     expect(query.match(/nodes \{/g)?.length).toBeGreaterThan(1)
+  })
+})
+
+describe('optionalFields', () => {
+  it('always asks for the milestone, which needs no scope', () => {
+    expect(optionalFields(PLAIN, true)).toContain('milestone {')
+  })
+
+  it('leaves out what the token was not granted', () => {
+    const fields = optionalFields(PLAIN, true)
+    expect(fields).not.toContain('projectItems')
+    expect(fields).not.toContain('issueType')
+  })
+
+  it('asks for projects and types once they are available', () => {
+    const fields = optionalFields(FULL, true)
+    expect(fields).toContain('projectItems(first: 10)')
+    expect(fields).toContain('issueType { name color }')
+  })
+
+  it('never asks a pull request for an issue type', () => {
+    expect(optionalFields(FULL, false)).not.toContain('issueType')
+  })
+})
+
+describe('itemDetailQuery', () => {
+  it('keeps projects out of both branches without the scope', () => {
+    expect(itemDetailQuery(PLAIN)).not.toContain('projectItems')
+  })
+
+  it('asks both branches for projects once the scope is there', () => {
+    expect(itemDetailQuery(FULL).match(/projectItems/g)?.length).toBe(2)
+  })
+})
+
+describe('milestoneChangeArgs', () => {
+  it('sets a milestone by title', () => {
+    expect(milestoneChangeArgs('issue', 12, 'v1.0')).toEqual([
+      'issue',
+      'edit',
+      '12',
+      '--milestone',
+      'v1.0'
+    ])
+  })
+
+  it('clears it with its own flag rather than an empty title', () => {
+    expect(milestoneChangeArgs('pull', 7, null)).toEqual([
+      'pr',
+      'edit',
+      '7',
+      '--remove-milestone'
+    ])
   })
 })
 

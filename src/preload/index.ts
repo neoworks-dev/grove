@@ -66,10 +66,26 @@ const workbench = {
     status: () => ipcRenderer.invoke('github:status'),
     dashboard: (options: unknown) => ipcRenderer.invoke('github:dashboard', options),
     item: (kind: string, number: number) => ipcRenderer.invoke('github:item', kind, number),
+    labels: () => ipcRenderer.invoke('github:labels'),
+    milestones: () => ipcRenderer.invoke('github:milestones'),
+    changeMilestone: (kind: string, number: number, title: string | null) =>
+      ipcRenderer.invoke('github:changeMilestone', kind, number, title),
+    mentionables: () => ipcRenderer.invoke('github:mentionables'),
+    setSubscription: (nodeId: string, subscribed: boolean) =>
+      ipcRenderer.invoke('github:setSubscription', nodeId, subscribed),
+    command: (kind: string, number: number, command: string) =>
+      ipcRenderer.invoke('github:command', kind, number, command),
+    transfer: (number: number, destination: string) =>
+      ipcRenderer.invoke('github:transfer', number, destination),
+    createIssue: (draft: unknown) => ipcRenderer.invoke('github:createIssue', draft),
+    changeLabels: (kind: string, number: number, change: unknown) =>
+      ipcRenderer.invoke('github:changeLabels', kind, number, change),
     comment: (kind: string, number: number, body: string) =>
       ipcRenderer.invoke('github:comment', kind, number, body),
-    action: (kind: string, number: number, action: string, merge?: unknown) =>
-      ipcRenderer.invoke('github:action', kind, number, action, merge)
+    action: (kind: string, number: number, action: string, merge?: unknown, reason?: string) =>
+      ipcRenderer.invoke('github:action', kind, number, action, merge, reason),
+    changeAssignees: (kind: string, number: number, change: unknown) =>
+      ipcRenderer.invoke('github:changeAssignees', kind, number, change)
   },
   checkpoints: {
     list: (worktreeId: string) => ipcRenderer.invoke('checkpoints:list', worktreeId),

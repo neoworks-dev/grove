@@ -2,7 +2,7 @@
 // and the small vocabulary that turns GitHub's enums into colours and words.
 // Kept free of runes and `window` so they can be unit-tested directly.
 
-import type { GithubItem } from '../../../../../shared/types'
+import type { GithubItem, GithubItemKind } from '../../../../../shared/types'
 
 /** A colour token from the app palette, used for status text and dots. */
 export type Tone = 'green' | 'red' | 'amber' | 'violet' | 'blue' | 'dim'
@@ -25,9 +25,62 @@ export function matchesQuery(item: GithubItem, query: string): boolean {
   return haystack.some((field) => field.toLowerCase().includes(needle))
 }
 
-/** Search a list, keeping GitHub's most-recently-updated-first order. */
-export function filterItems<T extends GithubItem>(items: T[], query: string): T[] {
-  return items.filter((item) => matchesQuery(item, query))
+// The narrowing that used to live here — an ItemFilters record of arrays, one
+// per menu — is now search.ts: the query string is the only place a filter is
+// written down, so the menus and the box cannot disagree.
+
+/** Every author present in a list, alphabetical — the options the menu offers. */
+export function authorsOf(items: GithubItem[]): string[] {
+  return uniqueSorted(items.map((item) => item.author))
+}
+
+/**
+ * Every issue type present in a list, alphabetical. Types and projects are read
+ * off the loaded items rather than from the repository: the menu only narrows
+ * what is on screen, so offering one nothing here carries would filter to
+ * nothing and say nothing about why.
+ */
+export function typesOf(items: GithubItem[]): string[] {
+  return uniqueSorted(items.flatMap((item) => (item.issueType ? [item.issueType.name] : [])))
+}
+
+/** Every project board present in a list, alphabetical. */
+export function projectsOf(items: GithubItem[]): string[] {
+  const titles = items.flatMap((item) => {
+    if (!item.projects) return []
+    return item.projects.map((project) => project.title)
+  })
+  return uniqueSorted(titles)
+}
+
+// GitHub gives an issue type a colour by name from its own palette rather than
+// as a hex, so these are what those names resolve to. With one, a type can be
+// drawn through the same pill a label uses.
+const ISSUE_TYPE_COLOURS: Record<string, string> = {
+  RED: 'd1242f',
+  ORANGE: 'bc4c00',
+  YELLOW: '9a6700',
+  GREEN: '1a7f37',
+  BLUE: '0969da',
+  PURPLE: '8250df',
+  PINK: 'bf3989',
+  GRAY: '59636e'
+}
+
+/** Six-digit hex for an issue type's palette name; grey when it is unknown. */
+export function issueTypeColour(palette: string): string {
+  const hex = ISSUE_TYPE_COLOURS[palette.toUpperCase()]
+  if (hex === undefined) return ISSUE_TYPE_COLOURS.GRAY
+  return hex
+}
+
+function uniqueSorted(values: string[]): string[] {
+  const collected: string[] = []
+  for (const value of values) {
+    if (collected.includes(value)) continue
+    collected.push(value)
+  }
+  return collected.sort((left, right) => left.localeCompare(right))
 }
 
 const MINUTE = 60_000
@@ -83,24 +136,11 @@ export function reviewTone(decision: string | null | undefined): Tone {
 }
 
 /** Colour for an item's own state (open / closed / merged / draft). */
-export function stateTone(item: GithubItem): Tone {
+export function stateTone(item: { kind: GithubItemKind; state: string; isDraft?: boolean }): Tone {
   if (item.kind === 'pull' && item.isDraft) return 'dim'
   if (item.state === 'MERGED') return 'violet'
   if (item.state === 'CLOSED') return 'red'
   return 'green'
-}
-
-/**
- * Whether a label chip needs light or dark text over GitHub's background
- * colour, using the standard luminance cutoff.
- */
-export function labelIsDark(color: string): boolean {
-  const hex = color.replace('#', '')
-  if (hex.length !== 6) return true
-  const red = parseInt(hex.slice(0, 2), 16)
-  const green = parseInt(hex.slice(2, 4), 16)
-  const blue = parseInt(hex.slice(4, 6), 16)
-  return (red * 299 + green * 587 + blue * 114) / 1000 < 140
 }
 
 /** Actions offered for an item, given its kind and current state. */

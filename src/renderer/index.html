@@ -8,11 +8,19 @@
          'wasm-unsafe-eval'). Grammar downloads happen in the main process, so
          connect-src reaches nothing remote. The two custom schemes are both
          served by the main process over its own handlers: grove-plugin: is a
-         plugin's bundled code, grove-agent: is a chat attachment. Local
-         desktop tool, no remote content. -->
+         plugin's bundled code, grove-agent: is a chat attachment.
+
+         img-src is the one directive that reaches the network. Issue bodies,
+         comments and avatars are full of GitHub-hosted images, and a client
+         that renders none of them shows a different thread than the website
+         does. It is narrowed to the hosts GitHub actually serves from —
+         avatars and user attachments on githubusercontent.com (camo, which
+         proxies images from anywhere else, is one of those subdomains),
+         attachments under github.com itself. Nothing else remote loads, and no
+         other directive is widened: this buys pictures, not script or fetch. -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' grove-plugin:; style-src 'self' 'unsafe-inline'; img-src 'self' data: grove-agent:; font-src 'self' data:; connect-src 'self' grove-plugin: grove-agent:; worker-src 'self'"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' grove-plugin:; style-src 'self' 'unsafe-inline'; img-src 'self' data: grove-agent: https://github.com https://*.githubusercontent.com; font-src 'self' data:; connect-src 'self' grove-plugin: grove-agent:; worker-src 'self'"
     />
   </head>
 

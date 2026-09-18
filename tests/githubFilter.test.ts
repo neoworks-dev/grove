@@ -5,12 +5,14 @@ import { describe, it, expect } from 'bun:test'
 import {
   ageLabel,
   availableActions,
-  filterItems,
-  labelIsDark,
+  issueTypeColour,
+  authorsOf,
   matchesQuery,
+  projectsOf,
   relativeTime,
   reviewLabel,
-  stateTone
+  stateTone,
+  typesOf
 } from '../src/renderer/src/kernel/plugins/github/filter'
 import type { GithubIssueItem, GithubPullItem } from '../src/shared/types'
 
@@ -65,11 +67,6 @@ describe('matchesQuery', () => {
     expect(matchesQuery(issue(), '#42')).toBe(true)
     expect(matchesQuery(issue(), '#43')).toBe(false)
   })
-
-  it('keeps the incoming order when filtering', () => {
-    const items = [issue({ number: 1 }), issue({ number: 2, title: 'Other' }), issue({ number: 3 })]
-    expect(filterItems(items, 'crash').map((item) => item.number)).toEqual([1, 3])
-  })
 })
 
 describe('relativeTime', () => {
@@ -106,11 +103,6 @@ describe('item state vocabulary', () => {
     expect(reviewLabel('CHANGES_REQUESTED')).toBe('changes')
     expect(reviewLabel(null)).toBe(null)
   })
-
-  it('picks readable text for a label chip', () => {
-    expect(labelIsDark('0b0b0d')).toBe(true)
-    expect(labelIsDark('d4c5f9')).toBe(false)
-  })
 })
 
 describe('availableActions', () => {
@@ -132,5 +124,67 @@ describe('availableActions', () => {
       'merge',
       'close'
     ])
+  })
+})
+
+describe('typesOf and projectsOf', () => {
+  const base = {
+    kind: 'issue' as const,
+    url: '',
+    state: 'OPEN',
+    createdAt: '2026-09-18T10:00:00Z',
+    updatedAt: '2026-09-18T10:00:00Z',
+    assignees: [],
+    labels: [],
+    commentCount: 0,
+    author: 'claude',
+    title: ''
+  }
+
+  it('lists each type and board once, alphabetically', () => {
+    const items = [
+      { ...base, number: 1, issueType: { name: 'Task', color: 'GRAY' }, projects: [] },
+      {
+        ...base,
+        number: 2,
+        issueType: { name: 'Bug', color: 'RED' },
+        projects: [{ number: 1, title: 'Roadmap', url: '' }]
+      },
+      {
+        ...base,
+        number: 3,
+        issueType: { name: 'Bug', color: 'RED' },
+        projects: [{ number: 1, title: 'Roadmap', url: '' }]
+      }
+    ]
+    expect(typesOf(items)).toEqual(['Bug', 'Task'])
+    expect(projectsOf(items)).toEqual(['Roadmap'])
+  })
+
+  it('skips items the query could not ask about', () => {
+    expect(typesOf([{ ...base, number: 1 }])).toEqual([])
+    expect(projectsOf([{ ...base, number: 1 }])).toEqual([])
+  })
+})
+
+describe('issueTypeColour', () => {
+  it('resolves GitHub palette names to hex', () => {
+    expect(issueTypeColour('RED')).toBe('d1242f')
+    expect(issueTypeColour('blue')).toBe('0969da')
+  })
+
+  it('falls back to grey for a name it does not know', () => {
+    expect(issueTypeColour('CHARTREUSE')).toBe('59636e')
+  })
+})
+
+describe('authorsOf', () => {
+  it('lists each author once, alphabetically', () => {
+    const items = [
+      { author: 'zoe' },
+      { author: 'adam' },
+      { author: 'zoe' }
+    ] as unknown as Parameters<typeof authorsOf>[0]
+    expect(authorsOf(items)).toEqual(['adam', 'zoe'])
   })
 })

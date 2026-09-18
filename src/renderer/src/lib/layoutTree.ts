@@ -110,6 +110,25 @@ export function findLeaf(root: LayoutNode, leafId: string): LeafNode | null {
   return found ?? null
 }
 
+/**
+ * The distinct pane types this tree holds in one slot, in tree order. The slot
+ * of a type is looked up through the caller, so this stays independent of the
+ * pane registry.
+ */
+export function paneTypesInSlot(
+  root: LayoutNode,
+  slot: string,
+  slotOf: (paneTypeId: string) => string | undefined
+): string[] {
+  const collected: string[] = []
+  for (const leaf of leaves(root)) {
+    if (slotOf(leaf.paneTypeId) !== slot) continue
+    if (collected.includes(leaf.paneTypeId)) continue
+    collected.push(leaf.paneTypeId)
+  }
+  return collected
+}
+
 // Ids of every node from the root down to the given leaf, inclusive. Null when
 // the leaf isn't in the tree. Focus mode uses it to render just that branch.
 export function pathToLeaf(root: LayoutNode, leafId: string): string[] | null {

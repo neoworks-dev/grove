@@ -20,6 +20,7 @@ import {
   findParentSplit,
   findSplit,
   insertAtEdge,
+  paneTypesInSlot,
   pathToLeaf,
   splitLeaf,
   removeLeaf,
@@ -95,6 +96,15 @@ function createPaneLeaf(paneTypeId: string, paneState?: Record<string, unknown>)
 // Which outer edge a pane type belongs against when nothing of it is open.
 function edgeFor(paneTypeId: string): EdgeSide | null {
   return panes.get(paneTypeId)?.preferredEdge?.side ?? null
+}
+
+/**
+ * The centre panes a freshly built view consists of — what the view *is*, as
+ * opposed to the sidebar and chrome it happens to open with. Taken from the
+ * view's own tree rather than a list here, so a new view needs no change.
+ */
+function centrePaneTypes(tree: LayoutNode): string[] {
+  return paneTypesInSlot(tree, CENTER_SLOT, (paneTypeId) => panes.get(paneTypeId)?.slot)
 }
 
 // Smallest a pane may be dragged to before the gutter starts counting overshoot
@@ -596,6 +606,13 @@ class LayoutStore {
       this.splitFocused('row', paneTypeId)
       return true
     }
+    // The same stranding, one level up: a named view is its centre pane, so
+    // replacing that pane leaves the view showing something else entirely —
+    // and the swap is persisted, so it never comes back. Split beside it.
+    if (this.isActiveViewCentre(slotMate.paneTypeId)) {
+      this.splitFocused('row', paneTypeId)
+      return true
+    }
     this.setActiveTree(replaceLeafType(this.tree, slotMate.id, paneTypeId))
     this.focusLeafSoon(slotMate.id)
     this.schedule()
@@ -655,8 +672,30 @@ class LayoutStore {
   // Give a view a live tree and add it to the render list if it isn't mounted.
   private ensureMounted(viewId: string, definition: { buildTree: () => LayoutNode }): void {
     if (this.trees[viewId]) return
-    this.trees[viewId] = this.storedTrees[viewId] ?? definition.buildTree()
+    this.trees[viewId] = this.restoredTree(viewId, definition)
     this.mountedViewIds = [...this.mountedViewIds, viewId]
+  }
+
+  /**
+   * The tree a view opens with: what was saved for it, unless that no longer
+   * holds any of the panes the view is built around. A layout saved in that
+   * state shows the wrong thing forever, so it is dropped for a fresh one.
+   */
+  private restoredTree(viewId: string, definition: { buildTree: () => LayoutNode }): LayoutNode {
+    const stored = this.storedTrees[viewId]
+    if (!stored) return definition.buildTree()
+    const centreTypes = centrePaneTypes(definition.buildTree())
+    if (centreTypes.length === 0) return stored
+    const kept = leaves(stored).some((leaf) => centreTypes.includes(leaf.paneTypeId))
+    if (kept) return stored
+    return definition.buildTree()
+  }
+
+  /** Whether a pane type is one the active view is built around. */
+  private isActiveViewCentre(paneTypeId: string): boolean {
+    const definition = views.get(this.activeViewId)
+    if (!definition) return false
+    return centrePaneTypes(definition.buildTree()).includes(paneTypeId)
   }
 
   private focusInitial(definition: { initialFocus?: string }): void {

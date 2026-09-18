@@ -259,6 +259,76 @@ export interface GithubLabel {
   color: string
 }
 
+/** A label as the repository defines it, for the pickers that offer them. */
+export interface GithubLabelDefinition extends GithubLabel {
+  description: string
+}
+
+/** A repository milestone, as the sidebar shows one and the filter menu lists it. */
+export interface GithubMilestone {
+  number: number
+  title: string
+  /** OPEN | CLOSED, as GitHub stores it. */
+  state: string
+  /** ISO timestamp the milestone is due, or null when it has no date. */
+  dueOn: string | null
+}
+
+/** An organisation's issue type — Bug, Feature, Task, whatever it defines. */
+export interface GithubIssueType {
+  name: string
+  /** GitHub's palette name for the type: RED, BLUE, GRAY, … */
+  color: string
+}
+
+/** A ProjectV2 board an item sits on. */
+export interface GithubProjectRef {
+  number: number
+  title: string
+  url: string
+}
+
+/**
+ * Which optional GraphQL selections this token and this schema allow.
+ *
+ * Projects are ProjectV2 and need the `read:project` scope; issue types are not
+ * in every schema. A selection that is not allowed fails the *whole* document
+ * rather than coming back empty, so each is probed once and then either
+ * included in the queries or left out of them entirely.
+ */
+export interface GithubCapabilities {
+  projects: boolean
+  issueTypes: boolean
+  /** Sub-issues and the parent an issue hangs off. */
+  subIssues: boolean
+  /** The branches GitHub has linked to an issue. */
+  linkedBranches: boolean
+}
+
+/** A pointer to another issue, as a relationship carries one. */
+export interface GithubItemRef {
+  number: number
+  title: string
+  /** OPEN | CLOSED. */
+  state: string
+  url: string
+}
+
+/** How far down its sub-issues a tracking issue is. */
+export interface GithubSubIssueProgress {
+  total: number
+  completed: number
+  percentCompleted: number
+}
+
+/** A new issue, as composed in the pane and handed to `gh issue create`. */
+export interface GithubIssueDraft {
+  title: string
+  body: string
+  /** Label names, which must already exist on the repository. */
+  labels: string[]
+}
+
 interface GithubItemShared {
   number: number
   title: string
@@ -270,6 +340,11 @@ interface GithubItemShared {
   updatedAt: string
   labels: GithubLabel[]
   assignees: string[]
+  /** Null when the item has none. Absent when the query could not ask. */
+  milestone?: GithubMilestone | null
+  issueType?: GithubIssueType | null
+  /** Boards the item sits on; absent without the `read:project` scope. */
+  projects?: GithubProjectRef[]
 }
 
 export interface GithubIssueItem extends GithubItemShared {
@@ -304,24 +379,95 @@ export interface GithubDashboard {
   viewer: string | null
   issues: GithubIssueItem[]
   pulls: GithubPullItem[]
+  /** What this token could be asked for, so the UI hides what is not there. */
+  capabilities: GithubCapabilities
   /** Epoch ms of the fetch, for the "updated Xs ago" hint. */
   fetchedAt: number
 }
 
+/** Whoever did a thing, with what the UI needs to show them. */
+export interface GithubActor {
+  login: string
+  /** GitHub's avatar URL, or null for the deleted-user placeholder. */
+  avatarUrl: string | null
+}
+
 export interface GithubComment {
   id: string
-  author: string
+  author: GithubActor
   body: string
   createdAt: string
   url: string
+  /** OWNER | MEMBER | COLLABORATOR | CONTRIBUTOR | NONE — the badge GitHub puts
+   *  beside a name to say how the author relates to the repository. */
+  authorAssociation: string
   /** Review summaries are shown inline with issue comments, tagged by state. */
   reviewState?: string
 }
 
+/**
+ * Everything that is not a comment: the state changes, labellings and renames
+ * GitHub draws as one-line entries down the timeline's rail.
+ */
+export type GithubEventKind =
+  | 'labeled'
+  | 'unlabeled'
+  | 'closed'
+  | 'reopened'
+  | 'merged'
+  | 'assigned'
+  | 'unassigned'
+  | 'renamed'
+  | 'referenced'
+  | 'review_requested'
+
+export interface GithubTimelineEvent {
+  id: string
+  kind: GithubEventKind
+  actor: GithubActor
+  createdAt: string
+  /** labeled / unlabeled. */
+  label?: GithubLabel
+  /** assigned / unassigned / review_requested. */
+  subject?: string
+  /** renamed. */
+  previousTitle?: string
+  currentTitle?: string
+  /** closed, when GitHub gives a reason (completed / not planned). */
+  stateReason?: string
+  /** merged. */
+  mergeRefName?: string
+  /** referenced — the issue or pull request that mentioned this one. */
+  source?: { kind: GithubItemKind; number: number; title: string; url: string }
+}
+
+/** One entry of the thread, before the UI folds runs of them together. */
+export type GithubTimelineEntry =
+  | { type: 'comment'; at: string; comment: GithubComment }
+  | { type: 'event'; at: string; event: GithubTimelineEvent }
+
 export interface GithubItemDetail extends GithubItemShared {
   kind: GithubItemKind
+  /** The GraphQL node id, which the subscription mutation is addressed to. */
+  id: string
   body: string
-  comments: GithubComment[]
+  /** Who opened it, for the first card of the thread. */
+  authorActor: GithubActor
+  authorAssociation: string
+  /** Comments and events in one time-ordered list. */
+  timeline: GithubTimelineEntry[]
+  /** SUBSCRIBED | UNSUBSCRIBED | IGNORED, or null when GitHub has no opinion. */
+  viewerSubscription?: string | null
+  /** Whether the conversation is locked to people without write access. */
+  locked: boolean
+  /** Issues only: pinned to the top of the repository's issue list. */
+  isPinned?: boolean
+  /** The issue this one hangs off, or null when it hangs off nothing. */
+  parent?: GithubItemRef | null
+  subIssues?: GithubItemRef[]
+  subIssueProgress?: GithubSubIssueProgress
+  /** Branch names GitHub has linked to the issue. */
+  linkedBranches?: string[]
   // Pull-request-only fields.
   isDraft?: boolean
   additions?: number
@@ -333,8 +479,39 @@ export interface GithubItemDetail extends GithubItemShared {
   mergeStateStatus?: string
 }
 
+/** A relabelling of an item that already exists. */
+export interface GithubLabelChange {
+  add: string[]
+  remove: string[]
+}
+
+/** Where a freshly created issue landed. */
+export interface GithubCreatedIssue {
+  number: number
+  url: string
+}
+
 /** Non-comment actions the dashboard can run against an item. */
 export type GithubItemAction = 'close' | 'reopen' | 'ready' | 'merge'
+
+/**
+ * The commands beyond changing state, which the sidebar keeps apart from the
+ * rest: locking speaks for the repository, and deleting is gone for good.
+ * Pull requests can only be locked and unlocked.
+ */
+export type GithubItemCommand = 'lock' | 'unlock' | 'pin' | 'unpin' | 'delete'
+
+/**
+ * Why an issue was closed. GitHub distinguishes the two in its own UI and shows
+ * a different icon for each, so closing here has to be able to say which.
+ */
+export type GithubCloseReason = 'completed' | 'not planned'
+
+/** An assignment change on an item that already exists. */
+export interface GithubAssigneeChange {
+  add: string[]
+  remove: string[]
+}
 
 export interface GithubStatus {
   installed: boolean

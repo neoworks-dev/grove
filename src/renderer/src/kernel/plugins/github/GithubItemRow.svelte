@@ -5,6 +5,9 @@
   //
   // The row is a div rather than a button because it holds its own controls —
   // a checkbox inside a button is not something the browser will let you click.
+  // It still behaves like one: the whole row opens the item, and the tick box
+  // stops the click so selecting rows never navigates away from what you are
+  // reading.
   import Checkbox from '@neoworks-dev/ui/Checkbox'
   import ChatCircleIcon from 'phosphor-svelte/lib/ChatCircleIcon'
   import GithubAvatar from './GithubAvatar.svelte'
@@ -48,14 +51,32 @@
     if (login.includes('[')) return null
     return `https://github.com/${login}.png`
   }
+
+  /** Keyboard equivalent of clicking the row. */
+  function onRowKey(event: KeyboardEvent): void {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    event.preventDefault()
+    onselect()
+  }
 </script>
 
 <div
-  class="flex items-start gap-2 border-b border-line px-2 py-1.5"
-  class:bg-hover={selected}
+  class="flex cursor-pointer items-start gap-2 border-b border-line border-l-2 px-2 py-1.5 transition-colors duration-100 hover:bg-hover"
+  class:bg-elevated={selected}
+  class:border-l-action={selected}
+  class:border-l-transparent={!selected}
+  role="button"
+  tabindex="0"
   aria-current={selected}
+  onclick={onselect}
+  onkeydown={onRowKey}
 >
-  <span class="mt-0.5 shrink-0">
+  <span
+    class="mt-0.5 shrink-0"
+    role="presentation"
+    onclick={(event) => event.stopPropagation()}
+    onkeydown={(event) => event.stopPropagation()}
+  >
     <Checkbox size="sm" {checked} onchange={ontoggle} aria-label="Select #{item.number}" />
   </span>
 
@@ -63,7 +84,7 @@
     <GithubStateIcon {item} />
   </span>
 
-  <button class="min-w-0 flex-1 text-left" onclick={onselect}>
+  <div class="min-w-0 flex-1">
     <span class="flex flex-wrap items-center gap-x-1.5 gap-y-1">
       <span class="text-xs font-medium text-default">{item.title}</span>
       {#each item.labels as label (label.name)}
@@ -78,7 +99,7 @@
       <span class:text-violet={isViewer}>{item.author}</span>
       <span>opened {relativeTime(item.createdAt)} ago</span>
     </span>
-  </button>
+  </div>
 
   <span class="mt-0.5 flex shrink-0 items-center gap-2">
     {#if item.kind === 'pull'}

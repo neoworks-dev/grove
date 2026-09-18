@@ -2,6 +2,11 @@
   // A label as GitHub draws it: the label's own colour, with the text flipped to
   // stay readable on it. The one place that decision is made, so the list, the
   // thread, the timeline and the picker cannot drift apart.
+  //
+  // Deliberately smaller than body text. At the shared 2xs a pill sat within a
+  // pixel of the title beside it and the two competed; a label is an annotation
+  // on a title, and should read as one. The picker's pills are a step larger,
+  // because there they are the thing being clicked.
   import { labelIsDark } from './filter'
   import type { GithubLabel } from '../../../../../shared/types'
 
@@ -25,7 +30,7 @@
 
 {#if interactive}
   <button
-    class="max-w-full shrink-0 truncate rounded-full border px-2 py-0.5 text-2xs transition-colors"
+    class="max-w-full shrink-0 truncate rounded-full border px-2 py-0.5 text-[10px] leading-4 transition-colors"
     class:text-white={filled && dark}
     class:text-black={filled && !dark}
     class:text-dim={!filled}
@@ -41,7 +46,7 @@
   </button>
 {:else}
   <span
-    class="max-w-full shrink-0 truncate rounded-full px-2 py-0.5 text-2xs"
+    class="max-w-full shrink-0 truncate rounded-full px-1.5 py-0 text-[9px] font-medium leading-[15px]"
     class:text-white={dark}
     class:text-black={!dark}
     style:background-color="#{label.color}"

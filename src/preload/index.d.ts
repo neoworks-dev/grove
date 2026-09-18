@@ -30,6 +30,7 @@ import type {
   GithubItemDetail,
   GithubItemAction,
   GithubLabelDefinition,
+  GithubMilestone,
   GithubIssueDraft,
   GithubCreatedIssue,
   GithubLabelChange,
@@ -199,6 +200,12 @@ export interface WorkbenchApi {
     dashboard: (options: { state: GithubStateFilter; limit: number }) => Promise<GithubDashboard>
     item: (kind: GithubItemKind, number: number) => Promise<GithubItemDetail>
     labels: () => Promise<GithubLabelDefinition[]>
+    milestones: () => Promise<GithubMilestone[]>
+    changeMilestone: (
+      kind: GithubItemKind,
+      number: number,
+      title: string | null
+    ) => Promise<void>
     mentionables: () => Promise<GithubActor[]>
     createIssue: (draft: GithubIssueDraft) => Promise<GithubCreatedIssue>
     changeLabels: (kind: GithubItemKind, number: number, change: GithubLabelChange) => Promise<void>

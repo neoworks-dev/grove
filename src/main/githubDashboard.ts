@@ -12,8 +12,12 @@ import { spawn } from 'child_process'
 import { ensureGhReady } from './github'
 import type {
   GithubActor,
+  GithubCapabilities,
   GithubComment,
   GithubCreatedIssue,
+  GithubIssueType,
+  GithubMilestone,
+  GithubProjectRef,
   GithubDashboard,
   GithubEventKind,
   GithubIssueDraft,
@@ -118,6 +122,79 @@ export async function fetchStatus(repoPath: string): Promise<GithubStatus> {
   }
 }
 
+// Which optional selections a token allows changes only when the token does, so
+// the probes run once per repository per session.
+const capabilityCache = new Map<string, GithubCapabilities>()
+
+/**
+ * Whether a selection can be asked for at all: run it as a one-node query of its
+ * own and see whether GitHub accepts it. A missing scope and a missing schema
+ * field look the same from here, and both mean the same thing — leave it out of
+ * the real query — so both answer false.
+ */
+async function probeSelection(
+  repoPath: string,
+  owner: string,
+  name: string,
+  selection: string
+): Promise<boolean> {
+  const query = `
+query($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) { ${selection} }
+}`.trim()
+  try {
+    await runGh(repoPath, [
+      'api',
+      'graphql',
+      '-F',
+      `owner=${owner}`,
+      '-F',
+      `name=${name}`,
+      '-f',
+      `query=${query}`
+    ])
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * What the queries may select here. Probed rather than assumed: `projectItems`
+ * needs the `read:project` scope and `issueType` is not in every schema, and
+ * either one, asked for without being allowed, fails the whole document and
+ * takes the pane down with it.
+ */
+export async function fetchCapabilities(repoPath: string): Promise<GithubCapabilities> {
+  const cached = capabilityCache.get(repoPath)
+  if (cached) return cached
+  const repo = await repoRef(repoPath)
+  const [owner, name] = repo.nameWithOwner.split('/')
+  const [projects, issueTypes] = await Promise.all([
+    probeSelection(repoPath, owner, name, 'projectsV2(first: 1) { totalCount }'),
+    probeSelection(repoPath, owner, name, 'issues(first: 1) { nodes { issueType { name } } }')
+  ])
+  const capabilities: GithubCapabilities = { projects, issueTypes }
+  capabilityCache.set(repoPath, capabilities)
+  return capabilities
+}
+
+/**
+ * The metadata selections that are not always available, as query text. The
+ * milestone is always in the schema and needs no scope; the other two are here
+ * only when the probe said so. `issueType` exists on issues alone.
+ */
+export function optionalFields(capabilities: GithubCapabilities, onIssue: boolean): string {
+  const selections = ['milestone { number title state dueOn }']
+  if (capabilities.projects) {
+    selections.push('projectItems(first: 10) { nodes { project { number title url } } }')
+  }
+  if (capabilities.issueTypes && onIssue) {
+    selections.push('issueType { name color }')
+  }
+  return selections.join('\n        ')
+}
+
 // GraphQL enums cannot be passed as gh `-F` variables, so the state sets are
 // inlined into the query text. They come from this fixed map, never user input.
 const ISSUE_STATES: Record<GithubStateFilter, string> = {
@@ -133,7 +210,7 @@ const PULL_STATES: Record<GithubStateFilter, string> = {
 }
 
 /** The one query behind a dashboard refresh: viewer, issues and pulls at once. */
-export function dashboardQuery(filter: GithubStateFilter): string {
+export function dashboardQuery(filter: GithubStateFilter, capabilities: GithubCapabilities): string {
   return `
 query($owner: String!, $name: String!, $limit: Int!) {
   viewer { login }
@@ -147,6 +224,7 @@ query($owner: String!, $name: String!, $limit: Int!) {
         comments { totalCount }
         labels(first: 10) { nodes { name color } }
         assignees(first: 5) { nodes { login } }
+        ${optionalFields(capabilities, true)}
       }
     }
     pullRequests(first: $limit, states: ${PULL_STATES[filter]}, orderBy: {field: UPDATED_AT, direction: DESC}) {
@@ -157,6 +235,7 @@ query($owner: String!, $name: String!, $limit: Int!) {
         comments { totalCount }
         labels(first: 10) { nodes { name color } }
         assignees(first: 5) { nodes { login } }
+        ${optionalFields(capabilities, false)}
         commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
       }
     }
@@ -168,7 +247,14 @@ interface GraphqlAuthor {
   login?: string
 }
 
-interface GraphqlItemNode {
+/** The part of a node `optionalFields` selects, shared by the list and detail. */
+interface GraphqlOptionalNode {
+  milestone?: GithubMilestone | null
+  issueType?: GithubIssueType | null
+  projectItems?: { nodes: { project: GithubProjectRef | null }[] }
+}
+
+interface GraphqlItemNode extends GraphqlOptionalNode {
   number: number
   title: string
   url: string
@@ -208,8 +294,26 @@ function authorLogin(author: GraphqlAuthor | null | undefined): string {
   return author.login
 }
 
+/**
+ * The metadata the query may or may not have been allowed to ask for. Left off
+ * the item entirely when it was not selected, so "no milestone" and "could not
+ * ask about milestones" stay apart in the UI.
+ */
+function optionalMetadata(node: GraphqlOptionalNode): Partial<GithubIssueItem> {
+  const metadata: Partial<GithubIssueItem> = {}
+  if (node.milestone !== undefined) metadata.milestone = node.milestone
+  if (node.issueType !== undefined) metadata.issueType = node.issueType
+  if (node.projectItems) {
+    metadata.projects = node.projectItems.nodes
+      .map((entry) => entry.project)
+      .filter((project): project is GithubProjectRef => project !== null)
+  }
+  return metadata
+}
+
 function toIssueItem(node: GraphqlItemNode): GithubIssueItem {
   return {
+    ...optionalMetadata(node),
     kind: 'issue',
     number: node.number,
     title: node.title,
@@ -252,6 +356,7 @@ export async function fetchDashboard(
   options: { state: GithubStateFilter; limit: number }
 ): Promise<GithubDashboard> {
   const repo = await repoRef(repoPath)
+  const capabilities = await fetchCapabilities(repoPath)
   const [owner, name] = repo.nameWithOwner.split('/')
   const limit = Math.max(1, Math.min(options.limit, MAX_ITEMS))
   const raw = await runGh(repoPath, [
@@ -264,7 +369,7 @@ export async function fetchDashboard(
     '-F',
     `limit=${limit}`,
     '-f',
-    `query=${dashboardQuery(options.state)}`
+    `query=${dashboardQuery(options.state, capabilities)}`
   ])
   const payload = parseJson<DashboardResponse>(raw)
   const repository = payload.data.repository
@@ -274,6 +379,7 @@ export async function fetchDashboard(
     viewer: payload.data.viewer ? payload.data.viewer.login : null,
     issues: repository.issues.nodes.map(toIssueItem),
     pulls: repository.pullRequests.nodes.map(toPullItem),
+    capabilities,
     fetchedAt: Date.now()
   }
 }
@@ -381,7 +487,7 @@ function timelineNodeFields(includePullOnly: boolean): string {
  * timeline. `issueOrPullRequest` resolves either kind, so the caller's `kind` is
  * only used to shape the result rather than to pick a query.
  */
-export function itemDetailQuery(): string {
+export function itemDetailQuery(capabilities: GithubCapabilities): string {
   const shared = `number title url state createdAt updatedAt body authorAssociation
         author { ${ACTOR_FIELDS} }
         labels(first: 20) { nodes { name color } }
@@ -393,6 +499,7 @@ query($owner: String!, $name: String!, $number: Int!, $limit: Int!) {
       __typename
       ... on Issue {
         ${shared}
+        ${optionalFields(capabilities, true)}
         timelineItems(first: $limit, itemTypes: [${ISSUE_TIMELINE_TYPES.join(', ')}]) {
           nodes {${timelineNodeFields(false)}
           }
@@ -400,6 +507,7 @@ query($owner: String!, $name: String!, $number: Int!, $limit: Int!) {
       }
       ... on PullRequest {
         ${shared}
+        ${optionalFields(capabilities, false)}
         isDraft additions deletions changedFiles
         headRefName baseRefName reviewDecision mergeStateStatus
         timelineItems(first: $limit, itemTypes: [${PULL_TIMELINE_TYPES.join(', ')}]) {
@@ -438,7 +546,7 @@ interface TimelineNode {
   source?: { __typename?: string; number?: number; title?: string; url?: string } | null
 }
 
-interface DetailNode {
+interface DetailNode extends GraphqlOptionalNode {
   __typename: string
   number: number
   title: string
@@ -569,6 +677,7 @@ export async function fetchItem(
   number: number
 ): Promise<GithubItemDetail> {
   const repo = await repoRef(repoPath)
+  const capabilities = await fetchCapabilities(repoPath)
   const [owner, name] = repo.nameWithOwner.split('/')
   const raw = await runGh(repoPath, [
     'api',
@@ -582,7 +691,7 @@ export async function fetchItem(
     '-F',
     `limit=${MAX_TIMELINE}`,
     '-f',
-    `query=${itemDetailQuery()}`
+    `query=${itemDetailQuery(capabilities)}`
   ])
   const payload = parseJson<DetailResponse>(raw)
   const node = payload.data.repository?.issueOrPullRequest
@@ -592,6 +701,7 @@ export async function fetchItem(
     .filter((entry): entry is GithubTimelineEntry => entry !== null)
     .sort((a, b) => a.at.localeCompare(b.at))
   return {
+    ...optionalMetadata(node),
     kind,
     number: node.number,
     title: node.title,
@@ -657,6 +767,52 @@ export async function fetchMentionables(repoPath: string): Promise<GithubActor[]
   const raw = await runGh(repoPath, ['api', `repos/${repo.nameWithOwner}/assignees`, '--paginate'])
   const parsed = parseJson<{ login: string; avatar_url?: string }[]>(raw)
   return parsed.map((entry) => ({ login: entry.login, avatarUrl: entry.avatar_url ?? null }))
+}
+
+/**
+ * The milestones this repository defines, open and closed alike. Read from the
+ * repository rather than from the loaded items, so a milestone nothing is filed
+ * against yet can still be picked.
+ */
+export async function fetchMilestones(repoPath: string): Promise<GithubMilestone[]> {
+  const repo = await repoRef(repoPath)
+  const raw = await runGh(repoPath, [
+    'api',
+    `repos/${repo.nameWithOwner}/milestones?state=all&per_page=${MAX_ITEMS}`
+  ])
+  const parsed = parseJson<
+    { number: number; title: string; state: string; due_on: string | null }[]
+  >(raw)
+  return parsed.map((entry) => ({
+    number: entry.number,
+    title: entry.title,
+    state: entry.state,
+    dueOn: entry.due_on
+  }))
+}
+
+/**
+ * Build the gh argv for setting an item's milestone, or for clearing it when
+ * the title is null (pure, for testing/reuse).
+ */
+export function milestoneChangeArgs(
+  kind: GithubItemKind,
+  number: number,
+  title: string | null
+): string[] {
+  const command = kind === 'pull' ? 'pr' : 'issue'
+  if (title === null) return [command, 'edit', String(number), '--remove-milestone']
+  return [command, 'edit', String(number), '--milestone', title]
+}
+
+/** Put an item on a milestone, or take it off one. */
+export async function changeMilestone(
+  repoPath: string,
+  kind: GithubItemKind,
+  number: number,
+  title: string | null
+): Promise<void> {
+  await runGh(repoPath, milestoneChangeArgs(kind, number, title))
 }
 
 /** Build the gh argv for creating an issue (pure, for testing/reuse). */

@@ -6,9 +6,10 @@
   import Checkbox from '@neoworks-dev/ui/Checkbox'
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
   import GithubAvatar from './GithubAvatar.svelte'
+  import GithubChoiceMenu from './GithubChoiceMenu.svelte'
   import GithubLabelPill from './GithubLabelPill.svelte'
   import GithubMenu from './GithubMenu.svelte'
-  import { github, clearFilters, loadLabels } from './store.svelte'
+  import { github, clearFilters, loadLabels, loadMilestones } from './store.svelte'
 
   let { setStateFilter }: { setStateFilter: (event: Event) => void } = $props()
 
@@ -16,7 +17,13 @@
 
   $effect(() => {
     void loadLabels()
+    void loadMilestones()
   })
+
+  // Milestones come from the repository, so one nothing is filed against yet is
+  // still offered. Types and boards come from the loaded items instead — see
+  // `typesOf` in filter.ts for why.
+  const milestoneOptions = $derived(github.milestones.map((milestone) => milestone.title))
 
   const labelOptions = $derived.by(() => {
     const needle = labelQuery.trim().toLowerCase()
@@ -24,20 +31,10 @@
     return github.labels.filter((label) => label.name.toLowerCase().includes(needle))
   })
 
-  function toggleAuthor(login: string): void {
-    if (github.authorFilter.includes(login)) {
-      github.authorFilter = github.authorFilter.filter((entry) => entry !== login)
-      return
-    }
-    github.authorFilter = [...github.authorFilter, login]
-  }
-
-  function toggleLabel(name: string): void {
-    if (github.labelFilter.includes(name)) {
-      github.labelFilter = github.labelFilter.filter((entry) => entry !== name)
-      return
-    }
-    github.labelFilter = [...github.labelFilter, name]
+  /** The list with `value` added if it was missing, or taken out if it was not. */
+  function toggled(list: string[], value: string): string[] {
+    if (list.includes(value)) return list.filter((entry) => entry !== value)
+    return [...list, value]
   }
 
   function avatarFor(login: string): string | null {
@@ -63,7 +60,7 @@
         {#each github.authorOptions as login (login)}
           <button
             class="flex items-center gap-2 rounded px-1.5 py-1 text-left text-2xs text-default hover:bg-hover"
-            onclick={() => toggleAuthor(login)}
+            onclick={() => (github.authorFilter = toggled(github.authorFilter, login))}
           >
             <Checkbox size="sm" checked={github.authorFilter.includes(login)} />
             <GithubAvatar actor={{ login, avatarUrl: avatarFor(login) }} size={14} />
@@ -88,7 +85,7 @@
         {#each labelOptions as label (label.name)}
           <button
             class="flex items-center gap-2 rounded px-1.5 py-1 text-left hover:bg-hover"
-            onclick={() => toggleLabel(label.name)}
+            onclick={() => (github.labelFilter = toggled(github.labelFilter, label.name))}
           >
             <Checkbox size="sm" checked={github.labelFilter.includes(label.name)} />
             <GithubLabelPill {label} />
@@ -100,6 +97,34 @@
       </div>
     </FloatingScrollbar>
   </GithubMenu>
+
+  <GithubChoiceMenu
+    label="Milestone"
+    options={milestoneOptions}
+    selected={github.milestoneFilter}
+    empty="This repository has no milestones."
+    ontoggle={(title) => (github.milestoneFilter = toggled(github.milestoneFilter, title))}
+  />
+
+  {#if github.capabilities.issueTypes}
+    <GithubChoiceMenu
+      label="Type"
+      options={github.typeOptions}
+      selected={github.typeFilter}
+      empty="Nothing here carries a type."
+      ontoggle={(name) => (github.typeFilter = toggled(github.typeFilter, name))}
+    />
+  {/if}
+
+  {#if github.capabilities.projects}
+    <GithubChoiceMenu
+      label="Projects"
+      options={github.projectOptions}
+      selected={github.projectFilter}
+      empty="Nothing here is on a board."
+      ontoggle={(title) => (github.projectFilter = toggled(github.projectFilter, title))}
+    />
+  {/if}
 
   {#if github.filtersActive}
     <button

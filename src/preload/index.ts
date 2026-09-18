@@ -73,6 +73,10 @@ const workbench = {
     mentionables: () => ipcRenderer.invoke('github:mentionables'),
     setSubscription: (nodeId: string, subscribed: boolean) =>
       ipcRenderer.invoke('github:setSubscription', nodeId, subscribed),
+    command: (kind: string, number: number, command: string) =>
+      ipcRenderer.invoke('github:command', kind, number, command),
+    transfer: (number: number, destination: string) =>
+      ipcRenderer.invoke('github:transfer', number, destination),
     createIssue: (draft: unknown) => ipcRenderer.invoke('github:createIssue', draft),
     changeLabels: (kind: string, number: number, change: unknown) =>
       ipcRenderer.invoke('github:changeLabels', kind, number, change),

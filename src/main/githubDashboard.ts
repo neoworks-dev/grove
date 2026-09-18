@@ -29,6 +29,7 @@ import type {
   GithubTimelineEntry,
   GithubTimelineEvent,
   GithubItemDetail,
+  GithubItemCommand,
   GithubItemKind,
   GithubItemRef,
   GithubSubIssueProgress,
@@ -530,7 +531,7 @@ function timelineNodeFields(includePullOnly: boolean): string {
  */
 export function itemDetailQuery(capabilities: GithubCapabilities): string {
   const shared = `id number title url state createdAt updatedAt body authorAssociation
-        viewerSubscription
+        viewerSubscription locked
         author { ${ACTOR_FIELDS} }
         labels(first: 20) { nodes { name color } }
         assignees(first: 10) { nodes { login } }`
@@ -541,6 +542,7 @@ query($owner: String!, $name: String!, $number: Int!, $limit: Int!) {
       __typename
       ... on Issue {
         ${shared}
+        isPinned
         ${optionalFields(capabilities, true)}
         ${relationshipFields(capabilities)}
         timelineItems(first: $limit, itemTypes: [${ISSUE_TIMELINE_TYPES.join(', ')}]) {
@@ -593,6 +595,8 @@ interface DetailNode extends GraphqlOptionalNode {
   __typename: string
   id: string
   viewerSubscription: string | null
+  locked: boolean
+  isPinned?: boolean
   parent?: GithubItemRef | null
   subIssues?: { nodes: GithubItemRef[] }
   subIssuesSummary?: GithubSubIssueProgress
@@ -774,6 +778,8 @@ export async function fetchItem(
     kind,
     id: node.id,
     viewerSubscription: node.viewerSubscription,
+    locked: node.locked,
+    isPinned: node.isPinned,
     number: node.number,
     title: node.title,
     url: node.url,
@@ -1033,6 +1039,75 @@ export async function runItemAction(
   reason?: GithubCloseReason
 ): Promise<string> {
   const output = await runGh(repoPath, itemActionArgs(kind, number, action, merge, reason))
+  return output.trim()
+}
+
+/** Build the gh argv for an item command (pure, for testing/reuse). */
+export function itemCommandArgs(
+  kind: GithubItemKind,
+  number: number,
+  command: GithubItemCommand
+): string[] {
+  if (command === 'lock' || command === 'unlock') {
+    const base = kind === 'pull' ? 'pr' : 'issue'
+    return [base, command, String(number)]
+  }
+  if (kind === 'pull') {
+    throw new Error(`Pull requests support lock and unlock, not "${command}"`)
+  }
+  // --yes because gh otherwise asks at a terminal nobody is watching; the
+  // asking is done in the pane, where the user can see what they are deleting.
+  if (command === 'delete') return ['issue', 'delete', String(number), '--yes']
+  return ['issue', command, String(number)]
+}
+
+/**
+ * Deleting an issue needs admin rights, and gh passes GitHub's refusal through
+ * as an HTTP status. Say what is actually missing instead.
+ */
+export function adminHint(error: Error, command: GithubItemCommand): Error {
+  if (command !== 'delete') return error
+  const refused =
+    error.message.includes('403') ||
+    error.message.includes('admin rights') ||
+    error.message.includes('Resource not accessible')
+  if (!refused) return error
+  return new Error('Deleting an issue needs admin rights on this repository.')
+}
+
+/** Lock, unlock, pin, unpin or delete. */
+export async function runItemCommand(
+  repoPath: string,
+  kind: GithubItemKind,
+  number: number,
+  command: GithubItemCommand
+): Promise<void> {
+  try {
+    await runGh(repoPath, itemCommandArgs(kind, number, command))
+  } catch (error) {
+    throw adminHint(error as Error, command)
+  }
+}
+
+/** Build the gh argv for a transfer (pure, for testing/reuse). */
+export function transferArgs(number: number, destination: string): string[] {
+  const target = destination.trim()
+  if (target.length === 0) throw new Error('A transfer needs a destination repository')
+  // gh resolves anything here as a repository reference, so a typo becomes a
+  // confusing 404 rather than a refusal. Insist on owner/repo up front.
+  if (!/^[\w.-]+\/[\w.-]+$/.test(target)) {
+    throw new Error(`"${target}" is not an owner/repo`)
+  }
+  return ['issue', 'transfer', String(number), target]
+}
+
+/** Move an issue to another repository. Its number there is a new one. */
+export async function transferIssue(
+  repoPath: string,
+  number: number,
+  destination: string
+): Promise<string> {
+  const output = await runGh(repoPath, transferArgs(number, destination))
   return output.trim()
 }
 

@@ -10,8 +10,15 @@
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
   import BellIcon from 'phosphor-svelte/lib/BellIcon'
   import BellSlashIcon from 'phosphor-svelte/lib/BellSlashIcon'
+  import CopyIcon from 'phosphor-svelte/lib/CopyIcon'
   import GearIcon from 'phosphor-svelte/lib/GearIcon'
   import GitBranchIcon from 'phosphor-svelte/lib/GitBranchIcon'
+  import LockIcon from 'phosphor-svelte/lib/LockIcon'
+  import LockOpenIcon from 'phosphor-svelte/lib/LockOpenIcon'
+  import PushPinIcon from 'phosphor-svelte/lib/PushPinIcon'
+  import PushPinSlashIcon from 'phosphor-svelte/lib/PushPinSlashIcon'
+  import TrashIcon from 'phosphor-svelte/lib/TrashIcon'
+  import ArrowsLeftRightIcon from 'phosphor-svelte/lib/ArrowsLeftRightIcon'
   import GithubAvatar from './GithubAvatar.svelte'
   import GithubLabelPill from './GithubLabelPill.svelte'
   import GithubLabelPicker from './GithubLabelPicker.svelte'
@@ -24,13 +31,17 @@
     applyAssignees,
     applyLabels,
     applyMilestone,
+    cloneIssue,
     isSubscribed,
     loadMentionables,
     loadMilestones,
     openReference,
+    runCommand,
     startWorkOnIssue,
-    toggleSubscription
+    toggleSubscription,
+    transferIssue
   } from './store.svelte'
+  import type { Snippet } from 'svelte'
   import type { GithubItemDetail, GithubItemRef } from '../../../../../shared/types'
 
   let { detail }: { detail: GithubItemDetail } = $props()
@@ -96,6 +107,18 @@
     return detail.linkedBranches
   })
 
+  let transferTo = $state('')
+
+  /** Transfer, then close the menu it was typed into if it went through. */
+  async function transfer(close: () => void): Promise<void> {
+    const destination = transferTo.trim()
+    if (destination.length === 0) return
+    const moved = await transferIssue(destination)
+    if (!moved) return
+    transferTo = ''
+    close()
+  }
+
   /** "3 of 7 done", or null when nothing hangs off this issue. */
   const subIssueProgress = $derived.by<string | null>(() => {
     const progress = detail.subIssueProgress
@@ -103,6 +126,19 @@
     return `${progress.completed} of ${progress.total} done`
   })
 </script>
+
+{#snippet actionRow(label: string, icon: Snippet, run: () => void, danger: boolean)}
+  <button
+    class="flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left transition-colors hover:bg-hover disabled:opacity-50"
+    class:text-red={danger}
+    class:text-dim={!danger}
+    disabled={github.busy}
+    onclick={run}
+  >
+    {@render icon()}
+    {label}
+  </button>
+{/snippet}
 
 {#snippet refRow(ref: GithubItemRef)}
   <button
@@ -346,4 +382,60 @@
       <p class="text-dim">No one yet</p>
     {/if}
   </section>
+
+  <!--
+    The last section, kept apart from the rest because these do not change what
+    the item says, they change what it is. Locking, transferring and deleting
+    each name what is about to happen before they run.
+  -->
+  <section class="flex flex-col gap-0.5 border-t border-line pt-3">
+    {#if detail.locked}
+      {@render actionRow(
+        'Unlock conversation',
+        lockOpenIcon,
+        () => void runCommand('unlock'),
+        false
+      )}
+    {:else}
+      {@render actionRow('Lock conversation', lockIcon, () => void runCommand('lock'), false)}
+    {/if}
+
+    {#if detail.kind === 'issue'}
+      {#if detail.isPinned}
+        {@render actionRow('Unpin issue', unpinIcon, () => void runCommand('unpin'), false)}
+      {:else}
+        {@render actionRow('Pin issue', pinIcon, () => void runCommand('pin'), false)}
+      {/if}
+
+      {@render actionRow('Clone issue', copyIcon, cloneIssue, false)}
+
+      <GithubMenu label="Transfer issue" icon={transferIcon} align="right" disabled={github.busy}>
+        {#snippet children(close)}
+          <input
+            class="mb-1 w-full rounded-md border border-line bg-input px-2 py-0.5 text-2xs text-default outline-none placeholder:text-dim focus:border-line-strong"
+            placeholder="owner/repo"
+            bind:value={transferTo}
+            onkeydown={(event) => event.key === 'Enter' && transfer(close)}
+          />
+          <button
+            class="w-full rounded-md bg-action px-2 py-0.5 text-2xs text-action-fg hover:opacity-90 disabled:opacity-50"
+            disabled={github.busy || transferTo.trim().length === 0}
+            onclick={() => transfer(close)}
+          >
+            Transfer
+          </button>
+        {/snippet}
+      </GithubMenu>
+
+      {@render actionRow('Delete issue', trashIcon, () => void runCommand('delete'), true)}
+    {/if}
+  </section>
 </div>
+
+{#snippet lockIcon()}<LockIcon size={11} />{/snippet}
+{#snippet lockOpenIcon()}<LockOpenIcon size={11} />{/snippet}
+{#snippet pinIcon()}<PushPinIcon size={11} />{/snippet}
+{#snippet unpinIcon()}<PushPinSlashIcon size={11} />{/snippet}
+{#snippet copyIcon()}<CopyIcon size={11} />{/snippet}
+{#snippet transferIcon()}<ArrowsLeftRightIcon size={11} />{/snippet}
+{#snippet trashIcon()}<TrashIcon size={11} />{/snippet}

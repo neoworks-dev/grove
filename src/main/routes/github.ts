@@ -11,6 +11,7 @@ import * as dashboard from '../githubDashboard'
 import type {
   GithubIssueDraft,
   GithubItemAction,
+  GithubItemCommand,
   GithubLabelChange,
   GithubCloseReason,
   GithubAssigneeChange,
@@ -59,6 +60,20 @@ export const githubRoutes = {
         return dashboard.changeMilestone(repoPath, kind, number, title)
       }
     )
+
+    route(
+      ctx,
+      'github:command',
+      (_e, kind: GithubItemKind, number: number, command: GithubItemCommand) => {
+        const { repoPath } = ctx.workbench.requireRepo()
+        return dashboard.runItemCommand(repoPath, kind, number, command)
+      }
+    )
+
+    route(ctx, 'github:transfer', (_e, number: number, destination: string) => {
+      const { repoPath } = ctx.workbench.requireRepo()
+      return dashboard.transferIssue(repoPath, number, destination)
+    })
 
     route(ctx, 'github:setSubscription', (_e, nodeId: string, subscribed: boolean) => {
       const { repoPath } = ctx.workbench.requireRepo()

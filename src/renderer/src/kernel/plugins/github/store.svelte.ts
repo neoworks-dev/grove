@@ -6,6 +6,7 @@
 // has already navigated away from is dropped instead of overwriting the view.
 
 import { dialogs } from '../../../lib/dialogs.svelte'
+import type { DialogOptions } from '../../../lib/dialogs.svelte'
 import { store, refreshWorktrees, selectWorktree } from '../../../lib/store.svelte'
 import { branchNameFor } from './branches'
 import { authorsOf, filterItems, projectsOf, typesOf } from './filter'
@@ -18,6 +19,7 @@ import type {
   GithubItem,
   GithubCloseReason,
   GithubItemAction,
+  GithubItemCommand,
   GithubItemDetail,
   GithubItemKind,
   GithubLabelDefinition,
@@ -466,6 +468,128 @@ export async function loadMilestones(): Promise<void> {
       message: `Could not load milestones: ${(err as Error).message}`
     })
   }
+}
+
+/**
+ * What each command needs said before it runs, or null when it needs nothing.
+ * Pinning is reversible with the same click that did it; locking speaks for the
+ * repository, transferring renumbers the issue somewhere else, and deleting is
+ * gone for good — so those three name what is about to happen first.
+ */
+function commandConfirmation(
+  command: GithubItemCommand,
+  detail: GithubItemDetail
+): DialogOptions | null {
+  if (command === 'pin' || command === 'unpin' || command === 'unlock') return null
+  if (command === 'lock') {
+    return {
+      title: `Lock the conversation on #${detail.number}?`,
+      body: 'Only people with write access to the repository will be able to comment.',
+      actions: [
+        { id: 'go', label: 'Lock', kind: 'primary' },
+        { id: 'cancel', label: 'Cancel' }
+      ]
+    }
+  }
+  return {
+    title: `Delete #${detail.number}?`,
+    body: `"${detail.title}" and its whole conversation go for good. This cannot be undone, here or on GitHub.`,
+    actions: [
+      { id: 'go', label: 'Delete', kind: 'danger' },
+      { id: 'cancel', label: 'Cancel' }
+    ]
+  }
+}
+
+const COMMAND_OUTCOMES: Record<GithubItemCommand, string> = {
+  lock: 'Locked',
+  unlock: 'Unlocked',
+  pin: 'Pinned',
+  unpin: 'Unpinned',
+  delete: 'Deleted'
+}
+
+/** Lock, unlock, pin, unpin or delete the open item. */
+export async function runCommand(command: GithubItemCommand): Promise<void> {
+  const selection = github.selection
+  const detail = github.detail
+  if (!selection || !detail) return
+
+  const confirmation = commandConfirmation(command, detail)
+  if (confirmation) {
+    const picked = await dialogs.confirm(confirmation)
+    if (picked !== 'go') return
+  }
+
+  github.busy = true
+  try {
+    await window.workbench.github.command(selection.kind, selection.number, command)
+    dialogs.notify({
+      level: 'info',
+      message: `${COMMAND_OUTCOMES[command]} #${selection.number}`
+    })
+    // A deleted item has no thread left to reload, so the pane goes back to
+    // the list rather than refreshing a 404.
+    if (command === 'delete') {
+      await selectItem(null)
+    } else {
+      await loadDetail(selection, { silent: true })
+    }
+    await refreshDashboard(github.stateFilter, { silent: true })
+  } catch (err) {
+    dialogs.notify({ level: 'error', message: (err as Error).message })
+  } finally {
+    github.busy = false
+  }
+}
+
+/**
+ * Move the open issue to another repository. Its number there is a new one, so
+ * the pane cannot keep showing it — it goes back to the list and says where the
+ * issue went.
+ */
+export async function transferIssue(destination: string): Promise<boolean> {
+  const detail = github.detail
+  if (!detail) return false
+  const picked = await dialogs.confirm({
+    title: `Transfer #${detail.number} to ${destination}?`,
+    body: `"${detail.title}" leaves this repository and is renumbered in ${destination}. Bringing it back is another transfer.`,
+    actions: [
+      { id: 'go', label: 'Transfer', kind: 'danger' },
+      { id: 'cancel', label: 'Cancel' }
+    ]
+  })
+  if (picked !== 'go') return false
+
+  github.busy = true
+  try {
+    const url = await window.workbench.github.transfer(detail.number, destination)
+    dialogs.notify({ level: 'info', message: `Transferred to ${url}` })
+    await selectItem(null)
+    await refreshDashboard(github.stateFilter, { silent: true })
+    return true
+  } catch (err) {
+    dialogs.notify({ level: 'error', message: (err as Error).message })
+    return false
+  } finally {
+    github.busy = false
+  }
+}
+
+/**
+ * Open the composer on a copy of this issue. GitHub calls it Clone; there is no
+ * gh command for it and there does not need to be — a clone is a new issue that
+ * starts out saying the same thing, which the composer already knows how to do.
+ */
+export function cloneIssue(): void {
+  const detail = github.detail
+  if (!detail) return
+  github.draft = {
+    title: detail.title,
+    body: detail.body,
+    labels: detail.labels.map((label) => label.name)
+  }
+  github.composing = true
 }
 
 /** Whether the viewer is currently being notified about the open item. */

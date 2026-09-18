@@ -10,13 +10,15 @@ import {
   itemActionArgs,
   itemDetailQuery,
   milestoneChangeArgs,
-  optionalFields
+  optionalFields,
+  relationshipFields,
+  scopeHint
 } from '../src/main/githubDashboard'
 
 // What a token with nothing extra granted can ask for, which is the case the
 // optional selections exist to protect.
-const PLAIN = { projects: false, issueTypes: false }
-const FULL = { projects: true, issueTypes: true }
+const PLAIN = { projects: false, issueTypes: false, subIssues: false, linkedBranches: false }
+const FULL = { projects: true, issueTypes: true, subIssues: true, linkedBranches: true }
 
 describe('dashboardQuery', () => {
   it('asks for open items only under the open filter', () => {
@@ -76,6 +78,48 @@ describe('itemDetailQuery', () => {
   })
 })
 
+describe('relationshipFields', () => {
+  it('asks for nothing when the schema has neither', () => {
+    expect(relationshipFields(PLAIN)).toBe('')
+  })
+
+  it('takes the parent and the children together', () => {
+    const fields = relationshipFields({ ...PLAIN, subIssues: true })
+    expect(fields).toContain('parent { number title state url }')
+    expect(fields).toContain('subIssuesSummary')
+    expect(fields).not.toContain('linkedBranches')
+  })
+
+  it('asks for linked branches on their own probe', () => {
+    const fields = relationshipFields({ ...PLAIN, linkedBranches: true })
+    expect(fields).toContain('linkedBranches(first: 10)')
+    expect(fields).not.toContain('subIssues')
+  })
+})
+
+describe('itemDetailQuery relationships', () => {
+  it('keeps them out of the pull-request branch, which has no parent', () => {
+    expect(itemDetailQuery(FULL).match(/subIssuesSummary/g)?.length).toBe(1)
+  })
+})
+
+describe('scopeHint', () => {
+  it('replaces a scope wall with the command that fixes it', () => {
+    const raw = new Error(
+      'gh api graphql failed: {"errors":[{"type":"INSUFFICIENT_SCOPES","message":"The \'updateSubscription\' field requires one of the following scopes: [\'notifications\'], but your token has only been granted the: [\'repo\'] scopes."}]}'
+    )
+    const hinted = scopeHint(raw, 'notifications', 'change what it watches')
+    expect(hinted.message).toBe(
+      'Your GitHub token cannot change what it watches. Run: gh auth refresh -s notifications'
+    )
+  })
+
+  it('leaves a real failure alone', () => {
+    const raw = new Error('gh issue close failed: could not resolve to an Issue')
+    expect(scopeHint(raw, 'notifications', 'x')).toBe(raw)
+  })
+})
+
 describe('milestoneChangeArgs', () => {
   it('sets a milestone by title', () => {
     expect(milestoneChangeArgs('issue', 12, 'v1.0')).toEqual([
@@ -88,12 +132,7 @@ describe('milestoneChangeArgs', () => {
   })
 
   it('clears it with its own flag rather than an empty title', () => {
-    expect(milestoneChangeArgs('pull', 7, null)).toEqual([
-      'pr',
-      'edit',
-      '7',
-      '--remove-milestone'
-    ])
+    expect(milestoneChangeArgs('pull', 7, null)).toEqual(['pr', 'edit', '7', '--remove-milestone'])
   })
 })
 

@@ -201,12 +201,9 @@ export interface WorkbenchApi {
     item: (kind: GithubItemKind, number: number) => Promise<GithubItemDetail>
     labels: () => Promise<GithubLabelDefinition[]>
     milestones: () => Promise<GithubMilestone[]>
-    changeMilestone: (
-      kind: GithubItemKind,
-      number: number,
-      title: string | null
-    ) => Promise<void>
+    changeMilestone: (kind: GithubItemKind, number: number, title: string | null) => Promise<void>
     mentionables: () => Promise<GithubActor[]>
+    setSubscription: (nodeId: string, subscribed: boolean) => Promise<void>
     createIssue: (draft: GithubIssueDraft) => Promise<GithubCreatedIssue>
     changeLabels: (kind: GithubItemKind, number: number, change: GithubLabelChange) => Promise<void>
     comment: (kind: GithubItemKind, number: number, body: string) => Promise<string>

@@ -71,6 +71,8 @@ const workbench = {
     changeMilestone: (kind: string, number: number, title: string | null) =>
       ipcRenderer.invoke('github:changeMilestone', kind, number, title),
     mentionables: () => ipcRenderer.invoke('github:mentionables'),
+    setSubscription: (nodeId: string, subscribed: boolean) =>
+      ipcRenderer.invoke('github:setSubscription', nodeId, subscribed),
     createIssue: (draft: unknown) => ipcRenderer.invoke('github:createIssue', draft),
     changeLabels: (kind: string, number: number, change: unknown) =>
       ipcRenderer.invoke('github:changeLabels', kind, number, change),

@@ -30,6 +30,8 @@ import type {
   GithubTimelineEvent,
   GithubItemDetail,
   GithubItemKind,
+  GithubItemRef,
+  GithubSubIssueProgress,
   GithubLabel,
   GithubLabelDefinition,
   GithubPullItem,
@@ -170,13 +172,49 @@ export async function fetchCapabilities(repoPath: string): Promise<GithubCapabil
   if (cached) return cached
   const repo = await repoRef(repoPath)
   const [owner, name] = repo.nameWithOwner.split('/')
-  const [projects, issueTypes] = await Promise.all([
+  const [projects, issueTypes, subIssues, linkedBranches] = await Promise.all([
     probeSelection(repoPath, owner, name, 'projectsV2(first: 1) { totalCount }'),
-    probeSelection(repoPath, owner, name, 'issues(first: 1) { nodes { issueType { name } } }')
+    probeSelection(repoPath, owner, name, 'issues(first: 1) { nodes { issueType { name } } }'),
+    probeSelection(
+      repoPath,
+      owner,
+      name,
+      'issues(first: 1) { nodes { subIssuesSummary { total } } }'
+    ),
+    probeSelection(
+      repoPath,
+      owner,
+      name,
+      'issues(first: 1) { nodes { linkedBranches(first: 1) { totalCount } } }'
+    )
   ])
-  const capabilities: GithubCapabilities = { projects, issueTypes }
+  const capabilities: GithubCapabilities = { projects, issueTypes, subIssues, linkedBranches }
   capabilityCache.set(repoPath, capabilities)
   return capabilities
+}
+
+// Sub-issues cap at 100 like every other connection, and a tracking issue with
+// more than fifty children is not something this rail could show anyway.
+const MAX_SUB_ISSUES = 50
+
+/**
+ * The relationship and development selections, which only the detail query
+ * wants and only an issue has. Both are newer than the rest of the schema, so
+ * both are behind their own probe.
+ */
+export function relationshipFields(capabilities: GithubCapabilities): string {
+  const selections: string[] = []
+  if (capabilities.subIssues) {
+    selections.push('parent { number title state url }')
+    selections.push(
+      `subIssues(first: ${MAX_SUB_ISSUES}) { nodes { number title state url } }`,
+      'subIssuesSummary { total completed percentCompleted }'
+    )
+  }
+  if (capabilities.linkedBranches) {
+    selections.push('linkedBranches(first: 10) { nodes { ref { name } } }')
+  }
+  return selections.join('\n        ')
 }
 
 /**
@@ -210,7 +248,10 @@ const PULL_STATES: Record<GithubStateFilter, string> = {
 }
 
 /** The one query behind a dashboard refresh: viewer, issues and pulls at once. */
-export function dashboardQuery(filter: GithubStateFilter, capabilities: GithubCapabilities): string {
+export function dashboardQuery(
+  filter: GithubStateFilter,
+  capabilities: GithubCapabilities
+): string {
   return `
 query($owner: String!, $name: String!, $limit: Int!) {
   viewer { login }
@@ -488,7 +529,8 @@ function timelineNodeFields(includePullOnly: boolean): string {
  * only used to shape the result rather than to pick a query.
  */
 export function itemDetailQuery(capabilities: GithubCapabilities): string {
-  const shared = `number title url state createdAt updatedAt body authorAssociation
+  const shared = `id number title url state createdAt updatedAt body authorAssociation
+        viewerSubscription
         author { ${ACTOR_FIELDS} }
         labels(first: 20) { nodes { name color } }
         assignees(first: 10) { nodes { login } }`
@@ -500,6 +542,7 @@ query($owner: String!, $name: String!, $number: Int!, $limit: Int!) {
       ... on Issue {
         ${shared}
         ${optionalFields(capabilities, true)}
+        ${relationshipFields(capabilities)}
         timelineItems(first: $limit, itemTypes: [${ISSUE_TIMELINE_TYPES.join(', ')}]) {
           nodes {${timelineNodeFields(false)}
           }
@@ -548,6 +591,12 @@ interface TimelineNode {
 
 interface DetailNode extends GraphqlOptionalNode {
   __typename: string
+  id: string
+  viewerSubscription: string | null
+  parent?: GithubItemRef | null
+  subIssues?: { nodes: GithubItemRef[] }
+  subIssuesSummary?: GithubSubIssueProgress
+  linkedBranches?: { nodes: { ref: { name: string } | null }[] }
   number: number
   title: string
   url: string
@@ -670,6 +719,25 @@ function toEntry(node: TimelineNode): GithubTimelineEntry | null {
   return { type: 'event', at: node.createdAt, event: toEvent(node, kind) }
 }
 
+/**
+ * What the item hangs off and what hangs off it, plus the branches GitHub has
+ * linked to it. Each part is left off when the query could not ask for it, so
+ * "no sub-issues" and "this schema has none" stay apart.
+ */
+function relationships(node: DetailNode): Partial<GithubItemDetail> {
+  const found: Partial<GithubItemDetail> = {}
+  if (node.parent !== undefined) found.parent = node.parent
+  if (node.subIssues) found.subIssues = node.subIssues.nodes
+  if (node.subIssuesSummary) found.subIssueProgress = node.subIssuesSummary
+  if (node.linkedBranches) {
+    found.linkedBranches = node.linkedBranches.nodes
+      .map((entry) => entry.ref)
+      .filter((ref): ref is { name: string } => ref !== null)
+      .map((ref) => ref.name)
+  }
+  return found
+}
+
 /** One issue or pull request with its body and its whole timeline. */
 export async function fetchItem(
   repoPath: string,
@@ -702,7 +770,10 @@ export async function fetchItem(
     .sort((a, b) => a.at.localeCompare(b.at))
   return {
     ...optionalMetadata(node),
+    ...relationships(node),
     kind,
+    id: node.id,
+    viewerSubscription: node.viewerSubscription,
     number: node.number,
     title: node.title,
     url: node.url,
@@ -780,9 +851,8 @@ export async function fetchMilestones(repoPath: string): Promise<GithubMilestone
     'api',
     `repos/${repo.nameWithOwner}/milestones?state=all&per_page=${MAX_ITEMS}`
   ])
-  const parsed = parseJson<
-    { number: number; title: string; state: string; due_on: string | null }[]
-  >(raw)
+  const parsed =
+    parseJson<{ number: number; title: string; state: string; due_on: string | null }[]>(raw)
   return parsed.map((entry) => ({
     number: entry.number,
     title: entry.title,
@@ -813,6 +883,54 @@ export async function changeMilestone(
   title: string | null
 ): Promise<void> {
   await runGh(repoPath, milestoneChangeArgs(kind, number, title))
+}
+
+// Watching one thread is a node-level mutation, not a repository setting, so it
+// goes through GraphQL against the item's own id rather than through gh's
+// porcelain — which has no command for it.
+const SUBSCRIPTION_MUTATION = `
+mutation($id: ID!, $state: SubscriptionState!) {
+  updateSubscription(input: {subscribableId: $id, state: $state}) {
+    subscribable { viewerSubscription }
+  }
+}`.trim()
+
+/**
+ * gh reports a missing scope as a wall of GraphQL error text naming every scope
+ * the token does have. Turn that into the one line that matters: what could not
+ * be done, and the command that would grant it. Anything else passes through —
+ * a real failure should still read as itself.
+ */
+export function scopeHint(error: Error, scope: string, action: string): Error {
+  if (!error.message.includes('INSUFFICIENT_SCOPES')) return error
+  return new Error(`Your GitHub token cannot ${action}. Run: gh auth refresh -s ${scope}`)
+}
+
+/**
+ * Subscribe to an item's notifications, or stop them. Needs the `notifications`
+ * scope, which gh's default token does not carry — being told which command
+ * fixes that beats being handed the raw GraphQL error.
+ */
+export async function setSubscription(
+  repoPath: string,
+  nodeId: string,
+  subscribed: boolean
+): Promise<void> {
+  const state = subscribed ? 'SUBSCRIBED' : 'UNSUBSCRIBED'
+  try {
+    await runGh(repoPath, [
+      'api',
+      'graphql',
+      '-F',
+      `id=${nodeId}`,
+      '-f',
+      `state=${state}`,
+      '-f',
+      `query=${SUBSCRIPTION_MUTATION}`
+    ])
+  } catch (error) {
+    throw scopeHint(error as Error, 'notifications', 'change what it watches')
+  }
 }
 
 /** Build the gh argv for creating an issue (pure, for testing/reuse). */

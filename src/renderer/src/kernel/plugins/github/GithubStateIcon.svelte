@@ -8,9 +8,17 @@
   import CheckCircleIcon from 'phosphor-svelte/lib/CheckCircleIcon'
   import CircleIcon from 'phosphor-svelte/lib/CircleIcon'
   import { stateTone } from './filter'
-  import type { GithubItem } from '../../../../../shared/types'
+  import type { GithubItemKind } from '../../../../../shared/types'
 
-  let { item, size = 13 }: { item: GithubItem; size?: number } = $props()
+  // Structural rather than a whole GithubItem: a sub-issue in the rail is a
+  // number, a title and a state, and that is all this needs to draw one.
+  let {
+    item,
+    size = 13
+  }: {
+    item: { kind: GithubItemKind; state: string; isDraft?: boolean }
+    size?: number
+  } = $props()
 
   const tone = $derived(stateTone(item))
   const label = $derived.by<string>(() => {

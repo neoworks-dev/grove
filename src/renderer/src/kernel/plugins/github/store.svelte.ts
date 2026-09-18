@@ -6,6 +6,8 @@
 // has already navigated away from is dropped instead of overwriting the view.
 
 import { dialogs } from '../../../lib/dialogs.svelte'
+import { store, refreshWorktrees, selectWorktree } from '../../../lib/store.svelte'
+import { branchNameFor } from './branches'
 import { authorsOf, filterItems, projectsOf, typesOf } from './filter'
 import type {
   GithubActor,
@@ -108,6 +110,21 @@ class GithubStore {
     return collected
   }
 
+  /**
+   * Everyone who has said or done something on the open thread, once each —
+   * GitHub's Participants, which the timeline already knows and so costs no
+   * extra selection. The deleted-account placeholder is not a participant.
+   */
+  get participants(): GithubActor[] {
+    const collected: GithubActor[] = []
+    for (const actor of this.threadActors) {
+      if (actor.login === 'ghost') continue
+      if (collected.some((entry) => entry.login === actor.login)) continue
+      collected.push(actor)
+    }
+    return collected
+  }
+
   /** The active tab's items, after the search box and the filter menus. */
   get items(): GithubItem[] {
     return filterItems(this.tabItems, {
@@ -148,7 +165,9 @@ class GithubStore {
    * rather than flickering on and off.
    */
   get capabilities(): GithubCapabilities {
-    if (!this.dashboard) return { projects: false, issueTypes: false }
+    if (!this.dashboard) {
+      return { projects: false, issueTypes: false, subIssues: false, linkedBranches: false }
+    }
     return this.dashboard.capabilities
   }
 
@@ -446,6 +465,67 @@ export async function loadMilestones(): Promise<void> {
       level: 'error',
       message: `Could not load milestones: ${(err as Error).message}`
     })
+  }
+}
+
+/** Whether the viewer is currently being notified about the open item. */
+export function isSubscribed(detail: GithubItemDetail): boolean {
+  return detail.viewerSubscription === 'SUBSCRIBED'
+}
+
+/** Start or stop being notified about the open item. */
+export async function toggleSubscription(): Promise<void> {
+  const selection = github.selection
+  const detail = github.detail
+  if (!selection || !detail) return
+  github.busy = true
+  try {
+    await window.workbench.github.setSubscription(detail.id, !isSubscribed(detail))
+    await loadDetail(selection, { silent: true })
+  } catch (err) {
+    dialogs.notify({ level: 'error', message: (err as Error).message })
+  } finally {
+    github.busy = false
+  }
+}
+
+/**
+ * Open a worktree for the issue, on the branch the repository's own convention
+ * names. This is the one thing in the rail that is Grove's rather than
+ * GitHub's: the whole app is worktrees, and an issue is where one starts.
+ */
+export async function startWorkOnIssue(): Promise<void> {
+  const detail = github.detail
+  if (!detail) return
+  const branch = branchNameFor(detail.number, detail.title)
+  let baseBranch = 'main'
+  const config = store.config
+  if (config) baseBranch = config.workbench.default_base_branch
+
+  const picked = await dialogs.confirm({
+    title: `Open a worktree for #${detail.number}?`,
+    body: `Branch ${branch}, cut from ${baseBranch}.`,
+    actions: [
+      { id: 'go', label: 'Create worktree', kind: 'primary' },
+      { id: 'cancel', label: 'Cancel' }
+    ]
+  })
+  if (picked !== 'go') return
+
+  github.busy = true
+  try {
+    const created = await window.workbench.worktrees.create({
+      name: branch,
+      baseBranch,
+      newBranch: branch
+    })
+    await refreshWorktrees()
+    await selectWorktree(created.id)
+    dialogs.notify({ level: 'info', message: `Working on #${detail.number} in ${branch}` })
+  } catch (err) {
+    dialogs.notify({ level: 'error', message: (err as Error).message })
+  } finally {
+    github.busy = false
   }
 }
 

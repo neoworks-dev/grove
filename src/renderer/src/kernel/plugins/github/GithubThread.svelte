@@ -219,7 +219,8 @@
       <div class="mx-auto w-full" style:max-width="{READING_PX}px">
         <GithubMentionBox
           bind:value={draft}
-          rows={composerOpen ? 4 : 1}
+          rows={composerOpen ? 5 : 1}
+          chrome={composerOpen}
           disabled={github.busy}
           placeholder="Comment on #{detail.number} — @ to mention, ⌘/Ctrl+Enter to send"
           onfocus={() => (composerFocused = true)}

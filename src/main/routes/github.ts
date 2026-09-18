@@ -9,6 +9,7 @@ import { route } from '../kernel/route'
 import * as github from '../github'
 import * as dashboard from '../githubDashboard'
 import type {
+  GithubIssueDraft,
   GithubItemAction,
   GithubItemKind,
   GithubStateFilter,
@@ -27,18 +28,24 @@ export const githubRoutes = {
       return dashboard.fetchStatus(repoPath)
     })
 
-    route(
-      ctx,
-      'github:dashboard',
-      (_e, options: { state: GithubStateFilter; limit: number }) => {
-        const { repoPath } = ctx.workbench.requireRepo()
-        return dashboard.fetchDashboard(repoPath, options)
-      }
-    )
+    route(ctx, 'github:dashboard', (_e, options: { state: GithubStateFilter; limit: number }) => {
+      const { repoPath } = ctx.workbench.requireRepo()
+      return dashboard.fetchDashboard(repoPath, options)
+    })
 
     route(ctx, 'github:item', (_e, kind: GithubItemKind, number: number) => {
       const { repoPath } = ctx.workbench.requireRepo()
       return dashboard.fetchItem(repoPath, kind, number)
+    })
+
+    route(ctx, 'github:labels', () => {
+      const { repoPath } = ctx.workbench.requireRepo()
+      return dashboard.fetchLabels(repoPath)
+    })
+
+    route(ctx, 'github:createIssue', (_e, draft: GithubIssueDraft) => {
+      const { repoPath } = ctx.workbench.requireRepo()
+      return dashboard.createIssue(repoPath, draft)
     })
 
     route(ctx, 'github:comment', (_e, kind: GithubItemKind, number: number, body: string) => {

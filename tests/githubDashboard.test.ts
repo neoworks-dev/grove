@@ -4,7 +4,7 @@
 // here (the network calls themselves are not exercised).
 
 import { describe, it, expect } from 'bun:test'
-import { dashboardQuery, itemActionArgs } from '../src/main/githubDashboard'
+import { createIssueArgs, dashboardQuery, itemActionArgs } from '../src/main/githubDashboard'
 
 describe('dashboardQuery', () => {
   it('asks for open items only under the open filter', () => {
@@ -65,5 +65,29 @@ describe('itemActionArgs', () => {
 
   it('refuses to merge without a method', () => {
     expect(() => itemActionArgs('pull', 7, 'merge')).toThrow(/merge method/)
+  })
+})
+
+describe('createIssueArgs', () => {
+  it('sends the body over stdin rather than the command line', () => {
+    const args = createIssueArgs({ title: 'Terminal takes no mouse input', body: 'x', labels: [] })
+    expect(args).toEqual([
+      'issue',
+      'create',
+      '--title',
+      'Terminal takes no mouse input',
+      '--body-file',
+      '-'
+    ])
+  })
+
+  it('repeats --label once per label', () => {
+    const args = createIssueArgs({ title: 'T', body: '', labels: ['bug', 'area:terminal'] })
+    expect(args.slice(-4)).toEqual(['--label', 'bug', '--label', 'area:terminal'])
+  })
+
+  it('trims the title and refuses an empty one', () => {
+    expect(createIssueArgs({ title: '  T  ', body: '', labels: [] })[3]).toBe('T')
+    expect(() => createIssueArgs({ title: '   ', body: '', labels: [] })).toThrow(/needs a title/)
   })
 })

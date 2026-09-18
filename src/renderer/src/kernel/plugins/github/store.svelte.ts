@@ -9,10 +9,12 @@ import { dialogs } from '../../../lib/dialogs.svelte'
 import { filterItems } from './filter'
 import type {
   GithubDashboard,
+  GithubIssueDraft,
   GithubItem,
   GithubItemAction,
   GithubItemDetail,
   GithubItemKind,
+  GithubLabelDefinition,
   GithubStateFilter,
   GithubStatus,
   MergePrOptions
@@ -47,11 +49,21 @@ class GithubStore {
   /** A comment is being posted, or an action is running. */
   busy = $state(false)
 
+  /** The new-issue composer is open. */
+  composing = $state(false)
+  /**
+   * What the composer holds. It lives here rather than in the component so
+   * closing the composer — or opening a thread over it — does not throw away a
+   * half-written issue.
+   */
+  draft = $state<GithubIssueDraft>({ title: '', body: '', labels: [] })
+  /** The repository's own labels, for the composer's picker. Loaded on demand. */
+  labels = $state<GithubLabelDefinition[]>([])
+
   /** The active tab's items, after the search box. */
   get items(): GithubItem[] {
     if (!this.dashboard) return []
-    const source: GithubItem[] =
-      this.tab === 'pull' ? this.dashboard.pulls : this.dashboard.issues
+    const source: GithubItem[] = this.tab === 'pull' ? this.dashboard.pulls : this.dashboard.issues
     return filterItems(source, this.query)
   }
 
@@ -110,10 +122,7 @@ export async function selectItem(selection: GithubSelection | null): Promise<voi
 }
 
 /** (Re)load the open item's thread. */
-async function loadDetail(
-  selection: GithubSelection,
-  options: { silent: boolean }
-): Promise<void> {
+async function loadDetail(selection: GithubSelection, options: { silent: boolean }): Promise<void> {
   githubInternals.detailToken += 1
   const token = githubInternals.detailToken
   if (!options.silent) github.detailLoading = true
@@ -139,6 +148,51 @@ export async function postComment(body: string): Promise<boolean> {
     await window.workbench.github.comment(selection.kind, selection.number, body)
     await loadDetail(selection, { silent: true })
     void refreshDashboard(github.stateFilter, { silent: true })
+    return true
+  } catch (err) {
+    dialogs.notify({ level: 'error', message: (err as Error).message })
+    return false
+  } finally {
+    github.busy = false
+  }
+}
+
+/**
+ * Load the repository's labels once, so opening the composer a second time is
+ * instant. A failure leaves the picker empty rather than blocking the compose —
+ * an issue without labels still beats no issue.
+ */
+export async function loadLabels(): Promise<void> {
+  if (github.labels.length > 0) return
+  try {
+    github.labels = await window.workbench.github.labels()
+  } catch (err) {
+    dialogs.notify({ level: 'error', message: `Could not load labels: ${(err as Error).message}` })
+  }
+}
+
+/**
+ * Create the composed issue, then show it: the draft is cleared, the list
+ * reloads, the issue tab comes forward and the new issue opens, so the composer
+ * ends on the thing it just made. The draft is kept when it fails, so the text
+ * can be sent again.
+ */
+export async function createIssue(): Promise<boolean> {
+  const draft = github.draft
+  if (draft.title.trim().length === 0) return false
+  github.busy = true
+  try {
+    const created = await window.workbench.github.createIssue({
+      title: draft.title.trim(),
+      body: draft.body,
+      labels: draft.labels
+    })
+    github.draft = { title: '', body: '', labels: [] }
+    github.composing = false
+    dialogs.notify({ level: 'info', message: `Opened #${created.number}` })
+    github.tab = 'issue'
+    await refreshDashboard(github.stateFilter, { silent: true })
+    await selectItem({ kind: 'issue', number: created.number })
     return true
   } catch (err) {
     dialogs.notify({ level: 'error', message: (err as Error).message })

@@ -10,6 +10,10 @@ Anything more than a tiny change: open an issue (`gh issue create`) with the lab
 
 Straight to `main`, no issue and no branch: typos, one-liners, and anything that only touches how we work rather than the app — this file, `.claude/skills/`, editor config. Moving the extension-system rules into the `grove-plugins` skill was one of those.
 
+No issue either when the work is still undefined — building out a surface we're feeling our way through, where the shape comes from what we find as we go. An issue describes a known outcome, and there isn't one yet; writing it up front would be a guess, and keeping it current would cost more than it tells anyone. Still branch, and still open a PR — just without a `Closes`.
+
+The moment that exploration names something concrete, it gets an issue — and anything that won't finish in one session always does, however loosely defined it still is. A session ends and its context goes with it; an issue is the only thing that carries a goal across to the next one. Write them as soon as the list exists, not once the work starts.
+
 Labels are two axes. Type is GitHub's default `bug` or `enhancement`. Area is exactly one of:
 
 - `area:editor` — nvim surface: buffers, rendering, bundled config
@@ -18,7 +22,7 @@ Labels are two axes. Type is GitHub's default `bug` or `enhancement`. Area is ex
 - `area:sidebar` — the rail and its views
 - `area:git` — git changes, worktrees, checkpoints
 - `area:terminal` — terminal pane
-- `area:extensions` — plugin host, extensions view
+- `area:plugins` — plugin host, extensions view, and the panes built as plugins (GitHub, dashboard)
 - `area:ui` — app shell: top bar, menus, theming
 
 Two areas is fine when an issue genuinely spans them; three means split it.

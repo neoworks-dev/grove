@@ -29,6 +29,15 @@ import type {
   GithubItemKind,
   GithubItemDetail,
   GithubItemAction,
+  GithubItemCommand,
+  GithubLabelDefinition,
+  GithubMilestone,
+  GithubIssueDraft,
+  GithubCreatedIssue,
+  GithubLabelChange,
+  GithubCloseReason,
+  GithubAssigneeChange,
+  GithubActor,
   ArchiveOptions,
   DockLayoutState,
   WorkbenchConfig,
@@ -189,18 +198,30 @@ export interface WorkbenchApi {
     openPr: (worktreeId: string, options: OpenPrOptions) => Promise<string>
     mergePr: (worktreeId: string, options: MergePrOptions) => Promise<string>
     status: () => Promise<GithubStatus>
-    dashboard: (options: {
-      state: GithubStateFilter
-      limit: number
-    }) => Promise<GithubDashboard>
+    dashboard: (options: { state: GithubStateFilter; limit: number }) => Promise<GithubDashboard>
     item: (kind: GithubItemKind, number: number) => Promise<GithubItemDetail>
+    labels: () => Promise<GithubLabelDefinition[]>
+    milestones: () => Promise<GithubMilestone[]>
+    changeMilestone: (kind: GithubItemKind, number: number, title: string | null) => Promise<void>
+    mentionables: () => Promise<GithubActor[]>
+    setSubscription: (nodeId: string, subscribed: boolean) => Promise<void>
+    command: (kind: GithubItemKind, number: number, command: GithubItemCommand) => Promise<void>
+    transfer: (number: number, destination: string) => Promise<string>
+    createIssue: (draft: GithubIssueDraft) => Promise<GithubCreatedIssue>
+    changeLabels: (kind: GithubItemKind, number: number, change: GithubLabelChange) => Promise<void>
     comment: (kind: GithubItemKind, number: number, body: string) => Promise<string>
     action: (
       kind: GithubItemKind,
       number: number,
       action: GithubItemAction,
-      merge?: MergePrOptions
+      merge?: MergePrOptions,
+      reason?: GithubCloseReason
     ) => Promise<string>
+    changeAssignees: (
+      kind: GithubItemKind,
+      number: number,
+      change: GithubAssigneeChange
+    ) => Promise<void>
   }
   checkpoints: {
     list: (worktreeId: string) => Promise<CheckpointMeta[]>

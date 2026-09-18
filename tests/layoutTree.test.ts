@@ -6,6 +6,7 @@ import {
   findLeaf,
   findParentSplit,
   insertAtEdge,
+  paneTypesInSlot,
   pathToLeaf,
   splitChildFlex,
   splitLeaf,
@@ -425,5 +426,51 @@ describe('splitChildFlex', () => {
     const flex = splitChildFlex([0.3, 0.7], [null, null])
     expect(growTotal(flex)).toBeCloseTo(1)
     expect(Number(flex[0].split(' ')[0])).toBeCloseTo(0.3)
+  })
+})
+
+// A named view is its centre pane: the GitHub view is the GitHub pane. Grove
+// uses this both to refuse letting another centre pane replace it, and to drop
+// a saved layout that no longer holds it.
+describe('paneTypesInSlot', () => {
+  const SLOTS: Record<string, string> = {
+    nvim: 'center',
+    github: 'center',
+    dashboard: 'center',
+    agent: 'center',
+    files: 'sidebar'
+  }
+
+  function slotOf(paneTypeId: string): string | undefined {
+    return SLOTS[paneTypeId]
+  }
+
+  it('reports a single-pane view as that pane', () => {
+    expect(paneTypesInSlot(createLeaf('github'), 'center', slotOf)).toEqual(['github'])
+  })
+
+  it('leaves out panes of another slot', () => {
+    const tree = createSplit('row', [createLeaf('files'), createLeaf('nvim')])
+    expect(paneTypesInSlot(tree, 'center', slotOf)).toEqual(['nvim'])
+  })
+
+  it('lists each type once, in tree order', () => {
+    const tree = createSplit('row', [createLeaf('nvim'), createLeaf('agent'), createLeaf('nvim')])
+    expect(paneTypesInSlot(tree, 'center', slotOf)).toEqual(['nvim', 'agent'])
+  })
+
+  it('ignores a pane type that belongs to no slot', () => {
+    const tree = createSplit('row', [createLeaf('github'), createLeaf('not-a-pane')])
+    expect(paneTypesInSlot(tree, 'center', slotOf)).toEqual(['github'])
+  })
+
+  it('tells a view that lost its own pane from one the user merely split', () => {
+    // The bug: opening a file while the GitHub view was active replaced its
+    // only leaf with the editor, and that layout was then persisted.
+    const centre = paneTypesInSlot(createLeaf('github'), 'center', slotOf)
+    const evicted = createLeaf('nvim')
+    expect(leaves(evicted).some((leaf) => centre.includes(leaf.paneTypeId))).toBe(false)
+    const split = createSplit('row', [createLeaf('github'), createLeaf('nvim')])
+    expect(leaves(split).some((leaf) => centre.includes(leaf.paneTypeId))).toBe(true)
   })
 })

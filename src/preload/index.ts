@@ -67,7 +67,10 @@ const workbench = {
     dashboard: (options: unknown) => ipcRenderer.invoke('github:dashboard', options),
     item: (kind: string, number: number) => ipcRenderer.invoke('github:item', kind, number),
     labels: () => ipcRenderer.invoke('github:labels'),
+    mentionables: () => ipcRenderer.invoke('github:mentionables'),
     createIssue: (draft: unknown) => ipcRenderer.invoke('github:createIssue', draft),
+    changeLabels: (kind: string, number: number, change: unknown) =>
+      ipcRenderer.invoke('github:changeLabels', kind, number, change),
     comment: (kind: string, number: number, body: string) =>
       ipcRenderer.invoke('github:comment', kind, number, body),
     action: (kind: string, number: number, action: string, merge?: unknown) =>

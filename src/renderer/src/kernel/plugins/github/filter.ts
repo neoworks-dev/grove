@@ -2,7 +2,7 @@
 // and the small vocabulary that turns GitHub's enums into colours and words.
 // Kept free of runes and `window` so they can be unit-tested directly.
 
-import type { GithubItem } from '../../../../../shared/types'
+import type { GithubItem, GithubItemKind } from '../../../../../shared/types'
 
 /** A colour token from the app palette, used for status text and dots. */
 export type Tone = 'green' | 'red' | 'amber' | 'violet' | 'blue' | 'dim'
@@ -83,7 +83,7 @@ export function reviewTone(decision: string | null | undefined): Tone {
 }
 
 /** Colour for an item's own state (open / closed / merged / draft). */
-export function stateTone(item: GithubItem): Tone {
+export function stateTone(item: { kind: GithubItemKind; state: string; isDraft?: boolean }): Tone {
   if (item.kind === 'pull' && item.isDraft) return 'dim'
   if (item.state === 'MERGED') return 'violet'
   if (item.state === 'CLOSED') return 'red'

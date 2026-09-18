@@ -8,6 +8,7 @@
 import { dialogs } from '../../../lib/dialogs.svelte'
 import { filterItems } from './filter'
 import type {
+  GithubActor,
   GithubDashboard,
   GithubIssueDraft,
   GithubItem,
@@ -57,8 +58,33 @@ class GithubStore {
    * half-written issue.
    */
   draft = $state<GithubIssueDraft>({ title: '', body: '', labels: [] })
-  /** The repository's own labels, for the composer's picker. Loaded on demand. */
+  /** The repository's own labels, for the pickers. Loaded on demand. */
   labels = $state<GithubLabelDefinition[]>([])
+
+  /**
+   * Threads already fetched this session, keyed `kind:number`. Reselecting an
+   * item shows its thread at once and refreshes behind it, instead of blanking
+   * the pane and refetching what was on screen a moment ago.
+   */
+  details = $state<Record<string, GithubItemDetail>>({})
+
+  /** People the repository can assign, for @mention completion. */
+  mentionables = $state<GithubActor[]>([])
+
+  /** Everyone already on the open thread — offered ahead of the repository. */
+  get threadActors(): GithubActor[] {
+    const detail = this.detail
+    if (!detail) return []
+    const collected: GithubActor[] = [detail.authorActor]
+    for (const entry of detail.timeline) {
+      if (entry.type === 'comment') {
+        collected.push(entry.comment.author)
+        continue
+      }
+      collected.push(entry.event.actor)
+    }
+    return collected
+  }
 
   /** The active tab's items, after the search box. */
   get items(): GithubItem[] {
@@ -112,12 +138,29 @@ export async function refreshDashboard(
   }
 }
 
-/** Select an item and load its body and comments. */
+/** The cache key for a thread. */
+function detailKey(selection: GithubSelection): string {
+  return `${selection.kind}:${selection.number}`
+}
+
+/**
+ * Select an item and show its thread. A thread already read this session is put
+ * up immediately and refreshed silently; only a first visit shows the spinner.
+ */
 export async function selectItem(selection: GithubSelection | null): Promise<void> {
   github.selection = selection
-  github.detail = null
   github.detailError = null
-  if (!selection) return
+  if (!selection) {
+    github.detail = null
+    return
+  }
+  const cached = github.details[detailKey(selection)]
+  if (cached) {
+    github.detail = cached
+    await loadDetail(selection, { silent: true })
+    return
+  }
+  github.detail = null
   await loadDetail(selection, { silent: false })
 }
 
@@ -129,10 +172,14 @@ async function loadDetail(selection: GithubSelection, options: { silent: boolean
   try {
     const detail = await window.workbench.github.item(selection.kind, selection.number)
     if (token !== githubInternals.detailToken) return
+    github.details = { ...github.details, [detailKey(selection)]: detail }
     github.detail = detail
     github.detailError = null
   } catch (err) {
     if (token !== githubInternals.detailToken) return
+    // A background refresh that fails leaves the thread that is already on
+    // screen alone; only a first load has nothing to fall back to.
+    if (options.silent && github.detail) return
     github.detailError = (err as Error).message
   } finally {
     if (token === githubInternals.detailToken) github.detailLoading = false
@@ -172,6 +219,20 @@ export async function loadLabels(): Promise<void> {
 }
 
 /**
+ * Load the people a mention can name, once per session. A failure leaves
+ * completion offering only the thread's own participants rather than breaking
+ * the box it is attached to.
+ */
+export async function loadMentionables(): Promise<void> {
+  if (github.mentionables.length > 0) return
+  try {
+    github.mentionables = await window.workbench.github.mentionables()
+  } catch {
+    github.mentionables = []
+  }
+}
+
+/**
  * Create the composed issue, then show it: the draft is cleared, the list
  * reloads, the issue tab comes forward and the new issue opens, so the composer
  * ends on the thing it just made. The draft is kept when it fails, so the text
@@ -197,6 +258,31 @@ export async function createIssue(): Promise<boolean> {
   } catch (err) {
     dialogs.notify({ level: 'error', message: (err as Error).message })
     return false
+  } finally {
+    github.busy = false
+  }
+}
+
+/**
+ * Apply a new label set to the open item. The difference against what it
+ * already carries is what gets sent, so an unchanged pick costs no call.
+ */
+export async function applyLabels(next: string[]): Promise<void> {
+  const selection = github.selection
+  const detail = github.detail
+  if (!selection || !detail) return
+  const current = detail.labels.map((label) => label.name)
+  const add = next.filter((name) => !current.includes(name))
+  const remove = current.filter((name) => !next.includes(name))
+  if (add.length === 0 && remove.length === 0) return
+
+  github.busy = true
+  try {
+    await window.workbench.github.changeLabels(selection.kind, selection.number, { add, remove })
+    await loadDetail(selection, { silent: true })
+    void refreshDashboard(github.stateFilter, { silent: true })
+  } catch (err) {
+    dialogs.notify({ level: 'error', message: (err as Error).message })
   } finally {
     github.busy = false
   }

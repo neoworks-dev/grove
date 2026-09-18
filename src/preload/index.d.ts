@@ -32,6 +32,8 @@ import type {
   GithubLabelDefinition,
   GithubIssueDraft,
   GithubCreatedIssue,
+  GithubLabelChange,
+  GithubActor,
   ArchiveOptions,
   DockLayoutState,
   WorkbenchConfig,
@@ -195,7 +197,9 @@ export interface WorkbenchApi {
     dashboard: (options: { state: GithubStateFilter; limit: number }) => Promise<GithubDashboard>
     item: (kind: GithubItemKind, number: number) => Promise<GithubItemDetail>
     labels: () => Promise<GithubLabelDefinition[]>
+    mentionables: () => Promise<GithubActor[]>
     createIssue: (draft: GithubIssueDraft) => Promise<GithubCreatedIssue>
+    changeLabels: (kind: GithubItemKind, number: number, change: GithubLabelChange) => Promise<void>
     comment: (kind: GithubItemKind, number: number, body: string) => Promise<string>
     action: (
       kind: GithubItemKind,

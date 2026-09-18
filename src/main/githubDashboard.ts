@@ -367,6 +367,7 @@ function timelineNodeFields(includePullOnly: boolean): string {
         id createdAt
         actor { ${ACTOR_FIELDS} }
         source {
+          __typename
           ... on Issue { number title url }
           ... on PullRequest { number title url }
         }
@@ -432,7 +433,7 @@ interface TimelineNode {
   currentTitle?: string
   stateReason?: string | null
   mergeRefName?: string
-  source?: { number?: number; title?: string; url?: string } | null
+  source?: { __typename?: string; number?: number; title?: string; url?: string } | null
 }
 
 interface DetailNode {
@@ -513,6 +514,9 @@ function toEvent(node: TimelineNode, kind: GithubEventKind): GithubTimelineEvent
   if (node.mergeRefName) event.mergeRefName = node.mergeRefName
   if (node.source && node.source.number !== undefined) {
     event.source = {
+      // A reference can come from either kind, and the pane needs to know which
+      // to open it without guessing from the URL.
+      kind: node.source.__typename === 'PullRequest' ? 'pull' : 'issue',
       number: node.source.number,
       title: node.source.title ?? '',
       url: node.source.url ?? ''

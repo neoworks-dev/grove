@@ -12,6 +12,8 @@ Commits, issues and pull requests carry only what matters. Say the thing, explai
 
 Work lives in GitHub issues on `neoworks-dev/grove`, not in a file in the repo.
 
+Before starting on anything, check whether it is already half-built: `git branch -a` and `gh pr list` for the feature, and read what is on the branch. Sessions end mid-feature, and a branch is where that work is — starting again on `main` writes it a second time and loses whatever the first attempt learned. If a branch for it exists, continue on it.
+
 Anything more than a tiny change: open an issue (`gh issue create`) with the labels below, branch off `main` as `<issue-number>-<slug>` (e.g. `12-tab-strip-overflow`), then open a PR towards `main` with `Closes #12` in the body.
 
 Straight to `main`, no issue and no branch: typos, one-liners, and anything that only touches how we work rather than the app — this file, `.claude/skills/`, editor config. Moving the extension-system rules into the `grove-plugins` skill was one of those.

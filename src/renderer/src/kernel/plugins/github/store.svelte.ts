@@ -565,7 +565,9 @@ export async function openPrFile(detail: GithubItemDetail, file: GithubPrFile): 
   // be open at all.
   layout.ensurePane('nvim')
 
-  const base = await window.workbench.github.prBaseFile(diff.baseOid, file)
+  // The file comes out of `prDiffs`, so it is a reactive proxy — and a proxy
+  // cannot cross IPC ("An object could not be cloned"). Send the plain object.
+  const base = await window.workbench.github.prBaseFile(diff.baseOid, $state.snapshot(file))
   // A deleted file has nothing to open beside the base copy, so the base copy is
   // the whole view.
   if (file.changeType === 'deleted') {

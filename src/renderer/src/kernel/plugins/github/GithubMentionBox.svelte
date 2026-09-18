@@ -6,6 +6,17 @@
   import GithubAvatar from './GithubAvatar.svelte'
   import { github, loadMentionables } from './store.svelte'
   import { activeMention, applyMention, rankMentions, type MentionQuery } from './mentions'
+  import { applyMarkdownEdit, type MarkdownEdit } from './markdownEdits'
+  import { renderMarkdown } from '../../../lib/markdown'
+  import TextHOneIcon from 'phosphor-svelte/lib/TextHOneIcon'
+  import TextBIcon from 'phosphor-svelte/lib/TextBIcon'
+  import TextItalicIcon from 'phosphor-svelte/lib/TextItalicIcon'
+  import QuotesIcon from 'phosphor-svelte/lib/QuotesIcon'
+  import CodeIcon from 'phosphor-svelte/lib/CodeIcon'
+  import LinkSimpleIcon from 'phosphor-svelte/lib/LinkSimpleIcon'
+  import ListBulletsIcon from 'phosphor-svelte/lib/ListBulletsIcon'
+  import ListNumbersIcon from 'phosphor-svelte/lib/ListNumbersIcon'
+  import ListChecksIcon from 'phosphor-svelte/lib/ListChecksIcon'
   import type { GithubActor } from '../../../../../shared/types'
 
   let {
@@ -23,11 +34,40 @@
     onsubmit?: () => void
     onfocus?: () => void
     onblur?: () => void
+    /** Hides the Write/Preview tabs and the toolbar for a one-line box. */
+    chrome?: boolean
   } = $props()
 
   const MAX_SUGGESTIONS = 6
 
   let field = $state<HTMLTextAreaElement | null>(null)
+  let previewing = $state(false)
+
+  // Formatting buttons, in GitHub's order. Each is a pure edit over the text
+  // and selection, so what they do is decided in markdownEdits.ts.
+  const TOOLS: { edit: MarkdownEdit; label: string }[] = [
+    { edit: 'heading', label: 'Heading' },
+    { edit: 'bold', label: 'Bold' },
+    { edit: 'italic', label: 'Italic' },
+    { edit: 'quote', label: 'Quote' },
+    { edit: 'code', label: 'Code' },
+    { edit: 'link', label: 'Link' },
+    { edit: 'bullets', label: 'Bulleted list' },
+    { edit: 'numbers', label: 'Numbered list' },
+    { edit: 'tasks', label: 'Task list' }
+  ]
+
+  /** Run a formatting button against the live selection, then restore it. */
+  function format(edit: MarkdownEdit): void {
+    if (!field) return
+    const result = applyMarkdownEdit(value, field.selectionStart, field.selectionEnd, edit)
+    value = result.text
+    const target = field
+    requestAnimationFrame(() => {
+      target.focus()
+      target.setSelectionRange(result.selectionStart, result.selectionEnd)
+    })
+  }
   let mention = $state<MentionQuery | null>(null)
   let highlighted = $state(0)
 
@@ -111,23 +151,95 @@
 </script>
 
 <div class="relative">
-  <textarea
-    bind:this={field}
-    bind:value
-    class="w-full resize-none rounded-md border border-line bg-input px-2 py-1.5 text-xs text-default outline-none placeholder:text-dim focus:border-line-strong"
-    {placeholder}
-    {rows}
-    {disabled}
-    oninput={syncMention}
-    onkeyup={syncMention}
-    onclick={syncMention}
-    onkeydown={onKeydown}
-    onfocus={() => onfocus?.()}
-    onblur={() => {
-      mention = null
-      onblur?.()
-    }}
-  ></textarea>
+  {#if chrome}
+    <!-- Write / Preview, then the formatting row — GitHub's layout, because the
+         muscle memory for it is the point of matching it. -->
+    <div class="flex items-center gap-0.5 rounded-t-md border border-b-0 border-line px-1 py-0.5">
+      <button
+        class="rounded px-1.5 py-0.5 text-2xs hover:bg-hover"
+        class:text-default={!previewing}
+        class:text-dim={previewing}
+        onclick={() => (previewing = false)}
+      >
+        Write
+      </button>
+      <button
+        class="rounded px-1.5 py-0.5 text-2xs hover:bg-hover"
+        class:text-default={previewing}
+        class:text-dim={!previewing}
+        onclick={() => (previewing = true)}
+      >
+        Preview
+      </button>
+
+      {#if !previewing}
+        <span class="mx-1 h-3 w-px bg-line"></span>
+        {#each TOOLS as tool (tool.edit)}
+          <button
+            class="rounded p-1 text-dim hover:bg-hover hover:text-default"
+            title={tool.label}
+            aria-label={tool.label}
+            {disabled}
+            onclick={() => format(tool.edit)}
+          >
+            {#if tool.edit === 'heading'}
+              <TextHOneIcon size={12} />
+            {:else if tool.edit === 'bold'}
+              <TextBIcon size={12} />
+            {:else if tool.edit === 'italic'}
+              <TextItalicIcon size={12} />
+            {:else if tool.edit === 'quote'}
+              <QuotesIcon size={12} />
+            {:else if tool.edit === 'code'}
+              <CodeIcon size={12} />
+            {:else if tool.edit === 'link'}
+              <LinkSimpleIcon size={12} />
+            {:else if tool.edit === 'bullets'}
+              <ListBulletsIcon size={12} />
+            {:else if tool.edit === 'numbers'}
+              <ListNumbersIcon size={12} />
+            {:else}
+              <ListChecksIcon size={12} />
+            {/if}
+          </button>
+        {/each}
+      {/if}
+    </div>
+  {/if}
+
+  {#if previewing && chrome}
+    <div
+      class="agent-markdown prose max-w-none overflow-auto rounded-b-md border border-line bg-input px-2 py-1.5 text-xs text-default"
+      style:min-height="{rows * 1.5}rem"
+    >
+      {#if value.trim().length > 0}
+        <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+        {@html renderMarkdown(value)}
+      {:else}
+        <p class="text-dim">Nothing to preview.</p>
+      {/if}
+    </div>
+  {:else}
+    <textarea
+      bind:this={field}
+      bind:value
+      class="w-full resize-none border border-line bg-input px-2 py-1.5 text-xs text-default outline-none placeholder:text-dim focus:border-line-strong"
+      class:rounded-md={!chrome}
+      class:rounded-b-md={chrome}
+      {placeholder}
+      {rows}
+      {disabled}
+      oninput={syncMention}
+      onkeyup={syncMention}
+      onclick={syncMention}
+      onkeydown={onKeydown}
+      onfocus={() => onfocus?.()}
+      onblur={() => {
+        mention = null
+        onblur?.()
+      }}
+    ></textarea>
+  {/if}
 
   {#if open}
     <ul

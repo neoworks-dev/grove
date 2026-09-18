@@ -5,9 +5,12 @@
 
 import { describe, it, expect } from 'bun:test'
 import {
+  adminHint,
   createIssueArgs,
   dashboardQuery,
   itemActionArgs,
+  itemCommandArgs,
+  transferArgs,
   itemDetailQuery,
   milestoneChangeArgs,
   optionalFields,
@@ -100,6 +103,63 @@ describe('relationshipFields', () => {
 describe('itemDetailQuery relationships', () => {
   it('keeps them out of the pull-request branch, which has no parent', () => {
     expect(itemDetailQuery(FULL).match(/subIssuesSummary/g)?.length).toBe(1)
+  })
+})
+
+describe('itemCommandArgs', () => {
+  it('locks and unlocks either kind', () => {
+    expect(itemCommandArgs('issue', 12, 'lock')).toEqual(['issue', 'lock', '12'])
+    expect(itemCommandArgs('pull', 7, 'unlock')).toEqual(['pr', 'unlock', '7'])
+  })
+
+  it('pins and unpins issues', () => {
+    expect(itemCommandArgs('issue', 12, 'pin')).toEqual(['issue', 'pin', '12'])
+    expect(itemCommandArgs('issue', 12, 'unpin')).toEqual(['issue', 'unpin', '12'])
+  })
+
+  it('answers gh prompt itself, because the asking happens in the pane', () => {
+    expect(itemCommandArgs('issue', 12, 'delete')).toEqual(['issue', 'delete', '12', '--yes'])
+  })
+
+  it('refuses what a pull request cannot do', () => {
+    expect(() => itemCommandArgs('pull', 7, 'pin')).toThrow(/lock and unlock/)
+    expect(() => itemCommandArgs('pull', 7, 'delete')).toThrow(/lock and unlock/)
+  })
+})
+
+describe('transferArgs', () => {
+  it('takes an owner/repo destination', () => {
+    expect(transferArgs(12, 'neoworks-dev/grove')).toEqual([
+      'issue',
+      'transfer',
+      '12',
+      'neoworks-dev/grove'
+    ])
+  })
+
+  it('trims what was typed', () => {
+    expect(transferArgs(12, '  acme/tools  ')[3]).toBe('acme/tools')
+  })
+
+  it('refuses anything that is not owner/repo', () => {
+    expect(() => transferArgs(12, 'grove')).toThrow(/owner\/repo/)
+    expect(() => transferArgs(12, '   ')).toThrow(/needs a destination/)
+  })
+})
+
+describe('adminHint', () => {
+  it('names the missing right when a delete is refused', () => {
+    const raw = new Error('gh issue delete 12 --yes failed: HTTP 403: Must have admin rights')
+    expect(adminHint(raw, 'delete').message).toBe(
+      'Deleting an issue needs admin rights on this repository.'
+    )
+  })
+
+  it('leaves other commands and other failures alone', () => {
+    const refusal = new Error('HTTP 403: Must have admin rights')
+    expect(adminHint(refusal, 'lock')).toBe(refusal)
+    const missing = new Error('gh issue delete failed: could not resolve to an Issue')
+    expect(adminHint(missing, 'delete')).toBe(missing)
   })
 })
 

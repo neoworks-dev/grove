@@ -458,6 +458,10 @@ export interface GithubItemDetail extends GithubItemShared {
   timeline: GithubTimelineEntry[]
   /** SUBSCRIBED | UNSUBSCRIBED | IGNORED, or null when GitHub has no opinion. */
   viewerSubscription?: string | null
+  /** Whether the conversation is locked to people without write access. */
+  locked: boolean
+  /** Issues only: pinned to the top of the repository's issue list. */
+  isPinned?: boolean
   /** The issue this one hangs off, or null when it hangs off nothing. */
   parent?: GithubItemRef | null
   subIssues?: GithubItemRef[]
@@ -489,6 +493,13 @@ export interface GithubCreatedIssue {
 
 /** Non-comment actions the dashboard can run against an item. */
 export type GithubItemAction = 'close' | 'reopen' | 'ready' | 'merge'
+
+/**
+ * The commands beyond changing state, which the sidebar keeps apart from the
+ * rest: locking speaks for the repository, and deleting is gone for good.
+ * Pull requests can only be locked and unlocked.
+ */
+export type GithubItemCommand = 'lock' | 'unlock' | 'pin' | 'unpin' | 'delete'
 
 /**
  * Why an issue was closed. GitHub distinguishes the two in its own UI and shows

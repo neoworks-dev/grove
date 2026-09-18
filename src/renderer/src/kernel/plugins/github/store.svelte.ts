@@ -9,6 +9,7 @@ import { dialogs } from '../../../lib/dialogs.svelte'
 import type { DialogOptions } from '../../../lib/dialogs.svelte'
 import { store, refreshWorktrees, selectWorktree } from '../../../lib/store.svelte'
 import { branchNameFor } from './branches'
+import { clearRefusals, loadOnce, newReferenceLoads } from './referenceLoads'
 import { authorsOf, projectsOf, typesOf } from './filter'
 import {
   DEFAULT_QUERY,
@@ -214,6 +215,20 @@ const githubInternals = {
   detailToken: 0
 }
 
+// The labels, milestones and assignable people the menus need. Several
+// components want each of them and want it the moment they mount, so they are
+// loaded through one place that knows what is already in flight and what has
+// already been refused — see referenceLoads.ts for why neither can be worked
+// out from the loaded list itself.
+const referenceLoads = newReferenceLoads()
+
+/** Load a piece of reference data once, reporting a failure to the user. */
+function loadReference(key: string, load: () => Promise<void>): Promise<void> {
+  return loadOnce(referenceLoads, key, load, (error) => {
+    dialogs.notify({ level: 'error', message: error.message })
+  })
+}
+
 /**
  * Load the list for a state filter. The filter is a parameter rather than a
  * store read so a caller inside an effect depends on it. `silent` keeps the
@@ -225,7 +240,12 @@ export async function refreshDashboard(
 ): Promise<void> {
   if (githubInternals.listInFlight) return
   githubInternals.listInFlight = true
-  if (!options.silent) github.loading = true
+  // A refresh the user asked for is also them asking to try again; a background
+  // poll is not, and retrying on the poll is what this guards against.
+  if (!options.silent) {
+    github.loading = true
+    clearRefusals(referenceLoads)
+  }
   try {
     const status = await window.workbench.github.status()
     github.status = status
@@ -480,12 +500,9 @@ export async function postComment(body: string): Promise<boolean> {
  * an issue without labels still beats no issue.
  */
 export async function loadLabels(): Promise<void> {
-  if (github.labels.length > 0) return
-  try {
+  await loadReference('labels', async () => {
     github.labels = await window.workbench.github.labels()
-  } catch (err) {
-    dialogs.notify({ level: 'error', message: `Could not load labels: ${(err as Error).message}` })
-  }
+  })
 }
 
 /**
@@ -493,15 +510,9 @@ export async function loadLabels(): Promise<void> {
  * says so there, rather than taking down the rail it sits in.
  */
 export async function loadMilestones(): Promise<void> {
-  if (github.milestones.length > 0) return
-  try {
+  await loadReference('milestones', async () => {
     github.milestones = await window.workbench.github.milestones()
-  } catch (err) {
-    dialogs.notify({
-      level: 'error',
-      message: `Could not load milestones: ${(err as Error).message}`
-    })
-  }
+  })
 }
 
 /**
@@ -712,12 +723,9 @@ export async function applyMilestone(title: string | null): Promise<void> {
  * the box it is attached to.
  */
 export async function loadMentionables(): Promise<void> {
-  if (github.mentionables.length > 0) return
-  try {
+  await loadReference('mentionables', async () => {
     github.mentionables = await window.workbench.github.mentionables()
-  } catch {
-    github.mentionables = []
-  }
+  })
 }
 
 /**

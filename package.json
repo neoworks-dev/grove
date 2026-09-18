@@ -25,6 +25,7 @@
     "test:e2e": "bun scripts/e2e.ts",
     "test:e2e:fast": "GROVE_E2E_SKIP_BUILD=1 bun scripts/e2e.ts",
     "test:env": "bun scripts/test-env.ts",
+    "qa": "bun scripts/qa.ts",
     "build:plugins": "bun scripts/build-plugins.ts",
     "fetch:nvim": "bun scripts/fetch-nvim.ts",
     "icons": "bun scripts/generate-icons.ts",

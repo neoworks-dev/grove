@@ -9,7 +9,7 @@ This is the harness for the job an end-to-end spec cannot do: sitting down with
 the app and finding out what is wrong with it. Not "does the button dispatch the
 action" — whether the thing is any good to use.
 
-It is not the debugger. When a bug is already known and the question is *why*,
+It is not the debugger. When a bug is already known and the question is _why_,
 that is the `grove-debug` skill, which attaches to an instance over the `debug.*`
 routes. This one launches an instance of its own and uses it.
 
@@ -79,7 +79,9 @@ are listed under the tree when there are any, boot failures included.
 ### The screenshot is for what only a picture shows
 
 ```bash
-bun run qa screenshot opened-explorer    # a PNG in .grove-qa/shots; read it
+bun run qa screenshot opened-explorer               # the window
+bun run qa screenshot tab-strip --crop 400,40,520,60  # one part of it
+bun run qa screenshot agent-pane --of leaf-13         # one pane
 ```
 
 Alignment, overlap, a label running under an icon, a panel that went blank, a
@@ -87,9 +89,19 @@ colour that is wrong. **Not** for finding out what is open or what to click —
 `probe` says that exactly, and a picture costs you a thousand times as much to be
 told it approximately.
 
-When you do take one, **read the file**. Every screenshot is also drawn into the
-transcript the person watching this run is reading, so the path you print is the
-picture they see, and one you did not look at tells you nothing.
+`--crop x,y,w,h` is how you look closer. `probe` prints a position and a size for
+every element, so the numbers are already in front of you, and a crop of the row
+you are doubting beats a whole window you have to hunt through.
+
+When you do take one, **read the file** — with the Read tool, in this session.
+Never open it in a viewer or a browser: there is no desktop here, nobody is
+watching one, and the run has nothing to do with the machine it was started from.
+Every screenshot is also drawn into the transcript the person watching this run
+is reading, so the path you print is the picture they see, and one you did not
+look at tells you nothing.
+
+Taking one when nothing has happened since the last is refused. Two photographs
+of the same screen cannot differ; re-read the first, or `probe`.
 
 Anything transient has to be photographed in the same connection that produced
 it, which is what `--screenshot <label>` on an action is for:
@@ -116,15 +128,15 @@ bun run qa wait "Commit" [--gone]
 
 A target is one of:
 
-| form | means |
-| --- | --- |
-| `New session` | the accessible name, in the roles a person clicks |
-| `e14` | an element from the last `probe` |
-| `leaf-3` | a pane — clicking one focuses it |
-| `split-1:0` | the gutter between two panes, for a resize |
-| `at=820,460` | a point in the window, for what has no element |
-| `role=button:Save` | a name, in one role, when the bare name is ambiguous |
-| `text=Skip` / `testid=agent-mode-trigger` / `css=.thing` | when nothing else fits |
+| form                                                     | means                                                |
+| -------------------------------------------------------- | ---------------------------------------------------- |
+| `New session`                                            | the accessible name, in the roles a person clicks    |
+| `e14`                                                    | an element from the last `probe`                     |
+| `leaf-3`                                                 | a pane — clicking one focuses it                     |
+| `split-1:0`                                              | the gutter between two panes, for a resize           |
+| `at=820,460`                                             | a point in the window, for what has no element       |
+| `role=button:Save`                                       | a name, in one role, when the bare name is ambiguous |
+| `text=Skip` / `testid=agent-mode-trigger` / `css=.thing` | when nothing else fits                               |
 
 Two things about dragging. A gutter is grabbed a quarter of the way along it, not
 in the middle — the middle is where the `+` that opens a pane lives, and pressing

@@ -10,6 +10,8 @@ import { store } from './lib/store.svelte'
 import { review } from './lib/review.svelte'
 import { keymap } from './lib/keymap.svelte'
 import { layout } from './lib/layout.svelte'
+import { panes } from './lib/panes.svelte'
+import { views } from './lib/views.svelte'
 import { inlineEdit } from './lib/inlineEdit.svelte'
 import { agentSessions } from './lib/agents/sessions.svelte'
 import * as agentTranscript from './lib/agents/transcript'
@@ -43,6 +45,10 @@ if (window.workbench?.debug) {
     review,
     keymap,
     layout,
+    // The registries, so a harness can ask what pane types and views exist
+    // rather than being told a list that goes stale.
+    panes,
+    views,
     inlineEdit,
     nvimRegistry,
     agentSessions,

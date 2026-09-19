@@ -12,6 +12,14 @@ describe('parseTarget', () => {
     expect(parseTarget('edit')).toEqual({ kind: 'name', name: 'edit' })
   })
 
+  test('a pane and a gutter are recognised by their shape too', () => {
+    expect(parseTarget('leaf-3')).toEqual({ kind: 'leaf', leafId: 'leaf-3' })
+    expect(parseTarget('split-1:0')).toEqual({ kind: 'gutter', splitId: 'split-1', index: 0 })
+    // A label that only looks like one is still a label.
+    expect(parseTarget('leaf-node')).toEqual({ kind: 'name', name: 'leaf-node' })
+    expect(parseTarget('split-view')).toEqual({ kind: 'name', name: 'split-view' })
+  })
+
   test('a role narrows a name to one role', () => {
     expect(parseTarget('role=button:Save')).toEqual({ kind: 'name', name: 'Save', role: 'button' })
   })
@@ -48,5 +56,7 @@ describe('describeTarget', () => {
     expect(describeTarget(parseTarget('role=tab:README.md'))).toBe('tab "README.md"')
     expect(describeTarget(parseTarget('at=1,2'))).toBe('point 1,2')
     expect(describeTarget(parseTarget('e3'))).toBe('e3')
+    expect(describeTarget(parseTarget('leaf-3'))).toBe('pane leaf-3')
+    expect(describeTarget(parseTarget('split-1:2'))).toBe('gutter split-1:2')
   })
 })

@@ -14,8 +14,17 @@
 
 import { readFileSync, writeFileSync } from 'node:fs'
 import { chromium } from '@playwright/test'
-import type { Browser, Locator, Page } from '@playwright/test'
+import type { Browser, CDPSession, Locator, Page } from '@playwright/test'
 import { parseTarget, describeTarget, NAME_ROLES, type Target } from './targets.ts'
+import type {
+  Box,
+  LayoutSummary,
+  PaneSummary,
+  ProbeElement,
+  RendererState,
+  Snapshot,
+  TreeNode
+} from './snapshot.ts'
 
 interface Command {
   action: string
@@ -29,6 +38,11 @@ interface ProbeEntry {
   selector: string
   box: { x: number; y: number; width: number; height: number }
   disabled?: boolean
+  // The pane this element is inside, from the nearest `[data-leaf]`. Null for
+  // anything portalled out of the tree — a menu, a modal, the top bar.
+  leaf: string | null
+  // The gutter it belongs to instead, for the `+` that opens a pane in the gap.
+  gutter: string | null
 }
 
 async function main(): Promise<void> {
@@ -54,17 +68,29 @@ async function main(): Promise<void> {
  * show a screen the action never produced.
  */
 async function run(page: Page, refsPath: string, command: Command): Promise<unknown> {
+  // Before the action, not after: the errors worth catching are the ones this
+  // action causes, and the drain only sees what happens while it is attached.
+  await installConsoleCapture(page)
+  const drain = await attachErrorDrain(page)
+
   const result = await perform(page, refsPath, command)
-  if (typeof command.shot !== 'string') return result
-  await page.screenshot({ path: command.shot })
-  return { ...(result as Record<string, unknown>), shot: command.shot }
+  if (typeof command.screenshot !== 'string') {
+    await drain.detach().catch(() => undefined)
+    return result
+  }
+  await page.screenshot({ path: command.screenshot })
+  await drain.detach().catch(() => undefined)
+  return { ...(result as Record<string, unknown>), screenshot: command.screenshot }
 }
 
 async function perform(page: Page, refsPath: string, command: Command): Promise<unknown> {
-  if (command.action === 'ready') return ready(page, Number(command.timeout ?? 60_000))
-  if (command.action === 'state') return state(page)
+  if (command.action === 'ready') {
+    return ready(page, refsPath, Number(command.timeout ?? 60_000))
+  }
   if (command.action === 'console') return consoleLog(page)
   if (command.action === 'probe') return probe(page, refsPath, command)
+  if (command.action === 'panes') return paneTypes(page)
+  if (command.action === 'pane') return pane(page, refsPath, command)
   if (command.action === 'shot') return shot(page, refsPath, command)
   if (command.action === 'click') return click(page, refsPath, command)
   if (command.action === 'drag') return drag(page, refsPath, command)
@@ -106,45 +132,18 @@ async function rendererPage(browser: Browser): Promise<Page> {
  * process does after the renderer has painted — and the first-run wizard covers
  * the whole centre pane while it is up.
  */
-async function ready(page: Page, timeout: number): Promise<unknown> {
+async function ready(page: Page, refsPath: string, timeout: number): Promise<unknown> {
   await page.waitForFunction(
     () => Boolean((window as never as GroveWindow).__grove_debug?.store?.selectedWorktree?.path),
     undefined,
     { timeout }
   )
-  await installConsoleCapture(page)
 
   const notNow = page.getByRole('button', { name: 'Not now' })
   const dismissed = await notNow.isVisible().catch(() => false)
   if (dismissed) await notNow.click()
 
-  return { ready: true, dismissedSetup: dismissed, ...(await state(page)) }
-}
-
-// --------------------------------------------------------------------- state
-
-/** What is on screen right now, as far as the renderer's own stores know. */
-async function state(page: Page): Promise<Record<string, unknown>> {
-  await installConsoleCapture(page)
-  return page.evaluate(() => {
-    const debug = (window as never as GroveWindow).__grove_debug
-    if (!debug) return { error: 'renderer debug hooks missing — was GROVE_DEBUG set?' }
-    return {
-      worktree: debug.store?.selectedWorktree?.path,
-      activeTab: debug.store?.activeTabPath,
-      activePane: debug.keymap?.activePane,
-      panes: debug.layout?.leafSummary ? debug.layout.leafSummary() : undefined,
-      agentSessions: (debug.agentSessions?.list ?? []).map((session) => ({
-        id: session.id,
-        status: session.status
-      })),
-      reviewQueue: (debug.review?.queue ?? []).length,
-      storeError: debug.store?.error,
-      consoleErrors: ((window as never as QaWindow).__qa_console ?? []).filter(
-        (entry) => entry.level === 'error'
-      ).length
-    }
-  })
+  return { ready: true, dismissedSetup: dismissed, ...(await snapshot(page, refsPath)) }
 }
 
 /** Everything the renderer has logged since the capture went in. */
@@ -162,17 +161,29 @@ async function consoleLog(page: Page): Promise<unknown> {
  * complain about while I was not looking" answerable at all.
  */
 async function installConsoleCapture(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    const view = window as never as QaWindow
-    if (view.__qa_console) return
-    const entries: QaConsoleEntry[] = []
-    view.__qa_console = entries
+  await page
+    .evaluate(() => {
+      const view = window as never as QaWindow
+      if (view.__qa_console) return
+      const entries: QaConsoleEntry[] = []
+      view.__qa_console = entries
 
-    const record = (level: string, args: unknown[]): void => {
-      entries.push({
-        level,
-        at: new Date().toISOString(),
-        text: args
+      // Also the way the CDP drain gets its entries in here, which is why it
+      // lives on `window` rather than staying local.
+      const record = (level: string, text: string): void => {
+        // The same fault often arrives twice — `window.onerror` and CDP's
+        // exception report are the same throw — so a repeat of the last line
+        // within a second is dropped rather than counted again.
+        const last = entries[entries.length - 1]
+        const now = Date.now()
+        if (last && last.level === level && last.text === text && now - last.atMs < 1000) return
+        entries.push({ level, at: new Date(now).toISOString(), atMs: now, text })
+        if (entries.length > 500) entries.splice(0, entries.length - 500)
+      }
+      view.__qa_record = record
+
+      const format = (args: unknown[]): string =>
+        args
           .map((arg) => {
             if (typeof arg === 'string') return arg
             try {
@@ -182,59 +193,273 @@ async function installConsoleCapture(page: Page): Promise<void> {
             }
           })
           .join(' ')
-      })
-      if (entries.length > 500) entries.splice(0, entries.length - 500)
-    }
 
-    for (const level of ['log', 'info', 'warn', 'error'] as const) {
-      const original = console[level].bind(console)
-      console[level] = (...args: unknown[]): void => {
-        record(level, args)
-        original(...args)
+      for (const level of ['log', 'info', 'warn', 'error'] as const) {
+        const original = console[level].bind(console)
+        console[level] = (...args: unknown[]): void => {
+          record(level, format(args))
+          original(...args)
+        }
       }
+      window.addEventListener('error', (event) => record('error', event.message))
+      window.addEventListener('unhandledrejection', (event) =>
+        record('error', `unhandled rejection: ${format([(event as PromiseRejectionEvent).reason])}`)
+      )
+    })
+    .catch(() => undefined)
+}
+
+/**
+ * Report what the renderer never tells `console` about.
+ *
+ * A failed request, a blocked resource, a CSP violation and an uncaught throw
+ * are all things Chromium knows and the page does not log. CDP reports them —
+ * but only to a connected client, and this driver connects for one action at a
+ * time. So they are pushed into the page's own ring buffer, where they outlive
+ * the connection and the next `probe` can count them.
+ */
+async function attachErrorDrain(page: Page): Promise<{ detach: () => Promise<void> }> {
+  const record = (level: string, text: string): void => {
+    void page
+      .evaluate((entry) => (window as never as QaWindow).__qa_record?.(entry.level, entry.text), {
+        level,
+        text
+      })
+      .catch(() => undefined)
+  }
+
+  let session: CDPSession
+  try {
+    session = await page.context().newCDPSession(page)
+  } catch {
+    // An older Electron, or a page that went away mid-connection: the console
+    // patch above is still in place, so carry on without the extra reporting.
+    return { detach: () => Promise.resolve() }
+  }
+
+  session.on('Log.entryAdded', (event) => {
+    const entry = event.entry
+    let level = 'warn'
+    if (entry.level === 'error') level = 'error'
+    record(level, `${entry.source}: ${entry.text}`)
+  })
+  session.on('Runtime.exceptionThrown', (event) => {
+    const details = event.exceptionDetails
+    let text = details.text
+    if (details.exception?.description) text = details.exception.description
+    record('error', text)
+  })
+  await session.send('Log.enable').catch(() => undefined)
+  await session.send('Runtime.enable').catch(() => undefined)
+
+  return { detach: () => session.detach() }
+}
+
+// ------------------------------------------------------------------- probing
+
+/**
+ * What is on screen, as the pane tree it actually is.
+ *
+ * A flat list of buttons says nothing about where they are: an agent reading one
+ * cannot tell whether the GitHub pane is open, and goes looking for it with
+ * screenshots. So the panes come from the layout store, every element hangs off
+ * the pane that contains it, and anything portalled out of the tree — a menu, a
+ * modal, the top bar — is collected separately.
+ *
+ * Refs are written to disk so the next invocation can resolve them, and they are
+ * only valid until the screen changes under them: a stale one is an error, not a
+ * click somewhere unintended.
+ */
+async function probe(page: Page, refsPath: string, command: Command): Promise<unknown> {
+  const taken = await snapshot(page, refsPath)
+  if (typeof command.filter !== 'string') return taken
+  return filterSnapshot(taken, command.filter)
+}
+
+/** The tree, the panes, the elements and the session's own state, in one pass. */
+async function snapshot(page: Page, refsPath: string): Promise<Snapshot> {
+  const [entries, state] = await Promise.all([
+    page.evaluate<ProbeEntry[]>(probeScript),
+    page.evaluate<RendererState>(stateScript)
+  ])
+  writeFileSync(refsPath, JSON.stringify(entries, null, 2), 'utf8')
+
+  const byPane = new Map<string | null, ProbeElement[]>()
+  const byGutter: Record<string, ProbeElement[]> = {}
+  for (const entry of entries) {
+    if (entry.gutter !== null) {
+      const gutter = byGutter[entry.gutter] ?? []
+      gutter.push(describeElement(entry))
+      byGutter[entry.gutter] = gutter
+      continue
     }
-    window.addEventListener('error', (event) => record('error', [event.message]))
-    window.addEventListener('unhandledrejection', (event) =>
-      record('error', ['unhandled rejection:', (event as PromiseRejectionEvent).reason])
-    )
+    const bucket = byPane.get(entry.leaf) ?? []
+    bucket.push(describeElement(entry))
+    byPane.set(entry.leaf, bucket)
+  }
+
+  return {
+    ...state,
+    tree: state.tree === null ? null : attachElements(state.tree, state.leafBoxes, byPane),
+    gutterElements: byGutter,
+    overlays: byPane.get(null) ?? []
+  }
+}
+
+/** One element as a probe reader sees it: how to name it, and where it is. */
+function describeElement(entry: ProbeEntry): ProbeElement {
+  const grab = grabPoint(entry.box)
+  const element: ProbeElement = {
+    ref: entry.ref,
+    role: entry.role,
+    name: entry.name,
+    at: `${Math.round(grab.x)},${Math.round(grab.y)}`,
+    size: `${Math.round(entry.box.width)}x${Math.round(entry.box.height)}`
+  }
+  if (entry.disabled) element.disabled = true
+  return element
+}
+
+/** Hang each pane's elements and rendered size off its node in the tree. */
+function attachElements(
+  node: LayoutSummary,
+  boxes: Record<string, Box>,
+  byPane: Map<string | null, ProbeElement[]>
+): TreeNode {
+  if (node.kind === 'split') {
+    return {
+      ...node,
+      children: node.children.map((child) => attachElements(child, boxes, byPane))
+    }
+  }
+  const box = boxes[node.id]
+  return {
+    ...node,
+    width: box ? Math.round(box.width) : 0,
+    height: box ? Math.round(box.height) : 0,
+    elements: byPane.get(node.id) ?? []
+  }
+}
+
+/**
+ * Keep only the elements a filter names, and say so.
+ *
+ * The panes stay: which of them holds the match is most of the answer, and a
+ * pane that turns out to hold nothing matching is worth seeing too.
+ */
+function filterSnapshot(taken: Snapshot, filter: string): Snapshot {
+  const needle = filter.toLowerCase()
+  const matches = (element: ProbeElement): boolean =>
+    element.name.toLowerCase().includes(needle) ||
+    element.role.includes(needle) ||
+    element.ref === needle
+
+  const prune = (node: TreeNode): TreeNode => {
+    if (node.kind === 'split') return { ...node, children: node.children.map(prune) }
+    return { ...node, elements: node.elements.filter(matches) }
+  }
+
+  const gutterElements: Record<string, ProbeElement[]> = {}
+  for (const [gutter, elements] of Object.entries(taken.gutterElements)) {
+    gutterElements[gutter] = elements.filter(matches)
+  }
+
+  return {
+    ...taken,
+    filter,
+    tree: taken.tree === null ? null : prune(taken.tree),
+    gutterElements,
+    overlays: taken.overlays.filter(matches)
+  }
+}
+
+// ------------------------------------------------------------------ pane types
+
+/**
+ * Every pane type the kernel has registered, and whether one is open.
+ *
+ * Read off the registry rather than listed here: a plugin's panes appear the
+ * moment it loads, and nothing goes stale.
+ */
+async function paneTypes(page: Page): Promise<unknown> {
+  return page.evaluate(() => {
+    const debug = (window as never as GroveWindow).__grove_debug
+    if (!debug?.panes || !debug.layout) {
+      return { error: 'renderer debug hooks missing — was GROVE_DEBUG set?' }
+    }
+    const open = debug.layout.leafSummary()
+    return {
+      types: debug.panes.types
+        .map((type) => {
+          const leaves = open.filter((leaf) => leaf.paneTypeId === type.id)
+          const entry: Record<string, unknown> = { id: type.id, title: type.title }
+          if (type.slot) entry.slot = type.slot
+          if (type.preferredEdge) entry.edge = type.preferredEdge.side
+          if (type.rail) entry.rail = true
+          if (leaves.length > 0) entry.open = leaves.map((leaf) => leaf.id)
+          if (type.when && !type.when()) entry.unavailable = true
+          return entry
+        })
+        .sort((left, right) => String(left.id).localeCompare(String(right.id)))
+    }
   })
 }
 
-// --------------------------------------------------------------------- probe
-
 /**
- * Everything on screen that can be acted on, with a ref to act on it by.
+ * Open, move or close a pane by type, the way a command would.
  *
- * A model reading a screenshot can see a button and still be a dozen pixels out
- * when it clicks; naming what it saw is exact. Refs are written to disk so the
- * next invocation of this driver can resolve them, and they are only valid
- * until the screen changes under them — a stale one is an error, not a miss.
+ * The point is not to skip the UI but to stop paying for it: finding the gutter
+ * that opens a GitHub pane takes an agent a dozen actions, and none of them are
+ * what it was sent to test. The picker and the rail still need exercising — by
+ * whoever is testing the picker and the rail.
  */
-async function probe(page: Page, refsPath: string, command: Command): Promise<unknown> {
-  const filter = typeof command.filter === 'string' ? command.filter.toLowerCase() : null
-  const entries = await page.evaluate<ProbeEntry[]>(probeScript)
-
-  const matched = filter
-    ? entries.filter(
-        (entry) => entry.name.toLowerCase().includes(filter) || entry.role.includes(filter)
-      )
-    : entries
-
-  writeFileSync(refsPath, JSON.stringify(matched, null, 2), 'utf8')
-  return {
-    count: matched.length,
-    elements: matched.map((entry) => {
-      const grab = grabPoint(entry.box)
-      return {
-        ref: entry.ref,
-        role: entry.role,
-        name: entry.name,
-        disabled: entry.disabled,
-        at: `${Math.round(grab.x)},${Math.round(grab.y)}`,
-        size: `${Math.round(entry.box.width)}x${Math.round(entry.box.height)}`
-      }
-    })
+async function pane(page: Page, refsPath: string, command: Command): Promise<unknown> {
+  const paneTypeId = String(command.paneTypeId)
+  const request = {
+    paneTypeId,
+    close: command.close === true,
+    split: typeof command.split === 'string' ? command.split : null,
+    inLeaf: typeof command.inLeaf === 'string' ? command.inLeaf : null
   }
+
+  const outcome = await page.evaluate((options) => {
+    const debug = (window as never as GroveWindow).__grove_debug
+    const layout = debug?.layout
+    const panes = debug?.panes
+    if (!layout || !panes) return { error: 'renderer debug hooks missing — was GROVE_DEBUG set?' }
+    if (!panes.get(options.paneTypeId)) {
+      return {
+        error: `no such pane type: ${options.paneTypeId}`,
+        available: panes.types.map((type) => type.id).sort()
+      }
+    }
+
+    if (options.close) {
+      const open = layout.leafSummary().filter((leaf) => leaf.paneTypeId === options.paneTypeId)
+      if (open.length === 0) return { error: `no ${options.paneTypeId} pane is open` }
+      for (const leaf of open) layout.closeLeaf(leaf.id)
+      return { closed: open.map((leaf) => leaf.id) }
+    }
+    if (options.inLeaf !== null) {
+      const target = layout.leafSummary().find((leaf) => leaf.id === options.inLeaf)
+      if (!target) return { error: `no such pane: ${options.inLeaf}` }
+      layout.setLeafType(options.inLeaf, options.paneTypeId)
+      return { swapped: options.inLeaf }
+    }
+    if (options.split !== null) {
+      layout.splitFocused(options.split as 'row' | 'column', options.paneTypeId)
+      return { split: options.split }
+    }
+    layout.ensurePane(options.paneTypeId)
+    return { opened: options.paneTypeId }
+  }, request)
+
+  if ('error' in outcome) return outcome
+  // The pane mounts, and only then does focus move to it — a frame later at the
+  // earliest, and a canvas pane takes a few. Wait long enough that the tree
+  // printed below is honest about which pane ended up focused.
+  await page.waitForTimeout(500)
+  return { ...outcome, ...(await snapshot(page, refsPath)) }
 }
 
 /**
@@ -278,9 +503,7 @@ const probeScript = (): ProbeEntry[] => {
       const node: Element = current
       const parent: Element | null = node.parentElement
       if (!parent) break
-      const siblings = Array.from(parent.children).filter(
-        (child) => child.tagName === node.tagName
-      )
+      const siblings = Array.from(parent.children).filter((child) => child.tagName === node.tagName)
       const index = siblings.indexOf(node) + 1
       steps.unshift(`${node.tagName.toLowerCase()}:nth-of-type(${index})`)
       current = parent
@@ -321,18 +544,92 @@ const probeScript = (): ProbeEntry[] => {
     const style = getComputedStyle(element)
     if (style.visibility === 'hidden' || style.display === 'none') continue
 
+    const role = roleOf(element)
+    const gutter = element.closest('[data-gutter]')?.getAttribute('data-gutter') ?? null
+    // A gutter is two nested separators, and the tree already names it by the id
+    // it is targeted with. Reporting them as elements as well would put every
+    // divider in the window twice.
+    if (gutter !== null && role === 'separator') continue
+
     const entry: ProbeEntry = {
       ref: `e${next}`,
-      role: roleOf(element),
+      role,
       name: nameOf(element),
       selector: selectorFor(element),
-      box: { x: box.x, y: box.y, width: box.width, height: box.height }
+      box: { x: box.x, y: box.y, width: box.width, height: box.height },
+      leaf: element.closest('[data-leaf]')?.getAttribute('data-leaf') ?? null,
+      gutter
     }
     if (element.hasAttribute('disabled')) entry.disabled = true
     entries.push(entry)
     next += 1
   }
   return entries
+}
+
+/**
+ * The session's own account of itself: the pane tree, the worktree, the agents,
+ * and what has gone wrong so far.
+ *
+ * Serialised into the renderer like `probeScript`, so it stands alone.
+ */
+const stateScript = (): RendererState => {
+  const debug = (window as never as GroveWindow).__grove_debug
+  const empty: RendererState = {
+    window: { width: window.innerWidth, height: window.innerHeight },
+    view: null,
+    worktree: null,
+    activeTab: null,
+    activePane: null,
+    activeLeafId: null,
+    tree: null,
+    leafBoxes: {},
+    gutters: [],
+    agentSessions: [],
+    reviewQueue: 0,
+    errors: { count: 0, recent: [] }
+  }
+  if (!debug?.layout) {
+    return { ...empty, error: 'renderer debug hooks missing — was GROVE_DEBUG set?' }
+  }
+
+  const leafBoxes: Record<string, Box> = {}
+  for (const element of Array.from(document.querySelectorAll('[data-leaf]'))) {
+    const id = element.getAttribute('data-leaf')
+    if (id === null) continue
+    const box = element.getBoundingClientRect()
+    leafBoxes[id] = { x: box.x, y: box.y, width: box.width, height: box.height }
+  }
+
+  const logged = (window as never as QaWindow).__qa_console ?? []
+  const errors = logged.filter((entry) => entry.level === 'error')
+  const viewId = debug.layout.activeViewId
+  const view = debug.views?.get(viewId) ?? null
+
+  return {
+    window: { width: window.innerWidth, height: window.innerHeight },
+    view: { id: viewId, label: view === null ? viewId : view.label },
+    worktree: debug.store?.selectedWorktree?.path ?? null,
+    activeTab: debug.store?.activeTabPath ?? null,
+    activePane: debug.keymap?.activePane ?? null,
+    activeLeafId: debug.keymap?.activeLeafId ?? null,
+    tree: debug.layout.treeSummary(),
+    leafBoxes,
+    // Only the gutters actually rendered: focus mode folds the tree down and
+    // takes every gutter with it, so a tree node is not proof of a handle.
+    gutters: Array.from(document.querySelectorAll('[data-gutter]'))
+      .map((element) => element.getAttribute('data-gutter'))
+      .filter((id): id is string => id !== null),
+    agentSessions: (debug.agentSessions?.list ?? []).map((session) => ({
+      id: session.id,
+      status: session.status
+    })),
+    reviewQueue: (debug.review?.queue ?? []).length,
+    storeError: debug.store?.error,
+    bootError: (window as never as GroveWindow).__grove_boot_error,
+    focusMode: debug.layout.focusMode,
+    errors: { count: errors.length, recent: errors.slice(-5).map((entry) => entry.text) }
+  }
 }
 
 // ------------------------------------------------------------------ resolving
@@ -351,6 +648,10 @@ function locate(page: Page, refsPath: string, target: Target): Locator {
     const entry = readRefs(refsPath).find((candidate) => candidate.ref === target.ref)
     if (!entry) throw new Error(`no such ref: ${target.ref} — run "qa probe" again`)
     return page.locator(entry.selector)
+  }
+  if (target.kind === 'leaf') return page.locator(`[data-leaf="${target.leafId}"]`)
+  if (target.kind === 'gutter') {
+    return page.locator(`[data-gutter="${target.splitId}:${target.index}"]`)
   }
   if (target.kind === 'css') return page.locator(target.selector)
   if (target.kind === 'testid') return page.getByTestId(target.testId)
@@ -440,7 +741,9 @@ async function drag(page: Page, refsPath: string, command: Command): Promise<unk
     await page.mouse.move(from.x + (to.x - from.x) * ratio, from.y + (to.y - from.y) * ratio)
   }
   await page.mouse.up()
-  return { dragged: `${Math.round(from.x)},${Math.round(from.y)} → ${Math.round(to.x)},${Math.round(to.y)}` }
+  return {
+    dragged: `${Math.round(from.x)},${Math.round(from.y)} → ${Math.round(to.x)},${Math.round(to.y)}`
+  }
 }
 
 /** Type into whatever has focus, a keystroke at a time. */
@@ -509,18 +812,41 @@ async function shot(page: Page, refsPath: string, command: Command): Promise<unk
 interface QaConsoleEntry {
   level: string
   at: string
+  atMs: number
   text: string
 }
 
 interface QaWindow {
   __qa_console?: QaConsoleEntry[]
+  __qa_record?: (level: string, text: string) => void
+}
+
+interface DebugPaneType {
+  id: string
+  title: string
+  slot?: string
+  rail?: { order: number }
+  preferredEdge?: { side: string }
+  when?: () => boolean
 }
 
 interface GroveWindow {
+  __grove_boot_error?: string
   __grove_debug?: {
     store?: { selectedWorktree?: { path: string }; activeTabPath?: string; error?: string }
-    keymap?: { activePane?: string }
-    layout?: { leafSummary?(): unknown }
+    keymap?: { activePane?: string; activeLeafId?: string }
+    layout?: {
+      activeViewId: string
+      focusMode: boolean
+      leafSummary(): PaneSummary[]
+      treeSummary(): LayoutSummary
+      ensurePane(paneTypeId: string): void
+      splitFocused(direction: 'row' | 'column', paneTypeId?: string): void
+      setLeafType(leafId: string, paneTypeId: string): void
+      closeLeaf(leafId: string): void
+    }
+    panes?: { types: DebugPaneType[]; get(id: string): DebugPaneType | null }
+    views?: { get(id: string): { id: string; label: string } | null }
     review?: { queue?: unknown[] }
     agentSessions?: { list?: Array<{ id: string; status: string }> }
   }

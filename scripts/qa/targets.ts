@@ -7,6 +7,8 @@
 
 export type Target =
   | { kind: 'ref'; ref: string }
+  | { kind: 'leaf'; leafId: string }
+  | { kind: 'gutter'; splitId: string; index: number }
   | { kind: 'name'; name: string; role?: string }
   | { kind: 'text'; text: string }
   | { kind: 'testid'; testId: string }
@@ -50,9 +52,18 @@ export function parseTarget(input: string): Target {
   return bareTarget(trimmed)
 }
 
-/** A ref from the last probe, or otherwise an accessible name. */
+/**
+ * A ref, a pane, a gutter — or otherwise an accessible name.
+ *
+ * The three structural forms are the ids `probe` prints, and they are shaped
+ * distinctly enough (`e12`, `leaf-3`, `split-1:0`) that no label a person reads
+ * off the screen can be mistaken for one.
+ */
 function bareTarget(input: string): Target {
   if (/^e[0-9]+$/.test(input)) return { kind: 'ref', ref: input }
+  if (/^leaf-[0-9]+$/.test(input)) return { kind: 'leaf', leafId: input }
+  const gutter = /^(split-[0-9]+):([0-9]+)$/.exec(input)
+  if (gutter) return { kind: 'gutter', splitId: gutter[1], index: Number(gutter[2]) }
   return { kind: 'name', name: input }
 }
 
@@ -88,6 +99,8 @@ function requireValue(value: string, prefix: string): string {
 /** How a target reads back in an error or a log line. */
 export function describeTarget(target: Target): string {
   if (target.kind === 'ref') return target.ref
+  if (target.kind === 'leaf') return `pane ${target.leafId}`
+  if (target.kind === 'gutter') return `gutter ${target.splitId}:${target.index}`
   if (target.kind === 'name') {
     if (target.role === undefined) return `"${target.name}"`
     return `${target.role} "${target.name}"`

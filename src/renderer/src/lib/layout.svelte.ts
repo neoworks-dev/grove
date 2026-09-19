@@ -64,6 +64,30 @@ interface DefaultTreeOptions {
   centerType?: string
 }
 
+/** One open pane, flattened for a harness to read. */
+export interface PaneSummary {
+  kind: 'leaf'
+  id: string
+  paneTypeId: string
+  title: string
+  focused: boolean
+  // Absent unless notable: see summariseLeaf.
+  registered?: boolean
+  slot?: string
+  sizePx?: number
+  paneState?: Record<string, unknown>
+}
+
+export interface SplitSummary {
+  kind: 'split'
+  id: string
+  direction: SplitDirection
+  sizes: number[]
+  children: LayoutSummary[]
+}
+
+export type LayoutSummary = PaneSummary | SplitSummary
+
 // The starting layout: the center pane flanked by whichever pane types asked
 // for the left and right edges (the explorer and the agent panel, as they
 // register themselves). Exported for the base "code" view definition.
@@ -444,6 +468,54 @@ class LayoutStore {
   // Whether any leaf of the given pane type is open in the active view.
   hasPaneType(paneTypeId: string): boolean {
     return leaves(this.tree).some((leaf) => leaf.paneTypeId === paneTypeId)
+  }
+
+  /**
+   * Every open pane as plain data, in render order — what the debug harnesses
+   * print when asked what is on screen. Reactive state is copied out, not
+   * handed over: both callers serialise the result.
+   */
+  leafSummary(): PaneSummary[] {
+    return leaves(this.tree).map((leaf) => this.summariseLeaf(leaf))
+  }
+
+  /**
+   * The active view's tree as plain data, splits included.
+   *
+   * The flat summary says which panes exist; this says how they sit next to each
+   * other, which is what a harness needs to target a gutter or understand a
+   * layout it did not build.
+   */
+  treeSummary(): LayoutSummary {
+    const describe = (node: LayoutNode): LayoutSummary => {
+      if (node.kind === 'leaf') return this.summariseLeaf(node)
+      return {
+        kind: 'split',
+        id: node.id,
+        direction: node.direction,
+        sizes: [...node.sizes],
+        children: node.children.map(describe)
+      }
+    }
+    return describe(this.tree)
+  }
+
+  private summariseLeaf(leaf: LeafNode): PaneSummary {
+    const type = panes.get(leaf.paneTypeId)
+    const summary: PaneSummary = {
+      kind: 'leaf',
+      id: leaf.id,
+      paneTypeId: leaf.paneTypeId,
+      title: type?.title ?? leaf.paneTypeId,
+      focused: keymap.activeLeafId === leaf.id
+    }
+    // Only what distinguishes this pane from the default: a registered type, a
+    // family, a size it holds itself, state it was opened with.
+    if (!type) summary.registered = false
+    if (type?.slot) summary.slot = type.slot
+    if (typeof leaf.sizePx === 'number') summary.sizePx = leaf.sizePx
+    if (leaf.paneState) summary.paneState = { ...leaf.paneState }
+    return summary
   }
 
   closeLeaf(leafId: string): void {

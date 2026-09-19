@@ -8,9 +8,9 @@
 // job can be handed to a model instead of a person. `qa explore` starts one.
 //
 //   bun run qa start                     launch a session on a display of its own
-//   bun run qa shot opened-explorer      a screenshot, to look at
-//   bun run qa probe                     what is on screen, and refs to act on it by
+//   bun run qa probe                     the pane tree, and refs to act on it by
 //   bun run qa click "New session"       act
+//   bun run qa screenshot split-panes    a picture, when only a picture will do
 //   bun run qa stop
 //
 // The app itself is driven from `scripts/qa/drive.ts`, which runs under node.
@@ -29,6 +29,8 @@ import { demoWorktreePathFor } from '../tests/e2e/fixtures/demoRepo'
 import { prepareProfile, profileAt, type GroveProfile } from '../tests/e2e/fixtures/profile'
 import { displayEnv, startVirtualDisplay, stopVirtualDisplay } from './lib/virtualDisplay'
 import { renderTranscript } from './qa/transcript'
+import { renderPaneTypes, renderSnapshot, type PaneTypeEntry } from './qa/tree'
+import type { Snapshot } from './qa/snapshot'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -71,11 +73,10 @@ async function main(): Promise<void> {
 
   if (command === 'start') return start(args)
   if (command === 'stop') return stop()
-  if (command === 'status') return status()
   if (command === 'explore') return explore(args)
   if (command === 'finding') return fileFinding(args)
   if (command === 'charters') return listCharters()
-  if (command === 'log') return showLog(args)
+  if (command === 'logs') return showLogs(args)
   if (command === 'nvim') return nvim(args)
   return act(command, args)
 }
@@ -92,7 +93,7 @@ async function main(): Promise<void> {
  */
 async function start(args: string[]): Promise<void> {
   if (readSession()) {
-    console.log('a session is already running — "qa stop" first, or "qa status" to see it')
+    console.log('a session is already running — "qa stop" first, or "qa probe" to see it')
     return
   }
   if (args.includes('--fresh')) await resetProfile()
@@ -132,7 +133,8 @@ async function start(args: string[]): Promise<void> {
   console.log(`profile:   ${profile.userData}`)
   console.log(`demo repo: ${demo.root}  →  ${SANDBOX_REMOTE}`)
   console.log(`app log:   ${paths.appLog}`)
-  console.log(ready)
+  console.log('')
+  console.log(printable('probe', ready))
 }
 
 /** Take the session down: the app, everything it spawned, and the display. */
@@ -145,16 +147,6 @@ async function stop(): Promise<void> {
   await rm(paths.session, { force: true })
 
   console.log(`stopped ${killed} of the test profile's processes`)
-}
-
-function status(): void {
-  const session = readSession()
-  if (!session) {
-    console.log('no session — "qa start"')
-    return
-  }
-  console.log(JSON.stringify(session, null, 2))
-  console.log(drive(session, { action: 'state' }))
 }
 
 function readSession(): Session | null {
@@ -181,17 +173,79 @@ function requireSession(): Session {
 /** Everything that acts on the running app, forwarded to the node driver. */
 function act(command: string, args: string[]): void {
   const session = requireSession()
-  // `--shot label` on any action: take the screenshot in the same connection
-  // the action ran in, so what it shows is what the action left behind.
-  const shotLabel = optional(args, '--shot')
-  let shot: string | undefined = undefined
-  if (shotLabel !== undefined) shot = nextShotPath(shotLabel)
+  // `--screenshot label` on any action: photograph the result in the same
+  // connection the action ran in, so what it shows is what the action left
+  // behind. A menu closes when the driver disconnects.
+  let label = optional(args, '--screenshot')
+  if (label === undefined) label = optional(args, '--shot')
+  let screenshot: string | undefined = undefined
+  if (label !== undefined) screenshot = nextShotPath(label)
 
-  console.log(drive(session, { ...actionFor(command, args), shot }))
+  const output = drive(session, { ...actionFor(command, args), screenshot })
+  console.log(printable(command, output))
+}
+
+/**
+ * The driver's JSON, as the command that asked for it reads best.
+ *
+ * `probe` and the pane commands answer with a whole snapshot of the app, which
+ * is a tree; everything else answers with a line or two, which is already
+ * readable as JSON.
+ */
+function printable(command: string, output: string): string {
+  if (command === 'panes') return renderPaneTypes(parse<{ types: PaneTypeEntry[] }>(output).types)
+  if (command === 'screenshot' || command === 'shot') {
+    // The path, and nothing else: it is the one thing to do something with, and
+    // what to do with it is read it.
+    return `screenshot: ${parse<{ shot: string }>(output).shot}`
+  }
+  if (command !== 'probe' && command !== 'status' && command !== 'pane') return output
+
+  const snapshot = parse<Snapshot & Record<string, unknown>>(output)
+  // An error before the snapshot was taken (no such pane type, debug hooks
+  // missing) has no tree to draw.
+  if (snapshot.tree === undefined) return output
+
+  const lines: string[] = []
+  const outcome = outcomeLine(snapshot)
+  if (outcome !== null) lines.push(outcome, '')
+  lines.push(renderSnapshot(snapshot))
+  if (typeof snapshot.screenshot === 'string') lines.push('', `screenshot: ${snapshot.screenshot}`)
+  return lines.join('\n')
+}
+
+/** What a pane command did, above the tree it resulted in. */
+function outcomeLine(snapshot: Record<string, unknown>): string | null {
+  if (typeof snapshot.opened === 'string') return `opened ${snapshot.opened}`
+  if (typeof snapshot.swapped === 'string') return `swapped into ${snapshot.swapped}`
+  if (typeof snapshot.split === 'string') return `split ${snapshot.split}`
+  if (Array.isArray(snapshot.closed)) return `closed ${snapshot.closed.join(' ')}`
+  if (snapshot.dismissedSetup === true) return 'dismissed the first-run wizard'
+  return null
+}
+
+function parse<T>(output: string): T {
+  try {
+    return JSON.parse(output) as T
+  } catch {
+    throw new Error(`the driver answered with something that is not JSON:\n${output}`)
+  }
 }
 
 /** The flags that are followed by a value, as opposed to standing alone. */
-const VALUE_FLAGS = ['--shot', '--of', '--at', '--model', '--title', '--body', '--label', '--repo']
+const VALUE_FLAGS = [
+  '--screenshot',
+  '--shot',
+  '--of',
+  '--at',
+  '--in',
+  '--split',
+  '--model',
+  '--title',
+  '--body',
+  '--label',
+  '--repo'
+]
 
 /** What is left once the flags and their values are taken out. */
 function positional(args: string[]): string[] {
@@ -212,11 +266,26 @@ function positional(args: string[]): string[] {
 function actionFor(command: string, args: string[]): Record<string, unknown> {
   const rest = positional(args)
 
-  if (command === 'shot') {
+  if (command === 'screenshot' || command === 'shot') {
     return { action: 'shot', path: nextShotPath(rest[0]), target: optional(args, '--of') }
   }
-  if (command === 'probe') {
+  // `status` is the same question as `probe`, asked before there was a tree to
+  // answer it with.
+  if (command === 'probe' || command === 'status') {
     return { action: 'probe', filter: rest[0] }
+  }
+  if (command === 'panes') {
+    return { action: 'panes' }
+  }
+  if (command === 'pane') {
+    requireArgument(rest[0], 'pane <type> [--split row|column] [--in <pane>] [--close]')
+    return {
+      action: 'pane',
+      paneTypeId: rest[0],
+      close: args.includes('--close'),
+      split: splitDirection(args),
+      inLeaf: optional(args, '--in')
+    }
   }
   if (command === 'click' || command === 'dblclick' || command === 'rightclick') {
     requireArgument(rest[0], `${command} <target>`)
@@ -234,8 +303,8 @@ function actionFor(command: string, args: string[]): Record<string, unknown> {
     requireArgument(rest[0], 'type <text>')
     return { action: 'type', text: rest[0] }
   }
-  if (command === 'key') {
-    requireArgument(rest[0], 'key <chord> [chord …]')
+  if (command === 'press' || command === 'key') {
+    requireArgument(rest[0], 'press <chord> [chord …]')
     return { action: 'key', keys: rest }
   }
   if (command === 'scroll') {
@@ -250,10 +319,15 @@ function actionFor(command: string, args: string[]): Record<string, unknown> {
     requireArgument(rest[0], 'eval <expression>')
     return { action: 'eval', expression: rest[0] }
   }
-  if (command === 'console') {
-    return { action: 'console' }
-  }
   throw new Error(`unknown command: ${command} (try "qa help")`)
+}
+
+/** `--split row|column`, the orientation a new pane is opened in. */
+function splitDirection(args: string[]): string | undefined {
+  const value = optional(args, '--split')
+  if (value === undefined) return undefined
+  if (value === 'row' || value === 'column') return value
+  throw new Error(`--split takes row or column, got ${value}`)
 }
 
 /**
@@ -267,7 +341,12 @@ function actionFor(command: string, args: string[]): Record<string, unknown> {
 function drive(session: Session, command: Record<string, unknown>): string {
   const result = spawnSync(
     'node',
-    [join(repoRoot, 'scripts', 'qa', 'drive.ts'), String(session.port), paths.refs, JSON.stringify(command)],
+    [
+      join(repoRoot, 'scripts', 'qa', 'drive.ts'),
+      String(session.port),
+      paths.refs,
+      JSON.stringify(command)
+    ],
     { cwd: repoRoot, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 }
   )
   if (result.status !== 0) {
@@ -296,10 +375,33 @@ function nvim(args: string[]): void {
   console.log((result.stdout || result.stderr).trim())
 }
 
-function showLog(args: string[]): void {
-  const lines = Number(args[0] ?? 40)
+/**
+ * What the app has complained about, from both of its halves.
+ *
+ * The renderer's own buffer and the main process's stdout are different files
+ * with different failures in them — git, nvim and the agents only ever appear in
+ * the second — and a fault usually only makes sense with both in front of you.
+ */
+function showLogs(args: string[]): void {
+  const count = Number(positional(args)[0] ?? 40)
+  const onlyMain = args.includes('--main')
+  const onlyRenderer = args.includes('--renderer')
+
+  if (!onlyMain) {
+    const entries = parse<Array<{ level: string; at: string; text: string }>>(
+      drive(requireSession(), { action: 'console' })
+    )
+    console.log(`renderer (${entries.length} entries, last ${Math.min(count, entries.length)}):`)
+    for (const entry of entries.slice(-count)) {
+      console.log(`  [${entry.level}] ${entry.at.slice(11, 19)} ${entry.text}`)
+    }
+  }
+  if (onlyRenderer) return
+
   const contents = readFileSync(paths.appLog, 'utf8').split('\n')
-  console.log(contents.slice(-lines).join('\n'))
+  if (!onlyMain) console.log('')
+  console.log(`main process (${paths.appLog}, last ${count} lines):`)
+  for (const line of contents.slice(-count)) console.log(`  ${line}`)
 }
 
 // ------------------------------------------------------------------ the app
@@ -522,9 +624,13 @@ What to cover:
 
 ${charter}
 
-Work in small loops: act, screenshot, look at the screenshot, decide. Note
-anything that is broken, confusing, inconsistent, ugly, slow, or that made you
-guess what to do — the last one matters as much as the crashes.
+Work in small loops: act, probe, decide. The probe is a tree of the panes and
+what is inside them, which is what tells you where you are; take a screenshot
+when the question is visual — alignment, overlap, a panel that went blank — and
+read the file when you do.
+
+Note anything that is broken, confusing, inconsistent, ugly, slow, or that made
+you guess what to do — the last one matters as much as the crashes.
 
 Keep ${report} up to date as you go, so the work survives running out of context.
 
@@ -612,18 +718,19 @@ const SHOT_BRANCH = 'qa-screenshots'
  *
  *   qa finding --title "The tab strip loses the active tab on a split"
  *              --body report.md --label bug --label area:panes
- *              --shot .grove-qa/shots/012-split.png
+ *              --screenshot .grove-qa/shots/012-split.png
  *
  * `--body` takes a file when it names one, and the text itself otherwise.
  */
 function fileFinding(args: string[]): void {
   const title = optional(args, '--title')
-  requireArgument(title, 'finding --title <title> --body <file|text> [--label …] [--shot …]')
+  const form = 'finding --title <title> --body <file|text> [--label …] [--screenshot …]'
+  requireArgument(title, form)
   const body = optional(args, '--body')
-  requireArgument(body, 'finding --title <title> --body <file|text> [--label …] [--shot …]')
+  requireArgument(body, form)
 
   ensureLabel()
-  const images = all(args, '--shot').map(uploadScreenshot)
+  const images = [...all(args, '--screenshot'), ...all(args, '--shot')].map(uploadScreenshot)
   const labels = [AI_LABEL, ...all(args, '--label')]
 
   const sections = [bodyText(body as string)]
@@ -772,7 +879,10 @@ function stamp(): string {
 }
 
 function slug(value: string): string {
-  return value.replace(/[^a-zA-Z0-9-]+/g, '-').toLowerCase().slice(0, 40)
+  return value
+    .replace(/[^a-zA-Z0-9-]+/g, '-')
+    .toLowerCase()
+    .slice(0, 40)
 }
 
 // --------------------------------------------------------------------- misc
@@ -804,22 +914,30 @@ function usage(): void {
 
   start [--fresh] [--build]   launch a session on a display of its own
   stop                        kill the app, its children, and the display
-  status                      the session, and what the renderer thinks is on screen
 
-  shot [label] [--of <target>]   screenshot into .grove-qa/shots, and print the path
-  probe [filter]                 what is on screen, with a ref for each element
+Seeing:
+
+  probe [filter]                 the pane tree: what is open, what has focus,
+                                 and a ref for everything inside it
+  screenshot [label] [--of …]    a picture, for what only a picture shows —
+                                 alignment, overlap, a panel that went blank
+  logs [--main|--renderer] [n]   what the app has complained about
+  nvim <lua>                     run lua in the editor; its text is not in the DOM
+
+Acting:
+
+  panes                          every pane type, and whether one is open
+  pane <type> [--split row|column] [--in <pane>] [--close]
+                                 open one without hunting for the affordance
   click <target>                 click it; also dblclick, rightclick
-  drag <from> <to>               press, move, release — pane dividers included
+  drag <from> <to>               press, move, release — gutters included
   type <text>                    type into whatever has focus
-  key <chord> [chord …]          Escape, Control+s, g
+  press <chord> [chord …]        Escape, Control+s, g
   scroll <dy> [--at <target>]    wheel
   wait <target> [--gone]         until it is there, or until it is not
   eval <expression>              one expression in the renderer
-  console                        what the renderer has logged
-  nvim <lua>                     run lua in the editor
-  log [lines]                    the app's own output
 
-Every action above takes --shot <label>, which photographs the result in the
+Every action takes --screenshot <label>, which photographs the result in the
 same connection the action ran in. A menu closes when the driver disconnects, so
 this is the only way to see one.
 
@@ -827,9 +945,9 @@ this is the only way to see one.
   finding --title … --body …     file what it found, screenshot attached
   charters                       the charters that ship with the harness
 
-Targets are an accessible name ("New session"), a ref from the last probe (e12),
-or a point (at=820,460). role=button:Save, text=…, testid=…, css=… when a name
-is ambiguous.`)
+Targets are an accessible name ("New session"), or an id \`probe\` printed: a ref
+(e12), a pane (leaf-3), a gutter (split-1:0). Also at=820,460 for a bare point,
+and role=button:Save, text=…, testid=…, css=… when a name is ambiguous.`)
 }
 
 main().catch((error: unknown) => {

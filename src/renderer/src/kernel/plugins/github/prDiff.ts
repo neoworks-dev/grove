@@ -52,13 +52,19 @@ vim.cmd('diffthis')
 -- splitting again. Grove mirrors every Neovim window as a pane, so closing one
 -- and opening another is a pane closing and another opening in its place — and
 -- the editor pays for the new split each time.
+-- The grove_embedded mark keeps the base side inside the editor pane instead of
+-- a Grove pane of its own: the two halves of a diff are one view,
+-- and splitting them across two panes gives each its own chrome and its own
+-- place in the layout for something the user reads as a single file.
 if existing then
   vim.api.nvim_win_set_buf(existing, base)
   vim.api.nvim_win_call(existing, function() vim.cmd('diffthis') end)
+  vim.w[existing].grove_embedded = true
 else
   vim.cmd('leftabove vsplit')
   vim.api.nvim_win_set_buf(0, base)
   vim.cmd('diffthis')
+  vim.w[vim.api.nvim_get_current_win()].grove_embedded = true
 end
 
 vim.api.nvim_set_current_win(file)

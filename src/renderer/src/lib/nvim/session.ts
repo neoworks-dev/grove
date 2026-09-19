@@ -17,7 +17,13 @@ import { encodeKeyEvent } from './keys'
 import { measureCell, type CellMetrics, type FontSpec } from './metrics'
 import { CanvasGridRenderer } from './canvasRenderer'
 import type { GridRenderer } from './renderer'
-import { applyMultigridRedraw, createMultigridState, type NvimWindowPlacement } from './multigrid'
+import {
+  applyMultigridRedraw,
+  createMultigridState,
+  nvimGridSpan,
+  type NvimGridSpan,
+  type NvimWindowPlacement
+} from './multigrid'
 
 export interface NvimSessionElements {
   host: HTMLDivElement
@@ -236,6 +242,7 @@ export class NvimCanvasSession {
   private grid = createGridState()
   private multigrid = createMultigridState()
   private primaryGridId = 1
+  private embeddedWindows = new Set<number>()
   private externalSurfaces = new Map<
     number,
     {
@@ -339,6 +346,36 @@ export class NvimCanvasSession {
     return this.metrics?.cellWidth ?? 0
   }
 
+  /** The slice of Neovim's outer grid this pane draws. See nvimGridSpan. */
+  private hostSpan(): NvimGridSpan {
+    const outer = this.multigrid.grids.get(1)
+    const drawnHere = [...this.multigrid.windows.values()].filter(
+      (entry) =>
+        entry.kind === 'normal' &&
+        !entry.hidden &&
+        (entry.grid === this.primaryGridId || this.embeddedWindows.has(entry.win))
+    )
+    return nvimGridSpan(
+      drawnHere,
+      {
+        col: 0,
+        cols: outer ? outer.cols : this.grid.cols,
+        row: 0,
+        rows: outer ? outer.rows : this.grid.rows
+      },
+      this.messageRow()
+    )
+  }
+
+  /** The row the cmdline is composited onto, when one is showing. */
+  private messageRow(): number | undefined {
+    const message = [...this.multigrid.windows.values()].find(
+      (entry) => entry.kind === 'message' && !entry.hidden
+    )
+    if (!message) return undefined
+    return message.row
+  }
+
   /**
    * Maps Neovim's global screen rows to the same distributed pixel edges used
    * by the primary canvas. Multiplying by the nominal font cell height drifts
@@ -346,16 +383,16 @@ export class NvimCanvasSession {
    * all rows.
    */
   screenRowToPixel(row: number): number {
-    const rows = this.multigrid.grids.get(1)?.rows ?? this.grid.rows
-    if (rows < 1) return row * this.cellHeight
-    return Math.round((row * this.elements.host.clientHeight) / rows)
+    const span = this.hostSpan()
+    if (span.rows < 1) return row * this.cellHeight
+    return Math.round(((row - span.row) * this.elements.host.clientHeight) / span.rows)
   }
 
   /** Maps Neovim's global screen columns onto the primary canvas edges. */
   screenColToPixel(col: number): number {
-    const cols = this.multigrid.grids.get(1)?.cols ?? this.grid.cols
-    if (cols < 1) return col * this.cellWidth
-    return Math.round((col * this.elements.host.clientWidth) / cols)
+    const span = this.hostSpan()
+    if (span.cols < 1) return col * this.cellWidth
+    return Math.round(((col - span.col) * this.elements.host.clientWidth) / span.cols)
   }
 
   // The 1-based buffer line at the top of the viewport (`line('w0')`), for
@@ -824,8 +861,68 @@ export class NvimCanvasSession {
     }
   }
 
+  /** The window whose grid this pane's own canvas paints. */
+  get primaryWin(): number | null {
+    const placement = [...this.multigrid.windows.values()].find(
+      (entry) => entry.grid === this.primaryGridId && entry.kind === 'normal' && !entry.hidden
+    )
+    if (!placement) return null
+    return placement.win
+  }
+
   /**
-   * Point the canvas's cell edges at the grid it actually paints.
+   * Windows drawn inside the owner pane instead of being mirrored into a Grove
+   * pane of their own — the base side of a diff, which is half of one view
+   * rather than a second editor. The pane decides which those are; the session
+   * only needs to know whether there are any, because their presence is what
+   * makes the primary window a fraction of the pane rather than all of it.
+   */
+  setEmbeddedWindows(wins: number[]): void {
+    const changed =
+      wins.length !== this.embeddedWindows.size || wins.some((win) => !this.embeddedWindows.has(win))
+    if (!changed) return
+    this.embeddedWindows = new Set(wins)
+    this.fitRendererToGrid()
+    this.pendingDirtyAll = true
+    this.scheduleRender()
+  }
+
+  /**
+   * The box the primary window occupies inside the pane — the whole of it until
+   * a window is embedded beside it, since the pane's slice of the grid is then
+   * exactly that one window.
+   */
+  private primaryWindowBox(): { left: number; top: number; width: number; height: number } {
+    const { host } = this.elements
+    const whole = { left: 0, top: 0, width: host.clientWidth, height: host.clientHeight }
+    const placement = [...this.multigrid.windows.values()].find(
+      (entry) => entry.grid === this.primaryGridId && entry.kind === 'normal' && !entry.hidden
+    )
+    if (!placement) return whole
+    const left = this.screenColToPixel(placement.col)
+    const top = this.screenRowToPixel(placement.row)
+    return {
+      left,
+      top,
+      width: this.screenColToPixel(placement.col + placement.width) - left,
+      height: this.screenRowToPixel(placement.row + this.paintedRows()) - top
+    }
+  }
+
+  /**
+   * Rows the primary canvas paints: the window's own, plus the cmdline row that
+   * renderState composites onto the bottom of it. The canvas has to be sized for
+   * both or the message lands outside the edges that were built for it.
+   */
+  private paintedRows(): number {
+    const messageRow = this.messageRow()
+    if (messageRow === undefined) return this.grid.rows
+    return Math.max(this.grid.rows, messageRow + 1)
+  }
+
+  /**
+   * Point the canvas's cell edges at the grid it actually paints, and put the
+   * canvas where that grid's window is.
    *
    * `gridSize` is the outer UI size — the union of every surface this session
    * owns — because that is what Neovim has to be told to resize to. The canvas
@@ -836,14 +933,17 @@ export class NvimCanvasSession {
    */
   private fitRendererToGrid(): void {
     if (!this.renderer) return
-    const { host } = this.elements
-    if (host.clientWidth < 2 || host.clientHeight < 2) return
+    const box = this.primaryWindowBox()
+    if (box.width < 2 || box.height < 2) return
+    const { canvas } = this.elements
+    canvas.style.left = `${box.left}px`
+    canvas.style.top = `${box.top}px`
     this.renderer.resize(
       this.grid.cols,
-      this.grid.rows,
+      this.paintedRows(),
       window.devicePixelRatio,
-      host.clientWidth,
-      host.clientHeight
+      box.width,
+      box.height
     )
   }
 
@@ -913,7 +1013,7 @@ export class NvimCanvasSession {
     // it was before.
     if (
       this.renderer &&
-      (this.renderer.gridCols !== this.grid.cols || this.renderer.gridRows !== this.grid.rows)
+      (this.renderer.gridCols !== this.grid.cols || this.renderer.gridRows !== this.paintedRows())
     ) {
       this.fitRendererToGrid()
       this.pendingDirtyAll = true
@@ -943,6 +1043,9 @@ export class NvimCanvasSession {
     this.lastCursorRow = this.grid.cursor.row
     if (update.placementsChanged) {
       this.pendingDirtyAll = true
+      // An embedded window moving is the primary window moving with it, and the
+      // canvas is positioned on the primary window's box.
+      if (this.embeddedWindows.size > 0) this.fitRendererToGrid()
       this.callbacks.onWindowsChanged?.([...this.multigrid.windows.values()])
     }
     if (update.flushed || dirty.all) {
@@ -1119,7 +1222,15 @@ export class NvimCanvasSession {
     this.pendingGridSize = null
     if (!size || !this.nvimId || this.destroyed) return
     this.lastNvimResizeAt = performance.now()
-    void window.workbench.nvim.resize(this.nvimId, size.cols, size.rows)
+    const id = this.nvimId
+    const resized = window.workbench.nvim.resize(id, size.cols, size.rows)
+    if (this.embeddedWindows.size === 0) return
+    // Neovim hands every column a UI resize adds to the current window, so the
+    // two halves of a diff end up 13 columns against 161 the moment the pane
+    // grows. They are one view of one file; they stay even.
+    void Promise.resolve(resized)
+      .then(() => window.workbench.nvim.request(id, 'nvim_command', ['wincmd =']))
+      .catch(() => {})
   }
 
   // Grove → nvim mode names, clamped to what a pane registers.

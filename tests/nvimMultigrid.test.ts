@@ -2,8 +2,32 @@ import { describe, expect, test } from 'bun:test'
 import {
   applyMultigridRedraw,
   createMultigridState,
+  nvimGridSpan,
   resolveNvimWindowPosition
 } from '../src/renderer/src/lib/nvim/multigrid'
+import type { NvimWindowPlacement } from '../src/renderer/src/lib/nvim/multigrid'
+
+/** A normal window at a place in the outer grid, with the rest defaulted. */
+function placement(
+  win: number,
+  col: number,
+  width: number,
+  row = 0,
+  height = 39
+): NvimWindowPlacement {
+  return {
+    grid: win - 998,
+    win,
+    kind: 'normal',
+    row,
+    col,
+    width,
+    height,
+    focusable: true,
+    zindex: 0,
+    hidden: false
+  }
+}
 
 describe('nvim multigrid routing', () => {
   test('routes cells to separate grids and identifies the primary window', () => {
@@ -92,5 +116,41 @@ describe('nvim multigrid routing', () => {
     ])
     const docs = state.windows.get(5)!
     expect(resolveNvimWindowPosition(state.windows.values(), docs)).toEqual({ row: 13, col: 18 })
+  })
+})
+
+// What a pane maps its own columns against. Getting this wrong is what draws a
+// 43-column window across 87 columns of pane, with every glyph on top of the
+// one before it.
+describe('nvimGridSpan', () => {
+  const outer = { col: 0, cols: 87, row: 0, rows: 40 }
+
+  test('is the whole grid when the pane draws nothing of its own', () => {
+    expect(nvimGridSpan([], outer)).toEqual(outer)
+  })
+
+  test('is the one window when the rest are mirrored into other panes', () => {
+    const span = nvimGridSpan([placement(1000, 44, 43)], outer)
+    expect(span.col).toBe(44)
+    expect(span.cols).toBe(43)
+  })
+
+  test('covers a window embedded beside the primary one', () => {
+    const span = nvimGridSpan([placement(1000, 44, 43), placement(1002, 0, 43)], outer)
+    expect(span.col).toBe(0)
+    expect(span.cols).toBe(87)
+  })
+
+  test('reaches down to the cmdline row', () => {
+    const span = nvimGridSpan([placement(1000, 0, 87)], outer, 39)
+    expect(span.rows).toBe(40)
+  })
+
+  // renderState composites the cmdline onto the primary grid wherever that grid
+  // is, so the slice has to reach it even when the window itself stops short.
+  test('reaches the cmdline from a window that stops above it', () => {
+    const span = nvimGridSpan([placement(1000, 0, 87, 0, 20)], outer, 39)
+    expect(span.row).toBe(0)
+    expect(span.rows).toBe(40)
   })
 })

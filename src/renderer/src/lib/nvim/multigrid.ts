@@ -41,6 +41,40 @@ export interface NvimWindowScreenPosition {
   col: number
 }
 
+export interface NvimGridSpan {
+  col: number
+  cols: number
+  row: number
+  rows: number
+}
+
+/**
+ * The slice of Neovim's outer grid a pane draws, given the windows drawn there.
+ *
+ * A window mirrored into a Grove pane of its own takes its columns with it, so
+ * what is left is a range rather than the whole grid — and that range is what
+ * maps onto the pane, because the dividers between panes are pixels Neovim
+ * knows nothing about. Scaling the whole grid onto one pane instead counts
+ * those dividers in, which shifts every column past one and squashes the rest.
+ *
+ * The cmdline is composited onto the bottom of the primary grid rather than
+ * placed as a window, so its row belongs to the slice that reaches the bottom.
+ */
+export function nvimGridSpan(
+  drawnHere: Iterable<NvimWindowPlacement>,
+  outer: NvimGridSpan,
+  messageRow?: number
+): NvimGridSpan {
+  const windows = [...drawnHere]
+  if (windows.length === 0) return outer
+  const col = Math.min(...windows.map((entry) => entry.col))
+  const row = Math.min(...windows.map((entry) => entry.row))
+  const right = Math.max(...windows.map((entry) => entry.col + entry.width))
+  let bottom = Math.max(...windows.map((entry) => entry.row + entry.height))
+  if (messageRow !== undefined && messageRow >= row) bottom = Math.max(bottom, messageRow + 1)
+  return { col, cols: Math.max(1, right - col), row, rows: Math.max(1, bottom - row) }
+}
+
 const GRID_EVENTS = new Set([
   'grid_resize',
   'grid_line',

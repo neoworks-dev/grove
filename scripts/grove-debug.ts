@@ -257,7 +257,7 @@ const REVIEW_STATE_EXPRESSION = `(() => {
     activeTabPath: store.activeTabPath,
     activePane: keymap.activePane,
     activeLeafId: keymap.activeLeafId,
-    panes: layout.leafSummary ? layout.leafSummary() : undefined,
+    panes: layout.leafSummary(),
     error: store.error
   }
 })()`

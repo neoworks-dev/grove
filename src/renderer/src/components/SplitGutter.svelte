@@ -182,6 +182,7 @@
 
 <div
   bind:this={rootEl}
+  data-gutter="{split.id}:{gutterIndex}"
   class="group/gutter relative shrink-0 {horizontal ? 'w-2' : 'h-2'}"
   role="separator"
   aria-orientation={horizontal ? 'vertical' : 'horizontal'}

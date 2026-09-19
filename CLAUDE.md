@@ -12,6 +12,8 @@ Commits, issues and pull requests carry only what matters. Say the thing, explai
 
 Work lives in GitHub issues on `neoworks-dev/grove`, not in a file in the repo.
 
+Before starting on anything, check whether it is already half-built: `git branch -a` and `gh pr list` for the feature, and read what is on the branch. Sessions end mid-feature, and a branch is where that work is — starting again on `main` writes it a second time and loses whatever the first attempt learned. If a branch for it exists, continue on it.
+
 Anything more than a tiny change: open an issue (`gh issue create`) with the labels below, branch off `main` as `<issue-number>-<slug>` (e.g. `12-tab-strip-overflow`), then open a PR towards `main` with `Closes #12` in the body.
 
 Straight to `main`, no issue and no branch: typos, one-liners, and anything that only touches how we work rather than the app — this file, `.claude/skills/`, editor config. Moving the extension-system rules into the `grove-plugins` skill was one of those.
@@ -33,6 +35,8 @@ Labels are two axes. Type is GitHub's default `bug` or `enhancement`. Area is ex
 
 Two areas is fine when an issue genuinely spans them; three means split it.
 
+`ai-found` is not a third axis — the QA harness adds it to everything it files, so a model's findings can be told apart from a person's. Nothing else uses it.
+
 ## Validation
 
 Never launch the app yourself. I run it, with `GROVE_DEBUG=1`. Ask me to restart it after main-process changes; the renderer hot-reloads on its own.
@@ -40,6 +44,8 @@ Never launch the app yourself. I run it, with `GROVE_DEBUG=1`. Ask me to restart
 Attach to it and drive it yourself rather than asking me what I see — the `grove-debug` skill has the commands, the renderer state they reach, and the on-disk agent event log. Never read the UI through tmux.
 
 Reproduce a reported UI bug through the harness and confirm the mechanism before proposing a fix. Guessing from source has been wrong more often than right.
+
+Finding out what is wrong in the first place is the other harness: `bun run qa` launches a session on a virtual display and drives it by clicking, dragging and typing, and `bun run qa explore` hands that to a Claude Code instance which files what it finds. The `grove-qa` skill has both.
 
 ## Directory structure
 

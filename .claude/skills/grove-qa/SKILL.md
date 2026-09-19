@@ -106,6 +106,12 @@ not in the middle — the middle is where the `+` that opens a pane lives, and
 pressing there opens the picker instead of dragging. And the move is stepped, so
 a handler that accumulates `pointermove` deltas sees the whole drag.
 
+That quarter-way rule applies to an element — a ref, a name, a selector — and
+**not** to `at=x,y`, which presses exactly where you said. So a drag from a
+divider's midpoint read off a screenshot does nothing, while the same divider as
+a ref resizes. It is the app's behaviour, not a flaky harness: prefer the ref,
+and keep `at=` for the destination and for surfaces that have no element at all.
+
 ## The editor
 
 The editor is a canvas. Its text is not in the DOM, so `probe` shows you one

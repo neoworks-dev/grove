@@ -9,11 +9,14 @@ import type { Context } from '@neoworks/extension-system'
 import type {
   AgentSession,
   AgentSessionEvent,
+  DefaultResourceLoader,
   ExtensionAPI,
   ModelRuntime,
+  SessionStats as PiSessionStats,
   ToolDefinition
 } from '@earendil-works/pi-coding-agent'
 import type {
+  CommandInfo,
   ModelEntry,
   ModelPricing,
   ModelRoute,
@@ -28,33 +31,48 @@ import type {
   HarnessOffering,
   HarnessRun,
   HarnessRunOptions,
+  PromptAttachment,
   ToolIntent
 } from '../harness'
 import { jsonSchemaToTypebox } from './typeboxSchema'
 
 const HARNESS_ID = 'pi'
 
-// pi's built-in tools and how grove treats each one. Anything that changes the
-// working tree is held for a decision; reading is not worth a prompt.
-const BUILTIN_POLICIES: Record<string, ToolPolicy> = {
-  read: 'allow',
-  grep: 'allow',
-  find: 'allow',
-  ls: 'allow',
-  bash: 'ask',
-  powershell: 'ask',
-  edit: 'ask',
-  write: 'ask'
-}
+/**
+ * pi's commands as grove runs them.
+ *
+ * pi's own list lives behind a module the package does not export, and each of
+ * these is carried out by grove against the session API rather than by pi, so
+ * what they say is grove's to write. Everything not named here is handed to pi
+ * to dispatch — a prompt template, a skill, a command an extension registered.
+ */
+const SUPPORTED_BUILTINS: CommandInfo[] = [
+  { name: 'new', description: 'Leave this conversation and start an empty one', kind: 'builtin' },
+  {
+    name: 'compact',
+    description: 'Summarise the conversation so far and carry on from the summary',
+    argumentHint: '<instructions>',
+    kind: 'builtin'
+  },
+  {
+    name: 'session',
+    description: 'Show token use, cost and context for this session',
+    kind: 'builtin'
+  },
+  { name: 'name', description: 'Name the session', argumentHint: '<name>', kind: 'builtin' }
+]
 
 class PiRun implements HarnessRun {
   resumeKey: string | null
   private session: AgentSession | null = null
+  private loader: DefaultResourceLoader | null = null
+  private modelRuntime: ModelRuntime | null = null
   private unsubscribe: (() => void) | null = null
   private policies: Map<string, ToolPolicy>
-  private contextSent = false
   // Set when a message came back as a failed request, so the turn can end saying so.
   private turnFailed = false
+  // Counted so a command can tell whether what it sent started a turn at all.
+  private turnsEnded = 0
 
   constructor(
     private options: HarnessRunOptions,
@@ -64,18 +82,46 @@ class PiRun implements HarnessRun {
     this.policies = policies
   }
 
-  /** Build the session, wire the approval hook, and start following its events. */
+  /** Load pi's resources, open the session and start following its events. */
   async start(): Promise<void> {
-    const { createAgentSession, DefaultResourceLoader, getAgentDir, ModelRuntime, SessionManager } =
-      await import('@earendil-works/pi-coding-agent')
+    const { ModelRuntime } = await import('@earendil-works/pi-coding-agent')
+    this.modelRuntime = await ModelRuntime.create()
+    this.loader = await this.loadResources()
+    await this.open(this.resumeKey)
+  }
 
-    const modelRuntime = await ModelRuntime.create()
+  /**
+   * pi's resources for this worktree, with grove's context appended to whatever
+   * system prompt they build.
+   *
+   * Appended rather than set: `appendSystemPrompt` on its own would take the
+   * place of the user's own append file, and grove being in the session is no
+   * reason for their instructions to stop applying.
+   */
+  private async loadResources(): Promise<DefaultResourceLoader> {
+    const { DefaultResourceLoader, getAgentDir } = await import('@earendil-works/pi-coding-agent')
     const loader = new DefaultResourceLoader({
       cwd: this.options.workspaceRoot,
       agentDir: getAgentDir(),
-      extensionFactories: [{ name: 'grove-approvals', factory: (pi) => this.bindApprovals(pi) }]
+      extensionFactories: [{ name: 'grove-approvals', factory: (pi) => this.bindApprovals(pi) }],
+      appendSystemPromptOverride: (base) => this.withGroveContext(base)
     })
     await loader.reload()
+    return loader
+  }
+
+  private withGroveContext(base: string[]): string[] {
+    const context = this.options.systemPrompt
+    if (!context) return base
+    return [...base, context]
+  }
+
+  /** Open a pi session: the run's own conversation when there is one, else a new one. */
+  private async open(resumeKey: string | null): Promise<void> {
+    const { createAgentSession, SessionManager } = await import('@earendil-works/pi-coding-agent')
+    const loader = this.loader
+    const modelRuntime = this.modelRuntime
+    if (!loader || !modelRuntime) throw new Error('the pi harness was not started')
 
     const created = await createAgentSession({
       cwd: this.options.workspaceRoot,
@@ -85,35 +131,26 @@ class PiRun implements HarnessRun {
       resourceLoader: loader,
       customTools: this.options.tools.map((definition) => this.wrapTool(definition)),
       tools: this.options.activeTools ?? undefined,
-      sessionManager: this.resumeKey
-        ? SessionManager.open(this.resumeKey)
+      sessionManager: resumeKey
+        ? SessionManager.open(resumeKey)
         : SessionManager.create(this.options.workspaceRoot)
     })
 
     this.session = created.session
-    this.resumeKey = created.session.sessionFile ?? this.resumeKey
+    if (created.session.sessionFile) this.resumeKey = created.session.sessionFile
+    else this.resumeKey = resumeKey
     this.unsubscribe = created.session.subscribe((event) => this.handle(event))
   }
 
-  async prompt(text: string): Promise<void> {
+  async prompt(text: string, attachments: PromptAttachment[] = []): Promise<void> {
     const session = this.session
     if (!session) throw new Error('the pi harness is not running')
     this.options.emit({ type: 'session.status_running' })
-    await session.prompt(this.withGroveContext(text))
-  }
-
-  /**
-   * grove's system prompt, carried on the first turn.
-   *
-   * pi builds its system prompt from its own resources and exposes no way to
-   * append to it, so what grove has to say rides along with the opening message
-   * instead. Sent once per run: everything after it is in the conversation.
-   */
-  private withGroveContext(text: string): string {
-    const context = this.options.systemPrompt
-    if (!context || this.contextSent) return text
-    this.contextSent = true
-    return `<grove-context>\n${context}\n</grove-context>\n\n${text}`
+    if (attachments.length === 0) {
+      await session.prompt(text)
+      return
+    }
+    await session.prompt(text, { images: attachments.map(imageOf) })
   }
 
   async steer(text: string, deliverAs: 'steer' | 'followUp'): Promise<void> {
@@ -124,6 +161,89 @@ class PiRun implements HarnessRun {
 
   async interrupt(): Promise<void> {
     await this.session?.abort()
+  }
+
+  // ── Commands ────────────────────────────────────────────────────
+
+  /**
+   * Run a slash command.
+   *
+   * pi's own commands are its terminal's, not the session's, so the ones grove
+   * can honour are carried out here against the session API. Anything else is
+   * sent to pi as the line the user typed, which is how pi dispatches an
+   * extension command and expands a skill or a prompt template.
+   */
+  async command(name: string, args: string): Promise<void> {
+    const session = this.session
+    if (!session) throw new Error('the pi harness is not running')
+    // `clear` is not pi's name for it, but it is what every other harness calls
+    // the same thing, and it is what a user who has used one of them types.
+    if (name === 'new' || name === 'clear') return this.startFresh()
+    if (name === 'compact') return this.compact(session, args)
+    if (name === 'session') return this.reportSessionStats(session)
+    if (name === 'name') return this.nameSession(session, args)
+    return this.dispatch(session, name, args)
+  }
+
+  /** Leave the conversation behind and open an empty one, as pi's `/new` does. */
+  private async startFresh(): Promise<void> {
+    this.closeSession()
+    await this.open(null)
+    this.options.emit({ type: 'session.cleared' })
+  }
+
+  /** Summarise the conversation so far and carry on from the summary. */
+  private async compact(session: AgentSession, instructions: string): Promise<void> {
+    const trimmed = instructions.trim()
+    if (trimmed.length === 0) {
+      this.noticeCompaction(await session.compact())
+      return
+    }
+    this.noticeCompaction(await session.compact(trimmed))
+  }
+
+  private noticeCompaction(result: { tokensBefore: number }): void {
+    this.options.emit({
+      type: 'session.notice',
+      message: `Context compacted: ${result.tokensBefore} tokens summarised.`
+    })
+    this.reportUsage()
+  }
+
+  private reportSessionStats(session: AgentSession): void {
+    this.options.emit({
+      type: 'session.command_output',
+      text: sessionSummary(session.getSessionStats())
+    })
+    this.reportUsage()
+  }
+
+  private nameSession(session: AgentSession, args: string): void {
+    const name = args.trim()
+    if (name.length === 0) {
+      this.options.emit({
+        type: 'session.notice',
+        message: '/name takes the name to give the session.'
+      })
+      return
+    }
+    session.setSessionName(name)
+    this.options.emit({ type: 'session.notice', message: `Session named "${name}".` })
+  }
+
+  /**
+   * Hand the line to pi and let it decide what it was.
+   *
+   * Only some of what pi dispatches starts a turn — a prompt template does, a
+   * command an extension registered usually does not — so the session is put
+   * back to idle when nothing ran, rather than left saying it is working.
+   */
+  private async dispatch(session: AgentSession, name: string, args: string): Promise<void> {
+    const endedBefore = this.turnsEnded
+    this.options.emit({ type: 'session.status_running' })
+    await session.prompt(commandLine(name, args), { expandPromptTemplates: true })
+    if (this.turnsEnded !== endedBefore) return
+    this.options.emit({ type: 'session.status_idle', stopReason: 'end_turn' })
   }
 
   async setModel(provider: string | null, model: string): Promise<void> {
@@ -139,11 +259,39 @@ class PiRun implements HarnessRun {
   }
 
   dispose(): Promise<void> {
+    this.closeSession()
+    return Promise.resolve()
+  }
+
+  private closeSession(): void {
     this.unsubscribe?.()
     this.unsubscribe = null
     this.session?.dispose()
     this.session = null
-    return Promise.resolve()
+  }
+
+  /**
+   * What the session has spent so far.
+   *
+   * pi keeps running totals rather than reporting per-turn usage, so the whole
+   * of it is handed over each time and grove stores the latest.
+   */
+  private reportUsage(): void {
+    const session = this.session
+    if (!session) return
+    const stats = session.getSessionStats()
+    let contextWindow = 0
+    if (stats.contextUsage) contextWindow = stats.contextUsage.contextWindow
+    this.options.stats({
+      usage: {
+        inputTokens: stats.tokens.input,
+        outputTokens: stats.tokens.output,
+        cacheReadTokens: stats.tokens.cacheRead,
+        cacheWriteTokens: stats.tokens.cacheWrite
+      },
+      cost: stats.cost,
+      contextWindow
+    })
   }
 
   // ── Wiring ──────────────────────────────────────────────────────
@@ -239,6 +387,8 @@ class PiRun implements HarnessRun {
   private endTurn(): void {
     const failed = this.turnFailed
     this.turnFailed = false
+    this.turnsEnded += 1
+    this.reportUsage()
     if (failed) {
       this.options.emit({ type: 'session.status_idle', stopReason: 'error' })
       return
@@ -301,6 +451,34 @@ class PiRun implements HarnessRun {
       permission: 'allow'
     })
   }
+}
+
+/** One of grove's attachments, as pi takes an image. */
+function imageOf(attachment: PromptAttachment): { type: 'image'; data: string; mimeType: string } {
+  return { type: 'image', data: attachment.data, mimeType: attachment.mediaType }
+}
+
+/** The line the user would have typed, for pi to dispatch. */
+export function commandLine(name: string, args: string): string {
+  const trimmed = args.trim()
+  if (trimmed.length === 0) return `/${name}`
+  return `/${name} ${trimmed}`
+}
+
+/** What `/session` prints. */
+function sessionSummary(stats: PiSessionStats): string {
+  const lines = [
+    `messages: ${stats.userMessages} from you, ${stats.assistantMessages} back, ${stats.toolCalls} tool calls`,
+    `tokens: ${stats.tokens.input} in, ${stats.tokens.output} out, ${stats.tokens.cacheRead} cache read, ${stats.tokens.cacheWrite} cache write`,
+    `cost: $${stats.cost.toFixed(4)}`
+  ]
+  if (stats.contextUsage && stats.contextUsage.tokens !== null) {
+    lines.push(
+      `context: ${stats.contextUsage.tokens} of ${stats.contextUsage.contextWindow} tokens used`
+    )
+  }
+  if (stats.sessionFile) lines.push(`session: ${stats.sessionFile}`)
+  return lines.join('\n')
 }
 
 function resultText(result: unknown): string {
@@ -391,7 +569,7 @@ function summaryOf(input: Record<string, unknown>): string {
 }
 
 /** Everything pi can offer, plus the policy grove applies to each tool. */
-async function loadOffering(groveToolNames: string[]): Promise<HarnessOffering> {
+async function loadOffering(): Promise<HarnessOffering> {
   const { DefaultResourceLoader, ModelRuntime, SettingsManager, getAgentDir } =
     await import('@earendil-works/pi-coding-agent')
 
@@ -401,13 +579,17 @@ async function loadOffering(groveToolNames: string[]): Promise<HarnessOffering> 
   await loader.reload()
   const settings = SettingsManager.create(process.cwd(), getAgentDir())
 
+  const prompts: CommandInfo[] = loader.getPrompts().prompts.map((prompt) => ({
+    name: prompt.name,
+    description: prompt.description ?? '',
+    kind: 'prompt'
+  }))
+
   return {
-    tools: toolInfos(groveToolNames),
-    commands: loader.getPrompts().prompts.map((prompt) => ({
-      name: prompt.name,
-      description: prompt.description ?? '',
-      kind: 'prompt'
-    })),
+    tools: await toolInfos(),
+    // A command an extension registered is only known once a session has one
+    // loaded, so it is not offered here — typed out it still reaches pi.
+    commands: [...SUPPORTED_BUILTINS, ...prompts],
     skills: loader.getSkills().skills.map((skill) => ({
       name: skill.name,
       description: skill.description,
@@ -418,22 +600,45 @@ async function loadOffering(groveToolNames: string[]): Promise<HarnessOffering> 
   }
 }
 
-function toolInfos(groveToolNames: string[]): ToolInfo[] {
-  const builtins = Object.entries(BUILTIN_POLICIES).map(([name, policy]) => ({
-    name,
-    description: '',
-    policy,
-    parallelSafe: policy === 'allow',
-    inputSchema: {}
-  }))
-  const grove = groveToolNames.map((name) => ({
-    name,
-    description: '',
-    policy: 'allow' as ToolPolicy,
-    parallelSafe: false,
-    inputSchema: {}
-  }))
-  return [...builtins, ...grove]
+/**
+ * pi's tools, described by pi.
+ *
+ * The tools are built here only to be read: name, description and parameter
+ * schema are what the composer and the approval card show, and asking pi for
+ * them beats a list in grove that goes stale the next time pi ships one.
+ */
+async function toolInfos(): Promise<ToolInfo[]> {
+  const policies = await builtinPolicies()
+  const { createCodingTools, createReadOnlyTools } = await import('@earendil-works/pi-coding-agent')
+  const described = new Map<string, ToolInfo>()
+
+  for (const tool of [...createReadOnlyTools(process.cwd()), ...createCodingTools(process.cwd())]) {
+    const policy = policies.get(tool.name)
+    if (policy === undefined) continue
+    described.set(tool.name, {
+      name: tool.name,
+      description: tool.description,
+      policy,
+      parallelSafe: policy === 'allow',
+      inputSchema: tool.parameters as Record<string, unknown>
+    })
+  }
+  return [...described.values()]
+}
+
+/**
+ * How grove treats each of pi's own tools.
+ *
+ * pi's read-only set is the allow-list: everything in it answers a question,
+ * and everything outside it — bash, edit, write, and whatever pi adds next —
+ * changes something and is held for a decision.
+ */
+export async function builtinPolicies(): Promise<Map<string, ToolPolicy>> {
+  const { createCodingTools, createReadOnlyTools } = await import('@earendil-works/pi-coding-agent')
+  const policies = new Map<string, ToolPolicy>()
+  for (const tool of createCodingTools(process.cwd())) policies.set(tool.name, 'ask')
+  for (const tool of createReadOnlyTools(process.cwd())) policies.set(tool.name, 'allow')
+  return policies
 }
 
 /** The part of pi's settings grove reads: which model it was told to prefer. */
@@ -529,10 +734,6 @@ function configuredModel(
 }
 
 function createPiHarness(): HarnessDescriptor {
-  // The policies a run enforces, filled in from the offering so a tool grove has
-  // never heard of defaults to running without a prompt.
-  const policies = new Map<string, ToolPolicy>(Object.entries(BUILTIN_POLICIES))
-
   return {
     id: HARNESS_ID,
     label: 'pi',
@@ -545,7 +746,7 @@ function createPiHarness(): HarnessDescriptor {
       thinking: true,
       steering: true,
       groveTools: true,
-      attachments: false
+      attachments: true
     },
 
     async probe() {
@@ -560,9 +761,12 @@ function createPiHarness(): HarnessDescriptor {
       }
     },
 
-    offering: () => loadOffering([]),
+    offering: () => loadOffering(),
 
     async start(options: HarnessRunOptions) {
+      // Built per run: a policy is the session's, and a map shared by the
+      // descriptor would carry one session's tools into the next one.
+      const policies = await builtinPolicies()
       for (const tool of options.tools) policies.set(tool.name, tool.policy)
       const run = new PiRun(options, policies)
       await run.start()

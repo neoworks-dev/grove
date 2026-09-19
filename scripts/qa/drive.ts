@@ -78,7 +78,7 @@ async function run(page: Page, refsPath: string, command: Command): Promise<unkn
     await drain.detach().catch(() => undefined)
     return result
   }
-  await page.screenshot({ path: command.screenshot })
+  await page.screenshot({ path: command.screenshot, clip: cropOf(command) })
   await drain.detach().catch(() => undefined)
   return { ...(result as Record<string, unknown>), screenshot: command.screenshot }
 }
@@ -803,8 +803,22 @@ async function shot(page: Page, refsPath: string, command: Command): Promise<unk
     await locator.screenshot({ path })
     return { shot: path, of: String(command.target) }
   }
-  await page.screenshot({ path })
+  const crop = cropOf(command)
+  await page.screenshot({ path, clip: crop })
+  if (crop) return { shot: path, crop: `${crop.x},${crop.y},${crop.width},${crop.height}` }
   return { shot: path }
+}
+
+/**
+ * The rectangle a command asked to be photographed, if it asked for one.
+ *
+ * Already validated on the way in — this only has to put it in the shape
+ * Playwright clips with.
+ */
+function cropOf(command: Command): Box | undefined {
+  const crop = command.crop as Box | undefined
+  if (!crop) return undefined
+  return { x: crop.x, y: crop.y, width: crop.width, height: crop.height }
 }
 
 // The shapes this driver reaches for on `window`. Only what is used is

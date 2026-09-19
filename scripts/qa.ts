@@ -30,6 +30,8 @@ import { prepareProfile, profileAt, type GroveProfile } from '../tests/e2e/fixtu
 import { displayEnv, startVirtualDisplay, stopVirtualDisplay } from './lib/virtualDisplay'
 import { renderTranscript } from './qa/transcript'
 import { renderPaneTypes, renderSnapshot, type PaneTypeEntry } from './qa/tree'
+import { parseRegion, type Region } from './qa/targets'
+import { emptyPace, noteAction, notePicture, refusePicture, type Pace } from './qa/pace'
 import type { Snapshot } from './qa/snapshot'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -61,7 +63,8 @@ const paths = {
   refs: join(QA_ROOT, 'refs.json'),
   shots: join(QA_ROOT, 'shots'),
   reports: join(QA_ROOT, 'reports'),
-  appLog: join(QA_ROOT, 'app.log')
+  appLog: join(QA_ROOT, 'app.log'),
+  pace: join(QA_ROOT, 'pace.json')
 }
 
 async function main(): Promise<void> {
@@ -125,6 +128,7 @@ async function start(args: string[]): Promise<void> {
     startedAt: new Date().toISOString()
   }
   writeFileSync(paths.session, JSON.stringify(session, null, 2), 'utf8')
+  await rm(paths.pace, { force: true })
 
   await waitForDebugPort(port)
   const ready = drive(session, { action: 'ready', timeout: 90_000 })
@@ -181,8 +185,65 @@ function act(command: string, args: string[]): void {
   let screenshot: string | undefined = undefined
   if (label !== undefined) screenshot = nextShotPath(label)
 
-  const output = drive(session, { ...actionFor(command, args), screenshot })
+  const crop = cropOf(args)
+  const wantsPicture = screenshot !== undefined || command === 'screenshot' || command === 'shot'
+  if (wantsPicture) refuseRepeatPicture(args, crop)
+
+  const output = drive(session, { ...actionFor(command, args), screenshot, crop })
   console.log(printable(command, output))
+  notePace(command, wantsPicture, framing(args, crop))
+}
+
+/** Which commands change the app, and so make a new picture worth taking. */
+const ACTING_COMMANDS = [
+  'click',
+  'dblclick',
+  'rightclick',
+  'drag',
+  'type',
+  'key',
+  'press',
+  'scroll',
+  'pane'
+]
+
+function readPace(): Pace {
+  try {
+    return JSON.parse(readFileSync(paths.pace, 'utf8')) as Pace
+  } catch {
+    return emptyPace()
+  }
+}
+
+/** Refuse a picture of a screen that has already been photographed. */
+function refuseRepeatPicture(args: string[], crop: Region | undefined): void {
+  const refusal = refusePicture(readPace(), framing(args, crop))
+  if (refusal !== null) throw new Error(refusal)
+}
+
+/** How a screenshot was framed, so one closer look is told from a repeat. */
+function framing(args: string[], crop: Region | undefined): string {
+  const of = optional(args, '--of')
+  if (of !== undefined) return `of:${of}`
+  if (crop !== undefined) return `crop:${crop.x},${crop.y},${crop.width},${crop.height}`
+  return 'full'
+}
+
+function notePace(command: string, tookPicture: boolean, frame: string): void {
+  let pace = readPace()
+  if (ACTING_COMMANDS.includes(command)) pace = noteAction(pace)
+  if (tookPicture) pace = notePicture(pace, frame, latestShot())
+  writeFileSync(paths.pace, JSON.stringify(pace), 'utf8')
+}
+
+/** The screenshot just written, by the numbering `nextShotPath` hands out. */
+function latestShot(): string | null {
+  const taken = readdirSync(paths.shots)
+    .filter((name) => name.endsWith('.png'))
+    .sort()
+  const last = taken[taken.length - 1]
+  if (last === undefined) return null
+  return join(paths.shots, last)
 }
 
 /**
@@ -237,6 +298,7 @@ const VALUE_FLAGS = [
   '--screenshot',
   '--shot',
   '--of',
+  '--crop',
   '--at',
   '--in',
   '--split',
@@ -267,7 +329,12 @@ function actionFor(command: string, args: string[]): Record<string, unknown> {
   const rest = positional(args)
 
   if (command === 'screenshot' || command === 'shot') {
-    return { action: 'shot', path: nextShotPath(rest[0]), target: optional(args, '--of') }
+    return {
+      action: 'shot',
+      path: nextShotPath(rest[0]),
+      target: optional(args, '--of'),
+      crop: cropOf(args)
+    }
   }
   // `status` is the same question as `probe`, asked before there was a tree to
   // answer it with.
@@ -320,6 +387,13 @@ function actionFor(command: string, args: string[]): Record<string, unknown> {
     return { action: 'eval', expression: rest[0] }
   }
   throw new Error(`unknown command: ${command} (try "qa help")`)
+}
+
+/** `--crop x,y,w,h`, when only one part of the window is the question. */
+function cropOf(args: string[]): Region | undefined {
+  const value = optional(args, '--crop')
+  if (value === undefined) return undefined
+  return parseRegion(value)
 }
 
 /** `--split row|column`, the orientation a new pane is opened in. */
@@ -608,6 +682,9 @@ see what is on screen, and what is worth reporting.
 
 A session is already running. Do not start, stop or rebuild one.
 
+Every harness command is "bun run qa <command>". Nothing else can be run, and a
+command outside that list stops the run dead rather than asking anyone.
+
 Before you touch the app, read what is already known about the part you are
 testing:
 
@@ -627,7 +704,12 @@ ${charter}
 Work in small loops: act, probe, decide. The probe is a tree of the panes and
 what is inside them, which is what tells you where you are; take a screenshot
 when the question is visual — alignment, overlap, a panel that went blank — and
-read the file when you do.
+read the PNG with the Read tool when you do. "bun run qa screenshot <label>
+--crop x,y,w,h" cuts out one part of the window when the detail is small.
+
+Never open a browser, and never pass --web to anything. There is no desktop to
+open one on and nobody watching it: everything you need is the harness, the
+report, and gh's ordinary terminal output.
 
 Note anything that is broken, confusing, inconsistent, ugly, slow, or that made
 you guess what to do — the last one matters as much as the crashes.
@@ -655,6 +737,10 @@ Read the code to understand what you are seeing, but do not change any of it.`
         'Write',
         'Edit',
         'Bash(bun run qa:*)',
+        // The same harness, spelled the way `bun run` itself echoes it. A run
+        // that shortens to this form is asking for exactly what is already
+        // allowed above, and being stopped for it costs a whole session.
+        'Bash(bun scripts/qa.ts:*)',
         'Bash(gh issue:*)',
         'Bash(gh label:*)'
       ].join(','),
@@ -672,12 +758,13 @@ Read the code to understand what you are seeing, but do not change any of it.`
       '-p',
       prompt
     ],
-    { cwd: repoRoot, stdio: ['ignore', 'pipe', 'inherit'] }
+    { cwd: repoRoot, stdio: ['ignore', 'pipe', 'inherit'], env: exploreEnv() }
   )
 
   let opening = 'exploring the whole app'
   if (scope !== undefined) opening = `exploring: ${label}`
   console.log(`${opening}\n`)
+
   void renderTranscript(child.stdout)
 
   // Ctrl-C reaches the agent too — it shares this process group — so the run
@@ -692,6 +779,23 @@ Read the code to understand what you are seeing, but do not change any of it.`
     console.log(`\nreport: ${report}`)
     process.exit(code === null ? 0 : code)
   })
+}
+
+/**
+ * The environment an exploring agent gets.
+ *
+ * `gh issue view --web` is inside the permissions a run needs, and it opens a
+ * real browser on whoever's desktop launched this — which nobody is watching,
+ * and which has nothing to do with the app under test. Pointing every browser
+ * launch at `true` makes it a no-op instead of a window, so the run reads the
+ * terminal output it should have asked for in the first place.
+ */
+function exploreEnv(): Record<string, string> {
+  return {
+    ...(process.env as Record<string, string>),
+    BROWSER: '/usr/bin/true',
+    GH_BROWSER: '/usr/bin/true'
+  }
 }
 
 // ------------------------------------------------------------------ findings
@@ -919,8 +1023,10 @@ Seeing:
 
   probe [filter]                 the pane tree: what is open, what has focus,
                                  and a ref for everything inside it
-  screenshot [label] [--of …]    a picture, for what only a picture shows —
-                                 alignment, overlap, a panel that went blank
+  screenshot [label] [--of <target>] [--crop x,y,w,h]
+                                 a picture, for what only a picture shows —
+                                 alignment, overlap, a panel that went blank.
+                                 Refused when nothing has happened since the last
   logs [--main|--renderer] [n]   what the app has complained about
   nvim <lua>                     run lua in the editor; its text is not in the DOM
 
@@ -941,7 +1047,9 @@ Every action takes --screenshot <label>, which photographs the result in the
 same connection the action ran in. A menu closes when the driver disconnects, so
 this is the only way to see one.
 
-  explore [scope] [--dry-run]    hand the app to a Claude Code instance to test
+  explore [scope] [--dry-run] [--model <model>]
+                                 hand the app to a Claude Code instance to test
+                                 (sonnet by default; haiku and opus also work)
   finding --title … --body …     file what it found, screenshot attached
   charters                       the charters that ship with the harness
 

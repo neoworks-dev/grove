@@ -96,6 +96,32 @@ function requireValue(value: string, prefix: string): string {
   return value
 }
 
+/** A rectangle of the window, for a screenshot of part of it. */
+export interface Region {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/**
+ * `820,460,300,200` — where to crop a screenshot, as x,y,width,height.
+ *
+ * `probe` prints a position and a size for every element, so the numbers to
+ * crop around are already in front of whoever is asking.
+ */
+export function parseRegion(input: string): Region {
+  const parts = input.split(',').map((part) => Number(part.trim()))
+  if (parts.length !== 4 || parts.some((part) => !Number.isFinite(part))) {
+    throw new Error(`a crop is four numbers, x,y,width,height — got ${input}`)
+  }
+  const [x, y, width, height] = parts
+  if (width <= 0 || height <= 0) {
+    throw new Error(`a crop needs a positive width and height — got ${input}`)
+  }
+  return { x, y, width, height }
+}
+
 /** How a target reads back in an error or a log line. */
 export function describeTarget(target: Target): string {
   if (target.kind === 'ref') return target.ref

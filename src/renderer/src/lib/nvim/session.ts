@@ -238,7 +238,12 @@ export class NvimCanvasSession {
   private primaryGridId = 1
   private externalSurfaces = new Map<
     number,
-    { host: HTMLElement; renderer: CanvasGridRenderer; observer: ResizeObserver }
+    {
+      host: HTMLElement
+      renderer: CanvasGridRenderer
+      observer: ResizeObserver
+      sizeCanvas: () => void
+    }
   >()
   private renderScheduled = false
   private pendingDirtyRows = new Set<number>()
@@ -317,7 +322,7 @@ export class NvimCanvasSession {
     this.lastWidth = width
     this.lastHeight = height
     const { cols, rows } = this.gridSize()
-    this.renderer.resize(cols, rows, window.devicePixelRatio, width, height)
+    this.fitRendererToGrid()
     this.pendingDirtyAll = true
     this.scheduleRender()
     // A font change is a single deliberate event, so it goes to nvim at once —
@@ -819,6 +824,29 @@ export class NvimCanvasSession {
     }
   }
 
+  /**
+   * Point the canvas's cell edges at the grid it actually paints.
+   *
+   * `gridSize` is the outer UI size — the union of every surface this session
+   * owns — because that is what Neovim has to be told to resize to. The canvas
+   * paints only the primary window's grid, and the moment a second window
+   * exists that grid is a fraction of the union: building the edges from the
+   * union spreads a 43-column grid across a pane 87 columns wide, which draws
+   * every glyph at half an advance, on top of the one before it.
+   */
+  private fitRendererToGrid(): void {
+    if (!this.renderer) return
+    const { host } = this.elements
+    if (host.clientWidth < 2 || host.clientHeight < 2) return
+    this.renderer.resize(
+      this.grid.cols,
+      this.grid.rows,
+      window.devicePixelRatio,
+      host.clientWidth,
+      host.clientHeight
+    )
+  }
+
   private scheduleRender(): void {
     if (this.renderScheduled) return
     this.renderScheduled = true
@@ -879,6 +907,17 @@ export class NvimCanvasSession {
       this.pendingDirtyAll = true
     }
     this.grid = this.multigrid.grids.get(primary) ?? this.multigrid.grids.get(1) ?? this.grid
+    // Neovim resizes the primary window whenever the windows beside it change —
+    // a split, a close, a `:resize` — without the pane's own box moving, so the
+    // ResizeObserver never fires and the edges would keep describing the grid as
+    // it was before.
+    if (
+      this.renderer &&
+      (this.renderer.gridCols !== this.grid.cols || this.renderer.gridRows !== this.grid.rows)
+    ) {
+      this.fitRendererToGrid()
+      this.pendingDirtyAll = true
+    }
     const dirty = update.grids.get(primary) ?? {
       all: false,
       rows: new Set<number>(),
@@ -924,7 +963,10 @@ export class NvimCanvasSession {
     const renderer = new CanvasGridRenderer()
     renderer.attach(canvas)
     if (this.metrics) renderer.setFont(this.config.font, this.metrics)
-    const fit = (): void => {
+    // Split in two so a grid that Neovim resized on its own can rebuild its cell
+    // edges without also asking Neovim to resize the window back — the request
+    // that would answer with the very grid_resize that got us here.
+    const sizeCanvas = (): void => {
       const grid = this.multigrid.grids.get(gridId)
       if (!grid || host.clientWidth < 1 || host.clientHeight < 1) return
       renderer.resize(
@@ -935,6 +977,9 @@ export class NvimCanvasSession {
         host.clientHeight
       )
       renderer.render(grid, { all: true, rows: new Set(), flushed: true })
+    }
+    const fit = (): void => {
+      sizeCanvas()
       if (resizeWin && this.nvimId && this.metrics) {
         const cols = Math.max(1, Math.floor(host.clientWidth / this.metrics.cellWidth))
         const rows = Math.max(1, Math.floor(host.clientHeight / this.metrics.cellHeight))
@@ -948,7 +993,7 @@ export class NvimCanvasSession {
     }
     const observer = new ResizeObserver(fit)
     observer.observe(host)
-    this.externalSurfaces.set(gridId, { host, renderer, observer })
+    this.externalSurfaces.set(gridId, { host, renderer, observer, sizeCanvas })
     fit()
     return () => this.detachGridSurface(gridId, renderer)
   }
@@ -966,6 +1011,13 @@ export class NvimCanvasSession {
       const grid = this.multigrid.grids.get(gridId)
       const changed = dirty.get(gridId)
       if (!grid || !changed) continue
+      // Same invariant as the primary canvas: the edges have to describe the
+      // grid being painted, and Neovim resizes these windows without the pane
+      // they are mirrored into ever changing size.
+      if (surface.renderer.gridCols !== grid.cols || surface.renderer.gridRows !== grid.rows) {
+        surface.sizeCanvas()
+        continue
+      }
       surface.renderer.render(grid, changed)
     }
   }
@@ -1021,7 +1073,7 @@ export class NvimCanvasSession {
       // so the pane keeps showing real content until nvim's grid_resize redraw
       // arrives. Repainting the old grid here instead would draw it against the
       // new cell edges — the same cells at the wrong columns.
-      this.renderer.resize(cols, rows, window.devicePixelRatio, width, height)
+      this.fitRendererToGrid()
       this.queueNvimResize(cols, rows)
     })
   }

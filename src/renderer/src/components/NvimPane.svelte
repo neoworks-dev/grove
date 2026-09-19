@@ -80,6 +80,9 @@
   // Git gutter for the minimap: the open file's changed-line ranges.
   let diffMarkers = $state<{ start: number; count: number; kind: 'add' | 'del' | 'mod' }[]>([])
   let nvimWindows = $state<NvimWindowPlacement[]>([])
+  // Ordinary windows drawn inside this pane rather than mirrored into Grove
+  // panes of their own. See applyWindowPlacements.
+  let embeddedWindows = $state<NvimWindowPlacement[]>([])
   const floatingWindows = $derived(
     nvimWindows.filter((entry) => entry.kind === 'float' && !entry.hidden)
   )
@@ -110,6 +113,66 @@
       ? Math.max(0, top)
       : Math.max(0, Math.min(top, (hostEl?.clientHeight ?? top + height) - height))
     return `left:${left}px;top:${top}px;width:${width}px;height:${height}px;z-index:${40 + (entry.compindex ?? entry.zindex)}`
+  }
+
+  // Window handles Neovim has been told to keep inside this pane. Read back from
+  // Neovim rather than tracked here: a window can be closed, replaced or split
+  // again by anything the user types, and the mark travels with it.
+  const EMBEDDED_WINDOWS_LUA = `
+local wins = {}
+for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+  if vim.w[win].grove_embedded then table.insert(wins, win) end
+end
+return wins
+`
+
+  /**
+   * Sort the session's windows into the ones that become Grove panes and the
+   * ones drawn inside this one. A diff marks its base side embedded, because its
+   * two halves are one view of one file — everything else is an editor in its
+   * own right and gets a pane.
+   */
+  async function applyWindowPlacements(windows: NvimWindowPlacement[]): Promise<void> {
+    const id = session?.id
+    if (!id) return
+    let marked: number[] = []
+    try {
+      const result = await window.workbench.nvim.request(id, 'nvim_exec_lua', [
+        EMBEDDED_WINDOWS_LUA,
+        []
+      ])
+      if (Array.isArray(result)) {
+        marked = result.filter((win): win is number => typeof win === 'number')
+      }
+    } catch {
+      // session gone
+    }
+    if (!session || session.id !== id) return
+    const primaryWin = session.primaryWin
+    const ordinary = windows.filter((entry) => entry.kind === 'normal' && !entry.hidden)
+    // While a diff is open the pane lays out every window itself. Splitting the
+    // job — Grove sizing some windows from the panes they are mirrored into,
+    // Neovim sizing the rest inside this one — leaves the two disagreeing about
+    // every column, and each correction feeds the other.
+    const embed = marked.length > 0 ? ordinary.filter((entry) => entry.win !== primaryWin) : []
+    const embedded = new Set(embed.map((entry) => entry.win))
+    session.setEmbeddedWindows([...embedded])
+    embeddedWindows = embed
+    layout.syncNvimWindows(
+      leafId,
+      id,
+      windows.filter((entry) => !embedded.has(entry.win))
+    )
+  }
+
+  /** Place an embedded window on the pane, at the box Neovim gave it. */
+  function embeddedStyle(entry: NvimWindowPlacement): string {
+    if (!session) return 'display:none'
+    const left = session.screenColToPixel(entry.col)
+    const top = session.screenRowToPixel(entry.row)
+    const width = session.screenColToPixel(entry.col + entry.width) - left
+    const height = session.screenRowToPixel(entry.row + entry.height) - top
+    return `left:${left}px;top:${top}px;width:${width}px;height:${height}px`
   }
 
   // Fetch the active file's git hunks and map them to minimap gutter markers.
@@ -503,7 +566,7 @@ end, ns)
       },
       onWindowsChanged: (windows) => {
         nvimWindows = windows
-        if (session?.id) layout.syncNvimWindows(leafId, session.id, windows)
+        void applyWindowPlacements(windows)
       },
       onExited: (exitCode) => {
         console.warn(`nvim editor pane crashed (code ${exitCode}); restarting`)
@@ -706,7 +769,22 @@ end, ns)
         Neovim runtime missing — run `bun scripts/fetch-nvim.ts` and reopen this pane.
       </div>
     {:else}
-      <canvas bind:this={canvasEl} class="block h-full w-full"></canvas>
+      <!-- Absolute, not `h-full w-full`: with a window embedded beside it the
+           canvas covers the primary window's box rather than the whole pane,
+           and the session puts it there. -->
+      <canvas bind:this={canvasEl} class="absolute left-0 top-0 block"></canvas>
+      {#if session}
+        {#each embeddedWindows as embedded (embedded.grid)}
+          <div class="absolute overflow-hidden" style={embeddedStyle(embedded)}>
+            <NvimGridSurface
+              {session}
+              grid={embedded.grid}
+              win={embedded.win}
+              class="pointer-events-auto"
+            />
+          </div>
+        {/each}
+      {/if}
       {#if session && floatingWindows.length > 0}
         {#if modalFloatingWindows.length > 0}
           <div

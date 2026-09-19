@@ -258,26 +258,25 @@ export class CanvasGridRenderer implements GridRenderer {
     const bounds = this.cellBounds(col, 1, row)
     const baselineY = this.rowTop(row) + this.baselineDev
     const cell = line[col]
-    const cellColors = resolveColors(state, cell.hlId)
+    const colors = cursorColors(state, mode?.attrId, cell.hlId)
 
     if (shape === 'vertical') {
-      ctx.fillStyle = cellColors.fg
+      ctx.fillStyle = colors.body
       ctx.fillRect(bounds.left, bounds.top, Math.max(1, bounds.width * pct), bounds.height)
       return
     }
     if (shape === 'horizontal') {
-      ctx.fillStyle = cellColors.fg
+      ctx.fillStyle = colors.body
       const barHeight = Math.max(1, bounds.height * pct)
       ctx.fillRect(bounds.left, bounds.top + bounds.height - barHeight, bounds.width, barHeight)
       return
     }
-    // Block: reverse video over the cell.
-    ctx.fillStyle = cellColors.fg
+    ctx.fillStyle = colors.body
     ctx.fillRect(bounds.left, bounds.top, bounds.width, bounds.height)
     if (cell.text.trim() !== '') {
       const attrs = highlightAttrs(state, cell.hlId)
       ctx.font = this.cellFont(attrs.bold === true, attrs.italic === true)
-      ctx.fillStyle = cellColors.bg
+      ctx.fillStyle = colors.text
       ctx.textBaseline = 'alphabetic'
       ctx.save()
       ctx.beginPath()
@@ -287,6 +286,32 @@ export class CanvasGridRenderer implements GridRenderer {
       ctx.restore()
     }
   }
+}
+
+/**
+ * What to paint the cursor and the character under it in.
+ *
+ * A mode names the highlight its cursor is drawn with, and that highlight is
+ * the one colour in the grid chosen to be findable anywhere — which reverse
+ * video is not: it is the cell's own foreground, so on a comment the cursor is
+ * comment-coloured and on a string it is string-coloured. Reverse video stays
+ * the fallback for a mode that names no highlight, or names one with nothing to
+ * say about colour.
+ */
+export function cursorColors(
+  state: GridState,
+  attrId: number | undefined,
+  cellHlId: number
+): { body: string; text: string } {
+  const cellColors = resolveColors(state, cellHlId)
+  const reverseVideo = { body: cellColors.fg, text: cellColors.bg }
+  if (attrId === undefined || attrId === 0) return reverseVideo
+
+  const attrs = highlightAttrs(state, attrId)
+  if (attrs.background === undefined && attrs.reverse !== true) return reverseVideo
+
+  const colors = resolveColors(state, attrId)
+  return { body: colors.bg, text: colors.fg }
 }
 
 function allRows(count: number): number[] {

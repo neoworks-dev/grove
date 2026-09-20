@@ -25,6 +25,9 @@ import type {
   MergePrOptions,
   GithubPrDiff,
   GithubPrFile,
+  GithubPrReview,
+  GithubReviewDraft,
+  GithubReviewEvent,
   GithubStatus,
   GithubStateFilter,
   GithubDashboard,
@@ -229,6 +232,18 @@ export interface WorkbenchApi {
     checkoutPr: (number: number, baseRefName: string) => Promise<Worktree>
     prViewedFiles: (number: number) => Promise<string[]>
     setPrFileViewed: (pullRequestId: string, path: string, viewed: boolean) => Promise<void>
+    prReview: (number: number) => Promise<GithubPrReview>
+    addPrReviewComment: (
+      number: number,
+      pullRequestId: string,
+      draft: GithubReviewDraft
+    ) => Promise<string>
+    submitPrReview: (
+      number: number,
+      pullRequestId: string,
+      event: GithubReviewEvent,
+      body: string
+    ) => Promise<void>
   }
   checkpoints: {
     list: (worktreeId: string) => Promise<CheckpointMeta[]>

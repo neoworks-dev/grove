@@ -16,6 +16,8 @@ import {
 import { layout } from '../../../lib/layout.svelte'
 import { branchNameFor } from './branches'
 import { diffAgainstBase, showPrBaseOnly } from './prDiff'
+import { buildPrFileTree, nextUnreadFile } from './prFileTree'
+import { installPrReviewKeys, type PrReviewRequest } from './prReview'
 import { clearRefusals, loadOnce, newReferenceLoads } from './referenceLoads'
 import { authorsOf, projectsOf, typesOf } from './filter'
 import {
@@ -43,6 +45,10 @@ import type {
   GithubLabelDefinition,
   GithubPrDiff,
   GithubPrFile,
+  GithubPrReview,
+  GithubDiffSide,
+  GithubReviewEvent,
+  GithubReviewThread,
   GithubStateFilter,
   GithubStatus,
   MergePrOptions
@@ -61,6 +67,20 @@ export interface GithubSelection {
 
 /** The two halves of a pull request's thread, as GitHub names them. */
 export type GithubThreadTab = 'conversation' | 'files'
+
+/**
+ * Where a comment being written will land. `line` is null for one about the
+ * whole file, which is what rejecting a file writes; `leafId` is the editor
+ * pane the box is drawn over, so only that pane draws it.
+ */
+export interface PrCommentTarget {
+  number: number
+  pullRequestId: string
+  path: string
+  line: number | null
+  side: GithubDiffSide
+  leafId: string
+}
 
 class GithubStore {
   status = $state<GithubStatus | null>(null)
@@ -130,6 +150,19 @@ class GithubStore {
    * started in the browser continues here and the other way round.
    */
   prViewedFiles = $state<Record<number, string[]>>({})
+
+  /**
+   * The review conversation on each pull request, and whether this viewer has a
+   * draft of their own. Comments they have written but not submitted are in
+   * here too — GitHub returns those to their author and to nobody else.
+   */
+  prReviews = $state<Record<number, GithubPrReview>>({})
+
+  /** The comment being written over the buffer, or null while none is. */
+  prComment = $state<PrCommentTarget | null>(null)
+
+  /** A comment or a verdict is in flight; the controls that send them wait. */
+  prReviewBusy = $state(false)
 
   /**
    * Numbers ticked in the list, for acting on several at once. Held per tab,
@@ -575,6 +608,120 @@ export async function setPrFileViewed(
 }
 
 /**
+ * Load the review conversation on a pull request. Uncached for the same reason
+ * the viewed state is: it is what changes while Grove is not looking, and a
+ * comment left in the browser should be here when the tab is opened.
+ */
+export async function loadPrReview(number: number): Promise<void> {
+  await loadReference(`pr-review:${number}`, async () => {
+    const review = await window.workbench.github.prReview(number)
+    github.prReviews = { ...github.prReviews, [number]: review }
+  })
+}
+
+/** The review threads on one file of a pull request, topmost line first. */
+export function prThreadsFor(number: number, path: string): GithubReviewThread[] {
+  const review = github.prReviews[number]
+  if (!review) return []
+  return review.threads
+    .filter((thread) => thread.path === path)
+    .sort((a, b) => (a.line ?? 0) - (b.line ?? 0))
+}
+
+/**
+ * Whether this viewer has asked for changes to a file: a comment of theirs on
+ * the file as a whole, which is what rejecting one writes. GitHub has no
+ * per-file verdict, so this is the nearest thing that survives a submit.
+ */
+export function isPrFileRejected(number: number, path: string): boolean {
+  return prThreadsFor(number, path).some((thread) => thread.line === null)
+}
+
+/**
+ * Answer a review key pressed in the editor. Accepting is the same act as
+ * ticking the checkbox; the other two open the comment box, rejecting on the
+ * file as a whole and commenting on the line the cursor was on.
+ */
+export function handlePrReviewKey(request: PrReviewRequest): void {
+  const detail = request.detail
+  if (request.action === 'accept') {
+    const diff = github.prDiffs[detail.number]
+    const file = diff?.files.find((entry) => entry.path === request.path)
+    if (file) void markPrFileViewed(detail, file, true)
+    return
+  }
+  github.prComment = {
+    number: detail.number,
+    pullRequestId: detail.id,
+    path: request.path,
+    line: request.action === 'reject' ? null : request.line,
+    side: request.side,
+    leafId: request.leafId
+  }
+}
+
+/** Open the comment box over a line, or over a file when `line` is null. */
+export function startPrComment(target: PrCommentTarget): void {
+  github.prComment = target
+}
+
+export function cancelPrComment(): void {
+  github.prComment = null
+}
+
+/**
+ * Write the comment onto this viewer's pending review, starting one if they had
+ * not. The review is re-read afterwards rather than guessed at: GitHub decides
+ * the thread's id and whether the line it was asked for is still in the diff.
+ */
+export async function savePrComment(target: PrCommentTarget, body: string): Promise<boolean> {
+  if (!body.trim()) return false
+  github.prReviewBusy = true
+  try {
+    await window.workbench.github.addPrReviewComment(target.number, target.pullRequestId, {
+      path: target.path,
+      line: target.line,
+      side: target.side,
+      body
+    })
+    github.prComment = null
+    await loadPrReview(target.number)
+    return true
+  } catch (err) {
+    dialogs.notify({ level: 'error', message: (err as Error).message })
+    return false
+  } finally {
+    github.prReviewBusy = false
+  }
+}
+
+/**
+ * Send the review: every comment written since the last one goes with it. With
+ * nothing written this is a bare verdict, which is what approving a pull request
+ * you had no notes on is.
+ */
+export async function submitPrReview(
+  detail: GithubItemDetail,
+  event: GithubReviewEvent,
+  body: string
+): Promise<boolean> {
+  github.prReviewBusy = true
+  try {
+    await window.workbench.github.submitPrReview(detail.number, detail.id, event, body)
+    await loadPrReview(detail.number)
+    // The verdict is a timeline entry on the pull request, so the other half of
+    // the thread is stale the moment it lands.
+    await loadDetail({ kind: detail.kind, number: detail.number }, { silent: true })
+    return true
+  } catch (err) {
+    dialogs.notify({ level: 'error', message: (err as Error).message })
+    return false
+  } finally {
+    github.prReviewBusy = false
+  }
+}
+
+/**
  * Check a pull request out as its own worktree and select it, so the whole tree
  * is there to read rather than the changed files alone. Existing worktrees are
  * reused — the branch is named after the pull request, so a second call finds
@@ -627,10 +774,33 @@ export async function openPrFile(detail: GithubItemDetail, file: GithubPrFile): 
   // the whole view.
   if (file.changeType === 'deleted') {
     await showPrBaseOnly(file, base)
+    await installPrReviewKeys(detail, file.path)
     return
   }
   openFileInEditor(worktreeId, `${worktree.path}/${file.path}`)
   await diffAgainstBase(file, base)
+  // After the diff: the base side's window is one of the two the keys go on.
+  await installPrReviewKeys(detail, file.path)
+}
+
+/**
+ * Tick a file off and move to the next one still to read, so working down a
+ * pull request is one act per file. Unticking is a correction rather than
+ * progress, so it moves nothing.
+ */
+export async function markPrFileViewed(
+  detail: GithubItemDetail,
+  file: GithubPrFile,
+  viewed: boolean
+): Promise<void> {
+  await setPrFileViewed(detail, file.path, viewed)
+  if (!viewed) return
+  const diff = github.prDiffs[detail.number]
+  if (!diff) return
+  const next = nextUnreadFile(buildPrFileTree(diff.files), file.path, (path) =>
+    isPrFileViewed(detail.number, path)
+  )
+  if (next) await openPrFile(detail, next.file)
 }
 
 /** Post a comment on the open item, then pull the thread back in. */

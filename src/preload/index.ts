@@ -94,7 +94,12 @@ const workbench = {
       ipcRenderer.invoke('github:checkoutPr', number, baseRefName),
     prViewedFiles: (number: number) => ipcRenderer.invoke('github:prViewedFiles', number),
     setPrFileViewed: (pullRequestId: string, path: string, viewed: boolean) =>
-      ipcRenderer.invoke('github:setPrFileViewed', pullRequestId, path, viewed)
+      ipcRenderer.invoke('github:setPrFileViewed', pullRequestId, path, viewed),
+    prReview: (number: number) => ipcRenderer.invoke('github:prReview', number),
+    addPrReviewComment: (number: number, pullRequestId: string, draft: unknown) =>
+      ipcRenderer.invoke('github:addPrReviewComment', number, pullRequestId, draft),
+    submitPrReview: (number: number, pullRequestId: string, event: string, body: string) =>
+      ipcRenderer.invoke('github:submitPrReview', number, pullRequestId, event, body)
   },
   checkpoints: {
     list: (worktreeId: string) => ipcRenderer.invoke('checkpoints:list', worktreeId),

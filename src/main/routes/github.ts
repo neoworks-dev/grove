@@ -20,6 +20,8 @@ import type {
   GithubCloseReason,
   GithubAssigneeChange,
   GithubItemKind,
+  GithubReviewDraft,
+  GithubReviewEvent,
   GithubStateFilter,
   MergePrOptions,
   OpenPrOptions,
@@ -162,6 +164,38 @@ export const githubRoutes = {
       (_e, pullRequestId: string, path: string, viewed: boolean) => {
         const { repoPath } = ctx.workbench.requireRepo()
         return dashboard.setFileViewed(repoPath, pullRequestId, path, viewed)
+      }
+    )
+
+    // ── Reviewing ─────────────────────────────────────────────────
+    // Comments live on GitHub's own pending review, so one started here can be
+    // finished in the browser and the other way round.
+    route(ctx, 'github:prReview', (_e, number: number) => {
+      const { repoPath } = ctx.workbench.requireRepo()
+      return dashboard.fetchPrReview(repoPath, number)
+    })
+
+    route(
+      ctx,
+      'github:addPrReviewComment',
+      (_e, number: number, pullRequestId: string, draft: GithubReviewDraft) => {
+        const { repoPath } = ctx.workbench.requireRepo()
+        return dashboard.addPrReviewComment(repoPath, number, pullRequestId, draft)
+      }
+    )
+
+    route(
+      ctx,
+      'github:submitPrReview',
+      (
+        _e,
+        number: number,
+        pullRequestId: string,
+        event: GithubReviewEvent,
+        body: string
+      ) => {
+        const { repoPath } = ctx.workbench.requireRepo()
+        return dashboard.submitPrReview(repoPath, number, pullRequestId, event, body)
       }
     )
 

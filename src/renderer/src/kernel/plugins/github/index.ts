@@ -6,12 +6,15 @@
 
 import type { Context } from '@neoworks/extension-system'
 import GithubPane from './GithubPane.svelte'
+import GithubPrCommentBox from './GithubPrCommentBox.svelte'
 import { CENTER_SLOT } from '../../../lib/paneSlots'
 import { repoOpen } from '../guards'
+import { onPrReviewKey } from './prReview'
+import { handlePrReviewKey } from './store.svelte'
 
 export const githubDashboard = {
   name: 'core/github',
-  inject: ['panes'],
+  inject: ['panes', 'editor'],
 
   apply(ctx: Context): void {
     ctx.effect(
@@ -27,5 +30,18 @@ export const githubDashboard = {
         }),
       'pane:github'
     )
+
+    // Reviewing happens on the buffer: the comment box opens over the line it
+    // is about, and the keys that open it are Neovim's, mapped onto the diff.
+    ctx.effect(
+      () =>
+        ctx.editor.registerOverlay({
+          id: 'github.pr-comment',
+          component: GithubPrCommentBox
+        }),
+      'overlay:github-pr-comment'
+    )
+
+    onPrReviewKey(handlePrReviewKey)
   }
 }

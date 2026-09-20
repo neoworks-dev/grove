@@ -544,6 +544,54 @@ export interface GithubPrDiff {
   files: GithubPrFile[]
 }
 
+/** Which side of a diff a comment is attached to. */
+export type GithubDiffSide = 'LEFT' | 'RIGHT'
+
+/** One comment inside a review thread. */
+export interface GithubReviewComment {
+  id: string
+  author: GithubActor
+  body: string
+  createdAt: string
+  /** True until the review holding it is submitted — nobody else can see it. */
+  pending: boolean
+}
+
+/**
+ * A conversation about one place in a pull request. `line` is null for a thread
+ * about the file as a whole, and for one whose line no longer exists in the
+ * diff — GitHub calls that outdated, and has nowhere to put it.
+ */
+export interface GithubReviewThread {
+  id: string
+  path: string
+  line: number | null
+  side: GithubDiffSide
+  isResolved: boolean
+  /** Part of a review the viewer has not submitted yet. */
+  pending: boolean
+  comments: GithubReviewComment[]
+}
+
+/** A pull request's review threads, and the viewer's unsubmitted review. */
+export interface GithubPrReview {
+  threads: GithubReviewThread[]
+  /** The viewer's pending review, or null when they have not started one. */
+  pendingReviewId: string | null
+}
+
+/** What submitting a review says about the pull request. */
+export type GithubReviewEvent = 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT'
+
+/** Where a new comment goes, and what it says. */
+export interface GithubReviewDraft {
+  path: string
+  /** Null makes it a comment on the whole file rather than on a line. */
+  line: number | null
+  side: GithubDiffSide
+  body: string
+}
+
 // ── Config schema (repo-root YAML) ──────────────────────────────
 
 export interface WorkbenchConfig {

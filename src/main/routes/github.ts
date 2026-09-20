@@ -193,6 +193,16 @@ export const githubRoutes = {
       }
     )
 
+    route(ctx, 'github:setPrThreadResolved', (_e, threadId: string, resolved: boolean) => {
+      const { repoPath } = ctx.workbench.requireRepo()
+      return dashboard.setPrThreadResolved(repoPath, threadId, resolved)
+    })
+
+    route(ctx, 'github:discardPrReview', (_e, number: number) => {
+      const { repoPath } = ctx.workbench.requireRepo()
+      return dashboard.discardPrReview(repoPath, number)
+    })
+
     route(
       ctx,
       'github:submitPrReview',

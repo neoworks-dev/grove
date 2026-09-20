@@ -677,6 +677,67 @@ export function handlePrReviewKey(request: PrReviewRequest): void {
   }
 }
 
+/**
+ * Settle a thread, or reopen one settled too early. The review is re-read after
+ * it, which repaints the buffer — a resolved thread reads differently there.
+ */
+export async function setPrThreadResolved(
+  number: number,
+  threadId: string,
+  resolved: boolean
+): Promise<boolean> {
+  github.prReviewBusy = true
+  try {
+    await window.workbench.github.setPrThreadResolved(threadId, resolved)
+    await loadPrReview(number)
+    return true
+  } catch (err) {
+    dialogs.notify({ level: 'error', message: (err as Error).message })
+    return false
+  } finally {
+    github.prReviewBusy = false
+  }
+}
+
+/**
+ * Throw away the review being written. Asked for first: the comments in it are
+ * work, they exist nowhere else, and GitHub does not keep a copy once the draft
+ * is gone.
+ */
+export async function discardPrReview(detail: GithubItemDetail): Promise<boolean> {
+  const review = github.prReviews[detail.number]
+  const drafts = review ? review.threads.filter((thread) => thread.pending).length : 0
+  if (drafts === 0) {
+    dialogs.notify({ level: 'info', message: 'No review to discard.' })
+    return false
+  }
+  const picked = await dialogs.confirm({
+    title: `Discard your review of #${detail.number}?`,
+    body:
+      drafts === 1
+        ? 'One unsent comment goes with it. GitHub keeps no copy.'
+        : `${drafts} unsent comments go with it. GitHub keeps no copy.`,
+    actions: [
+      { id: 'go', label: 'Discard', kind: 'danger' },
+      { id: 'cancel', label: 'Cancel' }
+    ]
+  })
+  if (picked !== 'go') return false
+
+  github.prReviewBusy = true
+  try {
+    await window.workbench.github.discardPrReview(detail.number)
+    github.prComment = null
+    await loadPrReview(detail.number)
+    return true
+  } catch (err) {
+    dialogs.notify({ level: 'error', message: (err as Error).message })
+    return false
+  } finally {
+    github.prReviewBusy = false
+  }
+}
+
 /** One thread by its id, for a box that is answering it. */
 export function prThreadById(number: number, id: string): GithubReviewThread | null {
   const review = github.prReviews[number]
@@ -829,11 +890,14 @@ export async function openPrFile(detail: GithubItemDetail, file: GithubPrFile): 
   await paintOpenPrComments(detail.number)
 }
 
-/** Draw whatever comments the open file already has into it. */
+/**
+ * Draw the open file's comments into it, re-reading them first. Opening a file
+ * is the moment its comments matter, and somebody may have left one since the
+ * tab was opened — the read is one request and the diff itself is local.
+ */
 async function paintOpenPrComments(number: number): Promise<void> {
-  const review = github.prReviews[number]
-  if (!review) return
-  await paintPrComments($state.snapshot(review.threads))
+  // Reading the review is what paints it, so there is nothing to do after.
+  await loadPrReview(number)
 }
 
 /**

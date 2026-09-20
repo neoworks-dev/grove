@@ -16,7 +16,13 @@
   import GithubBadge from './GithubBadge.svelte'
   import { nvimSessionFor } from '../../../lib/nvim/registry'
   import { placeCommentBox } from './prCommentPlacement'
-  import { cancelPrComment, github, prThreadById, savePrComment } from './store.svelte'
+  import {
+    cancelPrComment,
+    github,
+    prThreadById,
+    savePrComment,
+    setPrThreadResolved
+  } from './store.svelte'
 
   let { leafId, tick }: { leafId: string; tick: number } = $props()
 
@@ -112,6 +118,9 @@
           <span>line {target.line}</span>
           <span class="text-dim">· {target.side === 'LEFT' ? 'base' : 'head'}</span>
         {/if}
+        {#if thread && thread.isResolved}
+          <GithubBadge tone="dim" title="Settled">resolved</GithubBadge>
+        {/if}
       </div>
       <!-- svelte-ignore a11y_autofocus -->
       <textarea
@@ -136,6 +145,18 @@
         <span class="flex-1 text-2xs text-dim">
           <Kbd>Esc</Kbd> discards · <Kbd>Ctrl</Kbd><Kbd>Enter</Kbd> adds it
         </span>
+        {#if thread}
+          <button
+            class="rounded border border-line px-1.5 py-0.5 text-2xs text-muted hover:bg-hover disabled:opacity-50"
+            disabled={github.prReviewBusy}
+            title={thread.isResolved
+              ? 'Open this conversation again'
+              : 'Settle this conversation'}
+            onclick={() => void setPrThreadResolved(target.number, thread.id, !thread.isResolved)}
+          >
+            {thread.isResolved ? 'Unresolve' : 'Resolve'}
+          </button>
+        {/if}
         <button
           class="rounded px-1.5 py-0.5 text-2xs text-muted hover:bg-hover"
           onclick={cancelPrComment}

@@ -24,7 +24,6 @@ import {
   pathToLeaf,
   splitLeaf,
   removeLeaf,
-  removeLeafInto,
   resizeGutter,
   swapLeaves,
   replaceLeafType,
@@ -32,10 +31,12 @@ import {
   updateLeafState,
   moveLeaf,
   sanitize,
+  syncNvimWindowLeaves,
   type DropZone,
   type EdgeSide,
   type LayoutNode,
   type LeafNode,
+  type NvimWindowPlacement,
   type SizingPolicy,
   type SplitDirection,
   type SplitNode
@@ -415,57 +416,24 @@ class LayoutStore {
     this.schedule()
   }
 
-  // Reconcile ordinary ext_multigrid windows with transient Grove leaves. The
-  // first normal window remains the owning NvimPane; every other window gets a
-  // pane backed by the same nvim process and keyed by its stable window handle.
-  syncNvimWindows(
-    ownerLeafId: string,
-    nvimId: string,
-    windows: {
-      grid: number
-      win: number
-      kind: string
-      row: number
-      col: number
-      hidden: boolean
-    }[]
-  ): void {
-    const normal = windows.filter((entry) => entry.kind === 'normal' && !entry.hidden)
-    const primary = normal[0]
-    if (!primary) return
-    let next = this.tree
-    const existing = leaves(next).filter(
-      (leaf) => leaf.paneTypeId === 'nvim-grid' && leaf.paneState?.ownerLeafId === ownerLeafId
-    )
-    const desiredWins = new Set(normal.slice(1).map((entry) => entry.win))
-    for (const leaf of existing) {
-      if (desiredWins.has(Number(leaf.paneState?.win))) continue
-      // Back to the owner it was split out of, not shared around: see
-      // removeLeafInto for what sharing it costs the editor.
-      next = removeLeafInto(next, leaf.id, ownerLeafId) ?? next
+  // Mirror an editor's Neovim windows into transient leaves beside it. The tree
+  // written is the one holding the owning pane, not the active one: an editor in
+  // a mounted-but-hidden view keeps reporting its windows.
+  syncNvimWindows(ownerLeafId: string, nvimId: string, windows: NvimWindowPlacement[]): void {
+    const viewId = this.viewHoldingLeaf(ownerLeafId)
+    if (!viewId) return
+    const tree = this.trees[viewId]
+    const next = syncNvimWindowLeaves(tree, ownerLeafId, nvimId, windows)
+    if (next !== tree) this.trees[viewId] = next
+  }
+
+  /** The mounted view whose tree holds this leaf, or null once it is gone. */
+  private viewHoldingLeaf(leafId: string): string | null {
+    for (const viewId of this.mountedViewIds) {
+      const tree = this.trees[viewId]
+      if (tree && findLeaf(tree, leafId)) return viewId
     }
-    const existingWins = new Set(
-      leaves(next)
-        .filter(
-          (leaf) => leaf.paneTypeId === 'nvim-grid' && leaf.paneState?.ownerLeafId === ownerLeafId
-        )
-        .map((leaf) => Number(leaf.paneState?.win))
-    )
-    for (const entry of normal.slice(1)) {
-      if (existingWins.has(entry.win) || !findLeaf(next, ownerLeafId)) continue
-      const horizontal = Math.abs(entry.col - primary.col) >= Math.abs(entry.row - primary.row)
-      const direction: SplitDirection = horizontal ? 'row' : 'column'
-      const before = horizontal ? entry.col < primary.col : entry.row < primary.row
-      const leaf = createLeaf('nvim-grid', {
-        transient: true,
-        ownerLeafId,
-        nvimId,
-        grid: entry.grid,
-        win: entry.win
-      })
-      next = splitLeaf(next, ownerLeafId, direction, leaf, before ? 'before' : 'after')
-    }
-    if (next !== this.tree) this.setActiveTree(next)
+    return null
   }
 
   // Whether any leaf of the given pane type is open in the active view.

@@ -16,6 +16,8 @@ interface ReviewKeyEvent {
   action?: string
   path?: string
   line?: number
+  screenRow?: number
+  screenCol?: number
   side?: string
 }
 
@@ -27,6 +29,9 @@ export interface PrReviewRequest {
   detail: GithubItemDetail
   path: string
   line: number
+  /** Where that line sits on Neovim's screen, 1-based, for placing the box. */
+  screenRow: number
+  screenCol: number
   side: GithubDiffSide
   leafId: string
 }
@@ -40,10 +45,18 @@ local args = ...
 
 local function report(action)
   return function()
+    local win = vim.api.nvim_get_current_win()
+    local line = vim.api.nvim_win_get_cursor(win)[1]
+    -- Where that line actually is on screen. A diff is mostly filler lines, and
+    -- folds and wrapping move a line too, so counting buffer lines down from
+    -- the top of the window puts the box rows away from the cursor.
+    local pos = vim.fn.screenpos(win, line, 1)
     vim.rpcnotify(0, 'grove_pr_review', {
       action = action,
       path = args.path,
-      line = vim.api.nvim_win_get_cursor(0)[1],
+      line = line,
+      screenRow = pos.row,
+      screenCol = pos.col,
       side = vim.b.grove_pr_base and 'LEFT' or 'RIGHT',
     })
   end
@@ -138,6 +151,10 @@ function toRequest(nvimId: string, data: ReviewKeyEvent): PrReviewRequest | null
     detail: openedFor,
     path: data.path,
     line: data.line,
+    // screenpos answers 0 for a line that is not on screen, which the cursor's
+    // never is; treat it as the top rather than trusting it.
+    screenRow: data.screenRow && data.screenRow > 0 ? data.screenRow : 1,
+    screenCol: data.screenCol && data.screenCol > 0 ? data.screenCol : 1,
     side: data.side === 'LEFT' ? 'LEFT' : 'RIGHT',
     leafId: session.leafId
   }

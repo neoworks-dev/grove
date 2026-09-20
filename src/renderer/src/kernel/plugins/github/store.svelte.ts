@@ -80,6 +80,9 @@ export interface PrCommentTarget {
   line: number | null
   side: GithubDiffSide
   leafId: string
+  /** Where the cursor was on Neovim's screen, 1-based, so the box opens by it. */
+  screenRow: number
+  screenCol: number
 }
 
 class GithubStore {
@@ -656,7 +659,9 @@ export function handlePrReviewKey(request: PrReviewRequest): void {
     path: request.path,
     line: request.action === 'reject' ? null : request.line,
     side: request.side,
-    leafId: request.leafId
+    leafId: request.leafId,
+    screenRow: request.screenRow,
+    screenCol: request.screenCol
   }
 }
 

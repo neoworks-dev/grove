@@ -28,6 +28,7 @@
     markPrFileViewed,
     openPrFile,
     prThreadsFor,
+    startPrComment,
     submitPrReview
   } from './store.svelte'
   import type {
@@ -105,16 +106,28 @@
   }
 
   /**
-   * Go to a comment: its file, and then the line it is on in the half of the
-   * diff it was left on. A comment about the whole file has no line to go to,
-   * so opening the file is the whole of it.
+   * Go to a comment and open it: its file, the line it is on in the half of the
+   * diff it was left on, and then the conversation itself — which is where it is
+   * read, replied to, settled and deleted. Picking a comment in a list and
+   * landing on a line with no way to answer it is half an act.
    */
   async function openThread(thread: GithubReviewThread): Promise<void> {
     const file = diff ? diff.files.find((entry) => entry.path === thread.path) : undefined
     if (!file) return
     await openFile(file)
-    if (thread.line === null) return
-    await revealPrLine(thread.side, thread.line)
+    const at = await revealPrLine(thread.side, thread.line)
+    if (!at) return
+    startPrComment({
+      number: detail.number,
+      pullRequestId: detail.id,
+      path: thread.path,
+      line: thread.line,
+      side: thread.side,
+      leafId: at.leafId,
+      screenRow: at.screenRow,
+      screenCol: at.screenCol,
+      threadId: thread.id
+    })
   }
 
   async function discard(): Promise<void> {

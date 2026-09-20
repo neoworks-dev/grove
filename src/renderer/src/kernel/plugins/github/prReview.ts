@@ -165,20 +165,45 @@ for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
     vim.api.nvim_win_set_cursor(win, { line, 0 })
     vim.api.nvim_set_current_win(win)
     vim.api.nvim_win_call(win, function() vim.cmd('normal! zz') end)
-    return true
+    -- After the scroll, not before: centring the line is what decides which
+    -- screen row it ends up on.
+    local pos = vim.fn.screenpos(win, line, 1)
+    return { row = pos.row, col = pos.col }
   end
 end
-return false
+return nil
 `
 
-/** Reveal a commented line in the open diff, on the side it was left on. */
-export async function revealPrLine(side: GithubDiffSide, line: number): Promise<void> {
+/** Where a revealed line ended up, so a box can be opened against it. */
+export interface RevealedLine {
+  leafId: string
+  screenRow: number
+  screenCol: number
+}
+
+/**
+ * Reveal a commented line in the open diff, on the side it was left on, and say
+ * where it landed. A comment about the whole file has no line to go to, so it
+ * answers with the top of the diff.
+ */
+export async function revealPrLine(
+  side: GithubDiffSide,
+  line: number | null
+): Promise<RevealedLine | null> {
   const session = await waitForNvimSession()
-  if (!session || !session.id) return
-  await window.workbench.nvim.request(session.id, 'nvim_exec_lua', [
+  if (!session || !session.id) return null
+  if (line === null) return { leafId: session.leafId, screenRow: 1, screenCol: 1 }
+  const at = await window.workbench.nvim.request(session.id, 'nvim_exec_lua', [
     REVEAL_LUA,
     [{ base: side === 'LEFT', line }]
   ])
+  const position = at as { row?: number; col?: number } | null
+  if (!position || typeof position.row !== 'number') return null
+  return {
+    leafId: session.leafId,
+    screenRow: position.row > 0 ? position.row : 1,
+    screenCol: typeof position.col === 'number' && position.col > 0 ? position.col : 1
+  }
 }
 
 // The pull request whose file is open, so a keypress from Neovim — which knows

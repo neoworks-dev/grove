@@ -700,6 +700,45 @@ export async function setPrThreadResolved(
 }
 
 /**
+ * Take one comment back. Asked for first, because GitHub keeps no copy.
+ *
+ * Only this comment goes: deleting the one a thread starts with leaves the
+ * thread standing with its replies, which is what GitHub does and what driving
+ * it showed — the opposite of what the confirmation first claimed.
+ */
+export async function deletePrReviewComment(
+  number: number,
+  commentId: string
+): Promise<boolean> {
+  const picked = await dialogs.confirm({
+    title: 'Delete this comment?',
+    body: 'It goes from the conversation for good — GitHub keeps no copy.',
+    actions: [
+      { id: 'go', label: 'Delete', kind: 'danger' },
+      { id: 'cancel', label: 'Cancel' }
+    ]
+  })
+  if (picked !== 'go') return false
+
+  github.prReviewBusy = true
+  try {
+    await window.workbench.github.deletePrReviewComment(commentId)
+    await loadPrReview(number)
+    // The box may have been open on a thread that has just gone.
+    const target = github.prComment
+    if (target && target.threadId && !prThreadById(number, target.threadId)) {
+      github.prComment = null
+    }
+    return true
+  } catch (err) {
+    dialogs.notify({ level: 'error', message: (err as Error).message })
+    return false
+  } finally {
+    github.prReviewBusy = false
+  }
+}
+
+/**
  * Throw away the review being written. Asked for first: the comments in it are
  * work, they exist nowhere else, and GitHub does not keep a copy once the draft
  * is gone.

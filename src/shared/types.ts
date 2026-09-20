@@ -555,6 +555,8 @@ export interface GithubReviewComment {
   createdAt: string
   /** True until the review holding it is submitted — nobody else can see it. */
   pending: boolean
+  /** Whether GitHub will let this viewer take it back. */
+  viewerCanDelete: boolean
 }
 
 /**

@@ -36,7 +36,11 @@ import type {
   GithubLabel,
   GithubLabelDefinition,
   GithubPullItem,
+  GithubPrReview,
   GithubRepoRef,
+  GithubReviewDraft,
+  GithubReviewEvent,
+  GithubReviewThread,
   GithubStateFilter,
   GithubStatus,
   MergePrOptions
@@ -1283,4 +1287,280 @@ export async function setFileViewed(
     '-f',
     `query=${viewed ? VIEWED_MUTATION : UNVIEWED_MUTATION}`
   ])
+}
+
+// ── Reviewing ─────────────────────────────────────────────────────
+// A review on GitHub is a draft that collects comments and is submitted in one
+// act, as an approval, a request for changes, or neither. Grove writes into that
+// same draft rather than keeping its own, so a review can be started here and
+// finished in the browser, or the other way round.
+
+/**
+ * Run one GraphQL document through gh. Numbers go through `-F`, which types
+ * them; everything else through `-f`, which keeps a body that happens to read
+ * as a number from arriving as one.
+ */
+async function graphql(
+  repoPath: string,
+  query: string,
+  variables: Record<string, string | number>
+): Promise<string> {
+  const args = ['api', 'graphql']
+  for (const [name, value] of Object.entries(variables)) {
+    args.push(typeof value === 'number' ? '-F' : '-f', `${name}=${value}`)
+  }
+  args.push('-f', `query=${query}`)
+  try {
+    return await runGh(repoPath, args)
+  } catch (error) {
+    throw graphqlFailure(error as Error)
+  }
+}
+
+/**
+ * gh reports a failure by echoing the command it ran, which for GraphQL is the
+ * whole document and every variable — pages of it in front of the one line that
+ * matters. Keep GitHub's own words and drop the command.
+ */
+export function graphqlFailure(error: Error): Error {
+  const [, ...rest] = error.message.split(' failed: ')
+  const detail = rest.join(' failed: ').trim()
+  // Nothing to strip: a rate limit is already rewritten, and anything without
+  // the marker is not gh echoing a command.
+  if (!detail) return error
+  return new Error(detail.replace(/^gh:\s*/, ''))
+}
+
+const REVIEW_THREADS_QUERY = `
+query($owner: String!, $name: String!, $number: Int!, $limit: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviews(first: 1, states: [PENDING]) { nodes { id } }
+      reviewThreads(first: $limit) {
+        nodes {
+          id
+          path
+          line
+          diffSide
+          subjectType
+          isResolved
+          comments(first: 50) {
+            nodes {
+              id
+              body
+              createdAt
+              state
+              author { login avatarUrl }
+            }
+          }
+        }
+      }
+    }
+  }
+}`.trim()
+
+const START_REVIEW_MUTATION = `
+mutation($pullRequestId: ID!) {
+  addPullRequestReview(input: {pullRequestId: $pullRequestId}) {
+    pullRequestReview { id }
+  }
+}`.trim()
+
+const LINE_THREAD_MUTATION = `
+mutation($reviewId: ID!, $path: String!, $body: String!, $line: Int!, $side: DiffSide!) {
+  addPullRequestReviewThread(
+    input: {pullRequestReviewId: $reviewId, path: $path, body: $body, line: $line, side: $side}
+  ) { thread { id } }
+}`.trim()
+
+const FILE_THREAD_MUTATION = `
+mutation($reviewId: ID!, $path: String!, $body: String!) {
+  addPullRequestReviewThread(
+    input: {pullRequestReviewId: $reviewId, path: $path, body: $body, subjectType: FILE}
+  ) { thread { id } }
+}`.trim()
+
+const SUBMIT_REVIEW_MUTATION = `
+mutation($reviewId: ID!, $event: PullRequestReviewEvent!, $body: String!) {
+  submitPullRequestReview(input: {pullRequestReviewId: $reviewId, event: $event, body: $body}) {
+    pullRequestReview { id state }
+  }
+}`.trim()
+
+const REVIEW_AT_ONCE_MUTATION = `
+mutation($pullRequestId: ID!, $event: PullRequestReviewEvent!, $body: String!) {
+  addPullRequestReview(input: {pullRequestId: $pullRequestId, event: $event, body: $body}) {
+    pullRequestReview { id state }
+  }
+}`.trim()
+
+interface ThreadCommentNode {
+  id: string
+  body: string
+  createdAt: string
+  state: string
+  author: GraphqlActor | null
+}
+
+export interface ThreadNode {
+  id: string
+  path: string
+  line: number | null
+  diffSide: string
+  subjectType: string
+  isResolved: boolean
+  comments: { nodes: ThreadCommentNode[] }
+}
+
+interface ReviewThreadsResponse {
+  data: {
+    repository: {
+      pullRequest: {
+        reviews: { nodes: { id: string }[] }
+        reviewThreads: { nodes: ThreadNode[] }
+      } | null
+    } | null
+  }
+}
+
+interface StartReviewResponse {
+  data: { addPullRequestReview: { pullRequestReview: { id: string } } }
+}
+
+/** One thread, with the side normalised to the two values the UI knows. */
+export function toReviewThread(node: ThreadNode): GithubReviewThread {
+  const comments = node.comments.nodes.map((comment) => ({
+    id: comment.id,
+    author: toActor(comment.author),
+    body: comment.body,
+    createdAt: comment.createdAt,
+    pending: comment.state === 'PENDING'
+  }))
+  return {
+    id: node.id,
+    path: node.path,
+    // A thread about the whole file still reports a line — GitHub answers 1,
+    // which points at a line nobody commented on. Only `subjectType` says which
+    // kind it is, and a null line is how the rest of Grove reads "the file".
+    line: node.subjectType === 'FILE' ? null : node.line,
+    side: node.diffSide === 'LEFT' ? 'LEFT' : 'RIGHT',
+    isResolved: node.isResolved,
+    // A thread is pending while the review holding it is, which is what its
+    // comments report — the thread itself has no state of its own.
+    pending: comments.some((comment) => comment.pending),
+    comments
+  }
+}
+
+/**
+ * Every review thread on a pull request, plus the viewer's unsubmitted review if
+ * they have one. Pending threads come back only to their author, so this is the
+ * draft and the conversation in one round trip.
+ */
+export async function fetchPrReview(repoPath: string, number: number): Promise<GithubPrReview> {
+  const repo = await repoRef(repoPath)
+  const [owner, name] = repo.nameWithOwner.split('/')
+  const raw = await graphql(repoPath, REVIEW_THREADS_QUERY, {
+    owner,
+    name,
+    number,
+    limit: MAX_ITEMS
+  })
+  const pullRequest = parseJson<ReviewThreadsResponse>(raw).data.repository?.pullRequest
+  if (!pullRequest) throw new Error(`GitHub returned no pull request #${number}`)
+  const pending = pullRequest.reviews.nodes[0]
+  return {
+    threads: pullRequest.reviewThreads.nodes.map(toReviewThread),
+    pendingReviewId: pending ? pending.id : null
+  }
+}
+
+/**
+ * The viewer's pending review, started if there is not one yet. GitHub allows
+ * one per pull request and refuses a second, so the lookup comes first. Every
+ * comment joins that one draft, and the review is submitted once however many
+ * comments it took.
+ */
+async function pendingReviewId(
+  repoPath: string,
+  number: number,
+  pullRequestId: string
+): Promise<string> {
+  const existing = await findPendingReview(repoPath, number)
+  if (existing) return existing
+  const raw = await graphql(repoPath, START_REVIEW_MUTATION, { pullRequestId })
+  return parseJson<StartReviewResponse>(raw).data.addPullRequestReview.pullRequestReview.id
+}
+
+/**
+ * Add a comment to the viewer's pending review: on a line when the draft names
+ * one, otherwise on the file as a whole. Returns the review it landed in.
+ */
+export async function addPrReviewComment(
+  repoPath: string,
+  number: number,
+  pullRequestId: string,
+  draft: GithubReviewDraft
+): Promise<string> {
+  const reviewId = await pendingReviewId(repoPath, number, pullRequestId)
+  if (draft.line === null) {
+    await graphql(repoPath, FILE_THREAD_MUTATION, {
+      reviewId,
+      path: draft.path,
+      body: draft.body
+    })
+    return reviewId
+  }
+  await graphql(repoPath, LINE_THREAD_MUTATION, {
+    reviewId,
+    path: draft.path,
+    body: draft.body,
+    line: draft.line,
+    side: draft.side
+  })
+  return reviewId
+}
+
+const PENDING_REVIEW_QUERY = `
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) { reviews(first: 1, states: [PENDING]) { nodes { id } } }
+  }
+}`.trim()
+
+interface PendingReviewResponse {
+  data: {
+    repository: { pullRequest: { reviews: { nodes: { id: string }[] } } | null } | null
+  }
+}
+
+/** The id of the viewer's unsubmitted review on a pull request, if there is one. */
+async function findPendingReview(repoPath: string, number: number): Promise<string | null> {
+  const repo = await repoRef(repoPath)
+  const [owner, name] = repo.nameWithOwner.split('/')
+  const raw = await graphql(repoPath, PENDING_REVIEW_QUERY, { owner, name, number })
+  const pullRequest = parseJson<PendingReviewResponse>(raw).data.repository?.pullRequest
+  const pending = pullRequest?.reviews.nodes[0]
+  if (!pending) return null
+  return pending.id
+}
+
+/**
+ * Submit the review. Whatever comments were written go with it; with none there
+ * is no draft to submit, and the verdict is posted on its own — which is what a
+ * bare approval is.
+ */
+export async function submitPrReview(
+  repoPath: string,
+  number: number,
+  pullRequestId: string,
+  event: GithubReviewEvent,
+  body: string
+): Promise<void> {
+  const draft = await findPendingReview(repoPath, number)
+  if (!draft) {
+    await graphql(repoPath, REVIEW_AT_ONCE_MUTATION, { pullRequestId, event, body })
+    return
+  }
+  await graphql(repoPath, SUBMIT_REVIEW_MUTATION, { reviewId: draft, event, body })
 }

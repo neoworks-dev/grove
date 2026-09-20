@@ -17,7 +17,10 @@ import {
   optionalFields,
   rateLimitMessage,
   relationshipFields,
-  scopeHint
+  scopeHint,
+  graphqlFailure,
+  toReviewThread,
+  type ThreadNode
 } from '../src/main/githubDashboard'
 
 // What a token with nothing extra granted can ask for, which is the case the
@@ -291,5 +294,84 @@ describe('createIssueArgs', () => {
   it('trims the title and refuses an empty one', () => {
     expect(createIssueArgs({ title: '  T  ', body: '', labels: [] })[3]).toBe('T')
     expect(() => createIssueArgs({ title: '   ', body: '', labels: [] })).toThrow(/needs a title/)
+  })
+})
+
+// A review thread as GitHub hands it over, before the pane reads it.
+function thread(overrides: Partial<ThreadNode> = {}): ThreadNode {
+  return {
+    id: 'PRRT_1',
+    path: 'src/format.ts',
+    line: 4,
+    diffSide: 'RIGHT',
+    subjectType: 'LINE',
+    isResolved: false,
+    comments: {
+      nodes: [
+        {
+          id: 'PRRC_1',
+          body: 'Is the pad enough?',
+          createdAt: '2026-09-20T10:00:00Z',
+          state: 'SUBMITTED',
+          author: { login: 'octocat', avatarUrl: 'https://example.invalid/a.png' }
+        }
+      ]
+    },
+    ...overrides
+  }
+}
+
+describe('toReviewThread', () => {
+  it('carries a line thread through as the line it is on', () => {
+    expect(toReviewThread(thread())).toMatchObject({
+      path: 'src/format.ts',
+      line: 4,
+      side: 'RIGHT',
+      pending: false
+    })
+  })
+
+  // GitHub answers `line: 1` for a thread about the whole file, which points at
+  // a line nobody commented on. Only subjectType tells the two apart.
+  it('drops the line GitHub invents for a thread about the whole file', () => {
+    const whole = toReviewThread(thread({ subjectType: 'FILE', line: 1 }))
+    expect(whole.line).toBeNull()
+  })
+
+  it('reads the review state off the comments, which is the only place it is', () => {
+    const draft = thread()
+    draft.comments.nodes[0].state = 'PENDING'
+    expect(toReviewThread(draft).pending).toBe(true)
+    expect(toReviewThread(draft).comments[0].pending).toBe(true)
+  })
+
+  it('keeps the base side apart from the head side', () => {
+    expect(toReviewThread(thread({ diffSide: 'LEFT' })).side).toBe('LEFT')
+    // Anything GitHub adds later reads as the head side rather than throwing.
+    expect(toReviewThread(thread({ diffSide: 'SOMETHING_NEW' })).side).toBe('RIGHT')
+  })
+
+  it('names a deleted author rather than leaving a blank', () => {
+    const gone = thread()
+    gone.comments.nodes[0].author = null
+    expect(toReviewThread(gone).comments[0].author.login).toBeTruthy()
+  })
+})
+
+// gh echoes the command it ran into every failure. For a porcelain call that is
+// a few words; for GraphQL it is the whole document, and the one line that says
+// what GitHub refused is lost behind it.
+describe('graphqlFailure', () => {
+  it('keeps what GitHub said and drops the command it said it about', () => {
+    const raw = new Error(
+      'gh api graphql -f event=APPROVE -f query=mutation($id: ID!) {\n  submit\n} failed: ' +
+        'gh: Review Can not approve your own pull request'
+    )
+    expect(graphqlFailure(raw).message).toBe('Review Can not approve your own pull request')
+  })
+
+  it('leaves a message that is not gh echoing a command alone', () => {
+    const rewritten = new Error('GitHub rate limit: this token is out of requests.')
+    expect(graphqlFailure(rewritten)).toBe(rewritten)
   })
 })

@@ -1,18 +1,27 @@
 <script lang="ts">
-  // The Files half of a pull request: what it changes, one row per file.
+  // The Files half of a pull request: what it changes, as the directory tree it
+  // changed them in. A flat list of paths says nothing about where in the
+  // repository the work landed, and truncates the interesting end of a long
+  // path to fit the pane.
   //
   // Opening a file checks the pull request out as a worktree first, so what you
   // read is the real tree at that revision — every file, not only the changed
   // ones — with the changed file opened beside the merge base's copy of it.
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
-  import GithubBadge from './GithubBadge.svelte'
+  import GithubPrFileRow from './GithubPrFileRow.svelte'
+  import { buildPrFileTree } from './prFileTree'
   import { checkoutPr, github, loadPrDiff, openPrFile } from './store.svelte'
   import type { GithubItemDetail, GithubPrFile } from '../../../../../shared/types'
 
   let { detail }: { detail: GithubItemDetail } = $props()
 
   const diff = $derived(github.prDiffs[detail.number])
+  const tree = $derived(diff ? buildPrFileTree(diff.files) : [])
   let openPath = $state<string | null>(null)
+
+  // Directories are open unless the user folded one, so the changed files are
+  // all in view the moment the tab is.
+  let collapsed = $state<Record<string, boolean>>({})
 
   // Fetched when the tab is first looked at rather than when the item is
   // selected: the first load pulls the pull request into the repository, which
@@ -22,12 +31,8 @@
     void loadPrDiff(detail.number, detail.baseRefName)
   })
 
-  const statusLetters: Record<GithubPrFile['changeType'], string> = {
-    added: 'A',
-    modified: 'M',
-    deleted: 'D',
-    renamed: 'R',
-    untracked: 'A'
+  function toggle(path: string): void {
+    collapsed = { ...collapsed, [path]: !collapsed[path] }
   }
 
   async function openFile(file: GithubPrFile): Promise<void> {
@@ -56,23 +61,8 @@
       {:else if !diff}
         <p class="px-4 py-6 text-xs text-dim">No changed files.</p>
       {:else}
-        {#each diff.files as file (file.path)}
-          <button
-            class="flex w-full items-center gap-2 px-4 py-1 text-left text-2xs hover:bg-hover"
-            class:bg-hover={openPath === file.path}
-            onclick={() => openFile(file)}
-          >
-            <span class="w-3 shrink-0 font-mono text-dim">{statusLetters[file.changeType]}</span>
-            <span class="min-w-0 flex-1 truncate font-mono text-default" title={file.path}>
-              {file.path}
-            </span>
-            {#if file.binary}
-              <GithubBadge tone="dim">binary</GithubBadge>
-            {:else}
-              <GithubBadge tone="green">+{file.added}</GithubBadge>
-              <GithubBadge tone="red">−{file.removed}</GithubBadge>
-            {/if}
-          </button>
+        {#each tree as node (node.path)}
+          <GithubPrFileRow {node} {collapsed} {openPath} onToggle={toggle} onOpen={openFile} />
         {/each}
       {/if}
     </div>

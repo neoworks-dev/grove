@@ -13,9 +13,10 @@
   // Registered as an editor overlay, so it appears in whichever Neovim pane the
   // review keys were pressed in and in none of the others.
   import Kbd from '../../../components/Kbd.svelte'
+  import GithubBadge from './GithubBadge.svelte'
   import { nvimSessionFor } from '../../../lib/nvim/registry'
   import { placeCommentBox } from './prCommentPlacement'
-  import { cancelPrComment, github, savePrComment } from './store.svelte'
+  import { cancelPrComment, github, prThreadById, savePrComment } from './store.svelte'
 
   let { leafId, tick }: { leafId: string; tick: number } = $props()
 
@@ -65,6 +66,12 @@
     return session.screenColToPixel(target.screenCol - 1)
   })
 
+  // The thread being answered, read back from the store rather than captured,
+  // so a reply that lands shows up in the box that wrote it.
+  const thread = $derived(
+    target && target.threadId ? prThreadById(target.number, target.threadId) : null
+  )
+
   const placement = $derived(
     placeCommentBox({ rowTop, columnLeft, rowHeight, boxHeight, paneWidth, paneHeight })
   )
@@ -81,6 +88,21 @@
       class="pointer-events-auto rounded-md border border-line bg-elevated/95 p-2 shadow-lg backdrop-blur"
       class:-translate-y-full={!placement.below}
     >
+      {#if thread}
+        <div class="mb-1.5 flex max-h-48 flex-col gap-1.5 overflow-y-auto">
+          {#each thread.comments as comment (comment.id)}
+            <div class="border-l-2 border-line pl-2">
+              <div class="flex items-center gap-1 text-2xs">
+                <span class="text-muted">{comment.author.login}</span>
+                {#if comment.pending}
+                  <GithubBadge tone="blue" title="Not submitted yet">draft</GithubBadge>
+                {/if}
+              </div>
+              <p class="whitespace-pre-wrap text-2xs text-default">{comment.body}</p>
+            </div>
+          {/each}
+        </div>
+      {/if}
       <div class="mb-1 flex items-center gap-1 text-2xs text-dim">
         {#if target.line === null}
           <span class="text-red">Asking for changes to</span>
@@ -96,9 +118,11 @@
         bind:this={input}
         class="w-full resize-y rounded border border-line bg-input px-2 py-1 text-2xs text-default outline-none"
         rows="3"
-        placeholder={target.line === null
-          ? 'What needs to change in this file?'
-          : 'What about this line?'}
+        placeholder={thread
+          ? 'Reply…'
+          : target.line === null
+            ? 'What needs to change in this file?'
+            : 'What about this line?'}
         bind:value={body}
         autofocus
         onkeydown={(event) => {
@@ -123,7 +147,7 @@
           disabled={github.prReviewBusy || body.trim().length === 0}
           onclick={() => void savePrComment(target, body)}
         >
-          Comment
+          {thread ? 'Reply' : 'Comment'}
         </button>
       </div>
     </div>

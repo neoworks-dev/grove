@@ -1380,6 +1380,20 @@ mutation($reviewId: ID!, $path: String!, $body: String!) {
   ) { thread { id } }
 }`.trim()
 
+const REPLY_MUTATION = `
+mutation($threadId: ID!, $body: String!) {
+  addPullRequestReviewThreadReply(
+    input: {pullRequestReviewThreadId: $threadId, body: $body}
+  ) { comment { id } }
+}`.trim()
+
+const PENDING_REPLY_MUTATION = `
+mutation($threadId: ID!, $body: String!, $reviewId: ID!) {
+  addPullRequestReviewThreadReply(
+    input: {pullRequestReviewThreadId: $threadId, body: $body, pullRequestReviewId: $reviewId}
+  ) { comment { id } }
+}`.trim()
+
 const SUBMIT_REVIEW_MUTATION = `
 mutation($reviewId: ID!, $event: PullRequestReviewEvent!, $body: String!) {
   submitPullRequestReview(input: {pullRequestReviewId: $reviewId, event: $event, body: $body}) {
@@ -1532,6 +1546,26 @@ interface PendingReviewResponse {
   data: {
     repository: { pullRequest: { reviews: { nodes: { id: string }[] } } | null } | null
   }
+}
+
+/**
+ * Answer an existing thread. The reply joins the viewer's pending review when
+ * they have one, so a whole review still arrives in one act; with no review
+ * open it posts on its own, which is what replying to somebody outside a review
+ * is. Never starts a review — answering a question is not reviewing.
+ */
+export async function addPrReviewReply(
+  repoPath: string,
+  number: number,
+  threadId: string,
+  body: string
+): Promise<void> {
+  const reviewId = await findPendingReview(repoPath, number)
+  if (!reviewId) {
+    await graphql(repoPath, REPLY_MUTATION, { threadId, body })
+    return
+  }
+  await graphql(repoPath, PENDING_REPLY_MUTATION, { threadId, body, reviewId })
 }
 
 /** The id of the viewer's unsubmitted review on a pull request, if there is one. */

@@ -41,10 +41,15 @@
   // A new target is a new comment; the draft never carries over to another line.
   // The box is opened by a key pressed in the editor, so the canvas has focus
   // and `autofocus` alone does not take it — the field is focused explicitly.
+  //
+  // And handed back when the box goes. Taking focus from the editor and not
+  // returning it leaves the keyboard pointing at nothing: the buffer stops
+  // drawing a cursor, and every key after it is swallowed by the document.
   $effect(() => {
     if (!target) return
     body = ''
     input?.focus()
+    return () => nvimSessionFor(leafId)?.focus()
   })
 
   // The pane the box is drawn in, re-read on each redraw so a resize moves it.

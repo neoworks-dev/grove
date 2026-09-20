@@ -103,7 +103,9 @@
       foreground: fg,
       cursor: fg,
       cursorAccent: cssVar('--surface', '#1c1c1e'),
-      selectionBackground: cssVar('--surface-hover', '#26262a'),
+      // The band nvim paints a Visual selection with, so selected text reads the
+      // same in a terminal as it does in the editor.
+      selectionBackground: cssVar('--border-strong', '#3f3f46'),
       black: cssVar('--surface', '#1c1c1e'),
       red: cssVar('--ctx-red', '#f87171'),
       green: cssVar('--ctx-green', '#a3e635'),

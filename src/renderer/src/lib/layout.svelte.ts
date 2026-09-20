@@ -31,10 +31,12 @@ import {
   updateLeafState,
   moveLeaf,
   sanitize,
+  syncNvimWindowLeaves,
   type DropZone,
   type EdgeSide,
   type LayoutNode,
   type LeafNode,
+  type NvimWindowPlacement,
   type SizingPolicy,
   type SplitDirection,
   type SplitNode
@@ -46,7 +48,9 @@ const DEFAULT_PANEL_SIZES: Record<string, number> = {
   tree: 224
 }
 
-const CENTER_TYPES = ['nvim', 'dashboard']
+// Center pane types a layout saved before the split tree may name. Only read
+// when restoring that old state; live layouts carry their tree.
+const CENTER_TYPES = ['nvim']
 
 // The editor is the one pane a slot swap may never take over — everything else
 // opens beside it. Losing the editor to a pane with no way back stranded the
@@ -414,55 +418,24 @@ class LayoutStore {
     this.schedule()
   }
 
-  // Reconcile ordinary ext_multigrid windows with transient Grove leaves. The
-  // first normal window remains the owning NvimPane; every other window gets a
-  // pane backed by the same nvim process and keyed by its stable window handle.
-  syncNvimWindows(
-    ownerLeafId: string,
-    nvimId: string,
-    windows: {
-      grid: number
-      win: number
-      kind: string
-      row: number
-      col: number
-      hidden: boolean
-    }[]
-  ): void {
-    const normal = windows.filter((entry) => entry.kind === 'normal' && !entry.hidden)
-    const primary = normal[0]
-    if (!primary) return
-    let next = this.tree
-    const existing = leaves(next).filter(
-      (leaf) => leaf.paneTypeId === 'nvim-grid' && leaf.paneState?.ownerLeafId === ownerLeafId
-    )
-    const desiredWins = new Set(normal.slice(1).map((entry) => entry.win))
-    for (const leaf of existing) {
-      if (desiredWins.has(Number(leaf.paneState?.win))) continue
-      next = removeLeaf(next, leaf.id) ?? next
+  // Mirror an editor's Neovim windows into transient leaves beside it. The tree
+  // written is the one holding the owning pane, not the active one: an editor in
+  // a mounted-but-hidden view keeps reporting its windows.
+  syncNvimWindows(ownerLeafId: string, nvimId: string, windows: NvimWindowPlacement[]): void {
+    const viewId = this.viewHoldingLeaf(ownerLeafId)
+    if (!viewId) return
+    const tree = this.trees[viewId]
+    const next = syncNvimWindowLeaves(tree, ownerLeafId, nvimId, windows)
+    if (next !== tree) this.trees[viewId] = next
+  }
+
+  /** The mounted view whose tree holds this leaf, or null once it is gone. */
+  private viewHoldingLeaf(leafId: string): string | null {
+    for (const viewId of this.mountedViewIds) {
+      const tree = this.trees[viewId]
+      if (tree && findLeaf(tree, leafId)) return viewId
     }
-    const existingWins = new Set(
-      leaves(next)
-        .filter(
-          (leaf) => leaf.paneTypeId === 'nvim-grid' && leaf.paneState?.ownerLeafId === ownerLeafId
-        )
-        .map((leaf) => Number(leaf.paneState?.win))
-    )
-    for (const entry of normal.slice(1)) {
-      if (existingWins.has(entry.win) || !findLeaf(next, ownerLeafId)) continue
-      const horizontal = Math.abs(entry.col - primary.col) >= Math.abs(entry.row - primary.row)
-      const direction: SplitDirection = horizontal ? 'row' : 'column'
-      const before = horizontal ? entry.col < primary.col : entry.row < primary.row
-      const leaf = createLeaf('nvim-grid', {
-        transient: true,
-        ownerLeafId,
-        nvimId,
-        grid: entry.grid,
-        win: entry.win
-      })
-      next = splitLeaf(next, ownerLeafId, direction, leaf, before ? 'before' : 'after')
-    }
-    if (next !== this.tree) this.setActiveTree(next)
+    return null
   }
 
   // Whether any leaf of the given pane type is open in the active view.
@@ -721,7 +694,7 @@ class LayoutStore {
     this.closeLeaf(inTree.id)
   }
 
-  // Show one of the center views (editor/diff/preview/dashboard).
+  // Show a center pane (the editor, the markdown preview, the problems list).
   showCenterPane(paneTypeId: string): void {
     if (!CENTER_TYPES.includes(paneTypeId) && !panes.get(paneTypeId)) return
     this.ensurePane(paneTypeId)
@@ -732,13 +705,30 @@ class LayoutStore {
   // target is mounted on first visit, then kept — so switching only flips which
   // subtree is visible instead of tearing down and rebuilding panes.
   switchView(viewId: string): void {
-    if (viewId === this.activeViewId) return
     const definition = views.get(viewId)
     if (!definition) return
     this.ensureMounted(viewId, definition)
     this.activeViewId = viewId
+    this.reopenViewCentre(definition)
     this.focusInitial(definition)
     this.schedule()
+  }
+
+  /**
+   * Reopen the pane a view is built around when its tree no longer holds it.
+   * Editors and other panes join a view freely — opening a pull request's files
+   * puts one in the GitHub view — and closing the view's own pane afterwards is
+   * allowed, which used to leave the view showing something else with no way to
+   * ask for it back: switching to a view already active did nothing at all.
+   */
+  private reopenViewCentre(definition: { buildTree: () => LayoutNode }): void {
+    const centreTypes = centrePaneTypes(definition.buildTree())
+    if (centreTypes.length === 0) return
+    const open = leaves(this.tree).map((leaf) => leaf.paneTypeId)
+    for (const paneTypeId of centreTypes) {
+      if (open.includes(paneTypeId)) return
+    }
+    this.ensurePane(centreTypes[0])
   }
 
   // Give a view a live tree and add it to the render list if it isn't mounted.

@@ -22,7 +22,6 @@ import { spawn, spawnSync, type SpawnSyncReturns } from 'node:child_process'
 import { existsSync, mkdirSync, openSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
-import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { demoWorktreePathFor } from '../tests/e2e/fixtures/demoRepo'
@@ -488,13 +487,6 @@ function launchApp(profile: GroveProfile, display: string, port: number): number
     ...displayEnv(display)
   }
   delete env.WAYLAND_DISPLAY
-
-  // The profile redirects XDG_CONFIG_HOME, which is where `gh` keeps its login —
-  // without this the GitHub surfaces are all "not authenticated" and there is
-  // nothing to test. This does mean the session can reach the user's account,
-  // which is why the demo repo's remote is a sandbox.
-  const ghConfig = join(homedir(), '.config', 'gh')
-  if (existsSync(ghConfig)) env.GH_CONFIG_DIR = ghConfig
 
   const child = spawn(
     join(repoRoot, 'node_modules', '.bin', 'electron'),

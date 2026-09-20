@@ -13,7 +13,9 @@
 // run.
 
 import { createHash, randomBytes } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { chmod, mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { PLUGIN_PERMISSIONS } from '../../../sdk/src/protocol'
 import {
@@ -55,9 +57,23 @@ export function profileAt(root: string): GroveProfile {
       XDG_STATE_HOME: join(root, 'state'),
       XDG_CACHE_HOME: join(root, 'cache'),
       // The debug routes only mount under this flag.
-      GROVE_DEBUG: '1'
+      GROVE_DEBUG: '1',
+      ...githubCliEnv()
     }
   }
+}
+
+/**
+ * Point `gh` back at the real login. Its config lives under XDG_CONFIG_HOME,
+ * which the profile has just moved, so without this every GitHub surface in the
+ * instance reads as "not authenticated" and there is nothing to drive. The
+ * session can then reach the user's account, which is why the demo repo's
+ * remote is a sandbox.
+ */
+function githubCliEnv(): Record<string, string> {
+  const configDir = join(homedir(), '.config', 'gh')
+  if (!existsSync(configDir)) return {}
+  return { GH_CONFIG_DIR: configDir }
 }
 
 /**

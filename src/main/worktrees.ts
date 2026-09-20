@@ -67,7 +67,7 @@ async function runCommands(
 export async function createWorktree(
   repoPath: string,
   config: WorkbenchConfig,
-  options: { name: string; baseBranch: string; newBranch?: string },
+  options: { name: string; baseBranch?: string; newBranch?: string; checkoutBranch?: string },
   log: SetupLogger
 ): Promise<Worktree> {
   const dir = worktreesDir(repoPath, config)
@@ -75,7 +75,8 @@ export async function createWorktree(
 
   await git.addWorktree(repoPath, worktreePath, {
     newBranch: options.newBranch,
-    baseBranch: options.baseBranch
+    baseBranch: options.baseBranch,
+    checkoutBranch: options.checkoutBranch
   })
 
   const worktrees = await listWithPorts(repoPath, config)
@@ -93,7 +94,9 @@ export async function createWorktree(
     await updateRepoState(repoPath, { setupOnceDone: true })
   }
   if (config.setup.per_worktree.length > 0) {
-    await runCommands(config.setup.per_worktree, worktreePath, vars, (line) => log(created.id, line))
+    await runCommands(config.setup.per_worktree, worktreePath, vars, (line) =>
+      log(created.id, line)
+    )
   }
 
   return created

@@ -26,6 +26,7 @@ export const diagnostics = {
           centerSlot: true,
           minWidth: 320,
           minHeight: 100,
+          keywords: 'diagnostics errors warnings lsp lint problems trouble',
           when: repoOpen
         }),
       'pane:diagnostics'

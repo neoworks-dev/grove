@@ -390,27 +390,6 @@ export function registerCoreBindings(): () => void {
       run: () => layout.closeFocused()
     },
     {
-      id: 'preferences.open',
-      title: 'Preferences: Open Settings',
-      group: 'Settings',
-      keywords: 'settings options configure preferences',
-      run: () => layout.ensurePane('preferences')
-    },
-    {
-      id: 'keybindings.open',
-      title: 'Preferences: Keyboard Shortcuts',
-      group: 'Settings',
-      keywords: 'keyboard shortcuts keybindings keys rebind',
-      run: () => layout.ensurePane('keybindings')
-    },
-    {
-      id: 'permissions.open',
-      title: 'Preferences: Permissions & Access',
-      group: 'Settings',
-      keywords: 'permissions grants plugins apps access revoke security',
-      run: () => layout.ensurePane('permissions')
-    },
-    {
       id: 'help.keybindings',
       title: 'Help: Keybindings Cheatsheet',
       group: 'Help',
@@ -418,32 +397,11 @@ export function registerCoreBindings(): () => void {
       run: () => keymap.toggleCheatsheet()
     },
     {
-      id: 'terminal.toggle',
-      title: 'Terminal: Toggle',
-      group: 'Terminal',
-      keywords: 'terminal shell console pty command line',
-      run: () => layout.togglePane('terminal')
-    },
-    {
       id: 'panel.toggle',
       title: 'View: Toggle Bottom Panel',
       group: 'View',
       keywords: 'panel bottom terminal problems diagnostics output tabs',
       run: () => layout.togglePane('panel')
-    },
-    {
-      id: 'nvim.open',
-      title: 'Editor: Open Neovim Pane',
-      group: 'Editor',
-      keywords: 'neovim nvim vim editor embedded',
-      run: () => layout.showCenterPane('nvim')
-    },
-    {
-      id: 'diagnostics.open',
-      title: 'Code: Open Diagnostics',
-      group: 'Code',
-      keywords: 'diagnostics errors warnings lsp lint problems trouble',
-      run: () => layout.ensurePane('diagnostics')
     },
     {
       id: 'symbols.open',
@@ -465,13 +423,6 @@ export function registerCoreBindings(): () => void {
       group: 'Code',
       keywords: 'undo history undotree redo states time travel',
       run: () => undoTree.toggle()
-    },
-    {
-      id: 'markdown.preview',
-      title: 'Markdown: Preview',
-      group: 'Editor',
-      keywords: 'markdown preview render md html readme',
-      run: () => layout.showCenterPane('markdown')
     },
     {
       id: 'editor.inlineEdit',

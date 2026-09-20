@@ -7,18 +7,25 @@
 import type { Context } from '@neoworks/extension-system'
 import { route } from '../kernel/route'
 import * as github from '../github'
+import * as git from '../git'
+import * as worktrees from '../worktrees'
 import * as dashboard from '../githubDashboard'
 import type {
   GithubIssueDraft,
+  GithubPrDiff,
+  GithubPrFile,
   GithubItemAction,
   GithubItemCommand,
   GithubLabelChange,
   GithubCloseReason,
   GithubAssigneeChange,
   GithubItemKind,
+  GithubReviewDraft,
+  GithubReviewEvent,
   GithubStateFilter,
   MergePrOptions,
-  OpenPrOptions
+  OpenPrOptions,
+  Worktree
 } from '../../shared/types'
 
 export const githubRoutes = {
@@ -128,6 +135,133 @@ export const githubRoutes = {
         return dashboard.runItemAction(repoPath, kind, number, action, merge, reason)
       }
     )
+
+    // ── Pull-request diff ─────────────────────────────────────────
+    // Both run against the repository root: the fetch puts the pull request in
+    // the shared object store, so every worktree can read it afterwards.
+    route(ctx, 'github:prDiff', async (_e, number: number, baseRefName: string) => {
+      const { repoPath } = ctx.workbench.requireRepo()
+      const { baseOid, headOid } = await git.fetchPullRequestRefs(repoPath, number, baseRefName)
+      const files = await git.changedFilesBetween(repoPath, baseOid, headOid)
+      return { baseOid, headOid, files } satisfies GithubPrDiff
+    })
+
+    route(ctx, 'github:prBaseFile', (_e, baseOid: string, file: GithubPrFile) => {
+      const { repoPath } = ctx.workbench.requireRepo()
+      return git.pullRequestBaseFile(repoPath, baseOid, file)
+    })
+
+    // Which files this viewer has already read. GitHub's own record, so it is
+    // the same tick as the Files tab on github.com.
+    route(ctx, 'github:prViewedFiles', (_e, number: number) => {
+      const { repoPath } = ctx.workbench.requireRepo()
+      return dashboard.fetchViewedFiles(repoPath, number)
+    })
+
+    route(
+      ctx,
+      'github:setPrFileViewed',
+      (_e, pullRequestId: string, path: string, viewed: boolean) => {
+        const { repoPath } = ctx.workbench.requireRepo()
+        return dashboard.setFileViewed(repoPath, pullRequestId, path, viewed)
+      }
+    )
+
+    // ── Reviewing ─────────────────────────────────────────────────
+    // Comments live on GitHub's own pending review, so one started here can be
+    // finished in the browser and the other way round.
+    route(ctx, 'github:prReview', (_e, number: number) => {
+      const { repoPath } = ctx.workbench.requireRepo()
+      return dashboard.fetchPrReview(repoPath, number)
+    })
+
+    route(
+      ctx,
+      'github:addPrReviewComment',
+      (_e, number: number, pullRequestId: string, draft: GithubReviewDraft) => {
+        const { repoPath } = ctx.workbench.requireRepo()
+        return dashboard.addPrReviewComment(repoPath, number, pullRequestId, draft)
+      }
+    )
+
+    route(
+      ctx,
+      'github:addPrReviewReply',
+      (_e, number: number, threadId: string, body: string) => {
+        const { repoPath } = ctx.workbench.requireRepo()
+        return dashboard.addPrReviewReply(repoPath, number, threadId, body)
+      }
+    )
+
+    route(ctx, 'github:setPrThreadResolved', (_e, threadId: string, resolved: boolean) => {
+      const { repoPath } = ctx.workbench.requireRepo()
+      return dashboard.setPrThreadResolved(repoPath, threadId, resolved)
+    })
+
+    route(ctx, 'github:deletePrReviewComment', (_e, commentId: string) => {
+      const { repoPath } = ctx.workbench.requireRepo()
+      return dashboard.deletePrReviewComment(repoPath, commentId)
+    })
+
+    route(ctx, 'github:discardPrReview', (_e, number: number) => {
+      const { repoPath } = ctx.workbench.requireRepo()
+      return dashboard.discardPrReview(repoPath, number)
+    })
+
+    route(
+      ctx,
+      'github:submitPrReview',
+      (
+        _e,
+        number: number,
+        pullRequestId: string,
+        event: GithubReviewEvent,
+        body: string
+      ) => {
+        const { repoPath } = ctx.workbench.requireRepo()
+        return dashboard.submitPrReview(repoPath, number, pullRequestId, event, body)
+      }
+    )
+
+    // Check a pull request out as a worktree of its own, so its whole tree can
+    // be read — not only the files it changed — with the editor, the language
+    // servers and the agents all pointed at it.
+    route(ctx, 'github:checkoutPr', async (_e, number: number, baseRefName: string) => {
+      const { repoPath, config } = ctx.workbench.requireRepo()
+
+      // Before the fetch: opening a file asks for the checkout every time, and
+      // two network round trips in front of every click is what that costs. A
+      // worktree that is already there is not re-fetched, so it does not follow
+      // the pull request either — see #69.
+      const name = `pr-${number}`
+      const existing = (await ctx.workbench.refreshWorktrees()).find(
+        (worktree: Worktree) => worktree.branch === name
+      )
+      if (existing) return existing
+
+      await git.fetchPullRequestRefs(repoPath, number, baseRefName)
+
+      // A branch left behind by a worktree that was removed: check it out again
+      // rather than failing on the name, and leave whatever is on it alone —
+      // reviewing a pull request is not a reason to throw away local commits.
+      const branches = await git.listBranches(repoPath)
+      const checkedOut = branches.local.includes(name)
+
+      const created = await worktrees.createWorktree(
+        repoPath,
+        config,
+        {
+          name,
+          newBranch: checkedOut ? undefined : name,
+          checkoutBranch: checkedOut ? name : undefined,
+          baseBranch: `refs/grove/pr/${number}/head`
+        },
+        (worktreeId, line) =>
+          ctx.workbench.send('event:log', { worktreeId, source: 'service', name: 'setup', line })
+      )
+      await ctx.workbench.refreshWorktrees()
+      return created
+    })
 
     // ── Ship-it (the PR of the selected worktree) ─────────────────
     route(ctx, 'github:openPr', (_e, worktreeId: string, options: OpenPrOptions) => {

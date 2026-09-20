@@ -37,6 +37,9 @@ export class PanelService extends Service {
           icon: TerminalWindow,
           component: BottomPanel,
           slot: CENTER_SLOT,
+          // A tab strip rather than a destination: `panel.toggle` shows and
+          // hides it, and the palette lists the tabs' own panes instead.
+          openable: false,
           // Opens below the focused editor, like the problems pane.
           preferredOrientation: 'column',
           containerClass: 'bg-canvas',

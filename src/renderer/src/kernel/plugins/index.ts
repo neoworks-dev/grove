@@ -11,7 +11,6 @@ import { setup } from './setup'
 import { markdownPreview } from './markdownPreview'
 import { diagnostics } from './diagnostics'
 import { terminal } from './terminal'
-import { dashboard } from './dashboard'
 import { githubDashboard } from './github'
 import { logs } from './logs'
 import { settingsPanes } from './settingsPanes'
@@ -33,7 +32,6 @@ export const corePlugins = [
   markdownPreview,
   diagnostics,
   terminal,
-  dashboard,
   githubDashboard,
   logs,
   settingsPanes

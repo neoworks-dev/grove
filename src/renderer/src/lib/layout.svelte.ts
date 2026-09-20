@@ -48,7 +48,9 @@ const DEFAULT_PANEL_SIZES: Record<string, number> = {
   tree: 224
 }
 
-const CENTER_TYPES = ['nvim', 'dashboard']
+// Center pane types a layout saved before the split tree may name. Only read
+// when restoring that old state; live layouts carry their tree.
+const CENTER_TYPES = ['nvim']
 
 // The editor is the one pane a slot swap may never take over — everything else
 // opens beside it. Losing the editor to a pane with no way back stranded the
@@ -692,7 +694,7 @@ class LayoutStore {
     this.closeLeaf(inTree.id)
   }
 
-  // Show one of the center views (editor/diff/preview/dashboard).
+  // Show a center pane (the editor, the markdown preview, the problems list).
   showCenterPane(paneTypeId: string): void {
     if (!CENTER_TYPES.includes(paneTypeId) && !panes.get(paneTypeId)) return
     this.ensurePane(paneTypeId)
@@ -703,13 +705,30 @@ class LayoutStore {
   // target is mounted on first visit, then kept — so switching only flips which
   // subtree is visible instead of tearing down and rebuilding panes.
   switchView(viewId: string): void {
-    if (viewId === this.activeViewId) return
     const definition = views.get(viewId)
     if (!definition) return
     this.ensureMounted(viewId, definition)
     this.activeViewId = viewId
+    this.reopenViewCentre(definition)
     this.focusInitial(definition)
     this.schedule()
+  }
+
+  /**
+   * Reopen the pane a view is built around when its tree no longer holds it.
+   * Editors and other panes join a view freely — opening a pull request's files
+   * puts one in the GitHub view — and closing the view's own pane afterwards is
+   * allowed, which used to leave the view showing something else with no way to
+   * ask for it back: switching to a view already active did nothing at all.
+   */
+  private reopenViewCentre(definition: { buildTree: () => LayoutNode }): void {
+    const centreTypes = centrePaneTypes(definition.buildTree())
+    if (centreTypes.length === 0) return
+    const open = leaves(this.tree).map((leaf) => leaf.paneTypeId)
+    for (const paneTypeId of centreTypes) {
+      if (open.includes(paneTypeId)) return
+    }
+    this.ensurePane(centreTypes[0])
   }
 
   // Give a view a live tree and add it to the render list if it isn't mounted.

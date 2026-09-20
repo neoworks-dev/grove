@@ -438,7 +438,6 @@ describe('paneTypesInSlot', () => {
   const SLOTS: Record<string, string> = {
     nvim: 'center',
     github: 'center',
-    dashboard: 'center',
       agent: 'center',
     files: 'sidebar'
   }

@@ -1,14 +1,18 @@
-// Views: named split-tree layouts shown in the header switcher, plus the bridge
-// that mirrors every registered view into the command palette and the View menu.
+// The Code view — the layout grove opens with — and the two bridges that put
+// what is registered into the command palette: every view, and every pane a
+// user can ask for by name.
+//
+// A view is a whole-screen split tree; a pane is one window inside one. Most
+// features only want a pane, and the pane bridge is what gets them a palette
+// entry for it, so nothing has to register a view it does not need.
 
 import type { Context } from '@neoworks/extension-system'
 import { untrack } from 'svelte'
 import { buildDefaultTree } from '../../lib/layout.svelte'
-import { createLeaf } from '../../lib/layoutTree'
 
 export const views = {
   name: 'core/views',
-  inject: ['views', 'commands', 'menu', 'layout'],
+  inject: ['views', 'panes', 'commands', 'menu', 'layout'],
 
   apply(ctx: Context): void {
     ctx.effect(
@@ -23,20 +27,8 @@ export const views = {
       'view:code'
     )
 
-    // A view owns its whole tree, edge panes included — the dashboard wants the
-    // screen to itself, so it declares a single pane and nothing else.
-    ctx.effect(
-      () =>
-        ctx.views.register({
-          id: 'dashboard',
-          label: 'Dashboard',
-          order: 2,
-          buildTree: () => createLeaf('dashboard')
-        }),
-      'view:dashboard'
-    )
-
     ctx.effect(() => bridgeViewsToCommandsAndMenu(ctx), 'view:switcher-bridge')
+    ctx.effect(() => bridgePanesToCommands(ctx), 'pane:palette-bridge')
   }
 }
 
@@ -74,6 +66,30 @@ function bridgeViewsToCommandsAndMenu(ctx: Context): () => void {
           disposeItems()
         }
       })
+    })
+  })
+}
+
+/**
+ * Keep one palette command per openable pane. Opening is `ensurePane`, which
+ * focuses the window already showing the pane when there is one — so the
+ * command reads as "take me to it" rather than "give me another".
+ */
+function bridgePanesToCommands(ctx: Context): () => void {
+  return $effect.root(() => {
+    $effect(() => {
+      const list = ctx.panes.openableTypes()
+      return untrack(() =>
+        ctx.commands.registerAll(
+          list.map((type) => ({
+            id: `pane.${type.id}`,
+            title: type.title,
+            group: 'View',
+            keywords: type.keywords,
+            run: () => ctx.layout.ensurePane(type.id)
+          }))
+        )
+      )
     })
   })
 }

@@ -5,6 +5,10 @@ import type { DirtyState, GridState } from './types'
 import type { CellMetrics, FontSpec } from './metrics'
 
 export interface GridRenderer {
+  // The grid size the current cell edges were built for, so a caller can tell
+  // whether they still describe the grid it is about to paint.
+  readonly gridCols: number
+  readonly gridRows: number
   attach(canvas: HTMLCanvasElement): void
   // Copy the pixels of a canvas this renderer previously drove onto the current
   // one, so a pane whose component was rebuilt keeps showing its last frame.

@@ -40,6 +40,17 @@ export class CanvasGridRenderer implements GridRenderer {
     this.ctx = canvas.getContext('2d')
   }
 
+  // The grid the current cell edges were built for. A caller compares these
+  // against the grid it is about to paint: a mismatch means the edges describe
+  // a different grid, and every cell would land at the wrong column.
+  get gridCols(): number {
+    return Math.max(0, this.colX.length - 1)
+  }
+
+  get gridRows(): number {
+    return Math.max(0, this.rowY.length - 1)
+  }
+
   carryFrom(previous: HTMLCanvasElement): void {
     if (!this.canvas || !this.ctx) return
     if (previous.width === 0 || previous.height === 0) return

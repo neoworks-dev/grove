@@ -7,10 +7,14 @@
   import { sessionByNvimId } from '../lib/nvim/registry'
   import type { NvimCanvasSession } from '../lib/nvim/session'
 
-  let { state }: { state: Record<string, unknown> } = $props()
-  const nvimId = String(state.nvimId ?? '')
-  const grid = Number(state.grid)
-  const win = Number(state.win)
+  // Renamed off `state`: a variable of that name in scope makes the compiler
+  // read `$state` as a store subscription, and the pane dies on mount with
+  // `store_invalid_shape` — which stops the whole tree rendering, not just this
+  // pane.
+  let { state: paneState }: { state: Record<string, unknown> } = $props()
+  const nvimId = String(paneState.nvimId ?? '')
+  const grid = Number(paneState.grid)
+  const win = Number(paneState.win)
   let session = $state<NvimCanvasSession | null>(null)
   let input = $state<HTMLDivElement>()
 
@@ -46,14 +50,7 @@
   onmousedown={focus}
 >
   {#if session}
-    <NvimGridSurface
-      {session}
-      {grid}
-      {win}
-      focusOwner={false}
-      resizeWindow
-      onFocus={focus}
-    />
+    <NvimGridSurface {session} {grid} {win} focusOwner={false} resizeWindow onFocus={focus} />
   {/if}
   <div
     bind:this={input}

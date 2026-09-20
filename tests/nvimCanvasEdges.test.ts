@@ -1,5 +1,18 @@
 import { describe, expect, test } from 'bun:test'
-import { buildEdges } from '../src/renderer/src/lib/nvim/canvasRenderer'
+import { buildEdges, CanvasGridRenderer } from '../src/renderer/src/lib/nvim/canvasRenderer'
+
+/**
+ * Enough of a canvas for `resize`: it writes width/height and a CSS size, and
+ * asks for a 2D context it only draws on when carrying a frame over.
+ */
+function fakeCanvas(): HTMLCanvasElement {
+  return {
+    width: 0,
+    height: 0,
+    style: {},
+    getContext: () => null
+  } as unknown as HTMLCanvasElement
+}
 
 function widths(edges: number[]): number[] {
   const result: number[] = []
@@ -41,5 +54,35 @@ describe('buildEdges', () => {
   test('exact multiple yields uniform cells', () => {
     const edges = buildEdges(10, 80)
     expect(widths(edges)).toEqual(new Array(10).fill(8))
+  })
+})
+
+// The caller that paints a grid has to be able to tell whether the edges still
+// describe it. Painting a 43-column grid against edges built for 87 columns
+// draws every glyph at half an advance, on top of the one before it — which is
+// what a pane looked like once a diff split its window in two.
+describe('CanvasGridRenderer grid geometry', () => {
+  test('reports the grid its edges were built for', () => {
+    const renderer = new CanvasGridRenderer()
+    renderer.attach(fakeCanvas())
+    renderer.resize(87, 40, 1, 338, 787)
+    expect(renderer.gridCols).toBe(87)
+    expect(renderer.gridRows).toBe(40)
+  })
+
+  test('follows the grid when it shrinks inside an unchanged box', () => {
+    const renderer = new CanvasGridRenderer()
+    renderer.attach(fakeCanvas())
+    renderer.resize(87, 40, 1, 338, 787)
+    renderer.resize(43, 39, 1, 338, 787)
+    expect(renderer.gridCols).toBe(43)
+    expect(renderer.gridRows).toBe(39)
+  })
+
+  test('reports nothing before a resize', () => {
+    const renderer = new CanvasGridRenderer()
+    renderer.attach(fakeCanvas())
+    expect(renderer.gridCols).toBe(0)
+    expect(renderer.gridRows).toBe(0)
   })
 })

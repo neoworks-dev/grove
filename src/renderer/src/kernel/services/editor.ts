@@ -7,6 +7,7 @@ import { Service, type Context } from '@neoworks/extension-system'
 import { panes } from '../../lib/panes.svelte'
 import { store, openFileInEditor, openFileAtLine } from '../../lib/store.svelte'
 import { activeNvimSession } from '../../lib/nvim/registry'
+import { editorOverlays, type EditorOverlay } from '../../lib/editorOverlays.svelte'
 import type { NvimCanvasSession } from '../../lib/nvim/session'
 import { CENTER_SLOT } from '../../lib/paneSlots'
 import { repoOpen } from '../plugins/guards'
@@ -31,6 +32,8 @@ export interface EditorAuxPane {
   containerClass?: string
   minWidth?: number
   minHeight?: number
+  // Extra words the palette matches this pane on, beyond its title.
+  keywords?: string
   when?: () => boolean
 }
 
@@ -73,6 +76,9 @@ export class EditorService extends Service {
           id: 'nvim-grid',
           title: 'Neovim Window',
           component: NvimGridPane,
+          // One window of an editor that already has a pane; it appears when
+          // Neovim splits and goes when that window closes.
+          openable: false,
           containerClass: 'bg-surface',
           minWidth: 120,
           minHeight: 80,
@@ -93,6 +99,8 @@ export class EditorService extends Service {
           title: 'Empty',
           component: EmptyCenter,
           slot: CENTER_SLOT,
+          // What a centre leaf falls back to, never something to open.
+          openable: false,
           minWidth: 240
         }),
       'pane:empty'
@@ -114,8 +122,18 @@ export class EditorService extends Service {
       containerClass: pane.containerClass,
       minWidth: pane.minWidth,
       minHeight: pane.minHeight,
+      keywords: pane.keywords,
       when: pane.when
     })
+  }
+
+  /**
+   * Register a component drawn over the editor's canvas, for a plugin whose
+   * controls belong on the buffer rather than in a pane of their own. Returns
+   * the inverse.
+   */
+  registerOverlay(overlay: EditorOverlay): () => void {
+    return editorOverlays.register(overlay)
   }
 
   /** Open a file in the editor, optionally revealing a line. */

@@ -85,7 +85,28 @@ const workbench = {
     action: (kind: string, number: number, action: string, merge?: unknown, reason?: string) =>
       ipcRenderer.invoke('github:action', kind, number, action, merge, reason),
     changeAssignees: (kind: string, number: number, change: unknown) =>
-      ipcRenderer.invoke('github:changeAssignees', kind, number, change)
+      ipcRenderer.invoke('github:changeAssignees', kind, number, change),
+    prDiff: (number: number, baseRefName: string) =>
+      ipcRenderer.invoke('github:prDiff', number, baseRefName),
+    prBaseFile: (baseOid: string, file: unknown) =>
+      ipcRenderer.invoke('github:prBaseFile', baseOid, file),
+    checkoutPr: (number: number, baseRefName: string) =>
+      ipcRenderer.invoke('github:checkoutPr', number, baseRefName),
+    prViewedFiles: (number: number) => ipcRenderer.invoke('github:prViewedFiles', number),
+    setPrFileViewed: (pullRequestId: string, path: string, viewed: boolean) =>
+      ipcRenderer.invoke('github:setPrFileViewed', pullRequestId, path, viewed),
+    prReview: (number: number) => ipcRenderer.invoke('github:prReview', number),
+    addPrReviewComment: (number: number, pullRequestId: string, draft: unknown) =>
+      ipcRenderer.invoke('github:addPrReviewComment', number, pullRequestId, draft),
+    addPrReviewReply: (number: number, threadId: string, body: string) =>
+      ipcRenderer.invoke('github:addPrReviewReply', number, threadId, body),
+    setPrThreadResolved: (threadId: string, resolved: boolean) =>
+      ipcRenderer.invoke('github:setPrThreadResolved', threadId, resolved),
+    deletePrReviewComment: (commentId: string) =>
+      ipcRenderer.invoke('github:deletePrReviewComment', commentId),
+    discardPrReview: (number: number) => ipcRenderer.invoke('github:discardPrReview', number),
+    submitPrReview: (number: number, pullRequestId: string, event: string, body: string) =>
+      ipcRenderer.invoke('github:submitPrReview', number, pullRequestId, event, body)
   },
   checkpoints: {
     list: (worktreeId: string) => ipcRenderer.invoke('checkpoints:list', worktreeId),

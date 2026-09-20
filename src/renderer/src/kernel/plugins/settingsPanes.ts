@@ -19,7 +19,8 @@ export const settingsPanes = {
           component: PreferencesPane,
           orientation: 'row',
           containerClass: 'bg-elevated',
-          minWidth: 320
+          minWidth: 320,
+          keywords: 'settings options configure preferences'
         }),
       'pane:preferences'
     )
@@ -32,7 +33,8 @@ export const settingsPanes = {
           component: KeyboardPane,
           orientation: 'row',
           containerClass: 'bg-elevated',
-          minWidth: 320
+          minWidth: 320,
+          keywords: 'keyboard shortcuts keybindings keys rebind'
         }),
       'pane:keybindings'
     )
@@ -45,7 +47,8 @@ export const settingsPanes = {
           component: GrantsPane,
           orientation: 'row',
           containerClass: 'bg-elevated',
-          minWidth: 320
+          minWidth: 320,
+          keywords: 'permissions grants plugins apps access revoke security'
         }),
       'pane:permissions'
     )

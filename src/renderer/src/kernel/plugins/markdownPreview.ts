@@ -20,6 +20,7 @@ export const markdownPreview = {
           orientation: 'row',
           centerSlot: true,
           minWidth: 320,
+          keywords: 'markdown preview render md html readme',
           when: repoOpen
         }),
       'pane:markdown'

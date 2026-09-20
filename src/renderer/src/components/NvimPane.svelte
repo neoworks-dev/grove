@@ -16,6 +16,7 @@
   import ReviewHeaderBar from './ReviewHeaderBar.svelte'
   import ReviewOverlay from './ReviewOverlay.svelte'
   import NvimGridSurface from './NvimGridSurface.svelte'
+  import { editorOverlays } from '../lib/editorOverlays.svelte'
   import { review } from '../lib/review.svelte'
   import { settings } from '../lib/settings.svelte'
   import { NvimCanvasSession } from '../lib/nvim/session'
@@ -77,9 +78,13 @@
   // Absolute paths of buffers with unsaved changes, keyed for tab lookup.
   let dirtyPaths = $state<Record<string, boolean>>({})
   let disposeBufferWatch: (() => void) | null = null
+  let disposeKeymapWatch: (() => void) | null = null
   // Git gutter for the minimap: the open file's changed-line ranges.
   let diffMarkers = $state<{ start: number; count: number; kind: 'add' | 'del' | 'mod' }[]>([])
   let nvimWindows = $state<NvimWindowPlacement[]>([])
+  // Ordinary windows drawn inside this pane rather than mirrored into Grove
+  // panes of their own. See applyWindowPlacements.
+  let embeddedWindows = $state<NvimWindowPlacement[]>([])
   const floatingWindows = $derived(
     nvimWindows.filter((entry) => entry.kind === 'float' && !entry.hidden)
   )
@@ -110,6 +115,70 @@
       ? Math.max(0, top)
       : Math.max(0, Math.min(top, (hostEl?.clientHeight ?? top + height) - height))
     return `left:${left}px;top:${top}px;width:${width}px;height:${height}px;z-index:${40 + (entry.compindex ?? entry.zindex)}`
+  }
+
+  // Window handles Neovim has been told to keep inside this pane. Read back from
+  // Neovim rather than tracked here: a window can be closed, replaced or split
+  // again by anything the user types, and the mark travels with it.
+  const EMBEDDED_WINDOWS_LUA = `
+local wins = {}
+for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+  if vim.w[win].grove_embedded then table.insert(wins, win) end
+end
+return wins
+`
+
+  /**
+   * Sort the session's windows into the ones that become Grove panes and the
+   * ones drawn inside this one. A diff marks its base side embedded, because its
+   * two halves are one view of one file — everything else is an editor in its
+   * own right and gets a pane.
+   */
+  async function applyWindowPlacements(windows: NvimWindowPlacement[]): Promise<void> {
+    const id = session?.id
+    if (!id) return
+    // Read while the pane is certainly still mounted: a `leafId` read after the
+    // await below throws once this pane's leaf has left the tree, which any
+    // reshuffle of the split it sits in does.
+    const ownerLeafId = leafId
+    let marked: number[] = []
+    try {
+      const result = await window.workbench.nvim.request(id, 'nvim_exec_lua', [
+        EMBEDDED_WINDOWS_LUA,
+        []
+      ])
+      if (Array.isArray(result)) {
+        marked = result.filter((win): win is number => typeof win === 'number')
+      }
+    } catch {
+      // session gone
+    }
+    if (!session || session.id !== id) return
+    const primaryWin = session.primaryWin
+    const ordinary = windows.filter((entry) => entry.kind === 'normal' && !entry.hidden)
+    // While a diff is open the pane lays out every window itself. Splitting the
+    // job — Grove sizing some windows from the panes they are mirrored into,
+    // Neovim sizing the rest inside this one — leaves the two disagreeing about
+    // every column, and each correction feeds the other.
+    const embed = marked.length > 0 ? ordinary.filter((entry) => entry.win !== primaryWin) : []
+    const embedded = new Set(embed.map((entry) => entry.win))
+    session.setEmbeddedWindows([...embedded])
+    embeddedWindows = embed
+    layout.syncNvimWindows(
+      ownerLeafId,
+      id,
+      windows.filter((entry) => !embedded.has(entry.win))
+    )
+  }
+
+  /** Place an embedded window on the pane, at the box Neovim gave it. */
+  function embeddedStyle(entry: NvimWindowPlacement): string {
+    if (!session) return 'display:none'
+    const left = session.screenColToPixel(entry.col)
+    const top = session.screenRowToPixel(entry.row)
+    const width = session.screenColToPixel(entry.col + entry.width) - left
+    const height = session.screenRowToPixel(entry.row + entry.height) - top
+    return `left:${left}px;top:${top}px;width:${width}px;height:${height}px`
   }
 
   // Fetch the active file's git hunks and map them to minimap gutter markers.
@@ -373,6 +442,21 @@ end
       .catch(() => {})
   }
 
+  /**
+   * Re-read nvim's mappings when something has just added some. The keymap is
+   * synced on attach and on opening a file, which is before anything that maps
+   * keys *onto* the file it opened — the pull-request review keys land in that
+   * gap, and without this they are typed straight past grove's leader layer.
+   */
+  function watchKeymapChanges(id: string): void {
+    disposeKeymapWatch?.()
+    disposeKeymapWatch = window.workbench.on('event:nvim-notify', (payload) => {
+      const event = payload as { id: string; method: string }
+      if (event.id !== id || event.method !== 'grove_keymap_changed') return
+      void syncNvimKeymap()
+    })
+  }
+
   // Streams every typed key back to grove while nvim is in normal or visual
   // mode, so the which-key overlay can show nvim's pending sequences (counts,
   // `g`/`z`/`[` layers, half-typed mappings). Nvim reports pending keys nowhere
@@ -488,6 +572,7 @@ end, ns)
         nvimId = id
         void syncNvimKeymap()
         watchBufferState(id)
+        watchKeymapChanges(id)
         watchPendingKeys(id)
         watchReferences(id)
         // A renderer reload leaves a gated review's preview in the buffer with
@@ -503,7 +588,7 @@ end, ns)
       },
       onWindowsChanged: (windows) => {
         nvimWindows = windows
-        if (session?.id) layout.syncNvimWindows(leafId, session.id, windows)
+        void applyWindowPlacements(windows)
       },
       onExited: (exitCode) => {
         console.warn(`nvim editor pane crashed (code ${exitCode}); restarting`)
@@ -678,6 +763,7 @@ end, ns)
   onDestroy(() => {
     disposeNvimBindings?.()
     disposeBufferWatch?.()
+    disposeKeymapWatch?.()
     disposePendingKeys?.()
     disposeReferences?.()
     keymap.hideHints()
@@ -706,7 +792,22 @@ end, ns)
         Neovim runtime missing — run `bun scripts/fetch-nvim.ts` and reopen this pane.
       </div>
     {:else}
-      <canvas bind:this={canvasEl} class="block h-full w-full"></canvas>
+      <!-- Absolute, not `h-full w-full`: with a window embedded beside it the
+           canvas covers the primary window's box rather than the whole pane,
+           and the session puts it there. -->
+      <canvas bind:this={canvasEl} class="absolute left-0 top-0 block"></canvas>
+      {#if session}
+        {#each embeddedWindows as embedded (embedded.grid)}
+          <div class="absolute overflow-hidden" style={embeddedStyle(embedded)}>
+            <NvimGridSurface
+              {session}
+              grid={embedded.grid}
+              win={embedded.win}
+              class="pointer-events-auto"
+            />
+          </div>
+        {/each}
+      {/if}
       {#if session && floatingWindows.length > 0}
         {#if modalFloatingWindows.length > 0}
           <div
@@ -775,6 +876,12 @@ end, ns)
       <InlineEditPrompt {leafId} />
       <InlineReviewOverlay {leafId} tick={minimapTick} />
       <ReviewOverlay {leafId} tick={minimapTick} />
+      <!-- Whatever a plugin has put on the buffer: the GitHub pane's review
+           comment box is the first, and it has to open over the line it is
+           about. Each decides for itself whether this pane is the one. -->
+      {#each editorOverlays.overlays as overlay (overlay.id)}
+        <overlay.component {leafId} tick={minimapTick} />
+      {/each}
       {#if !showEditor}
         <div
           class="absolute inset-0 z-30 flex flex-col items-center justify-center gap-4 bg-surface text-dim"

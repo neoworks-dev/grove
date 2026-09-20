@@ -227,6 +227,8 @@ export interface WorkbenchApi {
     prDiff: (number: number, baseRefName: string) => Promise<GithubPrDiff>
     prBaseFile: (baseOid: string, file: GithubPrFile) => Promise<string>
     checkoutPr: (number: number, baseRefName: string) => Promise<Worktree>
+    prViewedFiles: (number: number) => Promise<string[]>
+    setPrFileViewed: (pullRequestId: string, path: string, viewed: boolean) => Promise<void>
   }
   checkpoints: {
     list: (worktreeId: string) => Promise<CheckpointMeta[]>

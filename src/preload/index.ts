@@ -91,7 +91,10 @@ const workbench = {
     prBaseFile: (baseOid: string, file: unknown) =>
       ipcRenderer.invoke('github:prBaseFile', baseOid, file),
     checkoutPr: (number: number, baseRefName: string) =>
-      ipcRenderer.invoke('github:checkoutPr', number, baseRefName)
+      ipcRenderer.invoke('github:checkoutPr', number, baseRefName),
+    prViewedFiles: (number: number) => ipcRenderer.invoke('github:prViewedFiles', number),
+    setPrFileViewed: (pullRequestId: string, path: string, viewed: boolean) =>
+      ipcRenderer.invoke('github:setPrFileViewed', pullRequestId, path, viewed)
   },
   checkpoints: {
     list: (worktreeId: string) => ipcRenderer.invoke('checkpoints:list', worktreeId),

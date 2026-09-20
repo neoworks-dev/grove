@@ -149,6 +149,22 @@ export const githubRoutes = {
       return git.pullRequestBaseFile(repoPath, baseOid, file)
     })
 
+    // Which files this viewer has already read. GitHub's own record, so it is
+    // the same tick as the Files tab on github.com.
+    route(ctx, 'github:prViewedFiles', (_e, number: number) => {
+      const { repoPath } = ctx.workbench.requireRepo()
+      return dashboard.fetchViewedFiles(repoPath, number)
+    })
+
+    route(
+      ctx,
+      'github:setPrFileViewed',
+      (_e, pullRequestId: string, path: string, viewed: boolean) => {
+        const { repoPath } = ctx.workbench.requireRepo()
+        return dashboard.setFileViewed(repoPath, pullRequestId, path, viewed)
+      }
+    )
+
     // Check a pull request out as a worktree of its own, so its whole tree can
     // be read — not only the files it changed — with the editor, the language
     // servers and the agents all pointed at it.

@@ -93,3 +93,32 @@ function foldDirectory(name: string, building: Building, prefix: string): PrFile
   }
   return { kind: 'directory', path, name: label, children: childrenOf(current, path) }
 }
+
+/** Every file in the tree, in the order the rows appear. */
+export function flattenPrFileTree(nodes: PrFileTreeNode[]): PrFileTreeFile[] {
+  return nodes.flatMap((node) => {
+    if (node.kind === 'file') return [node]
+    return flattenPrFileTree(node.children)
+  })
+}
+
+/**
+ * The file to read after this one: the next one down the list that has not been
+ * read, wrapping to the top so the last file leads back to whatever was skipped.
+ * Null once nothing is left, which is how the caller knows the review is done.
+ */
+export function nextUnreadFile(
+  nodes: PrFileTreeNode[],
+  afterPath: string,
+  isRead: (path: string) => boolean
+): PrFileTreeFile | null {
+  const files = flattenPrFileTree(nodes)
+  const start = files.findIndex((file) => file.path === afterPath)
+  for (let step = 1; step <= files.length; step += 1) {
+    // From just past the current file, wrapping; `start` of -1 starts at the
+    // top, which is what an unknown path should do.
+    const candidate = files[(start + step) % files.length]
+    if (candidate && !isRead(candidate.path)) return candidate
+  }
+  return null
+}

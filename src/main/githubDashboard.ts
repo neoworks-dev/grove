@@ -1200,3 +1200,87 @@ export async function changeAssignees(
 ): Promise<void> {
   await runGh(repoPath, assigneeChangeArgs(kind, number, change))
 }
+
+// ── Reviewed files ────────────────────────────────────────────────
+// GitHub keeps a per-viewer record of which of a pull request's files have been
+// read. It is the same state the Files tab on github.com ticks, so a review
+// carries between the two rather than being two reviews.
+
+const VIEWED_FILES_QUERY = `
+query($owner: String!, $name: String!, $number: Int!, $limit: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      files(first: $limit) {
+        nodes { path viewerViewedState }
+      }
+    }
+  }
+}`.trim()
+
+const VIEWED_MUTATION = `
+mutation($id: ID!, $path: String!) {
+  markFileAsViewed(input: {pullRequestId: $id, path: $path}) { clientMutationId }
+}`.trim()
+
+const UNVIEWED_MUTATION = `
+mutation($id: ID!, $path: String!) {
+  unmarkFileAsViewed(input: {pullRequestId: $id, path: $path}) { clientMutationId }
+}`.trim()
+
+interface ViewedFilesResponse {
+  data: {
+    repository: {
+      pullRequest: { files: { nodes: { path: string; viewerViewedState: string }[] } } | null
+    } | null
+  }
+}
+
+/**
+ * The paths of a pull request's files this viewer has marked as read. One round
+ * trip for the whole pull request — the diff itself comes from git, so this is
+ * the only per-pull-request call the Files tab makes.
+ */
+export async function fetchViewedFiles(repoPath: string, number: number): Promise<string[]> {
+  const repo = await repoRef(repoPath)
+  const [owner, name] = repo.nameWithOwner.split('/')
+  const raw = await runGh(repoPath, [
+    'api',
+    'graphql',
+    '-F',
+    `owner=${owner}`,
+    '-F',
+    `name=${name}`,
+    '-F',
+    `number=${number}`,
+    '-F',
+    `limit=${MAX_ITEMS}`,
+    '-f',
+    `query=${VIEWED_FILES_QUERY}`
+  ])
+  const pullRequest = parseJson<ViewedFilesResponse>(raw).data.repository?.pullRequest
+  if (!pullRequest) throw new Error(`GitHub returned no pull request #${number}`)
+  // DISMISSED means "was viewed, then changed underneath you", which is not
+  // read — only VIEWED counts.
+  return pullRequest.files.nodes
+    .filter((node) => node.viewerViewedState === 'VIEWED')
+    .map((node) => node.path)
+}
+
+/** Mark one of a pull request's files as read, or take the mark off again. */
+export async function setFileViewed(
+  repoPath: string,
+  pullRequestId: string,
+  path: string,
+  viewed: boolean
+): Promise<void> {
+  await runGh(repoPath, [
+    'api',
+    'graphql',
+    '-F',
+    `id=${pullRequestId}`,
+    '-F',
+    `path=${path}`,
+    '-f',
+    `query=${viewed ? VIEWED_MUTATION : UNVIEWED_MUTATION}`
+  ])
+}

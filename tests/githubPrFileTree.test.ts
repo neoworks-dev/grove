@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'bun:test'
 import {
   buildPrFileTree,
+  flattenPrFileTree,
+  nextUnreadFile,
   type PrFileTreeDirectory,
   type PrFileTreeNode
 } from '../src/renderer/src/kernel/plugins/github/prFileTree'
@@ -85,5 +87,50 @@ describe('buildPrFileTree', () => {
 
   it('has nothing to show for no files', () => {
     expect(buildPrFileTree([])).toEqual([])
+  })
+})
+
+// Ticking a file off opens the next one still to read, so working down a pull
+// request is one click per file rather than a click and a hunt.
+describe('nextUnreadFile', () => {
+  const tree = buildPrFileTree([
+    file('src/main/git.ts'),
+    file('src/main/worktrees.ts'),
+    file('README.md')
+  ])
+
+  function afterReading(read: string[], current: string): string | null {
+    const next = nextUnreadFile(tree, current, (path) => read.includes(path))
+    return next ? next.path : null
+  }
+
+  it('lists files in the order the rows appear', () => {
+    expect(flattenPrFileTree(tree).map((entry) => entry.path)).toEqual([
+      'src/main/git.ts',
+      'src/main/worktrees.ts',
+      'README.md'
+    ])
+  })
+
+  it('goes to the next file down the list', () => {
+    expect(afterReading(['src/main/git.ts'], 'src/main/git.ts')).toBe('src/main/worktrees.ts')
+  })
+
+  it('skips files already read', () => {
+    const read = ['src/main/git.ts', 'src/main/worktrees.ts']
+    expect(afterReading(read, 'src/main/git.ts')).toBe('README.md')
+  })
+
+  it('wraps to the top, so the last file leads back to what was skipped', () => {
+    expect(afterReading(['README.md'], 'README.md')).toBe('src/main/git.ts')
+  })
+
+  it('has nowhere to go once every file has been read', () => {
+    const read = ['src/main/git.ts', 'src/main/worktrees.ts', 'README.md']
+    expect(afterReading(read, 'README.md')).toBeNull()
+  })
+
+  it('starts at the top for a path that is not in the tree', () => {
+    expect(afterReading([], 'gone.ts')).toBe('src/main/git.ts')
   })
 })

@@ -125,6 +125,13 @@ class GithubStore {
   prDiffLoading = $state(false)
 
   /**
+   * Paths this viewer has marked as read, per pull request. GitHub's own
+   * record, so it is the same tick as the Files tab on github.com — a review
+   * started in the browser continues here and the other way round.
+   */
+  prViewedFiles = $state<Record<number, string[]>>({})
+
+  /**
    * Numbers ticked in the list, for acting on several at once. Held per tab,
    * because a pull request and an issue with the same number are different
    * things and the actions that apply to them differ.
@@ -520,6 +527,50 @@ export async function loadPrDiff(number: number, baseRefName: string): Promise<v
     })
   } finally {
     github.prDiffLoading = false
+  }
+}
+
+/**
+ * Load which of a pull request's files this viewer has already read. One round
+ * trip for the whole pull request, beside the diff rather than part of it — the
+ * diff comes from git, and keeping them apart is what lets a tick be re-read
+ * without fetching the pull request again.
+ */
+export async function loadPrViewedFiles(number: number): Promise<void> {
+  // Re-read every time the tab is opened rather than caching it with the diff:
+  // the diff is cached because fetching the pull request is the slow part, and
+  // a tick is the one thing here that changes while Grove is not looking.
+  await loadReference(`pr-viewed:${number}`, async () => {
+    const paths = await window.workbench.github.prViewedFiles(number)
+    github.prViewedFiles = { ...github.prViewedFiles, [number]: paths }
+  })
+}
+
+/** Whether this viewer has marked a path in this pull request as read. */
+export function isPrFileViewed(number: number, path: string): boolean {
+  const paths = github.prViewedFiles[number]
+  if (!paths) return false
+  return paths.includes(path)
+}
+
+/**
+ * Tick a file as read, or take the tick off. The store moves first and is put
+ * back if GitHub refuses: a checkbox that waits for a round trip before it
+ * moves reads as a click that did not land.
+ */
+export async function setPrFileViewed(
+  detail: GithubItemDetail,
+  path: string,
+  viewed: boolean
+): Promise<void> {
+  const before = github.prViewedFiles[detail.number] ?? []
+  const after = viewed ? [...before, path] : before.filter((entry) => entry !== path)
+  github.prViewedFiles = { ...github.prViewedFiles, [detail.number]: after }
+  try {
+    await window.workbench.github.setPrFileViewed(detail.id, path, viewed)
+  } catch (err) {
+    github.prViewedFiles = { ...github.prViewedFiles, [detail.number]: before }
+    dialogs.notify({ level: 'error', message: (err as Error).message })
   }
 }
 

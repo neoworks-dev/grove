@@ -47,6 +47,17 @@ vim.opt.expandtab = true
 -- Also suppress the swap/attention message class outright as a belt-and-suspenders.
 vim.opt.shortmess:append('IA')
 vim.opt.fillchars = { eob = ' ' }
+-- nvim's stock 'guicursor' names no highlight group, which leaves a GUI with
+-- nothing to paint the cursor in but reverse video — so it takes the colour of
+-- whatever token it happens to sit on and disappears into a comment or a
+-- string. Naming Cursor/lCursor makes every mode report a highlight, and the
+-- theme decides what that is.
+vim.opt.guicursor = table.concat({
+  'n-v-c-sm:block-Cursor/lCursor',
+  'i-ci-ve:ver25-Cursor/lCursor',
+  'r-cr-o:hor20-Cursor/lCursor',
+  't:block-blinkon500-blinkoff500-TermCursor'
+}, ',')
 
 -- Second line of defence: even with 'swapfile' off above, a plugin or the user
 -- extension hook at the bottom of this file can turn it back on, and a leftover
@@ -427,6 +438,11 @@ _G.grove_apply_theme = function(palette)
   set(0, 'LineNr', { fg = palette.textDim })
   set(0, 'CursorLine', { bg = palette.surfaceHover })
   set(0, 'CursorLineNr', { fg = palette.textMuted })
+  -- One fixed pair, not the colours of the cell underneath: the cursor has to
+  -- be findable on a comment as easily as on a keyword.
+  set(0, 'Cursor', { fg = palette.primaryFg, bg = palette.primary })
+  set(0, 'lCursor', { fg = palette.primaryFg, bg = palette.primary })
+  set(0, 'TermCursor', { fg = palette.primaryFg, bg = palette.primary })
   set(0, 'SignColumn', { bg = palette.surface })
   set(0, 'EndOfBuffer', { fg = palette.surface })
   set(0, 'WinSeparator', { fg = palette.border })

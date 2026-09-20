@@ -26,6 +26,13 @@ export interface PaneTypeContext {
 export interface PaneType {
   id: string
   title: string
+  // False for panes nobody asks for by name — containers, placeholders, and the
+  // mirrors of another pane's windows. Everything else is mirrored into the
+  // command palette as "open this pane", so a plugin's pane is reachable the
+  // moment it registers.
+  openable?: boolean
+  // Extra words the palette matches this pane on, beyond its title.
+  keywords?: string
   // Rail icon (phosphor component); required when `rail` is set.
   icon?: Component
   // Rendered inside a PaneLeaf; receives PaneTypeContext as props.
@@ -102,6 +109,14 @@ class PaneRegistry {
     return this.types
       .filter((entry) => entry.rail)
       .sort((a, b) => (a.rail?.order ?? 0) - (b.rail?.order ?? 0))
+  }
+
+  // Types a user can ask for by name, sorted by title so the palette and the
+  // empty-pane placeholder list them the same way.
+  openableTypes(): PaneType[] {
+    return this.types
+      .filter((entry) => entry.openable !== false)
+      .sort((a, b) => a.title.localeCompare(b.title))
   }
 }
 

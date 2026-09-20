@@ -5,7 +5,7 @@ import LogsPane from '../../components/LogsPane.svelte'
 
 export const logs = {
   name: 'core/logs',
-  inject: ['panes', 'commands', 'layout'],
+  inject: ['panes'],
 
   apply(ctx: Context): void {
     ctx.effect(
@@ -15,20 +15,10 @@ export const logs = {
           title: 'Logs',
           component: LogsPane,
           containerClass: 'bg-elevated',
-          minHeight: 120
+          minHeight: 120,
+          keywords: 'logs output processes services stdout'
         }),
       'pane:logs'
-    )
-
-    ctx.effect(
-      () =>
-        ctx.commands.register({
-          id: 'view.toggleLogs',
-          title: 'Toggle Logs Panel',
-          group: 'View',
-          run: () => ctx.layout.togglePane('logs')
-        }),
-      'command:view.toggleLogs'
     )
   }
 }

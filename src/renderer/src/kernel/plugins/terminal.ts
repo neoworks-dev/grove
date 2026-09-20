@@ -23,6 +23,7 @@ export const terminal = {
           // 'normal' so global chords (ctrl+hjkl, leader) work; 'i' returns.
           modes: ['terminal', 'normal'],
           ownsFontScale: true,
+          keywords: 'terminal shell console pty command line',
           when: repoOpen
         }),
       'pane:terminal'

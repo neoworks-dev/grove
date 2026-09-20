@@ -16,6 +16,7 @@
   import ReviewHeaderBar from './ReviewHeaderBar.svelte'
   import ReviewOverlay from './ReviewOverlay.svelte'
   import NvimGridSurface from './NvimGridSurface.svelte'
+  import { editorOverlays } from '../lib/editorOverlays.svelte'
   import { review } from '../lib/review.svelte'
   import { settings } from '../lib/settings.svelte'
   import { NvimCanvasSession } from '../lib/nvim/session'
@@ -77,6 +78,7 @@
   // Absolute paths of buffers with unsaved changes, keyed for tab lookup.
   let dirtyPaths = $state<Record<string, boolean>>({})
   let disposeBufferWatch: (() => void) | null = null
+  let disposeKeymapWatch: (() => void) | null = null
   // Git gutter for the minimap: the open file's changed-line ranges.
   let diffMarkers = $state<{ start: number; count: number; kind: 'add' | 'del' | 'mod' }[]>([])
   let nvimWindows = $state<NvimWindowPlacement[]>([])
@@ -440,6 +442,21 @@ end
       .catch(() => {})
   }
 
+  /**
+   * Re-read nvim's mappings when something has just added some. The keymap is
+   * synced on attach and on opening a file, which is before anything that maps
+   * keys *onto* the file it opened — the pull-request review keys land in that
+   * gap, and without this they are typed straight past grove's leader layer.
+   */
+  function watchKeymapChanges(id: string): void {
+    disposeKeymapWatch?.()
+    disposeKeymapWatch = window.workbench.on('event:nvim-notify', (payload) => {
+      const event = payload as { id: string; method: string }
+      if (event.id !== id || event.method !== 'grove_keymap_changed') return
+      void syncNvimKeymap()
+    })
+  }
+
   // Streams every typed key back to grove while nvim is in normal or visual
   // mode, so the which-key overlay can show nvim's pending sequences (counts,
   // `g`/`z`/`[` layers, half-typed mappings). Nvim reports pending keys nowhere
@@ -555,6 +572,7 @@ end, ns)
         nvimId = id
         void syncNvimKeymap()
         watchBufferState(id)
+        watchKeymapChanges(id)
         watchPendingKeys(id)
         watchReferences(id)
         // A renderer reload leaves a gated review's preview in the buffer with
@@ -745,6 +763,7 @@ end, ns)
   onDestroy(() => {
     disposeNvimBindings?.()
     disposeBufferWatch?.()
+    disposeKeymapWatch?.()
     disposePendingKeys?.()
     disposeReferences?.()
     keymap.hideHints()
@@ -857,6 +876,12 @@ end, ns)
       <InlineEditPrompt {leafId} />
       <InlineReviewOverlay {leafId} tick={minimapTick} />
       <ReviewOverlay {leafId} tick={minimapTick} />
+      <!-- Whatever a plugin has put on the buffer: the GitHub pane's review
+           comment box is the first, and it has to open over the line it is
+           about. Each decides for itself whether this pane is the one. -->
+      {#each editorOverlays.overlays as overlay (overlay.id)}
+        <overlay.component {leafId} tick={minimapTick} />
+      {/each}
       {#if !showEditor}
         <div
           class="absolute inset-0 z-30 flex flex-col items-center justify-center gap-4 bg-surface text-dim"

@@ -1350,6 +1350,7 @@ query($owner: String!, $name: String!, $number: Int!, $limit: Int!) {
               body
               createdAt
               state
+              viewerCanDelete
               author { login avatarUrl }
             }
           }
@@ -1404,6 +1405,11 @@ mutation($threadId: ID!) {
   unresolveReviewThread(input: {threadId: $threadId}) { thread { id isResolved } }
 }`.trim()
 
+const DELETE_COMMENT_MUTATION = `
+mutation($commentId: ID!) {
+  deletePullRequestReviewComment(input: {id: $commentId}) { clientMutationId }
+}`.trim()
+
 const DISCARD_REVIEW_MUTATION = `
 mutation($reviewId: ID!) {
   deletePullRequestReview(input: {pullRequestReviewId: $reviewId}) { clientMutationId }
@@ -1428,6 +1434,7 @@ interface ThreadCommentNode {
   body: string
   createdAt: string
   state: string
+  viewerCanDelete?: boolean
   author: GraphqlActor | null
 }
 
@@ -1463,7 +1470,8 @@ export function toReviewThread(node: ThreadNode): GithubReviewThread {
     author: toActor(comment.author),
     body: comment.body,
     createdAt: comment.createdAt,
-    pending: comment.state === 'PENDING'
+    pending: comment.state === 'PENDING',
+    viewerCanDelete: comment.viewerCanDelete === true
   }))
   return {
     id: node.id,
@@ -1581,6 +1589,18 @@ export async function addPrReviewReply(
     return
   }
   await graphql(repoPath, PENDING_REPLY_MUTATION, { threadId, body, reviewId })
+}
+
+/**
+ * Take one comment back. GitHub decides who may — `viewerCanDelete` — and
+ * deleting the comment a thread starts with takes the thread and its replies
+ * with it, which is GitHub's rule and not one worth hiding.
+ */
+export async function deletePrReviewComment(
+  repoPath: string,
+  commentId: string
+): Promise<void> {
+  await graphql(repoPath, DELETE_COMMENT_MUTATION, { commentId })
 }
 
 /** Settle a thread, or reopen one that was settled too early. */

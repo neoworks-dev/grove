@@ -240,6 +240,7 @@ export interface WorkbenchApi {
     ) => Promise<string>
     addPrReviewReply: (number: number, threadId: string, body: string) => Promise<void>
     setPrThreadResolved: (threadId: string, resolved: boolean) => Promise<void>
+    deletePrReviewComment: (commentId: string) => Promise<void>
     discardPrReview: (number: number) => Promise<boolean>
     submitPrReview: (
       number: number,

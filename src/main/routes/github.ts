@@ -198,6 +198,11 @@ export const githubRoutes = {
       return dashboard.setPrThreadResolved(repoPath, threadId, resolved)
     })
 
+    route(ctx, 'github:deletePrReviewComment', (_e, commentId: string) => {
+      const { repoPath } = ctx.workbench.requireRepo()
+      return dashboard.deletePrReviewComment(repoPath, commentId)
+    })
+
     route(ctx, 'github:discardPrReview', (_e, number: number) => {
       const { repoPath } = ctx.workbench.requireRepo()
       return dashboard.discardPrReview(repoPath, number)

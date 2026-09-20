@@ -18,6 +18,7 @@
   import { placeCommentBox } from './prCommentPlacement'
   import {
     cancelPrComment,
+    deletePrReviewComment,
     github,
     prThreadById,
     savePrComment,
@@ -102,6 +103,17 @@
                 <span class="text-muted">{comment.author.login}</span>
                 {#if comment.pending}
                   <GithubBadge tone="blue" title="Not submitted yet">draft</GithubBadge>
+                {/if}
+                {#if comment.viewerCanDelete}
+                  <button
+                    class="ml-auto shrink-0 rounded px-1 text-dim hover:bg-hover hover:text-red disabled:opacity-50"
+                    disabled={github.prReviewBusy}
+                    aria-label="Delete this comment"
+                    title="Delete this comment"
+                    onclick={() => void deletePrReviewComment(target.number, comment.id)}
+                  >
+                    ✕
+                  </button>
                 {/if}
               </div>
               <p class="whitespace-pre-wrap text-2xs text-default">{comment.body}</p>

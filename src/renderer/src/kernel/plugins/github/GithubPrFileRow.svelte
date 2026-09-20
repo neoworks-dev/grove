@@ -168,9 +168,15 @@
         <span class="w-8 shrink-0 font-mono text-dim">
           {thread.line === null ? 'file' : `L${thread.line}`}
         </span>
+        {#if thread.comments[0]}
+          <span class="shrink-0 text-dim">{thread.comments[0].author.login}</span>
+        {/if}
         <span class="min-w-0 flex-1 truncate text-muted">
           {thread.comments[0] ? thread.comments[0].body : ''}
         </span>
+        {#if thread.comments.length > 1}
+          <GithubBadge tone="dim">+{thread.comments.length - 1}</GithubBadge>
+        {/if}
         {#if thread.pending}
           <GithubBadge tone="blue" title="Not submitted yet">draft</GithubBadge>
         {/if}

@@ -17,7 +17,7 @@ import { layout } from '../../../lib/layout.svelte'
 import { branchNameFor } from './branches'
 import { diffAgainstBase, showPrBaseOnly } from './prDiff'
 import { buildPrFileTree, nextUnreadFile } from './prFileTree'
-import { installPrReviewKeys, type PrReviewRequest } from './prReview'
+import { installPrReviewKeys, paintPrComments, type PrReviewRequest } from './prReview'
 import { clearRefusals, loadOnce, newReferenceLoads } from './referenceLoads'
 import { authorsOf, projectsOf, typesOf } from './filter'
 import {
@@ -83,6 +83,8 @@ export interface PrCommentTarget {
   /** Where the cursor was on Neovim's screen, 1-based, so the box opens by it. */
   screenRow: number
   screenCol: number
+  /** Set when the line already has a thread: the box answers it. */
+  threadId: string | null
 }
 
 class GithubStore {
@@ -619,6 +621,9 @@ export async function loadPrReview(number: number): Promise<void> {
   await loadReference(`pr-review:${number}`, async () => {
     const review = await window.workbench.github.prReview(number)
     github.prReviews = { ...github.prReviews, [number]: review }
+    // Straight into the buffer: the comment is about a line, and the line is
+    // where it is read. A proxy cannot cross IPC, so send the plain objects.
+    await paintPrComments($state.snapshot(review.threads))
   })
 }
 
@@ -653,6 +658,12 @@ export function handlePrReviewKey(request: PrReviewRequest): void {
     if (file) void markPrFileViewed(detail, file, true)
     return
   }
+  // Landing on a line that already has a thread opens that thread, so the box
+  // answers it rather than starting a second conversation about one line.
+  const existing =
+    request.action === 'comment'
+      ? prThreadAt(detail.number, request.path, request.line, request.side)
+      : null
   github.prComment = {
     number: detail.number,
     pullRequestId: detail.id,
@@ -661,8 +672,32 @@ export function handlePrReviewKey(request: PrReviewRequest): void {
     side: request.side,
     leafId: request.leafId,
     screenRow: request.screenRow,
-    screenCol: request.screenCol
+    screenCol: request.screenCol,
+    threadId: existing ? existing.id : null
   }
+}
+
+/** One thread by its id, for a box that is answering it. */
+export function prThreadById(number: number, id: string): GithubReviewThread | null {
+  const review = github.prReviews[number]
+  if (!review) return null
+  const found = review.threads.find((thread) => thread.id === id)
+  if (!found) return null
+  return found
+}
+
+/** The thread a line already has, if the review has one there. */
+export function prThreadAt(
+  number: number,
+  path: string,
+  line: number,
+  side: GithubDiffSide
+): GithubReviewThread | null {
+  const found = prThreadsFor(number, path).find(
+    (thread) => thread.line === line && thread.side === side
+  )
+  if (!found) return null
+  return found
 }
 
 /** Open the comment box over a line, or over a file when `line` is null. */
@@ -683,12 +718,16 @@ export async function savePrComment(target: PrCommentTarget, body: string): Prom
   if (!body.trim()) return false
   github.prReviewBusy = true
   try {
-    await window.workbench.github.addPrReviewComment(target.number, target.pullRequestId, {
-      path: target.path,
-      line: target.line,
-      side: target.side,
-      body
-    })
+    if (target.threadId) {
+      await window.workbench.github.addPrReviewReply(target.number, target.threadId, body)
+    } else {
+      await window.workbench.github.addPrReviewComment(target.number, target.pullRequestId, {
+        path: target.path,
+        line: target.line,
+        side: target.side,
+        body
+      })
+    }
     github.prComment = null
     await loadPrReview(target.number)
     return true
@@ -780,12 +819,21 @@ export async function openPrFile(detail: GithubItemDetail, file: GithubPrFile): 
   if (file.changeType === 'deleted') {
     await showPrBaseOnly(file, base)
     await installPrReviewKeys(detail, file.path)
+    await paintOpenPrComments(detail.number)
     return
   }
   openFileInEditor(worktreeId, `${worktree.path}/${file.path}`)
   await diffAgainstBase(file, base)
   // After the diff: the base side's window is one of the two the keys go on.
   await installPrReviewKeys(detail, file.path)
+  await paintOpenPrComments(detail.number)
+}
+
+/** Draw whatever comments the open file already has into it. */
+async function paintOpenPrComments(number: number): Promise<void> {
+  const review = github.prReviews[number]
+  if (!review) return
+  await paintPrComments($state.snapshot(review.threads))
 }
 
 /**

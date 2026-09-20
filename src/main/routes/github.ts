@@ -186,6 +186,15 @@ export const githubRoutes = {
 
     route(
       ctx,
+      'github:addPrReviewReply',
+      (_e, number: number, threadId: string, body: string) => {
+        const { repoPath } = ctx.workbench.requireRepo()
+        return dashboard.addPrReviewReply(repoPath, number, threadId, body)
+      }
+    )
+
+    route(
+      ctx,
       'github:submitPrReview',
       (
         _e,

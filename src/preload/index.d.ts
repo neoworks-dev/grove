@@ -238,6 +238,7 @@ export interface WorkbenchApi {
       pullRequestId: string,
       draft: GithubReviewDraft
     ) => Promise<string>
+    addPrReviewReply: (number: number, threadId: string, body: string) => Promise<void>
     submitPrReview: (
       number: number,
       pullRequestId: string,

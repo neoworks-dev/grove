@@ -98,6 +98,8 @@ const workbench = {
     prReview: (number: number) => ipcRenderer.invoke('github:prReview', number),
     addPrReviewComment: (number: number, pullRequestId: string, draft: unknown) =>
       ipcRenderer.invoke('github:addPrReviewComment', number, pullRequestId, draft),
+    addPrReviewReply: (number: number, threadId: string, body: string) =>
+      ipcRenderer.invoke('github:addPrReviewReply', number, threadId, body),
     submitPrReview: (number: number, pullRequestId: string, event: string, body: string) =>
       ipcRenderer.invoke('github:submitPrReview', number, pullRequestId, event, body)
   },

@@ -100,6 +100,9 @@ const workbench = {
       ipcRenderer.invoke('github:addPrReviewComment', number, pullRequestId, draft),
     addPrReviewReply: (number: number, threadId: string, body: string) =>
       ipcRenderer.invoke('github:addPrReviewReply', number, threadId, body),
+    setPrThreadResolved: (threadId: string, resolved: boolean) =>
+      ipcRenderer.invoke('github:setPrThreadResolved', threadId, resolved),
+    discardPrReview: (number: number) => ipcRenderer.invoke('github:discardPrReview', number),
     submitPrReview: (number: number, pullRequestId: string, event: string, body: string) =>
       ipcRenderer.invoke('github:submitPrReview', number, pullRequestId, event, body)
   },

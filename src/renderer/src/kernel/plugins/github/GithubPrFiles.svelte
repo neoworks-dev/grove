@@ -18,6 +18,7 @@
   import { revealPrLine } from './prReview'
   import {
     checkoutPr,
+    discardPrReview,
     github,
     isPrFileRejected,
     isPrFileViewed,
@@ -116,6 +117,13 @@
     await revealPrLine(thread.side, thread.line)
   }
 
+  async function discard(): Promise<void> {
+    const gone = await discardPrReview(detail)
+    if (!gone) return
+    summary = ''
+    submitting = false
+  }
+
   async function submit(event: GithubReviewEvent): Promise<void> {
     const sent = await submitPrReview(detail, event, summary)
     if (!sent) return
@@ -191,6 +199,14 @@
           onclick={() => void submit('COMMENT')}
         >
           Comment
+        </button>
+        <button
+          class="rounded px-2 py-0.5 text-dim hover:bg-hover hover:text-red disabled:opacity-50"
+          disabled={github.prReviewBusy || draftCount === 0}
+          title="Throw away the comments you have written"
+          onclick={() => void discard()}
+        >
+          Discard
         </button>
       </div>
     </div>

@@ -1394,6 +1394,21 @@ mutation($threadId: ID!, $body: String!, $reviewId: ID!) {
   ) { comment { id } }
 }`.trim()
 
+const RESOLVE_MUTATION = `
+mutation($threadId: ID!) {
+  resolveReviewThread(input: {threadId: $threadId}) { thread { id isResolved } }
+}`.trim()
+
+const UNRESOLVE_MUTATION = `
+mutation($threadId: ID!) {
+  unresolveReviewThread(input: {threadId: $threadId}) { thread { id isResolved } }
+}`.trim()
+
+const DISCARD_REVIEW_MUTATION = `
+mutation($reviewId: ID!) {
+  deletePullRequestReview(input: {pullRequestReviewId: $reviewId}) { clientMutationId }
+}`.trim()
+
 const SUBMIT_REVIEW_MUTATION = `
 mutation($reviewId: ID!, $event: PullRequestReviewEvent!, $body: String!) {
   submitPullRequestReview(input: {pullRequestReviewId: $reviewId, event: $event, body: $body}) {
@@ -1566,6 +1581,27 @@ export async function addPrReviewReply(
     return
   }
   await graphql(repoPath, PENDING_REPLY_MUTATION, { threadId, body, reviewId })
+}
+
+/** Settle a thread, or reopen one that was settled too early. */
+export async function setPrThreadResolved(
+  repoPath: string,
+  threadId: string,
+  resolved: boolean
+): Promise<void> {
+  await graphql(repoPath, resolved ? RESOLVE_MUTATION : UNRESOLVE_MUTATION, { threadId })
+}
+
+/**
+ * Throw the viewer's unsubmitted review away, comments and all. Nothing to do
+ * when they have not started one, which is not a failure — it is the state the
+ * caller was asking for.
+ */
+export async function discardPrReview(repoPath: string, number: number): Promise<boolean> {
+  const reviewId = await findPendingReview(repoPath, number)
+  if (!reviewId) return false
+  await graphql(repoPath, DISCARD_REVIEW_MUTATION, { reviewId })
+  return true
 }
 
 /** The id of the viewer's unsubmitted review on a pull request, if there is one. */

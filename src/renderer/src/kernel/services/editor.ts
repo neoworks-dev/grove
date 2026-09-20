@@ -7,6 +7,7 @@ import { Service, type Context } from '@neoworks/extension-system'
 import { panes } from '../../lib/panes.svelte'
 import { store, openFileInEditor, openFileAtLine } from '../../lib/store.svelte'
 import { activeNvimSession } from '../../lib/nvim/registry'
+import { editorOverlays, type EditorOverlay } from '../../lib/editorOverlays.svelte'
 import type { NvimCanvasSession } from '../../lib/nvim/session'
 import { CENTER_SLOT } from '../../lib/paneSlots'
 import { repoOpen } from '../plugins/guards'
@@ -124,6 +125,15 @@ export class EditorService extends Service {
       keywords: pane.keywords,
       when: pane.when
     })
+  }
+
+  /**
+   * Register a component drawn over the editor's canvas, for a plugin whose
+   * controls belong on the buffer rather than in a pane of their own. Returns
+   * the inverse.
+   */
+  registerOverlay(overlay: EditorOverlay): () => void {
+    return editorOverlays.register(overlay)
   }
 
   /** Open a file in the editor, optionally revealing a line. */

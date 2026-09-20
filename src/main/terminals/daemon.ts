@@ -10,7 +10,7 @@
 // keeps a `worktreeId` string for each session only so grove can sort them back
 // into the panes they came from.
 
-import { chmodSync, unlinkSync } from 'node:fs'
+import { chmodSync } from 'node:fs'
 import { createServer, type Server, type Socket } from 'node:net'
 import { spawn as spawnPty, type IPty } from 'node-pty'
 import {
@@ -20,6 +20,7 @@ import {
   type DaemonMessage,
   type TerminalSessionInfo
 } from './protocol'
+import { listenPastStaleSocket, removeSocket } from './listen'
 import { Scrollback } from './scrollback'
 
 // node-pty has no change event for the foreground process on POSIX, so it is
@@ -48,14 +49,25 @@ class TerminalDaemon {
   constructor(private socketPath: string) {}
 
   listen(): void {
-    this.server = createServer((socket) => this.accept(socket))
-    this.server.on('error', (cause: NodeJS.ErrnoException) => {
-      // Another daemon won the race to the socket; it can serve grove just as
-      // well, so this one leaves rather than fighting over the path.
-      if (cause.code === 'EADDRINUSE') process.exit(0)
+    const server = createServer((socket) => this.accept(socket))
+    this.server = server
+    void this.bind(server)
+  }
+
+  /**
+   * Take the socket, unless a daemon is already answering on it.
+   *
+   * The path being in use is not the same as being served — a killed daemon
+   * leaves its socket file behind — so `listenPastStaleSocket` connects before
+   * deciding, and only 'taken' means grove has a daemon without this one.
+   */
+  private async bind(server: Server): Promise<void> {
+    const outcome = await listenPastStaleSocket(server, this.socketPath)
+    if (outcome === 'taken') process.exit(0)
+    server.on('error', (cause) => {
       throw cause
     })
-    this.server.listen(this.socketPath, () => this.onListening())
+    this.onListening()
   }
 
   private onListening(): void {
@@ -269,15 +281,6 @@ function restrictToOwner(socketPath: string): void {
   } catch {
     // A socket that cannot be chmod'ed is still ours; the directory it sits in
     // is the user's own app-data directory.
-  }
-}
-
-function removeSocket(socketPath: string): void {
-  if (process.platform === 'win32') return
-  try {
-    unlinkSync(socketPath)
-  } catch {
-    // Already gone.
   }
 }
 

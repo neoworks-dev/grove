@@ -46,6 +46,13 @@ local file = vim.api.nvim_get_current_win()
 local base = base_buffer(args.name, args.path, args.lines)
 local existing = base_window()
 
+-- Neovim keeps the diff as a set of BUFFERS per tab page, not a pair of
+-- windows. Opening the next file leaves the one before it in that set, so by
+-- the third file it is diffing four buffers at once and marks every line that
+-- does not match all of them — the whole file reads as changed, and reopening
+-- an earlier file shows it changed too. Clearing the set is what makes each
+-- file a diff of its own two sides.
+vim.cmd('diffoff!')
 vim.cmd('diffthis')
 
 -- Reuse the window the last file's base copy was in rather than closing it and
@@ -94,7 +101,9 @@ if filetype then vim.bo[base].filetype = filetype end
 vim.bo[base].modifiable = false
 vim.b[base].grove_pr_base = true
 
-vim.cmd('silent! diffoff')
+-- The whole tab's diff set, not just this window's: a buffer left in it from an
+-- earlier file keeps being diffed against, and there is nothing to diff here.
+vim.cmd('silent! diffoff!')
 vim.api.nvim_win_set_buf(0, base)
 `
 

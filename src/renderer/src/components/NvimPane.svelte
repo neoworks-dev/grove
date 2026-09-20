@@ -135,6 +135,10 @@ return wins
   async function applyWindowPlacements(windows: NvimWindowPlacement[]): Promise<void> {
     const id = session?.id
     if (!id) return
+    // Read while the pane is certainly still mounted: a `leafId` read after the
+    // await below throws once this pane's leaf has left the tree, which any
+    // reshuffle of the split it sits in does.
+    const ownerLeafId = leafId
     let marked: number[] = []
     try {
       const result = await window.workbench.nvim.request(id, 'nvim_exec_lua', [
@@ -159,7 +163,7 @@ return wins
     session.setEmbeddedWindows([...embedded])
     embeddedWindows = embed
     layout.syncNvimWindows(
-      leafId,
+      ownerLeafId,
       id,
       windows.filter((entry) => !embedded.has(entry.win))
     )

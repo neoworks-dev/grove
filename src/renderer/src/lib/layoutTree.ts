@@ -590,3 +590,69 @@ function reserveGeneratedId(id: string): void {
   if (!match) return
   nodeCounter = Math.max(nodeCounter, Number(match[1]))
 }
+
+/** One ext_multigrid window, as far as the layout is concerned. */
+export interface NvimWindowPlacement {
+  grid: number
+  win: number
+  kind: string
+  row: number
+  col: number
+  hidden: boolean
+}
+
+/**
+ * Reconcile an editor's Neovim windows with the transient leaves that mirror
+ * them. The first normal window stays in the owning pane; every other one gets
+ * a leaf beside it, keyed by the window handle so it survives a redraw. Windows
+ * that have closed take their leaves with them.
+ *
+ * Returns the tree unchanged when the owner is not in it. An editor in a view
+ * that is mounted but hidden keeps reporting its windows, and mirroring them
+ * into whichever tree happens to be on screen put a stranger's panes in it —
+ * and left the owner's own behind when they closed.
+ */
+export function syncNvimWindowLeaves(
+  root: LayoutNode,
+  ownerLeafId: string,
+  nvimId: string,
+  windows: NvimWindowPlacement[]
+): LayoutNode {
+  if (!findLeaf(root, ownerLeafId)) return root
+  const normal = windows.filter((entry) => entry.kind === 'normal' && !entry.hidden)
+  const primary = normal[0]
+  if (!primary) return root
+
+  let next = root
+  const wanted = new Set(normal.slice(1).map((entry) => entry.win))
+  for (const leaf of mirrorLeaves(next, ownerLeafId)) {
+    if (wanted.has(Number(leaf.paneState?.win))) continue
+    // Back to the owner it was split out of, not shared around: see
+    // removeLeafInto for what sharing it costs the editor.
+    next = removeLeafInto(next, leaf.id, ownerLeafId) ?? next
+  }
+
+  const present = new Set(mirrorLeaves(next, ownerLeafId).map((leaf) => Number(leaf.paneState?.win)))
+  for (const entry of normal.slice(1)) {
+    if (present.has(entry.win) || !findLeaf(next, ownerLeafId)) continue
+    const horizontal = Math.abs(entry.col - primary.col) >= Math.abs(entry.row - primary.row)
+    const direction: SplitDirection = horizontal ? 'row' : 'column'
+    const before = horizontal ? entry.col < primary.col : entry.row < primary.row
+    const leaf = createLeaf('nvim-grid', {
+      transient: true,
+      ownerLeafId,
+      nvimId,
+      grid: entry.grid,
+      win: entry.win
+    })
+    next = splitLeaf(next, ownerLeafId, direction, leaf, before ? 'before' : 'after')
+  }
+  return next
+}
+
+/** The transient leaves mirroring one editor's Neovim windows. */
+function mirrorLeaves(root: LayoutNode, ownerLeafId: string): LeafNode[] {
+  return leaves(root).filter(
+    (leaf) => leaf.paneTypeId === 'nvim-grid' && leaf.paneState?.ownerLeafId === ownerLeafId
+  )
+}

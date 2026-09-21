@@ -11,6 +11,7 @@
   import DialogHost from './components/DialogHost.svelte'
   import NotificationHost from './components/NotificationHost.svelte'
   import KeybindCheatsheet from './components/KeybindCheatsheet.svelte'
+  import NvimPromptOverlay from './components/NvimPromptOverlay.svelte'
   import { store, subscribeEvents, openRepoResult, switchTab } from './lib/store.svelte'
   import { commands } from './lib/commands.svelte'
   import { keymap } from './lib/keymap.svelte'
@@ -226,5 +227,6 @@
 <PaneDragOverlay />
 <Overlay />
 <DialogHost />
+<NvimPromptOverlay />
 <NotificationHost />
 <KeybindCheatsheet />

@@ -24,6 +24,8 @@ import {
   type NvimGridSpan,
   type NvimWindowPlacement
 } from './multigrid'
+import { nvimBlockingPrompt } from './blockingPrompt'
+import { nvimPrompts } from './prompts.svelte'
 
 export interface NvimSessionElements {
   host: HTMLDivElement
@@ -68,13 +70,28 @@ const MOUSE_BUTTONS = ['left', 'middle', 'right']
 // Re-read one file from disk if this editor has it open and unedited. `checktime`
 // rather than `edit!` so the cursor, marks and undo history survive, and so a
 // buffer the user has unsaved work in is never silently thrown away.
+//
+// Except on a buffer opened for a path that did not exist yet: `checktime`
+// answers the file's arrival with W13 ("File has been created after editing
+// started"), a prompt that blocks this very request and that no autocmd can
+// intercept — W13 does not fire FileChangedShell. An empty buffer has no
+// cursor, marks or undo worth keeping, so read the new file straight in.
 const REFRESH_FILE_LUA = `
 local path = ...
 local buf = vim.fn.bufnr(vim.fn.fnameescape(path))
 if buf == -1 or not vim.api.nvim_buf_is_loaded(buf) then return false end
 if vim.bo[buf].modified then return false end
+
+local function isEmpty(bufnr)
+  if vim.api.nvim_buf_line_count(bufnr) > 1 then return false end
+  local first = vim.api.nvim_buf_get_lines(bufnr, 0, 1, false)[1]
+  return first == nil or first == ''
+end
+
+local command = 'checktime'
+if isEmpty(buf) then command = 'edit!' end
 vim.api.nvim_buf_call(buf, function()
-  vim.cmd('checktime')
+  vim.cmd(command)
 end)
 return true
 `
@@ -769,6 +786,7 @@ export class NvimCanvasSession {
     // Null the id first so the killed nvim's exit event is ignored (the exit
     // handler bails when the event id no longer matches this.nvimId).
     this.nvimId = null
+    if (old) nvimPrompts.clear(old)
     if (old) void window.workbench.nvim.kill(old)
     await this.connect(worktreeId)
   }
@@ -782,6 +800,7 @@ export class NvimCanvasSession {
   // nvim exited on its own. A clean exit (0) is the user quitting (:q / :qa) —
   // close the pane. A crash respawns, unless we've failed too often lately.
   private handleUnexpectedExit(exitCode: number): void {
+    if (this.nvimId) nvimPrompts.clear(this.nvimId)
     if (exitCode === 0) {
       this.callbacks.onClose?.()
       return
@@ -814,7 +833,10 @@ export class NvimCanvasSession {
     this.unwireElements()
     this.stopRedraw?.()
     this.stopExit?.()
-    if (this.nvimId) void window.workbench.nvim.kill(this.nvimId)
+    if (this.nvimId) {
+      nvimPrompts.clear(this.nvimId)
+      void window.workbench.nvim.kill(this.nvimId)
+    }
     this.renderer?.dispose()
     for (const surface of this.externalSurfaces.values()) {
       surface.observer.disconnect()
@@ -879,7 +901,8 @@ export class NvimCanvasSession {
    */
   setEmbeddedWindows(wins: number[]): void {
     const changed =
-      wins.length !== this.embeddedWindows.size || wins.some((win) => !this.embeddedWindows.has(win))
+      wins.length !== this.embeddedWindows.size ||
+      wins.some((win) => !this.embeddedWindows.has(win))
     if (!changed) return
     this.embeddedWindows = new Set(wins)
     this.fitRendererToGrid()
@@ -1048,11 +1071,29 @@ export class NvimCanvasSession {
       if (this.embeddedWindows.size > 0) this.fitRendererToGrid()
       this.callbacks.onWindowsChanged?.([...this.multigrid.windows.values()])
     }
+    this.syncBlockingPrompt()
     if (update.flushed || dirty.all) {
       this.scheduleRender()
       this.renderExternalSurfaces(update.grids)
       this.callbacks.onFlush?.()
     }
+  }
+
+  /**
+   * Publish, or withdraw, the prompt this nvim has stopped on. While it waits,
+   * every request grove has in flight behind it is stuck, so the prompt goes to
+   * a window-level overlay rather than to this pane: the answer has to be
+   * typeable from wherever focus happens to be.
+   */
+  private syncBlockingPrompt(): void {
+    const id = this.nvimId
+    if (!id) return
+    const lines = nvimBlockingPrompt(this.multigrid)
+    if (!lines) {
+      nvimPrompts.clear(id)
+      return
+    }
+    nvimPrompts.set(id, lines)
   }
 
   /** Bind one non-primary multigrid grid to a canvas owned by a float or pane. */

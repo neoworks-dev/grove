@@ -68,13 +68,27 @@ const MOUSE_BUTTONS = ['left', 'middle', 'right']
 // Re-read one file from disk if this editor has it open and unedited. `checktime`
 // rather than `edit!` so the cursor, marks and undo history survive, and so a
 // buffer the user has unsaved work in is never silently thrown away.
+//
+// Except when the buffer is empty: a buffer opened for a path that did not exist
+// yet is a `[New File]`, and nvim answers `checktime` on one of those with the
+// blocking W13 "has been created after editing started" prompt rather than a
+// reload — which stalls this very request, and leaves the buffer blank even once
+// the prompt is answered. (A FileChangedShell handler does not suppress it; the
+// created case never reaches the event.) An empty unedited buffer has no cursor,
+// marks or undo history worth keeping, so reload it outright.
 const REFRESH_FILE_LUA = `
 local path = ...
 local buf = vim.fn.bufnr(vim.fn.fnameescape(path))
 if buf == -1 or not vim.api.nvim_buf_is_loaded(buf) then return false end
 if vim.bo[buf].modified then return false end
+local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+local isEmpty = #lines == 0 or (#lines == 1 and lines[1] == '')
 vim.api.nvim_buf_call(buf, function()
-  vim.cmd('checktime')
+  if isEmpty then
+    vim.cmd('silent! edit!')
+  else
+    vim.cmd('checktime')
+  end
 end)
 return true
 `

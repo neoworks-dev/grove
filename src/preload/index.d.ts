@@ -18,6 +18,9 @@ import type {
   MergeMode,
   MergePreview,
   MergeResult,
+  ConflictedFile,
+  ConflictHunk,
+  ConflictChoice,
   WorktreeChatMessage,
   InlineHunk,
   AppliedRange,
@@ -198,6 +201,13 @@ export interface WorkbenchApi {
     mergeAbort: (targetWorktreeId: string) => Promise<void>
     mergeContinue: (targetWorktreeId: string) => Promise<MergeResult>
     mergeConflicts: (targetWorktreeId: string) => Promise<string[]>
+    conflicts: (worktreeId: string) => Promise<ConflictedFile[]>
+    resolveConflict: (
+      worktreeId: string,
+      relPath: string,
+      hunkIndex: number,
+      choice: ConflictChoice
+    ) => Promise<ConflictHunk[]>
   }
   github: {
     openPr: (worktreeId: string, options: OpenPrOptions) => Promise<string>

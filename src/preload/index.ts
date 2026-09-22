@@ -56,7 +56,14 @@ const workbench = {
     mergeContinue: (targetWorktreeId: string) =>
       ipcRenderer.invoke('git:mergeContinue', targetWorktreeId),
     mergeConflicts: (targetWorktreeId: string) =>
-      ipcRenderer.invoke('git:mergeConflicts', targetWorktreeId)
+      ipcRenderer.invoke('git:mergeConflicts', targetWorktreeId),
+    conflicts: (worktreeId: string) => ipcRenderer.invoke('git:conflicts', worktreeId),
+    resolveConflict: (
+      worktreeId: string,
+      relPath: string,
+      hunkIndex: number,
+      choice: 'ours' | 'theirs' | 'both'
+    ) => ipcRenderer.invoke('git:resolveConflict', worktreeId, relPath, hunkIndex, choice)
   },
   github: {
     openPr: (worktreeId: string, options: unknown) =>

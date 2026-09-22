@@ -95,6 +95,33 @@ export type MergeResult =
   | { status: 'merged'; summary: string; fastForward: boolean }
   | { status: 'conflict'; files: string[]; summary: string }
 
+// ── Conflict hunks ──────────────────────────────────────────────
+
+// One conflicted region of a working-tree file, as git left it between its
+// `<<<<<<<` and `>>>>>>>` markers.
+export interface ConflictHunk {
+  // 1-based lines of the opening and closing marker, so the editor can put the
+  // cursor on the conflict.
+  startLine: number
+  endLine: number
+  // What git wrote beside each marker — the branch names, usually `HEAD` and
+  // the branch being merged in. Empty when a marker carries no label.
+  oursLabel: string
+  theirsLabel: string
+  ours: string[]
+  theirs: string[]
+  // The common ancestor's lines, present only under diff3 conflict style.
+  base?: string[]
+}
+
+export interface ConflictedFile {
+  path: string
+  hunks: ConflictHunk[]
+}
+
+// Which side of one conflict to keep. `both` keeps ours followed by theirs.
+export type ConflictChoice = 'ours' | 'theirs' | 'both'
+
 // ── Cross-agent + agent↔user chat ───────────────────────────────
 
 // One message on a worktree's shared channel. `from.kind` distinguishes the

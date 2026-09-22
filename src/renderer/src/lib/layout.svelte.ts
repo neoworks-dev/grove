@@ -234,9 +234,15 @@ class LayoutStore {
     return new Set(pathToLeaf(this.tree, leafId) ?? [])
   })
 
-  // Whether a node renders at all — false only for the branches focus mode
-  // folds away.
+  // A leaf dragged past its collapse point while the drag is still held. It is
+  // hidden rather than closed, so pulling the divider back brings it back, and
+  // only closes once the drag is released.
+  collapsingLeafId = $state<string | null>(null)
+
+  // Whether a node renders at all — false for the branches focus mode folds
+  // away and for a leaf mid-collapse.
   isNodeVisible(nodeId: string): boolean {
+    if (nodeId === this.collapsingLeafId) return false
     if (!this.focusMode) return true
     return this.zoomPath.has(nodeId)
   }

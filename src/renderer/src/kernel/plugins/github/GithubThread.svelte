@@ -23,6 +23,7 @@
   import { foldTimeline } from './timeline'
   import type { GithubThreadTab } from './store.svelte'
   import type { GithubItemAction } from '../../../../../shared/types'
+  import PaneControls from '../../../components/PaneControls.svelte'
 
   // Below this the metadata moves above the timeline instead of beside it.
   const SIDEBAR_PX = 620
@@ -164,6 +165,7 @@
         >
           <ArrowSquareOutIcon size={14} />
         </button>
+        <PaneControls />
       </div>
 
       <div class="mt-1 flex flex-wrap items-center gap-2 text-2xs text-dim">

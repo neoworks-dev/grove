@@ -5,8 +5,9 @@
   // (hidden when inactive) so a terminal's pty and scrollback survive switching.
   import { panes } from '../lib/panes.svelte'
   import { panels } from '../lib/panels.svelte'
-  import { layout } from '../lib/layout.svelte'
   import { keymap } from '../lib/keymap.svelte'
+  import PaneControls from './PaneControls.svelte'
+  import PaneChromeBoundary from './PaneChromeBoundary.svelte'
 
   let {
     leafId,
@@ -38,10 +39,6 @@
     visited.add(id)
     visited = new Set(visited)
     updateState({ activeTab: id })
-  }
-
-  function closePanel(): void {
-    layout.closeLeaf(leafId)
   }
 
   // Keep the active tab and its mounted set in sync with the resolved view (e.g.
@@ -87,19 +84,13 @@
         <span>{view.title}</span>
       </button>
     {/each}
-    <button
-      class="ml-auto flex h-6 w-6 items-center justify-center rounded text-dim transition hover:bg-hover hover:text-default"
-      title="Close panel"
-      onclick={closePanel}
-    >
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M18 6L6 18M6 6l12 12" />
-      </svg>
-    </button>
+    <span class="flex-1"></span>
+    <PaneControls class="mr-1" />
   </div>
 
   <!-- Tab bodies: every visited view stays mounted; only the active shows. -->
   <div class="relative min-h-0 flex-1">
+    <PaneChromeBoundary>
     {#each views as view (view.id)}
       {#if visited.has(view.id)}
         {@const type = panes.get(view.paneTypeId)}
@@ -117,5 +108,6 @@
         </div>
       {/if}
     {/each}
+    </PaneChromeBoundary>
   </div>
 </div>

@@ -4,7 +4,6 @@
   // provider, flags conflicts, and creates new custom bindings that run a
   // command, a shell command, or an AI prompt.
   import { keymap } from '../lib/keymap.svelte'
-  import { layout } from '../lib/layout.svelte'
   import { settings } from '../lib/settings.svelte'
   import { commands } from '../lib/commands.svelte'
   import { store } from '../lib/store.svelte'
@@ -19,6 +18,7 @@
   import KeybindCapture from './controls/KeybindCapture.svelte'
   import type { CustomBinding, KeybindAction } from '../../../shared/actions'
   import type { SettingScope } from '../../../shared/settings'
+  import PaneControls from './PaneControls.svelte'
 
   let { leafId }: { leafId: string } = $props()
 
@@ -244,13 +244,7 @@
     >
       {adding ? 'Close' : 'Add binding'}
     </button>
-    <button
-      class="text-dim hover:text-default"
-      onclick={() => layout.closeLeaf(leafId)}
-      aria-label="Close keyboard shortcuts"
-    >
-      ✕
-    </button>
+    <PaneControls />
   </div>
 
   {#if adding}

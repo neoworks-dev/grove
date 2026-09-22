@@ -5,6 +5,7 @@
   import GithubLabelPicker from './GithubLabelPicker.svelte'
   import GithubMentionBox from './GithubMentionBox.svelte'
   import { github, createIssue } from './store.svelte'
+  import PaneControls from '../../../components/PaneControls.svelte'
 
   const canCreate = $derived(github.draft.title.trim().length > 0 && !github.busy)
 
@@ -28,6 +29,7 @@
     {#if github.dashboard}
       <span class="text-2xs text-dim">{github.dashboard.repo.nameWithOwner}</span>
     {/if}
+    <PaneControls />
   </div>
 
   <FloatingScrollbar class="min-h-0 flex-1">

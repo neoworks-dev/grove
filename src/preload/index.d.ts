@@ -90,6 +90,7 @@ import type {
   ClientEventBody,
   CreateSessionOptions,
   FileMatch,
+  ShellCompletion,
   HarnessCatalog,
   HarnessInfo,
   SessionEvent,
@@ -354,6 +355,8 @@ export interface WorkbenchApi {
     listEvents: (sessionId: string, after: number) => Promise<SessionEvent[]>
     sendEvents: (sessionId: string, events: ClientEventBody[]) => Promise<{ lastSeq: number }>
 
+    completeShell: (sessionId: string, line: string) => Promise<ShellCompletion[]>
+    shellName: () => Promise<string>
     searchFiles: (sessionId: string, query: string, limit?: number) => Promise<FileMatch[]>
     uploadBlob: (
       sessionId: string,

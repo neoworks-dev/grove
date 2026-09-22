@@ -30,6 +30,7 @@
     revertCommit
   } from './commitActions'
   import type { CommitSummary, RefList, ResetMode } from '../../../../../shared/types'
+  import PaneControls from '../../../components/PaneControls.svelte'
 
   let {
     state: paneState,
@@ -335,6 +336,7 @@
       onclick={fetchRemotes}
     />
     <RowAction icon={ArrowClockwiseIcon} title="Refresh" onclick={() => void load()} />
+    <PaneControls />
   </div>
 
   <div class="flex min-h-0 flex-1">

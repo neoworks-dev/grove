@@ -20,6 +20,8 @@
   import { ageLabel } from './filter'
   import { DEFAULT_QUERY, setStateQualifier } from './search'
   import type { GithubItemKind, GithubStateFilter } from '../../../../../shared/types'
+  import PaneControls from '../../../components/PaneControls.svelte'
+  import PaneChromeBoundary from '../../../components/PaneChromeBoundary.svelte'
 
   // Below this the pane shows one column at a time: the list, or the thread with
   // a way back.
@@ -114,6 +116,14 @@
   }
 </script>
 
+{#snippet detailColumn()}
+  {#if github.composing}
+    <GithubCompose />
+  {:else}
+    <GithubThread />
+  {/if}
+{/snippet}
+
 <div class="flex h-full min-h-0 flex-col" bind:clientWidth={width}>
   {#if github.error}
     <p class="border-b border-line px-3 py-2 text-xs text-red">{github.error}</p>
@@ -176,6 +186,10 @@
           >
             <PlusIcon size={13} />
           </button>
+          <!-- Alone in a narrow pane, the list's header is the pane's. -->
+          {#if narrow}
+            <PaneControls />
+          {/if}
         </div>
 
         <GithubFilterBar {setStateFilter} />
@@ -212,18 +226,25 @@
     {#if !narrow || detailColumnShown}
       <div class="flex min-h-0 min-w-0 flex-1 flex-col border-line" class:border-l={!narrow}>
         {#if narrow && detailColumnShown}
-          <button
-            class="border-b border-line px-3 py-1.5 text-left text-2xs text-dim hover:bg-hover"
-            onclick={backToList}
-          >
-            ← Back to list
-          </button>
+          <div class="flex items-center border-b border-line pr-2">
+            <button
+              class="flex-1 px-3 py-1.5 text-left text-2xs text-dim hover:bg-hover"
+              onclick={backToList}
+            >
+              ← Back to list
+            </button>
+            <PaneControls />
+          </div>
         {/if}
         <div class="min-h-0 flex-1">
-          {#if github.composing}
-            <GithubCompose />
+          <!-- The back row holds the controls in a narrow pane, so the thread's
+               own header must not take them as well. -->
+          {#if narrow}
+            <PaneChromeBoundary>
+              {@render detailColumn()}
+            </PaneChromeBoundary>
           {:else}
-            <GithubThread />
+            {@render detailColumn()}
           {/if}
         </div>
       </div>

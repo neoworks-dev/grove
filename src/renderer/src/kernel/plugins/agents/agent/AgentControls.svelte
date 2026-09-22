@@ -9,6 +9,7 @@
   // state (see lib/agents/modes.ts) rather than stored here.
 
   import Icon from '@iconify/svelte'
+  import StopIcon from 'phosphor-svelte/lib/StopIcon'
   import { MODE_DESCRIPTIONS, MODE_LABELS, type AgentMode } from '../../../../lib/agents/modes'
   import { findRoute } from '../../../../lib/agents/modelSelection'
   import ModelMenu from './ModelMenu.svelte'
@@ -348,10 +349,12 @@
 
   {#if running && capabilities?.interrupt !== false}
     <button
-      class="rounded-md border border-line px-3 py-1 text-xs hover:bg-hover"
+      class="flex items-center rounded border border-line px-1.5 py-1 text-red hover:bg-hover"
+      title="Stop (Esc)"
+      aria-label="Stop"
       onclick={onInterrupt}
     >
-      ■ Stop
+      <StopIcon size={12} weight="fill" />
     </button>
   {/if}
 </div>

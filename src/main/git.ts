@@ -199,6 +199,18 @@ export async function push(worktreePath: string): Promise<string> {
   return out.trim()
 }
 
+/** Fast-forwards the branch to its upstream; refuses rather than merging a diverged one. */
+export async function pull(worktreePath: string): Promise<string> {
+  const out = await gitFor(worktreePath).raw(['pull', '--ff-only'])
+  return out.trim()
+}
+
+/** Updates the remote-tracking branches, so ahead/behind counts are current. */
+export async function fetch(worktreePath: string): Promise<string> {
+  const out = await gitFor(worktreePath).raw(['fetch', '--prune'])
+  return out.trim()
+}
+
 // Push the worktree's HEAD to a branch on an explicit repository. `push -u
 // origin HEAD` cannot do this: a pull request's head branch lives wherever it
 // was opened from, which for a fork is not origin at all.

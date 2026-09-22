@@ -1,8 +1,8 @@
 <script lang="ts">
   // The source-control view for the selected worktree, laid out the way GitLens
   // and VS Code lay theirs: the branch and how it stands against its upstream,
-  // the commit box, then collapsible sections — staged, unstaged — as a tree or
-  // a list. Clicking a file opens it with its hunks painted by the review
+  // the commit box, then collapsible sections — staged, unstaged as a tree or a
+  // list, and the branch's commits. Clicking a file opens it with its hunks painted by the review
   // overlay; the ship-it chain lives in the footer.
   //
   // A merge in progress takes over both ends: its conflicts lead the sections,
@@ -21,6 +21,7 @@
   import { inlineEdit } from '../../../lib/inlineEdit.svelte'
   import { settings } from '../../../lib/settings.svelte'
   import CommitBox from './CommitBox.svelte'
+  import CommitsSection from './CommitsSection.svelte'
   import ChangesList, { fileKey } from './ChangesList.svelte'
   import ConflictsSection from './ConflictsSection.svelte'
   import GitSection from './GitSection.svelte'
@@ -233,7 +234,11 @@
       {/if}
 
       {#if !loading && files.length === 0 && merge.files.length === 0}
-        <p class="px-3 py-4 text-xs text-dim">No changes vs HEAD.</p>
+        <p class="px-3 py-3 text-xs text-dim">No changes vs HEAD.</p>
+      {/if}
+
+      {#if worktreeId}
+        <CommitsSection {worktreeId} {branchStatus} {refreshKey} onChanged={load} />
       {/if}
     </div>
   </FloatingScrollbar>

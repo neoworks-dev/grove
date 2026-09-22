@@ -25,6 +25,9 @@ export interface ScratchOptions {
   title: string
   lines: string[]
   filetype?: string
+  // A read-only buffer shows content that cannot be written back anywhere,
+  // such as a file as it stood at a past commit.
+  readonly?: boolean
   onWrite: (lines: string[]) => void | Promise<void>
 }
 
@@ -58,10 +61,10 @@ function start(): void {
   })
 }
 
-// Minimal nvim wiring for the buffer. Args: token, title, lines, filetype.
+// Minimal nvim wiring for the buffer. Args: token, title, lines, filetype, readonly.
 // Returns the created buffer number.
 const SCRATCH_LUA = `
-local token, title, lines, filetype = ...
+local token, title, lines, filetype, readonly = ...
 local buf = vim.api.nvim_create_buf(false, true)
 vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
 vim.bo[buf].buftype = 'acwrite'
@@ -118,19 +121,22 @@ route('q', 'GroveScratchClose')
 route('wq', 'GroveScratchClose write')
 route('x', 'GroveScratchClose write')
 
+if readonly then vim.bo[buf].modifiable = false end
+
 vim.api.nvim_set_current_buf(buf)
 return buf
 `
 
 // Open a scratch buffer in the active editor and register it as a grove tab.
-export async function openScratch(options: ScratchOptions): Promise<void> {
+// Resolves true once the buffer is the editor's current one.
+export async function openScratch(options: ScratchOptions): Promise<boolean> {
   start()
   const worktreeId = store.selectedWorktreeId
-  if (!worktreeId) return
+  if (!worktreeId) return false
   const session = anyNvimSession()
   if (!session?.id) {
     store.setError('Open an editor pane first.')
-    return
+    return false
   }
   counter += 1
   const key = `scratch://${counter}/${options.title}`
@@ -138,19 +144,20 @@ export async function openScratch(options: ScratchOptions): Promise<void> {
   try {
     bufnr = await window.workbench.nvim.request(session.id, 'nvim_exec_lua', [
       SCRATCH_LUA,
-      [key, options.title, options.lines, options.filetype ?? '']
+      [key, options.title, options.lines, options.filetype ?? '', options.readonly === true]
     ])
   } catch (err) {
     store.setError((err as Error).message)
-    return
+    return false
   }
   if (typeof bufnr !== 'number') {
     store.setError('Failed to open scratch buffer.')
-    return
+    return false
   }
   entries.set(key, { key, nvimId: session.id, bufnr, onWrite: options.onWrite })
   store.openTab({ worktreeId, path: key, name: options.title, scratch: true })
   session.focus()
+  return true
 }
 
 // Remove a scratch buffer: drop the registry entry and the grove tab, and wipe

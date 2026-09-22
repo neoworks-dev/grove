@@ -24,7 +24,7 @@
 
 <section>
   <div
-    class="group sticky top-0 z-[1] flex items-center gap-1 bg-surface py-1 pr-2 pl-1 hover:bg-hover"
+    class="group/section sticky top-0 z-[1] flex items-center gap-1 bg-surface py-1 pr-2 pl-1 hover:bg-hover"
   >
     <button
       class="flex min-w-0 flex-1 items-center gap-1 text-left"
@@ -51,7 +51,7 @@
     </button>
     {#if actions}
       <div
-        class="flex shrink-0 items-center gap-0.5 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100"
+        class="flex shrink-0 items-center gap-0.5 opacity-0 group-focus-within/section:opacity-100 group-hover/section:opacity-100"
       >
         {@render actions()}
       </div>

@@ -5,6 +5,7 @@ import type { Context } from '@neoworks/extension-system'
 import { route } from '../kernel/route'
 import * as git from '../git'
 import * as conflicts from '../conflicts'
+import * as history from '../history'
 import * as hunkStaging from '../hunkStaging'
 import * as inlineDiff from '../inlineDiff'
 import * as worktrees from '../worktrees'
@@ -100,6 +101,36 @@ export const gitRoutes = {
       const worktree = ctx.workbench.findWorktree(worktreeId)
       return hunkStaging.unstageHunk(worktree.path, file, hunkIndex)
     })
+
+    route(ctx, 'git:pull', (_e, worktreeId: string) => {
+      const worktree = ctx.workbench.findWorktree(worktreeId)
+      return git.pull(worktree.path)
+    })
+
+    route(ctx, 'git:fetch', (_e, worktreeId: string) => {
+      const worktree = ctx.workbench.findWorktree(worktreeId)
+      return git.fetch(worktree.path)
+    })
+
+    // ── History ─────────────────────────────────────────────────────
+    route(ctx, 'git:branchCommits', (_e, worktreeId: string, skip: number, limit: number) => {
+      const worktree = ctx.workbench.findWorktree(worktreeId)
+      return history.branchCommits(worktree.path, skip, limit)
+    })
+
+    route(ctx, 'git:commitFiles', (_e, worktreeId: string, sha: string) => {
+      const worktree = ctx.workbench.findWorktree(worktreeId)
+      return history.commitFiles(worktree.path, sha)
+    })
+
+    route(
+      ctx,
+      'git:fileAtRevision',
+      (_e, worktreeId: string, revision: string, relPath: string) => {
+        const worktree = ctx.workbench.findWorktree(worktreeId)
+        return git.fileAtRef(worktree.path, revision, relPath)
+      }
+    )
 
     route(ctx, 'git:branchStatus', (_e, worktreeId: string) => {
       const worktree = ctx.workbench.findWorktree(worktreeId)

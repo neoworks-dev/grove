@@ -54,6 +54,27 @@ export interface BranchStatus {
   behind: number
 }
 
+// One commit as a history list shows it. `date` is the author date, ISO 8601.
+export interface CommitSummary {
+  sha: string
+  shortSha: string
+  parents: string[]
+  authorName: string
+  authorEmail: string
+  date: string
+  subject: string
+}
+
+// A page of the checked-out branch's history, newest first. `unpushed` names
+// the commits in it that the upstream lacks (or, with no upstream, that no
+// remote has); `incoming` is what the upstream has that the branch lacks.
+export interface BranchCommits {
+  commits: CommitSummary[]
+  unpushed: string[]
+  incoming: CommitSummary[]
+  hasMore: boolean
+}
+
 // Changed line ranges for a file, parsed from `git diff` hunk headers. Empty
 // for untracked files, where every modified line is an addition.
 export interface DiffHunks {

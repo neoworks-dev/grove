@@ -23,11 +23,18 @@
 
   // One `flex` shorthand per child, from the shares in the tree and whichever
   // children hold a pixel size. Zoomed, the one visible child takes everything.
+  // A pane mid-collapse counts as empty, so its siblings fill the space it
+  // leaves instead of the split showing a gap.
   const childFlex = $derived.by(() => {
     if (node.kind !== 'split') return []
     if (layout.focusMode) return node.children.map(() => '1 1 0%')
-    const fixedPx = node.children.map((child) => layout.fixedSizePx(child))
-    return splitChildFlex(node.sizes, fixedPx)
+    const collapsing = node.children.map((child) => child.id === layout.collapsingLeafId)
+    const sizes = node.sizes.map((size, index) => (collapsing[index] ? 0 : size))
+    const fixedPx = node.children.map((child, index) => {
+      if (collapsing[index]) return null
+      return layout.fixedSizePx(child)
+    })
+    return splitChildFlex(sizes, fixedPx)
   })
 
   /**

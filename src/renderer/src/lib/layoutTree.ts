@@ -360,29 +360,46 @@ export function removeLeafInto(
   return { ...root, children, sizes: renormalize(sizes) }
 }
 
+/**
+ * How far a gutter may really move for a requested shift. Neither side is
+ * pushed under its own minimum, and a side the layout already squeezed under it
+ * may grow back but never shrink further — its size is not a reason to move
+ * the gutter the other way.
+ */
+export function clampGutterShift(
+  deltaFraction: number,
+  beforeFraction: number,
+  afterFraction: number,
+  minBefore: number,
+  minAfter: number
+): number {
+  const lowest = Math.min(0, minBefore - beforeFraction)
+  const highest = Math.max(0, afterFraction - minAfter)
+  return Math.min(Math.max(deltaFraction, lowest), highest)
+}
+
 // Adjust the boundary between children gutterIndex and gutterIndex+1 of the
-// target split. Delta is a fraction of the split; both sides stay above min.
+// target split. Delta is a fraction of the split; each side stays above its
+// minimum, which defaults to the same for both.
 export function resizeGutter(
   root: LayoutNode,
   splitId: string,
   gutterIndex: number,
   deltaFraction: number,
-  minFraction: number = MIN_PANE_FRACTION
+  minBefore: number = MIN_PANE_FRACTION,
+  minAfter: number = minBefore
 ): LayoutNode {
   if (root.kind === 'leaf') return root
   if (root.id !== splitId) {
     const children = root.children.map((child) =>
-      resizeGutter(child, splitId, gutterIndex, deltaFraction, minFraction)
+      resizeGutter(child, splitId, gutterIndex, deltaFraction, minBefore, minAfter)
     )
     return { ...root, children }
   }
   const before = root.sizes[gutterIndex]
   const after = root.sizes[gutterIndex + 1]
   if (before === undefined || after === undefined) return root
-  const lowest = minFraction - before
-  const highest = after - minFraction
-  if (lowest > highest) return root
-  const clamped = Math.min(Math.max(deltaFraction, lowest), highest)
+  const clamped = clampGutterShift(deltaFraction, before, after, minBefore, minAfter)
   const sizes = [...root.sizes]
   sizes[gutterIndex] = before + clamped
   sizes[gutterIndex + 1] = after - clamped

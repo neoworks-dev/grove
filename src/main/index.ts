@@ -5,6 +5,7 @@ import icon from '../../resources/grove-icon.png?asset'
 import { registerIpc, shutdown, reapNvimSessions } from './ipc'
 import { registerPluginScheme } from './plugins/protocol'
 import { registerAgentScheme } from './agents/protocol'
+import { isAppNavigation, isExternallyOpenable } from './navigation'
 
 // Custom scheme privileges must be declared before app ready.
 registerPluginScheme()
@@ -51,6 +52,12 @@ function registerPaneZoomForwarding(window: BrowserWindow): void {
   })
 }
 
+/** Opens a link in the user's browser, dropping schemes that are not web or mail links. */
+function openExternally(url: string): void {
+  if (!isExternallyOpenable(url)) return
+  void shell.openExternal(url)
+}
+
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
     width: 1440,
@@ -82,8 +89,16 @@ function createWindow(): void {
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    openExternally(details.url)
     return { action: 'deny' }
+  })
+
+  // A plain anchor click navigates the workbench frame itself; keep the window
+  // on the app and send the link to the browser instead.
+  mainWindow.webContents.on('will-navigate', (event) => {
+    if (isAppNavigation(mainWindow.webContents.getURL(), event.url)) return
+    event.preventDefault()
+    openExternally(event.url)
   })
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {

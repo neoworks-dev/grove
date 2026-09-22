@@ -31,6 +31,7 @@
   import { scratchFor, closeScratch } from '../lib/nvim/scratch.svelte'
   import { leaveDiff, restoreDiff } from '../lib/nvim/diffTabs'
   import { editorHasContent } from '../lib/nvim/visibility'
+  import { closedTabPaths } from '../lib/nvim/closedTabs'
   import { nvimKeymapBindings, type NvimMapping } from '../lib/nvimKeymap'
   import { operatorHintEntries, operatorTitle } from '../lib/nvimOperatorHints'
   import { decodeNvimKey, nextPending, pendingHint } from '../lib/nvimPendingKeys'
@@ -253,10 +254,29 @@ return wins
       return
     }
     store.closeTab(path)
-    // nvim keeps the buffer (and keeps showing it) unless it is told otherwise,
-    // which would leave a closed file on screen with no tab for it.
+  }
+
+  // Every file tab open in any worktree, as of the last run of the effect below.
+  // Across worktrees, so switching worktree does not read as closing its tabs.
+  let knownFileTabPaths: string[] = []
+
+  // Mirror every tab close into nvim — the strip, the buffer menu, close
+  // others. A buffer left behind is what nvim falls back to when the current
+  // one goes, and the buffer-state snapshot then brings its tab back.
+  $effect(() => {
+    const paths = Object.values(store.tabsByWorktree)
+      .flat()
+      .filter((tab) => !tab.scratch)
+      .map((tab) => tab.path)
+    const closed = closedTabPaths(knownFileTabPaths, paths)
+    knownFileTabPaths = paths
     const id = session?.id
     if (!id) return
+    for (const path of closed) deleteBuffer(id, path)
+  })
+
+  /** Drops a closed tab's buffer from nvim, so it is neither shown nor fallen back to. */
+  function deleteBuffer(id: string, path: string): void {
     if (path === lastPushedPath) lastPushedPath = null
     void window.workbench.nvim
       .request(id, 'nvim_exec_lua', [CLOSE_BUFFER_LUA, [path]])
@@ -371,6 +391,20 @@ vim.api.nvim_create_autocmd(
   }
 )
 
+-- :bd / :bw on a file buffer closes its Grove tab. Terminal, help and
+-- quickfix buffers never had one.
+vim.api.nvim_create_autocmd('BufDelete', {
+  group = group,
+  callback = function(args)
+    if vim.bo[args.buf].buftype ~= '' then return end
+    local name = vim.api.nvim_buf_get_name(args.buf)
+    if name == '' then return end
+    vim.schedule(function()
+      vim.rpcnotify(0, 'grove_buffer_closed', name)
+    end)
+  end,
+})
+
 return snapshot()
 `
 
@@ -421,6 +455,13 @@ end
     attachActiveBuffer(snapshot.active)
   }
 
+  /** Closes the tab of a file whose buffer was deleted inside nvim (`:bd`). */
+  function closeDeletedBuffer(path: unknown): void {
+    if (typeof path !== 'string' || path === '') return
+    if (path === lastPushedPath) lastPushedPath = null
+    store.closeTab(path)
+  }
+
   /**
    * Install the buffer-state autocmd in a freshly attached session and subscribe
    * to its notifications, so the pane knows whether nvim has anything on screen,
@@ -430,8 +471,12 @@ end
     disposeBufferWatch?.()
     disposeBufferWatch = window.workbench.on('event:nvim-notify', (payload) => {
       const event = payload as { id: string; method: string; args: unknown[] }
-      if (event.id !== id || event.method !== 'grove_buffers') return
-      applyBufferSnapshot((event.args?.[0] ?? {}) as BufferSnapshot)
+      if (event.id !== id) return
+      if (event.method === 'grove_buffers') {
+        applyBufferSnapshot((event.args?.[0] ?? {}) as BufferSnapshot)
+        return
+      }
+      if (event.method === 'grove_buffer_closed') closeDeletedBuffer(event.args?.[0])
     })
     void window.workbench.nvim
       .request(id, 'nvim_exec_lua', [BUFFER_STATE_LUA, []])

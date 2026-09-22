@@ -16,10 +16,20 @@ export interface ShellResult {
 
 export interface ShellOptions {
   cwd: string
+  /** The shell to run it in; the platform default (/bin/sh) when absent. */
+  shell?: string
   /** Give up and kill the command after this long. */
   timeoutMs?: number
   /** Keep at most this many characters of output, counted from the end. */
   maxOutputChars?: number
+}
+
+/** The shell to spawn: the one asked for, or Node's platform default. */
+function shellOf(options: ShellOptions): string | true {
+  if (options.shell === undefined) {
+    return true
+  }
+  return options.shell
 }
 
 const DEFAULT_TIMEOUT_MS = 120_000
@@ -43,7 +53,7 @@ export function runShellCommand(command: string, options: ShellOptions): Promise
     const child = spawn(command, {
       cwd: options.cwd,
       env: process.env,
-      shell: true,
+      shell: shellOf(options),
       stdio: ['ignore', 'pipe', 'pipe']
     })
 

@@ -10,6 +10,7 @@ import type {
   ClientEventBody,
   CreateSessionOptions,
   FileMatch,
+  ShellCompletion,
   HarnessCatalog,
   HarnessInfo,
   SessionEvent,
@@ -62,13 +63,17 @@ export function sendEvents(
   return agents().sendEvents(sessionId, events)
 }
 
-/** What bash would complete a word of a `!` command to, in the session's workspace. */
-export function completeShell(
-  sessionId: string,
-  word: string,
-  position: 'command' | 'argument'
-): Promise<string[]> {
-  return agents().completeShell(sessionId, word, position)
+/**
+ * What the user's shell would complete the last word of a `!` command to, in the
+ * session's workspace. `line` is the command up to the caret.
+ */
+export function completeShell(sessionId: string, line: string): Promise<ShellCompletion[]> {
+  return agents().completeShell(sessionId, line)
+}
+
+/** The name of the shell `!` commands run in, e.g. `fish` or `bash`. */
+export function shellName(): Promise<string> {
+  return agents().shellName()
 }
 
 export function searchFiles(sessionId: string, query: string, limit = 20): Promise<FileMatch[]> {

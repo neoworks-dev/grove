@@ -9,7 +9,7 @@
 
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
   import Kbd from '../../../../components/Kbd.svelte'
-  import { completeShell, searchFiles, uploadBlob } from '../../../../lib/agents/api'
+  import { completeShell, searchFiles, shellName, uploadBlob } from '../../../../lib/agents/api'
   import {
     activeCompletion,
     applyCompletion,
@@ -90,8 +90,18 @@
     historyIndex = -1
   })
 
-  const completion = $derived(activeCompletion(draft, caret))
-  let suggestions = $state<string[]>([])
+  // Set by Tab in a shell draft, which asks for completions of a word not yet
+  // started; cleared by the next edit.
+  let completionRequested = $state(false)
+
+  const completion = $derived(activeCompletion(draft, caret, completionRequested))
+
+  interface Suggestion {
+    value: string
+    description?: string
+  }
+
+  let suggestions = $state<Suggestion[]>([])
   let suggestionIndex = $state(0)
   let suggestionListEl = $state<HTMLDivElement>()
 
@@ -106,7 +116,10 @@
       return
     }
     if (active.kind === 'command') {
-      suggestions = commandNames.filter((name) => name.startsWith(active.query)).slice(0, 20)
+      suggestions = commandNames
+        .filter((name) => name.startsWith(active.query))
+        .slice(0, 20)
+        .map((name) => ({ value: name }))
       suggestionIndex = 0
       return
     }
@@ -121,21 +134,22 @@
       if (completion?.start !== active.start || completion?.query !== active.query) return
       suggestions = values
       suggestionIndex = 0
+      // Like a shell's Tab: a single answer to an explicit request is just taken.
+      if (completionRequested && values.length === 1) {
+        acceptSuggestion(values[0].value)
+      }
     } catch {
       suggestions = []
     }
   }
 
-  /** Asks the main process for `@` file matches or bash's completions of a `!` word. */
-  async function fetchSuggestions(active: Completion): Promise<string[]> {
-    if (active.kind === 'shellCommand') {
-      return completeShell(sessionId, active.query, 'command')
-    }
-    if (active.kind === 'shellPath') {
-      return completeShell(sessionId, active.query, 'argument')
+  /** Asks the main process for `@` file matches or the shell's completions of a `!` word. */
+  async function fetchSuggestions(active: Completion): Promise<Suggestion[]> {
+    if (active.kind === 'shell') {
+      return completeShell(sessionId, active.line ?? '')
     }
     const matches = await searchFiles(sessionId, active.query)
-    return matches.map((match) => match.path)
+    return matches.map((match) => ({ value: match.path }))
   }
 
   function syncCaret(): void {
@@ -170,21 +184,31 @@
     return { label: 'shell · shared', title: 'Runs in the worktree; the agent sees the output' }
   })
 
-  // The bash grammar is loaded once, up front. Tokenizing per keystroke has to
-  // land in the same frame as the character that caused it: awaiting a promise
-  // for each one paints the draft plain and then colours it, which is the flash.
+  // The grammar of the shell `!` commands run in — fish's when that is the
+  // user's shell, bash's otherwise — loaded once, up front. Tokenizing per
+  // keystroke has to land in the same frame as the character that caused it:
+  // awaiting a promise for each one paints the draft plain and then colours it,
+  // which is the flash.
+  let shellLanguage = $state('bash')
   let shellGrammarReady = $state(false)
 
   $effect(() => {
-    void warmLanguage('bash').then((ready) => {
-      shellGrammarReady = ready
-    })
+    void loadShellGrammar()
   })
+
+  /** Picks the grammar for the user's shell and loads it. */
+  async function loadShellGrammar(): Promise<void> {
+    const name = await shellName().catch(() => 'bash')
+    if (name === 'fish') {
+      shellLanguage = 'fish'
+    }
+    shellGrammarReady = await warmLanguage(shellLanguage)
+  }
 
   /** The coloured runs for the command being typed; empty until the grammar is in. */
   const shellLines = $derived.by(() => {
     if (!shell || !shellGrammarReady) return []
-    const lines = highlightCodeSync(shell.command, 'bash', store.activeTheme.scheme)
+    const lines = highlightCodeSync(shell.command, shellLanguage, store.activeTheme.scheme)
     if (!lines) return []
     return lines
   })
@@ -248,6 +272,7 @@
     const caretAfter = completion.end + next.length - draft.length
     draft = next
     suggestions = []
+    completionRequested = false
     queueMicrotask(() => {
       promptEl?.focus()
       promptEl?.setSelectionRange(caretAfter, caretAfter)
@@ -307,6 +332,13 @@
     }
     if (menuOpen && handleMenuKey(event)) return
 
+    // Tab in a shell draft asks the shell what could come next.
+    if (event.key === 'Tab' && shell) {
+      event.preventDefault()
+      completionRequested = true
+      return
+    }
+
     // Escape stops the turn in flight without leaving the composer, so the draft
     // being typed survives the interrupt.
     if (event.key === 'Escape' && running) {
@@ -353,12 +385,13 @@
     }
     if (event.key === 'Enter' || event.key === 'Tab') {
       event.preventDefault()
-      acceptSuggestion(suggestions[suggestionIndex])
+      acceptSuggestion(suggestions[suggestionIndex].value)
       return true
     }
     if (event.key === 'Escape') {
       event.preventDefault()
       suggestions = []
+      completionRequested = false
       return true
     }
     return false
@@ -416,7 +449,7 @@
       class="absolute bottom-full left-0 right-0 z-20 mb-1 overflow-hidden rounded-md border border-line bg-elevated shadow-lg"
     >
       <FloatingScrollbar class="max-h-56" bind:viewport={suggestionListEl}>
-        {#each suggestions as suggestion, index (suggestion)}
+        {#each suggestions as suggestion, index (suggestion.value)}
           <button
             class="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs {index ===
             suggestionIndex
@@ -424,10 +457,18 @@
               : 'text-muted hover:bg-hover'}"
             onmousedown={(event) => {
               event.preventDefault()
-              acceptSuggestion(suggestion)
+              acceptSuggestion(suggestion.value)
             }}
           >
-            <span class="truncate font-mono">{suggestion}</span>
+            <span class="shrink-0 truncate font-mono">{suggestion.value}</span>
+            {#if suggestion.description}
+              <span
+                class="ml-auto min-w-0 truncate pl-3 text-2xs"
+                class:text-dim={index !== suggestionIndex}
+              >
+                {suggestion.description}
+              </span>
+            {/if}
           </button>
         {/each}
       </FloatingScrollbar>
@@ -473,7 +514,10 @@
       onkeydown={onKey}
       onkeyup={syncCaret}
       onclick={syncCaret}
-      oninput={syncCaret}
+      oninput={() => {
+        completionRequested = false
+        syncCaret()
+      }}
       onscroll={syncHighlightScroll}
       onpaste={onPaste}
       ondrop={onDrop}

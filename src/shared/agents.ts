@@ -421,6 +421,14 @@ export interface SkillInfo {
   path: string
 }
 
+/** One completion of a composer `!` command, as the user's shell offers it. */
+export interface ShellCompletion {
+  /** Replaces the word the caret is on. */
+  value: string
+  /** What it is, when the shell says — fish's "Checkout and switch to a branch". */
+  description?: string
+}
+
 export interface FileMatch {
   path: string
   score: number

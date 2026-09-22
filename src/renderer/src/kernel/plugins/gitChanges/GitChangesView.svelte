@@ -35,6 +35,7 @@
   import ShipItBar from './ShipItBar.svelte'
   import { LAYOUT_SETTING, type ChangesLayout } from './changeTree'
   import type { BranchStatus, DiffFile, MergeState } from '../../../../../shared/types'
+  import PaneControls from '../../../components/PaneControls.svelte'
 
   let allFiles = $state<DiffFile[]>([])
   let merge = $state<MergeState>({ inProgress: false, files: [] })
@@ -186,6 +187,7 @@
       <RowAction icon={TreeStructureIcon} title="View as tree" onclick={toggleLayout} />
     {/if}
     <RowAction icon={ArrowsClockwiseIcon} title="Refresh" disabled={loading} onclick={load} />
+    <PaneControls />
   </div>
 
   {#if worktreeId && !merge.inProgress}

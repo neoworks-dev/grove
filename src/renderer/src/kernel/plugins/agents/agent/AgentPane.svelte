@@ -50,6 +50,7 @@
   import AgentWorkingBar from './AgentWorkingBar.svelte'
   import CredentialPrompt from './CredentialPrompt.svelte'
   import EndpointEditor from './EndpointEditor.svelte'
+  import PaneControls from '../../../../components/PaneControls.svelte'
 
   let { leafId }: { leafId: string } = $props()
 
@@ -654,6 +655,7 @@
         <Eye width="13" height="13" weight={following ? 'fill' : 'regular'} />
         Follow
       </button>
+      <PaneControls class="mr-1.5" />
     </div>
 
     {#if errorText}

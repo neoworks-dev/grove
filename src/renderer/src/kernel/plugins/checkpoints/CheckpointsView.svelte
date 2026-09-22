@@ -6,6 +6,7 @@
   // live-updates via the checkpoints event.
   import { store, refreshDiffStats } from '../../../lib/store.svelte'
   import type { CheckpointMeta } from '../../../../../shared/types'
+  import PaneControls from '../../../components/PaneControls.svelte'
 
   const worktree = $derived(store.selectedWorktree)
 
@@ -76,11 +77,13 @@
 </script>
 
 <div class="flex h-full min-h-0 flex-col">
-  <div class="flex items-center justify-between px-3 py-2">
+  <div class="flex items-center gap-2 px-3 py-2">
     <span class="text-2xs font-semibold uppercase tracking-caps text-dim">Checkpoints</span>
+    <span class="flex-1"></span>
     {#if worktree}
-      <span class="truncate text-2xs text-dim">{worktree.name}</span>
+      <span class="min-w-0 truncate text-2xs text-dim">{worktree.name}</span>
     {/if}
+    <PaneControls />
   </div>
 
   {#if localError}

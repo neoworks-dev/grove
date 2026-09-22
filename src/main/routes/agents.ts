@@ -45,6 +45,12 @@ export const agentRoutes = {
     )
 
     // ── Composer helpers ──────────────────────────────────────────
+    route(
+      ctx,
+      'agents:completeShell',
+      (_e, sessionId: string, word: string, position: 'command' | 'argument') =>
+        ctx.agents.completeShell(sessionId, word, position)
+    )
     route(ctx, 'agents:searchFiles', (_e, sessionId: string, query: string, limit?: number) =>
       ctx.agents.searchFiles(sessionId, query, limit)
     )

@@ -62,6 +62,15 @@ export function sendEvents(
   return agents().sendEvents(sessionId, events)
 }
 
+/** What bash would complete a word of a `!` command to, in the session's workspace. */
+export function completeShell(
+  sessionId: string,
+  word: string,
+  position: 'command' | 'argument'
+): Promise<string[]> {
+  return agents().completeShell(sessionId, word, position)
+}
+
 export function searchFiles(sessionId: string, query: string, limit = 20): Promise<FileMatch[]> {
   return agents().searchFiles(sessionId, query, limit)
 }

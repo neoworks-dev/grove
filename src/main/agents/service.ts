@@ -45,6 +45,7 @@ import type {
   SubagentIdentity
 } from './harness'
 import { runShellCommand, type ShellResult } from './shell'
+import { completeShellWord, type ShellWordPosition } from './shellCompletion'
 import {
   hasStarted,
   idleRuntime,
@@ -848,6 +849,16 @@ export class AgentService {
       if (score > 0) matches.push({ path, score })
     }
     return matches.sort((a, b) => b.score - a.score).slice(0, limit)
+  }
+
+  /** Completions for a word of a composer `!` command, from bash in the session's workspace. */
+  async completeShell(
+    sessionId: string,
+    word: string,
+    position: ShellWordPosition
+  ): Promise<string[]> {
+    const session = await this.store.require(sessionId)
+    return completeShellWord(word, position, session.workspaceRoot)
   }
 
   // ── Internals ───────────────────────────────────────────────────

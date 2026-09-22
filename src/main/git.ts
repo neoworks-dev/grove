@@ -9,6 +9,7 @@ import { join } from 'path'
 import type {
   Worktree,
   BranchList,
+  BranchStatus,
   DiffFile,
   DiffFileStat,
   DiffStats,
@@ -223,6 +224,40 @@ export async function commitsAhead(worktreePath: string, ref: string): Promise<n
   } catch {
     // The ref is only there once the pull request has been fetched.
     return 0
+  }
+}
+
+/** The checked-out branch, the upstream it tracks, and how far apart the two are. */
+export async function branchStatus(worktreePath: string): Promise<BranchStatus> {
+  const branch = await currentBranch(worktreePath)
+  const detached = branch === 'HEAD'
+  const upstream = await upstreamOf(worktreePath)
+  if (upstream === null) return { branch, detached, upstream: null, ahead: 0, behind: 0 }
+
+  const counts = await gitFor(worktreePath).raw([
+    'rev-list',
+    '--left-right',
+    '--count',
+    'HEAD...@{upstream}'
+  ])
+  const [ahead, behind] = counts.trim().split(/\s+/).map(Number)
+  return { branch, detached, upstream, ahead: ahead || 0, behind: behind || 0 }
+}
+
+/** The upstream the current branch tracks, or null for none (or a detached HEAD). */
+async function upstreamOf(worktreePath: string): Promise<string | null> {
+  try {
+    const out = await gitFor(worktreePath).raw([
+      'rev-parse',
+      '--abbrev-ref',
+      '--symbolic-full-name',
+      '@{upstream}'
+    ])
+    const upstream = out.trim()
+    if (upstream.length === 0) return null
+    return upstream
+  } catch {
+    return null
   }
 }
 

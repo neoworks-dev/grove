@@ -44,6 +44,16 @@ export interface DiffHunk {
   modifiedCount: number
 }
 
+// The checked-out branch against the upstream it tracks. `upstream` is null when
+// the branch tracks nothing; ahead/behind are then 0.
+export interface BranchStatus {
+  branch: string
+  detached: boolean
+  upstream: string | null
+  ahead: number
+  behind: number
+}
+
 // Changed line ranges for a file, parsed from `git diff` hunk headers. Empty
 // for untracked files, where every modified line is an addition.
 export interface DiffHunks {

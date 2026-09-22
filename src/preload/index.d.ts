@@ -10,6 +10,7 @@ import type {
 import type {
   Worktree,
   BranchList,
+  BranchStatus,
   DiffFile,
   DiffSides,
   DiffHunks,
@@ -191,6 +192,9 @@ export interface WorkbenchApi {
     diffText: (worktreeId: string, before: string, after: string) => Promise<string>
     stage: (worktreeId: string, paths: string[]) => Promise<void>
     unstage: (worktreeId: string, paths: string[]) => Promise<void>
+    stageHunk: (worktreeId: string, file: DiffFile, hunkIndex: number) => Promise<void>
+    unstageHunk: (worktreeId: string, file: DiffFile, hunkIndex: number) => Promise<void>
+    branchStatus: (worktreeId: string) => Promise<BranchStatus>
     commit: (worktreeId: string, message: string) => Promise<string>
     push: (worktreeId: string) => Promise<string>
     mergeLocal: (worktreeId: string, baseBranch: string) => Promise<string>

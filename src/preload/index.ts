@@ -42,6 +42,11 @@ const workbench = {
       ipcRenderer.invoke('git:stage', worktreeId, paths),
     unstage: (worktreeId: string, paths: string[]) =>
       ipcRenderer.invoke('git:unstage', worktreeId, paths),
+    stageHunk: (worktreeId: string, file: unknown, hunkIndex: number) =>
+      ipcRenderer.invoke('git:stageHunk', worktreeId, file, hunkIndex),
+    unstageHunk: (worktreeId: string, file: unknown, hunkIndex: number) =>
+      ipcRenderer.invoke('git:unstageHunk', worktreeId, file, hunkIndex),
+    branchStatus: (worktreeId: string) => ipcRenderer.invoke('git:branchStatus', worktreeId),
     commit: (worktreeId: string, message: string) =>
       ipcRenderer.invoke('git:commit', worktreeId, message),
     push: (worktreeId: string) => ipcRenderer.invoke('git:push', worktreeId),

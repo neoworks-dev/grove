@@ -31,6 +31,12 @@ export const KeyPriority = {
   dialog: 90,
   /** Keys that must work in any context, even under an overlay (F1). */
   hardKey: 85,
+  /**
+   * A Neovim prompt everything behind it is queued on. Above the overlay tier
+   * because the answer has to reach nvim from wherever focus is, and below
+   * hardKey so a misread prompt can never leave the app without a keyboard.
+   */
+  nvimPrompt: 82,
   /** An open overlay types into its own input, so the chain stands down. */
   overlay: 80,
   /** Open menus close on Escape. */

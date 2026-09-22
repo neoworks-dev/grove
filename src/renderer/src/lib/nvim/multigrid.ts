@@ -163,7 +163,11 @@ export function applyMultigridRedraw(state: MultigridState, events: unknown[]): 
         mergeDirty(result.grids, id, changed)
         if (name === 'grid_resize') {
           const placement = state.windows.get(id)
-          if (placement) {
+          // A message grid is always allocated at the full outer height, so its
+          // own rows say nothing about how much of the screen it covers — that
+          // comes from where msg_set_pos put it. Taking the resize at face value
+          // would report every message as covering the whole editor.
+          if (placement && placement.kind !== 'message') {
             state.windows.set(id, { ...placement, width: grid.cols, height: grid.rows })
             result.placementsChanged = true
           }
@@ -298,6 +302,12 @@ function applyPlacement(state: MultigridState, name: string, args: unknown[]): b
       return changed
     }
     const current = state.grids.get(grid)
+    // What the message covers is the outer grid from `row` down: one row while
+    // it is only the cmdline, more once nvim has stopped to say something. The
+    // height is what tells those two apart — see nvim/blockingPrompt.ts.
+    const outer = state.grids.get(1)
+    let height = 1
+    if (outer) height = Math.max(1, outer.rows - row)
     state.windows.set(grid, {
       grid,
       win: 0,
@@ -305,7 +315,7 @@ function applyPlacement(state: MultigridState, name: string, args: unknown[]): b
       row,
       col: 0,
       width: current?.cols ?? 0,
-      height: 1,
+      height,
       focusable: true,
       zindex: 200,
       hidden: false

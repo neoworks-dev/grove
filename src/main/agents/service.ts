@@ -47,6 +47,7 @@ import type {
 } from './harness'
 import { runShellCommand, type ShellResult } from './shell'
 import { completeShellLine } from './shellCompletion'
+import { firstPromptText, isDefaultTitle, titleFromPrompt } from './sessionSummary'
 import { resolveLoginShell } from './loginShell'
 import {
   hasStarted,
@@ -141,7 +142,12 @@ export class AgentService {
   async listSessions(): Promise<SessionMeta[]> {
     const stored = await this.store.list()
     return stored.map((session) =>
-      SessionStore.metaOf(session, this.isLive(session.id), this.runtimeOf(session.id))
+      SessionStore.metaOf(
+        session,
+        this.isLive(session.id),
+        this.runtimeOf(session.id),
+        this.store.previewOf(session.id)
+      )
     )
   }
 
@@ -294,6 +300,22 @@ export class AgentService {
     })
   }
 
+  /**
+   * Name a session after what it was first asked, once that prompt is on the
+   * log. Only a session still carrying one of grove's made-up names is renamed,
+   * so a title a person or a spawning agent chose is never overwritten.
+   */
+  private async nameFromFirstPrompt(sessionId: string): Promise<void> {
+    const session = await this.store.require(sessionId)
+    if (!isDefaultTitle(session.title)) return
+    const prompt = firstPromptText(this.store.peekEvents(sessionId))
+    if (!prompt) return
+    const title = titleFromPrompt(prompt)
+    if (!title) return
+    await this.store.patch(sessionId, { title })
+    await this.store.append(sessionId, { type: 'session.info_changed', changed: ['title'] })
+  }
+
   /** Put a message to the agent: straight through, steered, or queued. */
   private async deliver(
     sessionId: string,
@@ -310,6 +332,7 @@ export class AgentService {
     // ends the wait for everything run before it.
     const pending = await this.pendingShellContext(sessionId)
     const stamped = await this.store.append(sessionId, event)
+    await this.nameFromFirstPrompt(sessionId)
     const runtime = this.runtimeOrCreate(sessionId)
     const text = withPendingShell(pending, textOf(event))
     const attachments = await this.attachmentsFor(sessionId, event)
@@ -915,7 +938,8 @@ export class AgentService {
       session,
       this.isLive(session.id),
       runtime ?? idleRuntime(),
-      runtime?.messageCount ?? 0
+      runtime?.messageCount ?? 0,
+      this.store.previewOf(session.id)
     )
   }
 

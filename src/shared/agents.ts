@@ -226,6 +226,13 @@ export interface QueuedMessage {
   attachments?: ImageBlock[]
 }
 
+/** The last message in a session, for a listing to show under its name. */
+export interface SessionPreview {
+  from: 'user' | 'agent'
+  /** On one line, and cut short; the row truncates it further to fit. */
+  text: string
+}
+
 /**
  * A row from the session listing: stored metadata, plus `live` for sessions the
  * main process currently has a harness attached to. `live: false` means nothing
@@ -259,6 +266,8 @@ export interface SessionMeta {
    * session keeps the harness it started on; only the model stays open.
    */
   started: boolean
+  /** The last thing said in it, when anything has been. */
+  preview: SessionPreview | null
 }
 
 /** One session in full, which adds what only a live run knows. */

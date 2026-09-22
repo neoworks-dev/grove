@@ -158,6 +158,32 @@ describe('AgentService', () => {
     }
   })
 
+  test('an unnamed session is named after its first prompt, and keeps that name', async () => {
+    const { service, cleanup } = await setup()
+    try {
+      const session = await service.createSession({ workspace: '/tmp/worktree', title: 'Session 2' })
+      await service.send(session.id, [say('Fix the tab strip overflow\nIt clips the last tab')])
+      await service.send(session.id, [say('and the close button')])
+
+      const [listed] = await service.listSessions()
+      expect(listed.title).toBe('Fix the tab strip overflow')
+      expect(listed.preview).toEqual({ from: 'user', text: 'and the close button' })
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('a session somebody named keeps its name', async () => {
+    const { service, cleanup } = await setup()
+    try {
+      const session = await service.createSession({ workspace: '/tmp/worktree', title: 'Inline edits' })
+      await service.send(session.id, [say('rewrite this')])
+      expect((await service.getSession(session.id)).title).toBe('Inline edits')
+    } finally {
+      await cleanup()
+    }
+  })
+
   test('a new session starts on the model its harness recommends', async () => {
     const { service, cleanup } = await setup()
     try {

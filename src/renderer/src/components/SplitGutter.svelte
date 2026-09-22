@@ -5,7 +5,12 @@
   import PlusIcon from 'phosphor-svelte/lib/PlusIcon'
   import PanePicker from './PanePicker.svelte'
   import { layout } from '../lib/layout.svelte'
-  import { type LayoutNode, type SplitNode, MIN_PANE_FRACTION } from '../lib/layoutTree'
+  import {
+    type LayoutNode,
+    type SplitNode,
+    MIN_PANE_FRACTION,
+    clampGutterShift
+  } from '../lib/layoutTree'
 
   let { split, gutterIndex }: { split: SplitNode; gutterIndex: number } = $props()
 
@@ -104,14 +109,16 @@
       resizeShares(delta)
       return
     }
-    if (beforePx !== null) resizeFixed(before, beforePx + delta)
-    if (afterPx !== null) resizeFixed(after, afterPx - delta)
+    if (beforePx !== null) resizeFixed(before, beforePx, beforePx + delta)
+    if (afterPx !== null) resizeFixed(after, afterPx, afterPx - delta)
   }
 
-  // Commit a fixed pane's new size, stopped at its minimum. Drag the stop can't
+  // Commit a fixed pane's new size, stopped at its minimum — or at its current
+  // size, when the layout already squeezed it under that. Drag the stop can't
   // absorb piles up as overshoot, and past the slop the pane closes.
-  function resizeFixed(node: LayoutNode, requestedPx: number): void {
-    const clamped = Math.max(layout.minSizePx(node, split.direction), requestedPx)
+  function resizeFixed(node: LayoutNode, currentPx: number, requestedPx: number): void {
+    const floorPx = Math.min(layout.minSizePx(node, split.direction), currentPx)
+    const clamped = Math.max(floorPx, requestedPx)
     layout.setFixedSizePx(node.id, clamped)
     const leftover = requestedPx - clamped
     if (leftover === 0) {
@@ -132,7 +139,7 @@
     const minFrac = minFraction()
     // What resizeGutter will actually apply after clamping both sides to min.
     const requested = delta / containerPx
-    const clamped = Math.min(Math.max(requested, minFrac - beforeFraction), afterFraction - minFrac)
+    const clamped = clampGutterShift(requested, beforeFraction, afterFraction, minFrac)
     const leftoverPx = (requested - clamped) * containerPx
     if (leftoverPx !== 0 && collapseSqueezed(leftoverPx)) return
     if (leftoverPx === 0) overshoot = 0

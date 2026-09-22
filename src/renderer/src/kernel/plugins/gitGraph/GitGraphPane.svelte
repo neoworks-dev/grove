@@ -10,6 +10,7 @@
   import CloudArrowDownIcon from 'phosphor-svelte/lib/CloudArrowDownIcon'
   import { untrack } from 'svelte'
   import ContextMenu, { type MenuItem } from '../../../components/ContextMenu.svelte'
+  import EdgePanel from '../../../components/EdgePanel.svelte'
   import RowAction from '../gitChanges/RowAction.svelte'
   import CommitDetails from './CommitDetails.svelte'
   import GraphCell, { graphWidth, laneColour } from './GraphCell.svelte'
@@ -30,7 +31,18 @@
   } from './commitActions'
   import type { CommitSummary, RefList, ResetMode } from '../../../../../shared/types'
 
+  let {
+    state: paneState,
+    updateState
+  }: {
+    state: Record<string, unknown>
+    updateState: (patch: Record<string, unknown>) => void
+  } = $props()
+
   const ROW_HEIGHT = 24
+  // The details panel's width until it is dragged, and the narrowest it goes.
+  const DETAILS_WIDTH = 320
+  const DETAILS_MIN_WIDTH = 220
   const PAGE_SIZE = 200
   // Rows rendered beyond each edge of the viewport, so a quick scroll does not
   // show blank space before the next frame.
@@ -58,6 +70,7 @@
   let viewportHeight = $state(0)
   let menu = $state<{ x: number; y: number; commit: CommitSummary } | null>(null)
   let loadedWorktreeId: string | null = null
+  let detailsWidth = $state(initialDetailsWidth())
 
   const worktreeId = $derived(store.selectedWorktreeId)
   const worktree = $derived(store.selectedWorktree)
@@ -86,6 +99,19 @@
     currentBranch,
     onChanged: () => void load()
   })
+
+  /** The details panel's width as last dragged in this pane, or the default. */
+  function initialDetailsWidth(): number {
+    const saved = paneState.detailsWidth
+    if (typeof saved === 'number') return saved
+    return DETAILS_WIDTH
+  }
+
+  /** Remembers a dragged details width with the pane. */
+  function saveDetailsWidth(width: number): void {
+    detailsWidth = width
+    updateState({ detailsWidth: width })
+  }
 
   /** Re-reads the refs and as much history as was already loaded. */
   async function load(): Promise<void> {
@@ -293,7 +319,7 @@
   })
 </script>
 
-<div class="flex h-full min-h-0 flex-col bg-canvas text-xs">
+<div class="flex h-full min-h-0 flex-col text-xs">
   <div class="flex h-7 shrink-0 items-center gap-2 border-b border-line px-2">
     <span class="text-muted">Commit Graph</span>
     {#if currentBranch}
@@ -392,7 +418,12 @@
     </div>
 
     {#if selected && worktreeId}
-      <div class="w-80 shrink-0 border-l border-line">
+      <EdgePanel
+        side="left"
+        bind:size={() => detailsWidth, saveDetailsWidth}
+        min={DETAILS_MIN_WIDTH}
+        class="border-l border-line"
+      >
         <CommitDetails
           {worktreeId}
           commit={selected}
@@ -401,7 +432,7 @@
           onChanged={() => void load()}
           onClose={() => (selectedSha = null)}
         />
-      </div>
+      </EdgePanel>
     {/if}
   </div>
 </div>

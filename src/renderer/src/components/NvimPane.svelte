@@ -29,7 +29,7 @@
     unregisterNvimSession
   } from '../lib/nvim/registry'
   import { scratchFor, closeScratch } from '../lib/nvim/scratch.svelte'
-  import { restoreDiff } from '../lib/nvim/diffTabs'
+  import { leaveDiff, restoreDiff } from '../lib/nvim/diffTabs'
   import { editorHasContent } from '../lib/nvim/visibility'
   import { nvimKeymapBindings, type NvimMapping } from '../lib/nvimKeymap'
   import { operatorHintEntries, operatorTitle } from '../lib/nvimOperatorHints'
@@ -712,8 +712,11 @@ end, ns)
     // Scratch tabs map to a live nvim buffer, not a file: switch the window to
     // it (only in the pane that owns the buffer) rather than :edit-ing a path.
     const scratch = scratchFor(path)
+    if (scratch && scratch.nvimId !== id) return
+    // Out of the last diff: its base window, and diff mode unless this tab is a
+    // diff too.
+    await leaveDiff(id, path).catch(showRestoreError)
     if (scratch) {
-      if (scratch.nvimId !== id) return
       await window.workbench.nvim
         .request(id, 'nvim_set_current_buf', [scratch.bufnr])
         .catch(() => {})
@@ -731,9 +734,9 @@ end, ns)
     await restoreDiff(id, path).catch(showRestoreError)
   }
 
-  /** Reports a diff that could not be rebuilt on returning to its tab. */
+  /** Reports a diff that could not be closed or rebuilt on switching tabs. */
   function showRestoreError(err: unknown): void {
-    store.setError(`Could not restore the diff: ${(err as Error).message}`)
+    store.setError(`Could not switch the diff: ${(err as Error).message}`)
   }
 
   // Jump to a specific line when a search result (ripgrep) is accepted. Claim

@@ -9,6 +9,7 @@ import { store } from './store.svelte'
 import { agentSessions } from './agents/sessions.svelte'
 import { visibleItems, type AgentItem } from './agents/transcript'
 import type { SessionMeta } from './agents/types'
+import type { SessionAttention } from './agents/attention'
 
 export const serviceStatusColor: Record<string, string> = {
   running: 'bg-green',
@@ -31,6 +32,18 @@ export interface WorktreeAttention {
   unread: boolean
   dirty: boolean
   needsAttention: boolean
+}
+
+/** The sessions in a worktree whose turn ended out of sight, with how it ended. */
+export function sessionAttentionFor(
+  worktreeId: string
+): { session: SessionMeta; attention: SessionAttention }[] {
+  const flagged: { session: SessionMeta; attention: SessionAttention }[] = []
+  for (const session of sessionsFor(worktreeId)) {
+    const attention = agentSessions.attention[session.id]
+    if (attention) flagged.push({ session, attention })
+  }
+  return flagged
 }
 
 /** Agent sessions rooted in a worktree. A worktree's id is its path. */

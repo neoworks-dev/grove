@@ -6,13 +6,17 @@
   import WaveSpinner from '../../../components/WaveSpinner.svelte'
   import { relativeTime } from '../../../lib/time'
   import type { SessionMeta } from '../../../lib/agents/types'
+  import { ATTENTION_LABELS, type SessionAttention } from '../../../lib/agents/attention'
 
   let {
     session,
+    attention,
     selected,
     onopen
   }: {
     session: SessionMeta
+    /** How its last turn ended, when that happened out of sight. */
+    attention?: SessionAttention
     /** Whether the worktree it belongs to is the selected one. */
     selected: boolean
     onopen: (event: MouseEvent) => void
@@ -47,11 +51,21 @@
   </span>
   <span class="flex min-w-0 flex-1 flex-col gap-0.5">
     <span class="flex items-center gap-2">
-      <span class="min-w-0 flex-1 truncate text-xs" class:text-default={running} class:text-muted={!running}>
+      <span class="min-w-0 flex-1 truncate text-xs" class:text-default={running || attention} class:text-muted={!running && !attention}>
         {title}
       </span>
       {#if running}
         <span class="shrink-0 text-green"><WaveSpinner count={3} /></span>
+      {:else if attention}
+        <span
+          class="flex shrink-0 items-center gap-1 text-2xs font-medium"
+          class:text-green={attention === 'done'}
+          class:text-amber={attention === 'needs_you'}
+          class:text-red={attention === 'failed'}
+        >
+          <span class="size-1.5 rounded-full bg-current"></span>
+          {ATTENTION_LABELS[attention]}
+        </span>
       {:else if waiting}
         <span class="shrink-0 text-2xs text-amber">waiting</span>
       {:else}

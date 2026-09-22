@@ -552,8 +552,16 @@ class LayoutStore {
     this.schedule()
   }
 
-  resize(splitId: string, gutterIndex: number, deltaFraction: number, minFraction?: number): void {
-    this.setActiveTree(resizeGutter(this.tree, splitId, gutterIndex, deltaFraction, minFraction))
+  resize(
+    splitId: string,
+    gutterIndex: number,
+    deltaFraction: number,
+    minBefore?: number,
+    minAfter?: number
+  ): void {
+    this.setActiveTree(
+      resizeGutter(this.tree, splitId, gutterIndex, deltaFraction, minBefore, minAfter)
+    )
     this.schedule()
   }
 

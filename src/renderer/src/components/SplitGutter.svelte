@@ -39,7 +39,7 @@
 
   let dragging = $state(false)
   let lastPos = 0
-  let containerPx = 1
+  let pxPerFraction = 1
   let rootEl: HTMLElement
 
   // Pointer moves fire far faster than the display refreshes; accumulate the
@@ -58,21 +58,25 @@
   const before = $derived(split.children[gutterIndex])
   const after = $derived(split.children[gutterIndex + 1])
 
-  // Smallest fraction either neighbor may shrink to.
-  function minFraction(): number {
-    const minPx = Math.max(
-      layout.minSizePx(before, split.direction),
-      layout.minSizePx(after, split.direction)
-    )
-    return Math.max(MIN_PANE_FRACTION, Math.min(0.45, minPx / containerPx))
+  // Smallest fraction this neighbor may shrink to: its own minimum, not the
+  // larger of the two.
+  function minFractionOf(node: LayoutNode): number {
+    const minPx = layout.minSizePx(node, split.direction)
+    return Math.max(MIN_PANE_FRACTION, Math.min(0.45, minPx / pxPerFraction))
   }
 
-  // The split's flex container is the gutter root's parent; its size is the
-  // basis for converting pixel drag deltas into size fractions.
+  // Pixels one unit of share is worth in this split, read off the two panes the
+  // gutter sits between. The container is no basis for it: a fixed-size sibling
+  // takes part of the container without holding a share of it.
   function measure(): void {
-    const parent = rootEl?.parentElement
-    if (!parent) return
-    containerPx = Math.max(1, horizontal ? parent.clientWidth : parent.clientHeight)
+    const beforeEl = rootEl?.previousElementSibling as HTMLElement | null
+    const afterEl = rootEl?.nextElementSibling as HTMLElement | null
+    if (!beforeEl || !afterEl) return
+    let px = beforeEl.offsetHeight + afterEl.offsetHeight
+    if (horizontal) px = beforeEl.offsetWidth + afterEl.offsetWidth
+    const fraction = split.sizes[gutterIndex] + split.sizes[gutterIndex + 1]
+    if (px <= 0 || fraction <= 0) return
+    pxPerFraction = px / fraction
   }
 
   function onPointerDown(event: PointerEvent): void {
@@ -81,8 +85,22 @@
     lastPos = horizontal ? event.clientX : event.clientY
     measure()
     event.preventDefault()
+    // Captured, so the release still arrives when the pointer has left the
+    // window — a collapsing pane is only closed or restored on it.
+    capturePointer(event)
     window.addEventListener('pointermove', onPointerMove)
     window.addEventListener('pointerup', onPointerUp)
+    window.addEventListener('pointercancel', onPointerCancel)
+  }
+
+  /** Captures the dragging pointer; one that is not active (synthetic) has nothing to capture. */
+  function capturePointer(event: PointerEvent): void {
+    const handle = event.currentTarget as HTMLElement
+    try {
+      handle.setPointerCapture(event.pointerId)
+    } catch {
+      // Not an active pointer: the window listeners still see its moves.
+    }
   }
 
   function onPointerMove(event: PointerEvent): void {
@@ -171,16 +189,17 @@
   function resizeShares(delta: number): void {
     const beforeFraction = split.sizes[gutterIndex]
     const afterFraction = split.sizes[gutterIndex + 1]
-    const minFrac = minFraction()
-    // What resizeGutter will actually apply after clamping both sides to min.
-    const requested = delta / containerPx
-    const clamped = clampGutterShift(requested, beforeFraction, afterFraction, minFrac)
-    const leftoverPx = (requested - clamped) * containerPx
+    const minBefore = minFractionOf(before)
+    const minAfter = minFractionOf(after)
+    // What resizeGutter will actually apply after clamping each side to its min.
+    const requested = delta / pxPerFraction
+    const clamped = clampGutterShift(requested, beforeFraction, afterFraction, minBefore, minAfter)
+    const leftoverPx = (requested - clamped) * pxPerFraction
     if (leftoverPx === 0) setOvershoot(0, null)
     // leftover > 0 squeezes the right child; < 0 the left one.
     if (leftoverPx > 0) addOvershoot(leftoverPx, after)
     if (leftoverPx < 0) addOvershoot(leftoverPx, before)
-    if (clamped !== 0) layout.resize(split.id, gutterIndex, clamped, minFrac)
+    if (clamped !== 0) layout.resize(split.id, gutterIndex, clamped, minBefore, minAfter)
   }
 
   /** Closes the pane the drag left collapsed, if any, and clears the overshoot. */
@@ -198,12 +217,20 @@
     }
     window.removeEventListener('pointermove', onPointerMove)
     window.removeEventListener('pointerup', onPointerUp)
+    window.removeEventListener('pointercancel', onPointerCancel)
   }
 
   function onPointerUp(): void {
     flushResize()
     endDrag()
     commitCollapse()
+  }
+
+  // The system took the pointer away mid-drag: nobody chose to close the pane,
+  // so a collapsing one comes back.
+  function onPointerCancel(): void {
+    endDrag()
+    setOvershoot(0, null)
   }
 
   // Keyboard resize for accessibility. There is no drag to release, so a pane

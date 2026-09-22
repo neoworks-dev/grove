@@ -50,7 +50,7 @@ export class SidebarService extends Service {
       // The sidebar is set once and then left alone: it keeps its width when
       // other panes open, close or the window resizes.
       fixedSize: { defaultPx: 256 },
-      containerClass: view.containerClass || 'bg-elevated',
+      containerClass: view.containerClass || 'bg-surface',
       minWidth: view.minWidth || 180,
       when: view.when
     })

@@ -17,6 +17,7 @@
   } from '../../../lib/worktreeStatus'
   import BusySpark from '../../../components/BusySpark.svelte'
   import type { SessionMeta } from '../../../lib/agents/types'
+  import PaneControls from '../../../components/PaneControls.svelte'
 
   // The session listing is polled centrally; this keeps it live while the
   // overview is on screen even when no agent pane is open.
@@ -43,6 +44,7 @@
 <div class="flex h-full flex-col">
   <div class="flex items-center justify-between px-3 py-2">
     <span class="text-2xs font-semibold uppercase tracking-caps text-dim">Agents</span>
+    <PaneControls />
   </div>
 
   <div class="min-h-0 flex-1 overflow-auto">
@@ -55,7 +57,7 @@
         <button
           class="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-hover {store.selectedWorktreeId ===
           worktree.id
-            ? 'bg-surface'
+            ? 'bg-elevated'
             : ''}"
           onclick={() => focusWorktree(worktree.id)}
         >

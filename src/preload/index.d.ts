@@ -12,6 +12,9 @@ import type {
   BranchList,
   BranchStatus,
   BranchCommits,
+  RefList,
+  StashEntry,
+  RefComparison,
   DiffFile,
   DiffSides,
   DiffHunks,
@@ -201,6 +204,16 @@ export interface WorkbenchApi {
     branchCommits: (worktreeId: string, skip: number, limit: number) => Promise<BranchCommits>
     commitFiles: (worktreeId: string, sha: string) => Promise<DiffFile[]>
     fileAtRevision: (worktreeId: string, revision: string, relPath: string) => Promise<string>
+    refs: (worktreeId: string) => Promise<RefList>
+    stashes: (worktreeId: string) => Promise<StashEntry[]>
+    checkout: (worktreeId: string, branch: string, remote: boolean) => Promise<Worktree[]>
+    mergeRef: (worktreeId: string, ref: string) => Promise<MergeResult>
+    rebaseOnto: (worktreeId: string, onto: string) => Promise<string>
+    deleteBranch: (worktreeId: string, branch: string, force: boolean) => Promise<void>
+    stashPush: (worktreeId: string, message: string) => Promise<void>
+    stashApply: (worktreeId: string, ref: string, pop: boolean) => Promise<void>
+    stashDrop: (worktreeId: string, ref: string) => Promise<void>
+    compare: (worktreeId: string, base: string, head: string | null) => Promise<RefComparison>
     commit: (worktreeId: string, message: string) => Promise<string>
     push: (worktreeId: string) => Promise<string>
     mergeLocal: (worktreeId: string, baseBranch: string) => Promise<string>

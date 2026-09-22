@@ -21,7 +21,7 @@ export const gitGraph = {
           title: 'Commit Graph',
           icon: GraphIcon,
           component: GitGraphPane,
-          containerClass: 'bg-canvas',
+          containerClass: 'bg-surface',
           minWidth: 320,
           minHeight: 160,
           // Opens below the focused editor, like the panel, so a diff opened

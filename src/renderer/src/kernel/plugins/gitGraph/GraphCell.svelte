@@ -80,7 +80,7 @@
       cx={x(row.column)}
       cy={middle}
       r="3"
-      fill="var(--color-canvas)"
+      fill="var(--color-surface)"
       stroke-width="1.5"
       stroke={laneColour(row.colour)}
     />

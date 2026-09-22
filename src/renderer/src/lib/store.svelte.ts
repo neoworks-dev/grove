@@ -43,6 +43,10 @@ export interface EditorTab {
   // A non-file scratch buffer (batch rename, etc.), backed by an nvim buffer
   // rather than a path on disk. Not persisted across sessions.
   scratch?: boolean
+  // A real file opened as one side of a pull request's diff. It stays a file
+  // tab in every way; the flag only tints it like a scratch tab, so it reads
+  // as a review rather than an edit.
+  reviewing?: boolean
 }
 
 const MAX_LOG_LINES = 2000
@@ -199,6 +203,13 @@ class WorkbenchStore {
   openTab(tab: EditorTab): void {
     this.attachEditorTab(tab)
     layout.showCenterPane(preferredEditorPane())
+  }
+
+  /** Marks an open file's tab as showing a pull request's diff. */
+  markTabReviewing(worktreeId: string, path: string): void {
+    const tabs = this.tabsByWorktree[worktreeId] ?? []
+    const marked = tabs.map((tab) => (tab.path === path ? { ...tab, reviewing: true } : tab))
+    this.tabsByWorktree = { ...this.tabsByWorktree, [worktreeId]: marked }
   }
 
   closeTab(path: string): void {

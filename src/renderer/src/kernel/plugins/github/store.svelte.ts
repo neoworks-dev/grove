@@ -999,7 +999,9 @@ export async function openPrFile(detail: GithubItemDetail, file: GithubPrFile): 
     await paintOpenPrComments(detail.number)
     return
   }
-  openFileInEditor(worktreeId, `${worktree.path}/${file.path}`)
+  const path = `${worktree.path}/${file.path}`
+  openFileInEditor(worktreeId, path)
+  store.markTabReviewing(worktreeId, path)
   await diffAgainstBase(file, base)
   // After the diff: the base side's window is one of the two the keys go on.
   await installPrReviewKeys(detail, file.path)

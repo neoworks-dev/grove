@@ -3,7 +3,7 @@
 // Watches a dynamic set of worktrees (the selected one plus any running agents).
 
 import chokidar, { type FSWatcher } from 'chokidar'
-import { relative } from 'path'
+import { relative, sep } from 'path'
 
 export interface FsChange {
   worktreeId: string
@@ -12,7 +12,20 @@ export interface FsChange {
   type: 'add' | 'change' | 'unlink' | 'addDir' | 'unlinkDir'
 }
 
-const IGNORED = /(^|[/\\])(\.git|node_modules|\.workbench|\.worktrees|out|dist)([/\\]|$)/
+const IGNORED_DIRECTORIES = ['.git', 'node_modules', '.workbench', '.worktrees', 'out', 'dist']
+
+/**
+ * Whether a path found under a watched worktree is one we never follow. Only the
+ * part below the root is judged: a worktree of its own lives at
+ * `<repo>/../.worktrees/<name>`, so matching the whole path would ignore the
+ * root itself and leave that worktree — the one an agent is working in —
+ * silently unwatched.
+ */
+export function isIgnoredPath(worktreePath: string, candidate: string): boolean {
+  const relativePath = relative(worktreePath, candidate)
+  if (relativePath === '') return false
+  return relativePath.split(sep).some((segment) => IGNORED_DIRECTORIES.includes(segment))
+}
 
 export class WorktreeWatcher {
   // worktreeId (== path) -> watcher
@@ -36,7 +49,7 @@ export class WorktreeWatcher {
 
   private add(worktreePath: string): void {
     const watcher = chokidar.watch(worktreePath, {
-      ignored: IGNORED,
+      ignored: (candidate: string) => isIgnoredPath(worktreePath, candidate),
       ignoreInitial: true,
       persistent: true,
       depth: 20

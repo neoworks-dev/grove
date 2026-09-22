@@ -15,7 +15,7 @@ import type {
   ReviewBatch,
   WorktreeChatMessage
 } from '../../../shared/types'
-import type { FileBlock } from './agents/types'
+import type { FileBlock, SessionEvent } from './agents/types'
 
 export interface LogLine {
   source: 'service'
@@ -481,6 +481,10 @@ export async function refreshRuntimes(worktreeId: string): Promise<void> {
 
 // Subscribe to streamed main-process events. Call once at app start.
 export function subscribeEvents(): void {
+  // Every session's events, so a turn that ends out of sight is flagged.
+  window.workbench.on('event:agent-event', (payload) => {
+    agentSessions.noteEvent(payload as SessionEvent)
+  })
   window.workbench.on('event:log', (payload) => {
     const event = payload as {
       worktreeId: string

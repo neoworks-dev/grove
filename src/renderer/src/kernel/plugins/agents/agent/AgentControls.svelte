@@ -1,7 +1,8 @@
 <script lang="ts">
   // The status line under the composer: which harness runs the session, what
   // model it will use, how hard it will think, how freely it may act, and when
-  // its changes get reviewed.
+  // its changes get reviewed. The selects wrap onto a second row as the pane
+  // narrows rather than squeezing.
   //
   // Harness, provider, model and thinking level are session state in the main
   // process, so picking one updates the session. Mode is derived from the same
@@ -27,6 +28,7 @@
     reviewMode,
     reviewPause,
     tokensLabel,
+    costLabel,
     contextTokens,
     onPickHarness,
     onPickModel,
@@ -50,6 +52,8 @@
     reviewMode: string
     reviewPause: boolean
     tokensLabel: string
+    /** What the session has cost so far, empty when the harness reports none. */
+    costLabel: string
     /** Context the session has already built up, which a model switch re-reads. */
     contextTokens: number
     onPickHarness: (harness: string) => void
@@ -118,16 +122,6 @@
     return model
   })
 
-  /**
-   * The id the session actually runs, shown beside the name because the name
-   * alone can be an alias — "Default (recommended)" names no model at all, and
-   * one model is spelled differently by each provider that serves it.
-   */
-  const modelId = $derived.by(() => {
-    if (model === modelLabel) return ''
-    return model
-  })
-
   // Modes read as how far they step away from "ask": neutral, then the theme's
   // accent, then its two warning tones. Every one is a theme token, so they
   // change with the palette instead of sitting on top of it.
@@ -139,7 +133,7 @@
   }
 </script>
 
-<div class="relative flex items-center gap-2 text-2xs">
+<div class="relative flex flex-wrap items-center gap-2 text-2xs">
   <!-- Backdrop closes any open menu on outside click. -->
   {#if openMenu}
     <button
@@ -201,7 +195,7 @@
     {/if}
   </div>
 
-  <!-- Model, then the route that reaches it. -->
+  <!-- Model -->
   <div class="relative z-20">
     <button
       class="flex items-center gap-1.5 rounded border border-line px-2 py-1 hover:bg-hover"
@@ -209,9 +203,6 @@
       onclick={() => toggle('model')}
     >
       <span class="max-w-[12rem] truncate font-medium text-default">{modelLabel}</span>
-      {#if modelId}
-        <span class="max-w-[12rem] truncate font-mono text-dim">{modelId}</span>
-      {/if}
       <span class="text-dim">▾</span>
     </button>
     {#if openMenu === 'model'}
@@ -319,6 +310,9 @@
 
   {#if tokensLabel}
     <span class="truncate font-mono text-dim" title="Context used">{tokensLabel}</span>
+  {/if}
+  {#if costLabel}
+    <span class="font-mono text-dim" title="Session cost so far">{costLabel}</span>
   {/if}
 
   <!-- Thinking: hidden for a harness that has no thinking levels. -->

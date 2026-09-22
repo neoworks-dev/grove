@@ -616,6 +616,13 @@
     return `${(used / 1000).toFixed(1)}k · ${Math.round(snapshot.context.ratio * 100)}%`
   })
 
+  // Cost so far, as the harness reports it; hidden while nothing has been spent.
+  const costLabel = $derived.by(() => {
+    if (!snapshot) return ''
+    if (snapshot.cost <= 0) return ''
+    return `$${snapshot.cost.toFixed(2)}`
+  })
+
   const errorText = $derived(live?.error || agentSessions.serverError || catalog.error)
 </script>
 
@@ -825,6 +832,7 @@
               {reviewMode}
               {reviewPause}
               tokensLabel={contextLabel}
+              {costLabel}
               contextTokens={snapshot.context.usedTokens}
               onPickHarness={pickHarness}
               onPickModel={pickModel}

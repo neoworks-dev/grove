@@ -12,6 +12,7 @@
 import { openScratch } from './scratch.svelte'
 import { waitForNvimSession } from './registry'
 import { store, openFileInEditor } from '../store.svelte'
+import type { CommitSummary, DiffFile } from '../../../../shared/types'
 
 export interface RevisionDiffRequest {
   worktreeId: string
@@ -236,4 +237,26 @@ async function waitForActiveFile(
     await new Promise((resolve) => setTimeout(resolve, 50))
   }
   return false
+}
+
+/**
+ * Opens one file a commit changed, as the commit left it beside the commit's
+ * first parent — or beside nothing, for a root commit.
+ */
+export function openCommitFileDiff(worktreeId: string, commit: CommitSummary, file: DiffFile): void {
+  let parent: string | null = null
+  let parentLabel = 'empty'
+  if (commit.parents.length > 0) {
+    parent = commit.parents[0]
+    parentLabel = parent.slice(0, commit.shortSha.length)
+  }
+  void openRevisionDiff({
+    worktreeId,
+    path: file.path,
+    oldPath: file.oldPath,
+    leftRevision: parent,
+    rightRevision: commit.sha,
+    leftLabel: parentLabel,
+    rightLabel: commit.shortSha
+  })
 }

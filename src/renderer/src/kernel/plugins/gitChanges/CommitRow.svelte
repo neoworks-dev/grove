@@ -10,7 +10,7 @@
   import RowAction from './RowAction.svelte'
   import { store } from '../../../lib/store.svelte'
   import { relativeTime } from '../../../lib/time'
-  import { openRevisionDiff } from '../../../lib/nvim/revisionDiff'
+  import { openCommitFileDiff } from '../../../lib/nvim/revisionDiff'
   import type { CommitSummary, DiffFile } from '../../../../../shared/types'
 
   let {
@@ -44,23 +44,7 @@
 
   /** Opens one of the commit's files as a diff against the commit's first parent. */
   function openFile(file: DiffFile): void {
-    let parent: string | null = null
-    if (commit.parents.length > 0) parent = commit.parents[0]
-    void openRevisionDiff({
-      worktreeId,
-      path: file.path,
-      oldPath: file.oldPath,
-      leftRevision: parent,
-      rightRevision: commit.sha,
-      leftLabel: parentLabel(parent),
-      rightLabel: commit.shortSha
-    })
-  }
-
-  /** How the left side of a diff names the parent. */
-  function parentLabel(parent: string | null): string {
-    if (parent === null) return 'empty'
-    return parent.slice(0, commit.shortSha.length)
+    openCommitFileDiff(worktreeId, commit, file)
   }
 
   /** Puts the full sha on the clipboard. */

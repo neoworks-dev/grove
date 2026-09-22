@@ -7,7 +7,7 @@ import { dialogs } from '../../../lib/dialogs.svelte'
 import type { BranchRef, StashEntry } from '../../../../../shared/types'
 
 /** Runs a git action, surfacing its error; true when it succeeded. */
-async function attempt(action: () => Promise<unknown>): Promise<boolean> {
+export async function attempt(action: () => Promise<unknown>): Promise<boolean> {
   try {
     await action()
     return true
@@ -98,7 +98,7 @@ export async function deleteBranch(worktreeId: string, branch: BranchRef): Promi
 async function forceDeleteBranch(worktreeId: string, branch: BranchRef): Promise<boolean> {
   const choice = await dialogs.confirm({
     title: `${branch.name} is not fully merged`,
-    body: 'Its commits are on no other branch. Deleting it anyway loses them.',
+    body: 'Git finds its commits in neither the checked-out branch nor its upstream. Deleting it anyway loses any of them no other branch has.',
     actions: [
       { id: 'force', label: 'Delete anyway', kind: 'danger' },
       { id: 'cancel', label: 'Keep it' }
@@ -138,6 +138,6 @@ export function copyText(text: string): void {
 }
 
 /** A short confirmation toast. */
-function notify(message: string): void {
+export function notify(message: string): void {
   dialogs.notify({ level: 'info', message })
 }

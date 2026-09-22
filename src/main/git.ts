@@ -198,6 +198,34 @@ export async function push(worktreePath: string): Promise<string> {
   return out.trim()
 }
 
+// Push the worktree's HEAD to a branch on an explicit repository. `push -u
+// origin HEAD` cannot do this: a pull request's head branch lives wherever it
+// was opened from, which for a fork is not origin at all.
+export async function pushHeadTo(
+  worktreePath: string,
+  remoteUrl: string,
+  branch: string
+): Promise<string> {
+  const out = await gitFor(worktreePath).raw(['push', remoteUrl, `HEAD:refs/heads/${branch}`])
+  return out.trim()
+}
+
+// Point a ref at a commit (or at whatever another ref names).
+export async function updateRef(worktreePath: string, ref: string, target: string): Promise<void> {
+  await gitFor(worktreePath).raw(['update-ref', ref, target])
+}
+
+// How many commits the worktree's HEAD has that `ref` does not.
+export async function commitsAhead(worktreePath: string, ref: string): Promise<number> {
+  try {
+    const out = await gitFor(worktreePath).raw(['rev-list', '--count', `${ref}..HEAD`])
+    return Number(out.trim()) || 0
+  } catch {
+    // The ref is only there once the pull request has been fetched.
+    return 0
+  }
+}
+
 // Merge a feature branch into the base branch locally. The merge runs in the
 // main worktree (mainWorktreePath) because a branch checked out in another
 // worktree cannot be checked out here; the base branch is expected to live in
@@ -318,6 +346,20 @@ export async function mergeWorktree(
       return { status: 'conflict', files, summary: (err as Error).message }
     }
     throw err
+  }
+}
+
+// Whether a merge is underway in this worktree. MERGE_HEAD exists for as long
+// as one is, including after every conflict has been resolved and staged —
+// which is exactly when the only thing left to offer is finishing it.
+export async function mergeInProgress(worktreePath: string): Promise<boolean> {
+  try {
+    // simple-git does not reliably reject on rev-parse's exit code, so the
+    // answer is whether a sha came back, not whether the call threw.
+    const out = await gitFor(worktreePath).raw(['rev-parse', '-q', '--verify', 'MERGE_HEAD'])
+    return out.trim().length > 0
+  } catch {
+    return false
   }
 }
 

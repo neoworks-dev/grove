@@ -51,7 +51,8 @@ import type {
   GithubReviewThread,
   GithubStateFilter,
   GithubStatus,
-  MergePrOptions
+  MergePrOptions,
+  PrCheckoutState
 } from '../../../../../shared/types'
 
 /** How many items each side of the dashboard asks for. */
@@ -162,6 +163,15 @@ class GithubStore {
    * here too — GitHub returns those to their author and to nobody else.
    */
   prReviews = $state<Record<number, GithubPrReview>>({})
+
+  /**
+   * Where each pull request's checkout stands against the pull request, keyed
+   * by number. Loaded when a conflicting pull request is opened and refreshed
+   * after anything that moves the checkout, so the banner offers resolving or
+   * pushing rather than both.
+   */
+  prCheckouts = $state<Record<number, PrCheckoutState>>({})
+  prCheckoutBusy = $state(false)
 
   /** The comment being written over the buffer, or null while none is. */
   prComment = $state<PrCommentTarget | null>(null)
@@ -706,10 +716,7 @@ export async function setPrThreadResolved(
  * thread standing with its replies, which is what GitHub does and what driving
  * it showed — the opposite of what the confirmation first claimed.
  */
-export async function deletePrReviewComment(
-  number: number,
-  commentId: string
-): Promise<boolean> {
+export async function deletePrReviewComment(number: number, commentId: string): Promise<boolean> {
   const picked = await dialogs.confirm({
     title: 'Delete this comment?',
     body: 'It goes from the conversation for good — GitHub keeps no copy.',
@@ -888,6 +895,76 @@ export async function checkoutPr(detail: GithubItemDetail): Promise<string | nul
     return null
   } finally {
     github.busy = false
+  }
+}
+
+/** Re-read where a pull request's checkout stands, for the conflict banner. */
+export async function loadPrCheckoutState(number: number): Promise<void> {
+  try {
+    const state = await window.workbench.github.prCheckoutState(number)
+    github.prCheckouts = { ...github.prCheckouts, [number]: state }
+  } catch (err) {
+    // The banner is an offer, not the view — a repository gh cannot answer for
+    // should not blank the thread.
+    github.error = (err as Error).message
+  }
+}
+
+/**
+ * Merge the pull request's base branch into its checkout, which is what turns
+ * a conflict GitHub reports into conflicts on disk, and show them.
+ *
+ * The result is resolved in the Git Changes view, so that is where this leaves
+ * the user — the pane itself has nothing more to offer until the merge is
+ * committed and ready to push.
+ */
+export async function resolvePrConflicts(detail: GithubItemDetail): Promise<void> {
+  if (!detail.baseRefName) return
+  github.prCheckoutBusy = true
+  try {
+    const result = await window.workbench.github.resolvePrConflicts(
+      detail.number,
+      detail.baseRefName
+    )
+    await refreshWorktrees()
+    await selectWorktree(result.worktreeId)
+    await loadPrCheckoutState(detail.number)
+
+    if (result.merge.status === 'conflict') {
+      layout.ensurePane('changes')
+      return
+    }
+    if (result.merge.status === 'up-to-date') {
+      dialogs.notify({
+        level: 'info',
+        message: `${detail.baseRefName} is already in this pull request.`
+      })
+      return
+    }
+    dialogs.notify({ level: 'info', message: `Merged ${detail.baseRefName} without conflicts.` })
+  } catch (err) {
+    dialogs.notify({ level: 'error', message: (err as Error).message })
+  } finally {
+    github.prCheckoutBusy = false
+  }
+}
+
+/**
+ * Push the resolved checkout back to the pull request's head branch. Until this
+ * runs the conflict is only fixed locally and GitHub still reports it.
+ */
+export async function pushPrBranch(number: number): Promise<void> {
+  github.prCheckoutBusy = true
+  try {
+    await window.workbench.github.pushPrBranch(number)
+    await loadPrCheckoutState(number)
+    // The push moves mergeStateStatus, which is what the banner reads.
+    await loadDetail({ kind: 'pull', number }, { silent: true })
+    dialogs.notify({ level: 'info', message: `Pushed to pull request #${number}.` })
+  } catch (err) {
+    dialogs.notify({ level: 'error', message: (err as Error).message })
+  } finally {
+    github.prCheckoutBusy = false
   }
 }
 

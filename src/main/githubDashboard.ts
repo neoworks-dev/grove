@@ -43,7 +43,8 @@ import type {
   GithubReviewThread,
   GithubStateFilter,
   GithubStatus,
-  MergePrOptions
+  MergePrOptions,
+  PrPushTarget
 } from '../shared/types'
 
 // GraphQL `first:` tops out at 100 per connection.
@@ -619,6 +620,8 @@ query($owner: String!, $name: String!, $number: Int!, $limit: Int!) {
         ${optionalFields(capabilities, false)}
         isDraft additions deletions changedFiles
         headRefName baseRefName reviewDecision mergeStateStatus
+        maintainerCanModify
+        headRepository { url nameWithOwner viewerPermission }
         timelineItems(first: $limit, itemTypes: [${PULL_TIMELINE_TYPES.join(', ')}]) {
           nodes {${timelineNodeFields(true)}
           }
@@ -685,6 +688,12 @@ interface DetailNode extends GraphqlOptionalNode {
   baseRefName?: string
   reviewDecision?: string | null
   mergeStateStatus?: string
+  maintainerCanModify?: boolean
+  headRepository?: {
+    url: string
+    nameWithOwner: string
+    viewerPermission: string | null
+  } | null
 }
 
 interface DetailResponse {
@@ -864,7 +873,9 @@ export async function fetchItem(
     headRefName: node.headRefName,
     baseRefName: node.baseRefName,
     reviewDecision: node.reviewDecision,
-    mergeStateStatus: node.mergeStateStatus
+    mergeStateStatus: node.mergeStateStatus,
+    maintainerCanModify: node.maintainerCanModify,
+    headRepository: node.headRepository
   }
 }
 
@@ -1220,6 +1231,98 @@ query($owner: String!, $name: String!, $number: Int!, $limit: Int!) {
     }
   }
 }`.trim()
+
+// Where a pull request's head branch lives and whether it can be written to.
+// Asked on its own rather than read off the item detail, because the answer
+// decides whether a push is offered and the detail is the renderer's copy.
+const HEAD_BRANCH_QUERY = `
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    viewerPermission
+    pullRequest(number: $number) {
+      headRefName
+      maintainerCanModify
+      headRepository { url nameWithOwner viewerPermission }
+    }
+  }
+}`.trim()
+
+interface HeadBranchResponse {
+  data: {
+    repository: {
+      viewerPermission: string | null
+      pullRequest: {
+        headRefName: string
+        maintainerCanModify: boolean
+        headRepository: {
+          url: string
+          nameWithOwner: string
+          viewerPermission: string | null
+        } | null
+      } | null
+    } | null
+  }
+}
+
+/** Repository permissions that carry push access. */
+const WRITE_PERMISSIONS = new Set(['WRITE', 'MAINTAIN', 'ADMIN'])
+
+export interface PrPushDecision {
+  target: PrPushTarget | null
+  blockedReason: string | null
+}
+
+/**
+ * Where a push of a resolved pull request would go, or why it cannot go
+ * anywhere.
+ *
+ * Write access to the head repository is the direct route. A fork that allows
+ * maintainer edits is the other one: the viewer has no permission on the fork
+ * itself, and pushes on the strength of write access to the base repository.
+ */
+export function decidePushTarget(
+  basePermission: string | null,
+  pullRequest: {
+    headRefName: string
+    maintainerCanModify: boolean
+    headRepository: { url: string; nameWithOwner: string; viewerPermission: string | null } | null
+  }
+): PrPushDecision {
+  const head = pullRequest.headRepository
+  if (!head) {
+    return { target: null, blockedReason: 'the branch this was opened from is gone' }
+  }
+
+  const target: PrPushTarget = {
+    repository: head.nameWithOwner,
+    branch: pullRequest.headRefName,
+    url: head.url
+  }
+  if (WRITE_PERMISSIONS.has(head.viewerPermission || '')) {
+    return { target, blockedReason: null }
+  }
+  if (pullRequest.maintainerCanModify && WRITE_PERMISSIONS.has(basePermission || '')) {
+    return { target, blockedReason: null }
+  }
+  if (!pullRequest.maintainerCanModify) {
+    return {
+      target: null,
+      blockedReason: `${head.nameWithOwner} does not allow edits from maintainers`
+    }
+  }
+  return { target: null, blockedReason: `no write access to ${head.nameWithOwner}` }
+}
+
+/** `decidePushTarget` against what GitHub says about this pull request. */
+export async function fetchPushTarget(repoPath: string, number: number): Promise<PrPushDecision> {
+  const repo = await repoRef(repoPath)
+  const [owner, name] = repo.nameWithOwner.split('/')
+  const raw = await graphql(repoPath, HEAD_BRANCH_QUERY, { owner, name, number })
+  const repository = parseJson<HeadBranchResponse>(raw).data.repository
+  const pullRequest = repository?.pullRequest
+  if (!pullRequest) throw new Error(`GitHub returned no pull request #${number}`)
+  return decidePushTarget(repository?.viewerPermission || null, pullRequest)
+}
 
 const VIEWED_MUTATION = `
 mutation($id: ID!, $path: String!) {
@@ -1596,10 +1699,7 @@ export async function addPrReviewReply(
  * deleting the comment a thread starts with takes the thread and its replies
  * with it, which is GitHub's rule and not one worth hiding.
  */
-export async function deletePrReviewComment(
-  repoPath: string,
-  commentId: string
-): Promise<void> {
+export async function deletePrReviewComment(repoPath: string, commentId: string): Promise<void> {
   await graphql(repoPath, DELETE_COMMENT_MUTATION, { commentId })
 }
 

@@ -1,6 +1,8 @@
 <script lang="ts">
   // A small icon button on a section header or a row. It stops the click there,
-  // so acting on a row never also selects or expands it.
+  // so acting on a row never also selects or expands it. The negative margin
+  // keeps it from adding height: rows show it only on hover, and a row that
+  // grows under the pointer jumps everything below it.
   import type { Component } from 'svelte'
 
   let {
@@ -25,7 +27,7 @@
 </script>
 
 <button
-  class="grid size-5 shrink-0 place-items-center rounded text-dim hover:bg-raised hover:text-default disabled:opacity-40"
+  class="-my-1 grid size-5 shrink-0 place-items-center rounded text-dim hover:bg-raised hover:text-default disabled:opacity-40"
   {title}
   aria-label={title}
   {disabled}

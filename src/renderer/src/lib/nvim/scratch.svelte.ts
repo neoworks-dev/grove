@@ -67,6 +67,10 @@ const SCRATCH_LUA = `
 local token, title, lines, filetype, readonly = ...
 local buf = vim.api.nvim_create_buf(false, true)
 vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+-- Filling an acwrite buffer marks it modified, and a modified bufhidden=wipe
+-- buffer cannot be left (E37) — opening the next buffer over this one would
+-- fail. The initial content is not an edit.
+vim.bo[buf].modified = false
 vim.bo[buf].buftype = 'acwrite'
 vim.bo[buf].bufhidden = 'wipe'
 vim.bo[buf].swapfile = false

@@ -629,7 +629,7 @@ function freePort(): Promise<number> {
 
 // ------------------------------------------------------------------ charters
 
-const CHARTER_DIR = join(repoRoot, '.claude', 'skills', 'grove-qa', 'charters')
+const CHARTER_DIR = join(repoRoot, '.claude', 'skills', 'grove-debug', 'charters')
 
 /**
  * Turn a Claude Code instance loose on the app and let it report what it finds.
@@ -669,7 +669,7 @@ happened, and what you expected.`
 
   const prompt = `You are testing Grove by using it, the way a person would.
 
-Read .claude/skills/grove-qa/SKILL.md first. It has the harness commands, how to
+Read .claude/skills/grove-debug/SKILL.md first. It has the harness commands, how to
 see what is on screen, and what is worth reporting.
 
 A session is already running. Do not start, stop or rebuild one.

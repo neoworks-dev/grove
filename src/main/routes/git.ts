@@ -5,6 +5,7 @@ import type { Context } from '@neoworks/extension-system'
 import { route } from '../kernel/route'
 import * as git from '../git'
 import * as conflicts from '../conflicts'
+import * as hunkStaging from '../hunkStaging'
 import * as inlineDiff from '../inlineDiff'
 import * as worktrees from '../worktrees'
 import type { ConflictChoice, DiffFile, InlineHunk } from '../../shared/types'
@@ -88,6 +89,21 @@ export const gitRoutes = {
     route(ctx, 'git:unstage', (_e, worktreeId: string, paths: string[]) => {
       const worktree = ctx.workbench.findWorktree(worktreeId)
       return git.unstage(worktree.path, paths)
+    })
+
+    route(ctx, 'git:stageHunk', (_e, worktreeId: string, file: DiffFile, hunkIndex: number) => {
+      const worktree = ctx.workbench.findWorktree(worktreeId)
+      return hunkStaging.stageHunk(worktree.path, file, hunkIndex)
+    })
+
+    route(ctx, 'git:unstageHunk', (_e, worktreeId: string, file: DiffFile, hunkIndex: number) => {
+      const worktree = ctx.workbench.findWorktree(worktreeId)
+      return hunkStaging.unstageHunk(worktree.path, file, hunkIndex)
+    })
+
+    route(ctx, 'git:branchStatus', (_e, worktreeId: string) => {
+      const worktree = ctx.workbench.findWorktree(worktreeId)
+      return git.branchStatus(worktree.path)
     })
 
     route(ctx, 'git:commit', (_e, worktreeId: string, message: string) => {

@@ -1,26 +1,24 @@
 <script lang="ts">
-  // Ship-it action bar for the diff pane: commit staged changes, push + open a
-  // PR, merge (via GitHub or locally into the base branch), then archive the
-  // worktree. Each step streams its git/gh output into the log area below.
-  import { store } from '../lib/store.svelte'
-  import type { DiffFile, PrMergeMethod } from '../../../shared/types'
+  // The ship-it chain under the changes: push + open a PR, merge (via GitHub or
+  // locally into the base branch), then archive the worktree. Committing is the
+  // commit box's job at the top of the view; its message doubles as the PR
+  // title. Each step streams its git/gh output into the log area below.
+  import { store } from '../../../lib/store.svelte'
+  import type { PrMergeMethod } from '../../../../../shared/types'
 
   let {
     worktreeId,
-    files,
+    commitMessage,
     onChanged
   }: {
     worktreeId: string
-    files: DiffFile[]
+    commitMessage: string
     onChanged: () => void
   } = $props()
 
-  let commitMessage = $state('')
   let busy = $state(false)
   let log = $state<string[]>([])
   let mergeMenuOpen = $state(false)
-
-  const stagedCount = $derived(files.filter((file) => file.staged).length)
 
   const baseBranch = $derived(store.config?.workbench.default_base_branch || 'main')
   const branch = $derived(
@@ -49,23 +47,6 @@
     } finally {
       busy = false
     }
-  }
-
-  function commit(): void {
-    if (stagedCount === 0) {
-      store.setError('Nothing staged to commit')
-      return
-    }
-    if (commitMessage.trim().length === 0) {
-      store.setError('Commit message is empty')
-      return
-    }
-    const message = commitMessage
-    void run('git commit', async () => {
-      const out = await window.workbench.git.commit(worktreeId, message)
-      commitMessage = ''
-      return out
-    })
   }
 
   function pushAndPr(): void {
@@ -99,24 +80,6 @@
 </script>
 
 <div class="border-t border-line px-3 py-2">
-  <div class="mb-2 flex items-center gap-1">
-    <input
-      class="min-w-0 flex-1 rounded border border-line bg-canvas px-2 py-1 text-xs outline-none focus:border-line-strong"
-      placeholder="Commit message"
-      bind:value={commitMessage}
-      disabled={busy}
-      onkeydown={(event) => event.key === 'Enter' && commit()}
-    />
-    <button
-      class="shrink-0 rounded bg-action px-2 py-1 text-2xs text-action-fg disabled:opacity-50"
-      onclick={commit}
-      disabled={busy || stagedCount === 0}
-      title={stagedCount === 0 ? 'Stage files first' : `Commit ${stagedCount} staged`}
-    >
-      Commit
-    </button>
-  </div>
-
   <div class="flex items-center gap-1">
     <button
       class="rounded border border-line px-2 py-1 text-2xs hover:bg-hover disabled:opacity-50"

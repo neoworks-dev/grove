@@ -136,15 +136,16 @@ return buf
 `
 
 // Open a scratch buffer in the active editor and register it as a grove tab.
-// Resolves true once the buffer is the editor's current one.
-export async function openScratch(options: ScratchOptions): Promise<boolean> {
+// Resolves to the tab's key once the buffer is the editor's current one, or
+// null when it could not be opened.
+export async function openScratch(options: ScratchOptions): Promise<string | null> {
   start()
   const worktreeId = store.selectedWorktreeId
-  if (!worktreeId) return false
+  if (!worktreeId) return null
   const session = anyNvimSession()
   if (!session?.id) {
     store.setError('Open an editor pane first.')
-    return false
+    return null
   }
   counter += 1
   const key = `scratch://${counter}/${options.title}`
@@ -156,18 +157,18 @@ export async function openScratch(options: ScratchOptions): Promise<boolean> {
     ])
   } catch (err) {
     store.setError((err as Error).message)
-    return false
+    return null
   }
   if (typeof bufnr !== 'number') {
     store.setError('Failed to open scratch buffer.')
-    return false
+    return null
   }
   entries.set(key, { key, nvimId: session.id, bufnr, onWrite: options.onWrite })
   let name = options.title
   if (options.tabName) name = options.tabName
   store.openTab({ worktreeId, path: key, name, scratch: true, diff: options.diff })
   session.focus()
-  return true
+  return key
 }
 
 // Remove a scratch buffer: drop the registry entry and the grove tab, and wipe

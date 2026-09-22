@@ -29,6 +29,7 @@
     unregisterNvimSession
   } from '../lib/nvim/registry'
   import { scratchFor, closeScratch } from '../lib/nvim/scratch.svelte'
+  import { restoreDiff } from '../lib/nvim/diffTabs'
   import { editorHasContent } from '../lib/nvim/visibility'
   import { nvimKeymapBindings, type NvimMapping } from '../lib/nvimKeymap'
   import { operatorHintEntries, operatorTitle } from '../lib/nvimOperatorHints'
@@ -716,6 +717,7 @@ end, ns)
       await window.workbench.nvim
         .request(id, 'nvim_set_current_buf', [scratch.bufnr])
         .catch(() => {})
+      await restoreDiff(id, path).catch(showRestoreError)
       return
     }
     try {
@@ -723,7 +725,15 @@ end, ns)
       syncNvimKeymap()
     } catch {
       // session gone, or the file vanished between the click and the open
+      return
     }
+    // A tab opened as a diff lost its other side when it was left.
+    await restoreDiff(id, path).catch(showRestoreError)
+  }
+
+  /** Reports a diff that could not be rebuilt on returning to its tab. */
+  function showRestoreError(err: unknown): void {
+    store.setError(`Could not restore the diff: ${(err as Error).message}`)
   }
 
   // Jump to a specific line when a search result (ripgrep) is accepted. Claim

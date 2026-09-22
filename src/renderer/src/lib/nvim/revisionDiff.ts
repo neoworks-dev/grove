@@ -1,15 +1,16 @@
 // A file as one revision left it, beside the same file at another, in Neovim's
 // own diff mode. When both sides are history, both are read-only scratch
-// buffers: the right one is a Grove tab named `file @ sha`, the left one sits
-// in a window inside the same editor pane, the way the pull-request diff places
-// its base side. Against the working tree, the right side is the real file
-// instead — editable, with its language server.
+// buffers: the right one is a Grove tab labelled with both sides, the left one
+// sits in a window inside the same editor pane, the way the pull-request diff
+// places its base side. Against the working tree, the right side is the real
+// file instead — editable, with its language server.
 //
 // The left window is marked `grove_revision_base`, which is how the next diff
 // reuses it instead of stacking another split, and how it is closed once the
-// right side leaves its window.
+// right side leaves its window. Coming back to the tab rebuilds it (diffTabs).
 
 import { openScratch } from './scratch.svelte'
+import { registerDiffRestore } from './diffTabs'
 import { waitForNvimSession } from './registry'
 import { store, openFileInEditor } from '../store.svelte'
 import type { CommitSummary, DiffFile } from '../../../../shared/types'
@@ -78,26 +79,54 @@ else
   vim.w[existing].grove_embedded = true
   vim.w[existing].grove_revision_base = true
 end
+-- Which right side the window is the base of, so leaving one diff for another
+-- does not close the window the next diff has just taken over.
+vim.w[existing].grove_revision_for = right_buf
 
 vim.api.nvim_win_call(existing, function() vim.cmd('diffthis') end)
 vim.api.nvim_win_call(right, function() vim.cmd('diffthis') end)
 
--- Once the right side leaves its window (tab switch, :q), the left side has
--- nothing to be a diff against, so it goes too.
+-- Once the right side leaves its window (tab switch, :q), its left side has
+-- nothing to be a diff against, so it goes too. The group is per buffer, so
+-- rebuilding the diff on return replaces the handler instead of adding one.
+local group = vim.api.nvim_create_augroup('grove_revision_' .. right_buf, { clear = true })
 vim.api.nvim_create_autocmd('BufWinLeave', {
+  group = group,
   buffer = right_buf,
   once = true,
   callback = function()
     vim.schedule(function()
-      for _, win in ipairs(base_windows()) do pcall(vim.api.nvim_win_close, win, true) end
-      pcall(vim.cmd, 'diffoff!')
+      for _, win in ipairs(base_windows()) do
+        if vim.w[win].grove_revision_for == right_buf then pcall(vim.api.nvim_win_close, win, true) end
+      end
+      if #base_windows() == 0 then pcall(vim.cmd, 'diffoff!') end
     end)
   end,
 })
 
 vim.api.nvim_set_current_win(right)
-vim.cmd('silent! normal! gg]c')
+-- A fresh diff starts on its first change; one rebuilt on return keeps the cursor.
+if args.jump then vim.cmd('silent! normal! gg]c') end
 `
+
+// The left side of a diff: its buffer name, the path its filetype is read
+// from, and its lines.
+interface BaseSide {
+  name: string
+  path: string
+  lines: string[]
+}
+
+/** Puts a base side beside the current window's buffer, in diff mode. */
+async function showDiff(nvimId: string, base: BaseSide, jump: boolean): Promise<void> {
+  await window.workbench.nvim.request(nvimId, 'nvim_exec_lua', [DIFF_LUA, [{ ...base, jump }]])
+}
+
+/** Shows a diff now, and has its tab rebuild it each time it is shown again. */
+async function showRestorableDiff(nvimId: string, tabPath: string, base: BaseSide): Promise<void> {
+  await showDiff(nvimId, base, true)
+  registerDiffRestore(tabPath, (id) => showDiff(id, base, false))
+}
 
 /** The last path segment, which is what a tab shows. */
 function baseName(path: string): string {
@@ -161,7 +190,7 @@ export async function openRevisionDiff(request: RevisionDiffRequest): Promise<vo
   const sides = await readSides(request, leftPath)
   if (!sides) return
 
-  const opened = await openScratch({
+  const tabPath = await openScratch({
     title: `${baseName(request.path)} @ ${request.rightLabel}`,
     tabName: baseName(request.path),
     diff: { left: request.leftLabel, right: request.rightLabel },
@@ -169,14 +198,15 @@ export async function openRevisionDiff(request: RevisionDiffRequest): Promise<vo
     readonly: true,
     onWrite: () => {}
   })
-  if (!opened) return
+  if (!tabPath) return
 
   const session = await waitForNvimSession()
   if (!session || !session.id) return
-  await window.workbench.nvim.request(session.id, 'nvim_exec_lua', [
-    DIFF_LUA,
-    [{ name: `${leftPath} @ ${request.leftLabel}`, path: request.path, lines: sides.left }]
-  ])
+  await showRestorableDiff(session.id, tabPath, {
+    name: `${leftPath} @ ${request.leftLabel}`,
+    path: request.path,
+    lines: sides.left
+  })
 }
 
 /** How long to wait for the editor to finish opening the working-tree file. */
@@ -221,10 +251,11 @@ export async function openWorkingTreeDiff(request: {
   const session = await waitForNvimSession()
   if (!session || !session.id) return
   if (!(await waitForActiveFile(session, request.path))) return
-  await window.workbench.nvim.request(session.id, 'nvim_exec_lua', [
-    DIFF_LUA,
-    [{ name: `${leftPath} @ ${request.label}`, path: request.path, lines: left }]
-  ])
+  await showRestorableDiff(session.id, absolutePath, {
+    name: `${leftPath} @ ${request.label}`,
+    path: request.path,
+    lines: left
+  })
 }
 
 /**

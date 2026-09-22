@@ -198,6 +198,34 @@ export async function push(worktreePath: string): Promise<string> {
   return out.trim()
 }
 
+// Push the worktree's HEAD to a branch on an explicit repository. `push -u
+// origin HEAD` cannot do this: a pull request's head branch lives wherever it
+// was opened from, which for a fork is not origin at all.
+export async function pushHeadTo(
+  worktreePath: string,
+  remoteUrl: string,
+  branch: string
+): Promise<string> {
+  const out = await gitFor(worktreePath).raw(['push', remoteUrl, `HEAD:refs/heads/${branch}`])
+  return out.trim()
+}
+
+// Point a ref at a commit (or at whatever another ref names).
+export async function updateRef(worktreePath: string, ref: string, target: string): Promise<void> {
+  await gitFor(worktreePath).raw(['update-ref', ref, target])
+}
+
+// How many commits the worktree's HEAD has that `ref` does not.
+export async function commitsAhead(worktreePath: string, ref: string): Promise<number> {
+  try {
+    const out = await gitFor(worktreePath).raw(['rev-list', '--count', `${ref}..HEAD`])
+    return Number(out.trim()) || 0
+  } catch {
+    // The ref is only there once the pull request has been fetched.
+    return 0
+  }
+}
+
 // Merge a feature branch into the base branch locally. The merge runs in the
 // main worktree (mainWorktreePath) because a branch checked out in another
 // worktree cannot be checked out here; the base branch is expected to live in

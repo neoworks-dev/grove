@@ -21,6 +21,8 @@ import type {
   ConflictHunk,
   ConflictChoice,
   MergeState,
+  PrCheckoutState,
+  PrConflictResolution,
   WorktreeChatMessage,
   InlineHunk,
   AppliedRange,
@@ -240,6 +242,9 @@ export interface WorkbenchApi {
     prDiff: (number: number, baseRefName: string) => Promise<GithubPrDiff>
     prBaseFile: (baseOid: string, file: GithubPrFile) => Promise<string>
     checkoutPr: (number: number, baseRefName: string) => Promise<Worktree>
+    resolvePrConflicts: (number: number, baseRefName: string) => Promise<PrConflictResolution>
+    prCheckoutState: (number: number) => Promise<PrCheckoutState>
+    pushPrBranch: (number: number) => Promise<string>
     prViewedFiles: (number: number) => Promise<string[]>
     setPrFileViewed: (pullRequestId: string, path: string, viewed: boolean) => Promise<void>
     prReview: (number: number) => Promise<GithubPrReview>

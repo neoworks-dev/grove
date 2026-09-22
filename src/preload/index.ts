@@ -99,6 +99,10 @@ const workbench = {
       ipcRenderer.invoke('github:prBaseFile', baseOid, file),
     checkoutPr: (number: number, baseRefName: string) =>
       ipcRenderer.invoke('github:checkoutPr', number, baseRefName),
+    resolvePrConflicts: (number: number, baseRefName: string) =>
+      ipcRenderer.invoke('github:resolvePrConflicts', number, baseRefName),
+    prCheckoutState: (number: number) => ipcRenderer.invoke('github:prCheckoutState', number),
+    pushPrBranch: (number: number) => ipcRenderer.invoke('github:pushPrBranch', number),
     prViewedFiles: (number: number) => ipcRenderer.invoke('github:prViewedFiles', number),
     setPrFileViewed: (pullRequestId: string, path: string, viewed: boolean) =>
       ipcRenderer.invoke('github:setPrFileViewed', pullRequestId, path, viewed),

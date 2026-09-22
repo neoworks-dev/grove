@@ -512,6 +512,50 @@ export interface GithubItemDetail extends GithubItemShared {
   baseRefName?: string
   reviewDecision?: string | null
   mergeStateStatus?: string
+  /** Whether the base repository's maintainers may push to a fork's branch. */
+  maintainerCanModify?: boolean
+  /**
+   * The repository the head branch lives on, which for a fork is not the one
+   * the pull request was opened against. Null when the fork is gone.
+   */
+  headRepository?: {
+    url: string
+    nameWithOwner: string
+    viewerPermission: string | null
+  } | null
+}
+
+// The branch a resolved pull request is pushed back to. It lives on the head
+// repository, which for a fork is not the one the pull request was opened
+// against — so the push needs the URL, not a remote name.
+export interface PrPushTarget {
+  repository: string
+  branch: string
+  url: string
+}
+
+// Where a checked-out pull request stands against the pull request itself:
+// whether resolving its conflicts is underway, and whether the result can go
+// back to GitHub.
+export interface PrCheckoutState {
+  /** The `pr-<n>` worktree, or null when the pull request is not checked out. */
+  worktreeId: string | null
+  mergeInProgress: boolean
+  /** Files still carrying conflicts in that worktree. */
+  unresolved: number
+  /** Commits the checkout has that the pull request's head branch does not. */
+  ahead: number
+  /** Where a push would go, or null when pushing is not possible. */
+  pushTarget: PrPushTarget | null
+  /** Why pushing is not possible, when it is not. */
+  blockedReason: string | null
+}
+
+// The result of starting a conflict resolution: the checkout it happens in, and
+// what merging the base branch into it did.
+export interface PrConflictResolution {
+  worktreeId: string
+  merge: MergeResult
 }
 
 /** A relabelling of an item that already exists. */

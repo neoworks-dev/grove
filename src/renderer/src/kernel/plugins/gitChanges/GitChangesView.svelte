@@ -41,7 +41,8 @@
   let branchStatus = $state<BranchStatus | null>(null)
   let loading = $state(false)
   let selectedKey = $state<string | null>(null)
-  let commitMessage = $state('')
+  let commitSubject = $state('')
+  let commitDescription = $state('')
   // Bumped after every load, so expanded file rows re-read their hunks.
   let refreshKey = $state(0)
 
@@ -192,7 +193,8 @@
       {worktreeId}
       branch={branchName}
       stagedCount={stagedFiles.length}
-      bind:message={commitMessage}
+      bind:subject={commitSubject}
+      bind:description={commitDescription}
       onCommitted={load}
     />
   {/if}
@@ -262,6 +264,6 @@
   {#if worktreeId && merge.inProgress}
     <MergeBar {worktreeId} unresolved={merge.files.length} onChanged={load} />
   {:else if worktreeId}
-    <ShipItBar {worktreeId} {commitMessage} onChanged={load} />
+    <ShipItBar {worktreeId} commitMessage={commitSubject} onChanged={load} />
   {/if}
 </div>

@@ -271,16 +271,23 @@ return wins
     const closed = closedTabPaths(knownFileTabPaths, paths)
     knownFileTabPaths = paths
     const id = session?.id
-    if (!id) return
-    for (const path of closed) deleteBuffer(id, path)
+    if (!id || closed.length === 0) return
+    void deleteBuffers(id, closed, store.activeTabPath)
   })
 
-  /** Drops a closed tab's buffer from nvim, so it is neither shown nor fallen back to. */
-  function deleteBuffer(id: string, path: string): void {
-    if (path === lastPushedPath) lastPushedPath = null
-    void window.workbench.nvim
-      .request(id, 'nvim_exec_lua', [CLOSE_BUFFER_LUA, [path]])
-      .catch(() => {})
+  /**
+   * Drops closed tabs' buffers from nvim, so they are neither shown nor fallen
+   * back to. A diff is left first: deleting the file's buffer closes its window
+   * and would leave the diff's base window as the one still on screen.
+   */
+  async function deleteBuffers(id: string, paths: string[], nextPath: string | null): Promise<void> {
+    await leaveDiff(id, nextPath ?? '').catch(() => {})
+    for (const path of paths) {
+      if (path === lastPushedPath) lastPushedPath = null
+      await window.workbench.nvim
+        .request(id, 'nvim_exec_lua', [CLOSE_BUFFER_LUA, [path]])
+        .catch(() => {})
+    }
   }
 
   function cssVar(name: string, fallback: string): string {
@@ -408,14 +415,24 @@ vim.api.nvim_create_autocmd('BufDelete', {
 return snapshot()
 `
 
-  // Drops a file's buffer when its grove tab closes. Modified buffers survive
-  // (no force), so an unsaved edit is never thrown away behind the user's back.
+  // Drops a file's buffer when its grove tab closes. Modified buffers survive,
+  // so an unsaved edit is never thrown away behind the user's back. Left to
+  // itself nvim refills the buffer's windows with some other listed buffer —
+  // a diff's base side, a scratch — which then stays on screen with no tab, so
+  // those windows get an empty buffer first, wiped as soon as anything replaces it.
   const CLOSE_BUFFER_LUA = `
 local path = ...
 local buf = vim.fn.bufnr(path)
-if buf > 0 then
-  pcall(vim.api.nvim_buf_delete, buf, {})
+if buf <= 0 or vim.bo[buf].modified then return end
+local windows = vim.fn.win_findbuf(buf)
+if #windows > 0 then
+  local empty = vim.api.nvim_create_buf(true, false)
+  vim.bo[empty].bufhidden = 'wipe'
+  for _, win in ipairs(windows) do
+    vim.api.nvim_win_set_buf(win, empty)
+  end
 end
+pcall(vim.api.nvim_buf_delete, buf, {})
 `
 
   interface BufferSnapshot {

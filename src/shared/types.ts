@@ -75,6 +75,24 @@ export interface BranchCommits {
   hasMore: boolean
 }
 
+// A page of the whole repository's history for the commit graph, children
+// before parents. `head` is the commit this worktree has checked out.
+export interface GraphPage {
+  commits: CommitSummary[]
+  head: string | null
+  hasMore: boolean
+}
+
+// A page of the commits matching a search, newest first.
+export interface CommitSearchPage {
+  commits: CommitSummary[]
+  hasMore: boolean
+}
+
+// How far `git reset` moves: the branch only, the index too, or the working
+// tree as well.
+export type ResetMode = 'soft' | 'mixed' | 'hard'
+
 // A local or remote-tracking branch. `name` is the short form (`main`,
 // `origin/main`); `remote` names the remote a remote-tracking branch belongs
 // to. `worktreePath` is where the branch is checked out, when it is — git
@@ -233,6 +251,7 @@ export type CheckpointTrigger =
   | 'pre-restore'
   | 'pre-merge'
   | 'pre-rebase'
+  | 'pre-reset'
   | 'manual'
   // Taken when a review batch opens. Its tree is the baseline every staged file
   // in that batch is diffed against, and the checkpoint ref keeps it reachable

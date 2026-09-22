@@ -354,8 +354,15 @@ export async function openRepoResult(result: {
   // Restore UI layout (split tree — or the legacy pane sizes — and open tabs).
   layout.apply(repoState)
   restoreTabs(repoState)
+  // Every row in the worktrees view shows its line counts and services, so
+  // fetch them for all worktrees now rather than one at a time as each is
+  // selected. The selected one is awaited: the services panel reads it next.
+  for (const worktree of result.worktrees) {
+    if (worktree.id === store.selectedWorktreeId) continue
+    void refreshWorktreeStatus(worktree.id)
+  }
   if (store.selectedWorktreeId) {
-    await refreshRuntimes(store.selectedWorktreeId)
+    await refreshWorktreeStatus(store.selectedWorktreeId)
   }
   syncWatched()
   // Unconfigured workspace and never dismissed: offer the setup wizard in the
@@ -415,6 +422,11 @@ export function syncWatched(): void {
   if (store.selectedWorktreeId) ids.add(store.selectedWorktreeId)
   for (const id of store.activeAgentWorktrees) ids.add(id)
   void window.workbench.fs.watch([...ids])
+}
+
+/** Fetches one worktree's line counts and services into the store. */
+async function refreshWorktreeStatus(worktreeId: string): Promise<void> {
+  await Promise.all([refreshRuntimes(worktreeId), refreshDiffStats(worktreeId)])
 }
 
 export async function refreshWorktrees(): Promise<void> {

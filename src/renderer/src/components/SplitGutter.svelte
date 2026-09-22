@@ -33,8 +33,8 @@
   }
 
   // Once a neighbor bottoms out at its min, dragging this many more px past the
-  // clamp collapses (closes) it — mirroring the dock resize, and independent of
-  // whether a min was set. Subtrees keep clamping; only single leaves disappear.
+  // clamp collapses it — independent of whether a min was set. Subtrees keep
+  // clamping; only single leaves disappear.
   const COLLAPSE_SLOP_PX = 40
 
   let dragging = $state(false)
@@ -48,9 +48,11 @@
   let pendingDelta = 0
   let frame: number | null = null
 
-  // Signed px dragged past the size clamp (resize can't absorb it). Grows while
-  // a bottomed-out neighbor is pushed further; triggers collapse past the slop.
+  // Signed px dragged past the size clamp (resize can't absorb it), and the
+  // pane it is pushing against. Past the slop that pane collapses: hidden while
+  // the drag is held, closed when it is released.
   let overshoot = 0
+  let overshootNode: LayoutNode | null = null
 
   // The two subtrees this gutter sits between.
   const before = $derived(split.children[gutterIndex])
@@ -75,7 +77,7 @@
 
   function onPointerDown(event: PointerEvent): void {
     dragging = true
-    overshoot = 0
+    setOvershoot(0, null)
     lastPos = horizontal ? event.clientX : event.clientY
     measure()
     event.preventDefault()
@@ -102,7 +104,9 @@
   // A pane that holds a size owns the boundary next to it: the drag changes its
   // pixels and its siblings absorb the difference. Only when neither side holds
   // one do the two shares move against each other.
-  function applyDelta(delta: number): void {
+  function applyDelta(requestedDelta: number): void {
+    const delta = unwindOvershoot(requestedDelta)
+    if (delta === 0) return
     const beforePx = layout.fixedSizePx(before)
     const afterPx = layout.fixedSizePx(after)
     if (beforePx === null && afterPx === null) {
@@ -113,23 +117,54 @@
     if (afterPx !== null) resizeFixed(after, afterPx, afterPx - delta)
   }
 
+  /**
+   * Spends a drag back toward a squeezed pane on the overshoot first, so
+   * pulling back retraces the drag — un-collapsing the pane on the way — before
+   * it starts growing. Returns what is left of the delta for resizing.
+   */
+  function unwindOvershoot(delta: number): number {
+    if (overshoot === 0 || Math.sign(delta) === Math.sign(overshoot)) return delta
+    const unwound = overshoot + delta
+    if (Math.sign(unwound) === Math.sign(overshoot)) {
+      setOvershoot(unwound, overshootNode)
+      return 0
+    }
+    setOvershoot(0, null)
+    return unwound
+  }
+
+  /** Adds drag the clamp could not absorb against `node`; a reversal starts the count over. */
+  function addOvershoot(leftoverPx: number, node: LayoutNode): void {
+    let total = leftoverPx
+    if (Math.sign(leftoverPx) === Math.sign(overshoot)) total += overshoot
+    setOvershoot(total, node)
+  }
+
+  /** Records the overshoot, and hides its pane once it passes the slop. */
+  function setOvershoot(amount: number, node: LayoutNode | null): void {
+    overshoot = amount
+    overshootNode = node
+    if (amount === 0) overshootNode = null
+    let collapsingLeafId: string | null = null
+    if (overshootNode?.kind === 'leaf' && Math.abs(overshoot) > COLLAPSE_SLOP_PX) {
+      collapsingLeafId = overshootNode.id
+    }
+    layout.collapsingLeafId = collapsingLeafId
+  }
+
   // Commit a fixed pane's new size, stopped at its minimum — or at its current
   // size, when the layout already squeezed it under that. Drag the stop can't
-  // absorb piles up as overshoot, and past the slop the pane closes.
+  // absorb piles up as overshoot.
   function resizeFixed(node: LayoutNode, currentPx: number, requestedPx: number): void {
     const floorPx = Math.min(layout.minSizePx(node, split.direction), currentPx)
     const clamped = Math.max(floorPx, requestedPx)
     layout.setFixedSizePx(node.id, clamped)
     const leftover = requestedPx - clamped
     if (leftover === 0) {
-      overshoot = 0
+      setOvershoot(0, null)
       return
     }
-    if (Math.sign(leftover) !== Math.sign(overshoot)) overshoot = 0
-    overshoot += leftover
-    if (node.kind !== 'leaf' || Math.abs(overshoot) <= COLLAPSE_SLOP_PX) return
-    endDrag()
-    layout.closeLeaf(node.id)
+    addOvershoot(leftover, node)
   }
 
   // Move the boundary between two panes that share the container.
@@ -141,22 +176,18 @@
     const requested = delta / containerPx
     const clamped = clampGutterShift(requested, beforeFraction, afterFraction, minFrac)
     const leftoverPx = (requested - clamped) * containerPx
-    if (leftoverPx !== 0 && collapseSqueezed(leftoverPx)) return
-    if (leftoverPx === 0) overshoot = 0
+    if (leftoverPx === 0) setOvershoot(0, null)
+    // leftover > 0 squeezes the right child; < 0 the left one.
+    if (leftoverPx > 0) addOvershoot(leftoverPx, after)
+    if (leftoverPx < 0) addOvershoot(leftoverPx, before)
     if (clamped !== 0) layout.resize(split.id, gutterIndex, clamped, minFrac)
   }
 
-  // Track drag the clamp couldn't absorb; past the slop the squeezed pane
-  // closes. Returns whether it did. A reversal resets the count.
-  function collapseSqueezed(leftoverPx: number): boolean {
-    if (Math.sign(leftoverPx) !== Math.sign(overshoot)) overshoot = 0
-    overshoot += leftoverPx
-    // leftover > 0 squeezes the right child; < 0 the left one.
-    const squeezed = overshoot > 0 ? after : before
-    if (squeezed?.kind !== 'leaf' || Math.abs(overshoot) <= COLLAPSE_SLOP_PX) return false
-    endDrag()
-    layout.closeLeaf(squeezed.id)
-    return true
+  /** Closes the pane the drag left collapsed, if any, and clears the overshoot. */
+  function commitCollapse(): void {
+    const leafId = layout.collapsingLeafId
+    setOvershoot(0, null)
+    if (leafId) layout.closeLeaf(leafId)
   }
 
   function endDrag(): void {
@@ -172,9 +203,11 @@
   function onPointerUp(): void {
     flushResize()
     endDrag()
+    commitCollapse()
   }
 
-  // Keyboard resize for accessibility.
+  // Keyboard resize for accessibility. There is no drag to release, so a pane
+  // pushed past its collapse point closes straight away.
   function onKeyDown(event: KeyboardEvent): void {
     const grow = event.key === 'ArrowRight' || event.key === 'ArrowDown'
     const shrink = event.key === 'ArrowLeft' || event.key === 'ArrowUp'
@@ -182,6 +215,7 @@
     event.preventDefault()
     measure()
     applyDelta(grow ? 24 : -24)
+    if (layout.collapsingLeafId) commitCollapse()
   }
 </script>
 

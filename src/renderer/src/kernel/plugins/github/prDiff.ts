@@ -75,7 +75,8 @@ else
 end
 
 vim.api.nvim_set_current_win(file)
-vim.cmd('silent! normal! gg]c')
+-- A file opened fresh starts on its first change; one re-shown keeps the cursor.
+if args.jump then vim.cmd('silent! normal! gg]c') end
 `
 
 // A file the pull request deleted has no worktree copy to sit beside, so its
@@ -144,7 +145,19 @@ export async function diffAgainstBase(file: GithubPrFile, baseContent: string): 
   if (!session || !session.id) return
   await window.workbench.nvim.request(session.id, 'nvim_exec_lua', [
     DIFF_LUA,
-    [luaArgs(file, baseContent)]
+    [{ ...luaArgs(file, baseContent), jump: true }]
+  ])
+}
+
+/** Puts the base copy back beside a file shown again, leaving the cursor where it was. */
+export async function redrawDiffAgainstBase(
+  nvimId: string,
+  file: GithubPrFile,
+  baseContent: string
+): Promise<void> {
+  await window.workbench.nvim.request(nvimId, 'nvim_exec_lua', [
+    DIFF_LUA,
+    [{ ...luaArgs(file, baseContent), jump: false }]
   ])
 }
 

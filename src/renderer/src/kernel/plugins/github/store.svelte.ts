@@ -11,11 +11,13 @@ import {
   store,
   openFileInEditor,
   refreshWorktrees,
-  selectWorktree
+  selectWorktree,
+  type TabDiff
 } from '../../../lib/store.svelte'
 import { layout } from '../../../lib/layout.svelte'
 import { branchNameFor } from './branches'
-import { diffAgainstBase, showPrBaseOnly } from './prDiff'
+import { diffAgainstBase, redrawDiffAgainstBase, showPrBaseOnly } from './prDiff'
+import { registerDiffRestore } from '../../../lib/nvim/diffTabs'
 import { buildPrFileTree, nextUnreadFile } from './prFileTree'
 import { installPrReviewKeys, paintPrComments, type PrReviewRequest } from './prReview'
 import { clearRefusals, loadOnce, newReferenceLoads } from './referenceLoads'
@@ -999,11 +1001,29 @@ export async function openPrFile(detail: GithubItemDetail, file: GithubPrFile): 
     await paintOpenPrComments(detail.number)
     return
   }
-  openFileInEditor(worktreeId, `${worktree.path}/${file.path}`)
+  const path = `${worktree.path}/${file.path}`
+  openFileInEditor(worktreeId, path)
+  store.setTabDiff(worktreeId, path, prDiffSides(detail))
   await diffAgainstBase(file, base)
   // After the diff: the base side's window is one of the two the keys go on.
   await installPrReviewKeys(detail, file.path)
   await paintOpenPrComments(detail.number)
+  // Coming back to the tab rebuilds the base side, and with it the keys and
+  // comments that lived on the base buffer.
+  registerDiffRestore(path, async (nvimId) => {
+    await redrawDiffAgainstBase(nvimId, file, base)
+    await installPrReviewKeys(detail, file.path)
+    await paintOpenPrComments(detail.number)
+  })
+}
+
+/** What a pull request's file tab says its diff is between: base branch and head branch. */
+function prDiffSides(detail: GithubItemDetail): TabDiff {
+  let left = 'base'
+  if (detail.baseRefName) left = detail.baseRefName
+  let right = `#${detail.number}`
+  if (detail.headRefName) right = detail.headRefName
+  return { left, right }
 }
 
 /**

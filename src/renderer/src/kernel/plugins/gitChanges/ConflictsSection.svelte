@@ -6,6 +6,7 @@
   //
   // A file with nothing left to resolve is staged, which is what moves it out of
   // here and into the changes list.
+  import GitSection from './GitSection.svelte'
   import { store, openFileAtLine } from '../../../lib/store.svelte'
   import type { ConflictChoice, ConflictedFile, ConflictHunk } from '../../../../../shared/types'
 
@@ -73,19 +74,16 @@
   }
 </script>
 
-<div class="border-b border-line">
-  <div class="flex items-center gap-1.5 px-3 py-2">
-    <span class="text-2xs font-semibold uppercase tracking-caps text-red">
-      ⚠ Conflicts ({files.length})
-    </span>
-  </div>
-
+<GitSection title="Merge Conflicts" count={files.length} danger>
   {#each files as file (file.path)}
     <button
-      class="flex w-full items-center gap-2 py-1.5 pl-3 pr-2 text-left text-xs hover:bg-hover"
+      class="flex w-full items-center gap-1 py-[3px] pr-2 pl-1 text-left text-xs text-muted hover:bg-hover"
       onclick={() => toggle(file)}
     >
-      <span class="w-4 shrink-0 font-mono text-red">!</span>
+      <span class="w-3 shrink-0 text-center text-2xs text-dim"
+        >{openPath === file.path ? '▾' : '▸'}</span
+      >
+      <span class="w-3 shrink-0 text-center font-mono text-2xs text-red">!</span>
       <span class="truncate">{file.path}</span>
       <span class="ml-auto shrink-0 text-2xs text-dim">
         {#if file.hunks.length === 0}
@@ -98,7 +96,7 @@
 
     {#if openPath === file.path}
       {#each file.hunks as hunk, index (hunk.startLine)}
-        <div class="flex items-center gap-1 py-1 pl-9 pr-2 text-2xs">
+        <div class="flex items-center gap-1 py-1 pl-8 pr-2 text-2xs">
           <span class="shrink-0 font-mono text-dim" title="{hunk.oursLabel} vs {hunk.theirsLabel}">
             {hunkLabel(hunk)}
           </span>
@@ -139,11 +137,11 @@
       {/each}
 
       {#if file.hunks.length === 0}
-        <p class="py-1 pl-9 pr-3 text-2xs text-dim">
+        <p class="py-1 pl-8 pr-3 text-2xs text-dim">
           Conflicted over the file itself, not its contents — resolve it by staging the version you
           want, or removing it.
         </p>
       {/if}
     {/if}
   {/each}
-</div>
+</GitSection>

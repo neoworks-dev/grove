@@ -42,6 +42,52 @@ const workbench = {
       ipcRenderer.invoke('git:stage', worktreeId, paths),
     unstage: (worktreeId: string, paths: string[]) =>
       ipcRenderer.invoke('git:unstage', worktreeId, paths),
+    stageHunk: (worktreeId: string, file: unknown, hunkIndex: number) =>
+      ipcRenderer.invoke('git:stageHunk', worktreeId, file, hunkIndex),
+    unstageHunk: (worktreeId: string, file: unknown, hunkIndex: number) =>
+      ipcRenderer.invoke('git:unstageHunk', worktreeId, file, hunkIndex),
+    branchStatus: (worktreeId: string) => ipcRenderer.invoke('git:branchStatus', worktreeId),
+    pull: (worktreeId: string) => ipcRenderer.invoke('git:pull', worktreeId),
+    fetch: (worktreeId: string) => ipcRenderer.invoke('git:fetch', worktreeId),
+    branchCommits: (worktreeId: string, skip: number, limit: number) =>
+      ipcRenderer.invoke('git:branchCommits', worktreeId, skip, limit),
+    commitFiles: (worktreeId: string, sha: string) =>
+      ipcRenderer.invoke('git:commitFiles', worktreeId, sha),
+    graph: (worktreeId: string, skip: number, limit: number) =>
+      ipcRenderer.invoke('git:graph', worktreeId, skip, limit),
+    commitMessage: (worktreeId: string, sha: string) =>
+      ipcRenderer.invoke('git:commitMessage', worktreeId, sha),
+    searchCommits: (worktreeId: string, query: string, skip: number, limit: number) =>
+      ipcRenderer.invoke('git:searchCommits', worktreeId, query, skip, limit),
+    checkoutCommit: (worktreeId: string, sha: string) =>
+      ipcRenderer.invoke('git:checkoutCommit', worktreeId, sha),
+    createBranch: (worktreeId: string, name: string, sha: string, checkout: boolean) =>
+      ipcRenderer.invoke('git:createBranch', worktreeId, name, sha, checkout),
+    cherryPick: (worktreeId: string, sha: string) =>
+      ipcRenderer.invoke('git:cherryPick', worktreeId, sha),
+    revert: (worktreeId: string, sha: string) => ipcRenderer.invoke('git:revert', worktreeId, sha),
+    reset: (worktreeId: string, sha: string, mode: string) =>
+      ipcRenderer.invoke('git:reset', worktreeId, sha, mode),
+    fileAtRevision: (worktreeId: string, revision: string, relPath: string) =>
+      ipcRenderer.invoke('git:fileAtRevision', worktreeId, revision, relPath),
+    refs: (worktreeId: string) => ipcRenderer.invoke('git:refs', worktreeId),
+    stashes: (worktreeId: string) => ipcRenderer.invoke('git:stashes', worktreeId),
+    checkout: (worktreeId: string, branch: string, remote: boolean) =>
+      ipcRenderer.invoke('git:checkout', worktreeId, branch, remote),
+    mergeRef: (worktreeId: string, ref: string) =>
+      ipcRenderer.invoke('git:mergeRef', worktreeId, ref),
+    rebaseOnto: (worktreeId: string, onto: string) =>
+      ipcRenderer.invoke('git:rebaseOnto', worktreeId, onto),
+    deleteBranch: (worktreeId: string, branch: string, force: boolean) =>
+      ipcRenderer.invoke('git:deleteBranch', worktreeId, branch, force),
+    stashPush: (worktreeId: string, message: string) =>
+      ipcRenderer.invoke('git:stashPush', worktreeId, message),
+    stashApply: (worktreeId: string, ref: string, pop: boolean) =>
+      ipcRenderer.invoke('git:stashApply', worktreeId, ref, pop),
+    stashDrop: (worktreeId: string, ref: string) =>
+      ipcRenderer.invoke('git:stashDrop', worktreeId, ref),
+    compare: (worktreeId: string, base: string, head: string | null) =>
+      ipcRenderer.invoke('git:compare', worktreeId, base, head),
     commit: (worktreeId: string, message: string) =>
       ipcRenderer.invoke('git:commit', worktreeId, message),
     push: (worktreeId: string) => ipcRenderer.invoke('git:push', worktreeId),

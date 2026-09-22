@@ -10,7 +10,7 @@
 //     previous buffer instead of quitting Neovim, then drops the grove tab.
 // The buffer is bufhidden=wipe, so leaving it always discards it.
 
-import { store } from '../store.svelte'
+import { store, type TabDiff } from '../store.svelte'
 import { anyNvimSession } from './registry'
 
 export interface ScratchEntry {
@@ -23,8 +23,15 @@ export interface ScratchEntry {
 export interface ScratchOptions {
   // Buffer name + tab label (e.g. '[rename]').
   title: string
+  // A shorter tab label than the buffer name, which has to be unique.
+  tabName?: string
+  // The two sides, when the buffer is one side of a diff.
+  diff?: TabDiff
   lines: string[]
   filetype?: string
+  // A read-only buffer shows content that cannot be written back anywhere,
+  // such as a file as it stood at a past commit.
+  readonly?: boolean
   onWrite: (lines: string[]) => void | Promise<void>
 }
 
@@ -58,12 +65,16 @@ function start(): void {
   })
 }
 
-// Minimal nvim wiring for the buffer. Args: token, title, lines, filetype.
+// Minimal nvim wiring for the buffer. Args: token, title, lines, filetype, readonly.
 // Returns the created buffer number.
 const SCRATCH_LUA = `
-local token, title, lines, filetype = ...
+local token, title, lines, filetype, readonly = ...
 local buf = vim.api.nvim_create_buf(false, true)
 vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+-- Filling an acwrite buffer marks it modified, and a modified bufhidden=wipe
+-- buffer cannot be left (E37) — opening the next buffer over this one would
+-- fail. The initial content is not an edit.
+vim.bo[buf].modified = false
 vim.bo[buf].buftype = 'acwrite'
 vim.bo[buf].bufhidden = 'wipe'
 vim.bo[buf].swapfile = false
@@ -118,19 +129,23 @@ route('q', 'GroveScratchClose')
 route('wq', 'GroveScratchClose write')
 route('x', 'GroveScratchClose write')
 
+if readonly then vim.bo[buf].modifiable = false end
+
 vim.api.nvim_set_current_buf(buf)
 return buf
 `
 
 // Open a scratch buffer in the active editor and register it as a grove tab.
-export async function openScratch(options: ScratchOptions): Promise<void> {
+// Resolves to the tab's key once the buffer is the editor's current one, or
+// null when it could not be opened.
+export async function openScratch(options: ScratchOptions): Promise<string | null> {
   start()
   const worktreeId = store.selectedWorktreeId
-  if (!worktreeId) return
+  if (!worktreeId) return null
   const session = anyNvimSession()
   if (!session?.id) {
     store.setError('Open an editor pane first.')
-    return
+    return null
   }
   counter += 1
   const key = `scratch://${counter}/${options.title}`
@@ -138,19 +153,22 @@ export async function openScratch(options: ScratchOptions): Promise<void> {
   try {
     bufnr = await window.workbench.nvim.request(session.id, 'nvim_exec_lua', [
       SCRATCH_LUA,
-      [key, options.title, options.lines, options.filetype ?? '']
+      [key, options.title, options.lines, options.filetype ?? '', options.readonly === true]
     ])
   } catch (err) {
     store.setError((err as Error).message)
-    return
+    return null
   }
   if (typeof bufnr !== 'number') {
     store.setError('Failed to open scratch buffer.')
-    return
+    return null
   }
   entries.set(key, { key, nvimId: session.id, bufnr, onWrite: options.onWrite })
-  store.openTab({ worktreeId, path: key, name: options.title, scratch: true })
+  let name = options.title
+  if (options.tabName) name = options.tabName
+  store.openTab({ worktreeId, path: key, name, scratch: true, diff: options.diff })
   session.focus()
+  return key
 }
 
 // Remove a scratch buffer: drop the registry entry and the grove tab, and wipe

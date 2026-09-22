@@ -4,6 +4,7 @@
 import { explorer } from './explorer'
 import { worktrees } from './worktrees'
 import { gitChanges } from './gitChanges'
+import { gitGraph } from './gitGraph'
 import { agents } from './agents'
 import { checkpoints } from './checkpoints'
 import { extensionsView } from './extensions'
@@ -25,6 +26,7 @@ export const corePlugins = [
   explorer,
   worktrees,
   gitChanges,
+  gitGraph,
   agents,
   checkpoints,
   extensionsView,

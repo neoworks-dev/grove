@@ -44,6 +44,104 @@ export interface DiffHunk {
   modifiedCount: number
 }
 
+// The checked-out branch against the upstream it tracks. `upstream` is null when
+// the branch tracks nothing; ahead/behind are then 0.
+export interface BranchStatus {
+  branch: string
+  detached: boolean
+  upstream: string | null
+  ahead: number
+  behind: number
+}
+
+// One commit as a history list shows it. `date` is the author date, ISO 8601.
+export interface CommitSummary {
+  sha: string
+  shortSha: string
+  parents: string[]
+  authorName: string
+  authorEmail: string
+  date: string
+  subject: string
+}
+
+// A page of the checked-out branch's history, newest first. `unpushed` names
+// the commits in it that the upstream lacks (or, with no upstream, that no
+// remote has); `incoming` is what the upstream has that the branch lacks.
+export interface BranchCommits {
+  commits: CommitSummary[]
+  unpushed: string[]
+  incoming: CommitSummary[]
+  hasMore: boolean
+}
+
+// A page of the whole repository's history for the commit graph, children
+// before parents. `head` is the commit this worktree has checked out.
+export interface GraphPage {
+  commits: CommitSummary[]
+  head: string | null
+  hasMore: boolean
+}
+
+// A page of the commits matching a search, newest first.
+export interface CommitSearchPage {
+  commits: CommitSummary[]
+  hasMore: boolean
+}
+
+// How far `git reset` moves: the branch only, the index too, or the working
+// tree as well.
+export type ResetMode = 'soft' | 'mixed' | 'hard'
+
+// A local or remote-tracking branch. `name` is the short form (`main`,
+// `origin/main`); `remote` names the remote a remote-tracking branch belongs
+// to. `worktreePath` is where the branch is checked out, when it is — git
+// refuses to check a branch out twice.
+export interface BranchRef {
+  name: string
+  sha: string
+  subject: string
+  date: string
+  current: boolean
+  upstream: string | null
+  ahead: number
+  behind: number
+  /** The upstream branch was deleted on the remote. */
+  upstreamGone: boolean
+  worktreePath: string | null
+  remote: string | null
+}
+
+// A tag, peeled to the commit it names. `date` is when the tag was made for an
+// annotated tag, the commit's date for a lightweight one.
+export interface TagRef {
+  name: string
+  sha: string
+  subject: string
+  date: string
+}
+
+export interface RefList {
+  local: BranchRef[]
+  remote: BranchRef[]
+  tags: TagRef[]
+}
+
+// One stash entry. `ref` is how git addresses it (`stash@{0}`); `commit` is the
+// stash commit, whose first parent is the commit it was taken on.
+export interface StashEntry {
+  ref: string
+  commit: CommitSummary
+}
+
+// Two refs set side by side. `ahead` is what `head` has that `base` lacks,
+// `behind` the reverse; `files` is every file that differs between them.
+export interface RefComparison {
+  ahead: CommitSummary[]
+  behind: CommitSummary[]
+  files: DiffFile[]
+}
+
 // Changed line ranges for a file, parsed from `git diff` hunk headers. Empty
 // for untracked files, where every modified line is an addition.
 export interface DiffHunks {
@@ -152,6 +250,8 @@ export type CheckpointTrigger =
   | 'user-message'
   | 'pre-restore'
   | 'pre-merge'
+  | 'pre-rebase'
+  | 'pre-reset'
   | 'manual'
   // Taken when a review batch opens. Its tree is the baseline every staged file
   // in that batch is diffed against, and the checkpoint ref keeps it reachable

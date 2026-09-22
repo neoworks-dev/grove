@@ -360,6 +360,23 @@ export function removeLeafInto(
   return { ...root, children, sizes: renormalize(sizes) }
 }
 
+/**
+ * How far a gutter may really move for a requested shift. Neither side is
+ * pushed under the minimum, and a side the layout already squeezed under it
+ * may grow back but never shrink further — its size is not a reason to move
+ * the gutter the other way.
+ */
+export function clampGutterShift(
+  deltaFraction: number,
+  beforeFraction: number,
+  afterFraction: number,
+  minFraction: number
+): number {
+  const lowest = Math.min(0, minFraction - beforeFraction)
+  const highest = Math.max(0, afterFraction - minFraction)
+  return Math.min(Math.max(deltaFraction, lowest), highest)
+}
+
 // Adjust the boundary between children gutterIndex and gutterIndex+1 of the
 // target split. Delta is a fraction of the split; both sides stay above min.
 export function resizeGutter(
@@ -379,10 +396,7 @@ export function resizeGutter(
   const before = root.sizes[gutterIndex]
   const after = root.sizes[gutterIndex + 1]
   if (before === undefined || after === undefined) return root
-  const lowest = minFraction - before
-  const highest = after - minFraction
-  if (lowest > highest) return root
-  const clamped = Math.min(Math.max(deltaFraction, lowest), highest)
+  const clamped = clampGutterShift(deltaFraction, before, after, minFraction)
   const sizes = [...root.sizes]
   sizes[gutterIndex] = before + clamped
   sizes[gutterIndex + 1] = after - clamped

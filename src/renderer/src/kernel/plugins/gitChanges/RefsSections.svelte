@@ -67,7 +67,7 @@
   <GitSection title="Tags" count={refs.tags.length} bind:open={tagsOpen}>
     <div role="tree">
       {#each refs.tags as tag (tag.name)}
-        <TagRow {worktreeId} {tag} {currentBranch} {onChanged} />
+        <TagRow {worktreeId} {worktreePath} {tag} {currentBranch} {onChanged} />
       {/each}
     </div>
   </GitSection>

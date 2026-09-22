@@ -3,26 +3,29 @@
   // and merging it in — not checking it out, which would detach HEAD.
   import TagIcon from 'phosphor-svelte/lib/TagIcon'
   import DotsThreeIcon from 'phosphor-svelte/lib/DotsThreeIcon'
-  import ContextMenu, { type MenuItem } from '../../../components/ContextMenu.svelte'
+  import ContextMenu from '../../../components/ContextMenu.svelte'
   import RowAction from './RowAction.svelte'
   import { relativeTime } from '../../../lib/time'
-  import { compareRefs } from './compareTarget.svelte'
-  import { copyText, mergeIntoCurrent } from './refActions'
+  import { tagMenu } from './refMenus'
   import type { TagRef } from '../../../../../shared/types'
 
   let {
     worktreeId,
+    worktreePath,
     tag,
     currentBranch,
     onChanged
   }: {
     worktreeId: string
+    worktreePath: string
     tag: TagRef
     currentBranch: string
     onChanged: () => void
   } = $props()
 
   let menu = $state<{ x: number; y: number } | null>(null)
+
+  const context = $derived({ worktreeId, worktreePath, currentBranch, onChanged })
 
   /** Opens the menu at the pointer. */
   function openMenu(event: MouseEvent): void {
@@ -31,26 +34,9 @@
     menu = { x: event.clientX, y: event.clientY }
   }
 
-  /** Merges the tag into the checked-out branch, reloading the view after. */
-  async function merge(): Promise<void> {
-    if (await mergeIntoCurrent(worktreeId, tag.name)) onChanged()
-  }
-
   /** The tooltip: when the tag was made, and its message or commit subject. */
   function details(): string {
     return `${tag.name} · ${new Date(tag.date).toLocaleString()}\n${tag.subject}`
-  }
-
-  /** Everything the menu offers for this tag. */
-  function menuItems(): MenuItem[] {
-    return [
-      { label: 'Compare with HEAD', action: () => compareRefs(tag.name, 'HEAD') },
-      { label: 'Compare with working tree', action: () => compareRefs(tag.name, null) },
-      { divider: true },
-      { label: `Merge into ${currentBranch}`, action: () => void merge() },
-      { divider: true },
-      { label: 'Copy name', action: () => copyText(tag.name) }
-    ]
   }
 </script>
 
@@ -75,5 +61,5 @@
 </div>
 
 {#if menu}
-  <ContextMenu x={menu.x} y={menu.y} items={menuItems()} onClose={() => (menu = null)} />
+  <ContextMenu x={menu.x} y={menu.y} items={tagMenu(context, tag)} onClose={() => (menu = null)} />
 {/if}

@@ -24,6 +24,7 @@
   import CommitBox from './CommitBox.svelte'
   import CommitsSection from './CommitsSection.svelte'
   import CompareSection from './CompareSection.svelte'
+  import SearchSection from './SearchSection.svelte'
   import RefsSections from './RefsSections.svelte'
   import StashesSection from './StashesSection.svelte'
   import ChangesList, { fileKey } from './ChangesList.svelte'
@@ -252,6 +253,7 @@
           onChanged={load}
         />
         <StashesSection {worktreeId} hasChanges={files.length > 0} {refreshKey} onChanged={load} />
+        <SearchSection {worktreeId} />
         <CompareSection {worktreeId} {worktreePath} {refreshKey} />
       {/if}
     </div>

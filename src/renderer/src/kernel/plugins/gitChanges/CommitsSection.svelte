@@ -6,11 +6,14 @@
   import CloudArrowDownIcon from 'phosphor-svelte/lib/CloudArrowDownIcon'
   import ArrowDownIcon from 'phosphor-svelte/lib/ArrowDownIcon'
   import ArrowUpIcon from 'phosphor-svelte/lib/ArrowUpIcon'
+  import GraphIcon from 'phosphor-svelte/lib/GraphIcon'
   import { untrack } from 'svelte'
   import CommitRow from './CommitRow.svelte'
   import GitSection from './GitSection.svelte'
   import RowAction from './RowAction.svelte'
   import { store } from '../../../lib/store.svelte'
+  import { layout } from '../../../lib/layout.svelte'
+  import { GIT_GRAPH_PANE } from '../gitGraph'
   import type { BranchStatus, CommitSummary } from '../../../../../shared/types'
 
   let {
@@ -95,6 +98,11 @@
 
 <GitSection title="Commits" bind:open>
   {#snippet actions()}
+    <RowAction
+      icon={GraphIcon}
+      title="Open the commit graph"
+      onclick={() => layout.ensurePane(GIT_GRAPH_PANE)}
+    />
     <RowAction
       icon={CloudArrowDownIcon}
       title="Fetch"

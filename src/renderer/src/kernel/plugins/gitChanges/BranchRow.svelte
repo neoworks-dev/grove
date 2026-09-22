@@ -11,18 +11,10 @@
   import DotsThreeIcon from 'phosphor-svelte/lib/DotsThreeIcon'
   import ArrowUpIcon from 'phosphor-svelte/lib/ArrowUpIcon'
   import ArrowDownIcon from 'phosphor-svelte/lib/ArrowDownIcon'
-  import ContextMenu, { type MenuItem } from '../../../components/ContextMenu.svelte'
+  import ContextMenu from '../../../components/ContextMenu.svelte'
   import RowAction from './RowAction.svelte'
   import { relativeTime } from '../../../lib/time'
-  import { compareRefs } from './compareTarget.svelte'
-  import {
-    checkoutBranch,
-    copyText,
-    deleteBranch,
-    mergeIntoCurrent,
-    openBranchWorktree,
-    rebaseCurrentOnto
-  } from './refActions'
+  import { branchMenu, checkedOutElsewhere, checkoutLabel, checkoutOrOpen } from './refMenus'
   import type { BranchRef } from '../../../../../shared/types'
 
   let {
@@ -41,24 +33,12 @@
 
   let menu = $state<{ x: number; y: number } | null>(null)
 
-  // Checked out somewhere other than the worktree on screen.
-  const elsewhere = $derived(
-    branch.worktreePath !== null && branch.worktreePath !== worktreePath && !branch.current
-  )
-  const local = $derived(branch.remote === null)
-
-  /** Runs an action and reloads the view when it changed anything. */
-  async function run(action: () => Promise<boolean>): Promise<void> {
-    if (await action()) onChanged()
-  }
+  const context = $derived({ worktreeId, worktreePath, currentBranch, onChanged })
+  const elsewhere = $derived(checkedOutElsewhere(branch, worktreePath))
 
   /** Checks the branch out here, or goes to the worktree that has it. */
   function checkout(): void {
-    if (elsewhere) {
-      openBranchWorktree(branch)
-      return
-    }
-    void run(() => checkoutBranch(worktreeId, branch))
+    checkoutOrOpen(context, branch)
   }
 
   /** Opens the menu at the pointer. */
@@ -66,42 +46,6 @@
     event.preventDefault()
     event.stopPropagation()
     menu = { x: event.clientX, y: event.clientY }
-  }
-
-  /** Everything the menu offers for this branch, in the order it offers it. */
-  function menuItems(): MenuItem[] {
-    const items: MenuItem[] = []
-    if (!branch.current) {
-      items.push({ label: checkoutLabel(), action: checkout })
-      items.push({
-        label: `Merge into ${currentBranch}`,
-        action: () => void run(() => mergeIntoCurrent(worktreeId, branch.name))
-      })
-      items.push({
-        label: `Rebase ${currentBranch} onto ${branch.name}`,
-        action: () => void run(() => rebaseCurrentOnto(worktreeId, currentBranch, branch.name))
-      })
-      items.push({ divider: true })
-      items.push({ label: 'Compare with HEAD', action: () => compareRefs(branch.name, 'HEAD') })
-    }
-    items.push({ label: 'Compare with working tree', action: () => compareRefs(branch.name, null) })
-    items.push({ divider: true })
-    items.push({ label: 'Copy name', action: () => copyText(branch.name) })
-    if (local && !branch.current && branch.worktreePath === null) {
-      items.push({ divider: true })
-      items.push({
-        label: 'Delete branch',
-        danger: true,
-        action: () => void run(() => deleteBranch(worktreeId, branch))
-      })
-    }
-    return items
-  }
-
-  /** What checking out does for this branch. */
-  function checkoutLabel(): string {
-    if (elsewhere) return 'Open its worktree'
-    return 'Checkout'
   }
 
   /** The tooltip: last commit, upstream, and where it is checked out. */
@@ -140,7 +84,7 @@
 
   <div class="hidden shrink-0 items-center group-hover/row:flex">
     {#if !branch.current}
-      <RowAction icon={SignInIcon} title={checkoutLabel()} onclick={checkout} />
+      <RowAction icon={SignInIcon} title={checkoutLabel(branch, worktreePath)} onclick={checkout} />
     {/if}
     <RowAction icon={DotsThreeIcon} title="More actions" onclick={openMenu} />
   </div>
@@ -160,5 +104,5 @@
 </div>
 
 {#if menu}
-  <ContextMenu x={menu.x} y={menu.y} items={menuItems()} onClose={() => (menu = null)} />
+  <ContextMenu x={menu.x} y={menu.y} items={branchMenu(context, branch)} onClose={() => (menu = null)} />
 {/if}

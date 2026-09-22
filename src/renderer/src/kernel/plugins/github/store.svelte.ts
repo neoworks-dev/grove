@@ -11,7 +11,8 @@ import {
   store,
   openFileInEditor,
   refreshWorktrees,
-  selectWorktree
+  selectWorktree,
+  type TabDiff
 } from '../../../lib/store.svelte'
 import { layout } from '../../../lib/layout.svelte'
 import { branchNameFor } from './branches'
@@ -1001,11 +1002,20 @@ export async function openPrFile(detail: GithubItemDetail, file: GithubPrFile): 
   }
   const path = `${worktree.path}/${file.path}`
   openFileInEditor(worktreeId, path)
-  store.markTabReviewing(worktreeId, path)
+  store.setTabDiff(worktreeId, path, prDiffSides(detail))
   await diffAgainstBase(file, base)
   // After the diff: the base side's window is one of the two the keys go on.
   await installPrReviewKeys(detail, file.path)
   await paintOpenPrComments(detail.number)
+}
+
+/** What a pull request's file tab says its diff is between: base branch and head branch. */
+function prDiffSides(detail: GithubItemDetail): TabDiff {
+  let left = 'base'
+  if (detail.baseRefName) left = detail.baseRefName
+  let right = `#${detail.number}`
+  if (detail.headRefName) right = detail.headRefName
+  return { left, right }
 }
 
 /**

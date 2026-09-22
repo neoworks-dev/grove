@@ -35,6 +35,13 @@ import { intro } from './intro.svelte'
 import { allNvimSessions } from './nvim/registry'
 import { setup } from './setup.svelte'
 
+// The two sides a tab's diff is between, as the tab names them: refs, short
+// SHAs, "working tree".
+export interface TabDiff {
+  left: string
+  right: string
+}
+
 export interface EditorTab {
   worktreeId: string
   path: string // absolute file path, or a synthetic `scratch://…` key
@@ -43,10 +50,10 @@ export interface EditorTab {
   // A non-file scratch buffer (batch rename, etc.), backed by an nvim buffer
   // rather than a path on disk. Not persisted across sessions.
   scratch?: boolean
-  // A real file opened as one side of a pull request's diff. It stays a file
-  // tab in every way; the flag only tints it like a scratch tab, so it reads
-  // as a review rather than an edit.
-  reviewing?: boolean
+  // Set while the tab is open as one side of a diff — a commit's change, a
+  // compare, a pull request's file. A real file stays a file tab in every
+  // way; this only tints the tab and names where the two sides come from.
+  diff?: TabDiff
 }
 
 const MAX_LOG_LINES = 2000
@@ -202,14 +209,19 @@ class WorkbenchStore {
 
   openTab(tab: EditorTab): void {
     this.attachEditorTab(tab)
+    // An explicit open shows the file as it is, unless it is opened as a diff:
+    // a file last seen in a diff loses its label when opened plainly.
+    this.setTabDiff(tab.worktreeId, tab.path, tab.diff)
     layout.showCenterPane(preferredEditorPane())
   }
 
-  /** Marks an open file's tab as showing a pull request's diff. */
-  markTabReviewing(worktreeId: string, path: string): void {
+  /** Labels an open tab as one side of a diff, or clears the label. */
+  setTabDiff(worktreeId: string, path: string, diff: TabDiff | undefined): void {
     const tabs = this.tabsByWorktree[worktreeId] ?? []
-    const marked = tabs.map((tab) => (tab.path === path ? { ...tab, reviewing: true } : tab))
-    this.tabsByWorktree = { ...this.tabsByWorktree, [worktreeId]: marked }
+    const existing = tabs.find((tab) => tab.path === path)
+    if (!existing || sameDiff(existing.diff, diff)) return
+    const updated = tabs.map((tab) => (tab.path === path ? { ...tab, diff } : tab))
+    this.tabsByWorktree = { ...this.tabsByWorktree, [worktreeId]: updated }
   }
 
   closeTab(path: string): void {
@@ -275,6 +287,12 @@ export function applyColorTheme(name: string): void {
   applyThemeVars(name)
   store.colorTheme = name
   void settings.set('workbench.colorTheme', name, 'user')
+}
+
+/** Whether two diff labels name the same sides; both absent counts as the same. */
+function sameDiff(first: TabDiff | undefined, second: TabDiff | undefined): boolean {
+  if (first === undefined || second === undefined) return first === second
+  return first.left === second.left && first.right === second.right
 }
 
 // Opened files always go to the Neovim center pane — the only editor.

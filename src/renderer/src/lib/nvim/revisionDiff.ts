@@ -163,6 +163,8 @@ export async function openRevisionDiff(request: RevisionDiffRequest): Promise<vo
 
   const opened = await openScratch({
     title: `${baseName(request.path)} @ ${request.rightLabel}`,
+    tabName: baseName(request.path),
+    diff: { left: request.leftLabel, right: request.rightLabel },
     lines: sides.right,
     readonly: true,
     onWrite: () => {}
@@ -212,6 +214,10 @@ export async function openWorkingTreeDiff(request: {
 
   const absolutePath = `${request.worktreePath}/${request.path}`
   openFileInEditor(request.worktreeId, absolutePath)
+  store.setTabDiff(request.worktreeId, absolutePath, {
+    left: request.label,
+    right: 'working tree'
+  })
   const session = await waitForNvimSession()
   if (!session || !session.id) return
   if (!(await waitForActiveFile(session, request.path))) return

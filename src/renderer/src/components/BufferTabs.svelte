@@ -3,7 +3,8 @@
   // open files. Dirty state is optional; NvimPane sources it from nvim's
   // 'modified' flag and marks those tabs with a dot ahead of the file icon.
   import Icon from '@iconify/svelte'
-  import { store } from '../lib/store.svelte'
+  import ArrowsLeftRightIcon from 'phosphor-svelte/lib/ArrowsLeftRightIcon'
+  import { store, type TabDiff } from '../lib/store.svelte'
   import { fileIcon } from '../lib/icons'
 
   interface Tab {
@@ -12,7 +13,7 @@
     pinned?: boolean
     worktreeId: string
     scratch?: boolean
-    reviewing?: boolean
+    diff?: TabDiff
   }
 
   /** File-type icon for a tab, tracking the active icon pack. */
@@ -53,11 +54,12 @@
     <div class="flex w-max items-center gap-1">
       {#each tabs as tab (tab.path)}
         {@const active = store.activeTabPath === tab.path}
-        {@const tinted = tab.scratch || tab.reviewing}
+        {@const tinted = tab.scratch || tab.diff !== undefined}
         <!-- Floating pills: inactive tabs sit flat on the strip, the active one
              lifts to elevated. Ephemeral scratch buffers (batch rename, a
-             commit's revision) and files open as a pull request's diff get an
-             amber tint so they read as distinct from plain file tabs. -->
+             commit's revision) and files open as one side of a diff get an
+             amber tint so they read as distinct from plain file tabs; a diff
+             also names the two sides it is between. -->
         <div
           data-tab={tab.path}
           class="group/tab flex h-6 shrink-0 cursor-pointer items-center rounded-md px-2 text-xs {!active &&
@@ -83,6 +85,16 @@
               >{/if}
             <Icon icon={iconFor(tab)} width="13" height="13" class="shrink-0" />
             <span>{tab.name}</span>
+            {#if tab.diff}
+              <span
+                class="flex max-w-56 items-center gap-0.5 font-mono text-2xs opacity-70"
+                title="{tab.diff.left} ⇄ {tab.diff.right}"
+              >
+                <span class="truncate">{tab.diff.left}</span>
+                <ArrowsLeftRightIcon size={10} class="shrink-0" />
+                <span class="truncate">{tab.diff.right}</span>
+              </span>
+            {/if}
           </button>
           <button
             class="inline-flex w-0 shrink-0 cursor-pointer items-center overflow-hidden text-dim opacity-0 transition-all duration-150 ease-out hover:text-red group-hover/tab:ml-1 group-hover/tab:w-3.5 group-hover/tab:opacity-100"

@@ -10,7 +10,7 @@
 //     previous buffer instead of quitting Neovim, then drops the grove tab.
 // The buffer is bufhidden=wipe, so leaving it always discards it.
 
-import { store } from '../store.svelte'
+import { store, type TabDiff } from '../store.svelte'
 import { anyNvimSession } from './registry'
 
 export interface ScratchEntry {
@@ -23,6 +23,10 @@ export interface ScratchEntry {
 export interface ScratchOptions {
   // Buffer name + tab label (e.g. '[rename]').
   title: string
+  // A shorter tab label than the buffer name, which has to be unique.
+  tabName?: string
+  // The two sides, when the buffer is one side of a diff.
+  diff?: TabDiff
   lines: string[]
   filetype?: string
   // A read-only buffer shows content that cannot be written back anywhere,
@@ -159,7 +163,9 @@ export async function openScratch(options: ScratchOptions): Promise<boolean> {
     return false
   }
   entries.set(key, { key, nvimId: session.id, bufnr, onWrite: options.onWrite })
-  store.openTab({ worktreeId, path: key, name: options.title, scratch: true })
+  let name = options.title
+  if (options.tabName) name = options.tabName
+  store.openTab({ worktreeId, path: key, name, scratch: true, diff: options.diff })
   session.focus()
   return true
 }

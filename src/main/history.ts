@@ -1,10 +1,16 @@
-// Reading history: the checked-out branch's commits and what each one changed.
-// Everything comes from `git log` and `git diff-tree`; nothing is walked or
-// diffed in JS.
+// Reading history: the checked-out branch's commits, the whole repository's
+// for the graph, searches through it, and what each commit changed. Everything
+// comes from `git log` and `git diff-tree`; nothing is walked or diffed in JS.
 
 import { simpleGit } from 'simple-git'
 import { parseNameStatusZ } from './git'
-import type { BranchCommits, CommitSummary, DiffFile } from '../shared/types'
+import type {
+  BranchCommits,
+  CommitSearchPage,
+  CommitSummary,
+  DiffFile,
+  GraphPage
+} from '../shared/types'
 
 // Unit and record separators: neither can occur in a subject line or a name,
 // so a log formatted with them splits without any quoting.
@@ -124,4 +130,154 @@ export async function commitFiles(worktreePath: string, sha: string): Promise<Di
   if (isRoot) args.push('--root', sha)
   else args.push(`${sha}^1`, sha)
   return parseNameStatusZ(await git.raw(args), false)
+}
+
+// Every branch, remote branch and tag, and HEAD in case it is detached. Not
+// `--all`, which would also walk the stash and Grove's checkpoint refs.
+const ALL_HISTORY = ['--branches', '--remotes', '--tags', 'HEAD']
+
+/**
+ * A page of the whole repository's history for the commit graph, children
+ * always before their parents so lanes can be laid out top to bottom.
+ */
+export async function graphCommits(
+  worktreePath: string,
+  skip: number,
+  limit: number
+): Promise<GraphPage> {
+  if (!(await hasCommits(worktreePath))) return { commits: [], head: null, hasMore: false }
+  const page = await log(worktreePath, [
+    '--date-order',
+    `--skip=${skip}`,
+    `--max-count=${limit + 1}`,
+    ...ALL_HISTORY
+  ])
+  const head = await simpleGit({ baseDir: worktreePath }).raw(['rev-parse', 'HEAD'])
+  return { commits: page.slice(0, limit), head: head.trim(), hasMore: page.length > limit }
+}
+
+/** A commit's whole message: subject, blank line and body. */
+export async function commitMessage(worktreePath: string, sha: string): Promise<string> {
+  const output = await simpleGit({ baseDir: worktreePath }).raw([
+    'log',
+    '-1',
+    '--format=%B',
+    sha
+  ])
+  return output.trimEnd()
+}
+
+// ── Search ───────────────────────────────────────────────────────
+
+// What a search query asks for, one list per kind of term.
+export interface CommitQuery {
+  messages: string[]
+  authors: string[]
+  shas: string[]
+  files: string[]
+  // A regex for lines a commit added or removed (`git log -G`). Git takes one.
+  change: string | null
+}
+
+// GitLens's search operators, short and long form.
+const OPERATORS: Record<string, keyof CommitQuery> = {
+  '=:': 'messages',
+  'message:': 'messages',
+  '@:': 'authors',
+  'author:': 'authors',
+  '#:': 'shas',
+  'commit:': 'shas',
+  '?:': 'files',
+  'file:': 'files',
+  '~:': 'change',
+  'change:': 'change'
+}
+
+/**
+ * Splits a search into its terms. A term is a word or a "quoted phrase",
+ * optionally led by an operator (`@:alice`, `file:"src/main"`); a term with no
+ * operator searches commit messages.
+ */
+export function parseCommitQuery(text: string): CommitQuery {
+  const query: CommitQuery = { messages: [], authors: [], shas: [], files: [], change: null }
+  const termPattern = /([=@#?~]:|[a-z]+:)?(?:"([^"]*)"|(\S+))/g
+  for (const match of text.matchAll(termPattern)) {
+    let operator: string | undefined = match[1]
+    let value = match[2]
+    if (value === undefined) value = match[3]
+    if (operator !== undefined && !(operator in OPERATORS)) {
+      // An unknown `word:` is part of the message, not an operator.
+      value = operator + value
+      operator = undefined
+    }
+    if (value.length === 0) continue
+    addTerm(query, operator, value)
+  }
+  return query
+}
+
+/** Files one term of a query under the kind its operator names. */
+function addTerm(query: CommitQuery, operator: string | undefined, value: string): void {
+  if (operator === undefined) {
+    query.messages.push(value)
+    return
+  }
+  const kind = OPERATORS[operator]
+  if (kind === 'change') {
+    query.change = value
+    return
+  }
+  query[kind].push(value)
+}
+
+/** Whether a query has nothing to search for. */
+function isEmptyQuery(query: CommitQuery): boolean {
+  const lists = [query.messages, query.authors, query.shas, query.files]
+  return lists.every((list) => list.length === 0) && query.change === null
+}
+
+/**
+ * A page of the commits matching a search, across every branch and tag. Every
+ * term has to match, case-insensitively; a file term matches any path
+ * containing it. SHAs that name no commit match nothing.
+ */
+export async function searchCommits(
+  worktreePath: string,
+  text: string,
+  skip: number,
+  limit: number
+): Promise<CommitSearchPage> {
+  const empty: CommitSearchPage = { commits: [], hasMore: false }
+  const query = parseCommitQuery(text)
+  if (isEmptyQuery(query) || !(await hasCommits(worktreePath))) return empty
+
+  const args = ['-i', '--fixed-strings', '--all-match', `--skip=${skip}`, `--max-count=${limit + 1}`]
+  for (const message of query.messages) args.push(`--grep=${message}`)
+  for (const author of query.authors) args.push(`--author=${author}`)
+  if (query.change !== null) args.push(`-G${query.change}`)
+
+  if (query.shas.length > 0) {
+    const shas = await resolvedShas(worktreePath, query.shas)
+    if (shas.length === 0) return empty
+    args.push('--no-walk', ...shas)
+  } else {
+    args.push(...ALL_HISTORY)
+  }
+
+  if (query.files.length > 0) {
+    args.push('--')
+    for (const file of query.files) args.push(`:(icase)*${file}*`)
+  }
+
+  const page = await log(worktreePath, args)
+  return { commits: page.slice(0, limit), hasMore: page.length > limit }
+}
+
+/** The given SHAs, full or abbreviated, that name a commit. */
+async function resolvedShas(worktreePath: string, shas: string[]): Promise<string[]> {
+  const resolved: string[] = []
+  for (const sha of shas) {
+    if (await resolves(worktreePath, sha)) resolved.push(sha)
+  }
+  return resolved
 }

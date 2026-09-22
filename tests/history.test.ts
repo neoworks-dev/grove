@@ -4,12 +4,20 @@
 // the upstream is a genuine remote-tracking branch.
 
 import { describe, expect, test } from 'bun:test'
-import { mkdtemp, writeFile } from 'fs/promises'
+import { mkdir, mkdtemp, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { simpleGit, type SimpleGit } from 'simple-git'
 
-import { branchCommits, commitFiles, parseLog } from '../src/main/history'
+import {
+  branchCommits,
+  commitFiles,
+  commitMessage,
+  graphCommits,
+  parseCommitQuery,
+  parseLog,
+  searchCommits
+} from '../src/main/history'
 
 /** An empty repository with an identity to commit as. */
 async function repository(): Promise<{ directory: string; git: SimpleGit }> {
@@ -129,5 +137,91 @@ describe('commitFiles', () => {
       { path: 'a.txt', changeType: 'modified', staged: false },
       { path: 'b.txt', changeType: 'added', staged: false }
     ])
+  })
+})
+
+describe('graphCommits', () => {
+  test('walks every branch, children before parents, and names HEAD', async () => {
+    const { directory, git } = await repository()
+    await commitFile(directory, git, 'a.txt', 'a', 'root')
+    await git.checkoutLocalBranch('side')
+    await commitFile(directory, git, 'b.txt', 'b', 'on side')
+    await git.checkout('-')
+    await commitFile(directory, git, 'c.txt', 'c', 'on main')
+
+    const page = await graphCommits(directory, 0, 10)
+    const subjects = page.commits.map((commit) => commit.subject)
+    expect(subjects).toContain('on side')
+    expect(subjects.at(-1)).toBe('root')
+    expect(page.head).toBe((await git.revparse(['HEAD'])).trim())
+    expect(page.hasMore).toBe(false)
+
+    const firstPage = await graphCommits(directory, 0, 2)
+    expect(firstPage.commits).toHaveLength(2)
+    expect(firstPage.hasMore).toBe(true)
+  })
+})
+
+describe('commitMessage', () => {
+  test('returns subject and body', async () => {
+    const { directory, git } = await repository()
+    await writeFile(join(directory, 'a.txt'), 'a')
+    await git.add('a.txt')
+    await git.commit(['subject line', 'the body'])
+    expect(await commitMessage(directory, 'HEAD')).toBe('subject line\n\nthe body')
+  })
+})
+
+describe('parseCommitQuery', () => {
+  test('sorts terms by operator; bare words and unknown prefixes search messages', () => {
+    const query = parseCommitQuery('fix @:ada author:"Bob Smith" ?:src/main ~:foo\\( #:abc1 see:x')
+    expect(query.messages).toEqual(['fix', 'see:x'])
+    expect(query.authors).toEqual(['ada', 'Bob Smith'])
+    expect(query.files).toEqual(['src/main'])
+    expect(query.shas).toEqual(['abc1'])
+    expect(query.change).toBe('foo\\(')
+  })
+})
+
+describe('searchCommits', () => {
+  /** Three commits by two authors across two files. */
+  async function history(): Promise<{ directory: string; git: SimpleGit }> {
+    const repo = await repository()
+    await commitFile(repo.directory, repo.git, 'readme.md', 'hello\n', 'Add readme')
+    await mkdir(join(repo.directory, 'src'))
+    await commitFile(repo.directory, repo.git, 'src/Main.ts', 'let answer = 42\n', 'Fix [the] answer')
+    await writeFile(join(repo.directory, 'readme.md'), 'hello world\n')
+    await repo.git.add('readme.md')
+    await repo.git.commit('Fix readme', undefined, { '--author': 'Ada Lovelace <ada@x>' })
+    return repo
+  }
+
+  /** The subjects a search finds. */
+  async function subjects(directory: string, text: string): Promise<string[]> {
+    const page = await searchCommits(directory, text, 0, 10)
+    return page.commits.map((commit) => commit.subject)
+  }
+
+  test('matches messages literally and case-insensitively, every term required', async () => {
+    const { directory } = await history()
+    expect(await subjects(directory, 'fix')).toEqual(['Fix readme', 'Fix [the] answer'])
+    expect(await subjects(directory, '[the]')).toEqual(['Fix [the] answer'])
+    expect(await subjects(directory, 'fix readme')).toEqual(['Fix readme'])
+  })
+
+  test('matches authors, file paths, content changes and SHAs', async () => {
+    const { directory, git } = await history()
+    expect(await subjects(directory, '@:ada')).toEqual(['Fix readme'])
+    expect(await subjects(directory, 'fix @:ada')).toEqual(['Fix readme'])
+    expect(await subjects(directory, '?:main')).toEqual(['Fix [the] answer'])
+    expect(await subjects(directory, '~:answer')).toEqual(['Fix [the] answer'])
+    const root = (await git.raw(['rev-list', '--max-parents=0', 'HEAD'])).trim()
+    expect(await subjects(directory, `#:${root.slice(0, 7)}`)).toEqual(['Add readme'])
+    expect(await subjects(directory, '#:deadbeef')).toEqual([])
+  })
+
+  test('an empty query finds nothing', async () => {
+    const { directory } = await history()
+    expect(await subjects(directory, '   ')).toEqual([])
   })
 })

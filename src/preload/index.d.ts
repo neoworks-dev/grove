@@ -12,6 +12,9 @@ import type {
   BranchList,
   BranchStatus,
   BranchCommits,
+  GraphPage,
+  CommitSearchPage,
+  ResetMode,
   RefList,
   StashEntry,
   RefComparison,
@@ -203,6 +206,24 @@ export interface WorkbenchApi {
     fetch: (worktreeId: string) => Promise<string>
     branchCommits: (worktreeId: string, skip: number, limit: number) => Promise<BranchCommits>
     commitFiles: (worktreeId: string, sha: string) => Promise<DiffFile[]>
+    graph: (worktreeId: string, skip: number, limit: number) => Promise<GraphPage>
+    commitMessage: (worktreeId: string, sha: string) => Promise<string>
+    searchCommits: (
+      worktreeId: string,
+      query: string,
+      skip: number,
+      limit: number
+    ) => Promise<CommitSearchPage>
+    checkoutCommit: (worktreeId: string, sha: string) => Promise<Worktree[]>
+    createBranch: (
+      worktreeId: string,
+      name: string,
+      sha: string,
+      checkout: boolean
+    ) => Promise<Worktree[]>
+    cherryPick: (worktreeId: string, sha: string) => Promise<string>
+    revert: (worktreeId: string, sha: string) => Promise<string>
+    reset: (worktreeId: string, sha: string, mode: ResetMode) => Promise<Worktree[]>
     fileAtRevision: (worktreeId: string, revision: string, relPath: string) => Promise<string>
     refs: (worktreeId: string) => Promise<RefList>
     stashes: (worktreeId: string) => Promise<StashEntry[]>

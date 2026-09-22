@@ -53,6 +53,21 @@ const workbench = {
       ipcRenderer.invoke('git:branchCommits', worktreeId, skip, limit),
     commitFiles: (worktreeId: string, sha: string) =>
       ipcRenderer.invoke('git:commitFiles', worktreeId, sha),
+    graph: (worktreeId: string, skip: number, limit: number) =>
+      ipcRenderer.invoke('git:graph', worktreeId, skip, limit),
+    commitMessage: (worktreeId: string, sha: string) =>
+      ipcRenderer.invoke('git:commitMessage', worktreeId, sha),
+    searchCommits: (worktreeId: string, query: string, skip: number, limit: number) =>
+      ipcRenderer.invoke('git:searchCommits', worktreeId, query, skip, limit),
+    checkoutCommit: (worktreeId: string, sha: string) =>
+      ipcRenderer.invoke('git:checkoutCommit', worktreeId, sha),
+    createBranch: (worktreeId: string, name: string, sha: string, checkout: boolean) =>
+      ipcRenderer.invoke('git:createBranch', worktreeId, name, sha, checkout),
+    cherryPick: (worktreeId: string, sha: string) =>
+      ipcRenderer.invoke('git:cherryPick', worktreeId, sha),
+    revert: (worktreeId: string, sha: string) => ipcRenderer.invoke('git:revert', worktreeId, sha),
+    reset: (worktreeId: string, sha: string, mode: string) =>
+      ipcRenderer.invoke('git:reset', worktreeId, sha, mode),
     fileAtRevision: (worktreeId: string, revision: string, relPath: string) =>
       ipcRenderer.invoke('git:fileAtRevision', worktreeId, revision, relPath),
     refs: (worktreeId: string) => ipcRenderer.invoke('git:refs', worktreeId),

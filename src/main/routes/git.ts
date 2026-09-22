@@ -4,9 +4,10 @@
 import type { Context } from '@neoworks/extension-system'
 import { route } from '../kernel/route'
 import * as git from '../git'
+import * as conflicts from '../conflicts'
 import * as inlineDiff from '../inlineDiff'
 import * as worktrees from '../worktrees'
-import type { DiffFile, InlineHunk } from '../../shared/types'
+import type { ConflictChoice, DiffFile, InlineHunk } from '../../shared/types'
 
 export const gitRoutes = {
   name: 'main/routes/git',
@@ -162,6 +163,20 @@ export const gitRoutes = {
       const target = ctx.workbench.findWorktree(targetWorktreeId)
       return git.conflictedFiles(target.path)
     })
+
+    route(ctx, 'git:mergeState', (_e, worktreeId: string) => {
+      const worktree = ctx.workbench.findWorktree(worktreeId)
+      return conflicts.mergeState(worktree.path)
+    })
+
+    route(
+      ctx,
+      'git:resolveConflict',
+      (_e, worktreeId: string, relPath: string, hunkIndex: number, choice: ConflictChoice) => {
+        const worktree = ctx.workbench.findWorktree(worktreeId)
+        return conflicts.resolveConflictHunk(worktree.path, relPath, hunkIndex, choice)
+      }
+    )
 
     route(
       ctx,

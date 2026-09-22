@@ -18,6 +18,11 @@ import type {
   MergeMode,
   MergePreview,
   MergeResult,
+  ConflictHunk,
+  ConflictChoice,
+  MergeState,
+  PrCheckoutState,
+  PrConflictResolution,
   WorktreeChatMessage,
   InlineHunk,
   AppliedRange,
@@ -198,6 +203,13 @@ export interface WorkbenchApi {
     mergeAbort: (targetWorktreeId: string) => Promise<void>
     mergeContinue: (targetWorktreeId: string) => Promise<MergeResult>
     mergeConflicts: (targetWorktreeId: string) => Promise<string[]>
+    mergeState: (worktreeId: string) => Promise<MergeState>
+    resolveConflict: (
+      worktreeId: string,
+      relPath: string,
+      hunkIndex: number,
+      choice: ConflictChoice
+    ) => Promise<ConflictHunk[]>
   }
   github: {
     openPr: (worktreeId: string, options: OpenPrOptions) => Promise<string>
@@ -230,6 +242,9 @@ export interface WorkbenchApi {
     prDiff: (number: number, baseRefName: string) => Promise<GithubPrDiff>
     prBaseFile: (baseOid: string, file: GithubPrFile) => Promise<string>
     checkoutPr: (number: number, baseRefName: string) => Promise<Worktree>
+    resolvePrConflicts: (number: number, baseRefName: string) => Promise<PrConflictResolution>
+    prCheckoutState: (number: number) => Promise<PrCheckoutState>
+    pushPrBranch: (number: number) => Promise<string>
     prViewedFiles: (number: number) => Promise<string[]>
     setPrFileViewed: (pullRequestId: string, path: string, viewed: boolean) => Promise<void>
     prReview: (number: number) => Promise<GithubPrReview>

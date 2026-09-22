@@ -56,7 +56,14 @@ const workbench = {
     mergeContinue: (targetWorktreeId: string) =>
       ipcRenderer.invoke('git:mergeContinue', targetWorktreeId),
     mergeConflicts: (targetWorktreeId: string) =>
-      ipcRenderer.invoke('git:mergeConflicts', targetWorktreeId)
+      ipcRenderer.invoke('git:mergeConflicts', targetWorktreeId),
+    mergeState: (worktreeId: string) => ipcRenderer.invoke('git:mergeState', worktreeId),
+    resolveConflict: (
+      worktreeId: string,
+      relPath: string,
+      hunkIndex: number,
+      choice: 'ours' | 'theirs' | 'both'
+    ) => ipcRenderer.invoke('git:resolveConflict', worktreeId, relPath, hunkIndex, choice)
   },
   github: {
     openPr: (worktreeId: string, options: unknown) =>
@@ -92,6 +99,10 @@ const workbench = {
       ipcRenderer.invoke('github:prBaseFile', baseOid, file),
     checkoutPr: (number: number, baseRefName: string) =>
       ipcRenderer.invoke('github:checkoutPr', number, baseRefName),
+    resolvePrConflicts: (number: number, baseRefName: string) =>
+      ipcRenderer.invoke('github:resolvePrConflicts', number, baseRefName),
+    prCheckoutState: (number: number) => ipcRenderer.invoke('github:prCheckoutState', number),
+    pushPrBranch: (number: number) => ipcRenderer.invoke('github:pushPrBranch', number),
     prViewedFiles: (number: number) => ipcRenderer.invoke('github:prViewedFiles', number),
     setPrFileViewed: (pullRequestId: string, path: string, viewed: boolean) =>
       ipcRenderer.invoke('github:setPrFileViewed', pullRequestId, path, viewed),

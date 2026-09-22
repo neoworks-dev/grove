@@ -12,6 +12,7 @@
   import GithubSidebar from './GithubSidebar.svelte'
   import GithubMentionBox from './GithubMentionBox.svelte'
   import GithubPrFiles from './GithubPrFiles.svelte'
+  import GithubPrConflicts from './GithubPrConflicts.svelte'
   import ArrowSquareOutIcon from 'phosphor-svelte/lib/ArrowSquareOutIcon'
   import XCircleIcon from 'phosphor-svelte/lib/XCircleIcon'
   import ArrowCounterClockwiseIcon from 'phosphor-svelte/lib/ArrowCounterClockwiseIcon'
@@ -177,6 +178,8 @@
           {/if}
         {/if}
       </div>
+
+      <GithubPrConflicts {detail} />
 
       <!-- A pull request has two halves; an issue has one, so it gets no tabs. -->
       {#if detail.kind === 'pull'}

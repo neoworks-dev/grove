@@ -10,7 +10,7 @@
   import RowAction from './RowAction.svelte'
   import { store, openFileAtLine, openFileInEditor } from '../../../lib/store.svelte'
   import { fileIcon } from '../../../lib/icons'
-  import { baseName, directoryName } from './changeTree'
+  import { STATUS_COLOUR, baseName, directoryName } from './changeTree'
   import type { DiffFile, DiffHunk } from '../../../../../shared/types'
 
   let {
@@ -36,14 +36,6 @@
   let expanded = $state(false)
   let hunks = $state<DiffHunk[]>([])
   let busy = $state(false)
-
-  const statusColour: Record<string, string> = {
-    added: 'text-green',
-    modified: 'text-amber',
-    deleted: 'text-red',
-    renamed: 'text-blue',
-    untracked: 'text-violet'
-  }
 
   // Only a plain content change splits into hunks git can apply one at a time;
   // a whole-file add, delete or rename is staged as the file.
@@ -135,7 +127,7 @@
 </script>
 
 <div
-  class="group flex w-full cursor-pointer items-center gap-1 py-[3px] pr-2 text-xs select-none hover:bg-hover"
+  class="group/row flex w-full cursor-pointer items-center gap-1 py-[3px] pr-2 text-xs select-none hover:bg-hover"
   class:bg-hover={selected}
   class:text-default={selected}
   class:text-muted={!selected}
@@ -150,7 +142,7 @@
   <button
     class={[
       'w-3 shrink-0 text-center text-2xs text-dim',
-      { invisible: !splittable, 'opacity-0 group-hover:opacity-100': !expanded }
+      { invisible: !splittable, 'opacity-0 group-hover/row:opacity-100': !expanded }
     ]}
     title={expanded ? 'Hide hunks' : 'Show hunks'}
     aria-label={expanded ? 'Hide hunks' : 'Show hunks'}
@@ -170,7 +162,7 @@
   {:else}
     <span class="flex-1"></span>
   {/if}
-  <div class="hidden shrink-0 items-center gap-0.5 group-hover:flex">
+  <div class="hidden shrink-0 items-center gap-0.5 group-hover/row:flex">
     <RowAction icon={FileIcon} title="Open file" onclick={openFile} />
     {#if file.staged}
       <RowAction icon={MinusIcon} title="Unstage" disabled={busy} onclick={toggleFile} />
@@ -179,7 +171,7 @@
     {/if}
   </div>
   <span
-    class="w-3 shrink-0 text-center font-mono text-2xs {statusColour[file.changeType]}"
+    class="w-3 shrink-0 text-center font-mono text-2xs {STATUS_COLOUR[file.changeType]}"
     title={file.oldPath ? `renamed from ${file.oldPath}` : file.changeType}
   >
     {file.changeType[0].toUpperCase()}
@@ -189,7 +181,7 @@
 {#if expanded}
   {#each hunks as hunk, index (`${hunk.originalStart}:${hunk.modifiedStart}`)}
     <div
-      class="group flex w-full cursor-pointer items-center gap-2 py-[3px] pr-2 text-2xs select-none hover:bg-hover"
+      class="group/row flex w-full cursor-pointer items-center gap-2 py-[3px] pr-2 text-2xs select-none hover:bg-hover"
       style:padding-left="{indent + 32}px"
       role="treeitem"
       tabindex="-1"
@@ -205,7 +197,7 @@
         <span class="font-mono text-red">−{hunk.originalCount}</span>
       {/if}
       <span class="flex-1"></span>
-      <div class="hidden shrink-0 items-center group-hover:flex">
+      <div class="hidden shrink-0 items-center group-hover/row:flex">
         {#if file.staged}
           <RowAction
             icon={MinusIcon}

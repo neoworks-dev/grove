@@ -3,9 +3,18 @@
 // the way GitLens and VS Code compact them, so a deep path costs one row rather
 // than one per directory.
 
-import type { DiffFile } from '../../../../../shared/types'
+import type { DiffChangeType, DiffFile } from '../../../../../shared/types'
 
 export type ChangesLayout = 'tree' | 'list'
+
+/** Text colour for each kind of change, on the status letter at a row's end. */
+export const STATUS_COLOUR: Record<DiffChangeType, string> = {
+  added: 'text-green',
+  modified: 'text-amber',
+  deleted: 'text-red',
+  renamed: 'text-blue',
+  untracked: 'text-violet'
+}
 
 /** The setting that picks between the two layouts. */
 export const LAYOUT_SETTING = 'git.changesLayout'

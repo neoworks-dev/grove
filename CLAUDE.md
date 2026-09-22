@@ -39,13 +39,11 @@ Two areas is fine when an issue genuinely spans them; three means split it.
 
 ## Validation
 
-Never launch the app yourself. I run it, with `GROVE_DEBUG=1`. Ask me to restart it after main-process changes; the renderer hot-reloads on its own.
+Never launch or restart my instance of the app. Ask me to restart it after main-process changes; the renderer hot-reloads on its own.
 
-Attach to it and drive it yourself rather than asking me what I see — the `grove-debug` skill has the commands, the renderer state they reach, and the on-disk agent event log. Never read the UI through tmux.
+Debug through `bun run qa` rather than asking me what I see: it launches an isolated instance of its own on a virtual display and drives it by clicking, dragging and typing, and `bun run qa explore` hands that to a Claude Code instance which files what it finds. The `grove-debug` skill has the commands. Never read the UI through tmux.
 
 Reproduce a reported UI bug through the harness and confirm the mechanism before proposing a fix. Guessing from source has been wrong more often than right.
-
-Finding out what is wrong in the first place is the other harness: `bun run qa` launches a session on a virtual display and drives it by clicking, dragging and typing, and `bun run qa explore` hands that to a Claude Code instance which files what it finds. The `grove-qa` skill has both.
 
 ## Directory structure
 

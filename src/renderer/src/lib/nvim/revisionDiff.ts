@@ -1,8 +1,9 @@
-// A file as one commit left it, beside the same file as its parent had it, in
-// Neovim's own diff mode. Both sides are history, so both are read-only
-// scratch buffers: the right one is a Grove tab named `file @ sha`, the left
-// one sits in a window inside the same editor pane, the way the pull-request
-// diff places its base side.
+// A file as one revision left it, beside the same file at another, in Neovim's
+// own diff mode. When both sides are history, both are read-only scratch
+// buffers: the right one is a Grove tab named `file @ sha`, the left one sits
+// in a window inside the same editor pane, the way the pull-request diff places
+// its base side. Against the working tree, the right side is the real file
+// instead — editable, with its language server.
 //
 // The left window is marked `grove_revision_base`, which is how the next diff
 // reuses it instead of stacking another split, and how it is closed once the
@@ -10,7 +11,7 @@
 
 import { openScratch } from './scratch.svelte'
 import { waitForNvimSession } from './registry'
-import { store } from '../store.svelte'
+import { store, openFileInEditor } from '../store.svelte'
 
 export interface RevisionDiffRequest {
   worktreeId: string
@@ -20,7 +21,8 @@ export interface RevisionDiffRequest {
   oldPath?: string
   /** The older revision, or null when the file did not exist before. */
   leftRevision: string | null
-  rightRevision: string
+  /** The newer revision, or null when the file no longer exists there. */
+  rightRevision: string | null
   /** How each side's revision reads in its buffer name, e.g. a short sha. */
   leftLabel: string
   rightLabel: string
@@ -137,6 +139,20 @@ async function readSides(
   }
 }
 
+/** One revision's lines, or null (with the error shown) when it cannot be read. */
+async function readRevision(
+  worktreeId: string,
+  revision: string,
+  path: string
+): Promise<string[] | null> {
+  try {
+    return linesOf(await contentAt(worktreeId, revision, path))
+  } catch (err) {
+    store.setError((err as Error).message)
+    return null
+  }
+}
+
 /** Opens the diff between two revisions of a file in the editor. */
 export async function openRevisionDiff(request: RevisionDiffRequest): Promise<void> {
   let leftPath = request.path
@@ -158,4 +174,66 @@ export async function openRevisionDiff(request: RevisionDiffRequest): Promise<vo
     DIFF_LUA,
     [{ name: `${leftPath} @ ${request.leftLabel}`, path: request.path, lines: sides.left }]
   ])
+}
+
+/** How long to wait for the editor to finish opening the working-tree file. */
+const OPEN_TIMEOUT_MS = 4000
+
+/**
+ * Opens a working-tree file beside its copy at a revision. A file the working
+ * tree no longer has is shown as history against nothing instead.
+ */
+export async function openWorkingTreeDiff(request: {
+  worktreeId: string
+  worktreePath: string
+  path: string
+  oldPath?: string
+  revision: string
+  label: string
+  deleted: boolean
+}): Promise<void> {
+  if (request.deleted) {
+    await openRevisionDiff({
+      worktreeId: request.worktreeId,
+      path: request.path,
+      oldPath: request.oldPath,
+      leftRevision: request.revision,
+      rightRevision: null,
+      leftLabel: request.label,
+      rightLabel: 'working tree'
+    })
+    return
+  }
+  let leftPath = request.path
+  if (request.oldPath) leftPath = request.oldPath
+  const left = await readRevision(request.worktreeId, request.revision, leftPath)
+  if (!left) return
+
+  const absolutePath = `${request.worktreePath}/${request.path}`
+  openFileInEditor(request.worktreeId, absolutePath)
+  const session = await waitForNvimSession()
+  if (!session || !session.id) return
+  if (!(await waitForActiveFile(session, request.path))) return
+  await window.workbench.nvim.request(session.id, 'nvim_exec_lua', [
+    DIFF_LUA,
+    [{ name: `${leftPath} @ ${request.label}`, path: request.path, lines: left }]
+  ])
+}
+
+/**
+ * Waits for the editor to show a file. `openFileInEditor` only writes the tab;
+ * the pane pushes it to Neovim from an effect, so diffing at once would diff
+ * whatever was open before.
+ */
+async function waitForActiveFile(
+  session: { getActiveFile: () => Promise<{ path: string } | null> },
+  relativePath: string
+): Promise<boolean> {
+  const deadline = performance.now() + OPEN_TIMEOUT_MS
+  while (performance.now() < deadline) {
+    const active = await session.getActiveFile()
+    if (active && active.path.endsWith(`/${relativePath}`)) return true
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+  return false
 }

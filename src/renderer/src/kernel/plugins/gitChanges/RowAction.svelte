@@ -14,7 +14,7 @@
     icon: Component<{ size?: number }>
     title: string
     disabled?: boolean
-    onclick: () => void
+    onclick: (event: MouseEvent) => void
   } = $props()
 
   const Icon = $derived(icon)
@@ -22,7 +22,7 @@
   /** Runs the action without letting the click reach the row underneath. */
   function activate(event: MouseEvent): void {
     event.stopPropagation()
-    onclick()
+    onclick(event)
   }
 </script>
 

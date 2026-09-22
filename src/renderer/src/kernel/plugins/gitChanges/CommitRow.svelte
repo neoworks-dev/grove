@@ -2,6 +2,7 @@
   // One commit in the commits section: its subject, how old it is, and a mark
   // when it is not on the upstream yet (↑) or is on the upstream but not here
   // (↓). It expands into the files it changed; each opens that change.
+  import type { Snippet } from 'svelte'
   import CopyIcon from 'phosphor-svelte/lib/CopyIcon'
   import ArrowUpIcon from 'phosphor-svelte/lib/ArrowUpIcon'
   import ArrowDownIcon from 'phosphor-svelte/lib/ArrowDownIcon'
@@ -15,12 +16,15 @@
   let {
     worktreeId,
     commit,
-    direction
+    direction,
+    actions = undefined
   }: {
     worktreeId: string
     commit: CommitSummary
     /** Unpushed, incoming, or neither. */
     direction: 'outgoing' | 'incoming' | null
+    /** Hover actions shown before copy-SHA, for rows that are more than a commit (a stash). */
+    actions?: Snippet
   } = $props()
 
   let expanded = $state(false)
@@ -94,6 +98,9 @@
   </span>
   <span class="min-w-0 flex-1 truncate">{commit.subject}</span>
   <div class="hidden shrink-0 items-center group-hover/row:flex">
+    {#if actions}
+      {@render actions()}
+    {/if}
     <RowAction icon={CopyIcon} title="Copy SHA" onclick={copySha} />
   </div>
   <span class="shrink-0 font-mono text-2xs text-dim group-hover/row:hidden">

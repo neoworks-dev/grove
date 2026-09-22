@@ -2,7 +2,8 @@
   // The source-control view for the selected worktree, laid out the way GitLens
   // and VS Code lay theirs: the branch and how it stands against its upstream,
   // the commit box, then collapsible sections — staged, unstaged as a tree or a
-  // list, and the branch's commits. Clicking a file opens it with its hunks painted by the review
+  // list, the branch's commits, branches, tags and stashes, and a compare of
+  // any two refs. Clicking a file opens it with its hunks painted by the review
   // overlay; the ship-it chain lives in the footer.
   //
   // A merge in progress takes over both ends: its conflicts lead the sections,
@@ -22,6 +23,9 @@
   import { settings } from '../../../lib/settings.svelte'
   import CommitBox from './CommitBox.svelte'
   import CommitsSection from './CommitsSection.svelte'
+  import CompareSection from './CompareSection.svelte'
+  import RefsSections from './RefsSections.svelte'
+  import StashesSection from './StashesSection.svelte'
   import ChangesList, { fileKey } from './ChangesList.svelte'
   import ConflictsSection from './ConflictsSection.svelte'
   import GitSection from './GitSection.svelte'
@@ -41,6 +45,7 @@
   let refreshKey = $state(0)
 
   const worktreeId = $derived(store.selectedWorktreeId)
+  const worktreePath = $derived(store.selectedWorktree?.path)
   const layout = $derived(settings.get<ChangesLayout>(LAYOUT_SETTING))
 
   // An unmerged path is reported by both `diff` and `diff --staged`, so it would
@@ -237,8 +242,17 @@
         <p class="px-3 py-3 text-xs text-dim">No changes vs HEAD.</p>
       {/if}
 
-      {#if worktreeId}
+      {#if worktreeId && worktreePath}
         <CommitsSection {worktreeId} {branchStatus} {refreshKey} onChanged={load} />
+        <RefsSections
+          {worktreeId}
+          {worktreePath}
+          currentBranch={branchName}
+          {refreshKey}
+          onChanged={load}
+        />
+        <StashesSection {worktreeId} hasChanges={files.length > 0} {refreshKey} onChanged={load} />
+        <CompareSection {worktreeId} {worktreePath} {refreshKey} />
       {/if}
     </div>
   </FloatingScrollbar>

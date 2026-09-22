@@ -111,7 +111,7 @@
   <!-- Shown while the pointer is over the pane, or while the picker is open.
        Hidden rather than transparent, so the header keeps its full width. -->
   <div
-    class="hidden shrink-0 items-center gap-0.5 group-hover/pane:flex {className}"
+    class="pane-controls hidden shrink-0 items-center gap-0.5 group-hover/pane:flex {className}"
     class:!flex={pickerOpen}
     class:absolute={fallback}
     class:right-1.5={fallback}
@@ -147,3 +147,21 @@
     </div>
   {/if}
 {/if}
+
+<style>
+  /* Fade and slide in as the controls go from display:none to shown. The
+     starting style is what they animate from on the frame they first appear;
+     hiding stays instant, so leaving a pane never leaves them hanging. */
+  .pane-controls {
+    transition:
+      opacity 140ms ease-out,
+      translate 140ms ease-out;
+  }
+
+  @starting-style {
+    .pane-controls {
+      opacity: 0;
+      translate: 4px 0;
+    }
+  }
+</style>

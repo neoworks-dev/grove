@@ -29,3 +29,10 @@ test('the view distinguishes the dirty worktree from the clean one', async ({ gr
 test('the status bar names the branch the worktree is on', async ({ grove }) => {
   await expect(grove.page.getByRole('contentinfo')).toContainText('main')
 })
+
+test('the status bar follows the selected worktree', async ({ grove }) => {
+  await grove.page.getByTitle('Worktrees', { exact: true }).click()
+  await grove.page.getByRole('button', { name: /demo-worktree feature\/greeting/ }).click()
+
+  await expect(grove.page.getByRole('contentinfo')).toContainText('feature/greeting')
+})

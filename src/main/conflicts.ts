@@ -9,8 +9,8 @@
 
 import { readFile, writeFile } from 'fs/promises'
 import { join, relative, resolve, sep } from 'path'
-import type { ConflictChoice, ConflictHunk, ConflictedFile } from '../shared/types'
-import { conflictedFiles } from './git'
+import type { ConflictChoice, ConflictHunk, ConflictedFile, MergeState } from '../shared/types'
+import { conflictedFiles, mergeInProgress } from './git'
 
 // Markers are exactly seven characters, optionally followed by a space and a
 // label. `|||||||` only appears under diff3/zdiff3 conflict style.
@@ -155,6 +155,14 @@ export async function listConflicts(worktreePath: string): Promise<ConflictedFil
     files.push({ path, hunks: await conflictsInFile(worktreePath, path) })
   }
   return files
+}
+
+/** Where a worktree stands in a merge: whether one is open, and what is unresolved. */
+export async function mergeState(worktreePath: string): Promise<MergeState> {
+  return {
+    inProgress: await mergeInProgress(worktreePath),
+    files: await listConflicts(worktreePath)
+  }
 }
 
 /**

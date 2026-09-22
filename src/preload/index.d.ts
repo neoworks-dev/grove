@@ -18,9 +18,9 @@ import type {
   MergeMode,
   MergePreview,
   MergeResult,
-  ConflictedFile,
   ConflictHunk,
   ConflictChoice,
+  MergeState,
   WorktreeChatMessage,
   InlineHunk,
   AppliedRange,
@@ -201,7 +201,7 @@ export interface WorkbenchApi {
     mergeAbort: (targetWorktreeId: string) => Promise<void>
     mergeContinue: (targetWorktreeId: string) => Promise<MergeResult>
     mergeConflicts: (targetWorktreeId: string) => Promise<string[]>
-    conflicts: (worktreeId: string) => Promise<ConflictedFile[]>
+    mergeState: (worktreeId: string) => Promise<MergeState>
     resolveConflict: (
       worktreeId: string,
       relPath: string,

@@ -3,14 +3,26 @@
   // file opens it in the editor and paints its uncommitted hunks with the
   // floating accept/reject overlay — no separate diff pane. Staging and the
   // ship-it chain live in the footer.
+  //
+  // A merge in progress takes over both ends: its conflicts lead the list, and
+  // the footer offers finishing or abandoning the merge instead of shipping.
   import { store } from '../../../lib/store.svelte'
   import { inlineEdit } from '../../../lib/inlineEdit.svelte'
   import ShipItBar from '../../../components/ShipItBar.svelte'
-  import type { DiffFile } from '../../../../../shared/types'
+  import ConflictsSection from './ConflictsSection.svelte'
+  import MergeBar from './MergeBar.svelte'
+  import type { DiffFile, MergeState } from '../../../../../shared/types'
 
-  let files = $state<DiffFile[]>([])
+  let allFiles = $state<DiffFile[]>([])
+  let merge = $state<MergeState>({ inProgress: false, files: [] })
   let loading = $state(false)
   let selectedKey = $state<string | null>(null)
+
+  // An unmerged path is reported by both `diff` and `diff --staged`, so it would
+  // otherwise appear twice in the list — and neither entry means anything: the
+  // file is a set of conflicts, not a change to review against HEAD.
+  const conflictedPaths = $derived(new Set(merge.files.map((file) => file.path)))
+  const files = $derived(allFiles.filter((file) => !conflictedPaths.has(file.path)))
 
   const badge: Record<string, string> = {
     added: 'text-green',
@@ -33,12 +45,14 @@
   async function loadFiles(): Promise<void> {
     const worktreeId = store.selectedWorktreeId
     if (!worktreeId) {
-      files = []
+      allFiles = []
+      merge = { inProgress: false, files: [] }
       return
     }
     loading = true
     try {
-      files = await window.workbench.git.changedFiles(worktreeId)
+      allFiles = await window.workbench.git.changedFiles(worktreeId)
+      merge = await window.workbench.git.mergeState(worktreeId)
     } catch (err) {
       store.setError((err as Error).message)
     } finally {
@@ -98,6 +112,14 @@
   </div>
 
   <div class="min-h-0 flex-1 overflow-auto">
+    {#if store.selectedWorktreeId && merge.files.length > 0}
+      <ConflictsSection
+        worktreeId={store.selectedWorktreeId}
+        files={merge.files}
+        onResolved={loadFiles}
+      />
+    {/if}
+
     {#each files as file (fileKey(file))}
       <div
         class="flex w-full items-center gap-2 pr-2 text-xs {selectedKey === fileKey(file)
@@ -124,12 +146,18 @@
         </button>
       </div>
     {/each}
-    {#if !loading && files.length === 0}
+    {#if !loading && files.length === 0 && merge.files.length === 0}
       <p class="px-3 py-4 text-xs text-dim">No changes vs HEAD.</p>
     {/if}
   </div>
 
-  {#if store.selectedWorktreeId}
+  {#if store.selectedWorktreeId && merge.inProgress}
+    <MergeBar
+      worktreeId={store.selectedWorktreeId}
+      unresolved={merge.files.length}
+      onChanged={loadFiles}
+    />
+  {:else if store.selectedWorktreeId}
     <ShipItBar worktreeId={store.selectedWorktreeId} {files} onChanged={loadFiles} />
   {/if}
 </div>

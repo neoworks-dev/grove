@@ -164,9 +164,9 @@ export const gitRoutes = {
       return git.conflictedFiles(target.path)
     })
 
-    route(ctx, 'git:conflicts', (_e, worktreeId: string) => {
+    route(ctx, 'git:mergeState', (_e, worktreeId: string) => {
       const worktree = ctx.workbench.findWorktree(worktreeId)
-      return conflicts.listConflicts(worktree.path)
+      return conflicts.mergeState(worktree.path)
     })
 
     route(

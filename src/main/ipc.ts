@@ -156,7 +156,10 @@ const agents = new AgentService({
   systemPrompt: (session) => buildSystemPrompt(session),
   sessionRemoved: (session) => agentHandoffBridge.reportClosed(session),
   publish: (event) => send('event:agent-event', event),
-  defaultHarness: () => settings.get<string>('workbench.agentHarness')
+  defaultHarness: () => settings.get<string>('workbench.agentHarness'),
+  // fish consults its bundled completions before a directory with exactly this
+  // name, so a man-page git.fish cannot shadow the real one.
+  shellCompletionsDir: join(app.getPath('userData'), 'fish', 'generated_completions')
 })
 
 // Addresses the sessions in a worktree, delivers between them, and starts new

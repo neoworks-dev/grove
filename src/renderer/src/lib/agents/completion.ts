@@ -6,9 +6,8 @@
  * text and the caret means it is always right.
  */
 
-// `shellCommand` and `shellPath` complete the words of a `!` draft: its first
-// word as a command, the rest as paths.
-export type CompletionKind = 'command' | 'file' | 'shellCommand' | 'shellPath'
+// `shell` completes a word of a `!` draft, answered by the user's own shell.
+export type CompletionKind = 'command' | 'file' | 'shell'
 
 export interface Completion {
   kind: CompletionKind
@@ -17,39 +16,44 @@ export interface Completion {
   /** The span to replace when a suggestion is accepted, sigil included. */
   start: number
   end: number
+  /** For `shell`: the command as typed up to the caret, which the shell completes. */
+  line?: string
 }
 
-export function activeCompletion(text: string, caret: number): Completion | null {
+/**
+ * `requested` is a Tab press: in a shell draft it asks for completions even
+ * with nothing of the word typed yet, the way a shell's Tab lists subcommands.
+ */
+export function activeCompletion(text: string, caret: number, requested = false): Completion | null {
   const shell = shellDraft(text)
   if (shell) {
-    return shellWordAt(text, caret, shell)
+    return shellWordAt(text, caret, shell, requested)
   }
   return commandAt(text, caret) ?? fileAt(text, caret)
 }
 
 /**
- * The word of a `!` command the caret ends, once something of it is typed: the
- * first word completes as a command, every later one as a path.
+ * The word of a `!` command the caret ends, once something of it is typed or a
+ * Tab asked for it.
  */
-function shellWordAt(text: string, caret: number, shell: ShellDraft): Completion | null {
+function shellWordAt(
+  text: string,
+  caret: number,
+  shell: ShellDraft,
+  requested: boolean
+): Completion | null {
   const commandStart = shell.lead.length + shell.marker.length
-  if (caret <= commandStart) {
+  if (caret < commandStart) {
     return null
   }
 
-  const beforeCaret = text.slice(commandStart, caret)
-  const wordStart = commandStart + beforeCaret.search(/\S*$/)
+  const line = text.slice(commandStart, caret)
+  const wordStart = commandStart + line.search(/\S*$/)
   const query = text.slice(wordStart, caret)
-  if (query.length === 0) {
+  if (query.length === 0 && !requested) {
     return null
   }
-
-  const isFirstWord = text.slice(commandStart, wordStart).trim().length === 0
-  let kind: CompletionKind = 'shellPath'
-  if (isFirstWord) {
-    kind = 'shellCommand'
-  }
-  return { kind, query, start: wordStart, end: caret }
+  return { kind: 'shell', query, start: wordStart, end: caret, line }
 }
 
 /** Only the first word of the message, and only when it opens with a single slash. */

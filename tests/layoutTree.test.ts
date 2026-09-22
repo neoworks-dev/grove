@@ -13,6 +13,7 @@ import {
   removeLeaf,
   removeLeafInto,
   resizeGutter,
+  clampGutterShift,
   swapLeaves,
   syncNvimWindowLeaves,
   replaceLeafType,
@@ -132,6 +133,13 @@ describe('resizeGutter', () => {
     expect(next.sizes[1]).toBeCloseTo(0.1)
   })
 
+  it('lets a side the layout squeezed under the minimum grow back', () => {
+    const root = createSplit('row', [createLeaf('a'), createLeaf('b')], [0.95, 0.05])
+    const next = resizeGutter(root, root.id, 0, -0.1, 0.1) as SplitNode
+    expect(next.sizes[0]).toBeCloseTo(0.85)
+    expect(next.sizes[1]).toBeCloseTo(0.15)
+  })
+
   it('reaches nested splits by id', () => {
     const inner = createSplit('column', [createLeaf('a'), createLeaf('b')], [0.5, 0.5])
     const root = createSplit('row', [createLeaf('c'), inner])
@@ -139,6 +147,29 @@ describe('resizeGutter', () => {
     const nested = next.children[1] as SplitNode
     expect(nested.sizes[0]).toBeCloseTo(0.3)
     expect(nested.sizes[1]).toBeCloseTo(0.7)
+  })
+})
+
+describe('clampGutterShift', () => {
+  it('passes a shift both sides can take', () => {
+    expect(clampGutterShift(0.1, 0.5, 0.5, 0.1, 0.1)).toBeCloseTo(0.1)
+  })
+
+  it('stops a side at the minimum', () => {
+    expect(clampGutterShift(0.5, 0.5, 0.5, 0.1, 0.1)).toBeCloseTo(0.4)
+  })
+
+  it('stops each side at its own minimum, not the larger of the two', () => {
+    // The left side needs 0.4, the right only 0.1: the right may shrink to 0.1.
+    expect(clampGutterShift(0.3, 0.5, 0.5, 0.4, 0.1)).toBeCloseTo(0.3)
+    expect(clampGutterShift(0.5, 0.5, 0.5, 0.4, 0.1)).toBeCloseTo(0.4)
+    expect(clampGutterShift(-0.5, 0.5, 0.5, 0.4, 0.1)).toBeCloseTo(-0.1)
+  })
+
+  it('never moves the gutter for a side that is already under the minimum', () => {
+    // b sits at 0.05 with a 0.1 minimum: growing it is free, shrinking it is not.
+    expect(clampGutterShift(-0.02, 0.95, 0.05, 0.1, 0.1)).toBeCloseTo(-0.02)
+    expect(clampGutterShift(0.02, 0.95, 0.05, 0.1, 0.1)).toBe(0)
   })
 })
 

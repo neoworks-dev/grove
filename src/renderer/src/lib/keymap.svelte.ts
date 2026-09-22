@@ -250,8 +250,19 @@ class Keymap {
   }
 
   setActive(id: PaneId): void {
-    this.activePane = id
+    this.moveActive(id)
     this.refreshActive(id)
+  }
+
+  /**
+   * Makes a pane the active one, aborting a key sequence begun in another. A
+   * sequence belongs to the pane it started in, and the next may never hand its
+   * keys back (a terminal owns them all), which would leave the which-key panel
+   * up in it with nothing able to end the sequence.
+   */
+  private moveActive(id: PaneId): void {
+    if (id !== this.activePane && this.pendingActive) this.cancelPending()
+    this.activePane = id
   }
 
   private refreshActive(id: PaneId): void {
@@ -286,7 +297,7 @@ class Keymap {
     // Focus the innermost nested pane (e.g. the file tree inside the sidebar
     // wrapper) so its key handler receives hjkl, not the non-handling wrapper.
     const target = this.innermostPane(id, el)
-    this.activePane = target.id
+    this.moveActive(target.id)
     const delegate = this.focusDelegates.get(target.id)
     if (delegate && delegate()) return
     target.el.focus({ preventScroll: true })

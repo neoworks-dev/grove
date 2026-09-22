@@ -152,17 +152,24 @@ describe('resizeGutter', () => {
 
 describe('clampGutterShift', () => {
   it('passes a shift both sides can take', () => {
-    expect(clampGutterShift(0.1, 0.5, 0.5, 0.1)).toBeCloseTo(0.1)
+    expect(clampGutterShift(0.1, 0.5, 0.5, 0.1, 0.1)).toBeCloseTo(0.1)
   })
 
   it('stops a side at the minimum', () => {
-    expect(clampGutterShift(0.5, 0.5, 0.5, 0.1)).toBeCloseTo(0.4)
+    expect(clampGutterShift(0.5, 0.5, 0.5, 0.1, 0.1)).toBeCloseTo(0.4)
+  })
+
+  it('stops each side at its own minimum, not the larger of the two', () => {
+    // The left side needs 0.4, the right only 0.1: the right may shrink to 0.1.
+    expect(clampGutterShift(0.3, 0.5, 0.5, 0.4, 0.1)).toBeCloseTo(0.3)
+    expect(clampGutterShift(0.5, 0.5, 0.5, 0.4, 0.1)).toBeCloseTo(0.4)
+    expect(clampGutterShift(-0.5, 0.5, 0.5, 0.4, 0.1)).toBeCloseTo(-0.1)
   })
 
   it('never moves the gutter for a side that is already under the minimum', () => {
     // b sits at 0.05 with a 0.1 minimum: growing it is free, shrinking it is not.
-    expect(clampGutterShift(-0.02, 0.95, 0.05, 0.1)).toBeCloseTo(-0.02)
-    expect(clampGutterShift(0.02, 0.95, 0.05, 0.1)).toBe(0)
+    expect(clampGutterShift(-0.02, 0.95, 0.05, 0.1, 0.1)).toBeCloseTo(-0.02)
+    expect(clampGutterShift(0.02, 0.95, 0.05, 0.1, 0.1)).toBe(0)
   })
 })
 

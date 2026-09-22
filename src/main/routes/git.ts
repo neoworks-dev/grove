@@ -6,6 +6,7 @@ import { route } from '../kernel/route'
 import * as git from '../git'
 import * as conflicts from '../conflicts'
 import * as history from '../history'
+import * as refs from '../refs'
 import * as hunkStaging from '../hunkStaging'
 import * as inlineDiff from '../inlineDiff'
 import * as worktrees from '../worktrees'
@@ -225,6 +226,68 @@ export const gitRoutes = {
       }
     )
 
+    // ── Branches, tags, stashes, compare ────────────────────────────
+    route(ctx, 'git:refs', (_e, worktreeId: string) => {
+      const worktree = ctx.workbench.findWorktree(worktreeId)
+      return refs.listRefs(worktree.path)
+    })
+
+    route(ctx, 'git:stashes', (_e, worktreeId: string) => {
+      const worktree = ctx.workbench.findWorktree(worktreeId)
+      return refs.listStashes(worktree.path)
+    })
+
+    // Checking out another branch changes what the worktree is on, so the
+    // worktree list is refreshed before the renderer reads it again.
+    route(ctx, 'git:checkout', async (_e, worktreeId: string, branch: string, remote: boolean) => {
+      const worktree = ctx.workbench.findWorktree(worktreeId)
+      await refs.checkout(worktree.path, branch, remote)
+      return ctx.workbench.refreshWorktrees()
+    })
+
+    route(ctx, 'git:mergeRef', async (_e, worktreeId: string, ref: string) => {
+      const worktree = ctx.workbench.findWorktree(worktreeId)
+      await requireClean(worktree.path, worktree.name, 'merging')
+      await ctx.checkpoints.snapshot(worktree.path, 'pre-merge', {
+        note: `merge ${ref} → ${worktree.branch}`
+      })
+      return git.mergeWorktree(worktree.path, ref, { mode: 'ff' })
+    })
+
+    route(ctx, 'git:rebaseOnto', async (_e, worktreeId: string, onto: string) => {
+      const worktree = ctx.workbench.findWorktree(worktreeId)
+      await requireClean(worktree.path, worktree.name, 'rebasing')
+      await ctx.checkpoints.snapshot(worktree.path, 'pre-rebase', {
+        note: `rebase ${worktree.branch} onto ${onto}`
+      })
+      return refs.rebaseOnto(worktree.path, onto)
+    })
+
+    route(ctx, 'git:deleteBranch', (_e, worktreeId: string, branch: string, force: boolean) => {
+      const worktree = ctx.workbench.findWorktree(worktreeId)
+      return git.deleteBranch(worktree.path, branch, force)
+    })
+
+    route(ctx, 'git:stashPush', (_e, worktreeId: string, message: string) => {
+      const worktree = ctx.workbench.findWorktree(worktreeId)
+      return refs.stashPush(worktree.path, message)
+    })
+
+    route(ctx, 'git:stashApply', (_e, worktreeId: string, ref: string, pop: boolean) => {
+      const worktree = ctx.workbench.findWorktree(worktreeId)
+      return refs.stashApply(worktree.path, ref, pop)
+    })
+
+    route(ctx, 'git:stashDrop', (_e, worktreeId: string, ref: string) => {
+      const worktree = ctx.workbench.findWorktree(worktreeId)
+      return refs.stashDrop(worktree.path, ref)
+    })
+
+    route(ctx, 'git:compare', (_e, worktreeId: string, base: string, head: string | null) => {
+      const worktree = ctx.workbench.findWorktree(worktreeId)
+      return refs.compareRefs(worktree.path, base, head)
+    })
+
     route(
       ctx,
       'worktrees:archive',
@@ -241,4 +304,12 @@ export const gitRoutes = {
       }
     )
   }
+}
+
+/** Refuses an operation that rewrites the checked-out branch while it has uncommitted changes. */
+async function requireClean(worktreePath: string, name: string, doing: string): Promise<void> {
+  if (!(await git.isDirty(worktreePath))) return
+  throw new Error(
+    `worktree "${name}" has uncommitted changes; commit or stash them before ${doing}`
+  )
 }

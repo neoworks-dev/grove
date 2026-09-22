@@ -75,6 +75,55 @@ export interface BranchCommits {
   hasMore: boolean
 }
 
+// A local or remote-tracking branch. `name` is the short form (`main`,
+// `origin/main`); `remote` names the remote a remote-tracking branch belongs
+// to. `worktreePath` is where the branch is checked out, when it is — git
+// refuses to check a branch out twice.
+export interface BranchRef {
+  name: string
+  sha: string
+  subject: string
+  date: string
+  current: boolean
+  upstream: string | null
+  ahead: number
+  behind: number
+  /** The upstream branch was deleted on the remote. */
+  upstreamGone: boolean
+  worktreePath: string | null
+  remote: string | null
+}
+
+// A tag, peeled to the commit it names. `date` is when the tag was made for an
+// annotated tag, the commit's date for a lightweight one.
+export interface TagRef {
+  name: string
+  sha: string
+  subject: string
+  date: string
+}
+
+export interface RefList {
+  local: BranchRef[]
+  remote: BranchRef[]
+  tags: TagRef[]
+}
+
+// One stash entry. `ref` is how git addresses it (`stash@{0}`); `commit` is the
+// stash commit, whose first parent is the commit it was taken on.
+export interface StashEntry {
+  ref: string
+  commit: CommitSummary
+}
+
+// Two refs set side by side. `ahead` is what `head` has that `base` lacks,
+// `behind` the reverse; `files` is every file that differs between them.
+export interface RefComparison {
+  ahead: CommitSummary[]
+  behind: CommitSummary[]
+  files: DiffFile[]
+}
+
 // Changed line ranges for a file, parsed from `git diff` hunk headers. Empty
 // for untracked files, where every modified line is an addition.
 export interface DiffHunks {
@@ -183,6 +232,7 @@ export type CheckpointTrigger =
   | 'user-message'
   | 'pre-restore'
   | 'pre-merge'
+  | 'pre-rebase'
   | 'manual'
   // Taken when a review batch opens. Its tree is the baseline every staged file
   // in that batch is diffed against, and the checkpoint ref keeps it reachable

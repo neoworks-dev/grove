@@ -10,7 +10,7 @@ import type { BranchCommits, CommitSummary, DiffFile } from '../shared/types'
 // so a log formatted with them splits without any quoting.
 const FIELD = '\x1f'
 const RECORD = '\x1e'
-const LOG_FORMAT = `${['%H', '%h', '%P', '%an', '%ae', '%aI', '%s'].join('%x1f')}%x1e`
+export const LOG_FORMAT = `${['%H', '%h', '%P', '%an', '%ae', '%aI', '%s'].join('%x1f')}%x1e`
 
 /** Parses `git log` output written with LOG_FORMAT. */
 export function parseLog(output: string): CommitSummary[] {
@@ -33,7 +33,7 @@ export function parseLog(output: string): CommitSummary[] {
 }
 
 /** Runs `git log` with LOG_FORMAT over the given revision arguments. */
-async function log(worktreePath: string, args: string[]): Promise<CommitSummary[]> {
+export async function log(worktreePath: string, args: string[]): Promise<CommitSummary[]> {
   const output = await simpleGit({ baseDir: worktreePath }).raw([
     'log',
     `--format=${LOG_FORMAT}`,

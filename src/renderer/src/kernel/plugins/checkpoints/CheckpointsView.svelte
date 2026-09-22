@@ -18,6 +18,8 @@
     'user-message': 'your message',
     'pre-restore': 'before restore',
     'pre-merge': 'before merge',
+    'pre-rebase': 'before rebase',
+    'pre-reset': 'before reset',
     manual: 'manual',
     'review-baseline': 'before agent edits'
   }

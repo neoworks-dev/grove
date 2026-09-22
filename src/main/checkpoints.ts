@@ -24,10 +24,15 @@ const CHECKPOINT_ENV = {
   GIT_COMMITTER_EMAIL: 'checkpoint@grove.local'
 }
 
-// Default retention per worktree. Safety checkpoints (pre-restore/pre-merge) are
+// Default retention per worktree. Safety checkpoints (pre-restore/merge/rebase/reset) are
 // exempt from eviction.
 const DEFAULT_CAP = 50
-const EXEMPT_TRIGGERS: ReadonlySet<CheckpointTrigger> = new Set(['pre-restore', 'pre-merge'])
+const EXEMPT_TRIGGERS: ReadonlySet<CheckpointTrigger> = new Set([
+  'pre-restore',
+  'pre-merge',
+  'pre-rebase',
+  'pre-reset'
+])
 
 // Minimum spacing between snapshots for one worktree; back-to-back triggers
 // (e.g. a user message immediately followed by a turn-end) coalesce.
@@ -144,7 +149,7 @@ export class CheckpointManager {
     const now = Date.now()
     const isSafety = EXEMPT_TRIGGERS.has(trigger)
     const last = this.lastSnapshotAt.get(worktreePath) ?? 0
-    // Safety checkpoints (pre-restore/pre-merge) must never be debounced away.
+    // Safety checkpoints (pre-restore/merge/rebase/reset) must never be debounced away.
     if (!isSafety && now - last < MIN_SNAPSHOT_INTERVAL_MS) return null
 
     const git = gitFor(worktreePath)

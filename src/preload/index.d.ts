@@ -10,6 +10,14 @@ import type {
 import type {
   Worktree,
   BranchList,
+  BranchStatus,
+  BranchCommits,
+  GraphPage,
+  CommitSearchPage,
+  ResetMode,
+  RefList,
+  StashEntry,
+  RefComparison,
   DiffFile,
   DiffSides,
   DiffHunks,
@@ -191,6 +199,42 @@ export interface WorkbenchApi {
     diffText: (worktreeId: string, before: string, after: string) => Promise<string>
     stage: (worktreeId: string, paths: string[]) => Promise<void>
     unstage: (worktreeId: string, paths: string[]) => Promise<void>
+    stageHunk: (worktreeId: string, file: DiffFile, hunkIndex: number) => Promise<void>
+    unstageHunk: (worktreeId: string, file: DiffFile, hunkIndex: number) => Promise<void>
+    branchStatus: (worktreeId: string) => Promise<BranchStatus>
+    pull: (worktreeId: string) => Promise<string>
+    fetch: (worktreeId: string) => Promise<string>
+    branchCommits: (worktreeId: string, skip: number, limit: number) => Promise<BranchCommits>
+    commitFiles: (worktreeId: string, sha: string) => Promise<DiffFile[]>
+    graph: (worktreeId: string, skip: number, limit: number) => Promise<GraphPage>
+    commitMessage: (worktreeId: string, sha: string) => Promise<string>
+    searchCommits: (
+      worktreeId: string,
+      query: string,
+      skip: number,
+      limit: number
+    ) => Promise<CommitSearchPage>
+    checkoutCommit: (worktreeId: string, sha: string) => Promise<Worktree[]>
+    createBranch: (
+      worktreeId: string,
+      name: string,
+      sha: string,
+      checkout: boolean
+    ) => Promise<Worktree[]>
+    cherryPick: (worktreeId: string, sha: string) => Promise<string>
+    revert: (worktreeId: string, sha: string) => Promise<string>
+    reset: (worktreeId: string, sha: string, mode: ResetMode) => Promise<Worktree[]>
+    fileAtRevision: (worktreeId: string, revision: string, relPath: string) => Promise<string>
+    refs: (worktreeId: string) => Promise<RefList>
+    stashes: (worktreeId: string) => Promise<StashEntry[]>
+    checkout: (worktreeId: string, branch: string, remote: boolean) => Promise<Worktree[]>
+    mergeRef: (worktreeId: string, ref: string) => Promise<MergeResult>
+    rebaseOnto: (worktreeId: string, onto: string) => Promise<string>
+    deleteBranch: (worktreeId: string, branch: string, force: boolean) => Promise<void>
+    stashPush: (worktreeId: string, message: string) => Promise<void>
+    stashApply: (worktreeId: string, ref: string, pop: boolean) => Promise<void>
+    stashDrop: (worktreeId: string, ref: string) => Promise<void>
+    compare: (worktreeId: string, base: string, head: string | null) => Promise<RefComparison>
     commit: (worktreeId: string, message: string) => Promise<string>
     push: (worktreeId: string) => Promise<string>
     mergeLocal: (worktreeId: string, baseBranch: string) => Promise<string>

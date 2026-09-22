@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { PERMISSION_META, type PluginPermission } from '../../../shared/plugins'
   import { store } from '../lib/store.svelte'
-  import { layout } from '../lib/layout.svelte'
+  import PaneControls from './PaneControls.svelte'
 
   interface GrantSummary {
     clientId: string
@@ -94,13 +94,7 @@
     >
       Refresh
     </button>
-    <button
-      class="shrink-0 px-1 text-dim hover:text-default"
-      onclick={() => layout.closeLeaf(leafId)}
-      aria-label="Close permissions"
-    >
-      ✕
-    </button>
+    <PaneControls />
   </div>
 
   <div class="min-h-0 flex-1 overflow-auto py-1">

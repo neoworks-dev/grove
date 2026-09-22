@@ -14,6 +14,7 @@
   import { layout } from '../lib/layout.svelte'
   import { keymap } from '../lib/keymap.svelte'
   import { claimTerminal, releaseTerminal } from '../lib/terminalClaims'
+  import PaneControls from './PaneControls.svelte'
 
   let { leafId }: { leafId: string } = $props()
 
@@ -265,6 +266,7 @@
         </div>
       </div>
       {@render newTerminalButton()}
+      <PaneControls />
     </div>
   {/if}
 
@@ -290,6 +292,7 @@
   {#if sideStrip}
     <!-- Right: the same terminal list as a column beside the wide terminal. -->
     <div class="flex w-44 shrink-0 flex-col gap-1 p-2">
+      <PaneControls class="self-end" />
       <div bind:this={stripEl} class="no-scrollbar min-h-0 flex-1 overflow-y-auto">
         <div class="flex flex-col gap-1">
           {#each sessions as session (session.key)}

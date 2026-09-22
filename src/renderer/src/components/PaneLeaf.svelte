@@ -2,7 +2,8 @@
   // The canonical window: a leaf of the split tree. Registers itself as a
   // focusable pane and renders whatever pane type it references.
   import MissingPane from './MissingPane.svelte'
-  import PaneMenu from './PaneMenu.svelte'
+  import PaneControls from './PaneControls.svelte'
+  import { PaneChrome, providePaneChrome } from '../lib/paneChrome.svelte'
   import { panes } from '../lib/panes.svelte'
   import { keymap, pane } from '../lib/keymap.svelte'
   import { layout } from '../lib/layout.svelte'
@@ -10,6 +11,10 @@
   import type { LeafNode } from '../lib/layoutTree'
 
   let { leaf }: { leaf: LeafNode } = $props()
+
+  // The window controls act on this leaf; the pane's header renders them.
+  const chrome = new PaneChrome(leaf.id, () => leaf.paneTypeId)
+  providePaneChrome(chrome)
 
   const type = $derived(panes.get(leaf.paneTypeId))
   const available = $derived(type !== null && (!type.when || type.when()))
@@ -52,27 +57,33 @@
   data-zoom-container={leaf.id}
   style={zoomStyle}
   onpointerdown={onPointerDown}
-  class="pane-surface relative flex h-full w-full min-w-0 min-h-0 flex-col overflow-hidden rounded-xl border border-line-faint outline-none {surfaceClass} {keymap.activeSurfaceId ===
+  class="pane-surface group/pane relative flex h-full w-full min-w-0 min-h-0 flex-col overflow-hidden rounded-xl border border-line-faint outline-none {surfaceClass} {keymap.activeSurfaceId ===
   leaf.id
     ? 'pane-active'
     : ''} {dragged ? 'opacity-40' : ''}"
 >
-  <PaneMenu leafId={leaf.id} paneTypeId={leaf.paneTypeId} />
-  {#if !type}
-    <MissingPane paneTypeId={leaf.paneTypeId} />
-  {:else if !available}
-    <div class="flex flex-1 items-center justify-center text-dim">
-      Open a folder to begin.
-    </div>
-  {:else}
-    {#key leaf.paneTypeId}
-      {@const Content = type.component}
-      <Content
-        leafId={leaf.id}
-        paneTypeId={leaf.paneTypeId}
-        state={leaf.paneState ?? {}}
-        {updateState}
-      />
-    {/key}
+  <div class="relative flex min-h-0 min-w-0 flex-1 flex-col">
+    {#if !type}
+      <MissingPane paneTypeId={leaf.paneTypeId} />
+    {:else if !available}
+      <div class="flex flex-1 items-center justify-center text-dim">
+        Open a folder to begin.
+      </div>
+    {:else}
+      {#key leaf.paneTypeId}
+        {@const Content = type.component}
+        <Content
+          leafId={leaf.id}
+          paneTypeId={leaf.paneTypeId}
+          state={leaf.paneState ?? {}}
+          {updateState}
+        />
+      {/key}
+    {/if}
+  </div>
+  <!-- A pane with no header showing the controls gets them in its top-right
+       corner instead, on hover only like everywhere else. -->
+  {#if chrome.claims === 0}
+    <PaneControls fallback />
   {/if}
 </div>

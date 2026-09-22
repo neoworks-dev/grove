@@ -6,6 +6,7 @@
   import ArrowsLeftRightIcon from 'phosphor-svelte/lib/ArrowsLeftRightIcon'
   import { store, type TabDiff } from '../lib/store.svelte'
   import { fileIcon } from '../lib/icons'
+  import PaneControls from './PaneControls.svelte'
 
   interface Tab {
     path: string
@@ -105,4 +106,5 @@
       {/each}
     </div>
   </div>
+  <PaneControls class="ml-1.5" />
 </div>

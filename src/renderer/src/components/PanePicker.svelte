@@ -1,7 +1,7 @@
 <script lang="ts">
-  // The list of pane types, as a floating menu. Shared by the per-pane "…" menu
-  // (which swaps the pane in place) and the `+` on a gutter (which opens a new
-  // window there), so both offer the same panes in the same order.
+  // The list of pane types, as a floating menu. Shared by the pane controls'
+  // "Change pane" (which swaps the pane in place) and the `+` on a gutter (which
+  // opens a new window there), so both offer the same panes in the same order.
   import type { Snippet } from 'svelte'
   import { panes } from '../lib/panes.svelte'
 

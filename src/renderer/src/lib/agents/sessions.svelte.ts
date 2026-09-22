@@ -19,7 +19,9 @@ import {
   sendEvents,
   updateSession
 } from './api'
+import { untrack } from 'svelte'
 import { openStream } from './stream'
+import { attentionOf, type SessionAttention } from './attention'
 import type { AgentMode } from './modes'
 import { openFileAtLine, openFileInEditor, store } from '../store.svelte'
 import {
@@ -72,6 +74,9 @@ class AgentSessions {
   activeByWorktree = $state<Record<string, string>>({})
   // Set when the server itself is unreachable, as opposed to one session failing.
   serverError = $state('')
+  // Sessions whose turn ended while they were not on screen, and how it ended.
+  // Cleared by opening the session.
+  attention = $state<Record<string, SessionAttention>>({})
 
   private closers = new Map<string, () => void>()
   // Most recently viewed last, which is the order streams are evicted in.
@@ -320,13 +325,45 @@ class AgentSessions {
     return session
   }
 
-  /** Mark a session as the one on screen, which is what clears its unread count. */
+  /** Mark a session as the one on screen, which is what clears its unread count and attention. */
   view(sessionId: string | null): void {
     this.viewing = sessionId
     if (sessionId === null) return
     this.touch(sessionId)
     const session = this.live[sessionId]
     if (session) session.unread = 0
+    // Untracked: this runs inside the Agent pane's effect, which would otherwise
+    // come to depend on the attention map and clear every flag the moment one
+    // is raised.
+    untrack(() => {
+      if (this.attention[sessionId]) delete this.attention[sessionId]
+    })
+  }
+
+  /** Take down a session's flag: whatever it had to say has been seen. */
+  acknowledge(sessionId: string): void {
+    if (this.attention[sessionId]) delete this.attention[sessionId]
+  }
+
+  /** Stop treating a session as on screen, when the pane showing it goes away. */
+  unview(sessionId: string | null): void {
+    if (sessionId === null || this.viewing !== sessionId) return
+    this.viewing = null
+  }
+
+  /**
+   * Note a turn that ended in any session, from the event stream every session
+   * shares. One nobody is looking at is flagged, so the worktrees view can say
+   * something happened; a new turn starting takes the flag back down.
+   */
+  noteEvent(event: SessionEvent): void {
+    if (event.type === 'session.status_running') {
+      if (this.attention[event.sessionId]) delete this.attention[event.sessionId]
+      return
+    }
+    const attention = attentionOf(event)
+    if (!attention || event.sessionId === this.viewing) return
+    this.attention[event.sessionId] = attention
   }
 
   close(sessionId: string): void {

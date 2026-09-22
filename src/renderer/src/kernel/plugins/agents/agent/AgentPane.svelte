@@ -159,7 +159,12 @@
     return unwatch
   })
 
-  onDestroy(() => disposeBindings?.())
+  onDestroy(() => {
+    disposeBindings?.()
+    // Nothing shows this session once the pane is gone, so a turn ending in it
+    // should be flagged like any other.
+    agentSessions.unview(activeId)
+  })
 
   // Follow the selection: open a stream for the session on screen, and tell the
   // store which one it is so its unread count clears.

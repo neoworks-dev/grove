@@ -9,26 +9,29 @@
   import { diffStatLabel } from '../../../lib/worktreeStatus'
   import CreateWorktreeDialog from './CreateWorktreeDialog.svelte'
   import MergeWorktreeDialog from './MergeWorktreeDialog.svelte'
-  import WaveSpinner from '../../../components/WaveSpinner.svelte'
-  import AgentLogo from '../../../components/AgentLogo.svelte'
+  import WorktreeSessionRow from './WorktreeSessionRow.svelte'
+  import { onMount } from 'svelte'
+  import { agentSessions } from '../../../lib/agents/sessions.svelte'
   import type { Worktree, ServiceRuntime } from '../../../../../shared/types'
-  import type { SessionMeta } from '../../../lib/agents/types'
-  import { sessionsFor } from '../../../lib/worktreeStatus'
+  import { sessionAttentionFor, sessionsFor } from '../../../lib/worktreeStatus'
+  import { ATTENTION_LABELS } from '../../../lib/agents/attention'
+  import BellRingingIcon from 'phosphor-svelte/lib/BellRingingIcon'
   import PaneControls from '../../../components/PaneControls.svelte'
   import RowAction from '../gitChanges/RowAction.svelte'
   import PlusIcon from 'phosphor-svelte/lib/PlusIcon'
+  import HardDrivesIcon from 'phosphor-svelte/lib/HardDrivesIcon'
 
   let showDialog = $state(false)
   let mergeSource = $state<Worktree | null>(null)
 
-  function titleOf(session: SessionMeta): string {
-    if (session.title.trim().length > 0) return session.title
-    return session.model || 'Session'
-  }
+  // The session rows need the listing polled, and no agent pane may be open to
+  // do it; the poll is shared and reference counted, so this adds no second one.
+  onMount(() => agentSessions.watch())
 
   // Select the worktree, focus the Agent pane, and switch it to this session.
   function openSession(worktreeId: string, sessionId: string, event: MouseEvent): void {
     event.stopPropagation()
+    agentSessions.acknowledge(sessionId)
     void focusAgentInPane(worktreeId, sessionId)
     layout.ensurePane('agent')
   }
@@ -45,10 +48,27 @@
     layout.ensurePane('checkpoints')
   }
 
-  function serviceSummary(worktreeId: string): { running: number; total: number } {
+  /** How many of the worktree's workbench.yaml services run, and each one's state for the tooltip. */
+  function serviceSummary(worktreeId: string): { running: number; total: number; detail: string } {
     const list: ServiceRuntime[] = store.services[worktreeId] || []
     const running = list.filter((service) => service.status === 'running').length
-    return { running, total: list.length }
+    const lines = list.map((service) => `${service.name}: ${service.status}`)
+    const detail = [`${running} of ${list.length} services running`, ...lines].join('\n')
+    return { running, total: list.length, detail }
+  }
+
+  /** The tooltip on a worktree's bell: which sessions ended, and how. */
+  function attentionTitle(flagged: ReturnType<typeof sessionAttentionFor>): string {
+    return flagged
+      .map((entry) => `${entry.session.title}: ${ATTENTION_LABELS[entry.attention]}`)
+      .join('\n')
+  }
+
+  /** The bell's colour: the most pressing of the sessions it stands for. */
+  function attentionTone(flagged: ReturnType<typeof sessionAttentionFor>): string {
+    if (flagged.some((entry) => entry.attention === 'failed')) return 'text-red'
+    if (flagged.some((entry) => entry.attention === 'needs_you')) return 'text-amber'
+    return 'text-green'
   }
 
   function hasActiveAgent(worktreeId: string): boolean {
@@ -94,6 +114,7 @@
       {@const summary = serviceSummary(worktree.id)}
       {@const diff = diffStatLabel(worktree.id)}
       {@const sessions = sessionsFor(worktree.id)}
+      {@const flagged = sessionAttentionFor(worktree.id)}
       <div
         class="group/worktree flex cursor-pointer items-center gap-2 px-3 py-2 text-sm {store.selectedWorktreeId ===
         worktree.id
@@ -123,6 +144,15 @@
         </div>
 
         <div class="flex shrink-0 items-center gap-1.5">
+          {#if flagged.length > 0}
+            <span
+              class="flex items-center gap-0.5 text-2xs {attentionTone(flagged)}"
+              title={attentionTitle(flagged)}
+            >
+              <BellRingingIcon size={12} weight="fill" />
+              {#if flagged.length > 1}{flagged.length}{/if}
+            </span>
+          {/if}
           {#if diff}
             <span class="font-mono text-2xs" title="Lines changed vs HEAD">
               <span class="text-green">+{diff.added}</span>
@@ -131,9 +161,12 @@
           {/if}
           {#if summary.total > 0}
             <span
-              class="text-2xs {summary.running > 0 ? 'text-green' : 'text-dim'}"
-              title="running/total services"
+              class="flex items-center gap-0.5 text-2xs"
+              class:text-green={summary.running > 0}
+              class:text-dim={summary.running === 0}
+              title={summary.detail}
             >
+              <HardDrivesIcon size={11} />
               {summary.running}/{summary.total}
             </span>
           {/if}
@@ -184,26 +217,12 @@
 
       <!-- One row per agent session in this worktree, running or not. -->
       {#each sessions as session (session.id)}
-        <button
-          class="flex w-full items-center gap-2 py-1 pl-7 pr-3 text-left text-2xs hover:bg-hover {store.selectedWorktreeId ===
-          worktree.id
-            ? 'bg-elevated'
-            : ''}"
-          title="{titleOf(session)} · {session.provider}/{session.model} — {session.status}"
-          onclick={(event) => openSession(worktree.id, session.id, event)}
-        >
-          <AgentLogo harness={session.harness} size={14} active={session.status === 'running'} />
-          <span class="truncate {session.status === 'running' ? 'text-default' : 'text-muted'}"
-            >{titleOf(session)}</span
-          >
-          {#if session.status === 'running'}
-            <span class="ml-auto text-green"><WaveSpinner count={3} /></span>
-          {:else if session.pendingApprovals.length > 0}
-            <span class="ml-auto text-amber">waiting</span>
-          {:else}
-            <span class="ml-auto text-dim">{session.status}</span>
-          {/if}
-        </button>
+        <WorktreeSessionRow
+          {session}
+          attention={agentSessions.attention[session.id]}
+          selected={store.selectedWorktreeId === worktree.id}
+          onopen={(event) => openSession(worktree.id, session.id, event)}
+        />
       {/each}
     {/each}
 

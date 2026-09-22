@@ -12,10 +12,12 @@ import { randomUUID } from 'node:crypto'
 import { appendFile, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { AGENT_ID_LABEL, newAgentId } from './identity'
+import { firstPromptText, isDefaultTitle, lastMessagePreview, titleFromPrompt } from './sessionSummary'
 import type {
   EventBody,
   SessionEvent,
   SessionMeta,
+  SessionPreview,
   SessionSnapshot,
   AgentMode,
   ThinkingLevel,
@@ -216,6 +218,16 @@ export class SessionStore {
     }
   }
 
+  /** The last message in a session, read off the log already in memory. */
+  previewOf(sessionId: string): SessionPreview | null {
+    return lastMessagePreview(this.events.get(sessionId) ?? [])
+  }
+
+  /** The session's events as already loaded, without waiting; empty for an unknown id. */
+  peekEvents(sessionId: string): readonly SessionEvent[] {
+    return this.events.get(sessionId) ?? []
+  }
+
   dirOf(sessionId: string): string {
     return join(this.root, sessionId)
   }
@@ -223,7 +235,12 @@ export class SessionStore {
   // ── Projections ─────────────────────────────────────────────────
 
   /** The listing row for a stored session. */
-  static metaOf(session: StoredSession, live: boolean, runtime: RuntimeState): SessionMeta {
+  static metaOf(
+    session: StoredSession,
+    live: boolean,
+    runtime: RuntimeState,
+    preview: SessionPreview | null
+  ): SessionMeta {
     return {
       id: session.id,
       title: session.title,
@@ -243,7 +260,8 @@ export class SessionStore {
       pendingApprovals: runtime.pendingApprovals,
       lastSeq: session.lastSeq,
       live,
-      started: hasStarted(session)
+      started: hasStarted(session),
+      preview
     }
   }
 
@@ -252,12 +270,13 @@ export class SessionStore {
     session: StoredSession,
     live: boolean,
     runtime: RuntimeState,
-    messageCount: number
+    messageCount: number,
+    preview: SessionPreview | null
   ): SessionSnapshot {
     const used = session.usage.inputTokens + session.usage.outputTokens
     const window = session.contextWindow
     return {
-      ...SessionStore.metaOf(session, live, runtime),
+      ...SessionStore.metaOf(session, live, runtime, preview),
       messageCount,
       usage: session.usage,
       cost: session.cost,
@@ -286,8 +305,10 @@ export class SessionStore {
     const metaPath = join(this.dirOf(sessionId), META_FILE)
     try {
       const session = parseSession(await readFile(metaPath, 'utf8'))
+      const events = await this.readEvents(session.id)
       this.sessions.set(session.id, session)
-      this.events.set(session.id, await this.readEvents(session.id))
+      this.events.set(session.id, events)
+      this.nameUnnamed(session, events)
     } catch (cause) {
       this.onError(`could not read agent session ${sessionId}: ${(cause as Error).message}`)
     }
@@ -305,6 +326,20 @@ export class SessionStore {
       }
     }
     return events
+  }
+
+  /**
+   * Give a session from before sessions were named after their first prompt
+   * that name now, once, so the listing never shows a column of "Session N".
+   */
+  private nameUnnamed(session: StoredSession, events: readonly SessionEvent[]): void {
+    if (!isDefaultTitle(session.title)) return
+    const prompt = firstPromptText(events)
+    if (!prompt) return
+    const title = titleFromPrompt(prompt)
+    if (!title) return
+    session.title = title
+    this.queueWrite(() => this.writeMeta(session))
   }
 
   private async writeMeta(session: StoredSession): Promise<void> {

@@ -15,7 +15,7 @@ import type {
   ReviewBatch,
   WorktreeChatMessage
 } from '../../../shared/types'
-import type { FileBlock } from './agents/types'
+import type { FileBlock, SessionEvent } from './agents/types'
 
 export interface LogLine {
   source: 'service'
@@ -354,8 +354,15 @@ export async function openRepoResult(result: {
   // Restore UI layout (split tree — or the legacy pane sizes — and open tabs).
   layout.apply(repoState)
   restoreTabs(repoState)
+  // Every row in the worktrees view shows its line counts and services, so
+  // fetch them for all worktrees now rather than one at a time as each is
+  // selected. The selected one is awaited: the services panel reads it next.
+  for (const worktree of result.worktrees) {
+    if (worktree.id === store.selectedWorktreeId) continue
+    void refreshWorktreeStatus(worktree.id)
+  }
   if (store.selectedWorktreeId) {
-    await refreshRuntimes(store.selectedWorktreeId)
+    await refreshWorktreeStatus(store.selectedWorktreeId)
   }
   syncWatched()
   // Unconfigured workspace and never dismissed: offer the setup wizard in the
@@ -417,6 +424,11 @@ export function syncWatched(): void {
   void window.workbench.fs.watch([...ids])
 }
 
+/** Fetches one worktree's line counts and services into the store. */
+async function refreshWorktreeStatus(worktreeId: string): Promise<void> {
+  await Promise.all([refreshRuntimes(worktreeId), refreshDiffStats(worktreeId)])
+}
+
 export async function refreshWorktrees(): Promise<void> {
   store.worktrees = await window.workbench.worktrees.list()
   for (const worktree of store.worktrees) void refreshDiffStats(worktree.id)
@@ -469,6 +481,10 @@ export async function refreshRuntimes(worktreeId: string): Promise<void> {
 
 // Subscribe to streamed main-process events. Call once at app start.
 export function subscribeEvents(): void {
+  // Every session's events, so a turn that ends out of sight is flagged.
+  window.workbench.on('event:agent-event', (payload) => {
+    agentSessions.noteEvent(payload as SessionEvent)
+  })
   window.workbench.on('event:log', (payload) => {
     const event = payload as {
       worktreeId: string

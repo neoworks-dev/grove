@@ -14,6 +14,9 @@
   import type { Worktree, ServiceRuntime } from '../../../../../shared/types'
   import type { SessionMeta } from '../../../lib/agents/types'
   import { sessionsFor } from '../../../lib/worktreeStatus'
+  import PaneControls from '../../../components/PaneControls.svelte'
+  import RowAction from '../gitChanges/RowAction.svelte'
+  import PlusIcon from 'phosphor-svelte/lib/PlusIcon'
 
   let showDialog = $state(false)
   let mergeSource = $state<Worktree | null>(null)
@@ -74,16 +77,16 @@
 </script>
 
 <div class="flex h-full flex-col">
-  <div class="flex items-center justify-between px-3 py-2">
+  <div class="flex items-center gap-1.5 px-3 py-2">
     <span class="text-2xs font-semibold uppercase tracking-caps text-dim">Worktrees</span>
-    <button
-      class="rounded-md border border-line bg-surface px-1.5 py-0.5 text-xs hover:bg-hover disabled:opacity-40"
+    <span class="flex-1"></span>
+    <RowAction
+      icon={PlusIcon}
+      title="New worktree"
       disabled={!store.repo}
       onclick={() => (showDialog = true)}
-      title="New worktree"
-    >
-      +
-    </button>
+    />
+    <PaneControls />
   </div>
 
   <div class="flex-1 overflow-y-auto">
@@ -92,9 +95,9 @@
       {@const diff = diffStatLabel(worktree.id)}
       {@const sessions = sessionsFor(worktree.id)}
       <div
-        class="group flex cursor-pointer items-center gap-2 px-3 py-2 text-sm {store.selectedWorktreeId ===
+        class="group/worktree flex cursor-pointer items-center gap-2 px-3 py-2 text-sm {store.selectedWorktreeId ===
         worktree.id
-          ? 'bg-surface'
+          ? 'bg-elevated'
           : 'hover:bg-hover'}"
         role="button"
         tabindex="0"
@@ -138,7 +141,7 @@
             <span class="h-2 w-2 rounded-full bg-violet" title="agent running"></span>
           {/if}
           <button
-            class="hidden text-dim hover:text-default group-hover:block"
+            class="hidden text-dim hover:text-default group-hover/worktree:block"
             title="Worktree chat"
             onclick={(event) => {
               event.stopPropagation()
@@ -148,7 +151,7 @@
             ✉
           </button>
           <button
-            class="hidden text-dim hover:text-default group-hover:block"
+            class="hidden text-dim hover:text-default group-hover/worktree:block"
             title="Checkpoints"
             onclick={(event) => {
               event.stopPropagation()
@@ -158,7 +161,7 @@
             ⟲
           </button>
           <button
-            class="hidden text-dim hover:text-violet group-hover:block"
+            class="hidden text-dim hover:text-violet group-hover/worktree:block"
             title="Merge this worktree into another"
             onclick={(event) => {
               event.stopPropagation()
@@ -169,7 +172,7 @@
           </button>
           {#if !worktree.isMain}
             <button
-              class="hidden text-dim hover:text-red group-hover:block"
+              class="hidden text-dim hover:text-red group-hover/worktree:block"
               title="Remove worktree"
               onclick={(event) => remove(worktree, event)}
             >
@@ -184,7 +187,7 @@
         <button
           class="flex w-full items-center gap-2 py-1 pl-7 pr-3 text-left text-2xs hover:bg-hover {store.selectedWorktreeId ===
           worktree.id
-            ? 'bg-surface'
+            ? 'bg-elevated'
             : ''}"
           title="{titleOf(session)} · {session.provider}/{session.model} — {session.status}"
           onclick={(event) => openSession(worktree.id, session.id, event)}

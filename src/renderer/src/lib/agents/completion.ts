@@ -6,7 +6,8 @@
  * text and the caret means it is always right.
  */
 
-export type CompletionKind = 'command' | 'file'
+// `shell` completes a word of a `!` draft, answered by the user's own shell.
+export type CompletionKind = 'command' | 'file' | 'shell'
 
 export interface Completion {
   kind: CompletionKind
@@ -15,10 +16,44 @@ export interface Completion {
   /** The span to replace when a suggestion is accepted, sigil included. */
   start: number
   end: number
+  /** For `shell`: the command as typed up to the caret, which the shell completes. */
+  line?: string
 }
 
-export function activeCompletion(text: string, caret: number): Completion | null {
+/**
+ * `requested` is a Tab press: in a shell draft it asks for completions even
+ * with nothing of the word typed yet, the way a shell's Tab lists subcommands.
+ */
+export function activeCompletion(text: string, caret: number, requested = false): Completion | null {
+  const shell = shellDraft(text)
+  if (shell) {
+    return shellWordAt(text, caret, shell, requested)
+  }
   return commandAt(text, caret) ?? fileAt(text, caret)
+}
+
+/**
+ * The word of a `!` command the caret ends, once something of it is typed or a
+ * Tab asked for it.
+ */
+function shellWordAt(
+  text: string,
+  caret: number,
+  shell: ShellDraft,
+  requested: boolean
+): Completion | null {
+  const commandStart = shell.lead.length + shell.marker.length
+  if (caret < commandStart) {
+    return null
+  }
+
+  const line = text.slice(commandStart, caret)
+  const wordStart = commandStart + line.search(/\S*$/)
+  const query = text.slice(wordStart, caret)
+  if (query.length === 0 && !requested) {
+    return null
+  }
+  return { kind: 'shell', query, start: wordStart, end: caret, line }
 }
 
 /** Only the first word of the message, and only when it opens with a single slash. */
@@ -118,9 +153,27 @@ function firstBreakAfter(text: string, from: number): number {
   return match === null ? text.length : from + match.index
 }
 
+/** The draft with the completed span replaced by the accepted suggestion. */
 export function applyCompletion(text: string, completion: Completion, value: string): string {
-  const replacement = completion.kind === 'command' ? `/${value} ` : `@${value} `
+  const replacement = completionText(completion.kind, value)
   return text.slice(0, completion.start) + replacement + text.slice(completion.end)
+}
+
+/**
+ * What an accepted suggestion is written as. Shell words go in bare, and a
+ * directory gets no trailing space so completion can carry on into it.
+ */
+function completionText(kind: CompletionKind, value: string): string {
+  if (kind === 'command') {
+    return `/${value} `
+  }
+  if (kind === 'file') {
+    return `@${value} `
+  }
+  if (value.endsWith('/')) {
+    return value
+  }
+  return `${value} `
 }
 
 export type Submission =

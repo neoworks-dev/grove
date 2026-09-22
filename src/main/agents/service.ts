@@ -28,6 +28,7 @@ import type {
   SessionMeta,
   SessionSnapshot,
   SessionUpdate,
+  ShellCompletion,
   ThinkingLevel,
   ToolInfo,
   UserContentBlock
@@ -45,6 +46,8 @@ import type {
   SubagentIdentity
 } from './harness'
 import { runShellCommand, type ShellResult } from './shell'
+import { completeShellLine } from './shellCompletion'
+import { resolveLoginShell } from './loginShell'
 import {
   hasStarted,
   idleRuntime,
@@ -93,6 +96,8 @@ export interface AgentServiceOptions {
   publish(event: SessionEvent): void
   /** The harness to use when a session does not name one. */
   defaultHarness: () => string | undefined
+  /** Where man-page completions generated for fish are kept. */
+  shellCompletionsDir?: string
 }
 
 export class AgentService {
@@ -457,7 +462,10 @@ export class AgentService {
    */
   private async runShell(sessionId: string, command: string, share: boolean): Promise<void> {
     const session = await this.store.require(sessionId)
-    const result = await runShellCommand(command, { cwd: session.workspaceRoot })
+    const result = await runShellCommand(command, {
+      cwd: session.workspaceRoot,
+      shell: resolveLoginShell().path
+    })
     await this.store.append(sessionId, {
       type: 'session.shell_result',
       command,
@@ -848,6 +856,22 @@ export class AgentService {
       if (score > 0) matches.push({ path, score })
     }
     return matches.sort((a, b) => b.score - a.score).slice(0, limit)
+  }
+
+  /**
+   * Completions for the last word of a composer `!` command, from the shell it
+   * will run in, in the session's workspace. `line` is the command up to the caret.
+   */
+  async completeShell(sessionId: string, line: string): Promise<ShellCompletion[]> {
+    const session = await this.store.require(sessionId)
+    return completeShellLine(line, resolveLoginShell(), session.workspaceRoot, {
+      fishCompletionsDir: this.options.shellCompletionsDir
+    })
+  }
+
+  /** The name of the shell `!` commands run in, e.g. `fish`, for highlighting. */
+  shellName(): string {
+    return resolveLoginShell().name
   }
 
   // ── Internals ───────────────────────────────────────────────────

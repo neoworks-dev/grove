@@ -2,6 +2,7 @@
   import { store } from '../lib/store.svelte'
   import ServicesPanel from './ServicesPanel.svelte'
   import type { LogLine } from '../lib/store.svelte'
+  import PaneControls from './PaneControls.svelte'
 
   let tab = $state<'logs' | 'services'>('logs')
   let sourceFilter = $state<string>('all')
@@ -63,8 +64,13 @@
           <option value={source}>{source}</option>
         {/each}
       </select>
-      <button class="ml-auto text-2xs text-dim hover:text-default" onclick={clearLogs}>clear</button>
     {/if}
+    <div class="ml-auto flex items-center gap-2">
+      {#if tab === 'logs'}
+        <button class="text-2xs text-dim hover:text-default" onclick={clearLogs}>clear</button>
+      {/if}
+      <PaneControls />
+    </div>
   </div>
 
   {#if tab === 'logs'}

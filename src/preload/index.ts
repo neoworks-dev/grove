@@ -218,6 +218,9 @@ const workbench = {
     sendEvents: (sessionId: string, events: unknown) =>
       ipcRenderer.invoke('agents:sendEvents', sessionId, events),
 
+    completeShell: (sessionId: string, line: string) =>
+      ipcRenderer.invoke('agents:completeShell', sessionId, line),
+    shellName: () => ipcRenderer.invoke('agents:shellName'),
     searchFiles: (sessionId: string, query: string, limit?: number) =>
       ipcRenderer.invoke('agents:searchFiles', sessionId, query, limit),
     uploadBlob: (sessionId: string, bytes: Uint8Array, mediaType: string, filename?: string) =>

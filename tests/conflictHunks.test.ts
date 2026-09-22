@@ -15,7 +15,7 @@ import {
   parseConflictHunks,
   resolveConflictHunk
 } from '../src/main/conflicts'
-import { continueMerge, mergeWorktree } from '../src/main/git'
+import { continueMerge, mergeInProgress, mergeWorktree } from '../src/main/git'
 
 const TWO_SIDED = [
   'const port = 3000',
@@ -272,5 +272,22 @@ describe('against a real merge', () => {
     await git.raw(['add', 'greeting.txt'])
     expect(await listConflicts(root)).toEqual([])
     expect((await continueMerge(root)).status).toBe('merged')
+  })
+
+  test('the merge is in progress until it is committed', async () => {
+    const { root, git } = await conflictedRepo()
+    expect(await mergeInProgress(root)).toBe(false)
+
+    await mergeWorktree(root, 'feature', { mode: 'no-ff' })
+    expect(await mergeInProgress(root)).toBe(true)
+
+    // Still open with every conflict resolved and staged — which is when the
+    // only thing left to offer is finishing it.
+    await resolveConflictHunk(root, 'greeting.txt', 0, 'ours')
+    await git.raw(['add', 'greeting.txt'])
+    expect(await mergeInProgress(root)).toBe(true)
+
+    await continueMerge(root)
+    expect(await mergeInProgress(root)).toBe(false)
   })
 })

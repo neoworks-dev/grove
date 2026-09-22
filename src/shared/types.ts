@@ -122,6 +122,14 @@ export interface ConflictedFile {
 // Which side of one conflict to keep. `both` keeps ours followed by theirs.
 export type ConflictChoice = 'ours' | 'theirs' | 'both'
 
+// A merge underway in a worktree. `inProgress` outlives the conflicts: once
+// every one is resolved and staged the merge is still open, waiting to be
+// committed, and that is when finishing it is the only thing left to offer.
+export interface MergeState {
+  inProgress: boolean
+  files: ConflictedFile[]
+}
+
 // ── Cross-agent + agent↔user chat ───────────────────────────────
 
 // One message on a worktree's shared channel. `from.kind` distinguishes the

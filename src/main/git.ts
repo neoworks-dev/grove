@@ -321,6 +321,20 @@ export async function mergeWorktree(
   }
 }
 
+// Whether a merge is underway in this worktree. MERGE_HEAD exists for as long
+// as one is, including after every conflict has been resolved and staged —
+// which is exactly when the only thing left to offer is finishing it.
+export async function mergeInProgress(worktreePath: string): Promise<boolean> {
+  try {
+    // simple-git does not reliably reject on rev-parse's exit code, so the
+    // answer is whether a sha came back, not whether the call threw.
+    const out = await gitFor(worktreePath).raw(['rev-parse', '-q', '--verify', 'MERGE_HEAD'])
+    return out.trim().length > 0
+  } catch {
+    return false
+  }
+}
+
 // Abort an in-progress merge, restoring the pre-merge state.
 export async function abortMerge(worktreePath: string): Promise<void> {
   await gitFor(worktreePath).raw(['merge', '--abort'])

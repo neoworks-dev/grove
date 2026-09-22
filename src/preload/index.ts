@@ -57,7 +57,7 @@ const workbench = {
       ipcRenderer.invoke('git:mergeContinue', targetWorktreeId),
     mergeConflicts: (targetWorktreeId: string) =>
       ipcRenderer.invoke('git:mergeConflicts', targetWorktreeId),
-    conflicts: (worktreeId: string) => ipcRenderer.invoke('git:conflicts', worktreeId),
+    mergeState: (worktreeId: string) => ipcRenderer.invoke('git:mergeState', worktreeId),
     resolveConflict: (
       worktreeId: string,
       relPath: string,

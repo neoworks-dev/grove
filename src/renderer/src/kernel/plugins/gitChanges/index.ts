@@ -45,6 +45,7 @@ export const gitChanges = {
           icon: GitDiff,
           order: 3,
           component: GitChangesView,
+          containerClass: 'bg-surface',
           when: repoOpen
         }),
       'sidebar:changes'

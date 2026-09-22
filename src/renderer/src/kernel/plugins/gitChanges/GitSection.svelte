@@ -22,7 +22,9 @@
   } = $props()
 </script>
 
-<section>
+<!-- Isolated so the sticky header's z-index only lifts it over its own rows,
+     not over the view's floating scrollbar. -->
+<section class="isolate">
   <div
     class="group/section sticky top-0 z-[1] flex items-center gap-1 bg-surface py-1 pr-2 pl-1 hover:bg-hover"
   >

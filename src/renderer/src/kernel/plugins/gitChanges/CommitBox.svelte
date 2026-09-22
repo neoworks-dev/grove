@@ -3,6 +3,7 @@
   // of the view the way GitLens and VS Code place it. The button names the
   // branch it commits to, so committing into the wrong worktree reads as such
   // before it happens.
+  import Button from '@neoworks-dev/ui/Button'
   import CheckIcon from 'phosphor-svelte/lib/CheckIcon'
   import { store } from '../../../lib/store.svelte'
 
@@ -58,19 +59,23 @@
 
 <div class="flex flex-col gap-1.5 px-2 pb-2">
   <textarea
-    class="field-sizing-content max-h-40 min-h-[3.25rem] w-full resize-none rounded border border-line bg-canvas px-2 py-1.5 text-xs outline-none placeholder:text-faint focus:border-line-strong"
+    class="field-sizing-content max-h-40 min-h-14 w-full resize-none rounded-md border border-line bg-input px-2 py-1.5 text-xs text-default outline-none placeholder:text-dim focus:border-line-strong"
     placeholder="Message (Ctrl+Enter to commit)"
     bind:value={message}
     disabled={busy}
     onkeydown={onKeydown}
   ></textarea>
-  <button
-    class="flex w-full items-center justify-center gap-1.5 rounded bg-action px-2 py-1 text-xs text-action-fg disabled:opacity-50"
-    title={buttonTitle()}
-    disabled={!ready || busy}
-    onclick={commit}
-  >
-    <CheckIcon size={12} />
-    <span class="truncate">Commit to {branch}</span>
-  </button>
+  <!-- The design-system Button takes no title, so the tooltip sits on a wrapper. -->
+  <span class="block" title={buttonTitle()}>
+    <Button
+      variant="primary"
+      size="sm"
+      icon={CheckIcon}
+      full
+      disabled={!ready || busy}
+      onclick={commit}
+    >
+      <span class="truncate">Commit to {branch}</span>
+    </Button>
+  </span>
 </div>

@@ -6,11 +6,13 @@
   //
   // Set from the two pickers, or from a branch or tag's "compare with" menu,
   // which opens this section and scrolls it into view.
-  import Select from '@neoworks-dev/ui/Select'
+  import AnchorSimpleIcon from 'phosphor-svelte/lib/AnchorSimpleIcon'
   import ArrowsLeftRightIcon from 'phosphor-svelte/lib/ArrowsLeftRightIcon'
+  import CrosshairIcon from 'phosphor-svelte/lib/CrosshairIcon'
   import CommitFileRow from './CommitFileRow.svelte'
   import CommitRow from './CommitRow.svelte'
   import GitSection from './GitSection.svelte'
+  import RefPicker from './RefPicker.svelte'
   import RowAction from './RowAction.svelte'
   import { store } from '../../../lib/store.svelte'
   import { openRevisionDiff, openWorkingTreeDiff } from '../../../lib/nvim/revisionDiff'
@@ -76,16 +78,14 @@
   }
 
   /** The base picker changed. */
-  function pickBase(value: string | string[]): void {
-    if (typeof value !== 'string') return
+  function pickBase(value: string): void {
     let head: string | null = null
     if (target) head = target.head
     compareRefs(value, head)
   }
 
   /** The head picker changed; the empty value is the working tree. */
-  function pickHead(value: string | string[]): void {
-    if (typeof value !== 'string') return
+  function pickHead(value: string): void {
     let base = 'HEAD'
     if (target) base = target.base
     let head: string | null = value
@@ -132,15 +132,10 @@
     return revision
   }
 
-  /** The base picker's current value, empty until a base is picked. */
-  function baseValue(): string {
-    if (!target) return ''
+  /** The base picker's current value, null until a base is picked. */
+  function baseValue(): string | null {
+    if (!target) return null
     return target.base
-  }
-
-  /** Whether a picker option matches what was typed into its search box. */
-  function matchesQuery(option: { label: string }, query: string): boolean {
-    return option.label.toLowerCase().includes(query.toLowerCase())
   }
 
   /** The head picker's current value. */
@@ -171,39 +166,32 @@
 
 <div bind:this={sectionElement}>
   <GitSection title="Compare" bind:open>
-    {#snippet actions()}
+    <div class="flex items-center gap-1 px-2 pt-1 pb-2">
+      <div class="min-w-0 flex-1">
+        <RefPicker
+          icon={AnchorSimpleIcon}
+          label="Base"
+          value={baseValue()}
+          options={refOptions}
+          placeholder="Base"
+          onChange={pickBase}
+        />
+      </div>
       <RowAction
         icon={ArrowsLeftRightIcon}
         title="Swap base and head"
         disabled={!target || target.head === null}
         onclick={swap}
       />
-    {/snippet}
-
-    <div class="flex flex-col gap-1 px-2 pt-1 pb-2 text-xs">
-      <label class="flex items-center gap-2">
-        <span class="w-9 shrink-0 text-2xs text-dim">base</span>
-        <div class="min-w-0 flex-1">
-          <Select
-            value={baseValue()}
-            options={refOptions}
-            placeholder="Pick a ref"
-            filter={matchesQuery}
-            onChange={pickBase}
-          />
-        </div>
-      </label>
-      <label class="flex items-center gap-2">
-        <span class="w-9 shrink-0 text-2xs text-dim">head</span>
-        <div class="min-w-0 flex-1">
-          <Select
-            value={headValue()}
-            options={headOptions}
-            filter={matchesQuery}
-            onChange={pickHead}
-          />
-        </div>
-      </label>
+      <div class="min-w-0 flex-1">
+        <RefPicker
+          icon={CrosshairIcon}
+          label="Head"
+          value={headValue()}
+          options={headOptions}
+          onChange={pickHead}
+        />
+      </div>
     </div>
 
     {#if target && result}

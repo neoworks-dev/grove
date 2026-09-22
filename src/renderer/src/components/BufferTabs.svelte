@@ -12,6 +12,7 @@
     pinned?: boolean
     worktreeId: string
     scratch?: boolean
+    reviewing?: boolean
   }
 
   /** File-type icon for a tab, tracking the active icon pack. */
@@ -52,23 +53,25 @@
     <div class="flex w-max items-center gap-1">
       {#each tabs as tab (tab.path)}
         {@const active = store.activeTabPath === tab.path}
+        {@const tinted = tab.scratch || tab.reviewing}
         <!-- Floating pills: inactive tabs sit flat on the strip, the active one
-             lifts to elevated. Ephemeral scratch buffers (batch rename, etc.)
-             get an amber tint so they read as distinct from real file tabs. -->
+             lifts to elevated. Ephemeral scratch buffers (batch rename, a
+             commit's revision) and files open as a pull request's diff get an
+             amber tint so they read as distinct from plain file tabs. -->
         <div
           data-tab={tab.path}
           class="group/tab flex h-6 shrink-0 cursor-pointer items-center rounded-md px-2 text-xs {!active &&
-          tab.scratch
+          tinted
             ? 'bg-amber-soft/40'
             : ''}"
-          class:bg-elevated={active && !tab.scratch}
-          class:text-default={active && !tab.scratch}
-          class:text-dim={!active && !tab.scratch}
-          class:hover:bg-hover={!active && !tab.scratch}
-          class:hover:text-default={!active && !tab.scratch}
-          class:text-amber={tab.scratch}
-          class:bg-amber-soft={active && tab.scratch}
-          class:hover:bg-amber-soft={!active && tab.scratch}
+          class:bg-elevated={active && !tinted}
+          class:text-default={active && !tinted}
+          class:text-dim={!active && !tinted}
+          class:hover:bg-hover={!active && !tinted}
+          class:hover:text-default={!active && !tinted}
+          class:text-amber={tinted}
+          class:bg-amber-soft={active && tinted}
+          class:hover:bg-amber-soft={!active && tinted}
         >
           <button class="flex cursor-pointer items-center gap-1.5" onclick={() => onSelect(tab.path)}>
             {#if tab.pinned}<Icon icon="ph:push-pin-fill" width="11" height="11" class="text-amber" />{/if}

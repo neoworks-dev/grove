@@ -6,7 +6,9 @@
  * text and the caret means it is always right.
  */
 
-export type CompletionKind = 'command' | 'file'
+// `shellCommand` and `shellPath` complete the words of a `!` draft: its first
+// word as a command, the rest as paths.
+export type CompletionKind = 'command' | 'file' | 'shellCommand' | 'shellPath'
 
 export interface Completion {
   kind: CompletionKind
@@ -18,7 +20,36 @@ export interface Completion {
 }
 
 export function activeCompletion(text: string, caret: number): Completion | null {
+  const shell = shellDraft(text)
+  if (shell) {
+    return shellWordAt(text, caret, shell)
+  }
   return commandAt(text, caret) ?? fileAt(text, caret)
+}
+
+/**
+ * The word of a `!` command the caret ends, once something of it is typed: the
+ * first word completes as a command, every later one as a path.
+ */
+function shellWordAt(text: string, caret: number, shell: ShellDraft): Completion | null {
+  const commandStart = shell.lead.length + shell.marker.length
+  if (caret <= commandStart) {
+    return null
+  }
+
+  const beforeCaret = text.slice(commandStart, caret)
+  const wordStart = commandStart + beforeCaret.search(/\S*$/)
+  const query = text.slice(wordStart, caret)
+  if (query.length === 0) {
+    return null
+  }
+
+  const isFirstWord = text.slice(commandStart, wordStart).trim().length === 0
+  let kind: CompletionKind = 'shellPath'
+  if (isFirstWord) {
+    kind = 'shellCommand'
+  }
+  return { kind, query, start: wordStart, end: caret }
 }
 
 /** Only the first word of the message, and only when it opens with a single slash. */
@@ -118,9 +149,27 @@ function firstBreakAfter(text: string, from: number): number {
   return match === null ? text.length : from + match.index
 }
 
+/** The draft with the completed span replaced by the accepted suggestion. */
 export function applyCompletion(text: string, completion: Completion, value: string): string {
-  const replacement = completion.kind === 'command' ? `/${value} ` : `@${value} `
+  const replacement = completionText(completion.kind, value)
   return text.slice(0, completion.start) + replacement + text.slice(completion.end)
+}
+
+/**
+ * What an accepted suggestion is written as. Shell words go in bare, and a
+ * directory gets no trailing space so completion can carry on into it.
+ */
+function completionText(kind: CompletionKind, value: string): string {
+  if (kind === 'command') {
+    return `/${value} `
+  }
+  if (kind === 'file') {
+    return `@${value} `
+  }
+  if (value.endsWith('/')) {
+    return value
+  }
+  return `${value} `
 }
 
 export type Submission =

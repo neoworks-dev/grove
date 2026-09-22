@@ -9,7 +9,7 @@
 
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
   import Kbd from '../../../../components/Kbd.svelte'
-  import { searchFiles, uploadBlob } from '../../../../lib/agents/api'
+  import { completeShell, searchFiles, uploadBlob } from '../../../../lib/agents/api'
   import {
     activeCompletion,
     applyCompletion,
@@ -97,8 +97,8 @@
 
   const menuOpen = $derived(completion !== null && suggestions.length > 0)
 
-  // Suggestions follow the caret. File matches come from the server, which knows
-  // the workspace; commands are already in hand.
+  // Suggestions follow the caret. File matches and shell completions come from
+  // the main process, which knows the workspace; commands are already in hand.
   $effect(() => {
     const active = completion
     if (!active) {
@@ -110,19 +110,32 @@
       suggestionIndex = 0
       return
     }
-    void loadFileSuggestions(active)
+    void loadRemoteSuggestions(active)
   })
 
-  async function loadFileSuggestions(active: Completion): Promise<void> {
+  /** Fetches suggestions for a completion that needs the main process to answer. */
+  async function loadRemoteSuggestions(active: Completion): Promise<void> {
     try {
-      const matches = await searchFiles(sessionId, active.query)
+      const values = await fetchSuggestions(active)
       // The caret may have moved on while the request was in flight.
       if (completion?.start !== active.start || completion?.query !== active.query) return
-      suggestions = matches.map((match) => match.path)
+      suggestions = values
       suggestionIndex = 0
     } catch {
       suggestions = []
     }
+  }
+
+  /** Asks the main process for `@` file matches or bash's completions of a `!` word. */
+  async function fetchSuggestions(active: Completion): Promise<string[]> {
+    if (active.kind === 'shellCommand') {
+      return completeShell(sessionId, active.query, 'command')
+    }
+    if (active.kind === 'shellPath') {
+      return completeShell(sessionId, active.query, 'argument')
+    }
+    const matches = await searchFiles(sessionId, active.query)
+    return matches.map((match) => match.path)
   }
 
   function syncCaret(): void {
@@ -148,6 +161,14 @@
   // the layer paints it as shell rather than as prose: the marker as a marker,
   // the rest tokenized with the same grammar the transcript shows commands in.
   const shell = $derived(shellDraft(draft))
+
+  // `!!` keeps the output to yourself, `!` shows it to the model.
+  const shellBadge = $derived.by(() => {
+    if (shell?.marker === '!!') {
+      return { label: 'shell · private', title: 'Runs in the worktree; the output stays with you' }
+    }
+    return { label: 'shell · shared', title: 'Runs in the worktree; the agent sees the output' }
+  })
 
   // The bash grammar is loaded once, up front. Tokenizing per keystroke has to
   // land in the same frame as the character that caused it: awaiting a promise
@@ -220,14 +241,16 @@
     return references.filter((reference) => draft.includes(mentionFor(reference)))
   }
 
+  /** Writes a suggestion into the draft and leaves the caret just after it. */
   function acceptSuggestion(value: string): void {
     if (!completion) return
-    draft = applyCompletion(draft, completion, value)
+    const next = applyCompletion(draft, completion, value)
+    const caretAfter = completion.end + next.length - draft.length
+    draft = next
     suggestions = []
     queueMicrotask(() => {
       promptEl?.focus()
-      const end = draft.length
-      promptEl?.setSelectionRange(end, end)
+      promptEl?.setSelectionRange(caretAfter, caretAfter)
       syncCaret()
     })
   }
@@ -429,11 +452,21 @@
     <div class="mb-1.5 truncate text-2xs text-red">{error}</div>
   {/if}
 
-  <div class="relative mb-2 rounded-md border border-line-strong bg-elevated">
+  <!-- A `!` draft switches the box to shell: monospace in a heavier weight, and an
+       amber frame that says whether the model will see the output. Both copies of
+       the text take the same font classes so they stay in register. -->
+  <div
+    class="relative mb-2 rounded-md border bg-elevated"
+    class:border-line-strong={!shell}
+    class:border-amber={shell !== null}
+  >
     <textarea
       bind:this={promptEl}
       bind:value={draft}
       class="relative z-0 block h-20 w-full resize-none border-0 bg-transparent px-2 py-1.5 text-xs leading-normal text-transparent caret-default outline-none placeholder:text-dim"
+      class:font-mono={shell !== null}
+      class:font-medium={shell !== null}
+      spellcheck={shell === null}
       placeholder={running
         ? 'Steer the running agent…  ( Enter send · Esc interrupt )'
         : `Prompt…  ( / commands · @ files · ! shell · ↑↓ history · ← sessions · Enter send${placeholderHint} )`}
@@ -465,6 +498,8 @@
       bind:this={highlightEl}
       aria-hidden="true"
       class="pointer-events-none absolute inset-0 z-10 overflow-hidden whitespace-pre-wrap break-words px-2 py-1.5 text-xs leading-normal text-default"
+      class:font-mono={shell !== null}
+      class:font-medium={shell !== null}
     >
       {#if shell}{shell.lead}<span class="rounded-sm bg-amber-soft text-amber">{shell.marker}</span
         >{#each shellLines as line, lineIndex (lineIndex)}{#if lineIndex > 0}{'\n'}{/if}{#each line as token, tokenIndex (tokenIndex)}<span
@@ -473,6 +508,15 @@
               class="rounded-sm bg-action/15 text-action">{segment.text}</span
             >{:else}{segment.text}{/if}{/each}{/if}&#8203;
     </div>
+
+    {#if shell}
+      <span
+        class="pointer-events-none absolute bottom-1 right-2 z-20 font-mono text-2xs text-amber"
+        title={shellBadge.title}
+      >
+        {shellBadge.label}
+      </span>
+    {/if}
 
     {#if !focused}
       <!-- Normal-mode hint: press i (or click) to focus the composer. -->

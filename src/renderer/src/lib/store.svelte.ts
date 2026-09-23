@@ -218,12 +218,13 @@ class WorkbenchStore {
     this.activeTabByWorktree = { ...this.activeTabByWorktree, [tab.worktreeId]: tab.path }
   }
 
-  openTab(tab: EditorTab): void {
+  /** Opens a tab and shows the editor; `focus: false` leaves focus where it is. */
+  openTab(tab: EditorTab, options: { focus?: boolean } = {}): void {
     this.attachEditorTab(tab)
     // An explicit open shows the file as it is, unless it is opened as a diff:
     // a file last seen in a diff loses its label when opened plainly.
     this.setTabDiff(tab.worktreeId, tab.path, tab.diff)
-    layout.showCenterPane(preferredEditorPane())
+    layout.showCenterPane(preferredEditorPane(), options)
   }
 
   /** Labels an open tab as one side of a diff, or clears the label. */
@@ -312,11 +313,16 @@ function preferredEditorPane(): string {
 }
 
 // Open an absolute file path in the editor (used by the file tree and by agent
-// tool cards). Basename becomes the tab label.
-export function openFileInEditor(worktreeId: string, path: string): void {
+// tool cards). Basename becomes the tab label. `focus: false` shows the file
+// without moving focus into the editor, for opens the user didn't ask for.
+export function openFileInEditor(
+  worktreeId: string,
+  path: string,
+  options: { focus?: boolean } = {}
+): void {
   const name = path.split('/').pop() || path
   store.selectedWorktreeId = worktreeId
-  store.openTab({ worktreeId, path, name })
+  store.openTab({ worktreeId, path, name }, options)
 }
 
 // Open a file and reveal a specific line (ripgrep search results).

@@ -709,9 +709,28 @@ class LayoutStore {
   }
 
   // Show a center pane (the editor, the markdown preview, the problems list).
-  showCenterPane(paneTypeId: string): void {
+  // `focus: false` shows it without taking focus from wherever it is.
+  showCenterPane(paneTypeId: string, options: { focus?: boolean } = {}): void {
     if (!CENTER_TYPES.includes(paneTypeId) && !panes.get(paneTypeId)) return
+    if (options.focus === false) {
+      this.revealPane(paneTypeId)
+      return
+    }
     this.ensurePane(paneTypeId)
+  }
+
+  /** Opens a pane of this type if none is open, leaving focus where it was. */
+  private revealPane(paneTypeId: string): void {
+    if (leaves(this.tree).some((leaf) => leaf.paneTypeId === paneTypeId)) return
+    const focusedLeafId = keymap.activeLeafId
+    const focusedElement = document.activeElement
+    this.ensurePane(paneTypeId)
+    // ensurePane focuses the new leaf on the next frame; hand focus back after
+    // it, down to the element, so a composer being typed in keeps its caret.
+    requestAnimationFrame(() => {
+      if (focusedLeafId) keymap.focusPane(focusedLeafId)
+      if (focusedElement instanceof HTMLElement) focusedElement.focus()
+    })
   }
 
   // ── Views ─────────────────────────────────────────────────────

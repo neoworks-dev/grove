@@ -429,15 +429,59 @@ async function refreshWorktreeStatus(worktreeId: string): Promise<void> {
   await Promise.all([refreshRuntimes(worktreeId), refreshDiffStats(worktreeId)])
 }
 
+/** How often worktree status is re-read while the window is visible. */
+const WORKTREE_STATUS_INTERVAL_MS = 30_000
+
+/**
+ * Keeps every worktree's dirty flag and line counts current, including changes
+ * grove never saw: the fs watcher only covers the selected worktree and those
+ * with a running agent, so edits from another editor, a shell outside grove or
+ * a git operation elsewhere only show once something re-reads them. Re-reads on
+ * window focus and on an interval while the window is visible. Returns the stop.
+ */
+export function watchWorktreeStatus(): () => void {
+  const refreshIfVisible = (): void => {
+    if (document.visibilityState !== 'visible') return
+    void refreshWorktreeStatuses()
+  }
+  const onFocus = (): void => void refreshWorktreeStatuses()
+  window.addEventListener('focus', onFocus)
+  const timer = setInterval(refreshIfVisible, WORKTREE_STATUS_INTERVAL_MS)
+  return () => {
+    window.removeEventListener('focus', onFocus)
+    clearInterval(timer)
+  }
+}
+
+/**
+ * Re-reads the worktree list (for `dirty`) and every worktree's line counts,
+ * replacing the list only when it changed: everything derived from the selected
+ * worktree would otherwise re-run on each tick.
+ */
+async function refreshWorktreeStatuses(): Promise<void> {
+  if (store.worktrees.length === 0) return
+  const worktrees = await window.workbench.worktrees.list().catch(() => null)
+  if (!worktrees) return
+  if (!sameJson(store.worktrees, worktrees)) store.worktrees = worktrees
+  for (const worktree of worktrees) void refreshDiffStats(worktree.id)
+}
+
+/** Whether two plain values serialise the same, for skipping no-op store writes. */
+function sameJson(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
 export async function refreshWorktrees(): Promise<void> {
   store.worktrees = await window.workbench.worktrees.list()
   for (const worktree of store.worktrees) void refreshDiffStats(worktree.id)
 }
 
-// Fetch +/- line counts vs HEAD for one worktree into the store.
+// Fetch +/- line counts vs HEAD for one worktree into the store. Unchanged
+// counts are left alone, so a periodic refresh does not re-render every row.
 export async function refreshDiffStats(worktreeId: string): Promise<void> {
   try {
     const stats = await window.workbench.git.diffStats(worktreeId)
+    if (sameJson(store.diffStats[worktreeId], stats)) return
     store.diffStats = { ...store.diffStats, [worktreeId]: stats }
   } catch {
     // A worktree may be mid-removal; ignore transient failures.

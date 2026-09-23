@@ -335,6 +335,10 @@ class ClaudeRun implements HarnessRun {
       // `allowedTools` is the SDK's auto-approve list — passing it there let
       // every listed tool run unasked while restricting nothing.
       tools: this.options.activeTools ?? undefined,
+      // Claude Code's own subagents run hidden inside the turn; grove's
+      // `spawn_agent` is the one way a session starts another agent, so it shows
+      // up in the worktree beside the rest. `Task` is the tool's older name.
+      disallowedTools: ['Agent', 'Task'],
       permissionMode: sdkPermissionMode(this.options.permissionMode),
       // The CLI's own prompt still leads; grove's part is appended to it, so a
       // session keeps every Claude Code behaviour and gains the worktree it is

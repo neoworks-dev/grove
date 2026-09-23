@@ -19,7 +19,11 @@ async function branchPositions(
   for (const worktree of worktreeList) {
     if (worktree.branch === base) continue
     const position = await git.aheadBehind(worktree.path, base)
-    if (position) positions[worktree.id] = { base, ...position }
+    if (!position) continue
+    let mergedLocally = false
+    if (position.ahead === 0)
+      mergedLocally = await git.branchHasMoved(worktree.path, worktree.branch)
+    positions[worktree.id] = { base, ...position, mergedLocally }
   }
   return positions
 }

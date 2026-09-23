@@ -11,7 +11,13 @@ import * as refs from '../refs'
 import * as hunkStaging from '../hunkStaging'
 import * as inlineDiff from '../inlineDiff'
 import * as worktrees from '../worktrees'
-import type { ConflictChoice, DiffFile, InlineHunk, ResetMode } from '../../shared/types'
+import type {
+  ArchiveOptions,
+  ConflictChoice,
+  DiffFile,
+  InlineHunk,
+  ResetMode
+} from '../../shared/types'
 
 export const gitRoutes = {
   name: 'main/routes/git',
@@ -348,21 +354,18 @@ export const gitRoutes = {
       return refs.compareRefs(worktree.path, base, head)
     })
 
-    route(
-      ctx,
-      'worktrees:archive',
-      async (_e, worktreeId: string, options: { deleteBranch: boolean; force: boolean }) => {
-        const { repoPath } = ctx.workbench.requireRepo()
-        const worktree = ctx.workbench.findWorktree(worktreeId)
-        await ctx.supervisor.stopAllForWorktree(worktreeId)
-        await worktrees.archiveWorktree(repoPath, worktree.path, {
-          branch: worktree.branch,
-          deleteBranch: options.deleteBranch,
-          force: options.force
-        })
-        return ctx.workbench.refreshWorktrees()
-      }
-    )
+    route(ctx, 'worktrees:archive', async (_e, worktreeId: string, options: ArchiveOptions) => {
+      const { repoPath } = ctx.workbench.requireRepo()
+      const worktree = ctx.workbench.findWorktree(worktreeId)
+      await ctx.supervisor.stopAllForWorktree(worktreeId)
+      await worktrees.archiveWorktree(repoPath, worktree.path, {
+        branch: worktree.branch,
+        deleteBranch: options.deleteBranch,
+        force: options.force,
+        forceBranch: options.forceBranch
+      })
+      return ctx.workbench.refreshWorktrees()
+    })
   }
 }
 

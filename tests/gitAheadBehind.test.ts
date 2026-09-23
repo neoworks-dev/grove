@@ -5,7 +5,7 @@ import { execSync } from 'child_process'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { aheadBehind } from '../src/main/git'
+import { aheadBehind, branchHasMoved } from '../src/main/git'
 
 let repo: string
 
@@ -37,5 +37,19 @@ describe('aheadBehind', () => {
 
   it('is null when the base does not resolve', async () => {
     expect(await aheadBehind(repo, 'no-such-branch')).toBeNull()
+  })
+})
+
+describe('branchHasMoved', () => {
+  it('is false for a branch that was only created, true once it is committed to', async () => {
+    git('branch fresh')
+    expect(await branchHasMoved(repo, 'fresh')).toBe(false)
+    git('switch -q fresh')
+    git('commit -q --allow-empty -m work')
+    expect(await branchHasMoved(repo, 'fresh')).toBe(true)
+  })
+
+  it('is false for a branch that does not exist', async () => {
+    expect(await branchHasMoved(repo, 'missing')).toBe(false)
   })
 })

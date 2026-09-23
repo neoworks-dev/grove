@@ -156,10 +156,11 @@ export async function removeWorktree(
 export async function archiveWorktree(
   repoPath: string,
   worktreePath: string,
-  options: { branch?: string; deleteBranch: boolean; force: boolean }
+  options: { branch?: string; deleteBranch: boolean; force: boolean; forceBranch?: boolean }
 ): Promise<void> {
   await git.removeWorktree(repoPath, worktreePath, options.force)
   if (options.deleteBranch && options.branch) {
-    await git.deleteBranch(repoPath, options.branch, options.force)
+    const forceBranch = options.force || options.forceBranch === true
+    await git.deleteBranch(repoPath, options.branch, forceBranch)
   }
 }

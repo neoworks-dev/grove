@@ -112,6 +112,19 @@ export function pullFor(worktree: Worktree): BranchPull | null {
   return byNumber
 }
 
+/**
+ * Whether a worktree's work has landed on the base: its pull request was
+ * merged, or its branch's own commits are all on the base already.
+ */
+export function isMerged(worktree: Worktree): boolean {
+  if (worktree.isMain) return false
+  const pull = pullFor(worktree)
+  if (pull && pull.state === 'MERGED') return true
+  const position = store.branchPositions[worktree.id]
+  if (!position) return false
+  return position.mergedLocally
+}
+
 /** How a pull request's checks came out, collapsed to the three a dot can show. */
 export function checksOutcome(pull: BranchPull): 'passed' | 'failed' | 'pending' | null {
   if (pull.checks === 'SUCCESS') return 'passed'

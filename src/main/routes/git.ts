@@ -11,6 +11,7 @@ import * as refs from '../refs'
 import * as hunkStaging from '../hunkStaging'
 import * as inlineDiff from '../inlineDiff'
 import * as worktrees from '../worktrees'
+import { fetchBranchPulls } from '../githubDashboard'
 import type {
   ArchiveOptions,
   ConflictChoice,
@@ -358,15 +359,33 @@ export const gitRoutes = {
       const { repoPath } = ctx.workbench.requireRepo()
       const worktree = ctx.workbench.findWorktree(worktreeId)
       await ctx.supervisor.stopAllForWorktree(worktreeId)
+      let forceBranch = options.forceBranch === true
+      if (options.deleteBranch && !options.force && !forceBranch) {
+        forceBranch = await pullWasMerged(repoPath, worktree.branch)
+      }
       await worktrees.archiveWorktree(repoPath, worktree.path, {
         branch: worktree.branch,
         deleteBranch: options.deleteBranch,
         force: options.force,
-        forceBranch: options.forceBranch
+        forceBranch
       })
       return ctx.workbench.refreshWorktrees()
     })
   }
+}
+
+/**
+ * Whether a branch's pull request was merged on GitHub. A squash or rebase merge
+ * never puts the branch's commits on the base, so `git branch -d` refuses a
+ * branch that is finished; this is what says it is safe to delete anyway. False
+ * when gh cannot answer.
+ */
+async function pullWasMerged(repoPath: string, branch: string): Promise<boolean> {
+  const pulls = await fetchBranchPulls(repoPath).catch(() => null)
+  if (!pulls) return false
+  const pull = pulls[branch]
+  if (!pull) return false
+  return pull.state === 'MERGED'
 }
 
 /** Refuses an operation that rewrites the checked-out branch while it has uncommitted changes. */

@@ -69,6 +69,8 @@ export interface ToolItem {
   status: ToolStatus
   progress: string
   result: string
+  /** Images the tool returned, shown under its row. */
+  images: ImageBlock[]
 }
 
 export interface ShellItem {
@@ -368,7 +370,8 @@ function applyTool(state: TranscriptState, event: SessionEvent): void {
       permission: event.permission,
       status: initialToolStatus(event.permission),
       progress: '',
-      result: ''
+      result: '',
+      images: []
     })
   }
   if (event.type === 'agent.tool_use_edited') {
@@ -387,7 +390,7 @@ function applyTool(state: TranscriptState, event: SessionEvent): void {
     applyConfirmation(state, event.toolUseId, event.result)
   }
   if (event.type === 'agent.tool_result') {
-    applyToolResult(state, event.toolUseId, event.content, event.isError)
+    applyToolResult(state, event.toolUseId, event.content, event.isError, event.images ?? [])
   }
 }
 
@@ -545,13 +548,15 @@ function applyToolResult(
   state: TranscriptState,
   toolUseId: string,
   content: string,
-  isError: boolean
+  isError: boolean,
+  images: ImageBlock[]
 ): void {
   const tool = findTool(state, toolUseId)
   if (!tool) {
     return
   }
   tool.result = content
+  tool.images = images
   tool.progress = ''
   tool.status = isError ? 'error' : 'ok'
 }

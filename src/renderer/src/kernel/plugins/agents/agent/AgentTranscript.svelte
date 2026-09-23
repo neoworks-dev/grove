@@ -29,6 +29,7 @@
   import { agentIdIn, senderOf } from '../../../../lib/agents/transcript'
   import type { ToolItem, TranscriptItem } from '../../../../lib/agents/transcript'
   import type { ToolInfo } from '../../../../lib/agents/types'
+  import AgentImage from './AgentImage.svelte'
   import AgentToolCall from './AgentToolCall.svelte'
   import AgentSurface from './AgentSurface.svelte'
 
@@ -178,6 +179,7 @@
       <div class="pl-4">
         {#each run.items as call (call.eventId)}
           <AgentToolCall
+            {sessionId}
             item={call}
             display={displayOf(call.name)}
             {root}
@@ -239,11 +241,7 @@
       {#if item.attachments.length > 0}
         <div class="mt-1.5 flex flex-wrap gap-1.5">
           {#each item.attachments as attachment (attachment.ref)}
-            <img
-              class="max-h-32 rounded border border-line"
-              src={blobUrl(sessionId, attachment.ref)}
-              alt="attachment"
-            />
+            <AgentImage src={blobUrl(sessionId, attachment.ref)} alt="attachment" />
           {/each}
         </div>
       {/if}
@@ -333,6 +331,7 @@
     </div>
   {:else if item.kind === 'tool'}
     <AgentToolCall
+      {sessionId}
       {item}
       display={displayOf(item.name)}
       {root}

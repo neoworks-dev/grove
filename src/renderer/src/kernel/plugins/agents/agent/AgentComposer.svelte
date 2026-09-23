@@ -34,6 +34,7 @@
     commandNames,
     history,
     placeholderHint = '',
+    hidden = false,
     onSend,
     onFocusChange,
     onInterrupt,
@@ -51,6 +52,11 @@
      */
     history: string[]
     placeholderHint?: string
+    /**
+     * Out of sight while an approval or question card stands in for it. Hidden
+     * rather than unmounted, so the draft is still there once the card is answered.
+     */
+    hidden?: boolean
     onSend: (events: ClientEventBody[]) => void
     onFocusChange: (focused: boolean) => void
     onInterrupt: () => void
@@ -234,10 +240,15 @@
     })
   }
 
+  // Hiding a focused textarea doesn't reliably fire `blur`, which would leave the
+  // pane in insert mode with nothing visible to type into.
+  $effect(() => {
+    if (hidden) promptEl?.blur()
+  })
+
   // An @file:lines reference pushed in from the editor selection ("Send
-  // Selection to Composer"). Taken off the store as it lands: the composer is
-  // unmounted while an approval card is up, and a request left sitting there
-  // would be inserted again by the composer that replaces it.
+  // Selection to Composer"). Taken off the store as it lands, so a composer
+  // mounted later (another session, another pane) doesn't insert it again.
   $effect(() => {
     const request = store.composerInsert
     if (!request) return
@@ -442,7 +453,7 @@
   }
 </script>
 
-<div class="relative">
+<div class="relative" {hidden}>
   {#if menuOpen}
     <!-- Completions float above the composer. -->
     <div

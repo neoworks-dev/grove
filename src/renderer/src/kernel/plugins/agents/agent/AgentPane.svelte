@@ -817,6 +817,10 @@
               onShowChange={showChange}
             />
           {/key}
+        {/if}
+
+        {#if subagent && approvals[0]}
+          <!-- The card above stands in for the notice. -->
         {:else if subagent}
           <!-- Nothing can be said here: the agent this session holds was run by
                another one, and ended when its tool call returned. -->
@@ -836,9 +840,12 @@
             {/if}
           </div>
         {:else}
+          <!-- Kept mounted while an approval or question stands in for it, so the
+               draft being written survives the card. -->
           {#if activeId}
             <AgentComposer
               bind:this={composer}
+              hidden={approvals[0] !== undefined}
               sessionId={activeId}
               {running}
               history={promptHistory}
@@ -851,7 +858,7 @@
             />
           {/if}
 
-          {#if snapshot}
+          {#if snapshot && !approvals[0]}
             <AgentControls
               harness={snapshot.harness}
               harnesses={catalog.harnesses}

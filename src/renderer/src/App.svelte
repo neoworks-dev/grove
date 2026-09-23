@@ -12,7 +12,13 @@
   import NotificationHost from './components/NotificationHost.svelte'
   import KeybindCheatsheet from './components/KeybindCheatsheet.svelte'
   import NvimPromptOverlay from './components/NvimPromptOverlay.svelte'
-  import { store, subscribeEvents, openRepoResult, switchTab } from './lib/store.svelte'
+  import {
+    store,
+    subscribeEvents,
+    openRepoResult,
+    switchTab,
+    watchWorktreeStatus
+  } from './lib/store.svelte'
   import { commands } from './lib/commands.svelte'
   import { keymap } from './lib/keymap.svelte'
   import { keyDispatch, KeyPriority, startGlobalKeyDispatch } from './lib/keyDispatch'
@@ -133,6 +139,7 @@
       keyDispatch.subscribe(KeyPriority.app, handleEditorTabSwitch)
     ]
     const stopPaneZoom = window.workbench.on('event:pane-zoom', applyPaneZoom)
+    const stopWorktreeStatus = watchWorktreeStatus()
 
     void (async () => {
       await settings.init()
@@ -153,6 +160,7 @@
       for (const unsubscribe of unsubscribeKeys) unsubscribe()
       stopKeyDispatch()
       stopPaneZoom()
+      stopWorktreeStatus()
     }
   })
 
@@ -210,7 +218,7 @@
          to fall into the gutters around it. -->
     <div class="flex min-h-0 min-w-0 flex-1">
       {#each layout.mountedViewIds as viewId (viewId)}
-        <div class="flex min-h-0 min-w-0 flex-1 {viewId === layout.activeViewId ? '' : 'hidden'}">
+        <div class="flex min-h-0 min-w-0 flex-1" class:hidden={viewId !== layout.activeViewId}>
           <SplitTree node={layout.trees[viewId]} />
         </div>
       {/each}

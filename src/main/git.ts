@@ -137,6 +137,23 @@ export async function listBranches(repoPath: string): Promise<BranchList> {
   }
 }
 
+/**
+ * Every untracked file in a worktree, relative to it, ignored or not. Ignored
+ * directories come back as one entry each and are dropped, so node_modules is
+ * never walked.
+ */
+export async function listUntrackedPaths(worktreePath: string): Promise<string[]> {
+  const git = gitFor(worktreePath)
+  const [ignored, untracked] = await Promise.all([
+    git.raw(['ls-files', '--others', '--ignored', '--exclude-standard', '--directory']),
+    git.raw(['ls-files', '--others', '--exclude-standard'])
+  ])
+  const paths = [...ignored.split('\n'), ...untracked.split('\n')]
+    .map((path) => path.trim())
+    .filter((path) => path.length > 0 && !path.endsWith('/'))
+  return [...new Set(paths)]
+}
+
 // Create a worktree, optionally on a new branch.
 export async function addWorktree(
   repoPath: string,
@@ -162,6 +179,25 @@ export async function removeWorktree(
   const args = ['worktree', 'remove', worktreePath]
   if (force) args.push('--force')
   await gitFor(repoPath).raw(args)
+}
+
+/**
+ * Whether a local branch has moved since it was created — committed to, merged
+ * into, reset — going by its reflog. False when it has no reflog to read.
+ */
+export async function branchHasMoved(repoPath: string, branch: string): Promise<boolean> {
+  try {
+    const out = await gitFor(repoPath).raw([
+      'reflog',
+      'show',
+      '--format=%H',
+      `refs/heads/${branch}`
+    ])
+    const entries = out.split('\n').filter((line) => line.trim().length > 0)
+    return entries.length > 1
+  } catch {
+    return false
+  }
 }
 
 // Delete a local branch. Uses -d (safe, refuses unmerged) unless force.
@@ -229,6 +265,38 @@ export async function updateRef(worktreePath: string, ref: string, target: strin
 }
 
 // How many commits the worktree's HEAD has that `ref` does not.
+/**
+ * How far a worktree's HEAD is from a base ref, or null when the base does not
+ * resolve there.
+ */
+export async function aheadBehind(
+  worktreePath: string,
+  baseRef: string
+): Promise<{ ahead: number; behind: number } | null> {
+  try {
+    const out = await gitFor(worktreePath).raw([
+      'rev-list',
+      '--left-right',
+      '--count',
+      `${baseRef}...HEAD`
+    ])
+    const [behind, ahead] = out.trim().split(/\s+/).map(Number)
+    return { ahead: ahead || 0, behind: behind || 0 }
+  } catch {
+    return null
+  }
+}
+
+/** Commits `ref` has that the worktree's HEAD does not; 0 until the ref exists. */
+export async function commitsBehind(worktreePath: string, ref: string): Promise<number> {
+  try {
+    const out = await gitFor(worktreePath).raw(['rev-list', '--count', `HEAD..${ref}`])
+    return Number(out.trim()) || 0
+  } catch {
+    return 0
+  }
+}
+
 export async function commitsAhead(worktreePath: string, ref: string): Promise<number> {
   try {
     const out = await gitFor(worktreePath).raw(['rev-list', '--count', `${ref}..HEAD`])

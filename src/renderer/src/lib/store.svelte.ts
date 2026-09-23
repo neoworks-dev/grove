@@ -11,6 +11,8 @@ import type {
   ServiceRuntime,
   RepoInfo,
   BranchList,
+  BranchPosition,
+  BranchPull,
   DiffStats,
   ReviewBatch,
   WorktreeChatMessage
@@ -29,6 +31,7 @@ import type { ColorTheme } from './themes'
 import { layout } from './layout.svelte'
 import { settings } from './settings.svelte'
 import { agentSessions } from './agents/sessions.svelte'
+import { notifyTurnEnded } from './agents/notifications'
 import { inlineEdit } from './inlineEdit.svelte'
 import { review } from './review.svelte'
 import { intro } from './intro.svelte'
@@ -90,6 +93,14 @@ class WorkbenchStore {
   // Added/removed line counts vs HEAD, keyed by worktreeId. Refreshed on
   // worktree list load and on file changes, shown in the worktree overviews.
   diffStats = $state<Record<string, DiffStats>>({})
+
+  // Commits ahead of and behind the base branch, keyed by worktreeId; the
+  // worktree on the base itself has none.
+  branchPositions = $state<Record<string, BranchPosition>>({})
+
+  // Each branch's most recent pull request, keyed by branch name. Empty when gh
+  // cannot answer for the repository.
+  branchPulls = $state<Record<string, BranchPull>>({})
 
   // Worktrees with agent output the user hasn't looked at yet (agent produced
   // output while that worktree wasn't selected). Cleared on selecting it.
@@ -343,6 +354,8 @@ export async function openRepoResult(result: {
 }): Promise<void> {
   store.repo = result.info
   store.worktrees = result.worktrees
+  void refreshBranchPositions()
+  void refreshBranchPulls()
   store.config = await window.workbench.config.load()
   store.branches = await window.workbench.git.branches().catch(() => null)
   const repoState = await window.workbench.state.getRepo()
@@ -398,7 +411,7 @@ function restoreTabs(repoState: {
       tabs[worktreeId] = paths.map((path) => toTab(worktreeId, path))
     }
     store.tabsByWorktree = tabs
-    store.activeTabByWorktree = { ...(repoState.activeTabByWorktree || {}) }
+    store.activeTabByWorktree = { ...repoState.activeTabByWorktree }
     return
   }
 
@@ -418,10 +431,9 @@ function restoreTabs(repoState: {
 // Watch the selected worktree plus any worktree with a running agent, so file
 // changes (including agent edits) stream in even when not selected.
 export function syncWatched(): void {
-  const ids = new Set<string>()
-  if (store.selectedWorktreeId) ids.add(store.selectedWorktreeId)
-  for (const id of store.activeAgentWorktrees) ids.add(id)
-  void window.workbench.fs.watch([...ids])
+  const ids = store.activeAgentWorktrees.filter((id) => id !== store.selectedWorktreeId)
+  if (store.selectedWorktreeId) ids.push(store.selectedWorktreeId)
+  void window.workbench.fs.watch(ids)
 }
 
 /** Fetches one worktree's line counts and services into the store. */
@@ -429,15 +441,82 @@ async function refreshWorktreeStatus(worktreeId: string): Promise<void> {
   await Promise.all([refreshRuntimes(worktreeId), refreshDiffStats(worktreeId)])
 }
 
+/** How often worktree status is re-read while the window is visible. */
+const WORKTREE_STATUS_INTERVAL_MS = 30_000
+
+/**
+ * Keeps every worktree's dirty flag and line counts current, including changes
+ * grove never saw: the fs watcher only covers the selected worktree and those
+ * with a running agent, so edits from another editor, a shell outside grove or
+ * a git operation elsewhere only show once something re-reads them. Re-reads on
+ * window focus and on an interval while the window is visible. Returns the stop.
+ */
+export function watchWorktreeStatus(): () => void {
+  const refreshIfVisible = (): void => {
+    if (document.visibilityState !== 'visible') return
+    void refreshWorktreeStatuses()
+  }
+  const onFocus = (): void => {
+    void refreshWorktreeStatuses()
+    void refreshBranchPulls()
+  }
+  window.addEventListener('focus', onFocus)
+  const timer = setInterval(refreshIfVisible, WORKTREE_STATUS_INTERVAL_MS)
+  return () => {
+    window.removeEventListener('focus', onFocus)
+    clearInterval(timer)
+  }
+}
+
+/**
+ * Re-reads the worktree list (for `dirty`) and every worktree's line counts,
+ * replacing the list only when it changed: everything derived from the selected
+ * worktree would otherwise re-run on each tick.
+ */
+async function refreshWorktreeStatuses(): Promise<void> {
+  if (store.worktrees.length === 0) return
+  const worktrees = await window.workbench.worktrees.list().catch(() => null)
+  if (!worktrees) return
+  if (!sameJson(store.worktrees, worktrees)) store.worktrees = worktrees
+  for (const worktree of worktrees) void refreshDiffStats(worktree.id)
+  void refreshBranchPositions()
+}
+
+/** Re-reads how far each worktree's branch is from the base branch. */
+async function refreshBranchPositions(): Promise<void> {
+  const positions = await window.workbench.worktrees.positions().catch(() => null)
+  if (!positions || sameJson(store.branchPositions, positions)) return
+  store.branchPositions = positions
+}
+
+/**
+ * Re-reads each branch's pull request and its checks. A network call, so it
+ * runs on load and on window focus rather than on the status interval.
+ */
+async function refreshBranchPulls(): Promise<void> {
+  const pulls = await window.workbench.github.branchPulls().catch(() => null)
+  if (!pulls || sameJson(store.branchPulls, pulls)) return
+  store.branchPulls = pulls
+}
+
+/** Whether two plain values serialise the same, for skipping no-op store writes. */
+function sameJson(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
 export async function refreshWorktrees(): Promise<void> {
   store.worktrees = await window.workbench.worktrees.list()
   for (const worktree of store.worktrees) void refreshDiffStats(worktree.id)
+  void refreshBranchPositions()
+  void refreshBranchPulls()
 }
 
-// Fetch +/- line counts vs HEAD for one worktree into the store.
+// Fetch +/- line counts vs HEAD for one worktree into the store. Unchanged
+// counts are left alone, so a periodic refresh does not re-render every row.
 export async function refreshDiffStats(worktreeId: string): Promise<void> {
   try {
     const stats = await window.workbench.git.diffStats(worktreeId)
+    if (sameJson(store.diffStats[worktreeId], stats)) return
     store.diffStats = { ...store.diffStats, [worktreeId]: stats }
   } catch {
     // A worktree may be mid-removal; ignore transient failures.
@@ -445,17 +524,15 @@ export async function refreshDiffStats(worktreeId: string): Promise<void> {
 }
 
 // Coalesce bursts of file changes into a single diff-stat refresh per worktree.
-const diffStatTimers = new Map<string, ReturnType<typeof setTimeout>>()
+// A plain record: the timers are bookkeeping, nothing renders them.
+const diffStatTimers: Record<string, ReturnType<typeof setTimeout>> = {}
 function scheduleDiffStats(worktreeId: string): void {
-  const existing = diffStatTimers.get(worktreeId)
+  const existing = diffStatTimers[worktreeId]
   if (existing) clearTimeout(existing)
-  diffStatTimers.set(
-    worktreeId,
-    setTimeout(() => {
-      diffStatTimers.delete(worktreeId)
-      void refreshDiffStats(worktreeId)
-    }, 400)
-  )
+  diffStatTimers[worktreeId] = setTimeout(() => {
+    delete diffStatTimers[worktreeId]
+    void refreshDiffStats(worktreeId)
+  }, 400)
 }
 
 export async function selectWorktree(worktreeId: string): Promise<void> {
@@ -484,6 +561,7 @@ export function subscribeEvents(): void {
   // Every session's events, so a turn that ends out of sight is flagged.
   window.workbench.on('event:agent-event', (payload) => {
     agentSessions.noteEvent(payload as SessionEvent)
+    void notifyTurnEnded(payload as SessionEvent)
   })
   window.workbench.on('event:log', (payload) => {
     const event = payload as {

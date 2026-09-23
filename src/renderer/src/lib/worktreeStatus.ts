@@ -9,6 +9,7 @@ import { store } from './store.svelte'
 import { agentSessions } from './agents/sessions.svelte'
 import { visibleItems, type AgentItem } from './agents/transcript'
 import type { SessionMeta } from './agents/types'
+import type { BranchPosition, BranchPull, Worktree } from '../../../shared/types'
 import type { SessionAttention } from './agents/attention'
 
 export const serviceStatusColor: Record<string, string> = {
@@ -81,6 +82,74 @@ export function diffStatLabel(worktreeId: string): { added: number; removed: num
   if (!stats) return null
   if (stats.added === 0 && stats.removed === 0) return null
   return { added: stats.added, removed: stats.removed }
+}
+
+/**
+ * A worktree's commits ahead of and behind the base branch, or null when it is
+ * level with it or is the base itself.
+ */
+export function branchPositionFor(worktreeId: string): BranchPosition | null {
+  const position = store.branchPositions[worktreeId]
+  if (!position) return null
+  if (position.ahead === 0 && position.behind === 0) return null
+  return position
+}
+
+/**
+ * The pull request opened from a worktree's branch, or null when it has none.
+ * A pull request checked out from the GitHub pane sits on a local `pr-<n>`
+ * branch rather than its head branch, so that one is matched by number.
+ */
+export function pullFor(worktree: Worktree): BranchPull | null {
+  if (worktree.isMain || worktree.isDetached) return null
+  const pull = store.branchPulls[worktree.branch]
+  if (pull) return pull
+  const checkedOut = /^pr-(\d+)$/.exec(worktree.branch)
+  if (!checkedOut) return null
+  const number = Number(checkedOut[1])
+  const byNumber = Object.values(store.branchPulls).find((candidate) => candidate.number === number)
+  if (!byNumber) return null
+  return byNumber
+}
+
+/**
+ * Whether a worktree's work has landed on the base: its pull request was
+ * merged, or its branch's own commits are all on the base already.
+ */
+export function isMerged(worktree: Worktree): boolean {
+  if (worktree.isMain) return false
+  const pull = pullFor(worktree)
+  if (pull && pull.state === 'MERGED') return true
+  const position = store.branchPositions[worktree.id]
+  if (!position) return false
+  return position.mergedLocally
+}
+
+/** How a pull request's checks came out, collapsed to the three a dot can show. */
+export function checksOutcome(pull: BranchPull): 'passed' | 'failed' | 'pending' | null {
+  if (pull.checks === 'SUCCESS') return 'passed'
+  if (pull.checks === 'FAILURE' || pull.checks === 'ERROR') return 'failed'
+  if (pull.checks === 'PENDING' || pull.checks === 'EXPECTED') return 'pending'
+  return null
+}
+
+/** A pull request chip's tooltip: its number, state and checks. */
+export function pullTitle(pull: BranchPull): string {
+  const parts = [`Pull request #${pull.number}`, pullStateLabel(pull)]
+  const outcome = checksOutcome(pull)
+  if (outcome) parts.push(`checks ${outcome}`)
+  return parts.join(' · ')
+}
+
+/** A pull request's state in words, draft included. */
+function pullStateLabel(pull: BranchPull): string {
+  if (pull.state === 'OPEN' && pull.isDraft) return 'draft'
+  return pull.state.toLowerCase()
+}
+
+/** A position's tooltip, naming the base it is measured against. */
+export function positionTitle(position: BranchPosition): string {
+  return `${position.ahead} ahead of, ${position.behind} behind ${position.base}`
 }
 
 /**

@@ -39,3 +39,24 @@ export function branchNameFor(number: number, title: string): string {
   if (slug.length === 0) return String(number)
   return `${number}-${slug}`
 }
+
+/**
+ * Whether a branch belongs to an issue by the same convention: the bare number,
+ * or the number and a hyphen, whatever the slug or suffix after it.
+ */
+export function isBranchForIssue(branch: string, number: number): boolean {
+  const prefix = String(number)
+  if (branch === prefix) return true
+  return branch.startsWith(`${prefix}-`)
+}
+
+/**
+ * The branch name itself when nothing is called that yet, else the first of
+ * `<name>-2`, `<name>-3`, … that is free — for a second worktree on one issue.
+ */
+export function freeBranchName(name: string, taken: readonly string[]): string {
+  if (!taken.includes(name)) return name
+  let suffix = 2
+  while (taken.includes(`${name}-${suffix}`)) suffix += 1
+  return `${name}-${suffix}`
+}

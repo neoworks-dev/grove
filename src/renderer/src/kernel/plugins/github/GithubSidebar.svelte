@@ -38,9 +38,12 @@
     openReference,
     runCommand,
     startWorkOnIssue,
+    switchToWorktree,
     toggleSubscription,
-    transferIssue
+    transferIssue,
+    worktreesForIssue
   } from './store.svelte'
+  import { store } from '../../../lib/store.svelte'
   import type { Snippet } from 'svelte'
   import type { GithubItemDetail, GithubItemRef } from '../../../../../shared/types'
 
@@ -106,6 +109,10 @@
     if (!detail.linkedBranches) return []
     return detail.linkedBranches
   })
+
+  // Worktrees already on one of this issue's branches, to switch to rather than
+  // cut another by accident.
+  const issueWorktrees = $derived(worktreesForIssue(detail.number))
 
   let transferTo = $state('')
 
@@ -315,14 +322,37 @@
           <p class="truncate font-mono text-dim" title={branch}>{branch}</p>
         {/each}
       {/if}
+      {#each issueWorktrees as worktree (worktree.id)}
+        {@const current = worktree.id === store.selectedWorktreeId}
+        <div class="flex items-center gap-1.5">
+          <GitBranchIcon size={11} class="shrink-0 text-dim" />
+          <span class="min-w-0 flex-1 truncate font-mono text-default" title={worktree.path}>
+            {worktree.name}
+          </span>
+          {#if current}
+            <span class="shrink-0 text-2xs text-dim">current</span>
+          {:else}
+            <button
+              class="shrink-0 rounded-md border border-line px-1.5 py-0.5 text-2xs text-dim transition-colors hover:border-line-strong hover:text-default"
+              title="Switch to the worktree {worktree.name}"
+              onclick={() => switchToWorktree(worktree)}
+            >
+              Switch
+            </button>
+          {/if}
+        </div>
+      {/each}
       <button
         class="flex items-center gap-1.5 self-start rounded-md border border-line px-1.5 py-0.5 text-2xs text-dim transition-colors hover:border-line-strong hover:text-default disabled:opacity-50"
         disabled={github.busy}
-        title="Create a worktree on {branchNameFor(detail.number, detail.title)}"
+        title="Create a worktree on {branchNameFor(
+          detail.number,
+          detail.title
+        )}, optionally with an agent briefed on the issue"
         onclick={startWorkOnIssue}
       >
         <GitBranchIcon size={11} />
-        Create a worktree
+        Work on this
       </button>
     </section>
   {/if}

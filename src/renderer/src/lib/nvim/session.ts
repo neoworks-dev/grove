@@ -732,6 +732,10 @@ export class NvimCanvasSession {
   private async connect(worktreeId?: string): Promise<void> {
     if (this.destroyed || !this.renderer) return
     const target = worktreeId === undefined ? store.selectedWorktreeId : worktreeId
+    // Spawning and attaching take long enough for focus to have moved on — a
+    // worktree switch that also reveals another pane, say — and taking it back
+    // then would undo that.
+    const focusedAtStart = document.activeElement
     let spawnedId: string
     try {
       spawnedId = await window.workbench.nvim.spawn(target)
@@ -773,7 +777,7 @@ export class NvimCanvasSession {
     )
     void this.pushTheme()
     await this.callbacks.onAttached?.(this.nvimId)
-    this.elements.input.focus()
+    if (document.activeElement === focusedAtStart) this.elements.input.focus()
   }
 
   // Re-point this session at a different worktree (the user switched worktrees).

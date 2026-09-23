@@ -15,7 +15,10 @@ import {
   type TabDiff
 } from '../../../lib/store.svelte'
 import { layout } from '../../../lib/layout.svelte'
-import { branchNameFor } from './branches'
+import { branchNameFor, freeBranchName, isBranchForIssue } from './branches'
+import { issuePrompt } from './issuePrompt'
+import { startSessionWithTask } from '../../../lib/agents/newSession'
+import { agentSessions } from '../../../lib/agents/sessions.svelte'
 import { diffAgainstBase, redrawDiffAgainstBase, showPrBaseOnly } from './prDiff'
 import { registerDiffRestore } from '../../../lib/nvim/diffTabs'
 import { buildPrFileTree, nextUnreadFile } from './prFileTree'
@@ -54,7 +57,8 @@ import type {
   GithubStateFilter,
   GithubStatus,
   MergePrOptions,
-  PrCheckoutState
+  PrCheckoutState,
+  Worktree
 } from '../../../../../shared/types'
 
 /** How many items each side of the dashboard asks for. */
@@ -913,6 +917,39 @@ export async function loadPrCheckoutState(number: number): Promise<void> {
 }
 
 /**
+ * Fetch the pull request again and re-read where its checkout stands, so a
+ * checkout that has fallen behind says so. Once per pull request opened.
+ */
+export async function refreshPrCheckout(detail: GithubItemDetail): Promise<void> {
+  if (!detail.baseRefName) {
+    await loadPrCheckoutState(detail.number)
+    return
+  }
+  try {
+    const state = await window.workbench.github.refreshPrCheckout(detail.number, detail.baseRefName)
+    github.prCheckouts = { ...github.prCheckouts, [detail.number]: state }
+  } catch (err) {
+    github.error = (err as Error).message
+  }
+}
+
+/** Fast-forward the pull request's checkout to what the pull request is now. */
+export async function updatePrCheckout(detail: GithubItemDetail): Promise<void> {
+  if (!detail.baseRefName) return
+  github.prCheckoutBusy = true
+  try {
+    const state = await window.workbench.github.updatePrCheckout(detail.number, detail.baseRefName)
+    github.prCheckouts = { ...github.prCheckouts, [detail.number]: state }
+    await refreshWorktrees()
+    dialogs.notify({ level: 'info', message: `Checkout of #${detail.number} is up to date.` })
+  } catch (err) {
+    dialogs.notify({ level: 'error', message: (err as Error).message })
+  } finally {
+    github.prCheckoutBusy = false
+  }
+}
+
+/**
  * Merge the pull request's base branch into its checkout, which is what turns
  * a conflict GitHub reports into conflicts on disk, and show them.
  *
@@ -1238,29 +1275,95 @@ export async function toggleSubscription(): Promise<void> {
   }
 }
 
+/** The worktrees already on one of an issue's branches, by the `<number>-` convention. */
+export function worktreesForIssue(number: number): Worktree[] {
+  return store.worktrees.filter((worktree) => isBranchForIssue(worktree.branch, number))
+}
+
+/** Switches to a worktree an issue already has. */
+export async function switchToWorktree(worktree: Worktree): Promise<void> {
+  await selectWorktree(worktree.id)
+  dialogs.notify({ level: 'info', message: `Switched to ${worktree.name}` })
+}
+
 /**
  * Open a worktree for the issue, on the branch the repository's own convention
- * names. This is the one thing in the rail that is Grove's rather than
- * GitHub's: the whole app is worktrees, and an issue is where one starts.
+ * names, and optionally start an agent there briefed with the issue. This is
+ * the one thing in the rail that is Grove's rather than GitHub's: the whole app
+ * is worktrees, and an issue is where one starts.
+ *
+ * When the issue already has a worktree the dialog says so and offers to switch
+ * to it; creating another stays possible, on the next free branch name.
  */
 export async function startWorkOnIssue(): Promise<void> {
   const detail = github.detail
   if (!detail) return
-  const branch = branchNameFor(detail.number, detail.title)
+  const existing = worktreesForIssue(detail.number)
+  const branch = freeBranchName(branchNameFor(detail.number, detail.title), takenBranches())
   let baseBranch = 'main'
   const config = store.config
   if (config) baseBranch = config.workbench.default_base_branch
 
-  const picked = await dialogs.confirm({
-    title: `Open a worktree for #${detail.number}?`,
-    body: `Branch ${branch}, cut from ${baseBranch}.`,
+  const picked = await dialogs.confirm(
+    workOnIssueDialog(detail.number, branch, baseBranch, existing)
+  )
+  if (picked === 'cancel') return
+  const switchingTo = existing.find((worktree) => `switch:${worktree.id}` === picked)
+  if (switchingTo) {
+    await switchToWorktree(switchingTo)
+    return
+  }
+  await createIssueWorktree(detail, branch, baseBranch, picked === 'agent')
+}
+
+/** Every branch name in use, local or checked out in a worktree. */
+function takenBranches(): string[] {
+  const checkedOut = store.worktrees.map((worktree) => worktree.branch)
+  if (!store.branches) return checkedOut
+  return [...store.branches.all, ...checkedOut]
+}
+
+/** The confirmation for working on an issue, offering a switch to each worktree it already has. */
+function workOnIssueDialog(
+  number: number,
+  branch: string,
+  baseBranch: string,
+  existing: Worktree[]
+): DialogOptions {
+  const switches = existing.map((worktree) => ({
+    id: `switch:${worktree.id}`,
+    label: switchLabel(worktree, existing.length)
+  }))
+  let body = `Branch ${branch}, cut from ${baseBranch}. The agent is briefed with the issue and its comments.`
+  if (existing.length > 0) {
+    const names = existing.map((worktree) => worktree.name).join(', ')
+    body = `#${number} already has a worktree: ${names}. Switch to it, or create another on ${branch}.`
+  }
+  return {
+    title: `Work on #${number}?`,
+    body,
     actions: [
-      { id: 'go', label: 'Create worktree', kind: 'primary' },
+      ...switches,
+      { id: 'agent', label: 'Create with agent', kind: 'primary' },
+      { id: 'worktree', label: 'Create only' },
       { id: 'cancel', label: 'Cancel' }
     ]
-  })
-  if (picked !== 'go') return
+  }
+}
 
+/** A switch button's label: the body already names a lone worktree, several need their names. */
+function switchLabel(worktree: Worktree, count: number): string {
+  if (count === 1) return 'Switch to it'
+  return `Switch to ${worktree.name}`
+}
+
+/** Creates the issue's worktree and selects it, starting an agent on the issue if asked. */
+async function createIssueWorktree(
+  detail: GithubItemDetail,
+  branch: string,
+  baseBranch: string,
+  withAgent: boolean
+): Promise<void> {
   github.busy = true
   try {
     const created = await window.workbench.worktrees.create({
@@ -1271,11 +1374,20 @@ export async function startWorkOnIssue(): Promise<void> {
     await refreshWorktrees()
     await selectWorktree(created.id)
     dialogs.notify({ level: 'info', message: `Working on #${detail.number} in ${branch}` })
+    if (withAgent) await briefAgent(created.path, detail)
   } catch (err) {
     dialogs.notify({ level: 'error', message: (err as Error).message })
   } finally {
     github.busy = false
   }
+}
+
+/** Starts an agent in the worktree with the issue and its comment thread as its prompt. */
+async function briefAgent(worktreePath: string, detail: GithubItemDetail): Promise<void> {
+  const sessionId = await startSessionWithTask(worktreePath, issuePrompt(detail))
+  if (sessionId) return
+  const reason = agentSessions.serverError || 'Could not reach the agent server.'
+  dialogs.notify({ level: 'error', message: reason })
 }
 
 /** Put the open item on a milestone, or take it off one. */

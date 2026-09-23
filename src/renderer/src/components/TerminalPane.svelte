@@ -8,7 +8,12 @@
   // The shells themselves live in the terminal daemon rather than in grove, so
   // mounting starts by adopting whatever is still running in this worktree —
   // from a closed panel, or from the last time grove was open.
-  import { onMount, onDestroy } from 'svelte'
+  //
+  // The pane follows the selected worktree like the rest of the app: it lists
+  // that worktree's terminals, and the others keep running hidden. Pinned, it
+  // stays on one worktree whatever is selected.
+  import { onMount, onDestroy, untrack } from 'svelte'
+  import PushPinIcon from 'phosphor-svelte/lib/PushPinIcon'
   import TerminalView from './TerminalView.svelte'
   import { store } from '../lib/store.svelte'
   import { layout } from '../lib/layout.svelte'
@@ -16,7 +21,15 @@
   import { claimTerminal, releaseTerminal } from '../lib/terminalClaims'
   import PaneControls from './PaneControls.svelte'
 
-  let { leafId }: { leafId: string } = $props()
+  let {
+    leafId,
+    state: paneState,
+    updateState
+  }: {
+    leafId: string
+    state: Record<string, unknown>
+    updateState: (patch: Record<string, unknown>) => void
+  } = $props()
 
   interface TerminalSession {
     key: string
@@ -28,8 +41,24 @@
     ptyId: string | null
   }
 
+  // Every terminal the pane holds, across worktrees; only the shown worktree's
+  // are listed.
   let sessions = $state<TerminalSession[]>([])
-  let activeKey = $state<string | null>(null)
+  // The active tab per worktree, so switching back lands where it was left.
+  let activeKeyByWorktree = $state<Record<string, string>>({})
+  // Worktrees whose running shells have already been adopted. Bookkeeping, not
+  // state: nothing renders it.
+  const adoptedWorktrees: string[] = []
+
+  const pinnedWorktreeId = $derived(pinnedWorktree())
+  const shownWorktreeId = $derived(pinnedWorktreeId || store.selectedWorktreeId)
+  const shownSessions = $derived(
+    sessions.filter((session) => session.worktreeId === shownWorktreeId)
+  )
+  const activeKey = $derived(activeKeyFor(shownWorktreeId))
+  const shownWorktreeName = $derived(worktreeName(shownWorktreeId))
+  const pinTitle = $derived(pinTitleFor(pinnedWorktreeId, shownWorktreeName))
+  const pinWeight = $derived(pinnedWorktreeId ? 'fill' : 'regular')
   // Monotonic — closing a terminal never renumbers the survivors.
   let counter = 0
 
@@ -75,45 +104,95 @@
     return true
   }
 
+  /** The worktree this pane is pinned to, or an empty string when it follows the selection. */
+  function pinnedWorktree(): string {
+    const pinned = paneState.pinnedWorktreeId
+    if (typeof pinned !== 'string') return ''
+    return pinned
+  }
+
+  /** The active tab of a worktree's terminals, or null when it has none. */
+  function activeKeyFor(worktreeId: string): string | null {
+    const key = activeKeyByWorktree[worktreeId]
+    if (!key) return null
+    return key
+  }
+
+  /** The name the worktrees view shows for a worktree. */
+  function worktreeName(worktreeId: string): string {
+    const worktree = store.worktrees.find((candidate) => candidate.id === worktreeId)
+    if (!worktree) return worktreeId
+    return worktree.name
+  }
+
+  /** What the pin button does, said on hover. */
+  function pinTitleFor(pinned: string, name: string): string {
+    if (pinned) return `Pinned to ${name}: follow the selected worktree again`
+    return `Pin to ${name}: keep these terminals when the selection changes`
+  }
+
+  /** Makes a terminal the active tab of its worktree, or leaves the worktree with none. */
+  function setActiveKey(worktreeId: string, key: string | null): void {
+    if (key === null) {
+      delete activeKeyByWorktree[worktreeId]
+      return
+    }
+    activeKeyByWorktree[worktreeId] = key
+  }
+
+  /** Pins the pane to the worktree it shows, or lets it follow the selection again. */
+  function togglePin(): void {
+    if (pinnedWorktreeId) {
+      updateState({ pinnedWorktreeId: undefined })
+      return
+    }
+    updateState({ pinnedWorktreeId: shownWorktreeId })
+  }
+
   function newTerminal(): void {
     counter += 1
     const session: TerminalSession = {
       key: `term-${counter}`,
       title: `Terminal ${counter}`,
-      worktreeId: store.selectedWorktreeId,
+      worktreeId: shownWorktreeId,
       ptyId: null
     }
     sessions = [...sessions, session]
-    activeKey = session.key
+    setActiveKey(session.worktreeId, session.key)
   }
 
   /**
-   * Adopt the shells that are still running in this worktree, and only open a
-   * new one when there are none.
+   * Adopt the shells that are still running in a worktree, once per worktree.
+   * When there are none, a new one is opened only if `openWhenNone` — the pane
+   * was opened to get a terminal, but browsing worktrees should not leave a
+   * shell behind in each.
    *
    * The daemon owns the ptys, so a grove restart — or just closing and reopening
    * the panel — finds the same lazygit or build still going. Terminals another
    * pane has already taken are left alone.
    */
-  async function restoreTerminals(): Promise<void> {
+  async function adoptTerminals(worktreeId: string, openWhenNone: boolean): Promise<void> {
+    if (adoptedWorktrees.includes(worktreeId)) return
+    adoptedWorktrees.push(worktreeId)
     const running = await window.workbench.terminal.list().catch(() => [])
     const mine = running
-      .filter((info) => info.worktreeId === store.selectedWorktreeId)
+      .filter((info) => info.worktreeId === worktreeId)
       .filter((info) => claimTerminal(info.id))
       .sort((a, b) => a.startedAt - b.startedAt)
 
     if (mine.length === 0) {
-      newTerminal()
+      if (openWhenNone && worktreeId === shownWorktreeId) newTerminal()
       return
     }
-    sessions = mine.map((info) => ({
+    const adopted = mine.map((info) => ({
       key: info.id,
       title: info.title,
-      worktreeId: info.worktreeId ?? store.selectedWorktreeId,
+      worktreeId,
       attachId: info.id,
       ptyId: info.id
     }))
-    activeKey = sessions[0].key
+    sessions = [...sessions, ...adopted]
+    if (!activeKeyFor(worktreeId)) setActiveKey(worktreeId, adopted[0].key)
   }
 
   /** A view reports the shell it ended up with, which is what close kills. */
@@ -132,32 +211,44 @@
   }
 
   function selectTerminal(key: string): void {
-    activeKey = key
+    const session = sessions.find((candidate) => candidate.key === key)
+    if (!session) return
+    setActiveKey(session.worktreeId, key)
     // Defer focus until the newly-shown view has laid out.
     requestAnimationFrame(() => views[key]?.focus())
   }
 
   // Remove a terminal from the panel, and end the shell with it: closing a tab
   // is the one way a terminal dies now that quitting grove no longer does it.
-  // Closing the last one closes the whole pane.
+  // Closing the last one the pane holds closes the whole pane; closing the last
+  // one of a worktree leaves it empty.
   function closeTerminal(key: string): void {
-    const index = sessions.findIndex((session) => session.key === key)
-    if (index < 0) return
-    const closing = sessions[index]
+    const closing = sessions.find((session) => session.key === key)
+    if (!closing) return
     if (closing.ptyId) {
       void window.workbench.terminal.kill(closing.ptyId)
       releaseTerminal(closing.ptyId)
     }
     delete views[key]
+    const siblings = sessions.filter((session) => session.worktreeId === closing.worktreeId)
+    const index = siblings.indexOf(closing)
     sessions = sessions.filter((session) => session.key !== key)
     if (sessions.length === 0) {
       layout.closeLeaf(leafId)
       return
     }
-    if (activeKey === key) {
-      const neighbor = sessions[Math.min(index, sessions.length - 1)]
-      selectTerminal(neighbor.key)
+    if (activeKeyFor(closing.worktreeId) === key) selectNeighbor(closing.worktreeId, index)
+  }
+
+  /** Activates the tab that took a closed one's place in its worktree, if any is left. */
+  function selectNeighbor(worktreeId: string, closedIndex: number): void {
+    const remaining = sessions.filter((session) => session.worktreeId === worktreeId)
+    if (remaining.length === 0) {
+      setActiveKey(worktreeId, null)
+      return
     }
+    const neighbor = remaining[Math.min(closedIndex, remaining.length - 1)]
+    selectTerminal(neighbor.key)
   }
 
   // Keep the active tab visible when the strip is scrolled elsewhere.
@@ -174,8 +265,19 @@
   let unregisterBindings: (() => void) | null = null
   let unregisterFocus: (() => void) | null = null
 
+  // Follow the shown worktree: the first time it comes up, adopt what is still
+  // running there. The worktree shown at mount is the one the pane was opened
+  // for, so it gets a fresh shell when it has none.
+  let mounted = false
+  $effect(() => {
+    const worktreeId = shownWorktreeId
+    if (!worktreeId) return
+    const openWhenNone = !mounted
+    mounted = true
+    untrack(() => void adoptTerminals(worktreeId, openWhenNone))
+  })
+
   onMount(() => {
-    void restoreTerminals()
     unregisterFocus = keymap.registerPaneFocus(leafId, focusFromNavigation)
     // Vim-style: in 'normal' the terminal keeps focus for pane nav; 'i' hands
     // the keyboard back to the active shell.
@@ -237,6 +339,24 @@
   </div>
 {/snippet}
 
+{#snippet pinButton()}
+  <!-- Pinned, the pane names the worktree it stays on; the tabs alone would not
+       say that they are not the selected worktree's. -->
+  <button
+    class="flex max-w-40 shrink-0 cursor-pointer items-center gap-1 rounded-md p-2 text-2xs hover:bg-hover hover:text-default"
+    class:self-start={sideStrip}
+    class:text-blue={pinnedWorktreeId}
+    class:text-dim={!pinnedWorktreeId}
+    title={pinTitle}
+    onclick={togglePin}
+  >
+    <PushPinIcon size={12} weight={pinWeight} />
+    {#if pinnedWorktreeId}
+      <span class="truncate">{shownWorktreeName}</span>
+    {/if}
+  </button>
+{/snippet}
+
 {#snippet newTerminalButton()}
   <button
     class="flex shrink-0 cursor-pointer items-center rounded-md p-2 text-2xs text-dim hover:bg-hover hover:text-default"
@@ -260,11 +380,12 @@
     <div class="flex shrink-0 items-center gap-1 px-1.5 py-1">
       <div bind:this={stripEl} class="no-scrollbar min-w-0 flex-1 overflow-x-auto">
         <div class="flex w-max items-center gap-1">
-          {#each sessions as session (session.key)}
+          {#each shownSessions as session (session.key)}
             {@render terminalTab(session)}
           {/each}
         </div>
       </div>
+      {@render pinButton()}
       {@render newTerminalButton()}
       <PaneControls />
     </div>
@@ -287,6 +408,14 @@
         />
       </div>
     {/each}
+    {#if shownSessions.length === 0}
+      <div class="absolute inset-0 flex flex-col items-center justify-center gap-2 px-3">
+        <p class="text-xs text-dim">No terminal in {shownWorktreeName}.</p>
+        <button class="rounded-md bg-action px-3 py-1 text-xs text-action-fg" onclick={newTerminal}>
+          New terminal
+        </button>
+      </div>
+    {/if}
   </div>
 
   {#if sideStrip}
@@ -295,11 +424,12 @@
       <PaneControls class="self-end" />
       <div bind:this={stripEl} class="no-scrollbar min-h-0 flex-1 overflow-y-auto">
         <div class="flex flex-col gap-1">
-          {#each sessions as session (session.key)}
+          {#each shownSessions as session (session.key)}
             {@render terminalTab(session)}
           {/each}
         </div>
       </div>
+      {@render pinButton()}
       {@render newTerminalButton()}
     </div>
   {/if}

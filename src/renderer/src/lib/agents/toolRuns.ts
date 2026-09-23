@@ -32,6 +32,8 @@ export type TranscriptRow = ItemRow | ToolRunRow
 export interface ToolTally {
   name: string
   count: number
+  /** The file names its calls were about, once each, in the order they came. */
+  files: string[]
 }
 
 /** Whether a call is finished and uneventful enough to disappear into a summary. */
@@ -84,17 +86,35 @@ export function toItemRows(items: TranscriptItem[]): TranscriptRow[] {
  * What the run did, by tool name, in the order the names first appeared.
  *
  * Nothing here knows any tool: the harness decides what its tools are called, so the summary
- * counts whatever names came back rather than mapping them to phrases grove made up.
+ * counts whatever names came back rather than mapping them to phrases grove made up. A call
+ * about a file keeps its file name through the fold, since "Read" alone does not say what
+ * was read; `fileOf` is how the caller, which knows the tools, says which file that is.
  */
-export function tallyOf(items: ToolItem[]): ToolTally[] {
+export function tallyOf(
+  items: ToolItem[],
+  fileOf: (item: ToolItem) => string | null = () => null
+): ToolTally[] {
   const tallies: ToolTally[] = []
   for (const item of items) {
-    const existing = tallies.find((tally) => tally.name === item.name)
-    if (existing) {
-      existing.count += 1
-      continue
+    let tally = tallies.find((existing) => existing.name === item.name)
+    if (tally) {
+      tally.count += 1
+    } else {
+      tally = { name: item.name, count: 1, files: [] }
+      tallies.push(tally)
     }
-    tallies.push({ name: item.name, count: 1 })
+    addFileName(tally, fileOf(item))
   }
   return tallies
+}
+
+/** Adds a path's file name to a tally, once. */
+function addFileName(tally: ToolTally, path: string | null): void {
+  if (path === null) {
+    return
+  }
+  const name = path.split('/').pop() || path
+  if (!tally.files.includes(name)) {
+    tally.files.push(name)
+  }
 }

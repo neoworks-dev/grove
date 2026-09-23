@@ -645,6 +645,15 @@ export interface PrCheckoutState {
   unresolved: number
   /** Commits the checkout has that the pull request's head branch does not. */
   ahead: number
+  /** Commits the pull request's head has that the checkout does not, as last fetched. */
+  behind: number
+  /** Whether the checkout has uncommitted changes. */
+  dirty: boolean
+  /**
+   * Why a checkout that is behind is left alone rather than fast-forwarded, or
+   * null when it can be updated or is not behind.
+   */
+  updateBlockedReason: string | null
   /** Where a push would go, or null when pushing is not possible. */
   pushTarget: PrPushTarget | null
   /** Why pushing is not possible, when it is not. */

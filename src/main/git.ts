@@ -246,6 +246,16 @@ export async function updateRef(worktreePath: string, ref: string, target: strin
 }
 
 // How many commits the worktree's HEAD has that `ref` does not.
+/** Commits `ref` has that the worktree's HEAD does not; 0 until the ref exists. */
+export async function commitsBehind(worktreePath: string, ref: string): Promise<number> {
+  try {
+    const out = await gitFor(worktreePath).raw(['rev-list', '--count', `HEAD..${ref}`])
+    return Number(out.trim()) || 0
+  } catch {
+    return 0
+  }
+}
+
 export async function commitsAhead(worktreePath: string, ref: string): Promise<number> {
   try {
     const out = await gitFor(worktreePath).raw(['rev-list', '--count', `${ref}..HEAD`])

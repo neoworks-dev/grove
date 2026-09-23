@@ -25,15 +25,18 @@ import type {
   GithubStateFilter,
   MergePrOptions,
   OpenPrOptions,
+  PrCheckoutState,
   Worktree
 } from '../../shared/types'
+import { updateBlockedReason } from '../prCheckoutSync'
 
 /**
  * The `pr-<n>` worktree for a pull request, checked out if it is not already.
  *
  * A worktree that is already there is not re-fetched: opening a file asks for
  * the checkout every time, and two network round trips in front of every click
- * is what that would cost. It does not follow the pull request either — #69.
+ * is what that would cost. Following the pull request is `github:refreshPrCheckout`
+ * and `github:updatePrCheckout`'s job.
  */
 async function checkoutPullRequest(
   ctx: Context,
@@ -70,6 +73,49 @@ async function checkoutPullRequest(
   )
   await ctx.workbench.refreshWorktrees()
   return created
+}
+
+/** The `pr-<n>` worktree for a pull request, or undefined when it is not checked out. */
+async function findPrWorktree(ctx: Context, number: number): Promise<Worktree | undefined> {
+  const worktrees: Worktree[] = await ctx.workbench.refreshWorktrees()
+  return worktrees.find((entry) => entry.branch === `pr-${number}`)
+}
+
+/** Where a pull request's checkout stands against the pull request, as last fetched. */
+async function prCheckoutState(ctx: Context, number: number): Promise<PrCheckoutState> {
+  const worktree = await findPrWorktree(ctx, number)
+  const { target, blockedReason } = await dashboard.fetchPushTarget(
+    ctx.workbench.requireRepo().repoPath,
+    number
+  )
+  if (!worktree) {
+    return {
+      worktreeId: null,
+      mergeInProgress: false,
+      unresolved: 0,
+      ahead: 0,
+      behind: 0,
+      dirty: false,
+      updateBlockedReason: null,
+      pushTarget: target,
+      blockedReason
+    }
+  }
+  const headRef = `refs/grove/pr/${number}/head`
+  const position = {
+    ahead: await git.commitsAhead(worktree.path, headRef),
+    behind: await git.commitsBehind(worktree.path, headRef),
+    dirty: await git.isDirty(worktree.path),
+    mergeInProgress: await git.mergeInProgress(worktree.path)
+  }
+  return {
+    worktreeId: worktree.id,
+    unresolved: (await git.conflictedFiles(worktree.path)).length,
+    ...position,
+    updateBlockedReason: updateBlockedReason(position),
+    pushTarget: target,
+    blockedReason
+  }
 }
 
 export const githubRoutes = {
@@ -302,33 +348,36 @@ export const githubRoutes = {
     })
 
     // Where the pull request's checkout stands against the pull request, which
-    // is what decides whether resolving or pushing is the thing to offer.
-    route(ctx, 'github:prCheckoutState', async (_e, number: number) => {
-      const worktree = (await ctx.workbench.refreshWorktrees()).find(
-        (entry: Worktree) => entry.branch === `pr-${number}`
-      )
-      const { target, blockedReason } = await dashboard.fetchPushTarget(
-        ctx.workbench.requireRepo().repoPath,
-        number
-      )
-      if (!worktree) {
-        return {
-          worktreeId: null,
-          mergeInProgress: false,
-          unresolved: 0,
-          ahead: 0,
-          pushTarget: target,
-          blockedReason
-        }
+    // is what decides whether resolving, pushing or updating is the thing to
+    // offer. Reads the refs as last fetched.
+    route(ctx, 'github:prCheckoutState', (_e, number: number) => prCheckoutState(ctx, number))
+
+    // The same, after fetching the pull request's head and base again, so a
+    // checkout that has fallen behind shows as behind. Asked for when a pull
+    // request is opened, not on every file opened from it.
+    route(ctx, 'github:refreshPrCheckout', async (_e, number: number, baseRefName: string) => {
+      const { repoPath } = ctx.workbench.requireRepo()
+      if (await findPrWorktree(ctx, number)) {
+        await git.fetchPullRequestRefs(repoPath, number, baseRefName)
       }
-      return {
-        worktreeId: worktree.id,
-        mergeInProgress: await git.mergeInProgress(worktree.path),
-        unresolved: (await git.conflictedFiles(worktree.path)).length,
-        ahead: await git.commitsAhead(worktree.path, `refs/grove/pr/${number}/head`),
-        pushTarget: target,
-        blockedReason
+      return prCheckoutState(ctx, number)
+    })
+
+    // Bring the checkout up to the pull request — only ever by fast-forward.
+    // Anything else would throw work away, so it is refused with the reason.
+    route(ctx, 'github:updatePrCheckout', async (_e, number: number, baseRefName: string) => {
+      const { repoPath } = ctx.workbench.requireRepo()
+      const worktree = await findPrWorktree(ctx, number)
+      if (!worktree) throw new Error(`pull request #${number} is not checked out`)
+      await git.fetchPullRequestRefs(repoPath, number, baseRefName)
+      const before = await prCheckoutState(ctx, number)
+      if (before.updateBlockedReason) {
+        throw new Error(`${worktree.name} was left as it is: ${before.updateBlockedReason}`)
       }
+      if (before.behind > 0) {
+        await git.mergeWorktree(worktree.path, `refs/grove/pr/${number}/head`, { mode: 'ff-only' })
+      }
+      return prCheckoutState(ctx, number)
     })
 
     // Push the resolved merge back, which is the only thing that makes GitHub

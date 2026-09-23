@@ -917,6 +917,39 @@ export async function loadPrCheckoutState(number: number): Promise<void> {
 }
 
 /**
+ * Fetch the pull request again and re-read where its checkout stands, so a
+ * checkout that has fallen behind says so. Once per pull request opened.
+ */
+export async function refreshPrCheckout(detail: GithubItemDetail): Promise<void> {
+  if (!detail.baseRefName) {
+    await loadPrCheckoutState(detail.number)
+    return
+  }
+  try {
+    const state = await window.workbench.github.refreshPrCheckout(detail.number, detail.baseRefName)
+    github.prCheckouts = { ...github.prCheckouts, [detail.number]: state }
+  } catch (err) {
+    github.error = (err as Error).message
+  }
+}
+
+/** Fast-forward the pull request's checkout to what the pull request is now. */
+export async function updatePrCheckout(detail: GithubItemDetail): Promise<void> {
+  if (!detail.baseRefName) return
+  github.prCheckoutBusy = true
+  try {
+    const state = await window.workbench.github.updatePrCheckout(detail.number, detail.baseRefName)
+    github.prCheckouts = { ...github.prCheckouts, [detail.number]: state }
+    await refreshWorktrees()
+    dialogs.notify({ level: 'info', message: `Checkout of #${detail.number} is up to date.` })
+  } catch (err) {
+    dialogs.notify({ level: 'error', message: (err as Error).message })
+  } finally {
+    github.prCheckoutBusy = false
+  }
+}
+
+/**
  * Merge the pull request's base branch into its checkout, which is what turns
  * a conflict GitHub reports into conflicts on disk, and show them.
  *

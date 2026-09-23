@@ -7,9 +7,11 @@
   // block is the section box rather than the whole transcript, the header pins
   // only while its own turn is on screen and scrolls away with it.
 
+  import Icon from '@iconify/svelte'
   import CaretRight from 'phosphor-svelte/lib/CaretRight'
   import PaperPlaneTilt from 'phosphor-svelte/lib/PaperPlaneTilt'
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
+  import { fileIcon } from '../../../../lib/icons'
   import { renderMarkdown } from '../../../../lib/markdown'
   import { floatingCodeScrollbars } from '../../../../lib/markdownScrollbars'
   import { highlightCodeFences } from '../../../../lib/markdownHighlight'
@@ -144,7 +146,14 @@
       {tally.name}{#if tally.count > 1}<span class="text-dim">&nbsp;×{tally.count}</span>{/if}
     </span>
     {#if tally.files.length > 0}
-      <span class="min-w-0 truncate text-default">{tally.files.join(', ')}</span>
+      <span class="flex min-w-0 items-center gap-2 overflow-hidden">
+        {#each tally.files as file (file)}
+          <span class="flex min-w-0 items-center gap-1 text-default">
+            <Icon icon={fileIcon(file)} width="12" height="12" class="shrink-0" />
+            <span class="truncate">{file}</span>
+          </span>
+        {/each}
+      </span>
     {/if}
   {/each}
 {/snippet}
@@ -219,8 +228,9 @@
         <div class="mt-1.5 flex flex-wrap gap-1.5">
           {#each item.references as reference (`${reference.path}:${reference.startLine}`)}
             <span
-              class="rounded border border-line bg-canvas px-1.5 py-0.5 font-mono text-2xs text-muted"
+              class="flex items-center gap-1 rounded border border-line bg-canvas px-1.5 py-0.5 font-mono text-2xs text-muted"
             >
+              <Icon icon={fileIcon(reference.path)} width="12" height="12" class="shrink-0" />
               {reference.path}:{reference.startLine}-{reference.endLine}
             </span>
           {/each}

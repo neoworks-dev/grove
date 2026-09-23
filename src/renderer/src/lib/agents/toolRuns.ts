@@ -36,15 +36,25 @@ export interface ToolTally {
   files: string[]
 }
 
-/** Whether a call is finished and uneventful enough to disappear into a summary. */
-function isFoldable(item: TranscriptItem): item is ToolItem {
-  return item.kind === 'tool' && item.status === 'ok'
+/**
+ * Whether a call is finished and uneventful enough to disappear into a summary. A call the
+ * caller says stands alone (an edit, one that returned an image) never is.
+ */
+function isFoldable(
+  item: TranscriptItem,
+  standsAlone: (call: ToolItem) => boolean
+): item is ToolItem {
+  return item.kind === 'tool' && item.status === 'ok' && !standsAlone(item)
 }
 
 /**
  * The render list: every item in order, with runs of settled tool calls replaced by one row.
+ * `standsAlone` names the calls that keep a row of their own and break a run.
  */
-export function toTranscriptRows(items: TranscriptItem[]): TranscriptRow[] {
+export function toTranscriptRows(
+  items: TranscriptItem[],
+  standsAlone: (call: ToolItem) => boolean = () => false
+): TranscriptRow[] {
   const rows: TranscriptRow[] = []
   let run: ToolItem[] = []
 
@@ -61,7 +71,7 @@ export function toTranscriptRows(items: TranscriptItem[]): TranscriptRow[] {
   }
 
   for (const item of items) {
-    if (isFoldable(item)) {
+    if (isFoldable(item, standsAlone)) {
       run.push(item)
       continue
     }

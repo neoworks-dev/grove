@@ -32,13 +32,13 @@ function isAnswer(row: TranscriptRow): boolean {
  * out of the fold — as does everything the agent did not author: notices, application
  * messages, the user's own shell commands, harness command output, extension surfaces.
  */
-function isWork(row: TranscriptRow): boolean {
+function isWork(row: TranscriptRow, standsAlone: (call: ToolItem) => boolean): boolean {
   if (row.kind === 'toolRun') {
     return true
   }
   const item = row.item
   if (item.kind === 'tool') {
-    return item.status === 'ok'
+    return item.status === 'ok' && !standsAlone(item)
   }
   return item.kind === 'agent'
 }
@@ -49,8 +49,12 @@ function isWork(row: TranscriptRow): boolean {
  * All of the turn's work folds, wherever it sits — a burst of calls after the answer is as
  * much a detail as one before it, so the whole turn reduces to a single summary line plus the
  * answer. A turn that never produced an answer folds nothing: there would be nothing left.
+ * Calls `standsAlone` names (an edit, one that returned an image) stay on screen too.
  */
-export function foldTurn(rows: TranscriptRow[]): TurnFold {
+export function foldTurn(
+  rows: TranscriptRow[],
+  standsAlone: (call: ToolItem) => boolean = () => false
+): TurnFold {
   let lastAnswer = -1
   for (let index = 0; index < rows.length; index++) {
     if (isAnswer(rows[index])) lastAnswer = index
@@ -63,7 +67,7 @@ export function foldTurn(rows: TranscriptRow[]): TurnFold {
   const kept: TranscriptRow[] = []
   for (let index = 0; index < rows.length; index++) {
     const row = rows[index]
-    if (index !== lastAnswer && isWork(row)) {
+    if (index !== lastAnswer && isWork(row, standsAlone)) {
       hidden.push(row)
       continue
     }

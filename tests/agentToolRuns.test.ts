@@ -63,6 +63,16 @@ describe('tool runs', () => {
     expect(rows.map((row) => row.kind)).toEqual(['toolRun', 'item', 'toolRun'])
   })
 
+  test('a call that stands alone keeps its own row and breaks the run', () => {
+    const isEdit = (call: ToolItem): boolean => call.name === 'Edit'
+    const rows = toTranscriptRows(
+      [tool('Read'), tool('Read'), tool('Edit'), tool('Edit'), tool('Read'), tool('Bash')],
+      isEdit
+    )
+
+    expect(rows.map((row) => row.kind)).toEqual(['toolRun', 'item', 'item', 'toolRun'])
+  })
+
   test('a call that is not settled stays visible on its own', () => {
     const rows = toTranscriptRows([
       tool('Read'),

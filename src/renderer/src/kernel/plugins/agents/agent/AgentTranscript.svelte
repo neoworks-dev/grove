@@ -108,6 +108,17 @@
     return tools.find((tool) => tool.name === name)?.display
   }
 
+  /**
+   * Calls that keep a row of their own however the transcript folds: each change
+   * to a file, with the file it changed, and a call whose images are its point.
+   */
+  function standsAlone(call: ToolItem): boolean {
+    if (displayOf(call.name)?.edits === true) {
+      return true
+    }
+    return call.images.length > 0
+  }
+
   /** What a folded summary says a run of calls did, file names included. */
   function tallyCalls(calls: ToolItem[]): ToolTally[] {
     return tallyOf(calls, (call) =>
@@ -382,8 +393,8 @@
     {#each sections as section, index (section.key)}
       <!-- The section box is the sticky header's containing block, so the pinned
            user bubble scrolls away with its own turn instead of stacking. -->
-      {@const rows = toTranscriptRows(section.body)}
-      {@const fold = isSettled(index) ? foldTurn(rows) : { hidden: [], kept: rows }}
+      {@const rows = toTranscriptRows(section.body, standsAlone)}
+      {@const fold = isSettled(index) ? foldTurn(rows, standsAlone) : { hidden: [], kept: rows }}
       {@const open = Boolean(expandedTurns[section.key])}
       <div>
         {#if section.header}

@@ -407,6 +407,8 @@ export interface ToolDisplay {
   input?: ToolInputView
   result?: ToolResultView
   languageFrom?: string
+  /** The call changes a file, so it keeps a row of its own rather than folding into a summary. */
+  edits?: boolean
 }
 
 export interface ToolInfo {

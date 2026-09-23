@@ -633,13 +633,18 @@ async function toolInfos(): Promise<ToolInfo[]> {
   for (const tool of [...createReadOnlyTools(process.cwd()), ...createCodingTools(process.cwd())]) {
     const policy = policies.get(tool.name)
     if (policy === undefined) continue
-    described.set(tool.name, {
+    const info: ToolInfo = {
       name: tool.name,
       description: tool.description,
       policy,
       parallelSafe: policy === 'allow',
       inputSchema: tool.parameters as Record<string, unknown>
-    })
+    }
+    // pi's two file writers, as proposedContent knows them.
+    if (tool.name === 'write' || tool.name === 'edit') {
+      info.display = { edits: true }
+    }
+    described.set(tool.name, info)
   }
   return [...described.values()]
 }

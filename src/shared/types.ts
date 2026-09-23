@@ -787,6 +787,10 @@ export interface WorkbenchConfig {
   setup: {
     once: string[]
     per_worktree: string[]
+    /** Copy untracked `.env*` files from the main worktree into a new one. */
+    copy_env: boolean
+    /** Install dependencies in a new worktree with the package manager its lockfile names. */
+    install: boolean
   }
   services: Record<string, ServiceConfig>
   agents: Record<string, AgentConfig>

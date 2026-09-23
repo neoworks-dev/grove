@@ -234,7 +234,13 @@
 
 {#snippet row(item: TranscriptItem)}
   {#if item.kind === 'user'}
-    <div class="agent-sticky-user -mx-3 mb-3 whitespace-pre-wrap px-3 py-2 text-default">
+    <!-- Dimmed until the agent has taken it up: written mid-turn, it is still
+         waiting for the agent's next message. -->
+    <div
+      class="agent-sticky-user -mx-3 mb-3 whitespace-pre-wrap px-3 py-2 text-default transition-opacity duration-200"
+      class:opacity-50={item.pending}
+      title={item.pending ? 'Waiting for the agent to take it up' : undefined}
+    >
       {item.text}
       {#if item.references.length > 0}
         <!-- The slice itself went to the model; the bubble only names it. -->

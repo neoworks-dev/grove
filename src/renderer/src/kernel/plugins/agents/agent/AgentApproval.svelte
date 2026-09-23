@@ -216,13 +216,14 @@
       </button>
     </div>
   {:else}
+    <!-- Only the selected choice is marked. A pointer resting over the card by
+         accident must not look like, or become, the selection. -->
     <div class="mt-2 flex flex-col">
       {#each choices as choice, choiceIndex (choice.label)}
         <button
-          class="flex items-baseline gap-3 rounded-md px-2 py-1.5 text-left text-xs outline-none hover:bg-hover"
+          class="flex items-baseline gap-3 rounded-md px-2 py-1.5 text-left text-xs outline-none"
           class:bg-hover={choiceIndex === index}
           onclick={choice.run}
-          onmouseenter={() => (index = choiceIndex)}
         >
           <span class="w-3 shrink-0 text-2xs text-dim">{choiceIndex + 1}.</span>
           <span class="shrink-0 font-medium text-default">{choice.label}</span>

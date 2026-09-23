@@ -29,6 +29,7 @@ import type { ColorTheme } from './themes'
 import { layout } from './layout.svelte'
 import { settings } from './settings.svelte'
 import { agentSessions } from './agents/sessions.svelte'
+import { notifyTurnEnded } from './agents/notifications'
 import { inlineEdit } from './inlineEdit.svelte'
 import { review } from './review.svelte'
 import { intro } from './intro.svelte'
@@ -398,7 +399,7 @@ function restoreTabs(repoState: {
       tabs[worktreeId] = paths.map((path) => toTab(worktreeId, path))
     }
     store.tabsByWorktree = tabs
-    store.activeTabByWorktree = { ...(repoState.activeTabByWorktree || {}) }
+    store.activeTabByWorktree = { ...repoState.activeTabByWorktree }
     return
   }
 
@@ -418,10 +419,9 @@ function restoreTabs(repoState: {
 // Watch the selected worktree plus any worktree with a running agent, so file
 // changes (including agent edits) stream in even when not selected.
 export function syncWatched(): void {
-  const ids = new Set<string>()
-  if (store.selectedWorktreeId) ids.add(store.selectedWorktreeId)
-  for (const id of store.activeAgentWorktrees) ids.add(id)
-  void window.workbench.fs.watch([...ids])
+  const ids = store.activeAgentWorktrees.filter((id) => id !== store.selectedWorktreeId)
+  if (store.selectedWorktreeId) ids.push(store.selectedWorktreeId)
+  void window.workbench.fs.watch(ids)
 }
 
 /** Fetches one worktree's line counts and services into the store. */
@@ -445,17 +445,15 @@ export async function refreshDiffStats(worktreeId: string): Promise<void> {
 }
 
 // Coalesce bursts of file changes into a single diff-stat refresh per worktree.
-const diffStatTimers = new Map<string, ReturnType<typeof setTimeout>>()
+// A plain record: the timers are bookkeeping, nothing renders them.
+const diffStatTimers: Record<string, ReturnType<typeof setTimeout>> = {}
 function scheduleDiffStats(worktreeId: string): void {
-  const existing = diffStatTimers.get(worktreeId)
+  const existing = diffStatTimers[worktreeId]
   if (existing) clearTimeout(existing)
-  diffStatTimers.set(
-    worktreeId,
-    setTimeout(() => {
-      diffStatTimers.delete(worktreeId)
-      void refreshDiffStats(worktreeId)
-    }, 400)
-  )
+  diffStatTimers[worktreeId] = setTimeout(() => {
+    delete diffStatTimers[worktreeId]
+    void refreshDiffStats(worktreeId)
+  }, 400)
 }
 
 export async function selectWorktree(worktreeId: string): Promise<void> {
@@ -484,6 +482,7 @@ export function subscribeEvents(): void {
   // Every session's events, so a turn that ends out of sight is flagged.
   window.workbench.on('event:agent-event', (payload) => {
     agentSessions.noteEvent(payload as SessionEvent)
+    void notifyTurnEnded(payload as SessionEvent)
   })
   window.workbench.on('event:log', (payload) => {
     const event = payload as {

@@ -555,6 +555,8 @@ export interface WorkbenchApi {
     openFile: (scope: 'user' | 'project') => Promise<string | void>
   }
   openExternal: (url: string) => Promise<void>
+  // Bring grove's window to the front, e.g. from a desktop notification.
+  raiseWindow: () => Promise<void>
   // True when the app was started with GROVE_DEBUG=1; gates the renderer's
   // debug hooks on window.
   debug: boolean

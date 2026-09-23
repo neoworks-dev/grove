@@ -394,6 +394,7 @@ const workbench = {
     openFile: (scope: 'user' | 'project') => ipcRenderer.invoke('settings:openFile', scope)
   },
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
+  raiseWindow: () => ipcRenderer.invoke('window:raise'),
 
   // Whether the app was started with GROVE_DEBUG=1. The renderer only publishes
   // its stores on window when this is set, so a normal build exposes nothing.

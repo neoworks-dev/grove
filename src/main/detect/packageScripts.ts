@@ -8,18 +8,9 @@
 
 import type { DetectorFiles, ProjectDetector, ServiceProposal } from './types'
 import { forcePort, localhostUrl, rewritePort } from './ports'
+import { LOCKFILE_MANAGERS, managerForLockfiles } from './packageManagers'
 
 const PACKAGE_JSON = 'package.json'
-
-// Lockfile -> the run prefix that project uses. Order matters: a repo with both
-// a bun lockfile and a package-lock should be treated as bun.
-const LOCKFILE_RUNNERS: Array<{ file: string; run: string }> = [
-  { file: 'bun.lock', run: 'bun run' },
-  { file: 'bun.lockb', run: 'bun run' },
-  { file: 'pnpm-lock.yaml', run: 'pnpm run' },
-  { file: 'yarn.lock', run: 'yarn run' },
-  { file: 'package-lock.json', run: 'npm run' }
-]
 
 // Words that suggest a script stays in the foreground serving something.
 // Exported so this stays the single place to tune the heuristic.
@@ -63,11 +54,11 @@ function readScripts(manifest: string): Record<string, string> | null {
   return result
 }
 
+/** The run prefix the project's lockfile implies, npm's when it has none. */
 function pickRunner(files: DetectorFiles): string {
-  for (const candidate of LOCKFILE_RUNNERS) {
-    if (candidate.file in files) return candidate.run
-  }
-  return 'npm run'
+  const manager = managerForLockfiles(Object.keys(files))
+  if (!manager) return 'npm run'
+  return `${manager} run`
 }
 
 function looksLikeService(scriptName: string, scriptBody: string): boolean {
@@ -96,6 +87,6 @@ function buildProposal(scriptName: string, scriptBody: string, runner: string): 
 export const packageScriptsDetector: ProjectDetector = {
   id: 'package-scripts',
   title: 'package.json scripts',
-  files: [PACKAGE_JSON, ...LOCKFILE_RUNNERS.map((candidate) => candidate.file)],
+  files: [PACKAGE_JSON, ...LOCKFILE_MANAGERS.map((candidate) => candidate.file)],
   detect: parsePackageScripts
 }

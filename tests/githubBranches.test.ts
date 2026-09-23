@@ -3,7 +3,12 @@
 // discovered from a directory listing after the fact.
 
 import { describe, it, expect } from 'bun:test'
-import { branchNameFor, slugify } from '../src/renderer/src/kernel/plugins/github/branches'
+import {
+  branchNameFor,
+  freeBranchName,
+  isBranchForIssue,
+  slugify
+} from '../src/renderer/src/kernel/plugins/github/branches'
 
 describe('slugify', () => {
   it('lowercases and joins words with hyphens', () => {
@@ -38,5 +43,28 @@ describe('branchNameFor', () => {
 
   it('falls back to the number alone when there is no slug', () => {
     expect(branchNameFor(12, '???')).toBe('12')
+  })
+})
+
+describe('isBranchForIssue', () => {
+  it('matches the bare number and the number with a slug', () => {
+    expect(isBranchForIssue('60', 60)).toBe(true)
+    expect(isBranchForIssue('60-hand-an-issue-to-an-agent', 60)).toBe(true)
+  })
+
+  it('does not match a longer number that starts the same', () => {
+    expect(isBranchForIssue('601-other', 60)).toBe(false)
+    expect(isBranchForIssue('feature/60-x', 60)).toBe(false)
+  })
+})
+
+describe('freeBranchName', () => {
+  it('keeps the name when nothing has it', () => {
+    expect(freeBranchName('60-x', ['main'])).toBe('60-x')
+  })
+
+  it('counts up past the names already taken', () => {
+    expect(freeBranchName('60-x', ['60-x'])).toBe('60-x-2')
+    expect(freeBranchName('60-x', ['60-x', '60-x-2'])).toBe('60-x-3')
   })
 })

@@ -48,10 +48,14 @@ function renderPorts(config: WorkbenchConfig): string {
 function renderSetup(config: WorkbenchConfig): string {
   return [
     '# `once` runs the first time this repo is opened; `per_worktree` runs when a',
-    '# worktree is created.',
+    '# worktree is created. Before either, a new worktree gets copies of the main',
+    "# worktree's untracked .env files (`copy_env`) and its dependencies installed",
+    '# with the package manager its lockfile names (`install`).',
     'setup:',
     ...renderCommandList('once', config.setup.once),
     ...renderCommandList('per_worktree', config.setup.per_worktree),
+    `  copy_env: ${config.setup.copy_env}`,
+    `  install: ${config.setup.install}`,
     ''
   ].join('\n')
 }

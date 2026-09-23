@@ -9,6 +9,7 @@ import * as git from './git'
 import { assignSlots, portsForSlot } from './ports'
 import { buildWorktreeEnv, substitute, spawnEnv } from './env'
 import { getRepoState, updateRepoState } from './state'
+import { copyEnvFiles, installCommand } from './worktreeBootstrap'
 
 const execAsync = promisify(exec)
 
@@ -87,6 +88,15 @@ export async function createWorktree(
 
   const ports = portsForWorktree(config, created.portSlot)
   const vars = buildWorktreeEnv(created, ports)
+  const logLine = (line: string): void => log(created.id, line)
+
+  await bootstrapWorktree(
+    mainWorktreePath(repoPath, worktrees),
+    worktreePath,
+    config,
+    vars,
+    logLine
+  )
 
   const repoState = await getRepoState(repoPath)
   if (!repoState.setupOnceDone && config.setup.once.length > 0) {
@@ -100,6 +110,36 @@ export async function createWorktree(
   }
 
   return created
+}
+
+/** The main worktree's path, where untracked files like `.env` live. */
+function mainWorktreePath(repoPath: string, worktrees: Worktree[]): string {
+  const main = worktrees.find((worktree) => worktree.isMain)
+  if (!main) return repoPath
+  return main.path
+}
+
+/**
+ * Gives a new worktree what git does not: the main worktree's untracked env
+ * files and installed dependencies, each unless workbench.yaml turns it off.
+ * Runs before the setup commands, which may well need both.
+ */
+async function bootstrapWorktree(
+  mainPath: string,
+  worktreePath: string,
+  config: WorkbenchConfig,
+  vars: Record<string, string>,
+  log: (line: string) => void
+): Promise<void> {
+  if (config.setup.copy_env) {
+    await copyEnvFiles(mainPath, worktreePath, log).catch((error: Error) =>
+      log(`[setup] copying env files failed: ${error.message}`)
+    )
+  }
+  if (!config.setup.install) return
+  const command = await installCommand(worktreePath, config.setup.per_worktree)
+  if (!command) return
+  await runCommands([command], worktreePath, vars, log)
 }
 
 export async function removeWorktree(
@@ -116,10 +156,11 @@ export async function removeWorktree(
 export async function archiveWorktree(
   repoPath: string,
   worktreePath: string,
-  options: { branch?: string; deleteBranch: boolean; force: boolean }
+  options: { branch?: string; deleteBranch: boolean; force: boolean; forceBranch?: boolean }
 ): Promise<void> {
   await git.removeWorktree(repoPath, worktreePath, options.force)
   if (options.deleteBranch && options.branch) {
-    await git.deleteBranch(repoPath, options.branch, options.force)
+    const forceBranch = options.force || options.forceBranch === true
+    await git.deleteBranch(repoPath, options.branch, forceBranch)
   }
 }

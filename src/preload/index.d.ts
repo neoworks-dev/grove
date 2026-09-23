@@ -83,7 +83,9 @@ import type {
   LspCompletion,
   LspRange,
   LspDiagnostic,
-  TerminalSessionInfo
+  TerminalSessionInfo,
+  BranchPosition,
+  BranchPull
 } from '../shared/types'
 import type {
   BlobDescriptor,
@@ -177,6 +179,8 @@ export interface WorkbenchApi {
     list: () => Promise<Worktree[]>
     create: (options: { name: string; baseBranch: string; newBranch?: string }) => Promise<Worktree>
     remove: (worktreeId: string, force: boolean) => Promise<Worktree[]>
+    // Each worktree's commits ahead of and behind the base branch, by worktree id.
+    positions: () => Promise<Record<string, BranchPosition>>
     archive: (worktreeId: string, options: ArchiveOptions) => Promise<Worktree[]>
   }
   git: {
@@ -261,6 +265,8 @@ export interface WorkbenchApi {
     mergePr: (worktreeId: string, options: MergePrOptions) => Promise<string>
     status: () => Promise<GithubStatus>
     dashboard: (options: { state: GithubStateFilter; limit: number }) => Promise<GithubDashboard>
+    // Each branch's most recent pull request, by head branch name.
+    branchPulls: () => Promise<Record<string, BranchPull>>
     item: (kind: GithubItemKind, number: number) => Promise<GithubItemDetail>
     labels: () => Promise<GithubLabelDefinition[]>
     milestones: () => Promise<GithubMilestone[]>
@@ -289,6 +295,10 @@ export interface WorkbenchApi {
     checkoutPr: (number: number, baseRefName: string) => Promise<Worktree>
     resolvePrConflicts: (number: number, baseRefName: string) => Promise<PrConflictResolution>
     prCheckoutState: (number: number) => Promise<PrCheckoutState>
+    // Fetch the pull request again, then say where its checkout stands.
+    refreshPrCheckout: (number: number, baseRefName: string) => Promise<PrCheckoutState>
+    // Fast-forward the checkout to the pull request; refuses with the reason otherwise.
+    updatePrCheckout: (number: number, baseRefName: string) => Promise<PrCheckoutState>
     pushPrBranch: (number: number) => Promise<string>
     prViewedFiles: (number: number) => Promise<string[]>
     setPrFileViewed: (pullRequestId: string, path: string, viewed: boolean) => Promise<void>
@@ -555,6 +565,8 @@ export interface WorkbenchApi {
     openFile: (scope: 'user' | 'project') => Promise<string | void>
   }
   openExternal: (url: string) => Promise<void>
+  // Bring grove's window to the front, e.g. from a desktop notification.
+  raiseWindow: () => Promise<void>
   // True when the app was started with GROVE_DEBUG=1; gates the renderer's
   // debug hooks on window.
   debug: boolean

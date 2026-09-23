@@ -16,6 +16,7 @@ const workbench = {
       ipcRenderer.invoke('worktrees:create', options),
     remove: (worktreeId: string, force: boolean) =>
       ipcRenderer.invoke('worktrees:remove', worktreeId, force),
+    positions: () => ipcRenderer.invoke('worktrees:positions'),
     archive: (worktreeId: string, options: unknown) =>
       ipcRenderer.invoke('worktrees:archive', worktreeId, options)
   },
@@ -118,6 +119,7 @@ const workbench = {
       ipcRenderer.invoke('github:mergePr', worktreeId, options),
     status: () => ipcRenderer.invoke('github:status'),
     dashboard: (options: unknown) => ipcRenderer.invoke('github:dashboard', options),
+    branchPulls: () => ipcRenderer.invoke('github:branchPulls'),
     item: (kind: string, number: number) => ipcRenderer.invoke('github:item', kind, number),
     labels: () => ipcRenderer.invoke('github:labels'),
     milestones: () => ipcRenderer.invoke('github:milestones'),
@@ -148,6 +150,10 @@ const workbench = {
     resolvePrConflicts: (number: number, baseRefName: string) =>
       ipcRenderer.invoke('github:resolvePrConflicts', number, baseRefName),
     prCheckoutState: (number: number) => ipcRenderer.invoke('github:prCheckoutState', number),
+    refreshPrCheckout: (number: number, baseRefName: string) =>
+      ipcRenderer.invoke('github:refreshPrCheckout', number, baseRefName),
+    updatePrCheckout: (number: number, baseRefName: string) =>
+      ipcRenderer.invoke('github:updatePrCheckout', number, baseRefName),
     pushPrBranch: (number: number) => ipcRenderer.invoke('github:pushPrBranch', number),
     prViewedFiles: (number: number) => ipcRenderer.invoke('github:prViewedFiles', number),
     setPrFileViewed: (pullRequestId: string, path: string, viewed: boolean) =>
@@ -394,6 +400,7 @@ const workbench = {
     openFile: (scope: 'user' | 'project') => ipcRenderer.invoke('settings:openFile', scope)
   },
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
+  raiseWindow: () => ipcRenderer.invoke('window:raise'),
 
   // Whether the app was started with GROVE_DEBUG=1. The renderer only publishes
   // its stores on window when this is set, so a normal build exposes nothing.

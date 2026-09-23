@@ -12,6 +12,33 @@ export interface Worktree {
   portSlot: number // deterministic port-allocation slot
 }
 
+// How far a worktree's branch has moved from the base branch it is compared to.
+export interface BranchPosition {
+  /** The base branch it is measured against. */
+  base: string
+  /** Commits on the worktree's branch that the base does not have. */
+  ahead: number
+  /** Commits on the base that the worktree's branch does not have. */
+  behind: number
+  /**
+   * Whether the branch's own commits are all on the base: nothing ahead, and the
+   * branch has moved since it was created — a fresh branch is level too, but has
+   * nothing to have merged.
+   */
+  mergedLocally: boolean
+}
+
+// The pull request most recently opened from a branch, as a worktree row shows it.
+export interface BranchPull {
+  number: number
+  url: string
+  /** OPEN | MERGED | CLOSED */
+  state: string
+  isDraft: boolean
+  /** Rollup of the head commit's checks: SUCCESS | FAILURE | PENDING | …, or null. */
+  checks: string | null
+}
+
 export interface BranchList {
   current: string
   all: string[]
@@ -379,6 +406,11 @@ export interface MergePrOptions {
 export interface ArchiveOptions {
   deleteBranch: boolean
   force: boolean
+  /**
+   * Delete the branch even though git does not see it merged — for one whose
+   * pull request was squash- or rebase-merged, whose commits the base never got.
+   */
+  forceBranch?: boolean
 }
 
 // ── GitHub dashboard (issues + pull requests) ───────────────────
@@ -645,6 +677,15 @@ export interface PrCheckoutState {
   unresolved: number
   /** Commits the checkout has that the pull request's head branch does not. */
   ahead: number
+  /** Commits the pull request's head has that the checkout does not, as last fetched. */
+  behind: number
+  /** Whether the checkout has uncommitted changes. */
+  dirty: boolean
+  /**
+   * Why a checkout that is behind is left alone rather than fast-forwarded, or
+   * null when it can be updated or is not behind.
+   */
+  updateBlockedReason: string | null
   /** Where a push would go, or null when pushing is not possible. */
   pushTarget: PrPushTarget | null
   /** Why pushing is not possible, when it is not. */
@@ -787,6 +828,10 @@ export interface WorkbenchConfig {
   setup: {
     once: string[]
     per_worktree: string[]
+    /** Copy untracked `.env*` files from the main worktree into a new one. */
+    copy_env: boolean
+    /** Install dependencies in a new worktree with the package manager its lockfile names. */
+    install: boolean
   }
   services: Record<string, ServiceConfig>
   agents: Record<string, AgentConfig>

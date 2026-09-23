@@ -289,6 +289,10 @@ export interface WorkbenchApi {
     checkoutPr: (number: number, baseRefName: string) => Promise<Worktree>
     resolvePrConflicts: (number: number, baseRefName: string) => Promise<PrConflictResolution>
     prCheckoutState: (number: number) => Promise<PrCheckoutState>
+    // Fetch the pull request again, then say where its checkout stands.
+    refreshPrCheckout: (number: number, baseRefName: string) => Promise<PrCheckoutState>
+    // Fast-forward the checkout to the pull request; refuses with the reason otherwise.
+    updatePrCheckout: (number: number, baseRefName: string) => Promise<PrCheckoutState>
     pushPrBranch: (number: number) => Promise<string>
     prViewedFiles: (number: number) => Promise<string[]>
     setPrFileViewed: (pullRequestId: string, path: string, viewed: boolean) => Promise<void>

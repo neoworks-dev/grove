@@ -19,11 +19,13 @@
     toItemRows,
     toTranscriptRows,
     type ToolRunRow,
+    type ToolTally,
     type TranscriptRow
   } from '../../../../lib/agents/toolRuns'
+  import { fileOfCall } from '../../../../lib/agents/tools'
   import { foldedCalls, foldedMessages, foldTurn } from '../../../../lib/agents/turns'
   import { agentIdIn, senderOf } from '../../../../lib/agents/transcript'
-  import type { TranscriptItem } from '../../../../lib/agents/transcript'
+  import type { ToolItem, TranscriptItem } from '../../../../lib/agents/transcript'
   import type { ToolInfo } from '../../../../lib/agents/types'
   import AgentToolCall from './AgentToolCall.svelte'
   import AgentSurface from './AgentSurface.svelte'
@@ -103,6 +105,13 @@
     return tools.find((tool) => tool.name === name)?.display
   }
 
+  /** What a folded summary says a run of calls did, file names included. */
+  function tallyCalls(calls: ToolItem[]): ToolTally[] {
+    return tallyOf(calls, (call) =>
+      fileOfCall(displayOf(call.name), call.editedInput ?? call.input, root)
+    )
+  }
+
   // A turn that is over reads as its answer; the calls and interim messages behind
   // it hide behind one line. Which turns the user opened back up belongs to the
   // pane, like the runs above.
@@ -129,6 +138,17 @@
   }
 </script>
 
+{#snippet tallies(list: ToolTally[])}
+  {#each list as tally (tally.name)}
+    <span class="shrink-0 text-muted">
+      {tally.name}{#if tally.count > 1}<span class="text-dim">&nbsp;×{tally.count}</span>{/if}
+    </span>
+    {#if tally.files.length > 0}
+      <span class="min-w-0 truncate text-default">{tally.files.join(', ')}</span>
+    {/if}
+  {/each}
+{/snippet}
+
 {#snippet toolRun(run: ToolRunRow)}
   {@const open = Boolean(expandedRuns[run.key])}
   <div class="mb-1">
@@ -143,11 +163,7 @@
       >
         <CaretRight width="10" height="10" weight="bold" />
       </span>
-      {#each tallyOf(run.items) as tally (tally.name)}
-        <span class="shrink-0 text-muted">
-          {tally.name}{#if tally.count > 1}<span class="text-dim">&nbsp;×{tally.count}</span>{/if}
-        </span>
-      {/each}
+      {@render tallies(tallyCalls(run.items))}
     </button>
     {#if open}
       <div class="pl-4">
@@ -169,7 +185,7 @@
 {/snippet}
 
 {#snippet turnSummary(key: string, hidden: TranscriptRow[], open: boolean)}
-  {@const calls = tallyOf(foldedCalls(hidden))}
+  {@const calls = tallyCalls(foldedCalls(hidden))}
   {@const messages = foldedMessages(hidden).length}
   <div class="mb-1">
     <button
@@ -183,11 +199,7 @@
       >
         <CaretRight width="10" height="10" weight="bold" />
       </span>
-      {#each calls as tally (tally.name)}
-        <span class="shrink-0 text-muted">
-          {tally.name}{#if tally.count > 1}<span class="text-dim">&nbsp;×{tally.count}</span>{/if}
-        </span>
-      {/each}
+      {@render tallies(calls)}
       {#if messages > 0}
         <span class="shrink-0 text-dim">{messageLabel(messages)}</span>
       {/if}

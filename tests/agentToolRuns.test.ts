@@ -76,8 +76,27 @@ describe('tool runs', () => {
 
   test('counts each tool name once, in the order it first appeared', () => {
     expect(tallyOf([tool('Read'), tool('Bash'), tool('Read'), tool('Read')])).toEqual([
-      { name: 'Read', count: 3 },
-      { name: 'Bash', count: 1 }
+      { name: 'Read', count: 3, files: [] },
+      { name: 'Bash', count: 1, files: [] }
+    ])
+  })
+
+  test('keeps the file each call was about, by name and once', () => {
+    const paths: Record<string, string> = {}
+    const first = tool('Read')
+    const second = tool('Read')
+    const again = tool('Read')
+    paths[first.toolUseId] = '/repo/README.md'
+    paths[second.toolUseId] = '/repo/src/index.ts'
+    paths[again.toolUseId] = '/repo/README.md'
+
+    const tallies = tallyOf([first, tool('Bash'), second, again], (item) => {
+      return paths[item.toolUseId] ?? null
+    })
+
+    expect(tallies).toEqual([
+      { name: 'Read', count: 3, files: ['README.md', 'index.ts'] },
+      { name: 'Bash', count: 1, files: [] }
     ])
   })
 })

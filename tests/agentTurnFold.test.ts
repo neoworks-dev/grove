@@ -75,8 +75,8 @@ describe('foldTurn', () => {
 
     expect(fold.kept).toHaveLength(1)
     expect(tallyOf(foldedCalls(fold.hidden))).toEqual([
-      { name: 'Bash', count: 6 },
-      { name: 'Read', count: 2 }
+      { name: 'Bash', count: 6, files: [] },
+      { name: 'Read', count: 2, files: [] }
     ])
   })
 

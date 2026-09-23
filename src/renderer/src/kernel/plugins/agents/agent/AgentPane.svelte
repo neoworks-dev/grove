@@ -14,7 +14,12 @@
   import { settings } from '../../../../lib/settings.svelte'
   import { review } from '../../../../lib/review.svelte'
   import { catalog } from '../../../../lib/agents/catalog.svelte'
-  import { defaultSessionHarness, defaultSessionThinking } from '../../../../lib/agents/newSession'
+  import {
+    defaultSessionHarness,
+    defaultSessionThinking,
+    rememberedModel,
+    rememberModel
+  } from '../../../../lib/agents/newSession'
   import {
     badgeOf,
     agentSessions,
@@ -220,13 +225,16 @@
 
   /**
    * A new session runs the harness the user last chose, and otherwise whichever
-   * one the main process finds available.
+   * one the main process finds available, on the model last picked for it.
    */
   async function createSession(): Promise<void> {
     if (!worktreePath) return
+    const model = rememberedModel(newSessionHarness)
     await agentSessions.create(worktreePath, {
       title: `Session ${sessionList.length + 1}`,
       harness: newSessionHarness || undefined,
+      provider: model?.provider,
+      model: model?.model,
       thinkingLevel: rememberedThinking
     })
   }
@@ -338,8 +346,10 @@
 
   // ── Session settings ────────────────────────────────────────────
 
+  /** Switch the session's model, and remember it for new sessions on the same harness. */
   function pickModel(provider: string, model: string): void {
     if (!activeId) return
+    rememberModel(harness, { provider, model })
     void agentSessions.update(activeId, { provider, model })
   }
 
@@ -368,13 +378,20 @@
   /**
    * Pick the harness for a session that has not started yet, and for the ones
    * started from now on. A session another harness has already answered on
-   * keeps it — the main process refuses the change either way.
+   * keeps it — the main process refuses the change either way. The session
+   * moves to the model last picked on the new harness, since the old one's
+   * model id means nothing there.
    */
   function pickHarness(next: string): void {
     void settings.set('workbench.agentHarness', next, 'user')
     if (!activeId || next === harness) return
     if (snapshot?.started) return
-    void agentSessions.update(activeId, { harness: next })
+    const model = rememberedModel(next)
+    if (!model) {
+      void agentSessions.update(activeId, { harness: next })
+      return
+    }
+    void agentSessions.update(activeId, { harness: next, ...model })
   }
 
   function pickThinking(thinkingLevel: ThinkingLevel): void {

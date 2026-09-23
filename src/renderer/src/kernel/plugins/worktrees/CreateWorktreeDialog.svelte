@@ -11,6 +11,19 @@
 
   const branchOptions = $derived(store.branches?.all || [])
 
+  /**
+   * The branch the worktree gets, falling back to its name. Always a new branch: checking out
+   * the base itself fails whenever the base is already checked out, as the default base is.
+   */
+  function branchForWorktree(): string {
+    const branch = newBranch.trim()
+    if (branch) {
+      return branch
+    }
+    return name.trim()
+  }
+
+  /** Creates the worktree on its own branch off the chosen base and selects it. */
   async function submit(): Promise<void> {
     localError = null
     if (!name.trim()) {
@@ -22,7 +35,7 @@
       const created = await window.workbench.worktrees.create({
         name: name.trim(),
         baseBranch,
-        newBranch: newBranch.trim() || undefined
+        newBranch: branchForWorktree()
       })
       await refreshWorktrees()
       await selectWorktree(created.id)
@@ -71,13 +84,13 @@
     </select>
 
     <label class="mb-1 block text-xs text-muted" for="wt-newbranch">
-      New branch name (optional)
+      New branch
     </label>
     <input
       id="wt-newbranch"
       class="mb-3 w-full rounded-md border border-line bg-input px-2 py-1.5 text-sm"
       bind:value={newBranch}
-      placeholder="leave empty to check out base branch"
+      placeholder={name.trim() || 'defaults to the worktree name'}
     />
 
     {#if localError}

@@ -137,6 +137,23 @@ export async function listBranches(repoPath: string): Promise<BranchList> {
   }
 }
 
+/**
+ * Every untracked file in a worktree, relative to it, ignored or not. Ignored
+ * directories come back as one entry each and are dropped, so node_modules is
+ * never walked.
+ */
+export async function listUntrackedPaths(worktreePath: string): Promise<string[]> {
+  const git = gitFor(worktreePath)
+  const [ignored, untracked] = await Promise.all([
+    git.raw(['ls-files', '--others', '--ignored', '--exclude-standard', '--directory']),
+    git.raw(['ls-files', '--others', '--exclude-standard'])
+  ])
+  const paths = [...ignored.split('\n'), ...untracked.split('\n')]
+    .map((path) => path.trim())
+    .filter((path) => path.length > 0 && !path.endsWith('/'))
+  return [...new Set(paths)]
+}
+
 // Create a worktree, optionally on a new branch.
 export async function addWorktree(
   repoPath: string,

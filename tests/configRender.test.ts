@@ -7,7 +7,12 @@ import type { WorkbenchConfig } from '../src/shared/types'
 const FULL: WorkbenchConfig = {
   workbench: { worktrees_dir: '../.worktrees', default_base_branch: 'main' },
   ports: { start: 3100, count_per_worktree: 10 },
-  setup: { once: ['bun install'], per_worktree: ['bun install'] },
+  setup: {
+    once: ['bun install'],
+    per_worktree: ['bun install'],
+    copy_env: false,
+    install: true
+  },
   services: {
     web: {
       command: 'bun run dev -- --port ${PORT_0}',

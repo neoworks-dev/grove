@@ -450,11 +450,11 @@
   // ── Editor handoff ──────────────────────────────────────────────
 
   /** Tool paths are absolute or workspace-relative; the editor wants absolute. */
-  function openFile(path: string): void {
+  function openFile(path: string, options: { focus?: boolean } = {}): void {
     const worktreeId = store.selectedWorktreeId
     if (!worktreeId) return
     const absolute = path.startsWith('/') ? path : `${worktreePath}/${path}`
-    openFileInEditor(worktreeId, absolute)
+    openFileInEditor(worktreeId, absolute, options)
   }
 
   function showChange(): void {
@@ -501,7 +501,9 @@
       if (followedCalls.has(item.toolUseId)) continue
       newlySeen.push(item.toolUseId)
       const path = fileOfCall(displayOf(item.name), item.editedInput ?? item.input, worktreePath)
-      if (path) openFile(path)
+      // The agent opened this, not the user: show it, but leave focus where the
+      // user is, which is often mid-sentence in the composer.
+      if (path) openFile(path, { focus: false })
     }
     if (newlySeen.length > 0) {
       followedCalls = new Set([...followedCalls, ...newlySeen])

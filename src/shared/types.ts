@@ -20,6 +20,12 @@ export interface BranchPosition {
   ahead: number
   /** Commits on the base that the worktree's branch does not have. */
   behind: number
+  /**
+   * Whether the branch's own commits are all on the base: nothing ahead, and the
+   * branch has moved since it was created — a fresh branch is level too, but has
+   * nothing to have merged.
+   */
+  mergedLocally: boolean
 }
 
 // The pull request most recently opened from a branch, as a worktree row shows it.
@@ -400,6 +406,11 @@ export interface MergePrOptions {
 export interface ArchiveOptions {
   deleteBranch: boolean
   force: boolean
+  /**
+   * Delete the branch even though git does not see it merged — for one whose
+   * pull request was squash- or rebase-merged, whose commits the base never got.
+   */
+  forceBranch?: boolean
 }
 
 // ── GitHub dashboard (issues + pull requests) ───────────────────

@@ -181,6 +181,25 @@ export async function removeWorktree(
   await gitFor(repoPath).raw(args)
 }
 
+/**
+ * Whether a local branch has moved since it was created — committed to, merged
+ * into, reset — going by its reflog. False when it has no reflog to read.
+ */
+export async function branchHasMoved(repoPath: string, branch: string): Promise<boolean> {
+  try {
+    const out = await gitFor(repoPath).raw([
+      'reflog',
+      'show',
+      '--format=%H',
+      `refs/heads/${branch}`
+    ])
+    const entries = out.split('\n').filter((line) => line.trim().length > 0)
+    return entries.length > 1
+  } catch {
+    return false
+  }
+}
+
 // Delete a local branch. Uses -d (safe, refuses unmerged) unless force.
 export async function deleteBranch(
   repoPath: string,

@@ -10,11 +10,14 @@
   import Icon from '@iconify/svelte'
   import Info from 'phosphor-svelte/lib/Info'
   import PencilSimple from 'phosphor-svelte/lib/PencilSimple'
+  import CodeBlock from '../../../../components/CodeBlock.svelte'
   import { fileIcon } from '../../../../lib/icons'
+  import { formatShellCommand } from '../../../../lib/shellFormat'
   import { diffLines, statsOf } from '../../../../lib/agents/diff'
   import {
     asRecord,
     descriptionOf,
+    inputViewOf,
     labelFor,
     messageOf,
     stringOf
@@ -59,6 +62,19 @@
     }
     return stringOf(fields.command)
   })
+  // A command about to run, as shell and broken at every operator, so each step
+  // being agreed to is on a line of its own.
+  const command = $derived.by(() => {
+    if (inputViewOf(tool?.display) !== 'command') {
+      return ''
+    }
+    const fields = asRecord(item.input)
+    if (fields === null) {
+      return ''
+    }
+    return formatShellCommand(stringOf(fields.command), 0)
+  })
+
   const reason = $derived(tool?.summary || tool?.description || 'This tool needs your approval')
 
   // Only a tool that asked to be rendered as a message gets the message card;
@@ -170,7 +186,7 @@
     {:else}
       <span class="shrink-0 font-mono text-default">{item.name}</span>
       {#if description}<span class="min-w-0 truncate text-default">{description}</span>{/if}
-      {#if detail && !description}
+      {#if detail && !description && !command}
         <span class="min-w-0 truncate font-mono text-muted">{detail}</span>
       {/if}
     {/if}
@@ -190,7 +206,13 @@
   {/if}
 
   <!-- The arguments themselves, once the description has said what they are for. -->
-  {#if !message && description && detail}
+  {#if !message && command}
+    <CodeBlock
+      code={command}
+      language="shell"
+      class="mt-1.5 max-h-40 overflow-auto whitespace-pre-wrap rounded border border-line bg-canvas px-2 py-1 font-mono text-2xs text-muted"
+    />
+  {:else if !message && description && detail}
     <pre
       class="mt-1.5 max-h-24 overflow-auto whitespace-pre-wrap rounded border border-line bg-canvas px-2 py-1 font-mono text-2xs text-muted">{detail}</pre>
   {/if}

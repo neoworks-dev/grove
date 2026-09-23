@@ -155,12 +155,13 @@
         <span class="shrink-0 rounded bg-blue-soft px-1 text-blue">→ {message.to}</span>
       {/if}
       {#if pathLabel === null}
-        <!-- The description is what the call is for, so the arguments give up
-             their room first; it only truncates once it alone overfills the row. -->
-        {#if description}<span class="min-w-0 truncate text-muted">{description}</span>{/if}
+        <!-- The description is what the call is for: one line, never cut. The
+             arguments take whatever room is left and truncate. -->
+        {#if description}<span class="shrink-0 whitespace-nowrap text-muted">{description}</span
+          >{/if}
         {#if detail}
           <span
-            class="min-w-0 shrink-[1000] truncate"
+            class="min-w-0 truncate"
             class:text-dim={description.length > 0}
             class:text-muted={description.length === 0}>{detail}</span
           >

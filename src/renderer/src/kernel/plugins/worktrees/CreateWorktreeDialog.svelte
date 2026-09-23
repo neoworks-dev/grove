@@ -1,11 +1,14 @@
 <script lang="ts">
   import { store, refreshWorktrees, selectWorktree } from '../../../lib/store.svelte'
+  import { agentSessions } from '../../../lib/agents/sessions.svelte'
+  import { startSessionWithTask } from '../../../lib/agents/newSession'
 
   let { onClose }: { onClose: () => void } = $props()
 
   let name = $state('')
   let baseBranch = $state(store.config?.workbench.default_base_branch || 'main')
   let newBranch = $state('')
+  let task = $state('')
   let creating = $state(false)
   let localError = $state<string | null>(null)
 
@@ -23,7 +26,10 @@
     return name.trim()
   }
 
-  /** Creates the worktree on its own branch off the chosen base and selects it. */
+  /**
+   * Creates the worktree on its own branch off the chosen base and selects it, then
+   * starts an agent there on the task when one was given.
+   */
   async function submit(): Promise<void> {
     localError = null
     if (!name.trim()) {
@@ -40,10 +46,30 @@
       await refreshWorktrees()
       await selectWorktree(created.id)
       onClose()
+      await startTask(created.path)
     } catch (err) {
       localError = (err as Error).message
     } finally {
       creating = false
+    }
+  }
+
+  /**
+   * Starts an agent in the new worktree on the task, if one was given. Runs after the
+   * dialog has closed, so a failure goes to the app's error banner.
+   */
+  async function startTask(worktreePath: string): Promise<void> {
+    const prompt = task.trim()
+    if (!prompt) {
+      return
+    }
+    try {
+      const sessionId = await startSessionWithTask(worktreePath, prompt)
+      if (!sessionId) {
+        store.setError(agentSessions.serverError || 'Could not reach the agent server.')
+      }
+    } catch (err) {
+      store.setError((err as Error).message)
     }
   }
 </script>
@@ -83,15 +109,21 @@
       {/each}
     </select>
 
-    <label class="mb-1 block text-xs text-muted" for="wt-newbranch">
-      New branch
-    </label>
+    <label class="mb-1 block text-xs text-muted" for="wt-newbranch"> New branch </label>
     <input
       id="wt-newbranch"
       class="mb-3 w-full rounded-md border border-line bg-input px-2 py-1.5 text-sm"
       bind:value={newBranch}
       placeholder={name.trim() || 'defaults to the worktree name'}
     />
+
+    <label class="mb-1 block text-xs text-muted" for="wt-task">Task (optional)</label>
+    <textarea
+      id="wt-task"
+      class="mb-3 h-20 w-full resize-none rounded-md border border-line bg-input px-2 py-1.5 text-sm"
+      bind:value={task}
+      placeholder="Starts an agent in the new worktree"
+    ></textarea>
 
     {#if localError}
       <p class="mb-2 text-xs text-red">{localError}</p>

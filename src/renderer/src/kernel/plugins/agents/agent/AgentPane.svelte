@@ -14,6 +14,7 @@
   import { settings } from '../../../../lib/settings.svelte'
   import { review } from '../../../../lib/review.svelte'
   import { catalog } from '../../../../lib/agents/catalog.svelte'
+  import { defaultSessionHarness, defaultSessionThinking } from '../../../../lib/agents/newSession'
   import {
     badgeOf,
     agentSessions,
@@ -119,18 +120,8 @@
 
   // ── Settings ────────────────────────────────────────────────────
 
-  // The harness a new session starts on: the last one chosen, else the first
-  // that can actually run.
-  const newSessionHarness = $derived(
-    settings.get<string>('workbench.agentHarness') || (catalog.available[0]?.id ?? '')
-  )
-
-  // The effort a new session opens on. Chosen levels are remembered here as
-  // well as on the session, so the next one starts where the last was left
-  // instead of back at "off".
-  const rememberedThinking = $derived(
-    settings.get<ThinkingLevel>('workbench.agentThinking') ?? 'off'
-  )
+  const newSessionHarness = $derived(defaultSessionHarness())
+  const rememberedThinking = $derived(defaultSessionThinking())
 
   const reviewMode = $derived(settings.get<string>('workbench.reviewMode') ?? 'pre')
   const reviewPause = $derived(settings.get<boolean>('workbench.reviewPause') ?? false)
@@ -440,12 +431,13 @@
   let followedCalls = new Set<string>()
   let followedSession: string | null = null
 
+  /** The ids of every tool call in the transcript on screen. */
   function callIdsOnScreen(): Set<string> {
-    const ids = new Set<string>()
+    const ids: string[] = []
     for (const item of items) {
-      if (item.kind === 'tool') ids.add(item.toolUseId)
+      if (item.kind === 'tool') ids.push(item.toolUseId)
     }
-    return ids
+    return new Set(ids)
   }
 
   function displayOf(name: string): ToolInfo['display'] {
@@ -453,13 +445,19 @@
   }
 
   /** Opens the file of every call seen for the first time; only ever moves forward. */
+  // The set is replaced rather than added to: it is plain bookkeeping, not state,
+  // and the effect below both reads and writes it.
   function followNewCalls(): void {
+    const newlySeen: string[] = []
     for (const item of items) {
       if (item.kind !== 'tool') continue
       if (followedCalls.has(item.toolUseId)) continue
-      followedCalls.add(item.toolUseId)
+      newlySeen.push(item.toolUseId)
       const path = fileOfCall(displayOf(item.name), item.editedInput ?? item.input, worktreePath)
       if (path) openFile(path)
+    }
+    if (newlySeen.length > 0) {
+      followedCalls = new Set([...followedCalls, ...newlySeen])
     }
   }
 
@@ -650,9 +648,12 @@
         />
       </div>
       <button
-        class="mr-1.5 flex h-6 shrink-0 items-center gap-1 rounded-md px-2 text-2xs {following
-          ? 'bg-elevated text-blue'
-          : 'text-dim hover:bg-hover hover:text-default'}"
+        class="mr-1.5 flex h-6 shrink-0 items-center gap-1 rounded-md px-2 text-2xs"
+        class:bg-elevated={following}
+        class:text-blue={following}
+        class:text-dim={!following}
+        class:hover:bg-hover={!following}
+        class:hover:text-default={!following}
         title="Follow mode: open every file the agent reads or writes (f)"
         aria-pressed={following}
         onclick={toggleFollow}
@@ -698,10 +699,9 @@
         <div class="flex items-center gap-1">
           {#each catalog.harnesses as entry (entry.id)}
             <button
-              class="flex items-center gap-1.5 rounded border border-line px-2 py-1 text-2xs hover:bg-hover disabled:opacity-50 {entry.id ===
-              newSessionHarness
-                ? 'text-default'
-                : 'text-dim'}"
+              class="flex items-center gap-1.5 rounded border border-line px-2 py-1 text-2xs hover:bg-hover disabled:opacity-50"
+              class:text-default={entry.id === newSessionHarness}
+              class:text-dim={entry.id !== newSessionHarness}
               disabled={!entry.available}
               title={entry.detail ?? entry.description}
               onclick={() => pickHarness(entry.id)}

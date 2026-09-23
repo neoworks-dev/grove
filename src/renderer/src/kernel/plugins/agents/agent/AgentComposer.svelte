@@ -35,6 +35,7 @@
     history,
     placeholderHint = '',
     hidden = false,
+    onKeystroke,
     onSend,
     onFocusChange,
     onInterrupt,
@@ -57,6 +58,8 @@
      * rather than unmounted, so the draft is still there once the card is answered.
      */
     hidden?: boolean
+    /** Every key pressed in the draft, so the pane can tell when the user is mid-sentence. */
+    onKeystroke?: () => void
     onSend: (events: ClientEventBody[]) => void
     onFocusChange: (focused: boolean) => void
     onInterrupt: () => void
@@ -336,6 +339,7 @@
   }
 
   function onKey(event: KeyboardEvent): void {
+    onKeystroke?.()
     if (event.key === 'Tab' && event.shiftKey) {
       event.preventDefault()
       onCycleMode?.()

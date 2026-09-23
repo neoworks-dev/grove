@@ -100,6 +100,26 @@
     if (!live) return []
     return pendingApprovals(live.transcript)
   })
+  // A card arriving mid-sentence would take the composer's place under the
+  // user's fingers, so it waits until they have stopped typing for a while.
+  const TYPING_HOLD_MS = 3000
+  let typing = $state(false)
+  let typingTimer: ReturnType<typeof setTimeout> | undefined
+
+  /** Holds approval cards back until TYPING_HOLD_MS after the latest keystroke. */
+  function onComposerKeystroke(): void {
+    typing = true
+    clearTimeout(typingTimer)
+    typingTimer = setTimeout(() => {
+      typing = false
+    }, TYPING_HOLD_MS)
+  }
+
+  // The approval the card is showing, once the typing hold allows it.
+  const shownApproval = $derived.by(() => {
+    if (typing) return undefined
+    return approvals[0]
+  })
   // A parked call whose input is a set of questions is one, whatever the
   // harness named the tool.
   const questions = $derived(approvals[0] ? questionsOf(approvals[0].input) : null)
@@ -166,6 +186,7 @@
 
   onDestroy(() => {
     disposeBindings?.()
+    clearTimeout(typingTimer)
     // Nothing shows this session once the pane is gone, so a turn ending in it
     // should be flagged like any other.
     agentSessions.unview(activeId)
@@ -779,7 +800,7 @@
           {/each}
         {/if}
 
-        {#if approvals[0] && reviewIsOpen}
+        {#if shownApproval && reviewIsOpen}
           <!-- The review's own controls in the editor are answering this one. -->
           <div
             class="mb-2 flex items-center gap-2 rounded-md border border-line bg-elevated px-2 py-1.5 text-2xs text-muted"
@@ -794,32 +815,32 @@
               Go to diff
             </button>
           </div>
-        {:else if approvals[0] && questions}
+        {:else if shownApproval && questions}
           <!-- The call is a question, not an operation to approve: answering it is
              what lets it run, so the card asks rather than asking permission. -->
-          {#key approvals[0].toolUseId}
+          {#key shownApproval.toolUseId}
             <AgentQuestion
               {questions}
-              input={approvals[0].input}
+              input={shownApproval.input}
               onAnswer={answerQuestion}
-              onDecline={() => void decide(approvals[0].toolUseId, 'deny', 'no answer given')}
+              onDecline={() => void decide(shownApproval.toolUseId, 'deny', 'no answer given')}
             />
           {/key}
-        {:else if approvals[0]}
+        {:else if shownApproval}
           <!-- An approval blocks the agent, so it replaces the composer until it is
              answered. Keyed so its selection state resets per request. -->
-          {#key approvals[0].toolUseId}
+          {#key shownApproval.toolUseId}
             <AgentApproval
-              item={approvals[0]}
-              tool={catalog.toolNamed(approvals[0].name)}
+              item={shownApproval}
+              tool={catalog.toolNamed(shownApproval.name)}
               batch={gatedReview}
-              onDecide={(result, reason) => void decide(approvals[0].toolUseId, result, reason)}
+              onDecide={(result, reason) => void decide(shownApproval.toolUseId, result, reason)}
               onShowChange={showChange}
             />
           {/key}
         {/if}
 
-        {#if subagent && approvals[0]}
+        {#if subagent && shownApproval}
           <!-- The card above stands in for the notice. -->
         {:else if subagent}
           <!-- Nothing can be said here: the agent this session holds was run by
@@ -845,7 +866,8 @@
           {#if activeId}
             <AgentComposer
               bind:this={composer}
-              hidden={approvals[0] !== undefined}
+              hidden={shownApproval !== undefined}
+              onKeystroke={onComposerKeystroke}
               sessionId={activeId}
               {running}
               history={promptHistory}
@@ -858,7 +880,7 @@
             />
           {/if}
 
-          {#if snapshot && !approvals[0]}
+          {#if snapshot && !shownApproval}
             <AgentControls
               harness={snapshot.harness}
               harnesses={catalog.harnesses}

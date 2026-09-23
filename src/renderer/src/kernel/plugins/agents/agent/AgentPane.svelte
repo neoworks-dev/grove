@@ -58,7 +58,10 @@
   const worktree = $derived(store.selectedWorktree)
   const worktreePath = $derived(worktree?.path ?? '')
 
-  const sessionList = $derived(worktreePath ? agentSessions.forWorktree(worktreePath) : [])
+  const sessionList = $derived.by(() => {
+    if (!worktreePath) return []
+    return agentSessions.forWorktree(worktreePath)
+  })
   const activeId = $derived(worktreePath ? agentSessions.resolveActive(worktreePath) : null)
   // Every session there is, not just this worktree's: a message quotes whoever
   // sent it, and a sender still running elsewhere is not a closed one.
@@ -77,7 +80,10 @@
     return ''
   })
 
-  const items = $derived(live ? visibleItems(live.transcript) : [])
+  const items = $derived.by(() => {
+    if (!live) return []
+    return visibleItems(live.transcript)
+  })
   // What has already been said here, oldest first: the composer steps back
   // through the conversation itself, so history outlives the window it was
   // typed in the way the transcript does.
@@ -85,7 +91,10 @@
     const said = items.filter((item) => item.kind === 'user')
     return said.map((item) => item.text).filter((text) => text.trim().length > 0)
   })
-  const approvals = $derived(live ? pendingApprovals(live.transcript) : [])
+  const approvals = $derived.by(() => {
+    if (!live) return []
+    return pendingApprovals(live.transcript)
+  })
   // A parked call whose input is a set of questions is one, whatever the
   // harness named the tool.
   const questions = $derived(approvals[0] ? questionsOf(approvals[0].input) : null)
@@ -135,11 +144,11 @@
   // The batch raised for the approval on screen, if the review bridge staged one.
   const gatedReview = $derived(approvals[0] ? review.gatedFor(approvals[0].toolUseId) : null)
   const reviewIsOpen = $derived(gatedReview !== null && review.active?.id === gatedReview.id)
-  const postReviews = $derived(
-    worktreePath && activeId
-      ? review.queueFor(worktreePath, harness, activeId).filter((batch) => batch.origin !== 'gated')
-      : []
-  )
+  const postReviews = $derived.by(() => {
+    if (!worktreePath || !activeId) return []
+    const queue = review.queueFor(worktreePath, harness, activeId)
+    return queue.filter((batch) => batch.origin !== 'gated')
+  })
 
   // ── Lifecycle ───────────────────────────────────────────────────
 

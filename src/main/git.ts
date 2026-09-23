@@ -246,6 +246,28 @@ export async function updateRef(worktreePath: string, ref: string, target: strin
 }
 
 // How many commits the worktree's HEAD has that `ref` does not.
+/**
+ * How far a worktree's HEAD is from a base ref, or null when the base does not
+ * resolve there.
+ */
+export async function aheadBehind(
+  worktreePath: string,
+  baseRef: string
+): Promise<{ ahead: number; behind: number } | null> {
+  try {
+    const out = await gitFor(worktreePath).raw([
+      'rev-list',
+      '--left-right',
+      '--count',
+      `${baseRef}...HEAD`
+    ])
+    const [behind, ahead] = out.trim().split(/\s+/).map(Number)
+    return { ahead: ahead || 0, behind: behind || 0 }
+  } catch {
+    return null
+  }
+}
+
 /** Commits `ref` has that the worktree's HEAD does not; 0 until the ref exists. */
 export async function commitsBehind(worktreePath: string, ref: string): Promise<number> {
   try {

@@ -12,6 +12,27 @@ export interface Worktree {
   portSlot: number // deterministic port-allocation slot
 }
 
+// How far a worktree's branch has moved from the base branch it is compared to.
+export interface BranchPosition {
+  /** The base branch it is measured against. */
+  base: string
+  /** Commits on the worktree's branch that the base does not have. */
+  ahead: number
+  /** Commits on the base that the worktree's branch does not have. */
+  behind: number
+}
+
+// The pull request most recently opened from a branch, as a worktree row shows it.
+export interface BranchPull {
+  number: number
+  url: string
+  /** OPEN | MERGED | CLOSED */
+  state: string
+  isDraft: boolean
+  /** Rollup of the head commit's checks: SUCCESS | FAILURE | PENDING | …, or null. */
+  checks: string | null
+}
+
 export interface BranchList {
   current: string
   all: string[]

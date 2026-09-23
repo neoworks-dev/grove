@@ -6,7 +6,14 @@
     focusAgentInPane
   } from '../../../lib/store.svelte'
   import { layout } from '../../../lib/layout.svelte'
-  import { diffStatLabel } from '../../../lib/worktreeStatus'
+  import {
+    branchPositionFor,
+    checksOutcome,
+    diffStatLabel,
+    positionTitle,
+    pullFor,
+    pullTitle
+  } from '../../../lib/worktreeStatus'
   import CreateWorktreeDialog from './CreateWorktreeDialog.svelte'
   import MergeWorktreeDialog from './MergeWorktreeDialog.svelte'
   import WorktreeSessionRow from './WorktreeSessionRow.svelte'
@@ -78,9 +85,9 @@
   async function remove(worktree: Worktree, event: MouseEvent): Promise<void> {
     event.stopPropagation()
     const force = worktree.dirty
-    const confirmed = confirm(
-      `Remove worktree "${worktree.name}"?${force ? ' It has uncommitted changes (force).' : ''}`
-    )
+    let question = `Remove worktree "${worktree.name}"?`
+    if (force) question += ' It has uncommitted changes (force).'
+    const confirmed = confirm(question)
     if (!confirmed) return
     try {
       await window.workbench.worktrees.remove(worktree.id, force)
@@ -115,18 +122,21 @@
       {@const diff = diffStatLabel(worktree.id)}
       {@const sessions = sessionsFor(worktree.id)}
       {@const flagged = sessionAttentionFor(worktree.id)}
+      {@const position = branchPositionFor(worktree.id)}
+      {@const pull = pullFor(worktree)}
       <div
-        class="group/worktree flex cursor-pointer items-center gap-2 px-3 py-2 text-sm {store.selectedWorktreeId ===
-        worktree.id
-          ? 'bg-elevated'
-          : 'hover:bg-hover'}"
+        class="group/worktree flex cursor-pointer items-center gap-2 px-3 py-2 text-sm"
+        class:bg-elevated={store.selectedWorktreeId === worktree.id}
+        class:hover:bg-hover={store.selectedWorktreeId !== worktree.id}
         role="button"
         tabindex="0"
         onclick={() => selectWorktree(worktree.id)}
         onkeydown={(event) => event.key === 'Enter' && selectWorktree(worktree.id)}
       >
         <span
-          class="h-2 w-2 shrink-0 rounded-full {worktree.dirty ? 'bg-amber' : 'bg-green'}"
+          class="h-2 w-2 shrink-0 rounded-full"
+          class:bg-amber={worktree.dirty}
+          class:bg-green={!worktree.dirty}
           title={worktree.dirty ? 'dirty' : 'clean'}
         ></span>
         <div class="min-w-0 flex-1">
@@ -140,7 +150,38 @@
               ></span>
             {/if}
           </div>
-          <div class="truncate font-mono text-2xs text-dim">{worktree.branch}</div>
+          <div class="flex items-center gap-1.5 font-mono text-2xs text-dim">
+            <span class="truncate">{worktree.branch}</span>
+            {#if position}
+              <span class="shrink-0" title={positionTitle(position)}>
+                {#if position.ahead > 0}↑{position.ahead}{/if}
+                {#if position.behind > 0}↓{position.behind}{/if}
+              </span>
+            {/if}
+            {#if pull}
+              {@const outcome = checksOutcome(pull)}
+              <button
+                class="flex shrink-0 cursor-pointer items-center gap-1 hover:text-default"
+                class:text-violet={pull.state === 'MERGED'}
+                class:line-through={pull.state === 'CLOSED'}
+                title={pullTitle(pull)}
+                onclick={(event) => {
+                  event.stopPropagation()
+                  void window.workbench.openExternal(pull.url)
+                }}
+              >
+                #{pull.number}
+                {#if outcome}
+                  <span
+                    class="h-1.5 w-1.5 rounded-full"
+                    class:bg-green={outcome === 'passed'}
+                    class:bg-red={outcome === 'failed'}
+                    class:bg-amber={outcome === 'pending'}
+                  ></span>
+                {/if}
+              </button>
+            {/if}
+          </div>
         </div>
 
         <div class="flex shrink-0 items-center gap-1.5">

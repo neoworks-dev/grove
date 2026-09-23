@@ -11,6 +11,7 @@
 import { spawn } from 'child_process'
 import { ensureGhReady } from './github'
 import type {
+  BranchPull,
   GithubActor,
   GithubCapabilities,
   GithubComment,
@@ -436,7 +437,7 @@ function toIssueItem(node: GraphqlItemNode): GithubIssueItem {
 }
 
 /** Check state of the head commit, or null when the PR has no checks. */
-function checkState(node: GraphqlPullNode): string | null {
+function checkState(node: Pick<GraphqlPullNode, 'commits'>): string | null {
   const commit = node.commits.nodes[0]
   if (!commit) return null
   if (!commit.commit.statusCheckRollup) return null
@@ -455,6 +456,70 @@ function toPullItem(node: GraphqlPullNode): GithubPullItem {
     reviewDecision: node.reviewDecision,
     checks: checkState(node)
   }
+}
+
+/** How many recent pull requests are matched against worktree branches. */
+const BRANCH_PULL_LIMIT = 100
+
+const BRANCH_PULLS_QUERY = `
+query($owner: String!, $name: String!, $limit: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequests(first: $limit, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes {
+        number url state isDraft headRefName
+        commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+      }
+    }
+  }
+}`.trim()
+
+interface BranchPullsResponse {
+  data: {
+    repository: {
+      pullRequests: {
+        nodes: Array<
+          Pick<GraphqlPullNode, 'number' | 'url' | 'state' | 'isDraft' | 'headRefName' | 'commits'>
+        >
+      }
+    } | null
+  }
+}
+
+/**
+ * The pull request most recently updated from each branch, among the
+ * repository's recent ones, keyed by head branch name — what a worktree row
+ * shows beside its branch.
+ */
+export async function fetchBranchPulls(repoPath: string): Promise<Record<string, BranchPull>> {
+  const repo = await repoRef(repoPath)
+  const [owner, name] = repo.nameWithOwner.split('/')
+  const raw = await runGh(repoPath, [
+    'api',
+    'graphql',
+    '-F',
+    `owner=${owner}`,
+    '-F',
+    `name=${name}`,
+    '-F',
+    `limit=${BRANCH_PULL_LIMIT}`,
+    '-f',
+    `query=${BRANCH_PULLS_QUERY}`
+  ])
+  const repository = parseJson<BranchPullsResponse>(raw).data.repository
+  const pulls: Record<string, BranchPull> = {}
+  if (!repository) return pulls
+  for (const node of repository.pullRequests.nodes) {
+    // Most recently updated first, so the first one seen for a branch wins.
+    if (pulls[node.headRefName]) continue
+    pulls[node.headRefName] = {
+      number: node.number,
+      url: node.url,
+      state: node.state,
+      isDraft: node.isDraft,
+      checks: checkState(node)
+    }
+  }
+  return pulls
 }
 
 /** Issues and pull requests for the repository, most recently updated first. */
@@ -526,9 +591,9 @@ const ACTOR_FIELDS = 'login avatarUrl'
  * inside IssueTimelineItems outright, rather than returning an empty list.
  */
 function timelineNodeFields(includePullOnly: boolean): string {
-  const pullOnly = !includePullOnly
-    ? ''
-    : `
+  let pullOnly = ''
+  if (includePullOnly) {
+    pullOnly = `
       ... on PullRequestReview {
         id createdAt submittedAt url body state authorAssociation
         author { ${ACTOR_FIELDS} }
@@ -542,6 +607,7 @@ function timelineNodeFields(includePullOnly: boolean): string {
         actor { ${ACTOR_FIELDS} }
         requestedReviewer { ... on User { login } ... on Team { name } }
       }`
+  }
   return `
       __typename
       ... on IssueComment {

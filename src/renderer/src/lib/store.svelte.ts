@@ -11,6 +11,8 @@ import type {
   ServiceRuntime,
   RepoInfo,
   BranchList,
+  BranchPosition,
+  BranchPull,
   DiffStats,
   ReviewBatch,
   WorktreeChatMessage
@@ -91,6 +93,14 @@ class WorkbenchStore {
   // Added/removed line counts vs HEAD, keyed by worktreeId. Refreshed on
   // worktree list load and on file changes, shown in the worktree overviews.
   diffStats = $state<Record<string, DiffStats>>({})
+
+  // Commits ahead of and behind the base branch, keyed by worktreeId; the
+  // worktree on the base itself has none.
+  branchPositions = $state<Record<string, BranchPosition>>({})
+
+  // Each branch's most recent pull request, keyed by branch name. Empty when gh
+  // cannot answer for the repository.
+  branchPulls = $state<Record<string, BranchPull>>({})
 
   // Worktrees with agent output the user hasn't looked at yet (agent produced
   // output while that worktree wasn't selected). Cleared on selecting it.
@@ -344,6 +354,8 @@ export async function openRepoResult(result: {
 }): Promise<void> {
   store.repo = result.info
   store.worktrees = result.worktrees
+  void refreshBranchPositions()
+  void refreshBranchPulls()
   store.config = await window.workbench.config.load()
   store.branches = await window.workbench.git.branches().catch(() => null)
   const repoState = await window.workbench.state.getRepo()
@@ -444,7 +456,10 @@ export function watchWorktreeStatus(): () => void {
     if (document.visibilityState !== 'visible') return
     void refreshWorktreeStatuses()
   }
-  const onFocus = (): void => void refreshWorktreeStatuses()
+  const onFocus = (): void => {
+    void refreshWorktreeStatuses()
+    void refreshBranchPulls()
+  }
   window.addEventListener('focus', onFocus)
   const timer = setInterval(refreshIfVisible, WORKTREE_STATUS_INTERVAL_MS)
   return () => {
@@ -464,6 +479,24 @@ async function refreshWorktreeStatuses(): Promise<void> {
   if (!worktrees) return
   if (!sameJson(store.worktrees, worktrees)) store.worktrees = worktrees
   for (const worktree of worktrees) void refreshDiffStats(worktree.id)
+  void refreshBranchPositions()
+}
+
+/** Re-reads how far each worktree's branch is from the base branch. */
+async function refreshBranchPositions(): Promise<void> {
+  const positions = await window.workbench.worktrees.positions().catch(() => null)
+  if (!positions || sameJson(store.branchPositions, positions)) return
+  store.branchPositions = positions
+}
+
+/**
+ * Re-reads each branch's pull request and its checks. A network call, so it
+ * runs on load and on window focus rather than on the status interval.
+ */
+async function refreshBranchPulls(): Promise<void> {
+  const pulls = await window.workbench.github.branchPulls().catch(() => null)
+  if (!pulls || sameJson(store.branchPulls, pulls)) return
+  store.branchPulls = pulls
 }
 
 /** Whether two plain values serialise the same, for skipping no-op store writes. */
@@ -474,6 +507,8 @@ function sameJson(left: unknown, right: unknown): boolean {
 export async function refreshWorktrees(): Promise<void> {
   store.worktrees = await window.workbench.worktrees.list()
   for (const worktree of store.worktrees) void refreshDiffStats(worktree.id)
+  void refreshBranchPositions()
+  void refreshBranchPulls()
 }
 
 // Fetch +/- line counts vs HEAD for one worktree into the store. Unchanged

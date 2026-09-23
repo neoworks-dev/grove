@@ -103,7 +103,12 @@ const TOOL_DISPLAY: Record<string, ToolDisplay> = {
   Bash: { input: 'command' },
   BashOutput: { input: 'hidden' },
   // The file is already the header; its contents are the point.
-  Read: { input: 'hidden', result: 'code', languageFrom: 'file_path' }
+  Read: { input: 'hidden', result: 'code', languageFrom: 'file_path' },
+  // Each change to a file is worth its own row; the WRITE_TOOLS above.
+  Write: { edits: true },
+  Edit: { edits: true },
+  MultiEdit: { edits: true },
+  NotebookEdit: { edits: true }
 }
 
 /** Thinking levels mapped onto the SDK's token budget. `off` disables it. */

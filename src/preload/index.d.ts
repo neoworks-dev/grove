@@ -83,7 +83,9 @@ import type {
   LspCompletion,
   LspRange,
   LspDiagnostic,
-  TerminalSessionInfo
+  TerminalSessionInfo,
+  BranchPosition,
+  BranchPull
 } from '../shared/types'
 import type {
   BlobDescriptor,
@@ -177,6 +179,8 @@ export interface WorkbenchApi {
     list: () => Promise<Worktree[]>
     create: (options: { name: string; baseBranch: string; newBranch?: string }) => Promise<Worktree>
     remove: (worktreeId: string, force: boolean) => Promise<Worktree[]>
+    // Each worktree's commits ahead of and behind the base branch, by worktree id.
+    positions: () => Promise<Record<string, BranchPosition>>
     archive: (worktreeId: string, options: ArchiveOptions) => Promise<Worktree[]>
   }
   git: {
@@ -261,6 +265,8 @@ export interface WorkbenchApi {
     mergePr: (worktreeId: string, options: MergePrOptions) => Promise<string>
     status: () => Promise<GithubStatus>
     dashboard: (options: { state: GithubStateFilter; limit: number }) => Promise<GithubDashboard>
+    // Each branch's most recent pull request, by head branch name.
+    branchPulls: () => Promise<Record<string, BranchPull>>
     item: (kind: GithubItemKind, number: number) => Promise<GithubItemDetail>
     labels: () => Promise<GithubLabelDefinition[]>
     milestones: () => Promise<GithubMilestone[]>

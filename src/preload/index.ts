@@ -16,6 +16,7 @@ const workbench = {
       ipcRenderer.invoke('worktrees:create', options),
     remove: (worktreeId: string, force: boolean) =>
       ipcRenderer.invoke('worktrees:remove', worktreeId, force),
+    positions: () => ipcRenderer.invoke('worktrees:positions'),
     archive: (worktreeId: string, options: unknown) =>
       ipcRenderer.invoke('worktrees:archive', worktreeId, options)
   },
@@ -118,6 +119,7 @@ const workbench = {
       ipcRenderer.invoke('github:mergePr', worktreeId, options),
     status: () => ipcRenderer.invoke('github:status'),
     dashboard: (options: unknown) => ipcRenderer.invoke('github:dashboard', options),
+    branchPulls: () => ipcRenderer.invoke('github:branchPulls'),
     item: (kind: string, number: number) => ipcRenderer.invoke('github:item', kind, number),
     labels: () => ipcRenderer.invoke('github:labels'),
     milestones: () => ipcRenderer.invoke('github:milestones'),

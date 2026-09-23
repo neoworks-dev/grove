@@ -139,6 +139,12 @@ export const githubRoutes = {
       return dashboard.fetchItem(repoPath, kind, number)
     })
 
+    // The pull request of each branch, for the worktree rows.
+    route(ctx, 'github:branchPulls', () => {
+      const { repoPath } = ctx.workbench.requireRepo()
+      return dashboard.fetchBranchPulls(repoPath)
+    })
+
     route(ctx, 'github:labels', () => {
       const { repoPath } = ctx.workbench.requireRepo()
       return dashboard.fetchLabels(repoPath)

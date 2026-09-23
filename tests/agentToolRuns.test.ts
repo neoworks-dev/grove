@@ -20,7 +20,8 @@ function tool(name: string, status: ToolItem['status'] = 'ok'): ToolItem {
     permission: 'allow',
     status,
     progress: '',
-    result: ''
+    result: '',
+    images: []
   }
 }
 

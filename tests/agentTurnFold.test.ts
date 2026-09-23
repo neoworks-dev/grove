@@ -32,6 +32,7 @@ function toolCall(name: string, status: ToolStatus = 'ok'): TranscriptItem {
     editedInput: null,
     permission: 'allow',
     result: '',
+    images: [],
     status,
     progress: ''
   }

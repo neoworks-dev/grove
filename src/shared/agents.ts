@@ -147,6 +147,8 @@ export type ServerEventBody =
       name: string
       content: string
       isError: boolean
+      /** Images the tool returned (a screenshot, an image file it read), as session blobs. */
+      images?: ImageBlock[]
     }
   | { type: 'ui.surface'; surfaceId: string; slot: UiSlot; view: UiNode }
   | { type: 'ui.surface'; surfaceId: string; view: null }

@@ -26,9 +26,12 @@
   } from '../../../../lib/agents/tools'
   import type { ToolItem, ToolStatus } from '../../../../lib/agents/transcript'
   import type { ToolDisplay } from '../../../../lib/agents/types'
+  import { blobUrl } from '../../../../lib/agents/api'
+  import AgentImage from './AgentImage.svelte'
 
   let {
     item,
+    sessionId,
     display,
     root = '',
     expanded,
@@ -38,6 +41,8 @@
     onOpenSession
   }: {
     item: ToolItem
+    /** The session the call ran in, which the images it returned are stored under. */
+    sessionId: string
     display: ToolDisplay | undefined
     /** The workspace the session runs in; paths under it are shown relative to it. */
     root?: string
@@ -270,5 +275,15 @@
             : 'text-dim'}">{item.result}</pre>
       {/if}
     {/if}
+  {/if}
+
+  <!-- Images the tool returned stay on screen collapsed or not: a screenshot is
+       the thing the call was for. -->
+  {#if item.images.length > 0}
+    <div class="mt-1 flex flex-wrap gap-1.5 pl-4">
+      {#each item.images as image (image.ref)}
+        <AgentImage src={blobUrl(sessionId, image.ref)} alt="{item.name} result" />
+      {/each}
+    </div>
   {/if}
 </div>

@@ -510,7 +510,9 @@
 
   <!-- A `!` draft switches the box to shell: monospace in a heavier weight, and an
        amber frame that says whether the model will see the output. Both copies of
-       the text take the same font classes so they stay in register. -->
+       the text take the same font classes so they stay in register. The textarea
+       draws no scrollbar: one would narrow only it, so it would wrap lines where
+       the painted copy doesn't and the caret would drift off the text. -->
   <div
     class="relative mb-2 rounded-md border bg-elevated"
     class:border-line-strong={!shell}
@@ -519,7 +521,7 @@
     <textarea
       bind:this={promptEl}
       bind:value={draft}
-      class="relative z-0 block h-20 w-full resize-none border-0 bg-transparent px-2 py-1.5 text-xs leading-normal text-transparent caret-default outline-none placeholder:text-dim"
+      class="no-scrollbar relative z-0 block h-20 w-full resize-none border-0 bg-transparent px-2 py-1.5 text-xs leading-normal text-transparent caret-default outline-none placeholder:text-dim"
       class:font-mono={shell !== null}
       class:font-medium={shell !== null}
       spellcheck={shell === null}

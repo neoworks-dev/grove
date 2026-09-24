@@ -9,9 +9,11 @@
          connect-src reaches nothing remote. The two custom schemes are both
          served by the main process over its own handlers: grove-plugin: is a
          plugin's bundled code, grove-agent: is a chat attachment, grove-file:
-         is a worktree file opened in a media viewer (images, video and audio,
+         is a worktree file opened in a file viewer (images, video and audio,
          PDFs and 3D models, which load theirs by fetch). img-src takes blob:
-         for the textures a glTF packs into its own buffers.
+         for the textures a glTF packs into its own buffers. frame-src admits a
+         plugin's file viewer page, which main serves under a policy of its own
+         that cuts it off from the network.
 
          img-src is the one directive that reaches the network. Issue bodies,
          comments and avatars are full of GitHub-hosted images, and a client
@@ -23,7 +25,7 @@
          other directive is widened: this buys pictures, not script or fetch. -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' grove-plugin:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: grove-agent: grove-file: https://github.com https://*.githubusercontent.com; font-src 'self' data:; media-src 'self' grove-file:; connect-src 'self' grove-plugin: grove-agent: grove-file:; worker-src 'self'"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' grove-plugin:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: grove-agent: grove-file: https://github.com https://*.githubusercontent.com; font-src 'self' data:; media-src 'self' grove-file:; connect-src 'self' grove-plugin: grove-agent: grove-file:; frame-src grove-plugin:; worker-src 'self'"
     />
   </head>
 

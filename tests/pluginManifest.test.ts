@@ -11,7 +11,12 @@ const valid = {
   contributes: {
     commands: [{ id: 'files.find', title: 'Go to File' }],
     keybindings: [
-      { id: 'leader.files', keys: 'leader space', description: 'Search files', command: 'files.find' }
+      {
+        id: 'leader.files',
+        keys: 'leader space',
+        description: 'Search files',
+        command: 'files.find'
+      }
     ],
     overlays: [{ id: 'fileFinder', title: 'Search files by name…' }]
   }
@@ -73,5 +78,41 @@ describe('isValidActivationEvent', () => {
   it('rejects empty payloads and unknown prefixes', () => {
     expect(isValidActivationEvent('onCommand:')).toBe(false)
     expect(isValidActivationEvent('onBoot')).toBe(false)
+  })
+})
+
+describe('fileViewers contributions', () => {
+  const viewer = {
+    id: 'docx',
+    label: 'Word document',
+    extensions: ['docx'],
+    page: 'viewer/index.html'
+  }
+  const withViewer = (
+    overrides: Record<string, unknown>,
+    permissions = ['workspace.read']
+  ): unknown => ({
+    ...valid,
+    permissions,
+    contributes: { fileViewers: [{ ...viewer, ...overrides }] }
+  })
+
+  it('accepts a viewer page inside the plugin', () => {
+    expect(validateManifest(withViewer({})).ok).toBe(true)
+  })
+
+  it('requires workspace.read, since the viewer is handed the file', () => {
+    expect(validateManifest(withViewer({}, ['state'])).ok).toBe(false)
+  })
+
+  it('rejects extensions with dots or capitals', () => {
+    expect(validateManifest(withViewer({ extensions: ['.docx'] })).ok).toBe(false)
+    expect(validateManifest(withViewer({ extensions: ['DOCX'] })).ok).toBe(false)
+    expect(validateManifest(withViewer({ extensions: [] })).ok).toBe(false)
+  })
+
+  it('rejects a page outside the plugin directory', () => {
+    expect(validateManifest(withViewer({ page: '../other/index.html' })).ok).toBe(false)
+    expect(validateManifest(withViewer({ page: '/etc/index.html' })).ok).toBe(false)
   })
 })

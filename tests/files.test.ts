@@ -2,7 +2,14 @@ import { describe, it, expect } from 'bun:test'
 import { mkdtemp, mkdir, writeFile, stat, readFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { createFile, createDir, renamePath, removePath, listDir } from '../src/main/files'
+import {
+  createFile,
+  createDir,
+  renamePath,
+  removePath,
+  listDir,
+  readFileBytes
+} from '../src/main/files'
 
 async function tempRoot(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'files-'))
@@ -61,5 +68,21 @@ describe('files CRUD', () => {
     await createFile(root, 'alpha.ts')
     const nodes = await listDir(root, '')
     expect(nodes.map((node) => node.name)).toEqual(['zeta', 'alpha.ts'])
+  })
+})
+
+describe('readFileBytes', () => {
+  it('reads a binary file byte for byte', async () => {
+    const root = await tempRoot()
+    const bytes = new Uint8Array([0, 255, 80, 75, 3, 4])
+    await writeFile(join(root, 'report.docx'), bytes)
+    expect(Array.from(await readFileBytes(root, join(root, 'report.docx')))).toEqual(
+      Array.from(bytes)
+    )
+  })
+
+  it('refuses a path outside the worktree', async () => {
+    const root = await tempRoot()
+    await expect(readFileBytes(root, join(root, '..', 'elsewhere.bin'))).rejects.toThrow()
   })
 })

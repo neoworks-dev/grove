@@ -111,6 +111,23 @@ export async function readFileContent(worktreeRoot: string, absPath: string): Pr
   return readFile(absPath, 'utf8')
 }
 
+// A viewer holds the whole file in memory, twice over while it is handed to
+// a plugin page; past this it is better left unopened than opened slowly.
+const MAX_BYTES_READ = 200 * 1024 * 1024
+
+/** The raw bytes of a file inside the worktree, for viewers of binary formats. */
+export async function readFileBytes(worktreeRoot: string, absPath: string): Promise<Uint8Array> {
+  if (!isInside(worktreeRoot, absPath)) {
+    throw new Error('path outside worktree')
+  }
+  const info = await stat(absPath)
+  if (info.size > MAX_BYTES_READ) {
+    throw new Error('file too large to open')
+  }
+  const data = await readFile(absPath)
+  return new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+}
+
 export async function writeFileContent(
   worktreeRoot: string,
   absPath: string,

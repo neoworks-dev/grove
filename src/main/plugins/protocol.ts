@@ -1,9 +1,9 @@
 // grove-plugin:// serves plugin bundle files: the worker's code, and the pages
 // (with their scripts, styles and images) a plugin shows as a file viewer.
 // Only loaded + trusted + enabled plugins are served, path-validated to their
-// own directory. registerPluginScheme must run before app ready.
+// own directory. PLUGIN_SCHEME is declared with the others in main/index.ts.
 
-import { protocol } from 'electron'
+import { protocol, type CustomScheme } from 'electron'
 import { readFile } from 'fs/promises'
 import { extname, join } from 'path'
 import { isInside } from '../api/broker'
@@ -62,13 +62,9 @@ function headersFor(pluginId: string, fullPath: string): Record<string, string> 
   return headers
 }
 
-export function registerPluginScheme(): void {
-  protocol.registerSchemesAsPrivileged([
-    {
-      scheme: 'grove-plugin',
-      privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true }
-    }
-  ])
+export const PLUGIN_SCHEME: CustomScheme = {
+  scheme: 'grove-plugin',
+  privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true }
 }
 
 /** Serve grove-plugin:// bundle files; returns the inverse. */

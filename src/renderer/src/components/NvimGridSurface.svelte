@@ -52,6 +52,7 @@
       session.focus()
     }
     onFocus?.()
+    if (button === 'right') session.noteRightClick(event.clientX, event.clientY)
     dragButton = button
     lastDragRow = point.row
     lastDragCol = point.col
@@ -86,16 +87,7 @@
     if (!point) return
     event.preventDefault()
     event.stopPropagation()
-    if (event.deltaY !== 0) {
-      session.inputMouseOnGrid(
-        grid,
-        'wheel',
-        event.deltaY > 0 ? 'down' : 'up',
-        modifier(event),
-        point.row,
-        point.col
-      )
-    }
+    session.scrollByWheel(event, grid, point.row, point.col)
   }
 
   onMount(() => {

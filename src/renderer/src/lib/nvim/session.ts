@@ -21,11 +21,14 @@ import {
   applyMultigridRedraw,
   createMultigridState,
   nvimGridSpan,
+  type MultigridState,
   type NvimGridSpan,
   type NvimWindowPlacement
 } from './multigrid'
 import { nvimBlockingPrompt } from './blockingPrompt'
 import { nvimPrompts } from './prompts.svelte'
+import { nvimPopupMenu } from './popupMenu.svelte'
+import { WheelAccumulator } from './wheel'
 
 export interface NvimSessionElements {
   host: HTMLDivElement
@@ -66,6 +69,15 @@ export interface NvimSessionConfig {
 }
 
 const MOUSE_BUTTONS = ['left', 'middle', 'right']
+
+/** Whether nvim's cursor is in the message grid shown on the cmdline row. */
+function messageHasCursorIn(
+  state: MultigridState,
+  message: NvimWindowPlacement | undefined
+): boolean {
+  if (!message) return false
+  return state.cursorGrid === message.grid
+}
 
 // Re-read one file from disk if this editor has it open and unedited. `checktime`
 // rather than `edit!` so the cursor, marks and undo history survive, and so a
@@ -275,6 +287,7 @@ export class NvimCanvasSession {
   private composing = false
   private hasFocus = false
   private lastCursorRow = 0
+  private lastCursorGrid = 1
   private lastMode = 'normal'
 
   private fitScheduled = false
@@ -287,6 +300,8 @@ export class NvimCanvasSession {
   private lastNvimResizeAt = 0
 
   private dragButton: string | null = null
+  private verticalWheel = new WheelAccumulator()
+  private horizontalWheel = new WheelAccumulator()
   private lastDragRow = -1
   private lastDragCol = -1
 
@@ -854,7 +869,7 @@ export class NvimCanvasSession {
     try {
       await window.workbench.nvim.request(this.nvimId, 'nvim_exec_lua', [
         'grove_apply_theme(...)',
-        [store.activeTheme.palette]
+        [store.activeTheme.palette, store.activeTheme.scheme]
       ])
     } catch {
       // session already gone
@@ -1011,7 +1026,7 @@ export class NvimCanvasSession {
           lines.push(Array.from({ length: state.cols }, () => ({ text: ' ', hlId: 0 })))
         }
         lines[message.row] = messageGrid.lines[0]
-        const messageHasCursor = this.multigrid.cursorGrid === message.grid
+        const messageHasCursor = messageHasCursorIn(this.multigrid, message)
         state = {
           ...state,
           rows,
@@ -1022,8 +1037,26 @@ export class NvimCanvasSession {
         }
       }
     }
-    if (this.hasFocus) return state
+    const cursorHere = messageHasCursorIn(this.multigrid, message) || this.cursorOnPrimary()
+    if (this.hasFocus && cursorHere) return state
     return { ...state, cursor: { ...state.cursor, visible: false } }
+  }
+
+  // Whether nvim's cursor is in the primary window, rather than in a float or a
+  // split mirrored elsewhere. Grid 1 is the outer grid, painted as the primary.
+  private cursorOnPrimary(): boolean {
+    const cursorGrid = this.multigrid.cursorGrid
+    return cursorGrid === this.primaryGridId || cursorGrid === 1
+  }
+
+  // A grid mirrored outside the primary canvas, as painted: its cursor shows
+  // only while nvim's cursor is actually in it and the pane has focus. Every
+  // grid remembers where its cursor last was, so without this a float such as
+  // noice's cmdline popup keeps a stale block on screen.
+  private externalRenderState(gridId: number, grid: GridState): GridState {
+    const visible = grid.cursor.visible && this.hasFocus && this.multigrid.cursorGrid === gridId
+    if (visible === grid.cursor.visible) return grid
+    return { ...grid, cursor: { ...grid.cursor, visible } }
   }
 
   private handleRedraw(events: unknown[]): void {
@@ -1077,6 +1110,7 @@ export class NvimCanvasSession {
     }
     this.syncBlockingPrompt()
     if (update.flushed || dirty.all) {
+      this.markCursorGridChange(update.grids)
       this.scheduleRender()
       this.renderExternalSurfaces(update.grids)
       this.callbacks.onFlush?.()
@@ -1124,7 +1158,11 @@ export class NvimCanvasSession {
         host.clientWidth,
         host.clientHeight
       )
-      renderer.render(grid, { all: true, rows: new Set(), flushed: true })
+      renderer.render(this.externalRenderState(gridId, grid), {
+        all: true,
+        rows: new Set(),
+        flushed: true
+      })
     }
     const fit = (): void => {
       sizeCanvas()
@@ -1166,8 +1204,26 @@ export class NvimCanvasSession {
         surface.sizeCanvas()
         continue
       }
-      surface.renderer.render(grid, changed)
+      surface.renderer.render(this.externalRenderState(gridId, grid), changed)
     }
+  }
+
+  // When nvim's cursor moves to another grid, the grid it left has to repaint
+  // the row its block was on, and the one it entered the row it lands on.
+  private markCursorGridChange(dirty: Map<number, DirtyState>): void {
+    const cursorGrid = this.multigrid.cursorGrid
+    if (cursorGrid === this.lastCursorGrid) return
+    for (const gridId of [this.lastCursorGrid, cursorGrid]) {
+      const grid = this.multigrid.grids.get(gridId)
+      if (!grid) continue
+      const entry = dirty.get(gridId)
+      if (entry) {
+        entry.rows.add(grid.cursor.row)
+        continue
+      }
+      dirty.set(gridId, { all: false, rows: new Set([grid.cursor.row]), flushed: true })
+    }
+    this.lastCursorGrid = cursorGrid
   }
 
   focusWindow(win: number, focusInput = true): void {
@@ -1188,6 +1244,12 @@ export class NvimCanvasSession {
         this.closeWindow(placement.win)
       }
     }
+  }
+
+  /** Remember where a right-click landed, so nvim's menu for it opens there. */
+  noteRightClick(x: number, y: number): void {
+    if (!this.nvimId) return
+    nvimPopupMenu.noteRightClick(this.nvimId, x, y)
   }
 
   inputMouseOnGrid(
@@ -1338,6 +1400,10 @@ export class NvimCanvasSession {
     this.hasFocus = hasFocus
     this.pendingDirtyRows.add(this.grid.cursor.row)
     this.scheduleRender()
+    const cursorGrid = this.multigrid.grids.get(this.multigrid.cursorGrid)
+    if (!cursorGrid) return
+    const dirty: DirtyState = { all: false, rows: new Set([cursorGrid.cursor.row]), flushed: true }
+    this.renderExternalSurfaces(new Map([[this.multigrid.cursorGrid, dirty]]))
   }
 
   // Spatial pane nav focuses the leaf container; steer that into the hidden
@@ -1373,6 +1439,7 @@ export class NvimCanvasSession {
     const button = MOUSE_BUTTONS[event.button]
     const cell = this.cellAt(event)
     if (!button || !cell) return
+    if (button === 'right') this.noteRightClick(event.clientX, event.clientY)
     this.dragButton = button
     this.lastDragRow = cell.row
     this.lastDragCol = cell.col
@@ -1431,30 +1498,35 @@ export class NvimCanvasSession {
     const cell = this.cellAt(event)
     if (!cell) return
     event.preventDefault()
+    this.scrollByWheel(event, this.primaryGridId, cell.row, cell.col)
+  }
+
+  /**
+   * Scroll the window under a wheel event by the distance it travelled, one
+   * nvim wheel step (one line, per the bundled 'mousescroll') at a time.
+   */
+  scrollByWheel(event: WheelEvent, grid: number, row: number, col: number): void {
+    if (!this.nvimId || !this.metrics) return
+    const { cellHeight, cellWidth } = this.metrics
+    const page = this.elements.host.clientHeight
     const modifier = this.mouseModifier(event)
-    if (event.deltaY !== 0) {
-      const action = event.deltaY > 0 ? 'down' : 'up'
-      void window.workbench.nvim.inputMouse(
-        this.nvimId,
-        'wheel',
-        action,
-        modifier,
-        cell.row,
-        cell.col,
-        this.primaryGridId
-      )
-    }
-    if (event.deltaX !== 0) {
-      const action = event.deltaX > 0 ? 'right' : 'left'
-      void window.workbench.nvim.inputMouse(
-        this.nvimId,
-        'wheel',
-        action,
-        modifier,
-        cell.row,
-        cell.col,
-        this.primaryGridId
-      )
+    const down = this.verticalWheel.lines(event.deltaY, event.deltaMode, cellHeight, page)
+    this.sendWheel(grid, down > 0 ? 'down' : 'up', Math.abs(down), modifier, row, col)
+    const right = this.horizontalWheel.lines(event.deltaX, event.deltaMode, cellWidth, page)
+    this.sendWheel(grid, right > 0 ? 'right' : 'left', Math.abs(right), modifier, row, col)
+  }
+
+  private sendWheel(
+    grid: number,
+    action: string,
+    steps: number,
+    modifier: string,
+    row: number,
+    col: number
+  ): void {
+    if (!this.nvimId) return
+    for (let step = 0; step < steps; step++) {
+      void window.workbench.nvim.inputMouse(this.nvimId, 'wheel', action, modifier, row, col, grid)
     }
   }
 }

@@ -2,8 +2,8 @@
 //
 // Inside a buffer, Neovim colours everything; a preview pane, a diff card or a
 // search result is plain DOM, and was plain grey text. Shiki tokenizes with the
-// same TextMate grammars the editor ecosystem uses, and the theme follows the
-// app's light/dark scheme rather than shipping its own palette.
+// same TextMate grammars the editor ecosystem uses, in the editor's own code
+// theme for the app's light/dark scheme.
 //
 // Tokenizing is synchronous once a grammar is in memory, but loading one is not,
 // so everything here is async and results are cached: previews re-render on
@@ -26,11 +26,11 @@ export interface HighlightedToken {
 
 export type ColorScheme = 'dark' | 'light'
 
-// Two themes, picked by the app's scheme. Their greys sit close enough to the
-// design tokens that a highlighted excerpt reads as part of the window.
+// The editor's code theme, Catppuccin, in the flavour the editor picks for the
+// app's scheme, so an excerpt is coloured the way the same code is in a buffer.
 const THEMES: Record<ColorScheme, string> = {
-  dark: 'github-dark',
-  light: 'github-light'
+  dark: 'catppuccin-mocha',
+  light: 'catppuccin-latte'
 }
 
 // Excerpts repeat as the selection moves up and down a result list, so the same

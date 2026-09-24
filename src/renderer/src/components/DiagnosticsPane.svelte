@@ -311,9 +311,9 @@
             <span class="shrink-0 font-mono text-2xs tabular-nums {style.color}">
               {row.diagnostic.lnum + 1}:{row.diagnostic.col + 1}
             </span>
-            <span class="min-w-0 flex-1 truncate">{row.diagnostic.message}</span>
+            <span class="min-w-0 flex-1 truncate font-mono">{row.diagnostic.message}</span>
             {#if row.diagnostic.source}
-              <span class="shrink-0 text-2xs text-dim">{row.diagnostic.source}</span>
+              <span class="shrink-0 font-mono text-2xs text-dim">{row.diagnostic.source}</span>
             {/if}
           </div>
         {/if}

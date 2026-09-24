@@ -16,6 +16,8 @@
   import ReviewHeaderBar from './ReviewHeaderBar.svelte'
   import ReviewOverlay from './ReviewOverlay.svelte'
   import NvimGridSurface from './NvimGridSurface.svelte'
+  import MediaViewer from './media/MediaViewer.svelte'
+  import { mediaKind } from '../lib/media'
   import { editorOverlays } from '../lib/editorOverlays.svelte'
   import { review } from '../lib/review.svelte'
   import { settings } from '../lib/settings.svelte'
@@ -224,6 +226,26 @@ return wins
   const activeTabs = $derived(
     store.tabs.filter((tab) => tab.worktreeId === store.selectedWorktreeId)
   )
+
+  // The active tab when it is an image, video, PDF or model: drawn by a viewer
+  // over nvim rather than :edit-ed, while nvim keeps whatever it last showed.
+  const activeMedia = $derived(mediaTabFor(store.activeTabPath))
+  let mediaViewer = $state<MediaViewer>()
+
+  /** The media tab open at `path` in the selected worktree, or null for a text file. */
+  function mediaTabFor(path: string | null): { worktreeId: string; path: string } | null {
+    const worktreeId = store.selectedWorktreeId
+    if (path === null || worktreeId === null) return null
+    if (mediaKind(path) === null) return null
+    return { worktreeId, path }
+  }
+
+  /** The file nvim should open on start: the active tab, unless a viewer shows it. */
+  function initialNvimFile(): string | null {
+    const path = store.activeTabPath
+    if (path === null || mediaKind(path) !== null) return null
+    return path
+  }
 
   // Nothing open anywhere → cover the editor with the empty state instead of
   // showing nvim's blank scratch buffer. The session stays alive underneath so
@@ -700,7 +722,7 @@ end, ns)
     }
     session = new NvimCanvasSession(
       elements,
-      { leafId, font, initialFile: () => store.activeTabPath },
+      { leafId, font, initialFile: initialNvimFile },
       sessionCallbacks()
     )
     registeredLeafId = leafId
@@ -723,9 +745,15 @@ end, ns)
 
   // Spatial pane nav focuses the leaf container; pull focus into the input so
   // keys reach nvim. Skipped while the empty state covers the pane — typing into
-  // a buffer nobody can see is worse than dropping the keys.
+  // a buffer nobody can see is worse than dropping the keys. A media viewer
+  // covers nvim the same way, so it takes the focus instead.
   $effect(() => {
-    if (keymap.activePane === leafId && showEditor) session?.focus()
+    if (keymap.activePane !== leafId || !showEditor) return
+    if (activeMedia !== null) {
+      mediaViewer?.focus()
+      return
+    }
+    session?.focus()
   })
 
   // Per-pane font zoom: re-measure nvim's cell when this pane's scale changes.
@@ -771,6 +799,9 @@ end, ns)
       await review.cancel()
     }
 
+    // A viewer draws this one; nvim would only load its bytes as text.
+    if (mediaKind(path) !== null) return
+
     // Scratch tabs map to a live nvim buffer, not a file: switch the window to
     // it (only in the pane that owns the buffer) rather than :edit-ing a path.
     const scratch = scratchFor(path)
@@ -808,6 +839,7 @@ end, ns)
     const id = session?.id
     if (!id || !target) return
     store.revealTarget = null
+    if (mediaKind(target.path) !== null) return
     lastPushedPath = target.path
     void revealLine(target.path, target.line)
   })
@@ -883,7 +915,9 @@ end, ns)
           </div>
         {/each}
       {/if}
-      {#if session && floatingWindows.length > 0}
+      <!-- A media viewer stands in for nvim's window, so nvim's floats (plugin
+           UIs, hovers) wait until a text tab is back rather than cover it. -->
+      {#if session && floatingWindows.length > 0 && activeMedia === null}
         {#if modalFloatingWindows.length > 0}
           <div
             class="absolute inset-0 z-30 bg-black/25"
@@ -932,6 +966,17 @@ end, ns)
           {diffMarkers}
           class="absolute right-0 top-0 z-20 h-full w-[64px] border-l border-line"
         />
+      {/if}
+      <!-- Over nvim and its minimap, under which-key: leader keys still work
+           while a viewer has focus. -->
+      {#if showEditor && activeMedia !== null}
+        {#key activeMedia.path}
+          <MediaViewer
+            bind:this={mediaViewer}
+            worktreeId={activeMedia.worktreeId}
+            path={activeMedia.path}
+          />
+        {/key}
       {/if}
       <div
         bind:this={inputEl}

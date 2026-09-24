@@ -26,12 +26,16 @@ export function resolveColors(state: GridState, hlId: number): ResolvedColors {
   const attrs = state.hl.get(hlId) ?? {}
   let fg = attrs.foreground ?? state.defaults.fg
   let bg = attrs.background ?? state.defaults.bg
-  const sp = attrs.special ?? state.defaults.sp
   if (attrs.reverse) {
     const swap = fg
     fg = bg
     bg = swap
   }
+  // A highlight without a special colour underlines in the colour of its text,
+  // as nvim's own TUI does. Not default_colors_set's sp: outside ext_termcolors
+  // nvim always sends one, red unless Normal sets guisp, so it can't say "none".
+  let sp = fg
+  if (attrs.special !== undefined) sp = attrs.special
   return { fg: rgbToCss(fg), bg: rgbToCss(bg), sp: rgbToCss(sp) }
 }
 

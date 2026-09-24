@@ -3,6 +3,8 @@
   // resolves with 'cancel'.
   import { dialogs } from '../lib/dialogs.svelte'
   import { keyDispatch, KeyPriority } from '../lib/keyDispatch'
+  import { untrack } from 'svelte'
+  import { rememberFocus } from '../lib/focusReturn'
 
   const active = $derived(dialogs.active)
 
@@ -20,6 +22,22 @@
     return keyDispatch.subscribe(KeyPriority.dialog, onKeyDown)
   })
 
+  // A clicked button takes focus and goes with the dialog; hand focus back to
+  // wherever it was before the dialog opened.
+  let surfaceEl = $state<HTMLDivElement>()
+  let returnFocus: ((surface: HTMLElement | undefined) => void) | null = null
+  $effect(() => {
+    const open = active !== null
+    if (open && returnFocus === null) {
+      returnFocus = rememberFocus()
+      return
+    }
+    if (!open && returnFocus !== null) {
+      returnFocus(untrack(() => surfaceEl))
+      returnFocus = null
+    }
+  })
+
   const buttonClass: Record<string, string> = {
     primary: 'border-accent bg-accent text-accent-content hover:opacity-90',
     danger: 'border-line bg-red-soft text-red hover:opacity-90',
@@ -29,6 +47,7 @@
 
 {#if active}
   <div
+    bind:this={surfaceEl}
     class="fixed inset-0 z-modal flex items-center justify-center bg-black/40"
     role="presentation"
     onclick={(event) => {

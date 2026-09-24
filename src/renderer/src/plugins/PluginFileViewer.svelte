@@ -27,12 +27,14 @@
   let pageReady = $state(false)
   let error = $state<string | null>(null)
 
-  // The page announces itself; only messages from this frame count.
+  // The page announces itself, and passes up keys it leaves alone; only
+  // messages from this frame count.
   $effect(() => {
     const listener = (event: MessageEvent): void => {
       if (!frameEl || event.source !== frameEl.contentWindow) return
       const message = event.data as FileViewerMessage
       if (message?.type === 'grove.viewer.ready') pageReady = true
+      if (message?.type === 'grove.viewer.key') replayKey(message)
     }
     window.addEventListener('message', listener)
     return () => window.removeEventListener('message', listener)
@@ -52,6 +54,25 @@
     if (!pageReady) return
     post({ type: 'grove.viewer.theme', theme: currentTheme() })
   })
+
+  /**
+   * Replays a key from the page as if pressed on the frame, so Grove's key
+   * dispatch — which listens on the window — sees it. Keys inside a sandboxed
+   * frame never reach this document on their own.
+   */
+  function replayKey(message: Extract<FileViewerMessage, { type: 'grove.viewer.key' }>): void {
+    const event = new KeyboardEvent('keydown', {
+      key: message.key,
+      code: message.code,
+      ctrlKey: message.ctrlKey,
+      altKey: message.altKey,
+      shiftKey: message.shiftKey,
+      metaKey: message.metaKey,
+      bubbles: true,
+      cancelable: true
+    })
+    frameEl?.dispatchEvent(event)
+  }
 
   /** Reads the file as the plugin and transfers its bytes to the page. */
   async function sendFile(fileWorktreeId: string, filePath: string): Promise<void> {

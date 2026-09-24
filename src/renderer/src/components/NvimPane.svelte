@@ -769,6 +769,23 @@ end, ns)
     session?.focus()
   })
 
+  // Where focusing this pane puts the keyboard: the viewer when one is showing,
+  // nvim's input otherwise. Pane navigation and a closing overlay both come
+  // through here, so neither leaves focus on the leaf while keys belong inside.
+  $effect(() => keymap.registerPaneFocus(leafId, focusFromNavigation))
+
+  /** Focuses what this pane shows; false leaves it to the leaf, e.g. under the empty state. */
+  function focusFromNavigation(): boolean {
+    if (!showEditor) return false
+    if (activeViewer !== null && viewerHost) {
+      viewerHost.focus()
+      return true
+    }
+    if (!session) return false
+    session.focus()
+    return true
+  }
+
   // Per-pane font zoom: re-measure nvim's cell when this pane's scale changes.
   $effect(() => {
     const scale = layout.fontScale(leafId)

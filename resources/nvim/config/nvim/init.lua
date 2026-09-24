@@ -112,6 +112,81 @@ if not (vim.uv or vim.loop).fs_stat(lazyEntry) then
   bootstrapLazy()
 end
 
+-- Only one nvim at a time may install plugins. lazy deletes a plugin's
+-- directory before cloning it, and a failed `git clone` deletes its target, so
+-- panes starting together wiped each other's clones until every one failed and
+-- left its `.cloning` marker behind, which lazy reads as "not installed".
+-- A directory is the lock because mkdir is atomic; it holds the owner's pid so
+-- the lock of an nvim killed mid-install (grove kills a pane's nvim when the
+-- pane goes away) can be taken over, and the clones it left unfinished redone.
+local installLock = vim.fs.joinpath(dataDir, 'lazy-install.lock')
+local installLockOwner = vim.fs.joinpath(installLock, 'pid')
+local installLockTimeoutMs = 180000
+
+--- Whether the nvim that wrote the install lock is still running.
+local function installLockOwnerAlive()
+  local file = io.open(installLockOwner, 'r')
+  if not file then
+    -- Just created and not yet written: its owner is alive.
+    return true
+  end
+  local pid = tonumber(file:read('*a'))
+  file:close()
+  if not pid then
+    return true
+  end
+  return (vim.uv or vim.loop).kill(pid, 0) == 0
+end
+
+--- Takes the install lock, clearing one left by a dead nvim. Returns false
+--- when a live nvim holds it.
+local function takeInstallLock()
+  local uv = vim.uv or vim.loop
+  if not uv.fs_mkdir(installLock, 493) then
+    if installLockOwnerAlive() then
+      return false
+    end
+    vim.fn.delete(installLock, 'rf')
+    if not uv.fs_mkdir(installLock, 493) then
+      return false
+    end
+  end
+  local file = io.open(installLockOwner, 'w')
+  if file then
+    file:write(tostring(vim.fn.getpid()))
+    file:close()
+  end
+  return true
+end
+
+--- Releases the install lock.
+local function releaseInstallLock()
+  vim.fn.delete(installLock, 'rf')
+end
+
+--- Whether the install lock is free to take: released, or its owner is dead.
+local function installLockFree()
+  if not (vim.uv or vim.loop).fs_stat(installLock) then
+    return true
+  end
+  return not installLockOwnerAlive()
+end
+
+--- Takes the install lock, waiting while another nvim installs. Every nvim
+--- holds it for its own lazy setup, which then finds nothing left to install or
+--- finishes what a killed owner started. Returns false when the wait timed out.
+local function acquireInstallLock()
+  local deadline = (vim.uv or vim.loop).now() + installLockTimeoutMs
+  while not takeInstallLock() do
+    local remaining = deadline - (vim.uv or vim.loop).now()
+    if remaining <= 0 then
+      return false
+    end
+    vim.wait(remaining, installLockFree, 200)
+  end
+  return true
+end
+
 -- Accepts the Copilot ghost-text suggestion currently on screen. Returns true
 -- when it consumed the key, which is blink.cmp's signal to stop walking the
 -- rest of its <Tab> fallback chain. Returns false when copilot.lua has not
@@ -126,6 +201,7 @@ end
 
 if (vim.uv or vim.loop).fs_stat(lazyEntry) then
   vim.opt.rtp:prepend(lazyPath)
+  local installsPlugins = acquireInstallLock()
   pcall(function()
     require('lazy').setup({
       -- vim-sleuth: read a file's own indentation and set tabstop/shiftwidth/
@@ -426,11 +502,14 @@ if (vim.uv or vim.loop).fs_stat(lazyEntry) then
       root = vim.fs.joinpath(dataDir, 'lazy'),
       lockfile = vim.fs.joinpath(dataDir, 'lazy-lock.json'),
       -- Grove owns the chrome; keep lazy from drawing its own UI on startup.
-      install = { colorscheme = {} },
+      install = { missing = installsPlugins, colorscheme = {} },
       ui = { border = 'rounded' },
       change_detection = { enabled = false }
     })
   end)
+  if installsPlugins then
+    releaseInstallLock()
+  end
 end
 
 -- Each diagnostic's message at the end of its line, in the severity's colour

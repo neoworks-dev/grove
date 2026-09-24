@@ -875,7 +875,7 @@ function postEvidence(args: string[]): void {
   if (images.length > 0) {
     sections.push(images.map((url) => `![screenshot](${url})`).join('\n\n'))
   }
-  sections.push(`---\n\n*Verified by Claude on ${headCommit()}.*`)
+  sections.push(`---\n\n*Verified by Claude on ${headCommit(process.cwd())}.*`)
 
   const commented = spawnSync(
     'gh',
@@ -975,9 +975,10 @@ function bodyText(value: string): string {
   return value
 }
 
-function headCommit(): string {
+/** The short hash checked out in a directory — the harness's own checkout unless told otherwise. */
+function headCommit(directory: string = repoRoot): string {
   const result = spawnSync('git', ['rev-parse', '--short', 'HEAD'], {
-    cwd: repoRoot,
+    cwd: directory,
     encoding: 'utf8'
   })
   if (result.status !== 0) return 'an unknown build'

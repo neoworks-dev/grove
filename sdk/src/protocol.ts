@@ -501,6 +501,17 @@ export type FileViewerMessage =
     }
   | { type: 'grove.viewer.theme'; theme: FileViewerTheme }
   | { type: 'grove.viewer.error'; message: string }
+  // A key the page had no use for, passed up so Grove's own bindings (the
+  // leader, pane navigation) keep working while the page has focus.
+  | {
+      type: 'grove.viewer.key'
+      key: string
+      code: string
+      ctrlKey: boolean
+      altKey: boolean
+      shiftKey: boolean
+      metaKey: boolean
+    }
 
 // ── RPC envelope ────────────────────────────────────────────────
 

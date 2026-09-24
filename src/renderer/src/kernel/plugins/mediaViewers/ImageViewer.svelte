@@ -4,9 +4,10 @@
   // and actual pixels. Zoom is kept as a factor of the image's natural size.
   import MediaToolbar from './MediaToolbar.svelte'
   import MediaToolButton from './MediaToolButton.svelte'
-  import { fitScale, zoomAbout, type ViewTransform } from '../../lib/mediaView'
+  import { fitScale, zoomAbout, type ViewTransform } from '../../../lib/mediaView'
+  import type { FileViewerProps } from '../../../lib/fileViewers.svelte'
 
-  let { src }: { src: string } = $props()
+  let { src }: FileViewerProps = $props()
 
   const MIN_SCALE = 0.02
   const MAX_SCALE = 64

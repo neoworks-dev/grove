@@ -16,12 +16,13 @@
   import MediaToolbar from './MediaToolbar.svelte'
   import MediaToolButton from './MediaToolButton.svelte'
   import PdfPage from './PdfPage.svelte'
+  import type { FileViewerProps } from '../../../lib/fileViewers.svelte'
 
   // The legacy build: pdf.js targets the newest Chromium, and calls methods
   // (Map.getOrInsertComputed) that Electron's lags behind; this one polyfills them.
   GlobalWorkerOptions.workerSrc = workerUrl
 
-  let { src }: { src: string } = $props()
+  let { src }: FileViewerProps = $props()
 
   const MIN_SCALE = 0.25
   const MAX_SCALE = 6

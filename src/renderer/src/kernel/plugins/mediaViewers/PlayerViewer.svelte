@@ -4,8 +4,19 @@
   // picture of its own. Seeking works because main answers Range requests.
   import WaveformIcon from 'phosphor-svelte/lib/WaveformIcon'
   import MediaToolbar from './MediaToolbar.svelte'
+  import type { FileViewerProps } from '../../../lib/fileViewers.svelte'
 
-  let { src, kind, name }: { src: string; kind: 'video' | 'audio'; name: string } = $props()
+  let { src, path, options }: FileViewerProps = $props()
+
+  // Registered twice, once per kind; audio has no picture to size to.
+  const kind = $derived(playerKind(options))
+  const name = $derived(path.split('/').pop() ?? path)
+
+  /** Whether this registration plays video or audio. */
+  function playerKind(registration: unknown): 'video' | 'audio' {
+    if (registration === 'audio') return 'audio'
+    return 'video'
+  }
 
   let videoWidth = $state(0)
   let videoHeight = $state(0)

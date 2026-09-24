@@ -8,6 +8,7 @@ import { panes } from '../../lib/panes.svelte'
 import { store, openFileInEditor, openFileAtLine } from '../../lib/store.svelte'
 import { activeNvimSession } from '../../lib/nvim/registry'
 import { editorOverlays, type EditorOverlay } from '../../lib/editorOverlays.svelte'
+import { fileViewers, type FileViewer } from '../../lib/fileViewers.svelte'
 import type { NvimCanvasSession } from '../../lib/nvim/session'
 import { CENTER_SLOT } from '../../lib/paneSlots'
 import { repoOpen } from '../plugins/guards'
@@ -134,6 +135,15 @@ export class EditorService extends Service {
    */
   registerOverlay(overlay: EditorOverlay): () => void {
     return editorOverlays.register(overlay)
+  }
+
+  /**
+   * Register a viewer for files nvim can't show as text, by extension. A file
+   * it claims opens under the editor's tab strip like any other, with the
+   * viewer shown in nvim's place. Returns the inverse.
+   */
+  registerFileViewer(viewer: FileViewer): () => void {
+    return fileViewers.register(viewer)
   }
 
   /** Open a file in the editor, optionally revealing a line. */

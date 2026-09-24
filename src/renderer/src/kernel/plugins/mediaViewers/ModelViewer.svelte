@@ -4,12 +4,13 @@
   // sized to the pane, and reloads the model when the file changes on disk —
   // keeping the camera where it was, since that is the same model re-exported.
   import { onDestroy, onMount } from 'svelte'
-  import { ModelStage, type ModelStats } from '../../lib/modelStage'
-  import { extensionOf } from '../../lib/media'
+  import { ModelStage, type ModelStats } from '../../../lib/modelStage'
+  import { extensionOf } from '../../../lib/fileUrl'
+  import type { FileViewerProps } from '../../../lib/fileViewers.svelte'
   import MediaToolbar from './MediaToolbar.svelte'
   import MediaToolButton from './MediaToolButton.svelte'
 
-  let { src, path }: { src: string; path: string } = $props()
+  let { src, path }: FileViewerProps = $props()
 
   let canvasEl = $state<HTMLCanvasElement>()
   let stage = $state.raw<ModelStage | null>(null)

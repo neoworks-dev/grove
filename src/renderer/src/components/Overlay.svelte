@@ -12,6 +12,8 @@
   import { highlightCode, type HighlightedToken } from '../lib/highlight'
   import { languageOfPath, pathLabelOf } from '../lib/agents/tools'
   import { store } from '../lib/store.svelte'
+  import { untrack } from 'svelte'
+  import { rememberFocus } from '../lib/focusReturn'
 
   // 'file:<name>' resolves through the active icon pack (plugins can't call
   // fileIcon themselves).
@@ -26,6 +28,23 @@
 
   const descriptor = $derived(overlays.active)
   const hasPreview = $derived(descriptor?.onPreview !== undefined)
+
+  // Hands focus back to where it was once the overlay closes. Declared before
+  // the effect below so it records focus before the input takes it; one
+  // overlay replacing another keeps the first one's return point.
+  let surfaceEl = $state<HTMLDivElement>()
+  let returnFocus: ((surface: HTMLElement | undefined) => void) | null = null
+  $effect(() => {
+    const open = descriptor !== null
+    if (open && returnFocus === null) {
+      returnFocus = rememberFocus()
+      return
+    }
+    if (!open && returnFocus !== null) {
+      returnFocus(untrack(() => surfaceEl))
+      returnFocus = null
+    }
+  })
 
   $effect(() => {
     if (!descriptor) return
@@ -140,6 +159,7 @@
 
 {#if descriptor}
   <div
+    bind:this={surfaceEl}
     class="fixed inset-0 z-modal flex items-start justify-center bg-black/50 pt-[12vh]"
     role="button"
     tabindex="0"

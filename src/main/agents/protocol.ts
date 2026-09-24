@@ -3,20 +3,16 @@
 // An image pasted into the composer is stored beside its session, and the
 // transcript shows it with an ordinary <img src>. A file:// URL would reach
 // outside the renderer's origin, so the bytes come back through a scheme the
-// main process owns. `registerAgentScheme` must run before app ready.
+// main process owns. AGENT_SCHEME is declared with the others in main/index.ts.
 
-import { protocol } from 'electron'
+import { protocol, type CustomScheme } from 'electron'
 import type { AgentService } from './service'
 
 const BLOB_HOST = 'blob'
 
-export function registerAgentScheme(): void {
-  protocol.registerSchemesAsPrivileged([
-    {
-      scheme: 'grove-agent',
-      privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true }
-    }
-  ])
+export const AGENT_SCHEME: CustomScheme = {
+  scheme: 'grove-agent',
+  privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true }
 }
 
 /** Serve grove-agent:// from the session store; returns the inverse. */

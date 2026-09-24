@@ -77,6 +77,7 @@ async function main(): Promise<void> {
   if (command === 'stop') return stop()
   if (command === 'explore') return explore(args)
   if (command === 'finding') return fileFinding(args)
+  if (command === 'evidence') return postEvidence(args)
   if (command === 'charters') return listCharters()
   if (command === 'logs') return showLogs(args)
   if (command === 'nvim') return nvim(args)
@@ -854,6 +855,39 @@ function fileFinding(args: string[]): void {
   console.log(created.stdout.trim())
 }
 
+/**
+ * Show on an issue that its fix works: a comment with what changed and the
+ * screenshots that prove it.
+ *
+ *   qa evidence --issue 23 --body "The cmdline now floats…"
+ *               --screenshot .grove-qa/shots/004-before.png
+ *               --screenshot .grove-qa/shots/009-after.png
+ */
+function postEvidence(args: string[]): void {
+  const issue = optional(args, '--issue')
+  const form = 'evidence --issue <n> --body <file|text> [--screenshot …]'
+  requireArgument(issue, form)
+  const body = optional(args, '--body')
+  requireArgument(body, form)
+
+  const images = [...all(args, '--screenshot'), ...all(args, '--shot')].map(uploadScreenshot)
+  const sections = [bodyText(body as string)]
+  if (images.length > 0) {
+    sections.push(images.map((url) => `![screenshot](${url})`).join('\n\n'))
+  }
+  sections.push(`---\n\n*Verified by Claude on ${headCommit()}.*`)
+
+  const commented = spawnSync(
+    'gh',
+    ['issue', 'comment', issue as string, '--repo', FINDINGS_REPO, '--body', sections.join('\n\n')],
+    { cwd: repoRoot, encoding: 'utf8' }
+  )
+  if (commented.status !== 0) {
+    throw new Error(`could not comment on #${issue}:\n${commented.stderr.trim()}`)
+  }
+  console.log(commented.stdout.trim())
+}
+
 /** Put a screenshot somewhere GitHub will render it from, and say where. */
 function uploadScreenshot(path: string): string {
   if (!existsSync(path)) throw new Error(`no such screenshot: ${path}`)
@@ -1043,6 +1077,7 @@ this is the only way to see one.
                                  hand the app to a Claude Code instance to test
                                  (sonnet by default; haiku and opus also work)
   finding --title … --body …     file what it found, screenshot attached
+  evidence --issue <n> --body …  show on an issue that its fix works
   charters                       the charters that ship with the harness
 
 Targets are an accessible name ("New session"), or an id \`probe\` printed: a ref

@@ -3,12 +3,20 @@
 import type { Context } from '@neoworks/extension-system'
 import { route } from '../kernel/route'
 import * as files from '../files'
+import { registerFileProtocol } from '../fileProtocol'
 
 export const filesRoutes = {
   name: 'main/routes/files',
   inject: ['workbench'],
 
   apply(ctx: Context): void {
+    // Media viewers load files by URL rather than over IPC, so a video can seek
+    // and a model's sidecar files resolve next to it.
+    ctx.effect(
+      () => registerFileProtocol((worktreeId) => ctx.workbench.findWorktree(worktreeId)),
+      'protocol:grove-file'
+    )
+
     // ── Files ─────────────────────────────────────────────────────
     route(ctx, 'files:listDir', (_e, worktreeId: string, relPath: string) => {
       const worktree = ctx.workbench.findWorktree(worktreeId)

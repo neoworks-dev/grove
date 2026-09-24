@@ -896,24 +896,20 @@ function uploadScreenshot(path: string): string {
   // Committed under a timestamp, because a screenshot is evidence: two runs
   // finding the same thing must not overwrite each other's.
   const name = `${stamp()}-${slug(basename(path, '.png'))}.png`
+  // The request goes in on stdin: as a `-f content=…` argument, any full-window
+  // screenshot is past Linux's 128 KiB limit on a single argument.
+  const request = JSON.stringify({
+    message: 'qa: screenshot for a finding',
+    branch: SHOT_BRANCH,
+    content: readFileSync(path).toString('base64')
+  })
   const committed = spawnSync(
     'gh',
-    [
-      'api',
-      '--method',
-      'PUT',
-      `repos/${FINDINGS_REPO}/contents/shots/${name}`,
-      '-f',
-      `message=qa: screenshot for a finding`,
-      '-f',
-      `branch=${SHOT_BRANCH}`,
-      '-f',
-      `content=${readFileSync(path).toString('base64')}`
-    ],
-    { cwd: repoRoot, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }
+    ['api', '--method', 'PUT', `repos/${FINDINGS_REPO}/contents/shots/${name}`, '--input', '-'],
+    { cwd: repoRoot, encoding: 'utf8', input: request, maxBuffer: 64 * 1024 * 1024 }
   )
   if (committed.status !== 0) {
-    throw new Error(`could not upload ${path}:\n${committed.stderr.trim()}`)
+    throw new Error(`could not upload ${path}:\n${String(committed.stderr).trim()}`)
   }
   return `https://raw.githubusercontent.com/${FINDINGS_REPO}/${SHOT_BRANCH}/shots/${name}`
 }

@@ -38,6 +38,18 @@ export function registerWorkspaceRoutes(registry: RouteRegistry): void {
     handler: (args, context) => readFileContent(args, context)
   })
 
+  // Binary-safe read: a plugin's file viewer gets its file this way.
+  registry.register({
+    method: 'workspace.readBytes',
+    scope: null,
+    handler: async (args, context) => {
+      const worktree = context.worktreeFor(args)
+      const absPath = absolutePath(worktree, String(args.path ?? ''))
+      await context.broker.ensurePath(context.client, 'read', absPath, worktree.path)
+      return files.readFileBytes(worktree.path, absPath)
+    }
+  })
+
   registry.register({
     method: 'workspace.readExcerpt',
     scope: null,

@@ -9,6 +9,7 @@
 // changes which descriptor `start()` is called on and nothing else.
 
 import { randomUUID } from 'node:crypto'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { extname, join } from 'node:path'
 import type {
@@ -694,7 +695,8 @@ export class AgentService {
       emit: (body) => void this.absorb(sessionId, body),
       emitFrom: (agent, body) => void this.subagents.absorb(sessionId, agent, body),
       stats: (update) => void this.store.patch(sessionId, update),
-      confirm: (request) => this.requestApproval(sessionId, request)
+      confirm: (request) => this.requestApproval(sessionId, request),
+      storeImage: (image) => this.storeImageSync(sessionId, image)
     })
 
     runtime.run = run
@@ -861,6 +863,19 @@ export class AgentService {
     const ref = `${randomUUID()}${extname(filename ?? '')}`
     await writeFile(join(directory, ref), bytes)
     return { ref, mediaType, filename, bytes: bytes.byteLength }
+  }
+
+  /**
+   * Store an image a tool returned, synchronously, so the harness can emit the
+   * result it belongs to in order. Tool images are rare and small enough that
+   * the blocking write costs less than events arriving out of order would.
+   */
+  private storeImageSync(sessionId: string, image: PromptAttachment): ImageBlock {
+    const directory = join(this.store.dirOf(sessionId), BLOBS_DIR)
+    mkdirSync(directory, { recursive: true })
+    const ref = randomUUID()
+    writeFileSync(join(directory, ref), Buffer.from(image.data, 'base64'))
+    return { type: 'image', ref, mediaType: image.mediaType }
   }
 
   async readBlob(sessionId: string, ref: string): Promise<Buffer> {

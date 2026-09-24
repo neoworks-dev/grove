@@ -34,6 +34,8 @@
     commandNames,
     history,
     placeholderHint = '',
+    hidden = false,
+    onKeystroke,
     onSend,
     onFocusChange,
     onInterrupt,
@@ -51,6 +53,13 @@
      */
     history: string[]
     placeholderHint?: string
+    /**
+     * Out of sight while an approval or question card stands in for it. Hidden
+     * rather than unmounted, so the draft is still there once the card is answered.
+     */
+    hidden?: boolean
+    /** Every key pressed in the draft, so the pane can tell when the user is mid-sentence. */
+    onKeystroke?: () => void
     onSend: (events: ClientEventBody[]) => void
     onFocusChange: (focused: boolean) => void
     onInterrupt: () => void
@@ -234,10 +243,15 @@
     })
   }
 
+  // Hiding a focused textarea doesn't reliably fire `blur`, which would leave the
+  // pane in insert mode with nothing visible to type into.
+  $effect(() => {
+    if (hidden) promptEl?.blur()
+  })
+
   // An @file:lines reference pushed in from the editor selection ("Send
-  // Selection to Composer"). Taken off the store as it lands: the composer is
-  // unmounted while an approval card is up, and a request left sitting there
-  // would be inserted again by the composer that replaces it.
+  // Selection to Composer"). Taken off the store as it lands, so a composer
+  // mounted later (another session, another pane) doesn't insert it again.
   $effect(() => {
     const request = store.composerInsert
     if (!request) return
@@ -325,6 +339,7 @@
   }
 
   function onKey(event: KeyboardEvent): void {
+    onKeystroke?.()
     if (event.key === 'Tab' && event.shiftKey) {
       event.preventDefault()
       onCycleMode?.()
@@ -442,7 +457,7 @@
   }
 </script>
 
-<div class="relative">
+<div class="relative" {hidden}>
   {#if menuOpen}
     <!-- Completions float above the composer. -->
     <div
@@ -495,7 +510,9 @@
 
   <!-- A `!` draft switches the box to shell: monospace in a heavier weight, and an
        amber frame that says whether the model will see the output. Both copies of
-       the text take the same font classes so they stay in register. -->
+       the text take the same font classes so they stay in register. The textarea
+       draws no scrollbar: one would narrow only it, so it would wrap lines where
+       the painted copy doesn't and the caret would drift off the text. -->
   <div
     class="relative mb-2 rounded-md border bg-elevated"
     class:border-line-strong={!shell}
@@ -504,7 +521,7 @@
     <textarea
       bind:this={promptEl}
       bind:value={draft}
-      class="relative z-0 block h-20 w-full resize-none border-0 bg-transparent px-2 py-1.5 text-xs leading-normal text-transparent caret-default outline-none placeholder:text-dim"
+      class="no-scrollbar relative z-0 block h-20 w-full resize-none border-0 bg-transparent px-2 py-1.5 text-xs leading-normal text-transparent caret-default outline-none placeholder:text-dim"
       class:font-mono={shell !== null}
       class:font-medium={shell !== null}
       spellcheck={shell === null}

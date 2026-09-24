@@ -147,6 +147,8 @@ export type ServerEventBody =
       name: string
       content: string
       isError: boolean
+      /** Images the tool returned (a screenshot, an image file it read), as session blobs. */
+      images?: ImageBlock[]
     }
   | { type: 'ui.surface'; surfaceId: string; slot: UiSlot; view: UiNode }
   | { type: 'ui.surface'; surfaceId: string; view: null }
@@ -405,6 +407,8 @@ export interface ToolDisplay {
   input?: ToolInputView
   result?: ToolResultView
   languageFrom?: string
+  /** The call changes a file, so it keeps a row of its own rather than folding into a summary. */
+  edits?: boolean
 }
 
 export interface ToolInfo {

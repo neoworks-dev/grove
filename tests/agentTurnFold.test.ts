@@ -4,7 +4,7 @@
 import { describe, expect, test } from 'bun:test'
 import { tallyOf, toTranscriptRows } from '../src/renderer/src/lib/agents/toolRuns'
 import { foldedCalls, foldedMessages, foldTurn } from '../src/renderer/src/lib/agents/turns'
-import type { ToolStatus, TranscriptItem } from '../src/renderer/src/lib/agents/transcript'
+import type { ToolItem, ToolStatus, TranscriptItem } from '../src/renderer/src/lib/agents/transcript'
 
 let nextEventId = 0
 
@@ -32,6 +32,7 @@ function toolCall(name: string, status: ToolStatus = 'ok'): TranscriptItem {
     editedInput: null,
     permission: 'allow',
     result: '',
+    images: [],
     status,
     progress: ''
   }
@@ -59,6 +60,21 @@ describe('foldTurn', () => {
     expect(foldedCalls(fold.hidden).map((call) => call.name)).toEqual(['Read', 'Read', 'Edit'])
   })
 
+  test('keeps a call that stands alone on screen', () => {
+    const isEdit = (call: ToolItem): boolean => call.name === 'Edit'
+    const rows = toTranscriptRows(
+      [toolCall('Read'), toolCall('Edit'), toolCall('Read'), agentMessage('done')],
+      isEdit
+    )
+    const fold = foldTurn(rows, isEdit)
+
+    expect(foldedCalls(fold.hidden).map((call) => call.name)).toEqual(['Read', 'Read'])
+    expect(fold.kept.map((row) => (row.kind === 'item' ? row.item.kind : row.kind))).toEqual([
+      'tool',
+      'agent'
+    ])
+  })
+
   test('folds the calls that trail the answer into the same summary', () => {
     const rows = toTranscriptRows([
       toolCall('Bash'),
@@ -75,8 +91,8 @@ describe('foldTurn', () => {
 
     expect(fold.kept).toHaveLength(1)
     expect(tallyOf(foldedCalls(fold.hidden))).toEqual([
-      { name: 'Bash', count: 6 },
-      { name: 'Read', count: 2 }
+      { name: 'Bash', count: 6, files: [] },
+      { name: 'Read', count: 2, files: [] }
     ])
   })
 

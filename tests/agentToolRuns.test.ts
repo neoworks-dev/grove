@@ -20,7 +20,8 @@ function tool(name: string, status: ToolItem['status'] = 'ok'): ToolItem {
     permission: 'allow',
     status,
     progress: '',
-    result: ''
+    result: '',
+    images: []
   }
 }
 
@@ -62,6 +63,16 @@ describe('tool runs', () => {
     expect(rows.map((row) => row.kind)).toEqual(['toolRun', 'item', 'toolRun'])
   })
 
+  test('a call that stands alone keeps its own row and breaks the run', () => {
+    const isEdit = (call: ToolItem): boolean => call.name === 'Edit'
+    const rows = toTranscriptRows(
+      [tool('Read'), tool('Read'), tool('Edit'), tool('Edit'), tool('Read'), tool('Bash')],
+      isEdit
+    )
+
+    expect(rows.map((row) => row.kind)).toEqual(['toolRun', 'item', 'item', 'toolRun'])
+  })
+
   test('a call that is not settled stays visible on its own', () => {
     const rows = toTranscriptRows([
       tool('Read'),
@@ -76,8 +87,27 @@ describe('tool runs', () => {
 
   test('counts each tool name once, in the order it first appeared', () => {
     expect(tallyOf([tool('Read'), tool('Bash'), tool('Read'), tool('Read')])).toEqual([
-      { name: 'Read', count: 3 },
-      { name: 'Bash', count: 1 }
+      { name: 'Read', count: 3, files: [] },
+      { name: 'Bash', count: 1, files: [] }
+    ])
+  })
+
+  test('keeps the file each call was about, by name and once', () => {
+    const paths: Record<string, string> = {}
+    const first = tool('Read')
+    const second = tool('Read')
+    const again = tool('Read')
+    paths[first.toolUseId] = '/repo/README.md'
+    paths[second.toolUseId] = '/repo/src/index.ts'
+    paths[again.toolUseId] = '/repo/README.md'
+
+    const tallies = tallyOf([first, tool('Bash'), second, again], (item) => {
+      return paths[item.toolUseId] ?? null
+    })
+
+    expect(tallies).toEqual([
+      { name: 'Read', count: 3, files: ['README.md', 'index.ts'] },
+      { name: 'Bash', count: 1, files: [] }
     ])
   })
 })

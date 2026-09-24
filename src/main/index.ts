@@ -1,15 +1,17 @@
-import { app, shell, BrowserWindow } from 'electron'
+import { app, shell, protocol, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/grove-icon.png?asset'
 import { registerIpc, shutdown, reapNvimSessions } from './ipc'
-import { registerPluginScheme } from './plugins/protocol'
-import { registerAgentScheme } from './agents/protocol'
+import { PLUGIN_SCHEME } from './plugins/protocol'
+import { AGENT_SCHEME } from './agents/protocol'
+import { FILE_SCHEME } from './fileProtocol'
 import { isAppNavigation, isExternallyOpenable } from './navigation'
 
-// Custom scheme privileges must be declared before app ready.
-registerPluginScheme()
-registerAgentScheme()
+// Custom scheme privileges must be declared before app ready, and in one
+// call: each call replaces the list the last one set, so a scheme declared
+// in a call of its own silently loses fetch, CORS and the rest.
+protocol.registerSchemesAsPrivileged([PLUGIN_SCHEME, AGENT_SCHEME, FILE_SCHEME])
 
 // LSP servers speak over stdio; when a server process dies mid-exchange,
 // vscode-jsonrpc can still try to flush an internal reply to the destroyed

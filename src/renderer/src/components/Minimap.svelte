@@ -3,7 +3,9 @@
   // pulls the buffer text, window view, and treesitter highlight spans over RPC
   // (refreshed when the pane's redraw tick bumps) and drives scrolling by
   // sending winrestview back. Buffer text/colors are only re-fetched when
-  // changedtick moves, so plain scrolling stays cheap.
+  // changedtick moves, so plain scrolling stays cheap. In diff mode the map is
+  // drawn by the window's rows rather than the buffer's lines, so it shows the
+  // folded diff the pane shows instead of the whole file.
   import {
     LINE_PITCH,
     GLYPH_HEIGHT,
@@ -13,8 +15,13 @@
     computeGeometry,
     toplineForY,
     clampCursorLine,
+    runsForRows,
+    rowForLine,
+    lineForRow,
+    MINIMAP_VIEW_LUA,
     type LineRun,
     type ColorSpan,
+    type DisplayRows,
     type MinimapGeometry
   } from '../lib/minimap'
   import type { ThemePalette } from '../lib/themes'
@@ -44,6 +51,9 @@
   // Monochrome shape (always available) with treesitter colors drawn on top.
   let baseRuns: LineRun[][] = []
   let colorRuns: LineRun[][] = []
+  // The window's row layout in diff mode; null when every line is its own row.
+  let rows: DisplayRows | null = null
+  // In rows when `rows` is set, in buffer lines otherwise.
   let total = 1
   let topline = 1
   let botline = 1
@@ -65,62 +75,10 @@
     total: number
     topline: number
     botline: number
+    rows?: DisplayRows
     lines?: string[]
     spans?: ColorSpan[][]
   }
-
-  // One round-trip: window view + line count always; buffer text and treesitter
-  // colors only when the buffer or its content changed (changedtick is
-  // per-buffer, so the buffer number is part of the gate).
-  const VIEW_LUA = `
-    local prevTick, prevBuf = ...
-    local buf = vim.api.nvim_get_current_buf()
-    local total = vim.api.nvim_buf_line_count(buf)
-    local out = {
-      view = vim.fn.winsaveview(),
-      tick = vim.b.changedtick,
-      bufnr = buf,
-      total = total,
-      topline = vim.fn.line('w0'),
-      botline = vim.fn.line('w$')
-    }
-    if out.tick == prevTick and out.bufnr == prevBuf then return out end
-    out.lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-    if total <= 8000 then
-      local ok, parser = pcall(vim.treesitter.get_parser, buf)
-      if ok and parser then
-        local spans = {}
-        for i = 1, total do spans[i] = {} end
-        local cache = {}
-        local function colorFor(group)
-          if cache[group] == nil then
-            local hl = vim.api.nvim_get_hl(0, { name = group, link = false })
-            local fg = hl and hl.fg
-            cache[group] = fg and string.format('#%06x', fg) or false
-          end
-          return cache[group]
-        end
-        pcall(function()
-          -- Parse the whole buffer, not just the visible viewport, so every
-          -- line gets highlight captures.
-          local trees = parser:parse(true)
-          local query = vim.treesitter.query.get(parser:lang(), 'highlights')
-          if not query then return end
-          for _, tree in ipairs(trees) do
-            for id, node in query:iter_captures(tree:root(), buf, 0, total) do
-              local srow, scol, erow, ecol = node:range()
-              if srow == erow then
-                local color = colorFor('@' .. query.captures[id])
-                if color then table.insert(spans[srow + 1], { scol, ecol, color }) end
-              end
-            end
-          end
-        end)
-        out.spans = spans
-      end
-    end
-    return out
-  `
 
   async function refresh(): Promise<void> {
     if (!nvimId) return
@@ -131,11 +89,16 @@
     refreshing = true
     try {
       const result = (await window.workbench.nvim.request(nvimId, 'nvim_exec_lua', [
-        VIEW_LUA,
+        MINIMAP_VIEW_LUA,
         [lastTick, lastBuf]
       ])) as ViewResult | null
       if (!result) return
+      rows = null
       total = result.total
+      if (Array.isArray(result.rows) && result.rows.length > 0) {
+        rows = result.rows
+        total = result.rows.length
+      }
       topline = result.topline
       botline = result.botline
       savedView = result.view
@@ -222,9 +185,20 @@
     ctx.globalAlpha = 1
     const geo = geometry()
     drawDiffBackground(ctx, geo)
-    drawRuns(ctx, baseRuns, geo)
-    drawRuns(ctx, colorRuns, geo)
+    if (rows) {
+      drawRuns(ctx, runsForRows(baseRuns, rows, theme.palette.borderStrong), geo)
+      drawRuns(ctx, runsForRows(colorRuns, rows, null), geo)
+    } else {
+      drawRuns(ctx, baseRuns, geo)
+      drawRuns(ctx, colorRuns, geo)
+    }
     drawIndicator(ctx, geo)
+  }
+
+  /** The map row a 1-based buffer line is drawn on. */
+  function rowOf(line: number): number {
+    if (!rows) return line
+    return rowForLine(rows, line)
   }
 
   // Full-width translucent line background per changed line — green for
@@ -239,12 +213,11 @@
     ctx.globalAlpha = 0.25
     for (const marker of diffMarkers) {
       ctx.fillStyle = color[marker.kind]
+      const y = (rowOf(marker.start) - 1) * LINE_PITCH - geo.mapScrollTop
       if (marker.kind === 'del') {
-        const y = (marker.start - 1) * LINE_PITCH - geo.mapScrollTop
         ctx.fillRect(0, y - 1, canvasWidth, 2)
         continue
       }
-      const y = (marker.start - 1) * LINE_PITCH - geo.mapScrollTop
       ctx.fillRect(0, y, canvasWidth, LINE_PITCH * marker.count)
     }
     ctx.globalAlpha = 1
@@ -253,12 +226,20 @@
   function drawRuns(ctx: CanvasRenderingContext2D, runs: LineRun[][], geo: MinimapGeometry): void {
     if (runs.length === 0) return
     const firstLine = Math.max(0, Math.floor(geo.mapScrollTop / LINE_PITCH))
-    const lastLine = Math.min(runs.length - 1, Math.ceil((geo.mapScrollTop + canvasHeight) / LINE_PITCH))
+    const lastLine = Math.min(
+      runs.length - 1,
+      Math.ceil((geo.mapScrollTop + canvasHeight) / LINE_PITCH)
+    )
     for (let lineIndex = firstLine; lineIndex <= lastLine; lineIndex++) {
       const y = lineIndex * LINE_PITCH - geo.mapScrollTop
       for (const run of runs[lineIndex]) {
         ctx.fillStyle = run.color
-        ctx.fillRect(run.fromCol * COL_WIDTH, y, (run.toCol - run.fromCol) * COL_WIDTH, GLYPH_HEIGHT)
+        ctx.fillRect(
+          run.fromCol * COL_WIDTH,
+          y,
+          (run.toCol - run.fromCol) * COL_WIDTH,
+          GLYPH_HEIGHT
+        )
       }
     }
   }
@@ -278,15 +259,33 @@
     if (!nvimId) return
     const geo = geometry()
     const target = toplineForY(handleTopY, geo.mapScrollTop, total)
-    const visibleLines = Math.max(1, botline - topline + 1)
-    const lnum = clampCursorLine(savedView.lnum ?? target, target, visibleLines, total)
-    botline = Math.min(total, target + visibleLines - 1)
+    const visibleRows = Math.max(1, botline - topline + 1)
+    botline = Math.min(total, target + visibleRows - 1)
     topline = target
     scheduleDraw()
     void window.workbench.nvim.request(nvimId, 'nvim_call_function', [
       'winrestview',
-      [{ ...savedView, topline: target, lnum }]
+      [viewForTopRow(target, visibleRows)]
     ])
+  }
+
+  /**
+   * The winrestview for a new top row, with the cursor pulled inside the rows
+   * that will be on screen. Rows are buffer lines outside diff mode.
+   */
+  function viewForTopRow(targetRow: number, visibleRows: number): Record<string, number> {
+    let cursorLine = savedView.lnum
+    if (cursorLine === undefined) {
+      cursorLine = targetRow
+    }
+    if (!rows) {
+      const lnum = clampCursorLine(cursorLine, targetRow, visibleRows, total)
+      return { ...savedView, topline: targetRow, lnum }
+    }
+    const topLine = lineForRow(rows, targetRow)
+    const bottomLine = lineForRow(rows, Math.min(total, targetRow + visibleRows - 1))
+    const lnum = Math.max(topLine, Math.min(cursorLine, bottomLine))
+    return { ...savedView, topline: topLine, topfill: 0, lnum }
   }
 
   function localY(event: PointerEvent): number {

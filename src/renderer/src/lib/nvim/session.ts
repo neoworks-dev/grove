@@ -70,6 +70,18 @@ export interface NvimSessionConfig {
 
 const MOUSE_BUTTONS = ['left', 'middle', 'right']
 
+// Hand the app theme to nvim. The theme is kept in vim.g.grove_theme as well:
+// on a first launch nvim answers this while its config is still installing
+// plugins, before grove_apply_theme exists, and the config applies the kept
+// theme itself once it gets that far.
+const APPLY_THEME_LUA = `
+local palette, scheme = ...
+vim.g.grove_theme = { palette = palette, scheme = scheme }
+if type(_G.grove_apply_theme) == 'function' then
+  _G.grove_apply_theme(palette, scheme)
+end
+`
+
 /** Whether nvim's cursor is in the message grid shown on the cmdline row. */
 function messageHasCursorIn(
   state: MultigridState,
@@ -868,7 +880,7 @@ export class NvimCanvasSession {
     if (!this.nvimId) return
     try {
       await window.workbench.nvim.request(this.nvimId, 'nvim_exec_lua', [
-        'grove_apply_theme(...)',
+        APPLY_THEME_LUA,
         [store.activeTheme.palette, store.activeTheme.scheme]
       ])
     } catch {

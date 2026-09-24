@@ -494,6 +494,8 @@ async function refreshBranchPositions(): Promise<void> {
  * runs on load and on window focus rather than on the status interval.
  */
 async function refreshBranchPulls(): Promise<void> {
+  // Window focus fires before a repo is open too, and main has none to ask about.
+  if (!store.repo) return
   const pulls = await window.workbench.github.branchPulls().catch(() => null)
   if (!pulls || sameJson(store.branchPulls, pulls)) return
   store.branchPulls = pulls

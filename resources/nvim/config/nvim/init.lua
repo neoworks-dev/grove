@@ -190,6 +190,17 @@ local function acquireInstallLock()
   return true
 end
 
+--- Closes lazy's floating view if the startup install opened it. lazy shows it
+--- whenever a UI is attached, which grove always is, and grove then opens the
+--- pane's file in the current window — that float.
+local function closeLazyView()
+  local ok, view = pcall(require, 'lazy.view')
+  if not ok or not view.visible() then
+    return
+  end
+  view.view:close()
+end
+
 -- Accepts the Copilot ghost-text suggestion currently on screen. Returns true
 -- when it consumed the key, which is blink.cmp's signal to stop walking the
 -- rest of its <Tab> fallback chain. Returns false when copilot.lua has not
@@ -513,6 +524,7 @@ if (vim.uv or vim.loop).fs_stat(lazyEntry) then
   if installsPlugins then
     releaseInstallLock()
   end
+  closeLazyView()
 end
 
 -- Each diagnostic's message at the end of its line, in the severity's colour

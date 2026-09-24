@@ -667,6 +667,14 @@ _G.grove_apply_theme = function(palette, scheme)
   apply_chrome(palette)
 end
 
+-- Grove can send its theme while this file is still running: nvim answers RPC
+-- while lazy installs missing plugins above, before grove_apply_theme exists.
+-- Grove leaves the theme in vim.g.grove_theme for exactly that case, and it is
+-- applied here, once the plugins (and so the code theme) are in place.
+if type(vim.g.grove_theme) == 'table' then
+  _G.grove_apply_theme(vim.g.grove_theme.palette, vim.g.grove_theme.scheme)
+end
+
 -- Push the named code scopes enclosing the cursor (function/class/etc, outer
 -- first) to grove's breadcrumb bar. Treesitter-based, so it works in any
 -- buffer with a running parser; buffers without one report an empty chain.

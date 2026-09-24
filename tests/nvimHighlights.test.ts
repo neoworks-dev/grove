@@ -12,7 +12,7 @@ describe('highlights', () => {
   test('unknown hl id falls back to defaults', () => {
     const state = createGridState()
     state.defaults = { fg: 0x111111, bg: 0x222222, sp: 0x333333 }
-    expect(resolveColors(state, 42)).toEqual({ fg: '#111111', bg: '#222222', sp: '#333333' })
+    expect(resolveColors(state, 42)).toEqual({ fg: '#111111', bg: '#222222', sp: '#111111' })
   })
 
   test('defined attrs override defaults, missing fields fall through', () => {
@@ -31,5 +31,14 @@ describe('highlights', () => {
     const colors = resolveColors(state, 2)
     expect(colors.fg).toBe('#222222')
     expect(colors.bg).toBe('#111111')
+  })
+
+  test('an underline with no special colour takes the text colour', () => {
+    const state = createGridState()
+    state.defaults = { fg: 0x111111, bg: 0x222222, sp: 0xff0000 }
+    defineHighlight(state, 3, { foreground: 0xabcdef, underline: true })
+    expect(resolveColors(state, 3).sp).toBe('#abcdef')
+    defineHighlight(state, 4, { foreground: 0xabcdef, special: 0x445566, underline: true })
+    expect(resolveColors(state, 4).sp).toBe('#445566')
   })
 })

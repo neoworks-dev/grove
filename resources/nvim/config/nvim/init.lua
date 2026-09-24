@@ -595,13 +595,12 @@ local function apply_palette_syntax(palette)
   set(0, 'Delimiter', { fg = palette.textMuted })
 end
 
--- Same-token highlights get an underline on top of whatever fill the code
--- theme gave them, so the other occurrences stand out on a busy line.
+-- Same-token highlights are an underline and nothing else: no fill over the
+-- code theme's, and no colour of their own, so the underline is drawn in the
+-- colour of the token it sits under.
 local function underline_same_token()
   for _, group in ipairs({ 'IlluminatedWordText', 'IlluminatedWordRead', 'IlluminatedWordWrite' }) do
-    local highlight = vim.api.nvim_get_hl(0, { name = group, link = false })
-    highlight.underline = true
-    vim.api.nvim_set_hl(0, group, highlight)
+    vim.api.nvim_set_hl(0, group, { underline = true })
   end
 end
 

@@ -5,9 +5,9 @@
 // relative to the file that names them.
 //
 // Video and audio seek with Range requests, which this answers with 206s.
-// `registerFileScheme` must run before app ready.
+// FILE_SCHEME is declared with the others in main/index.ts.
 
-import { protocol } from 'electron'
+import { protocol, type CustomScheme } from 'electron'
 import { createReadStream } from 'fs'
 import { realpath, stat } from 'fs/promises'
 import { extname, join } from 'path'
@@ -51,20 +51,15 @@ interface ByteRange {
   end: number
 }
 
-/** Declares the scheme's privileges; must run before app ready. */
-export function registerFileScheme(): void {
-  protocol.registerSchemesAsPrivileged([
-    {
-      scheme: 'grove-file',
-      privileges: {
-        standard: true,
-        secure: true,
-        supportFetchAPI: true,
-        corsEnabled: true,
-        stream: true
-      }
-    }
-  ])
+export const FILE_SCHEME: CustomScheme = {
+  scheme: 'grove-file',
+  privileges: {
+    standard: true,
+    secure: true,
+    supportFetchAPI: true,
+    corsEnabled: true,
+    stream: true
+  }
 }
 
 /** Serves grove-file:// from the worktrees `findWorktree` knows; returns the inverse. */

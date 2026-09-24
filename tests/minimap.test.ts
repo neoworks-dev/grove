@@ -4,6 +4,9 @@ import {
   computeGeometry,
   toplineForY,
   clampCursorLine,
+  runsForRows,
+  rowForLine,
+  lineForRow,
   LINE_PITCH
 } from '../src/renderer/src/lib/minimap'
 
@@ -64,5 +67,36 @@ describe('clampCursorLine', () => {
     expect(clampCursorLine(5, 40, 20, 100)).toBe(40)
     expect(clampCursorLine(80, 40, 20, 100)).toBe(59)
     expect(clampCursorLine(45, 40, 20, 100)).toBe(45)
+  })
+})
+
+describe('diff-mode rows', () => {
+  // Line 1, a filler row, line 2, a fold hiding lines 3–9, line 10.
+  const rows = [1, 0, 2, -3, 10]
+
+  test('runsForRows keeps line runs, flattens folds, empties fillers', () => {
+    const run = (color: string) => [{ fromCol: 0, toCol: 4, color }]
+    const lines = Array.from({ length: 10 }, (_, index) => run(`#${index + 1}`))
+    const out = runsForRows(lines, rows, '#fold')
+    expect(out[0]).toEqual(run('#1'))
+    expect(out[1]).toEqual([])
+    expect(out[2]).toEqual(run('#2'))
+    expect(out[3][0].color).toBe('#fold')
+    expect(out[4]).toEqual(run('#10'))
+    expect(runsForRows(lines, rows, null)[3]).toEqual([])
+  })
+
+  test('rowForLine finds a line, or the fold hiding it', () => {
+    expect(rowForLine(rows, 1)).toBe(1)
+    expect(rowForLine(rows, 2)).toBe(3)
+    expect(rowForLine(rows, 5)).toBe(4)
+    expect(rowForLine(rows, 10)).toBe(5)
+  })
+
+  test('lineForRow maps fillers to the line below and folds to their start', () => {
+    expect(lineForRow(rows, 2)).toBe(2)
+    expect(lineForRow(rows, 4)).toBe(3)
+    expect(lineForRow(rows, 5)).toBe(10)
+    expect(lineForRow([1, 2, 0], 3)).toBe(2)
   })
 })

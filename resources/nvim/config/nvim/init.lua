@@ -28,6 +28,10 @@ vim.opt.backupdir:remove('.')
 -- prompt on attach (which aborts the session). Grove owns buffer persistence.
 vim.opt.swapfile = false
 vim.opt.mouse = 'a'
+-- One line per wheel step: grove measures the wheel's travel and sends one
+-- step per line of it (lib/nvim/wheel.ts), so a touchpad scrolls as far as
+-- the fingers moved rather than three lines per event.
+vim.opt.mousescroll = 'ver:1,hor:1'
 -- Route yanks and puts through the desktop clipboard. Without this the '+'
 -- register is never touched, so nothing yanked in an editor pane can be pasted
 -- outside grove. nvim picks its own provider (wl-copy, xclip, pbcopy, win32yank);
@@ -77,11 +81,35 @@ vim.api.nvim_create_autocmd('SwapExists', {
 -- just leaves the editor plugin-less.
 local dataDir = vim.fn.stdpath('data')
 local lazyPath = vim.fs.joinpath(dataDir, 'lazy', 'lazy.nvim')
-if not (vim.uv or vim.loop).fs_stat(lazyPath) then
+-- Checked by its entry file, not by the directory: a clone cut short (the app
+-- quit mid-bootstrap) leaves the directory behind empty, and that alone must
+-- not count as installed or no plugin ever loads again.
+local lazyEntry = vim.fs.joinpath(lazyPath, 'lua', 'lazy', 'init.lua')
+
+-- Clone lazy.nvim beside its final path and move it into place once complete.
+-- Every pane is its own nvim and they start together on a fresh profile, so
+-- several run this at once; cloning straight into the shared path had them
+-- clobber each other's half-written checkout.
+local function bootstrapLazy()
+  local uv = vim.uv or vim.loop
+  -- Outside lazy's plugin root, so a leftover never shows up as a plugin.
+  local staging = vim.fs.joinpath(dataDir, 'lazy-bootstrap-' .. vim.fn.getpid())
+  vim.fn.delete(staging, 'rf')
   vim.fn.system({
     'git', 'clone', '--filter=blob:none', '--branch=stable',
-    'https://github.com/folke/lazy.nvim.git', lazyPath
+    'https://github.com/folke/lazy.nvim.git', staging
   })
+  local cloned = uv.fs_stat(vim.fs.joinpath(staging, 'lua', 'lazy', 'init.lua'))
+  -- Another nvim may have finished first while this one was cloning.
+  if cloned and not uv.fs_stat(lazyEntry) then
+    vim.fn.delete(lazyPath, 'rf')
+    uv.fs_rename(staging, lazyPath)
+  end
+  vim.fn.delete(staging, 'rf')
+end
+
+if not (vim.uv or vim.loop).fs_stat(lazyEntry) then
+  bootstrapLazy()
 end
 
 -- Accepts the Copilot ghost-text suggestion currently on screen. Returns true
@@ -96,7 +124,7 @@ local function acceptCopilotSuggestion()
   return true
 end
 
-if (vim.uv or vim.loop).fs_stat(lazyPath) then
+if (vim.uv or vim.loop).fs_stat(lazyEntry) then
   vim.opt.rtp:prepend(lazyPath)
   pcall(function()
     require('lazy').setup({
@@ -104,6 +132,66 @@ if (vim.uv or vim.loop).fs_stat(lazyPath) then
       -- expandtab from it, so a tab-indented project keeps its tabs and a
       -- 4-space one keeps its four. No config, no keys — it just observes.
       { 'tpope/vim-sleuth' },
+
+      -- The code theme. Not applied here: grove_apply_theme (below) sets it up
+      -- with grove's own backgrounds and picks the flavour from the app's
+      -- light/dark scheme, and re-runs whenever the app theme changes.
+      { 'catppuccin/nvim', name = 'catppuccin', lazy = false, priority = 1000 },
+
+      -- snacks.nvim, for two of its modules only: indent guides with the
+      -- enclosing scope drawn brighter, and animated scrolling so a jump of a
+      -- page (or a wheel notch) glides instead of snapping. Every other module
+      -- stays off unless it is enabled here.
+      {
+        'folke/snacks.nvim',
+        lazy = false,
+        priority = 900,
+        opts = {
+          indent = { enabled = true },
+          scroll = { enabled = true }
+        }
+      },
+
+      -- Same-token highlighting: every other occurrence of the word under the
+      -- cursor, from the LSP where one is attached and treesitter or a plain
+      -- match otherwise. The underline is added in grove_apply_theme.
+      {
+        'RRethy/vim-illuminate',
+        event = { 'BufReadPost', 'BufNewFile' },
+        opts = {
+          delay = 200,
+          large_file_cutoff = 2000,
+          large_file_overrides = { providers = { 'lsp' } }
+        },
+        config = function(_, opts)
+          require('illuminate').configure(opts)
+        end
+      },
+
+      -- noice.nvim, for the command line only: `:` and `/` open as a popup in
+      -- the middle of the editor instead of on its last row. Messages stay in
+      -- nvim's own message grid, because that is where grove recognises a
+      -- blocking prompt (see blockingPrompt.ts); handing them to noice would
+      -- leave a prompt no pane can see. Its LSP hover, signature and progress
+      -- takeovers stay off — grove and blink already draw those.
+      {
+        'folke/noice.nvim',
+        event = 'VeryLazy',
+        dependencies = { 'MunifTanjim/nui.nvim' },
+        opts = {
+          cmdline = { enabled = true, view = 'cmdline_popup' },
+          messages = { enabled = false },
+          popupmenu = { enabled = true, backend = 'nui' },
+          notify = { enabled = false },
+          lsp = {
+            progress = { enabled = false },
+            hover = { enabled = false },
+            signature = { enabled = false },
+            message = { enabled = false }
+          },
+          presets = { command_palette = true }
+        }
+      },
 
       -- flash.nvim: quick label-based motion. `s`/`S` jump by on-screen labels.
       {
@@ -345,6 +433,15 @@ if (vim.uv or vim.loop).fs_stat(lazyPath) then
   end)
 end
 
+-- Each diagnostic's message at the end of its line, in the severity's colour
+-- behind a dot, on top of the underline. Worst first where several share a line.
+vim.diagnostic.config({
+  underline = true,
+  update_in_insert = false,
+  severity_sort = true,
+  virtual_text = { spacing = 4, source = 'if_many', prefix = '●' }
+})
+
 -- Push LSP/lint diagnostics to grove's native Diagnostics pane. rpcnotify(0,…)
 -- broadcasts to grove's msgpack channel, where the main process forwards it to
 -- the renderer. Debounced so a burst of DiagnosticChanged (e.g. a multi-file
@@ -408,8 +505,6 @@ vim.api.nvim_create_autocmd('LspAttach', {
   end
 })
 
--- Applied by grove over RPC (nvim_exec_lua) on create and on theme change.
--- `palette` is a subset of grove's ThemePalette: hex strings.
 -- Mix two "#rrggbb" colors; ratio 0 = base, 1 = tint. Used to derive subtle
 -- diff line backgrounds from the saturated context colors.
 local function blend(base, tint, ratio)
@@ -425,38 +520,59 @@ local function blend(base, tint, ratio)
   return string.format('#%02x%02x%02x', mix(br, tr), mix(bg, tg), mix(bb, tb))
 end
 
--- The editor sits in a pane next to grove's own panes, so it paints on the
--- surface pane background rather than the canvas underneath them; floats and
--- menus step up to the elevated level so they still read as raised.
-_G.grove_apply_theme = function(palette)
+-- Load Catppuccin as the code theme: Mocha on a dark app theme, Latte on a
+-- light one. Its background shades are swapped for grove's, so the buffer sits
+-- on the same surface as the panes around it whatever the app theme is.
+-- Returns false when the plugin is not installed (first launch offline), and
+-- the caller falls back to syntax colours derived from the app palette.
+local function apply_code_theme(palette, scheme)
+  local function hex(value)
+    if type(value) == 'string' and value:match('^#%x%x%x%x%x%x$') then
+      return value
+    end
+    return nil
+  end
+  local ok, catppuccin = pcall(require, 'catppuccin')
+  if not ok then
+    return false
+  end
+  local flavour = 'mocha'
+  if scheme == 'light' then
+    flavour = 'latte'
+  end
+  catppuccin.setup({
+    flavour = flavour,
+    color_overrides = {
+      [flavour] = { base = hex(palette.surface), mantle = hex(palette.bgElevated), crust = hex(palette.bg) }
+    },
+    integrations = {
+      blink_cmp = true,
+      flash = true,
+      gitsigns = true,
+      illuminate = { enabled = true },
+      mason = true,
+      noice = true,
+      snacks = { enabled = true, indent_scope_color = 'overlay2' },
+      treesitter = true
+    }
+  })
+  return pcall(vim.cmd.colorscheme, 'catppuccin-' .. flavour)
+end
+
+-- Syntax colours from the app palette's context colours, for when the code
+-- theme could not be loaded.
+local function apply_palette_syntax(palette)
   local set = vim.api.nvim_set_hl
-  set(0, 'Normal', { fg = palette.text, bg = palette.surface })
-  set(0, 'NormalNC', { fg = palette.text, bg = palette.surface })
-  set(0, 'NormalFloat', { fg = palette.text, bg = palette.bgElevated })
-  set(0, 'FloatBorder', { fg = palette.border, bg = palette.bgElevated })
   set(0, 'Visual', { bg = palette.borderStrong })
   set(0, 'LineNr', { fg = palette.textDim })
   set(0, 'CursorLine', { bg = palette.surfaceHover })
   set(0, 'CursorLineNr', { fg = palette.textMuted })
-  -- One fixed pair, not the colours of the cell underneath: the cursor has to
-  -- be findable on a comment as easily as on a keyword.
-  set(0, 'Cursor', { fg = palette.primaryFg, bg = palette.primary })
-  set(0, 'lCursor', { fg = palette.primaryFg, bg = palette.primary })
-  set(0, 'TermCursor', { fg = palette.primaryFg, bg = palette.primary })
-  set(0, 'SignColumn', { bg = palette.surface })
-  set(0, 'EndOfBuffer', { fg = palette.surface })
-  set(0, 'WinSeparator', { fg = palette.border })
-  set(0, 'Pmenu', { fg = palette.text, bg = palette.bgElevated })
-  set(0, 'PmenuSel', { fg = palette.textInverse, bg = palette.primary })
-  set(0, 'PmenuSbar', { bg = palette.bgElevated })
-  set(0, 'PmenuThumb', { bg = palette.borderStrong })
   set(0, 'Search', { fg = palette.textInverse, bg = palette.ctxAmber })
   set(0, 'IncSearch', { fg = palette.textInverse, bg = palette.primary })
   set(0, 'CurSearch', { fg = palette.textInverse, bg = palette.primary })
   set(0, 'MatchParen', { fg = palette.ctxAmber, bold = true })
   set(0, 'ErrorMsg', { fg = palette.ctxRed })
   set(0, 'WarningMsg', { fg = palette.ctxAmber })
-  set(0, 'MsgArea', { fg = palette.textMuted, bg = palette.surface })
   set(0, 'Question', { fg = palette.ctxGreen })
   set(0, 'Directory', { fg = palette.ctxBlue })
   set(0, 'Title', { fg = palette.ctxViolet, bold = true })
@@ -477,6 +593,42 @@ _G.grove_apply_theme = function(palette)
   set(0, 'PreProc', { fg = palette.ctxPink })
   set(0, 'Special', { fg = palette.ctxPink })
   set(0, 'Delimiter', { fg = palette.textMuted })
+end
+
+-- Same-token highlights are an underline and nothing else: no fill over the
+-- code theme's, and no colour of their own, so the underline is drawn in the
+-- colour of the token it sits under.
+local function underline_same_token()
+  for _, group in ipairs({ 'IlluminatedWordText', 'IlluminatedWordRead', 'IlluminatedWordWrite' }) do
+    vim.api.nvim_set_hl(0, group, { underline = true })
+  end
+end
+
+-- The groups that belong to grove's chrome rather than to the code: the
+-- surfaces, floats and menus, the cursor, the diff fills the review flow paints
+-- with, and the terminal colours. Applied last, over the code theme.
+-- The editor sits in a pane next to grove's own panes, so it paints on the
+-- surface pane background rather than the canvas underneath them; floats and
+-- menus step up to the elevated level so they still read as raised.
+local function apply_chrome(palette)
+  local set = vim.api.nvim_set_hl
+  set(0, 'Normal', { fg = palette.text, bg = palette.surface })
+  set(0, 'NormalNC', { fg = palette.text, bg = palette.surface })
+  set(0, 'NormalFloat', { fg = palette.text, bg = palette.bgElevated })
+  set(0, 'FloatBorder', { fg = palette.border, bg = palette.bgElevated })
+  -- One fixed pair, not the colours of the cell underneath: the cursor has to
+  -- be findable on a comment as easily as on a keyword.
+  set(0, 'Cursor', { fg = palette.primaryFg, bg = palette.primary })
+  set(0, 'lCursor', { fg = palette.primaryFg, bg = palette.primary })
+  set(0, 'TermCursor', { fg = palette.primaryFg, bg = palette.primary })
+  set(0, 'SignColumn', { bg = palette.surface })
+  set(0, 'EndOfBuffer', { fg = palette.surface })
+  set(0, 'WinSeparator', { fg = palette.border })
+  set(0, 'Pmenu', { fg = palette.text, bg = palette.bgElevated })
+  set(0, 'PmenuSel', { fg = palette.textInverse, bg = palette.primary })
+  set(0, 'PmenuSbar', { bg = palette.bgElevated })
+  set(0, 'PmenuThumb', { bg = palette.borderStrong })
+  set(0, 'MsgArea', { fg = palette.textMuted, bg = palette.surface })
   -- Full-line diff fills: tint the base bg toward green/red so changed lines
   -- read at a glance without washing out the syntax-colored text on top.
   set(0, 'DiffAdd', { bg = blend(palette.surface, palette.ctxGreen, 0.22) })
@@ -500,6 +652,26 @@ _G.grove_apply_theme = function(palette)
   vim.g.terminal_color_13 = palette.ctxViolet
   vim.g.terminal_color_14 = palette.primary
   vim.g.terminal_color_15 = palette.text
+end
+
+-- Applied by grove over RPC (nvim_exec_lua) on attach and on every app theme
+-- change: the code theme first, then grove's chrome over it. `palette` is a
+-- subset of grove's ThemePalette (hex strings), `scheme` is 'dark' or 'light'.
+_G.grove_apply_theme = function(palette, scheme)
+  if apply_code_theme(palette, scheme) then
+    underline_same_token()
+  else
+    apply_palette_syntax(palette)
+  end
+  apply_chrome(palette)
+end
+
+-- Grove can send its theme while this file is still running: nvim answers RPC
+-- while lazy installs missing plugins above, before grove_apply_theme exists.
+-- Grove leaves the theme in vim.g.grove_theme for exactly that case, and it is
+-- applied here, once the plugins (and so the code theme) are in place.
+if type(vim.g.grove_theme) == 'table' then
+  _G.grove_apply_theme(vim.g.grove_theme.palette, vim.g.grove_theme.scheme)
 end
 
 -- Push the named code scopes enclosing the cursor (function/class/etc, outer
@@ -552,6 +724,90 @@ vim.api.nvim_create_autocmd({ 'CursorMoved', 'CursorMovedI', 'BufEnter' }, {
     end, 120)
   end
 })
+
+-- Right-click menu. nvim would draw its PopUp menu as grid cells, which grove
+-- renders but cannot make clickable, so right-click instead does what
+-- 'mousemodel' popup_setpos does to the cursor, lets the MenuPopup autocmds
+-- enable the entries that apply here, and hands the entries to grove to show
+-- as a real menu. Grove answers with grove_run_popup_item.
+
+-- The PopUp menu's mode for the current mode: visual, insert or normal.
+local function popup_mode()
+  local mode = vim.fn.mode()
+  if mode:match('^[vV\22sS\19]') then
+    return 'v'
+  end
+  if mode == 'i' then
+    return 'i'
+  end
+  return 'n'
+end
+
+-- True when a mouse position falls inside the current visual selection.
+local function inside_selection(mouse)
+  local start_line = vim.fn.line('v')
+  local end_line = vim.fn.line('.')
+  if start_line > end_line then
+    start_line, end_line = end_line, start_line
+  end
+  return mouse.line >= start_line and mouse.line <= end_line
+end
+
+-- Move the cursor to the clicked cell, leaving a visual selection alone when
+-- the click lands inside it so its Cut/Copy entries act on it.
+local function place_cursor_at_mouse(mouse, mode)
+  if mouse.winid == 0 or mouse.line == 0 then
+    return mode
+  end
+  if mode == 'v' and inside_selection(mouse) then
+    return mode
+  end
+  if mode == 'v' then
+    vim.cmd('normal! \27')
+    mode = 'n'
+  end
+  vim.api.nvim_set_current_win(mouse.winid)
+  pcall(vim.api.nvim_win_set_cursor, mouse.winid, { mouse.line, math.max(0, mouse.column - 1) })
+  return mode
+end
+
+-- The PopUp entries for a mode, in menu order. A separator is `{ separator = true }`.
+local function popup_items(mode)
+  local items = {}
+  for _, name in ipairs(vim.fn.menu_info('PopUp', mode).submenus or {}) do
+    local entry = vim.fn.menu_info('PopUp.' .. name, mode)
+    if name:match('^%-.*%-$') then
+      items[#items + 1] = { separator = true }
+    elseif entry.rhs ~= nil and entry.rhs ~= '' then
+      items[#items + 1] = { name = name, enabled = entry.enabled ~= false and entry.enabled ~= 0 }
+    end
+  end
+  return items
+end
+
+local function grove_right_click()
+  local mode = place_cursor_at_mouse(vim.fn.getmousepos(), popup_mode())
+  vim.api.nvim_exec_autocmds('MenuPopup', { pattern = mode, modeline = false })
+  vim.rpcnotify(0, 'grove_popup_menu', { mode = mode, items = popup_items(mode) })
+end
+
+vim.keymap.set({ 'n', 'x', 'i' }, '<RightMouse>', grove_right_click, { desc = 'Right-click menu' })
+-- The release would otherwise extend a selection to wherever the pointer is.
+vim.keymap.set({ 'n', 'x', 'i' }, '<RightRelease>', '<Nop>')
+
+-- Run the PopUp entry grove's menu picked, in the mode the menu was opened for.
+_G.grove_run_popup_item = function(name, mode)
+  local entry = vim.fn.menu_info('PopUp.' .. name, mode)
+  if entry.rhs == nil or entry.rhs == '' then
+    return
+  end
+  local keys = vim.api.nvim_replace_termcodes(entry.rhs, true, false, true)
+  local flags = 'm'
+  if entry.noremenu then
+    flags = 'n'
+  end
+  vim.api.nvim_feedkeys(keys, flags, false)
+end
 
 -- A dependency-free popup terminal for exercising (and using) Grove's native
 -- multigrid float surface. The terminal buffer and shell process survive while

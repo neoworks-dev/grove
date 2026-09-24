@@ -26,6 +26,7 @@ import type {
   ConfirmationResult,
   ContentBlock,
   CustomEndpoint,
+  ImageBlock,
   ModelEntry,
   ModelRoute,
   ProviderCredential,
@@ -102,7 +103,12 @@ const TOOL_DISPLAY: Record<string, ToolDisplay> = {
   Bash: { input: 'command' },
   BashOutput: { input: 'hidden' },
   // The file is already the header; its contents are the point.
-  Read: { input: 'hidden', result: 'code', languageFrom: 'file_path' }
+  Read: { input: 'hidden', result: 'code', languageFrom: 'file_path' },
+  // Each change to a file is worth its own row; the WRITE_TOOLS above.
+  Write: { edits: true },
+  Edit: { edits: true },
+  MultiEdit: { edits: true },
+  NotebookEdit: { edits: true }
 }
 
 /** Thinking levels mapped onto the SDK's token budget. `off` disables it. */
@@ -443,7 +449,10 @@ class ClaudeRun implements HarnessRun {
       return
     }
     if (message.type === 'user') {
-      this.report(message.parent_tool_use_id, toolResultEvents(message.message.content))
+      const events = toolResultEvents(message.message.content, (image) =>
+        this.options.storeImage(image)
+      )
+      this.report(message.parent_tool_use_id, events)
       return
     }
     if (message.type === 'result') this.handleResult(message)
@@ -1133,17 +1142,42 @@ export function assistantEvents(content: unknown): ServerEventBody[] {
   ]
 }
 
-/** The transcript events a user message carries: what the tools it ran answered. */
-export function toolResultEvents(content: unknown): ServerEventBody[] {
+/**
+ * The transcript events a user message carries: what the tools it ran answered.
+ * Images among a result's blocks go to `storeImage` and travel as blob references.
+ */
+export function toolResultEvents(
+  content: unknown,
+  storeImage?: (image: PromptAttachment) => ImageBlock
+): ServerEventBody[] {
   return blocksOf(content)
     .filter((block) => block.type === 'tool_result')
-    .map((block) => ({
-      type: 'agent.tool_result',
-      toolUseId: String(block.tool_use_id),
-      name: '',
-      content: textOf(block.content),
-      isError: block.is_error === true
-    }))
+    .map((block) => {
+      const event: Extract<ServerEventBody, { type: 'agent.tool_result' }> = {
+        type: 'agent.tool_result',
+        toolUseId: String(block.tool_use_id),
+        name: '',
+        content: textOf(block.content),
+        isError: block.is_error === true
+      }
+      const images = imagesOf(block.content)
+      if (images.length > 0 && storeImage) {
+        event.images = images.map(storeImage)
+      }
+      return event
+    })
+}
+
+/** The base64 images among a tool result's blocks. */
+function imagesOf(content: unknown): PromptAttachment[] {
+  const images: PromptAttachment[] = []
+  for (const block of blocksOf(content)) {
+    if (block.type !== 'image') continue
+    const source = block.source as Record<string, unknown> | undefined
+    if (source?.type !== 'base64') continue
+    images.push({ mediaType: String(source.media_type), data: String(source.data) })
+  }
+  return images
 }
 
 // What Claude's Task tool names the agent it starts, and the work it gives it.

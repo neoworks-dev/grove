@@ -128,10 +128,12 @@
 
     <div class="mt-1.5 text-xs text-default">{active.question}</div>
 
+    <!-- Only picked options are marked, so a pointer resting over the card by
+         accident doesn't make another one look picked. -->
     <div class="mt-2 flex flex-col">
       {#each active.options as option, optionIndex (option.label)}
         <button
-          class="flex items-baseline gap-3 rounded-md px-2 py-1.5 text-left text-xs hover:bg-hover"
+          class="flex items-baseline gap-3 rounded-md px-2 py-1.5 text-left text-xs"
           class:bg-hover={isPicked(active, option.label)}
           onclick={() => pick(active, option.label)}
         >

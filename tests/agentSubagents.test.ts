@@ -285,6 +285,37 @@ describe('what a Claude message carries', () => {
     ])
   })
 
+  test('an image a tool returned is stored and travels as a blob reference', () => {
+    const content = [
+      {
+        type: 'tool_result',
+        tool_use_id: 'toolu_1',
+        content: [
+          { type: 'text', text: 'screenshot taken' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0K' } }
+        ]
+      }
+    ]
+    const stored: string[] = []
+
+    const events = toolResultEvents(content, (image) => {
+      stored.push(`${image.mediaType}:${image.data}`)
+      return { type: 'image', ref: 'blob-1', mediaType: image.mediaType }
+    })
+
+    expect(stored).toEqual(['image/png:iVBORw0K'])
+    expect(events).toEqual([
+      {
+        type: 'agent.tool_result',
+        toolUseId: 'toolu_1',
+        name: '',
+        content: 'screenshot taken',
+        isError: false,
+        images: [{ type: 'image', ref: 'blob-1', mediaType: 'image/png' }]
+      }
+    ])
+  })
+
   test('deltas stream as text and thinking separately', () => {
     const text = { type: 'content_block_delta', delta: { type: 'text_delta', text: 'hello' } }
     const thinking = {

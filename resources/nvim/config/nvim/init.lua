@@ -103,6 +103,9 @@ local function bootstrapLazy()
   -- Another nvim may have finished first while this one was cloning.
   if cloned and not uv.fs_stat(lazyEntry) then
     vim.fn.delete(lazyPath, 'rf')
+    -- On a fresh profile nothing has made lazy's plugin root yet, and a rename
+    -- into a missing directory fails, leaving the editor without plugins.
+    vim.fn.mkdir(vim.fs.dirname(lazyPath), 'p')
     uv.fs_rename(staging, lazyPath)
   end
   vim.fn.delete(staging, 'rf')

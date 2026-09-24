@@ -27,9 +27,8 @@
 /* ── Bundled Nerd Font ─────────────────────────────────────────────
    JetBrains Mono, Nerd Font "Mono" patch (icons forced to single-cell
    width so they align on the terminal grid). Bundled so glyphs render
-   regardless of what the host has installed; appended to --font-mono as
-   a fallback, so it only fills codepoints the primary mono font lacks
-   (the Nerd icon Private Use Area). */
+   regardless of what the host has installed. It heads --font-mono, so the
+   editor, the terminal and every monospaced line of the UI share it. */
 @font-face {
   font-family: 'JetBrainsMono Nerd Font Mono';
   font-style: normal;
@@ -103,7 +102,7 @@
 
 @theme {
   /* ─────────────────────────────────────────────────────────
-   * FONTS — Geist everywhere; Geist Mono for code & numerics
+   * FONTS — Geist everywhere; the bundled nerd font for code & numerics
    * ───────────────────────────────────────────────────────── */
 
   --font-family-sans: var(--font-sans);
@@ -297,8 +296,10 @@
 /* ── Typography ─────────────────────────────────────────────── */
 :root {
   --font-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --font-mono:
-    'Geist Mono', 'JetBrainsMono Nerd Font Mono', ui-monospace, 'SF Mono', 'Roboto Mono', monospace;
+  /* The bundled nerd font first, so every monospaced surface (the nvim and
+     terminal canvases measure this same stack) renders in exactly one font,
+     whatever the host has installed. */
+  --font-mono: 'JetBrainsMono Nerd Font Mono', ui-monospace, monospace;
 
   --text-2xs: 11px;
   --text-xs: 12px;
@@ -648,7 +649,7 @@
  * ═══════════════════════════════════════════════════════════════ */
 
 @layer utilities {
-  /* Geist Mono family — overrides Tailwind's default mono stack. */
+  /* The bundled nerd font — overrides Tailwind's default mono stack. */
   .font-mono {
     font-family: var(--font-mono);
   }

@@ -17,6 +17,7 @@ import { EventHub } from '../src/main/api/events'
 // (ensurePath / AiBridge prompts / per-topic event gating).
 const SELF_GATED = new Set([
   'workspace.readFile',
+  'workspace.readBytes',
   'workspace.readExcerpt',
   'workspace.writeFile',
   'ai.registerMcpServer',

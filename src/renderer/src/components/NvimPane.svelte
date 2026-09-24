@@ -16,6 +16,8 @@
   import ReviewHeaderBar from './ReviewHeaderBar.svelte'
   import ReviewOverlay from './ReviewOverlay.svelte'
   import NvimGridSurface from './NvimGridSurface.svelte'
+  import FileViewerHost from './FileViewerHost.svelte'
+  import { fileViewers, type FileViewer } from '../lib/fileViewers.svelte'
   import { editorOverlays } from '../lib/editorOverlays.svelte'
   import { review } from '../lib/review.svelte'
   import { settings } from '../lib/settings.svelte'
@@ -225,6 +227,35 @@ return wins
     store.tabs.filter((tab) => tab.worktreeId === store.selectedWorktreeId)
   )
 
+  // The active tab when a registered viewer claims it (an image, a PDF, a
+  // plugin's .docx): the pane shows that viewer in nvim's place, and nvim keeps
+  // its session, hidden, for the next text tab.
+  const activeViewer = $derived(viewerTabFor(store.activeTabPath))
+  let viewerHost = $state<FileViewerHost>()
+
+  /** The viewer showing `path` in the selected worktree, or null for a text file. */
+  function viewerTabFor(
+    path: string | null
+  ): { worktreeId: string; path: string; viewer: FileViewer } | null {
+    const worktreeId = store.selectedWorktreeId
+    if (path === null || worktreeId === null) return null
+    const viewer = fileViewers.viewerFor(path)
+    if (viewer === null) return null
+    return { worktreeId, path, viewer }
+  }
+
+  /** Whether a viewer rather than nvim shows `path`. */
+  function hasViewer(path: string): boolean {
+    return fileViewers.viewerFor(path) !== null
+  }
+
+  /** The file nvim should open on start: the active tab, unless a viewer shows it. */
+  function initialNvimFile(): string | null {
+    const path = store.activeTabPath
+    if (path === null || hasViewer(path)) return null
+    return path
+  }
+
   // Nothing open anywhere → cover the editor with the empty state instead of
   // showing nvim's blank scratch buffer. The session stays alive underneath so
   // opening a file is instant.
@@ -280,7 +311,11 @@ return wins
    * back to. A diff is left first: deleting the file's buffer closes its window
    * and would leave the diff's base window as the one still on screen.
    */
-  async function deleteBuffers(id: string, paths: string[], nextPath: string | null): Promise<void> {
+  async function deleteBuffers(
+    id: string,
+    paths: string[],
+    nextPath: string | null
+  ): Promise<void> {
     await leaveDiff(id, nextPath ?? '').catch(() => {})
     for (const path of paths) {
       if (path === lastPushedPath) lastPushedPath = null
@@ -700,7 +735,7 @@ end, ns)
     }
     session = new NvimCanvasSession(
       elements,
-      { leafId, font, initialFile: () => store.activeTabPath },
+      { leafId, font, initialFile: initialNvimFile },
       sessionCallbacks()
     )
     registeredLeafId = leafId
@@ -723,10 +758,33 @@ end, ns)
 
   // Spatial pane nav focuses the leaf container; pull focus into the input so
   // keys reach nvim. Skipped while the empty state covers the pane — typing into
-  // a buffer nobody can see is worse than dropping the keys.
+  // a buffer nobody can see is worse than dropping the keys. A file viewer
+  // hides nvim the same way, so it takes the focus instead.
   $effect(() => {
-    if (keymap.activePane === leafId && showEditor) session?.focus()
+    if (keymap.activePane !== leafId || !showEditor) return
+    if (activeViewer !== null) {
+      viewerHost?.focus()
+      return
+    }
+    session?.focus()
   })
+
+  // Where focusing this pane puts the keyboard: the viewer when one is showing,
+  // nvim's input otherwise. Pane navigation and a closing overlay both come
+  // through here, so neither leaves focus on the leaf while keys belong inside.
+  $effect(() => keymap.registerPaneFocus(leafId, focusFromNavigation))
+
+  /** Focuses what this pane shows; false leaves it to the leaf, e.g. under the empty state. */
+  function focusFromNavigation(): boolean {
+    if (!showEditor) return false
+    if (activeViewer !== null && viewerHost) {
+      viewerHost.focus()
+      return true
+    }
+    if (!session) return false
+    session.focus()
+    return true
+  }
 
   // Per-pane font zoom: re-measure nvim's cell when this pane's scale changes.
   $effect(() => {
@@ -771,6 +829,9 @@ end, ns)
       await review.cancel()
     }
 
+    // A viewer shows this one; nvim would only load its bytes as text.
+    if (hasViewer(path)) return
+
     // Scratch tabs map to a live nvim buffer, not a file: switch the window to
     // it (only in the pane that owns the buffer) rather than :edit-ing a path.
     const scratch = scratchFor(path)
@@ -808,6 +869,7 @@ end, ns)
     const id = session?.id
     if (!id || !target) return
     store.revealTarget = null
+    if (hasViewer(target.path)) return
     lastPushedPath = target.path
     void revealLine(target.path, target.line)
   })
@@ -856,128 +918,147 @@ end, ns)
   {/if}
   <ReviewHeaderBar {leafId} />
 
-  <div
-    bind:this={hostEl}
-    data-nvim-ui={nvimId ?? undefined}
-    class="relative min-h-0 flex-1 overflow-hidden bg-surface"
-    role="none"
-  >
-    {#if unavailable}
-      <div class="flex h-full items-center justify-center text-dim">
-        Neovim runtime missing — run `bun scripts/fetch-nvim.ts` and reopen this pane.
-      </div>
-    {:else}
-      <!-- Absolute, not `h-full w-full`: with a window embedded beside it the
+  <!-- nvim or a file viewer, never both: while a viewer shows, nvim's host is
+       invisible — unfocusable, floats and all — but keeps its size, so the
+       session neither resizes nor loses its buffers. -->
+  <div class="relative min-h-0 flex-1">
+    <div
+      bind:this={hostEl}
+      data-nvim-ui={nvimId ?? undefined}
+      class="absolute inset-0 overflow-hidden bg-surface"
+      class:invisible={activeViewer !== null && showEditor}
+      role="none"
+    >
+      {#if unavailable}
+        <div class="flex h-full items-center justify-center text-dim">
+          Neovim runtime missing — run `bun scripts/fetch-nvim.ts` and reopen this pane.
+        </div>
+      {:else}
+        <!-- Absolute, not `h-full w-full`: with a window embedded beside it the
            canvas covers the primary window's box rather than the whole pane,
            and the session puts it there. -->
-      <canvas bind:this={canvasEl} class="absolute left-0 top-0 block"></canvas>
-      {#if session}
-        {#each embeddedWindows as embedded (embedded.grid)}
-          <div class="absolute overflow-hidden" style={embeddedStyle(embedded)}>
-            <NvimGridSurface
-              {session}
-              grid={embedded.grid}
-              win={embedded.win}
-              class="pointer-events-auto"
-            />
-          </div>
-        {/each}
-      {/if}
-      {#if session && floatingWindows.length > 0}
-        {#if modalFloatingWindows.length > 0}
-          <div
-            class="absolute inset-0 z-30 bg-black/25"
-            role="presentation"
-            onclick={(e) => {
-              e.stopPropagation()
-              for (const floating of modalFloatingWindows) session?.closeWindow(floating.win)
-            }}
-            onmousedown={(e) => e.stopPropagation()}
-          ></div>
+        <canvas bind:this={canvasEl} class="absolute left-0 top-0 block"></canvas>
+        {#if session}
+          {#each embeddedWindows as embedded (embedded.grid)}
+            <div class="absolute overflow-hidden" style={embeddedStyle(embedded)}>
+              <NvimGridSurface
+                {session}
+                grid={embedded.grid}
+                win={embedded.win}
+                class="pointer-events-auto"
+              />
+            </div>
+          {/each}
         {/if}
-        {#each floatingWindows as floating (floating.grid)}
-          <div
-            class={isTransientFloat(floating)
-              ? 'absolute overflow-hidden'
-              : 'group absolute overflow-hidden rounded-lg border border-line bg-surface shadow-2xl'}
-            style={floatStyle(floating)}
-          >
-            {#if !isTransientFloat(floating)}
-              <button
-                class="absolute right-1.5 top-1.5 z-40 flex h-5 w-5 items-center justify-center rounded text-xs text-dim opacity-60 transition-opacity hover:bg-hover hover:text-default hover:opacity-100"
-                title="Close window"
-                onclick={(e) => {
-                  e.stopPropagation()
-                  session?.closeWindow(floating.win)
-                }}
-                onmousedown={(e) => e.stopPropagation()}
-              >
-                ✕
-              </button>
-            {/if}
-            <NvimGridSurface
-              {session}
-              grid={floating.grid}
-              win={floating.win}
-              class="pointer-events-auto"
-            />
-          </div>
-        {/each}
-      {/if}
-      {#if nvimId}
-        <Minimap
-          {nvimId}
-          tick={minimapTick}
-          theme={store.activeTheme}
-          {diffMarkers}
-          class="absolute right-0 top-0 z-20 h-full w-[64px] border-l border-line"
-        />
-      {/if}
-      <div
-        bind:this={inputEl}
-        contenteditable="true"
-        class="absolute left-0 top-0 h-0 w-0 overflow-hidden opacity-0 outline-none"
-        role="textbox"
-        tabindex="0"
-        aria-label="Neovim input"
-      ></div>
-      <!-- Which-key rides over the buffer it applies to, clear of the minimap.
-           Only the focused pane shows it, so split editors don't each draw one. -->
-      {#if keymap.activeLeafId === leafId}
-        <div class="pointer-events-none absolute bottom-3 right-[72px] z-30">
-          <WhichKey inline />
-        </div>
-      {/if}
-      <InlineEditPrompt {leafId} />
-      <InlineReviewOverlay {leafId} tick={minimapTick} />
-      <ReviewOverlay {leafId} tick={minimapTick} />
-      <!-- Whatever a plugin has put on the buffer: the GitHub pane's review
+        {#if session && floatingWindows.length > 0}
+          {#if modalFloatingWindows.length > 0}
+            <div
+              class="absolute inset-0 z-30 bg-black/25"
+              role="presentation"
+              onclick={(e) => {
+                e.stopPropagation()
+                for (const floating of modalFloatingWindows) session?.closeWindow(floating.win)
+              }}
+              onmousedown={(e) => e.stopPropagation()}
+            ></div>
+          {/if}
+          {#each floatingWindows as floating (floating.grid)}
+            <div
+              class={isTransientFloat(floating)
+                ? 'absolute overflow-hidden'
+                : 'group absolute overflow-hidden rounded-lg border border-line bg-surface shadow-2xl'}
+              style={floatStyle(floating)}
+            >
+              {#if !isTransientFloat(floating)}
+                <button
+                  class="absolute right-1.5 top-1.5 z-40 flex h-5 w-5 items-center justify-center rounded text-xs text-dim opacity-60 transition-opacity hover:bg-hover hover:text-default hover:opacity-100"
+                  title="Close window"
+                  onclick={(e) => {
+                    e.stopPropagation()
+                    session?.closeWindow(floating.win)
+                  }}
+                  onmousedown={(e) => e.stopPropagation()}
+                >
+                  ✕
+                </button>
+              {/if}
+              <NvimGridSurface
+                {session}
+                grid={floating.grid}
+                win={floating.win}
+                class="pointer-events-auto"
+              />
+            </div>
+          {/each}
+        {/if}
+        {#if nvimId}
+          <Minimap
+            {nvimId}
+            tick={minimapTick}
+            theme={store.activeTheme}
+            {diffMarkers}
+            class="absolute right-0 top-0 z-20 h-full w-[64px] border-l border-line"
+          />
+        {/if}
+        <div
+          bind:this={inputEl}
+          contenteditable="true"
+          class="absolute left-0 top-0 h-0 w-0 overflow-hidden opacity-0 outline-none"
+          role="textbox"
+          tabindex="0"
+          aria-label="Neovim input"
+        ></div>
+        <InlineEditPrompt {leafId} />
+        <InlineReviewOverlay {leafId} tick={minimapTick} />
+        <ReviewOverlay {leafId} tick={minimapTick} />
+        <!-- Whatever a plugin has put on the buffer: the GitHub pane's review
            comment box is the first, and it has to open over the line it is
            about. Each decides for itself whether this pane is the one. -->
-      {#each editorOverlays.overlays as overlay (overlay.id)}
-        <overlay.component {leafId} tick={minimapTick} />
-      {/each}
-      {#if !showEditor}
-        <div
-          class="absolute inset-0 z-30 flex flex-col items-center justify-center gap-4 bg-surface text-dim"
-        >
-          <div class="text-sm">No file open</div>
-          <div class="flex flex-wrap justify-center gap-2">
-            <button
-              class="rounded-md border border-line px-3 py-1.5 text-xs hover:bg-hover hover:text-default"
-              onclick={openFileFinder}
-            >
-              Go to File
-            </button>
-            <button
-              class="rounded-md border border-line px-3 py-1.5 text-xs hover:bg-hover hover:text-default"
-              onclick={() => layout.ensurePane('files')}
-            >
-              Explorer
-            </button>
+        {#each editorOverlays.overlays as overlay (overlay.id)}
+          <overlay.component {leafId} tick={minimapTick} />
+        {/each}
+        {#if !showEditor}
+          <div
+            class="absolute inset-0 z-30 flex flex-col items-center justify-center gap-4 bg-surface text-dim"
+          >
+            <div class="text-sm">No file open</div>
+            <div class="flex flex-wrap justify-center gap-2">
+              <button
+                class="rounded-md border border-line px-3 py-1.5 text-xs hover:bg-hover hover:text-default"
+                onclick={openFileFinder}
+              >
+                Go to File
+              </button>
+              <button
+                class="rounded-md border border-line px-3 py-1.5 text-xs hover:bg-hover hover:text-default"
+                onclick={() => layout.ensurePane('files')}
+              >
+                Explorer
+              </button>
+            </div>
           </div>
-        </div>
+        {/if}
       {/if}
+    </div>
+    {#if showEditor && activeViewer !== null}
+      <div class="absolute inset-0">
+        {#key activeViewer.path}
+          <FileViewerHost
+            bind:this={viewerHost}
+            worktreeId={activeViewer.worktreeId}
+            path={activeViewer.path}
+            viewer={activeViewer.viewer}
+          />
+        {/key}
+      </div>
+    {/if}
+    <!-- Which-key rides over the buffer or viewer it applies to, clear of the
+         minimap. Only the focused pane shows it, so split editors don't each
+         draw one. -->
+    {#if keymap.activeLeafId === leafId}
+      <div class="pointer-events-none absolute bottom-3 right-[72px] z-30">
+        <WhichKey inline />
+      </div>
     {/if}
   </div>
 </div>

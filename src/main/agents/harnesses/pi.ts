@@ -365,13 +365,18 @@ class PiRun implements HarnessRun {
       return
     }
     if (event.type === 'tool_execution_end') {
-      this.options.emit({
+      const result: Extract<ServerEventBody, { type: 'agent.tool_result' }> = {
         type: 'agent.tool_result',
         toolUseId: event.toolCallId,
         name: event.toolName,
         content: resultText(event.result),
         isError: event.isError
-      })
+      }
+      const images = resultImages(event.result)
+      if (images.length > 0) {
+        result.images = images.map((image) => this.options.storeImage(image))
+      }
+      this.options.emit(result)
       return
     }
     if (event.type === 'message_end') {
@@ -487,6 +492,19 @@ function resultText(result: unknown): string {
   if (typeof content === 'string') return content
   if (!Array.isArray(content)) return ''
   return content.map(blockText).join('')
+}
+
+/** The images among a tool result's content blocks, which pi carries as base64. */
+function resultImages(result: unknown): PromptAttachment[] {
+  const content = (result as { content?: unknown })?.content
+  if (!Array.isArray(content)) return []
+  const images: PromptAttachment[] = []
+  for (const block of content) {
+    const typed = block as { type?: string; data?: string; mimeType?: string }
+    if (typed.type !== 'image' || !typed.data || !typed.mimeType) continue
+    images.push({ mediaType: typed.mimeType, data: typed.data })
+  }
+  return images
 }
 
 function blockText(block: unknown): string {
@@ -615,13 +633,18 @@ async function toolInfos(): Promise<ToolInfo[]> {
   for (const tool of [...createReadOnlyTools(process.cwd()), ...createCodingTools(process.cwd())]) {
     const policy = policies.get(tool.name)
     if (policy === undefined) continue
-    described.set(tool.name, {
+    const info: ToolInfo = {
       name: tool.name,
       description: tool.description,
       policy,
       parallelSafe: policy === 'allow',
       inputSchema: tool.parameters as Record<string, unknown>
-    })
+    }
+    // pi's two file writers, as proposedContent knows them.
+    if (tool.name === 'write' || tool.name === 'edit') {
+      info.display = { edits: true }
+    }
+    described.set(tool.name, info)
   }
   return [...described.values()]
 }

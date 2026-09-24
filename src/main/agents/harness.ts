@@ -15,6 +15,7 @@ import type {
   DeliverAs,
   HarnessCapabilities,
   HarnessInfo,
+  ImageBlock,
   OpenFileTarget,
   ModelEntry,
   ServerEventBody,
@@ -143,6 +144,12 @@ export interface HarnessRunOptions {
    * session's permission mode, or the user.
    */
   confirm(request: ApprovalRequest): Promise<ApprovalDecision>
+  /**
+   * Store an image a tool returned and get back the blob it is shown by, so
+   * the event log carries a reference rather than the bytes. Synchronous so
+   * the result event it belongs to is emitted in order.
+   */
+  storeImage(image: PromptAttachment): ImageBlock
 }
 
 /**

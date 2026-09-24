@@ -60,11 +60,43 @@ describe('transcript fold', () => {
     ])
 
     expect(state.items).toEqual([
-      { kind: 'user', seq: 1, eventId: 'evt_1', text: 'hi', attachments: [], references: [] },
+      {
+        kind: 'user',
+        seq: 1,
+        eventId: 'evt_1',
+        text: 'hi',
+        attachments: [],
+        references: [],
+        pending: false
+      },
       { kind: 'agent', seq: 3, eventId: 'evt_3', thinking: 'hmm', text: 'hello', streaming: false }
     ])
     expect(state.status).toBe('idle')
     expect(state.stopReason).toBe('end_turn')
+  })
+
+  test('a message written mid-turn waits until the agent starts its next message', () => {
+    const steered = { type: 'user.message', content: [{ type: 'text', text: 'also this' }] } as const
+    const waiting = fold([
+      { type: 'user.message', content: [{ type: 'text', text: 'go' }] },
+      { type: 'session.status_running' },
+      { type: 'agent.message_start' },
+      steered
+    ])
+    const taken = fold([
+      { type: 'user.message', content: [{ type: 'text', text: 'go' }] },
+      { type: 'session.status_running' },
+      { type: 'agent.message_start' },
+      steered,
+      { type: 'agent.message_start' }
+    ])
+
+    expect(waiting.items.map((item) => item.kind === 'user' && item.pending)).toEqual([
+      false,
+      false,
+      true
+    ])
+    expect(taken.items.some((item) => item.kind === 'user' && item.pending)).toBe(false)
   })
 
   test('a cleared conversation empties the transcript without losing the log', () => {

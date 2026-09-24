@@ -35,7 +35,8 @@ export const electronStub = {
     removeHandler: (channel: string) => ipcHandlers.delete(channel)
   },
   protocol: {
-    handle: () => {},
+    // Typed with its arguments so a test can swap in one that keeps the handler.
+    handle: (_scheme: string, _handler: never): void => {},
     unhandle: () => {},
     registerSchemesAsPrivileged: () => {}
   },

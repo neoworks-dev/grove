@@ -56,6 +56,18 @@ describe('formatShellCommand', () => {
     expect(formatShellCommand(command).split('\n')[1]).toBe(`  && ${LONG_PREFIX} two .`)
   })
 
+  test('an inline limit of 0 breaks even a short chain', () => {
+    expect(formatShellCommand('mkdir -p out && touch out/x | wc -l', 0).split('\n')).toEqual([
+      'mkdir -p out',
+      '  && touch out/x',
+      '  | wc -l'
+    ])
+  })
+
+  test('an inline limit of 0 leaves a single command whole', () => {
+    expect(formatShellCommand('git status --short', 0)).toBe('git status --short')
+  })
+
   test('a command the model laid out itself is left as written', () => {
     const command = `cat <<'EOF' > /tmp/x\nline one | not a pipe\nEOF`
 

@@ -22,11 +22,12 @@ const INDENT = '  '
  *
  * Returns the command unchanged when it is short enough to read as it is, or
  * when it already spans several lines — a heredoc or a script the model laid out
- * itself is already saying how it wants to be read.
+ * itself is already saying how it wants to be read. An approval passes an
+ * `inlineLimit` of 0, since every stage there is something being agreed to.
  */
-export function formatShellCommand(command: string): string {
+export function formatShellCommand(command: string, inlineLimit = INLINE_LIMIT): string {
   const trimmed = command.trim()
-  if (trimmed.length <= INLINE_LIMIT) return trimmed
+  if (trimmed.length <= inlineLimit) return trimmed
   if (trimmed.includes('\n')) return trimmed
 
   const stages = splitStages(trimmed).filter((stage) => stage.text.length > 0)

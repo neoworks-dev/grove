@@ -10,6 +10,7 @@
     "./protocol": "./src/protocol.ts",
     "./frames": "./src/frames.ts",
     "./rpc": "./src/rpc.ts",
-    "./client": "./src/client/node.ts"
+    "./client": "./src/client/node.ts",
+    "./viewer": "./src/viewer.ts"
   }
 }

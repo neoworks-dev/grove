@@ -183,7 +183,9 @@ const ACTIVATION_PREFIXES = ['onCommand:', 'onOverlay:', 'onPane:', 'onView:']
 
 export function isValidActivationEvent(event: string): boolean {
   if (event === 'onStartup') return true
-  return ACTIVATION_PREFIXES.some((prefix) => event.startsWith(prefix) && event.length > prefix.length)
+  return ACTIVATION_PREFIXES.some(
+    (prefix) => event.startsWith(prefix) && event.length > prefix.length
+  )
 }
 
 // ── Contributions (data-only, registered before the worker starts) ──
@@ -263,6 +265,24 @@ export interface ViewContribution {
   tree: unknown
 }
 
+// A viewer for files nvim can't show as text (.docx, a spreadsheet, a font).
+// It is a page from the plugin's bundle, shown in the editor pane in nvim's
+// place, in a sandboxed frame with no network access. Grove reads the file —
+// through the plugin's `workspace.read` grant, which a viewer requires — and
+// hands the page its bytes; see FileViewerMessage.
+export interface FileViewerContribution {
+  id: string
+  // Names the viewer where a person picks between them, e.g. "Word document".
+  label: string
+  // Lowercase, without the dot: ["docx"].
+  extensions: string[]
+  // HTML page relative to the plugin root, e.g. "viewer/index.html".
+  page: string
+  // Higher wins when two viewers claim an extension, Grove's own included
+  // (they are 0); ties go to the newest.
+  priority?: number
+}
+
 export interface PluginContributions {
   commands?: CommandContribution[]
   keybindings?: KeybindingContribution[]
@@ -272,6 +292,7 @@ export interface PluginContributions {
   statusBar?: StatusBarContribution[]
   panes?: PaneContribution[]
   views?: ViewContribution[]
+  fileViewers?: FileViewerContribution[]
   // SettingsContribution['settings'] shape; validated by the settings provider.
   settings?: unknown[]
 }
@@ -296,7 +317,8 @@ export const PLUGIN_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{1,63}$/
 
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/
 
-export type ManifestValidation = { ok: true; manifest: PluginManifest } | { ok: false; errors: string[] }
+export type ManifestValidation =
+  { ok: true; manifest: PluginManifest } | { ok: false; errors: string[] }
 
 // Structural validation of a parsed manifest.json. Deliberately hand-rolled
 // (no schema dependency); errors are human-readable for the plugins UI.
@@ -371,6 +393,7 @@ const CONTRIBUTION_KEYS = [
   'statusBar',
   'panes',
   'views',
+  'fileViewers',
   'settings'
 ] as const
 
@@ -389,6 +412,43 @@ function validateContributions(manifest: Record<string, unknown>, errors: string
     if (!Array.isArray(list)) errors.push(`contributes.${key} must be an array`)
   }
   validateContributionIds(contributes as PluginContributions, errors)
+  validateFileViewers(manifest, contributes as PluginContributions, errors)
+}
+
+function validateFileViewers(
+  manifest: Record<string, unknown>,
+  contributes: PluginContributions,
+  errors: string[]
+): void {
+  const viewers = contributes.fileViewers
+  if (!Array.isArray(viewers) || viewers.length === 0) return
+  const declaresRead =
+    Array.isArray(manifest.permissions) && manifest.permissions.includes('workspace.read')
+  if (!declaresRead) {
+    errors.push('contributes.fileViewers needs the "workspace.read" permission')
+  }
+  for (const viewer of viewers) {
+    if (!viewer || typeof viewer !== 'object') continue
+    const extensions = viewer.extensions
+    const extensionsValid =
+      Array.isArray(extensions) &&
+      extensions.length > 0 &&
+      extensions.every(
+        (extension) => typeof extension === 'string' && /^[a-z0-9]+$/.test(extension)
+      )
+    if (!extensionsValid) {
+      errors.push(`fileViewers.${viewer.id}: extensions must be lowercase, without the dot`)
+    }
+    const page = viewer.page
+    if (
+      typeof page !== 'string' ||
+      page.length === 0 ||
+      page.startsWith('/') ||
+      page.includes('..')
+    ) {
+      errors.push(`fileViewers.${viewer.id}: page must be a path inside the plugin directory`)
+    }
+  }
 }
 
 function validateContributionIds(contributes: PluginContributions, errors: string[]): void {
@@ -400,14 +460,58 @@ function validateContributionIds(contributes: PluginContributions, errors: strin
     ['menu', contributes.menu],
     ['statusBar', contributes.statusBar],
     ['panes', contributes.panes],
-    ['views', contributes.views]
+    ['views', contributes.views],
+    ['fileViewers', contributes.fileViewers]
   ]
   for (const [key, list] of lists) {
     if (!Array.isArray(list)) continue
-    const missing = list.some((item) => !item || typeof item.id !== 'string' || item.id.length === 0)
+    const missing = list.some(
+      (item) => !item || typeof item.id !== 'string' || item.id.length === 0
+    )
     if (missing) errors.push(`every contributes.${key} entry needs a string id`)
   }
 }
+
+// ── File viewer pages ───────────────────────────────────────────
+// What passes between Grove and a viewer page over postMessage. The page
+// announces itself once it is listening; Grove answers with the file, and
+// again whenever the file changes on disk or the theme does.
+
+export interface FileViewerTheme {
+  // Whether the theme is dark, for pages that only switch a scheme.
+  dark: boolean
+  background: string
+  surface: string
+  text: string
+  textMuted: string
+  border: string
+  accent: string
+}
+
+export type FileViewerMessage =
+  | { type: 'grove.viewer.ready' }
+  | {
+      type: 'grove.viewer.file'
+      // Absolute path, and the name and lowercase extension split from it.
+      path: string
+      name: string
+      extension: string
+      bytes: ArrayBuffer
+      theme: FileViewerTheme
+    }
+  | { type: 'grove.viewer.theme'; theme: FileViewerTheme }
+  | { type: 'grove.viewer.error'; message: string }
+  // A key the page had no use for, passed up so Grove's own bindings (the
+  // leader, pane navigation) keep working while the page has focus.
+  | {
+      type: 'grove.viewer.key'
+      key: string
+      code: string
+      ctrlKey: boolean
+      altKey: boolean
+      shiftKey: boolean
+      metaKey: boolean
+    }
 
 // ── RPC envelope ────────────────────────────────────────────────
 

@@ -35,6 +35,11 @@ export interface UserItem {
   attachments: ImageBlock[]
   /** File slices sent with the message; shown as chips, not inlined in the bubble. */
   references: FileBlock[]
+  /**
+   * Written while the agent was busy and not yet taken up: steered or queued, it
+   * reaches the model with the next message the agent starts.
+   */
+  pending: boolean
 }
 
 export interface AgentItem {
@@ -69,6 +74,8 @@ export interface ToolItem {
   status: ToolStatus
   progress: string
   result: string
+  /** Images the tool returned, shown under its row. */
+  images: ImageBlock[]
 }
 
 export interface ShellItem {
@@ -283,6 +290,16 @@ function applyStatus(state: TranscriptState, event: SessionEvent): void {
   }
 }
 
+/**
+ * A message the agent starts is a new request to the model, and that request
+ * carries everything written to it so far: nothing is waiting any more.
+ */
+function markUserMessagesTaken(state: TranscriptState): void {
+  for (const item of state.items) {
+    if (item.kind === 'user' && item.pending) item.pending = false
+  }
+}
+
 function applyMessage(state: TranscriptState, event: SessionEvent): void {
   // Both carry whatever shell output was waiting: the service prepends it to
   // anything it delivers to the harness, whoever wrote it.
@@ -296,7 +313,8 @@ function applyMessage(state: TranscriptState, event: SessionEvent): void {
       eventId: event.id,
       text: textOf(event.content),
       attachments: event.content.filter((block): block is ImageBlock => block.type === 'image'),
-      references: event.content.filter((block): block is FileBlock => block.type === 'file')
+      references: event.content.filter((block): block is FileBlock => block.type === 'file'),
+      pending: state.status === 'running'
     })
   }
   // A command reads back as the line that was typed, since that is what the
@@ -308,7 +326,8 @@ function applyMessage(state: TranscriptState, event: SessionEvent): void {
       eventId: event.id,
       text: commandLine(event.name, event.args),
       attachments: [],
-      references: []
+      references: [],
+      pending: false
     })
   }
   if (event.type === 'app.message') {
@@ -325,6 +344,7 @@ function applyMessage(state: TranscriptState, event: SessionEvent): void {
     dropModelVisibleMessage(state, event.messageId)
   }
   if (event.type === 'agent.message_start') {
+    markUserMessagesTaken(state)
     state.items.push({
       kind: 'agent',
       seq: event.seq,
@@ -368,7 +388,8 @@ function applyTool(state: TranscriptState, event: SessionEvent): void {
       permission: event.permission,
       status: initialToolStatus(event.permission),
       progress: '',
-      result: ''
+      result: '',
+      images: []
     })
   }
   if (event.type === 'agent.tool_use_edited') {
@@ -387,7 +408,7 @@ function applyTool(state: TranscriptState, event: SessionEvent): void {
     applyConfirmation(state, event.toolUseId, event.result)
   }
   if (event.type === 'agent.tool_result') {
-    applyToolResult(state, event.toolUseId, event.content, event.isError)
+    applyToolResult(state, event.toolUseId, event.content, event.isError, event.images ?? [])
   }
 }
 
@@ -545,13 +566,15 @@ function applyToolResult(
   state: TranscriptState,
   toolUseId: string,
   content: string,
-  isError: boolean
+  isError: boolean,
+  images: ImageBlock[]
 ): void {
   const tool = findTool(state, toolUseId)
   if (!tool) {
     return
   }
   tool.result = content
+  tool.images = images
   tool.progress = ''
   tool.status = isError ? 'error' : 'ok'
 }

@@ -7,9 +7,11 @@
   // block is the section box rather than the whole transcript, the header pins
   // only while its own turn is on screen and scrolls away with it.
 
+  import Icon from '@iconify/svelte'
   import CaretRight from 'phosphor-svelte/lib/CaretRight'
   import PaperPlaneTilt from 'phosphor-svelte/lib/PaperPlaneTilt'
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
+  import { fileIcon } from '../../../../lib/icons'
   import { renderMarkdown } from '../../../../lib/markdown'
   import { floatingCodeScrollbars } from '../../../../lib/markdownScrollbars'
   import { highlightCodeFences } from '../../../../lib/markdownHighlight'
@@ -19,12 +21,15 @@
     toItemRows,
     toTranscriptRows,
     type ToolRunRow,
+    type ToolTally,
     type TranscriptRow
   } from '../../../../lib/agents/toolRuns'
+  import { fileOfCall } from '../../../../lib/agents/tools'
   import { foldedCalls, foldedMessages, foldTurn } from '../../../../lib/agents/turns'
   import { agentIdIn, senderOf } from '../../../../lib/agents/transcript'
-  import type { TranscriptItem } from '../../../../lib/agents/transcript'
+  import type { ToolItem, TranscriptItem } from '../../../../lib/agents/transcript'
   import type { ToolInfo } from '../../../../lib/agents/types'
+  import AgentImage from './AgentImage.svelte'
   import AgentToolCall from './AgentToolCall.svelte'
   import AgentSurface from './AgentSurface.svelte'
 
@@ -103,6 +108,24 @@
     return tools.find((tool) => tool.name === name)?.display
   }
 
+  /**
+   * Calls that keep a row of their own however the transcript folds: each change
+   * to a file, with the file it changed, and a call whose images are its point.
+   */
+  function standsAlone(call: ToolItem): boolean {
+    if (displayOf(call.name)?.edits === true) {
+      return true
+    }
+    return call.images.length > 0
+  }
+
+  /** What a folded summary says a run of calls did, file names included. */
+  function tallyCalls(calls: ToolItem[]): ToolTally[] {
+    return tallyOf(calls, (call) =>
+      fileOfCall(displayOf(call.name), call.editedInput ?? call.input, root)
+    )
+  }
+
   // A turn that is over reads as its answer; the calls and interim messages behind
   // it hide behind one line. Which turns the user opened back up belongs to the
   // pane, like the runs above.
@@ -129,6 +152,24 @@
   }
 </script>
 
+{#snippet tallies(list: ToolTally[])}
+  {#each list as tally (tally.name)}
+    <span class="shrink-0 text-muted">
+      {tally.name}{#if tally.count > 1}<span class="text-dim">&nbsp;×{tally.count}</span>{/if}
+    </span>
+    {#if tally.files.length > 0}
+      <span class="flex min-w-0 items-center gap-2 overflow-hidden">
+        {#each tally.files as file (file)}
+          <span class="flex min-w-0 items-center gap-1 text-default">
+            <Icon icon={fileIcon(file)} width="12" height="12" class="shrink-0" />
+            <span class="truncate">{file}</span>
+          </span>
+        {/each}
+      </span>
+    {/if}
+  {/each}
+{/snippet}
+
 {#snippet toolRun(run: ToolRunRow)}
   {@const open = Boolean(expandedRuns[run.key])}
   <div class="mb-1">
@@ -143,16 +184,13 @@
       >
         <CaretRight width="10" height="10" weight="bold" />
       </span>
-      {#each tallyOf(run.items) as tally (tally.name)}
-        <span class="shrink-0 text-muted">
-          {tally.name}{#if tally.count > 1}<span class="text-dim">&nbsp;×{tally.count}</span>{/if}
-        </span>
-      {/each}
+      {@render tallies(tallyCalls(run.items))}
     </button>
     {#if open}
       <div class="pl-4">
         {#each run.items as call (call.eventId)}
           <AgentToolCall
+            {sessionId}
             item={call}
             display={displayOf(call.name)}
             {root}
@@ -169,7 +207,7 @@
 {/snippet}
 
 {#snippet turnSummary(key: string, hidden: TranscriptRow[], open: boolean)}
-  {@const calls = tallyOf(foldedCalls(hidden))}
+  {@const calls = tallyCalls(foldedCalls(hidden))}
   {@const messages = foldedMessages(hidden).length}
   <div class="mb-1">
     <button
@@ -183,11 +221,7 @@
       >
         <CaretRight width="10" height="10" weight="bold" />
       </span>
-      {#each calls as tally (tally.name)}
-        <span class="shrink-0 text-muted">
-          {tally.name}{#if tally.count > 1}<span class="text-dim">&nbsp;×{tally.count}</span>{/if}
-        </span>
-      {/each}
+      {@render tallies(calls)}
       {#if messages > 0}
         <span class="shrink-0 text-dim">{messageLabel(messages)}</span>
       {/if}
@@ -200,15 +234,22 @@
 
 {#snippet row(item: TranscriptItem)}
   {#if item.kind === 'user'}
-    <div class="agent-sticky-user -mx-3 mb-3 whitespace-pre-wrap px-3 py-2 text-default">
+    <!-- Dimmed until the agent has taken it up: written mid-turn, it is still
+         waiting for the agent's next message. -->
+    <div
+      class="agent-sticky-user -mx-3 mb-3 whitespace-pre-wrap px-3 py-2 text-default transition-opacity duration-200"
+      class:opacity-50={item.pending}
+      title={item.pending ? 'Waiting for the agent to take it up' : undefined}
+    >
       {item.text}
       {#if item.references.length > 0}
         <!-- The slice itself went to the model; the bubble only names it. -->
         <div class="mt-1.5 flex flex-wrap gap-1.5">
           {#each item.references as reference (`${reference.path}:${reference.startLine}`)}
             <span
-              class="rounded border border-line bg-canvas px-1.5 py-0.5 font-mono text-2xs text-muted"
+              class="flex items-center gap-1 rounded border border-line bg-canvas px-1.5 py-0.5 font-mono text-2xs text-muted"
             >
+              <Icon icon={fileIcon(reference.path)} width="12" height="12" class="shrink-0" />
               {reference.path}:{reference.startLine}-{reference.endLine}
             </span>
           {/each}
@@ -217,11 +258,7 @@
       {#if item.attachments.length > 0}
         <div class="mt-1.5 flex flex-wrap gap-1.5">
           {#each item.attachments as attachment (attachment.ref)}
-            <img
-              class="max-h-32 rounded border border-line"
-              src={blobUrl(sessionId, attachment.ref)}
-              alt="attachment"
-            />
+            <AgentImage src={blobUrl(sessionId, attachment.ref)} alt="attachment" />
           {/each}
         </div>
       {/if}
@@ -311,6 +348,7 @@
     </div>
   {:else if item.kind === 'tool'}
     <AgentToolCall
+      {sessionId}
       {item}
       display={displayOf(item.name)}
       {root}
@@ -361,8 +399,8 @@
     {#each sections as section, index (section.key)}
       <!-- The section box is the sticky header's containing block, so the pinned
            user bubble scrolls away with its own turn instead of stacking. -->
-      {@const rows = toTranscriptRows(section.body)}
-      {@const fold = isSettled(index) ? foldTurn(rows) : { hidden: [], kept: rows }}
+      {@const rows = toTranscriptRows(section.body, standsAlone)}
+      {@const fold = isSettled(index) ? foldTurn(rows, standsAlone) : { hidden: [], kept: rows }}
       {@const open = Boolean(expandedTurns[section.key])}
       <div>
         {#if section.header}

@@ -18,7 +18,12 @@
 //
 // Targets ("New session", `e12`, `at=820,460`) are `scripts/qa/targets.ts`.
 
-import { spawn, spawnSync, type SpawnSyncReturns } from 'node:child_process'
+import {
+  spawn,
+  spawnSync,
+  type SpawnSyncOptionsWithStringEncoding,
+  type SpawnSyncReturns
+} from 'node:child_process'
 import { existsSync, mkdirSync, openSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
@@ -836,8 +841,7 @@ function fileFinding(args: string[]): void {
   }
   sections.push(`---\n\n*Found by an exploratory QA agent on ${headCommit()}.*`)
 
-  const created = spawnSync(
-    'gh',
+  const created = github(
     [
       'issue',
       'create',
@@ -877,8 +881,7 @@ function postEvidence(args: string[]): void {
   }
   sections.push(`---\n\n*Verified by Claude on ${headCommit(process.cwd())}.*`)
 
-  const commented = spawnSync(
-    'gh',
+  const commented = github(
     ['issue', 'comment', issue as string, '--repo', FINDINGS_REPO, '--body', sections.join('\n\n')],
     { cwd: repoRoot, encoding: 'utf8' }
   )
@@ -886,6 +889,29 @@ function postEvidence(args: string[]): void {
     throw new Error(`could not comment on #${issue}:\n${commented.stderr.trim()}`)
   }
   console.log(commented.stdout.trim())
+}
+
+/**
+ * Run gh — as neoworks-bot through the `gh bot` extension when it is installed,
+ * so what the harness files and comments shows as the bot, not as whoever ran it.
+ */
+function github(
+  args: string[],
+  options: SpawnSyncOptionsWithStringEncoding = { encoding: 'utf8' }
+): SpawnSyncReturns<string> {
+  if (botAvailable()) return spawnSync('gh', ['bot', ...args], options)
+  return spawnSync('gh', args, options)
+}
+
+let botInstalled: boolean | undefined = undefined
+
+/** Whether the `gh bot` extension is installed; asked once per run. */
+function botAvailable(): boolean {
+  if (botInstalled === undefined) {
+    const extensions = spawnSync('gh', ['extension', 'list'], { encoding: 'utf8' })
+    botInstalled = extensions.status === 0 && /^gh bot\b/m.test(extensions.stdout)
+  }
+  return botInstalled
 }
 
 /** Put a screenshot somewhere GitHub will render it from, and say where. */
@@ -903,8 +929,7 @@ function uploadScreenshot(path: string): string {
     branch: SHOT_BRANCH,
     content: readFileSync(path).toString('base64')
   })
-  const committed = spawnSync(
-    'gh',
+  const committed = github(
     ['api', '--method', 'PUT', `repos/${FINDINGS_REPO}/contents/shots/${name}`, '--input', '-'],
     { cwd: repoRoot, encoding: 'utf8', input: request, maxBuffer: 64 * 1024 * 1024 }
   )
@@ -915,20 +940,18 @@ function uploadScreenshot(path: string): string {
 }
 
 function ensureShotBranch(): void {
-  const found = spawnSync('gh', ['api', `repos/${FINDINGS_REPO}/git/ref/heads/${SHOT_BRANCH}`], {
+  const found = github(['api', `repos/${FINDINGS_REPO}/git/ref/heads/${SHOT_BRANCH}`], {
     encoding: 'utf8'
   })
   if (found.status === 0) return
 
-  const main = spawnSync(
-    'gh',
+  const main = github(
     ['api', `repos/${FINDINGS_REPO}/git/ref/heads/main`, '--jq', '.object.sha'],
     { encoding: 'utf8' }
   )
   if (main.status !== 0) throw new Error(`could not read main:\n${main.stderr.trim()}`)
 
-  const created = spawnSync(
-    'gh',
+  const created = github(
     [
       'api',
       '--method',
@@ -947,12 +970,12 @@ function ensureShotBranch(): void {
 }
 
 function ensureLabel(): void {
-  const found = spawnSync('gh', ['label', 'list', '--repo', FINDINGS_REPO, '--search', AI_LABEL], {
+  const found = github(['label', 'list', '--repo', FINDINGS_REPO, '--search', AI_LABEL], {
     encoding: 'utf8'
   })
   if (found.status === 0 && found.stdout.includes(AI_LABEL)) return
 
-  spawnSync('gh', [
+  github([
     'label',
     'create',
     AI_LABEL,

@@ -29,8 +29,21 @@ const { ensureNvimUserConfig, ensureCopilotConfigLink, nvimUserConfigDir, bundle
   await import('../src/main/nvimPaths')
 
 let sandbox = ''
+// The suite runs with XDG_CONFIG_HOME unset, so the config root falls back to
+// the stubbed home; the profile test sets it for itself.
+const inheritedXdgConfigHome = process.env.XDG_CONFIG_HOME
+
+/** Puts XDG_CONFIG_HOME back the way it was, unset included. */
+function restoreXdgConfigHome(value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env.XDG_CONFIG_HOME
+    return
+  }
+  process.env.XDG_CONFIG_HOME = value
+}
 
 beforeEach(async () => {
+  delete process.env.XDG_CONFIG_HOME
   sandbox = await mkdtemp(join(nodeOs.tmpdir(), 'grove-nvim-config-'))
   appRoot = join(sandbox, 'app')
   testHome = join(sandbox, 'home')
@@ -40,6 +53,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  restoreXdgConfigHome(inheritedXdgConfigHome)
   await rm(sandbox, { recursive: true, force: true })
 })
 
@@ -84,6 +98,26 @@ describe('ensureNvimUserConfig', () => {
     await symlink(stale, nvimUserConfigDir(), 'dir')
     await ensureNvimUserConfig()
     expect(await linkTarget()).toBe(await realpath(bundledNvimConfigDir()))
+  })
+
+  // An isolated profile (qa, e2e, test-env) sets XDG_CONFIG_HOME. Linking under
+  // the real home instead repointed the user's own instance at the profile's
+  // checkout, and every run left another nvim.replaced-* behind.
+  it("links under the profile's XDG_CONFIG_HOME, not the real home", async () => {
+    const profileConfig = join(sandbox, 'profile', 'config')
+    const previous = process.env.XDG_CONFIG_HOME
+    process.env.XDG_CONFIG_HOME = profileConfig
+    try {
+      await ensureNvimUserConfig()
+    } finally {
+      restoreXdgConfigHome(previous)
+    }
+
+    const profileLink = join(profileConfig, 'grove', 'nvim')
+    expect(await realpath(await readlink(profileLink))).toBe(
+      await realpath(bundledNvimConfigDir())
+    )
+    expect(await readdir(groveConfigRoot())).toEqual([])
   })
 
   it('moves a real directory aside instead of deleting it', async () => {

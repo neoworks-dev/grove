@@ -10,6 +10,7 @@ import { checkpoints } from './checkpoints'
 import { extensionsView } from './extensions'
 import { setup } from './setup'
 import { markdownPreview } from './markdownPreview'
+import { mediaViewers } from './mediaViewers'
 import { diagnostics } from './diagnostics'
 import { terminal } from './terminal'
 import { githubDashboard } from './github'
@@ -32,6 +33,7 @@ export const corePlugins = [
   extensionsView,
   setup,
   markdownPreview,
+  mediaViewers,
   diagnostics,
   terminal,
   githubDashboard,

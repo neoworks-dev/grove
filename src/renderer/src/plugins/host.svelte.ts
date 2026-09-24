@@ -24,6 +24,7 @@ import { activeNvimSession } from '../lib/nvim/registry'
 import type { SettingDefinition } from '../../../shared/settings'
 import DeclarativeSurface from '../components/DeclarativeSurface.svelte'
 import DeclarativeStatusItem from '../components/DeclarativeStatusItem.svelte'
+import type { PluginViewerOptions } from './PluginFileViewer.svelte'
 
 export interface PluginRecordShape {
   id: string
@@ -530,6 +531,24 @@ class PluginHost {
           `panel:${pane.id}`
         )
       }
+    }
+
+    // Data-only, like commands: a viewer's page opens without the worker
+    // running, and reads its file through the plugin's own grant.
+    for (const viewer of contributes.fileViewers ?? []) {
+      const options: PluginViewerOptions = { pluginId, page: viewer.page }
+      add(
+        () =>
+          ctx.editor.registerFileViewer({
+            id: `${pluginId}.${viewer.id}`,
+            label: viewer.label,
+            extensions: viewer.extensions,
+            priority: viewer.priority,
+            load: () => import('./PluginFileViewer.svelte'),
+            options
+          }),
+        `viewer:${viewer.id}`
+      )
     }
 
     for (const view of contributes.views ?? []) {

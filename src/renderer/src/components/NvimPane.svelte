@@ -731,14 +731,22 @@ end, ns)
 
   // Neovim owns the `gr` mapping because it knows when an LSP client is
   // attached; its notification hands the multi-result presentation to Grove.
+  // Goto requests with several answers arrive as `grove_locations`, already
+  // resolved, and open the same picker.
   function watchReferences(id: string): void {
     disposeReferences?.()
     disposeReferences = window.workbench.on('event:nvim-notify', (payload) => {
       const event = payload as { id: string; method: string; args: unknown[] }
-      if (event.id !== id || event.method !== 'grove_references') return
-      clearPendingKeys()
-      const data = (event.args?.[0] ?? {}) as { symbol?: unknown }
-      references.show(id, typeof data.symbol === 'string' ? data.symbol : '')
+      if (event.id !== id) return
+      if (event.method === 'grove_references') {
+        clearPendingKeys()
+        const data = (event.args?.[0] ?? {}) as { symbol?: unknown }
+        references.show(id, typeof data.symbol === 'string' ? data.symbol : '')
+      }
+      if (event.method === 'grove_locations') {
+        clearPendingKeys()
+        showLocations(id, event.args?.[0])
+      }
     })
   }
 
@@ -806,6 +814,16 @@ end, ns)
   function dismissPreview(): void {
     if (preview === null) return
     answerPreview('grove_preview_dismiss(...)', [preview.id])
+  }
+
+  /** Opens the location picker on a `grove_locations` notification's payload. */
+  function showLocations(id: string, payload: unknown): void {
+    const data = (payload ?? {}) as { label?: unknown; symbol?: unknown; locations?: unknown }
+    let label = 'Locations'
+    if (typeof data.label === 'string') label = data.label
+    let symbol = ''
+    if (typeof data.symbol === 'string') symbol = data.symbol
+    references.showLocations(id, label, symbol, data.locations)
   }
 
   // Hides the pending panel without churning keymap state on every keystroke.

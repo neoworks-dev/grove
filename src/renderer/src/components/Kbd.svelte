@@ -1,6 +1,6 @@
 <script lang="ts">
   // Shared keycap: a single visual for keyboard keys across the app (which-key
-  // overlay, composer hints, cheatsheets). Matches the which-key styling.
+  // overlay, composer hints). Matches the which-key styling.
   import type { Snippet } from 'svelte'
 
   let { children, class: extra = '' }: { children: Snippet; class?: string } = $props()

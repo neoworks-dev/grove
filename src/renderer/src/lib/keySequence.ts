@@ -268,9 +268,14 @@ export function stepFromEvent(event: KeyboardEvent): KeyStep {
     shift: event.shiftKey,
     meta: event.metaKey
   }
+  // event.key is the character Shift already produced ('?', not '/'), so a
+  // bare printable key carries its Shift and the flag goes, as in "F".
+  if (key.length === 1 && !hasNonShiftModifier(step)) {
+    step.shift = false
+  }
   const normalized = normalizeStep(step)
   if (normalized) return normalized
-  // Unrepresentable steps (e.g. bare shift+digit) fall back to the raw key so
+  // Unrepresentable steps (e.g. "Dead", "Unidentified") fall back to the raw key so
   // capture UIs can still display something; matching will simply never hit.
   return step
 }

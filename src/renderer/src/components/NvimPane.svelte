@@ -6,7 +6,7 @@
   import { onMount, onDestroy } from 'svelte'
   import { store } from '../lib/store.svelte'
   import { layout } from '../lib/layout.svelte'
-  import { keymap } from '../lib/keymap.svelte'
+  import { keymap, type Direction } from '../lib/keymap.svelte'
   import { commands } from '../lib/commands.svelte'
   import BufferTabs from './BufferTabs.svelte'
   import Minimap from './Minimap.svelte'
@@ -16,6 +16,7 @@
   import ReviewHeaderBar from './ReviewHeaderBar.svelte'
   import ReviewOverlay from './ReviewOverlay.svelte'
   import NvimGridSurface from './NvimGridSurface.svelte'
+  import NvimSplitDivider from './NvimSplitDivider.svelte'
   import FileViewerHost from './FileViewerHost.svelte'
   import { fileViewers, type FileViewer } from '../lib/fileViewers.svelte'
   import { editorOverlays } from '../lib/editorOverlays.svelte'
@@ -40,9 +41,13 @@
     type NvimGroup,
     type NvimMapping
   } from '../lib/nvimKeymap'
+  import { splitDividers } from '../lib/nvim/splitDividers'
+  import { splitReplacement, swapTabs, type SplitWindow } from '../lib/nvim/splitTabs'
   import { operatorHintEntries, operatorTitle } from '../lib/nvimOperatorHints'
   import { decodeNvimKey, nextPending, pendingHint } from '../lib/nvimPendingKeys'
   import { references } from '../lib/references.svelte'
+  import { nvimSetup } from '../lib/nvim/setup.svelte'
+  import WaveSpinner from './WaveSpinner.svelte'
 
   let { leafId }: { leafId: string } = $props()
 
@@ -53,6 +58,7 @@
   // space leader still works while nvim is in normal mode.
   let inputEl = $state<HTMLDivElement>()
   let unavailable = $state(false)
+  nvimSetup.watch()
 
   // The template gates native multigrid surfaces on the live session. In runes
   // mode a plain variable never invalidates that branch after onMount assigns
@@ -86,36 +92,59 @@
   let nvimFileCount = $state(0)
   // Absolute paths of buffers with unsaved changes, keyed for tab lookup.
   let dirtyPaths = $state<Record<string, boolean>>({})
+  // The current tab page's file windows and the focused window, which the tab
+  // strip folds into one `a | b | c` tab while there is more than one.
+  let splitWindows = $state<SplitWindow[]>([])
+  let currentWin = $state(0)
   let disposeBufferWatch: (() => void) | null = null
   let disposeKeymapWatch: (() => void) | null = null
   // Git gutter for the minimap: the open file's changed-line ranges.
   let diffMarkers = $state<{ start: number; count: number; kind: 'add' | 'del' | 'mod' }[]>([])
   let nvimWindows = $state<NvimWindowPlacement[]>([])
-  // Ordinary windows drawn inside this pane rather than mirrored into Grove
-  // panes of their own. See applyWindowPlacements.
+  // nvim's windows other than the primary one, drawn inside this pane where
+  // nvim placed them. See applyWindowPlacements.
   let embeddedWindows = $state<NvimWindowPlacement[]>([])
   const floatingWindows = $derived(
     nvimWindows.filter((entry) => entry.kind === 'float' && !entry.hidden)
   )
+  // The grid nvim's cursor is on, i.e. the focused window.
+  let cursorGrid = $state(0)
   // Neovim reserves zindex 100 and above for transient editor UI such as
   // completion menus. Those surfaces already draw their own chrome and must not
-  // acquire Grove's modal backdrop or close button.
-  const modalFloatingWindows = $derived(floatingWindows.filter((entry) => entry.zindex < 100))
+  // acquire Grove's modal backdrop or close button. Below that, only a float
+  // the cursor is in (Lazy, Mason) is modal; a preview the cursor never
+  // entered (hover, line diagnostics, Inspect) sits over the text undimmed.
+  const modalFloatingWindows = $derived(
+    floatingWindows.filter((entry) => entry.zindex < 100 && entry.grid === cursorGrid)
+  )
 
   function isTransientFloat(entry: NvimWindowPlacement): boolean {
     return entry.zindex >= 100
   }
 
+  // Room between a Grove-framed float's border and its text, in pixels.
+  const FLOAT_PADDING = 8
+
+  /** Padding around a float's text: none for transient UI, which frames itself. */
+  function floatPadding(entry: NvimWindowPlacement): number {
+    if (isTransientFloat(entry)) return 0
+    return FLOAT_PADDING
+  }
+
   function floatStyle(entry: NvimWindowPlacement): string {
     const cellWidth = session?.cellWidth ?? 8
     const cellHeight = session?.cellHeight ?? 18
+    const padding = floatPadding(entry)
     const maxWidth = Math.max(80, (hostEl?.clientWidth ?? entry.width * cellWidth) - 24)
     const maxHeight = Math.max(60, (hostEl?.clientHeight ?? entry.height * cellHeight) - 24)
-    const width = Math.min(entry.width * cellWidth, maxWidth)
-    const height = Math.min(entry.height * cellHeight, maxHeight)
+    const width = Math.min(entry.width * cellWidth + 2 * padding, maxWidth)
+    const height = Math.min(entry.height * cellHeight + 2 * padding, maxHeight)
     const position = resolveNvimWindowPosition(nvimWindows, entry)
-    let left = session?.screenColToPixel(position.col) ?? position.col * cellWidth
+    // The frame grows sideways around the text and vertically away from nvim's
+    // anchor, so it never covers the line the float was opened from.
+    let left = (session?.screenColToPixel(position.col) ?? position.col * cellWidth) - padding
     let top = session?.screenRowToPixel(position.row) ?? position.row * cellHeight
+    if (entry.anchor?.startsWith('S')) top -= 2 * padding
     left = Math.max(0, Math.min(left, (hostEl?.clientWidth ?? left + width) - width))
     // Completion surfaces must keep Neovim's below-cursor anchor even when the
     // full menu does not fit. The pane clips the excess at its bottom edge;
@@ -123,62 +152,26 @@
     top = isTransientFloat(entry)
       ? Math.max(0, top)
       : Math.max(0, Math.min(top, (hostEl?.clientHeight ?? top + height) - height))
-    return `left:${left}px;top:${top}px;width:${width}px;height:${height}px;z-index:${40 + (entry.compindex ?? entry.zindex)}`
+    return `left:${left}px;top:${top}px;width:${width}px;height:${height}px;padding:${padding}px;z-index:${40 + (entry.compindex ?? entry.zindex)}`
   }
-
-  // Window handles Neovim has been told to keep inside this pane. Read back from
-  // Neovim rather than tracked here: a window can be closed, replaced or split
-  // again by anything the user types, and the mark travels with it.
-  const EMBEDDED_WINDOWS_LUA = `
-local wins = {}
-for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-  if vim.w[win].grove_embedded then table.insert(wins, win) end
-end
-return wins
-`
 
   /**
-   * Sort the session's windows into the ones that become Grove panes and the
-   * ones drawn inside this one. A diff marks its base side embedded, because its
-   * two halves are one view of one file — everything else is an editor in its
-   * own right and gets a pane.
+   * Draw every window of this pane's nvim inside the pane, where nvim put it:
+   * splits are nvim's own, laid out and sized by nvim as in any nvim UI. The
+   * primary window is the pane's main canvas; the rest get a surface each.
    */
-  async function applyWindowPlacements(windows: NvimWindowPlacement[]): Promise<void> {
-    const id = session?.id
-    if (!id) return
-    // Read while the pane is certainly still mounted: a `leafId` read after the
-    // await below throws once this pane's leaf has left the tree, which any
-    // reshuffle of the split it sits in does.
-    const ownerLeafId = leafId
-    let marked: number[] = []
-    try {
-      const result = await window.workbench.nvim.request(id, 'nvim_exec_lua', [
-        EMBEDDED_WINDOWS_LUA,
-        []
-      ])
-      if (Array.isArray(result)) {
-        marked = result.filter((win): win is number => typeof win === 'number')
-      }
-    } catch {
-      // session gone
-    }
-    if (!session || session.id !== id) return
+  function applyWindowPlacements(windows: NvimWindowPlacement[]): void {
+    if (!session) return
     const primaryWin = session.primaryWin
-    const ordinary = windows.filter((entry) => entry.kind === 'normal' && !entry.hidden)
-    // While a diff is open the pane lays out every window itself. Splitting the
-    // job — Grove sizing some windows from the panes they are mirrored into,
-    // Neovim sizing the rest inside this one — leaves the two disagreeing about
-    // every column, and each correction feeds the other.
-    const embed = marked.length > 0 ? ordinary.filter((entry) => entry.win !== primaryWin) : []
-    const embedded = new Set(embed.map((entry) => entry.win))
-    session.setEmbeddedWindows([...embedded])
-    embeddedWindows = embed
-    layout.syncNvimWindows(
-      ownerLeafId,
-      id,
-      windows.filter((entry) => !embedded.has(entry.win))
+    const embed = windows.filter(
+      (entry) => entry.kind === 'normal' && !entry.hidden && entry.win !== primaryWin
     )
+    session.setEmbeddedWindows(embed.map((entry) => entry.win))
+    embeddedWindows = embed
   }
+
+  // One divider per separator between the pane's splits (see splitDividers).
+  const dividers = $derived(splitDividers(nvimWindows))
 
   /** Place an embedded window on the pane, at the box Neovim gave it. */
   function embeddedStyle(entry: NvimWindowPlacement): string {
@@ -281,6 +274,21 @@ return wins
 
   function selectTab(path: string): void {
     store.activeTabPath = path
+  }
+
+  /** Focuses one window of the split tab; the buffer snapshot then follows its file. */
+  function selectSplit(win: number): void {
+    const id = session?.id
+    if (!id) return
+    void window.workbench.nvim.request(id, 'nvim_set_current_win', [win]).catch(() => {})
+  }
+
+  /** Closes one window of the split tab; its file keeps its buffer and gets its own tab back. */
+  function closeSplit(win: number, event: MouseEvent): void {
+    event.stopPropagation()
+    const id = session?.id
+    if (!id) return
+    void window.workbench.nvim.request(id, 'nvim_win_close', [win, false]).catch(() => {})
   }
 
   function closeTab(path: string, event: MouseEvent): void {
@@ -467,15 +475,37 @@ local function active_file()
   return name
 end
 
+-- The current tab page's file windows in window order, for the tab strip's
+-- \`a | b | c\` split tab. Diff windows are left out: a diff tab already names
+-- both of its sides.
+local function file_splits()
+  local splits = {}
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    local buf = vim.api.nvim_win_get_buf(win)
+    local name = vim.api.nvim_buf_get_name(buf)
+    local floating = vim.api.nvim_win_get_config(win).relative ~= ''
+    if not floating and not vim.wo[win].diff and vim.bo[buf].buftype == '' and name ~= '' then
+      table.insert(splits, { win = win, path = name })
+    end
+  end
+  return splits
+end
+
 local function snapshot()
-  return { count = count_visible(), modified = modified_paths(), active = active_file() }
+  return {
+    count = count_visible(),
+    modified = modified_paths(),
+    active = active_file(),
+    splits = file_splits(),
+    win = vim.api.nvim_get_current_win(),
+  }
 end
 
 local group = vim.api.nvim_create_augroup('GroveBufferCount', { clear = true })
 vim.api.nvim_create_autocmd(
   {
     'BufWinEnter', 'BufEnter', 'BufDelete', 'BufWipeout', 'BufFilePost',
-    'WinEnter', 'WinClosed', 'TabEnter', 'BufModifiedSet', 'BufWritePost'
+    'WinEnter', 'WinNew', 'WinClosed', 'TabEnter', 'BufModifiedSet', 'BufWritePost'
   },
   {
     group = group,
@@ -486,6 +516,17 @@ vim.api.nvim_create_autocmd(
     end,
   }
 )
+
+-- Entering or leaving a diff moves windows in or out of the split tab.
+vim.api.nvim_create_autocmd('OptionSet', {
+  group = group,
+  pattern = 'diff',
+  callback = function()
+    vim.schedule(function()
+      vim.rpcnotify(0, 'grove_buffers', snapshot())
+    end)
+  end,
+})
 
 -- :bd / :bw on a file buffer closes its Grove tab. Terminal, help and
 -- quickfix buffers never had one.
@@ -528,6 +569,17 @@ pcall(vim.api.nvim_buf_delete, buf, {})
     count?: number
     modified?: unknown
     active?: unknown
+    splits?: unknown
+    win?: unknown
+  }
+
+  /** Keeps the well-formed entries of nvim's split window list. */
+  function toSplitWindows(splits: unknown): SplitWindow[] {
+    if (!Array.isArray(splits)) return []
+    return splits.filter(
+      (entry): entry is SplitWindow =>
+        typeof entry?.win === 'number' && typeof entry?.path === 'string'
+    )
   }
 
   /** Turns nvim's list of unsaved buffer paths into the lookup BufferTabs takes. */
@@ -554,11 +606,26 @@ pcall(vim.api.nvim_buf_delete, buf, {})
     store.attachEditorTab({ worktreeId, path, name })
   }
 
+  /**
+   * When a split window switches file, swaps the two files' tabs so the split
+   * tab stays where it is and the file it let go of reappears where the new one
+   * stood, rather than the split tab sliding to wherever the new file sat.
+   */
+  function keepSplitTabInPlace(previous: SplitWindow[], next: SplitWindow[]): void {
+    const replacement = splitReplacement(previous, next)
+    if (replacement === null) return
+    store.tabs = swapTabs(store.tabs, replacement.left, replacement.entered)
+  }
+
   /** Applies one snapshot from the buffer-state autocmd to the pane's state. */
   function applyBufferSnapshot(snapshot: BufferSnapshot): void {
     if (typeof snapshot.count === 'number') nvimFileCount = snapshot.count
     dirtyPaths = toDirtyPaths(snapshot.modified)
+    if (typeof snapshot.win === 'number') currentWin = snapshot.win
     attachActiveBuffer(snapshot.active)
+    const nextSplits = toSplitWindows(snapshot.splits)
+    keepSplitTabInPlace(splitWindows, nextSplits)
+    splitWindows = nextSplits
   }
 
   /** Closes the tab of a file whose buffer was deleted inside nvim (`:bd`). */
@@ -648,15 +715,33 @@ end, ns)
 
   // Neovim owns the `gr` mapping because it knows when an LSP client is
   // attached; its notification hands the multi-result presentation to Grove.
+  // Goto requests with several answers arrive as `grove_locations`, already
+  // resolved, and open the same picker.
   function watchReferences(id: string): void {
     disposeReferences?.()
     disposeReferences = window.workbench.on('event:nvim-notify', (payload) => {
       const event = payload as { id: string; method: string; args: unknown[] }
-      if (event.id !== id || event.method !== 'grove_references') return
-      clearPendingKeys()
-      const data = (event.args?.[0] ?? {}) as { symbol?: unknown }
-      references.show(id, typeof data.symbol === 'string' ? data.symbol : '')
+      if (event.id !== id) return
+      if (event.method === 'grove_references') {
+        clearPendingKeys()
+        const data = (event.args?.[0] ?? {}) as { symbol?: unknown }
+        references.show(id, typeof data.symbol === 'string' ? data.symbol : '')
+      }
+      if (event.method === 'grove_locations') {
+        clearPendingKeys()
+        showLocations(id, event.args?.[0])
+      }
     })
+  }
+
+  /** Opens the location picker on a `grove_locations` notification's payload. */
+  function showLocations(id: string, payload: unknown): void {
+    const data = (payload ?? {}) as { label?: unknown; symbol?: unknown; locations?: unknown }
+    let label = 'Locations'
+    if (typeof data.label === 'string') label = data.label
+    let symbol = ''
+    if (typeof data.symbol === 'string') symbol = data.symbol
+    references.showLocations(id, label, symbol, data.locations)
   }
 
   // Hides the pending panel without churning keymap state on every keystroke.
@@ -738,15 +823,19 @@ end, ns)
       onModeChange: (mode) => {
         void handleModeChange(mode)
       },
+      onCursorGridChanged: (grid) => {
+        cursorGrid = grid
+      },
       onWindowsChanged: (windows) => {
         nvimWindows = windows
-        void applyWindowPlacements(windows)
+        applyWindowPlacements(windows)
       },
       onExited: (exitCode) => {
         console.warn(`nvim editor pane crashed (code ${exitCode}); restarting`)
         nvimId = null
         nvimFileCount = 0
         dirtyPaths = {}
+        splitWindows = []
       },
       onClose: () => {
         nvimId = null
@@ -827,6 +916,41 @@ end, ns)
   // nvim's input otherwise. Pane navigation and a closing overlay both come
   // through here, so neither leaves focus on the leaf while keys belong inside.
   $effect(() => keymap.registerPaneFocus(leafId, focusFromNavigation))
+  $effect(() =>
+    keymap.registerPaneNavigator(leafId, { move: moveToWindow, enter: enterFromEdge })
+  )
+
+  // Steps to nvim's window in a direction and reports whether there was one.
+  const MOVE_WINDOW_LUA = `
+local direction = ...
+local before = vim.api.nvim_get_current_win()
+vim.cmd('wincmd ' .. direction)
+return vim.api.nvim_get_current_win() ~= before
+`
+
+  const OPPOSITE_DIRECTION: Record<Direction, Direction> = { h: 'l', l: 'h', j: 'k', k: 'j' }
+
+  /**
+   * Ctrl-h/j/k/l inside the editor: nvim's split in that direction first, so
+   * focus only leaves the pane from the window at its edge.
+   */
+  async function moveToWindow(dir: Direction): Promise<boolean> {
+    const id = session?.id
+    if (!id || !showEditor) return false
+    const moved = await window.workbench.nvim
+      .request(id, 'nvim_exec_lua', [MOVE_WINDOW_LUA, [dir]])
+      .catch(() => false)
+    return moved === true
+  }
+
+  /** Arriving from a neighbouring pane lands on the split at that edge. */
+  function enterFromEdge(dir: Direction): void {
+    const id = session?.id
+    if (!id || !showEditor) return
+    void window.workbench.nvim
+      .request(id, 'nvim_command', [`999wincmd ${OPPOSITE_DIRECTION[dir]}`])
+      .catch(() => {})
+  }
 
   /** Focuses what this pane shows; false leaves it to the leaf, e.g. under the empty state. */
   function focusFromNavigation(): boolean {
@@ -968,7 +1092,16 @@ end, ns)
 
 <div class="flex h-full min-h-0 w-full flex-col">
   {#if showEditor}
-    <BufferTabs tabs={activeTabs} {dirtyPaths} onSelect={selectTab} onClose={closeTab} />
+    <BufferTabs
+      tabs={activeTabs}
+      splits={splitWindows}
+      {currentWin}
+      {dirtyPaths}
+      onSelect={selectTab}
+      onClose={closeTab}
+      onSelectSplit={selectSplit}
+      onCloseSplit={closeSplit}
+    />
   {/if}
   <ReviewHeaderBar {leafId} />
 
@@ -978,7 +1111,6 @@ end, ns)
   <div class="relative min-h-0 flex-1">
     <div
       bind:this={hostEl}
-      data-nvim-ui={nvimId ?? undefined}
       class="absolute inset-0 overflow-hidden bg-surface"
       class:invisible={activeViewer !== null && showEditor}
       role="none"
@@ -1003,6 +1135,9 @@ end, ns)
               />
             </div>
           {/each}
+          {#each dividers as divider (divider.key)}
+            <NvimSplitDivider {session} {divider} />
+          {/each}
         {/if}
         {#if session && floatingWindows.length > 0}
           {#if modalFloatingWindows.length > 0}
@@ -1020,10 +1155,13 @@ end, ns)
             <div
               class={isTransientFloat(floating)
                 ? 'absolute overflow-hidden'
-                : 'group absolute overflow-hidden rounded-lg border border-line bg-surface shadow-2xl'}
+                : 'group absolute overflow-hidden rounded-lg border border-line bg-elevated shadow-2xl'}
               style={floatStyle(floating)}
             >
-              {#if !isTransientFloat(floating)}
+              <!-- Only a float the cursor is in needs a way out by mouse; a
+                   preview closes on Escape or the next cursor move, and a ✕
+                   would sit on its text. -->
+              {#if modalFloatingWindows.includes(floating)}
                 <button
                   class="absolute right-1.5 top-1.5 z-40 flex h-5 w-5 items-center justify-center rounded text-xs text-dim opacity-60 transition-opacity hover:bg-hover hover:text-default hover:opacity-100"
                   title="Close window"
@@ -1071,6 +1209,20 @@ end, ns)
         {#each editorOverlays.overlays as overlay (overlay.id)}
           <overlay.component {leafId} tick={minimapTick} />
         {/each}
+        {#if nvimSetup.step !== null}
+          <!-- First-run setup holds every editor back until it is done. -->
+          <div
+            class="absolute inset-0 z-40 flex flex-col items-center justify-center gap-2 bg-surface text-dim"
+            role="status"
+          >
+            <div class="text-sm text-default">Setting up the editor</div>
+            <div class="flex items-center gap-2 text-xs">
+              <WaveSpinner count={3} />
+              <span>{nvimSetup.step}…</span>
+            </div>
+            <div class="text-xs">Only on first launch, and after an update.</div>
+          </div>
+        {/if}
         {#if !showEditor}
           <div
             class="absolute inset-0 z-30 flex flex-col items-center justify-center gap-4 bg-surface text-dim"

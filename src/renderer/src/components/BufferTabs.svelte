@@ -7,6 +7,7 @@
   import ArrowsLeftRightIcon from 'phosphor-svelte/lib/ArrowsLeftRightIcon'
   import CaretLeftIcon from 'phosphor-svelte/lib/CaretLeftIcon'
   import CaretRightIcon from 'phosphor-svelte/lib/CaretRightIcon'
+  import PushPinIcon from 'phosphor-svelte/lib/PushPinIcon'
   import { nextHiddenTab, tabOverflow, type TabOverflow, type TabSpan } from '../lib/tabOverflow'
   import { stripEntries, type SplitSegment, type SplitWindow } from '../lib/nvim/splitTabs'
   import { store, type TabDiff } from '../lib/store.svelte'
@@ -129,7 +130,7 @@
 
 <!-- A tab's face: pin, unsaved dot, file icon, name and, for a diff, its sides. -->
 {#snippet tabLabel(tab: Tab)}
-  {#if tab.pinned}<Icon icon="ph:push-pin-fill" width="11" height="11" class="text-amber" />{/if}
+  {#if tab.pinned}<PushPinIcon weight="fill" size={11} class="shrink-0 text-amber" />{/if}
   <!-- Unsaved marker sits ahead of the file icon, so a scanning eye
      finds every dirty tab in one straight column. -->
   {#if dirtyPaths[tab.path]}<span

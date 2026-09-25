@@ -22,6 +22,8 @@ export interface RepoState {
   // Open tabs + active tab scoped per worktree (worktreeId -> ...).
   openTabsByWorktree: Record<string, string[]>
   activeTabByWorktree: Record<string, string | null>
+  // Pinned tabs per worktree, as paths from openTabsByWorktree.
+  pinnedTabsByWorktree: Record<string, string[]>
   selectedWorktreeId: string | null
   setupOnceDone: boolean
   // AGENTS.md onboarding intro page was dismissed or completed for this repo.
@@ -105,6 +107,7 @@ export function emptyRepoState(): RepoState {
     activeTabPath: null,
     openTabsByWorktree: {},
     activeTabByWorktree: {},
+    pinnedTabsByWorktree: {},
     selectedWorktreeId: null,
     setupOnceDone: false,
     introDismissed: false,

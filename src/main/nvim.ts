@@ -10,8 +10,8 @@ import { NvimRpc, toPlain } from './nvimRpc'
 import {
   nvimBinary,
   nvimAvailable,
+  nvimConfigArgs,
   nvimEnvOverlay,
-  ensureNvimUserConfig,
   ensureCopilotConfigLink
 } from './nvimPaths'
 import { ensureNvimSetup } from './nvimSetup'
@@ -64,12 +64,13 @@ export class NeovimManager {
     const id = `nvim-${this.counter}`
     const env = { ...options.env, ...nvimEnvOverlay() }
     await this.ensureStateDirs(env)
-    await ensureNvimUserConfig()
     await ensureCopilotConfigLink()
-    // After the config link: setup runs that config.
     await ensureNvimSetup(this.events.onSetupStep)
 
-    const child = spawn(nvimBinary(), ['--embed'], { cwd: options.cwd, env })
+    const child = spawn(nvimBinary(), ['--embed', ...nvimConfigArgs()], {
+      cwd: options.cwd,
+      env
+    })
     if (!child.stdin || !child.stdout) throw new Error('nvim spawn failed: no stdio')
     const rpc = new NvimRpc(child.stdin, child.stdout)
     const session: NvimSession = { child, rpc, pending: [], flushTimer: null, killedByUs: false }

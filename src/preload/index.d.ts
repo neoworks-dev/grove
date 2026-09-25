@@ -112,6 +112,7 @@ interface RepoStateShape {
   activeTabPath: string | null
   openTabsByWorktree: Record<string, string[]>
   activeTabByWorktree: Record<string, string | null>
+  pinnedTabsByWorktree: Record<string, string[]>
   selectedWorktreeId: string | null
   setupOnceDone: boolean
   introDismissed: boolean
@@ -519,6 +520,8 @@ export interface WorkbenchApi {
     command: (id: string, command: string) => Promise<void>
     request: (id: string, method: string, args: unknown[]) => Promise<unknown>
     kill: (id: string) => Promise<void>
+    /** The step first-run setup is on, or null when none is running. */
+    setupStep: () => Promise<string | null>
   }
   state: {
     getRepo: () => Promise<RepoStateShape>

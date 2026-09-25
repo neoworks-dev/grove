@@ -7,6 +7,7 @@
 // resize and close the same way.
 
 import { store } from './store.svelte'
+import { pinnedPathsByWorktree } from './tabPins'
 import { keymap } from './keymap.svelte'
 import { panes } from './panes.svelte'
 import { views } from './views.svelte'
@@ -31,12 +32,10 @@ import {
   updateLeafState,
   moveLeaf,
   sanitize,
-  syncNvimWindowLeaves,
   type DropZone,
   type EdgeSide,
   type LayoutNode,
   type LeafNode,
-  type NvimWindowPlacement,
   type SizingPolicy,
   type SplitDirection,
   type SplitNode
@@ -422,26 +421,6 @@ class LayoutStore {
     )
     this.focusLeafSoon(newLeaf.id)
     this.schedule()
-  }
-
-  // Mirror an editor's Neovim windows into transient leaves beside it. The tree
-  // written is the one holding the owning pane, not the active one: an editor in
-  // a mounted-but-hidden view keeps reporting its windows.
-  syncNvimWindows(ownerLeafId: string, nvimId: string, windows: NvimWindowPlacement[]): void {
-    const viewId = this.viewHoldingLeaf(ownerLeafId)
-    if (!viewId) return
-    const tree = this.trees[viewId]
-    const next = syncNvimWindowLeaves(tree, ownerLeafId, nvimId, windows)
-    if (next !== tree) this.trees[viewId] = next
-  }
-
-  /** The mounted view whose tree holds this leaf, or null once it is gone. */
-  private viewHoldingLeaf(leafId: string): string | null {
-    for (const viewId of this.mountedViewIds) {
-      const tree = this.trees[viewId]
-      if (tree && findLeaf(tree, leafId)) return viewId
-    }
-    return null
   }
 
   // Whether any leaf of the given pane type is open in the active view.
@@ -868,11 +847,7 @@ class LayoutStore {
         // live tree over it.
         viewLayouts: {
           ...this.storedTrees,
-          ...Object.fromEntries(
-            Object.entries($state.snapshot(this.trees) as Record<string, LayoutNode>).map(
-              ([id, tree]) => [id, stripTransientNvimGrids(tree) ?? buildDefaultTree()]
-            )
-          )
+          ...($state.snapshot(this.trees) as Record<string, LayoutNode>)
         },
         activeLayoutView: this.activeViewId,
         paneSizes: $state.snapshot(this.paneSizes),
@@ -898,30 +873,13 @@ class LayoutStore {
             const fallback = files.length > 0 ? files[files.length - 1].path : null
             return [worktreeId, activeIsFile ? active : fallback]
           })
-        )
+        ),
+        pinnedTabsByWorktree: pinnedPathsByWorktree(store.tabsByWorktree)
       })
     } catch {
       // best-effort; layout is non-critical
     }
   }
-}
-
-// Neovim-derived leaves are reconstructed from win_pos after attach. Persisting
-// process-local grid/window ids would restore dead panes on the next launch.
-function stripTransientNvimGrids(node: LayoutNode): LayoutNode | null {
-  if (node.kind === 'leaf') return node.paneState?.transient === true ? null : node
-  const projected = node.children.map((child, index) => ({
-    child: stripTransientNvimGrids(child),
-    size: node.sizes[index]
-  }))
-  const kept = projected
-    .map((entry) => entry.child)
-    .filter((child): child is LayoutNode => child !== null)
-  if (kept.length === 0) return null
-  if (kept.length === 1) return kept[0]
-  const sizes = projected.filter((entry) => entry.child !== null).map((entry) => entry.size)
-  const total = sizes.reduce((sum, size) => sum + size, 0)
-  return { ...node, children: kept, sizes: sizes.map((size) => size / total) }
 }
 
 // Fold the retired left/right docks into every stored tree as ordinary leaves,

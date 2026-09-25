@@ -86,7 +86,7 @@
 
 {#if !capturing}
   <button
-    class="rounded-md border border-line bg-surface px-2 py-1 font-mono text-2xs text-default hover:bg-hover disabled:opacity-50"
+    class="rounded-md border border-line bg-surface px-2 py-1 font-mono text-2xs whitespace-nowrap text-default hover:bg-hover disabled:opacity-50"
     {disabled}
     onclick={begin}
     title="Click, then press the key sequence"
@@ -94,9 +94,9 @@
     {value || 'unbound'}
   </button>
 {:else}
-  <div class="flex items-center gap-1.5">
+  <div class="flex flex-wrap items-center gap-1.5">
     <span
-      class="min-w-24 rounded-md border border-accent bg-input px-2 py-1 text-center font-mono text-2xs text-default"
+      class="min-w-24 whitespace-nowrap rounded-md border border-accent bg-input px-2 py-1 text-center font-mono text-2xs text-default"
     >
       {draftText || 'press keys…'}
     </span>

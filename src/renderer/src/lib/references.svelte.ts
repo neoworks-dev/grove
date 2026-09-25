@@ -101,13 +101,38 @@ async function fetchReferences(nvimId: string): Promise<NvimReference[]> {
   }
 }
 
+/** The picker's prompt: "References to foo…", or just "References…" without a symbol. */
+function placeholderFor(label: string, preposition: string, symbol: string): string {
+  if (!symbol) return `${label}…`
+  return `${label} ${preposition} ${symbol}…`
+}
+
 class ReferencesStore {
+  /** Opens the picker on the references to the symbol under nvim's cursor. */
   show(nvimId: string, symbol = ''): void {
     // One LSP request feeds every filter update while this picker is open.
-    const pending = fetchReferences(nvimId)
+    this.open(nvimId, placeholderFor('References', 'to', symbol), symbol, fetchReferences(nvimId))
+  }
+
+  /**
+   * Opens the picker on locations nvim already found, such as the definitions
+   * of a symbol declared in more than one place.
+   */
+  showLocations(nvimId: string, label: string, symbol: string, locations: unknown): void {
+    const pending = Promise.resolve(normalizeNvimReferences(locations))
+    this.open(nvimId, placeholderFor(label, 'of', symbol), symbol, pending)
+  }
+
+  /** Shows the searchable location list with its source preview. */
+  private open(
+    nvimId: string,
+    placeholder: string,
+    symbol: string,
+    pending: Promise<NvimReference[]>
+  ): void {
     overlays.show({
       id: OVERLAY_ID,
-      placeholder: symbol ? `References to ${symbol}…` : 'References…',
+      placeholder,
       debounceMs: 0,
       onQuery: async (query, emit, token) => {
         const found = await pending

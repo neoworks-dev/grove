@@ -10,7 +10,6 @@
   import StatusBar from './components/StatusBar.svelte'
   import DialogHost from './components/DialogHost.svelte'
   import NotificationHost from './components/NotificationHost.svelte'
-  import KeybindCheatsheet from './components/KeybindCheatsheet.svelte'
   import NvimPromptOverlay from './components/NvimPromptOverlay.svelte'
   import NvimPopupMenu from './components/NvimPopupMenu.svelte'
   import {
@@ -36,14 +35,18 @@
   // contributed by the core plugins the kernel mounts (kernel/boot.ts). This
   // component is the chrome they render into.
 
-  // Persist layout (split tree, nested panel sizes, open tabs) whenever any of
+  // Persist layout (split tree, nested panel sizes, open and pinned tabs) whenever any of
   // these change; layout.schedule() debounces the write to per-repo state.
   $effect(() => {
     const tree = layout.tree
     const sizes = Object.values(layout.paneSizes)
     const tabs = store.tabs.map((tab) => tab.path).join('|')
+    const pins = store.tabs
+      .filter((tab) => tab.pinned)
+      .map((tab) => tab.path)
+      .join('|')
     const active = store.activeTabPath
-    void [tree, sizes, tabs, active]
+    void [tree, sizes, tabs, pins, active]
     layout.schedule()
   })
 
@@ -239,4 +242,3 @@
 <NvimPromptOverlay />
 <NvimPopupMenu />
 <NotificationHost />
-<KeybindCheatsheet />

@@ -57,6 +57,8 @@ export interface NvimSessionCallbacks {
   // Window topology changed. The owner projects floats into overlays and
   // ordinary nvim windows into Grove split leaves.
   onWindowsChanged?: (windows: NvimWindowPlacement[]) => void
+  // nvim's cursor moved to another grid: the window with focus changed.
+  onCursorGridChanged?: (grid: number) => void
 }
 
 export interface NvimSessionConfig {
@@ -893,18 +895,8 @@ export class NvimCanvasSession {
   private gridSize(): { cols: number; rows: number } {
     const { host } = this.elements
     if (!this.metrics) return { cols: 80, rows: 24 }
-    // Once ordinary nvim windows live in separate Grove leaves, the UI's outer
-    // size is their union—not the now-smaller owner leaf. Measuring every
-    // surface prevents a layout reconciliation from recursively shrinking nvim.
-    const id = this.nvimId
-    const surfaces = id ? [...document.querySelectorAll<HTMLElement>(`[data-nvim-ui="${id}"]`)] : []
-    const rects = surfaces.map((surface) => surface.getBoundingClientRect())
-    const width = rects.length
-      ? Math.max(...rects.map((rect) => rect.right)) - Math.min(...rects.map((rect) => rect.left))
-      : host.clientWidth
-    const height = rects.length
-      ? Math.max(...rects.map((rect) => rect.bottom)) - Math.min(...rects.map((rect) => rect.top))
-      : host.clientHeight
+    const width = host.clientWidth
+    const height = host.clientHeight
     // Floor so the grid fits inside the pane; the renderer then spreads the
     // sub-cell remainder across the cells (distributed edges) to reach every
     // edge, so there's no gap and no row is clipped.
@@ -924,11 +916,9 @@ export class NvimCanvasSession {
   }
 
   /**
-   * Windows drawn inside the owner pane instead of being mirrored into a Grove
-   * pane of their own — the base side of a diff, which is half of one view
-   * rather than a second editor. The pane decides which those are; the session
-   * only needs to know whether there are any, because their presence is what
-   * makes the primary window a fraction of the pane rather than all of it.
+   * nvim's windows besides the primary one, which the pane draws beside it.
+   * Their presence is what makes the primary window a fraction of the pane
+   * rather than all of it.
    */
   setEmbeddedWindows(wins: number[]): void {
     const changed =
@@ -1236,6 +1226,7 @@ export class NvimCanvasSession {
       dirty.set(gridId, { all: false, rows: new Set([grid.cursor.row]), flushed: true })
     }
     this.lastCursorGrid = cursorGrid
+    this.callbacks.onCursorGridChanged?.(cursorGrid)
   }
 
   focusWindow(win: number, focusInput = true): void {
@@ -1341,15 +1332,7 @@ export class NvimCanvasSession {
     this.pendingGridSize = null
     if (!size || !this.nvimId || this.destroyed) return
     this.lastNvimResizeAt = performance.now()
-    const id = this.nvimId
-    const resized = window.workbench.nvim.resize(id, size.cols, size.rows)
-    if (this.embeddedWindows.size === 0) return
-    // Neovim hands every column a UI resize adds to the current window, so the
-    // two halves of a diff end up 13 columns against 161 the moment the pane
-    // grows. They are one view of one file; they stay even.
-    void Promise.resolve(resized)
-      .then(() => window.workbench.nvim.request(id, 'nvim_command', ['wincmd =']))
-      .catch(() => {})
+    void window.workbench.nvim.resize(this.nvimId, size.cols, size.rows)
   }
 
   // Grove → nvim mode names, clamped to what a pane registers.

@@ -32,7 +32,6 @@ export const settingsPanes = {
           title: 'Keyboard Shortcuts',
           component: KeyboardPane,
           orientation: 'row',
-          containerClass: 'bg-elevated',
           minWidth: 320,
           keywords: 'keyboard shortcuts keybindings keys rebind'
         }),

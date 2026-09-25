@@ -3,7 +3,7 @@
   // progress, show the reachable next keys and their descriptions. Reads the
   // binding registry, so plugin-contributed shortcuts appear automatically.
   import { keymap } from '../lib/keymap.svelte'
-  import { formatStep, type KeyStep } from '../lib/keySequence'
+  import { formatSequence, formatStep, type KeyStep } from '../lib/keySequence'
   import Kbd from './Kbd.svelte'
 
   // `inline` anchors the panel to the nearest positioned ancestor (the editor
@@ -33,9 +33,13 @@
       const token = display(steps[prefix.length])
       const leaf = steps.length === prefix.length + 1
       if (!byToken.has(token)) {
+        let label = binding.description
+        if (!leaf) {
+          label = `+${groupName(steps.slice(0, prefix.length + 1), binding.group)}`
+        }
         byToken.set(token, {
           token,
-          label: leaf ? binding.description : `+${binding.group || 'more'}`,
+          label,
           group: binding.group || '',
           leaf
         })
@@ -43,6 +47,15 @@
     }
     return [...byToken.values()].sort((a, b) => a.token.localeCompare(b.token))
   })
+
+  /** A prefix's registered name, else the group of a binding under it. */
+  function groupName(steps: KeyStep[], bindingGroup: string | undefined): string {
+    const sequence = formatSequence({ leader: keymap.pendingLeader, steps })
+    const registered = keymap.prefixLabel(sequence)
+    if (registered !== null) return registered
+    if (bindingGroup) return bindingGroup
+    return 'more'
+  }
 
   const visible = $derived(keymap.whichKeyVisible && entries.length > 0)
   const typed = $derived(keymap.pendingSteps.map(display).join(' '))

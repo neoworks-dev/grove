@@ -19,6 +19,12 @@
   import type { CustomBinding, KeybindAction } from '../../../shared/actions'
   import type { SettingScope } from '../../../shared/settings'
   import PaneControls from './PaneControls.svelte'
+  import RowAction from '../kernel/plugins/gitChanges/RowAction.svelte'
+  import ArrowCounterClockwiseIcon from 'phosphor-svelte/lib/ArrowCounterClockwiseIcon'
+  import ProhibitIcon from 'phosphor-svelte/lib/ProhibitIcon'
+  import TrashIcon from 'phosphor-svelte/lib/TrashIcon'
+  import PlusIcon from 'phosphor-svelte/lib/PlusIcon'
+  import XIcon from 'phosphor-svelte/lib/XIcon'
 
   let { leafId }: { leafId: string } = $props()
 
@@ -79,6 +85,26 @@
       .sort((a, b) => a.group.localeCompare(b.group) || a.description.localeCompare(b.description))
   })
 
+  interface Group {
+    name: string
+    rows: Row[]
+  }
+
+  // Rows arrive sorted by group, so each group is one contiguous run.
+  const groups = $derived.by<Group[]>(() => {
+    const result: Group[] = []
+    for (const row of rows) {
+      const name = row.group || 'General'
+      const last = result[result.length - 1]
+      if (last && last.name === name) {
+        last.rows.push(row)
+        continue
+      }
+      result.push({ name, rows: [row] })
+    }
+    return result
+  })
+
   const conflictIds = $derived.by<Set<string>>(() => {
     const entries: ConflictEntry[] = []
     for (const row of rows) {
@@ -94,8 +120,9 @@
     return ids
   })
 
+  // Default bindings carry no label; only where a binding came from otherwise.
   const sourceLabels: Record<BindingSource, string> = {
-    default: 'default',
+    default: '',
     user: 'user',
     project: 'project',
     'custom-user': 'custom',
@@ -230,25 +257,32 @@
   }
 </script>
 
+
 <div class="flex h-full min-h-0 flex-col">
   <div class="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2">
     <input
       type="text"
-      class="w-64 rounded-md border border-line bg-input px-2 py-1 text-xs"
+      class="min-w-0 flex-1 rounded-md border border-line bg-input px-2 py-1 text-xs"
       placeholder="Search keybindings…"
       bind:value={filter}
     />
     <button
-      class="ml-auto rounded-md border border-line bg-surface px-2 py-1 text-xs hover:bg-hover"
+      class="grid size-6 shrink-0 place-items-center rounded-md text-dim hover:bg-hover hover:text-default"
+      title={adding ? 'Close' : 'Add binding'}
+      aria-label={adding ? 'Close' : 'Add binding'}
       onclick={() => (adding = !adding)}
     >
-      {adding ? 'Close' : 'Add binding'}
+      {#if adding}
+        <XIcon size={14} />
+      {:else}
+        <PlusIcon size={14} />
+      {/if}
     </button>
     <PaneControls />
   </div>
 
   {#if adding}
-    <div class="flex shrink-0 flex-wrap items-end gap-3 border-b border-line bg-elevated px-3 py-3">
+    <div class="grid shrink-0 grid-cols-[repeat(auto-fill,minmax(10rem,1fr))] items-end gap-3 border-b border-line px-3 py-3">
       <label class="flex flex-col gap-1 text-2xs text-dim">
         Action
         <select
@@ -264,7 +298,7 @@
         <label class="flex flex-col gap-1 text-2xs text-dim">
           Command
           <select
-            class="w-64 rounded-md border border-line bg-input px-2 py-1 text-xs text-default"
+            class="w-full rounded-md border border-line bg-input px-2 py-1 text-xs text-default"
             bind:value={newCommandId}
           >
             <option value="">— pick a command —</option>
@@ -278,7 +312,7 @@
           Command line (supports {'${PORT_0}'}, $WT_PATH…)
           <input
             type="text"
-            class="w-72 rounded-md border border-line bg-input px-2 py-1 font-mono text-xs text-default"
+            class="w-full rounded-md border border-line bg-input px-2 py-1 font-mono text-xs text-default"
             placeholder="bun test"
             bind:value={newShell}
           />
@@ -287,7 +321,7 @@
         <label class="flex flex-col gap-1 text-2xs text-dim">
           Prompt
           <textarea
-            class="h-14 w-72 rounded-md border border-line bg-input px-2 py-1 text-xs text-default"
+            class="h-14 w-full rounded-md border border-line bg-input px-2 py-1 text-xs text-default"
             bind:value={newPrompt}
           ></textarea>
         </label>
@@ -304,7 +338,7 @@
         Description
         <input
           type="text"
-          class="w-48 rounded-md border border-line bg-input px-2 py-1 text-xs text-default"
+          class="w-full rounded-md border border-line bg-input px-2 py-1 text-xs text-default"
           bind:value={newDescription}
         />
       </label>
@@ -327,74 +361,60 @@
     </div>
   {/if}
 
-  <div class="min-h-0 flex-1 overflow-auto">
-    <table class="w-full text-left text-xs">
-      <thead class="sticky top-0 bg-elevated text-2xs uppercase tracking-caps text-dim">
-        <tr>
-          <th class="px-3 py-2 font-medium">Description</th>
-          <th class="px-3 py-2 font-medium">Keys</th>
-          <th class="px-3 py-2 font-medium">Context</th>
-          <th class="px-3 py-2 font-medium">Source</th>
-          <th class="px-3 py-2 font-medium"></th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each rows as row (row.id)}
-          <tr class="border-b border-line/50 hover:bg-hover/40">
-            <td class="px-3 py-1.5">
-              <span class="text-muted">{row.description}</span>
-              {#if row.group}
-                <span class="ml-1 text-2xs text-faint">{row.group}</span>
-              {/if}
-              {#if conflictIds.has(row.id)}
-                <span class="ml-1 text-2xs text-amber" title="Conflicts with another binding"
-                  >⚠ conflict</span
-                >
-              {/if}
-            </td>
-            <td class="px-3 py-1.5">
-              <KeybindCapture
-                value={row.unbound ? '' : row.keys}
-                onchange={(next) => void rebind(row, next)}
-              />
-            </td>
-            <td class="px-3 py-1.5 font-mono text-2xs text-dim">{row.context}</td>
-            <td class="px-3 py-1.5">
-              <span class="rounded border border-line px-1.5 py-0.5 text-2xs text-dim">
-                {sourceLabels[row.source]}{row.unbound ? ' · unbound' : ''}
-              </span>
-            </td>
-            <td class="px-3 py-1.5 text-right">
+  <div class="min-h-0 flex-1 overflow-x-hidden overflow-y-auto pb-2">
+    {#each groups as group (group.name)}
+      <p
+        class="sticky top-0 z-10 bg-surface px-3 pt-3 pb-1 text-2xs font-semibold uppercase tracking-caps text-dim"
+      >
+        {group.name}
+      </p>
+      {#each group.rows as row (row.id)}
+        <div
+          class="group/row flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-1 text-xs hover:bg-hover/40 focus-within:bg-hover/40"
+        >
+          <div class="flex min-w-0 flex-1 basis-32 items-center gap-1.5">
+            <span class="truncate text-muted" title={row.description}>{row.description}</span>
+            {#if row.context !== 'global'}
+              <span class="shrink-0 font-mono text-2xs text-faint" title="Only active in {row.context}"
+                >{row.context}</span
+              >
+            {/if}
+            {#if sourceLabels[row.source]}
+              <span class="shrink-0 rounded border border-line px-1 text-2xs text-dim"
+                >{sourceLabels[row.source]}</span
+              >
+            {/if}
+            {#if conflictIds.has(row.id)}
+              <span class="shrink-0 text-2xs text-amber" title="Conflicts with another binding"
+                >⚠ conflict</span
+              >
+            {/if}
+          </div>
+          <div class="ml-auto flex max-w-full min-w-0 items-center gap-1">
+            <div class="hidden items-center group-focus-within/row:flex group-hover/row:flex">
               {#if row.custom}
-                <button
-                  class="text-2xs text-red hover:opacity-80"
-                  onclick={() => void deleteCustom(row)}
-                >
-                  Delete
-                </button>
+                <RowAction icon={TrashIcon} title="Delete" onclick={() => void deleteCustom(row)} />
               {:else}
                 {#if hasOverride(row)}
-                  <button
-                    class="mr-2 text-2xs text-dim hover:text-default"
+                  <RowAction
+                    icon={ArrowCounterClockwiseIcon}
+                    title="Reset to default"
                     onclick={() => void resetToDefault(row)}
-                  >
-                    Reset
-                  </button>
+                  />
                 {/if}
                 {#if !row.unbound}
-                  <button
-                    class="text-2xs text-dim hover:text-default"
-                    onclick={() => void unbind(row)}
-                  >
-                    Unbind
-                  </button>
+                  <RowAction icon={ProhibitIcon} title="Unbind" onclick={() => void unbind(row)} />
                 {/if}
               {/if}
-            </td>
-          </tr>
-        {/each}
-      </tbody>
-    </table>
+            </div>
+            <KeybindCapture
+              value={row.unbound ? '' : row.keys}
+              onchange={(next) => void rebind(row, next)}
+            />
+          </div>
+        </div>
+      {/each}
+    {/each}
     {#if rows.length === 0}
       <p class="px-3 py-6 text-xs text-dim">No bindings match.</p>
     {/if}

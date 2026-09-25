@@ -36,6 +36,7 @@
   import { editorHasContent } from '../lib/nvim/visibility'
   import { closedTabPaths } from '../lib/nvim/closedTabs'
   import { splitDividers } from '../lib/nvim/splitDividers'
+  import type { SplitWindow } from '../lib/nvim/splitTabs'
   import {
     nvimGroupLabels,
     nvimLeaderBindings,
@@ -88,6 +89,10 @@
   let nvimFileCount = $state(0)
   // Absolute paths of buffers with unsaved changes, keyed for tab lookup.
   let dirtyPaths = $state<Record<string, boolean>>({})
+  // The current tab page's file windows and the focused window, which the tab
+  // strip folds into one `a | b | c` tab while there is more than one.
+  let splitWindows = $state<SplitWindow[]>([])
+  let currentWin = $state(0)
   let disposeBufferWatch: (() => void) | null = null
   let disposeKeymapWatch: (() => void) | null = null
   // Git gutter for the minimap: the open file's changed-line ranges.
@@ -247,6 +252,21 @@
 
   function selectTab(path: string): void {
     store.activeTabPath = path
+  }
+
+  /** Focuses one window of the split tab; the buffer snapshot then follows its file. */
+  function selectSplit(win: number): void {
+    const id = session?.id
+    if (!id) return
+    void window.workbench.nvim.request(id, 'nvim_set_current_win', [win]).catch(() => {})
+  }
+
+  /** Closes one window of the split tab; its file keeps its buffer and gets its own tab back. */
+  function closeSplit(win: number, event: MouseEvent): void {
+    event.stopPropagation()
+    const id = session?.id
+    if (!id) return
+    void window.workbench.nvim.request(id, 'nvim_win_close', [win, false]).catch(() => {})
   }
 
   function closeTab(path: string, event: MouseEvent): void {
@@ -433,15 +453,37 @@ local function active_file()
   return name
 end
 
+-- The current tab page's file windows in window order, for the tab strip's
+-- \`a | b | c\` split tab. Diff windows are left out: a diff tab already names
+-- both of its sides.
+local function file_splits()
+  local splits = {}
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    local buf = vim.api.nvim_win_get_buf(win)
+    local name = vim.api.nvim_buf_get_name(buf)
+    local floating = vim.api.nvim_win_get_config(win).relative ~= ''
+    if not floating and not vim.wo[win].diff and vim.bo[buf].buftype == '' and name ~= '' then
+      table.insert(splits, { win = win, path = name })
+    end
+  end
+  return splits
+end
+
 local function snapshot()
-  return { count = count_visible(), modified = modified_paths(), active = active_file() }
+  return {
+    count = count_visible(),
+    modified = modified_paths(),
+    active = active_file(),
+    splits = file_splits(),
+    win = vim.api.nvim_get_current_win(),
+  }
 end
 
 local group = vim.api.nvim_create_augroup('GroveBufferCount', { clear = true })
 vim.api.nvim_create_autocmd(
   {
     'BufWinEnter', 'BufEnter', 'BufDelete', 'BufWipeout', 'BufFilePost',
-    'WinEnter', 'WinClosed', 'TabEnter', 'BufModifiedSet', 'BufWritePost'
+    'WinEnter', 'WinNew', 'WinClosed', 'TabEnter', 'BufModifiedSet', 'BufWritePost'
   },
   {
     group = group,
@@ -452,6 +494,17 @@ vim.api.nvim_create_autocmd(
     end,
   }
 )
+
+-- Entering or leaving a diff moves windows in or out of the split tab.
+vim.api.nvim_create_autocmd('OptionSet', {
+  group = group,
+  pattern = 'diff',
+  callback = function()
+    vim.schedule(function()
+      vim.rpcnotify(0, 'grove_buffers', snapshot())
+    end)
+  end,
+})
 
 -- :bd / :bw on a file buffer closes its Grove tab. Terminal, help and
 -- quickfix buffers never had one.
@@ -494,6 +547,17 @@ pcall(vim.api.nvim_buf_delete, buf, {})
     count?: number
     modified?: unknown
     active?: unknown
+    splits?: unknown
+    win?: unknown
+  }
+
+  /** Keeps the well-formed entries of nvim's split window list. */
+  function toSplitWindows(splits: unknown): SplitWindow[] {
+    if (!Array.isArray(splits)) return []
+    return splits.filter(
+      (entry): entry is SplitWindow =>
+        typeof entry?.win === 'number' && typeof entry?.path === 'string'
+    )
   }
 
   /** Turns nvim's list of unsaved buffer paths into the lookup BufferTabs takes. */
@@ -524,6 +588,8 @@ pcall(vim.api.nvim_buf_delete, buf, {})
   function applyBufferSnapshot(snapshot: BufferSnapshot): void {
     if (typeof snapshot.count === 'number') nvimFileCount = snapshot.count
     dirtyPaths = toDirtyPaths(snapshot.modified)
+    splitWindows = toSplitWindows(snapshot.splits)
+    if (typeof snapshot.win === 'number') currentWin = snapshot.win
     attachActiveBuffer(snapshot.active)
   }
 
@@ -713,6 +779,7 @@ end, ns)
         nvimId = null
         nvimFileCount = 0
         dirtyPaths = {}
+        splitWindows = []
       },
       onClose: () => {
         nvimId = null
@@ -969,7 +1036,16 @@ return vim.api.nvim_get_current_win() ~= before
 
 <div class="flex h-full min-h-0 w-full flex-col">
   {#if showEditor}
-    <BufferTabs tabs={activeTabs} {dirtyPaths} onSelect={selectTab} onClose={closeTab} />
+    <BufferTabs
+      tabs={activeTabs}
+      splits={splitWindows}
+      {currentWin}
+      {dirtyPaths}
+      onSelect={selectTab}
+      onClose={closeTab}
+      onSelectSplit={selectSplit}
+      onCloseSplit={closeSplit}
+    />
   {/if}
   <ReviewHeaderBar {leafId} />
 

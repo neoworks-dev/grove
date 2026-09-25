@@ -2,11 +2,13 @@
   // The editor buffer tab strip for the Neovim center pane, showing the row of
   // open files. Dirty state is optional; NvimPane sources it from nvim's
   // 'modified' flag and marks those tabs with a dot ahead of the file icon.
+  // Files side by side in nvim's splits share one tab, `a | b | c`.
   import Icon from '@iconify/svelte'
   import ArrowsLeftRightIcon from 'phosphor-svelte/lib/ArrowsLeftRightIcon'
   import CaretLeftIcon from 'phosphor-svelte/lib/CaretLeftIcon'
   import CaretRightIcon from 'phosphor-svelte/lib/CaretRightIcon'
   import { nextHiddenTab, tabOverflow, type TabOverflow, type TabSpan } from '../lib/tabOverflow'
+  import { stripEntries, type SplitSegment, type SplitWindow } from '../lib/nvim/splitTabs'
   import { store, type TabDiff } from '../lib/store.svelte'
   import { fileIcon } from '../lib/icons'
   import PaneControls from './PaneControls.svelte'
@@ -28,15 +30,32 @@
 
   let {
     tabs,
+    splits = [],
+    currentWin = 0,
     dirtyPaths = {},
     onSelect,
-    onClose
+    onClose,
+    onSelectSplit,
+    onCloseSplit
   }: {
     tabs: Tab[]
+    splits?: SplitWindow[]
+    currentWin?: number
     dirtyPaths?: Record<string, boolean>
     onSelect: (path: string) => void
     onClose: (path: string, event: MouseEvent) => void
+    onSelectSplit?: (win: number) => void
+    onCloseSplit?: (win: number, event: MouseEvent) => void
   } = $props()
+
+  const entries = $derived(stripEntries(tabs, splits))
+
+  /** The segment the split tab stands for when scrolling: the focused window's, else the first. */
+  function leadingSegment(segments: SplitSegment<Tab>[]): SplitSegment<Tab> {
+    const focused = segments.find((segment) => segment.win === currentWin)
+    if (focused !== undefined) return focused
+    return segments[0]
+  }
 
   let stripEl = $state<HTMLDivElement>()
   let rowEl = $state<HTMLDivElement>()
@@ -108,68 +127,111 @@
   })
 </script>
 
+<!-- A tab's face: pin, unsaved dot, file icon, name and, for a diff, its sides. -->
+{#snippet tabLabel(tab: Tab)}
+  {#if tab.pinned}<Icon icon="ph:push-pin-fill" width="11" height="11" class="text-amber" />{/if}
+  <!-- Unsaved marker sits ahead of the file icon, so a scanning eye
+     finds every dirty tab in one straight column. -->
+  {#if dirtyPaths[tab.path]}<span
+      class="shrink-0 text-[8px] leading-none text-amber"
+      title="Unsaved changes">●</span
+    >{/if}
+  <Icon icon={iconFor(tab)} width="13" height="13" class="shrink-0" />
+  <span>{tab.name}</span>
+  {#if tab.diff}
+    <span
+      class="flex max-w-56 items-center gap-0.5 font-mono text-2xs opacity-70"
+      title="{tab.diff.left} ⇄ {tab.diff.right}"
+    >
+      <span class="truncate">{tab.diff.left}</span>
+      <ArrowsLeftRightIcon size={10} class="shrink-0" />
+      <span class="truncate">{tab.diff.right}</span>
+    </span>
+  {/if}
+{/snippet}
+
+{#snippet plainTab(tab: Tab)}
+  {@const active = store.activeTabPath === tab.path}
+  {@const tinted = tab.scratch || tab.diff !== undefined}
+  <!-- Floating pills: inactive tabs sit flat on the strip, the active one
+     lifts to elevated. Ephemeral scratch buffers (batch rename, a
+     commit's revision) and files open as one side of a diff get an
+     amber tint so they read as distinct from plain file tabs; a diff
+     also names the two sides it is between. -->
+  <div
+    data-tab={tab.path}
+    class="group/tab flex h-6 shrink-0 cursor-pointer items-center rounded-md px-2 text-xs {!active &&
+    tinted
+      ? 'bg-amber-soft/40'
+      : ''}"
+    class:bg-elevated={active && !tinted}
+    class:text-default={active && !tinted}
+    class:text-dim={!active && !tinted}
+    class:hover:bg-hover={!active && !tinted}
+    class:hover:text-default={!active && !tinted}
+    class:text-amber={tinted}
+    class:bg-amber-soft={active && tinted}
+    class:hover:bg-amber-soft={!active && tinted}
+  >
+    <button class="flex cursor-pointer items-center gap-1.5" onclick={() => onSelect(tab.path)}>
+      {@render tabLabel(tab)}
+    </button>
+    <button
+      class="inline-flex w-0 shrink-0 cursor-pointer items-center overflow-hidden text-dim opacity-0 transition-all duration-150 ease-out hover:text-red group-hover/tab:ml-1 group-hover/tab:w-3.5 group-hover/tab:opacity-100"
+      title="Close tab"
+      onclick={(event) => onClose(tab.path, event)}>✕</button
+    >
+  </div>
+{/snippet}
+
+<!-- The files side by side in nvim's splits, as one pill in window order. The
+   pill lifts like an active tab while the focused file is one of them; inside
+   it the focused window's segment is bright and the rest dim. A segment's ✕
+   closes that split, not the file. -->
+{#snippet splitTab(segments: SplitSegment<Tab>[])}
+  {@const active = segments.some((segment) => segment.tab.path === store.activeTabPath)}
+  <div
+    data-tab={leadingSegment(segments).tab.path}
+    class="flex h-6 shrink-0 items-center rounded-md px-1 text-xs"
+    class:bg-elevated={active}
+    class:hover:bg-hover={!active}
+  >
+    {#each segments as segment, index (segment.win)}
+      {@const focused = segment.win === currentWin}
+      {#if index > 0}<span class="px-0.5 text-dim" aria-hidden="true">|</span>{/if}
+      <div
+        class="group/split flex items-center rounded px-1"
+        class:text-default={focused}
+        class:text-dim={!focused}
+        class:hover:text-default={!focused}
+      >
+        <button
+          class="flex cursor-pointer items-center gap-1.5"
+          title="Focus this split"
+          onclick={() => onSelectSplit?.(segment.win)}
+        >
+          {@render tabLabel(segment.tab)}
+        </button>
+        <button
+          class="inline-flex w-0 shrink-0 cursor-pointer items-center overflow-hidden text-dim opacity-0 transition-all duration-150 ease-out hover:text-red group-hover/split:ml-1 group-hover/split:w-3.5 group-hover/split:opacity-100"
+          title="Close split"
+          onclick={(event) => onCloseSplit?.(segment.win, event)}>✕</button
+        >
+      </div>
+    {/each}
+  </div>
+{/snippet}
+
 <div class="flex h-8 shrink-0 items-center bg-surface px-1.5">
   <div class="relative min-w-0 flex-1">
     <div bind:this={stripEl} class="no-scrollbar overflow-x-auto">
       <div bind:this={rowEl} class="flex w-max items-center gap-1">
-        {#each tabs as tab (tab.path)}
-          {@const active = store.activeTabPath === tab.path}
-          {@const tinted = tab.scratch || tab.diff !== undefined}
-          <!-- Floating pills: inactive tabs sit flat on the strip, the active one
-             lifts to elevated. Ephemeral scratch buffers (batch rename, a
-             commit's revision) and files open as one side of a diff get an
-             amber tint so they read as distinct from plain file tabs; a diff
-             also names the two sides it is between. -->
-          <div
-            data-tab={tab.path}
-            class="group/tab flex h-6 shrink-0 cursor-pointer items-center rounded-md px-2 text-xs {!active &&
-            tinted
-              ? 'bg-amber-soft/40'
-              : ''}"
-            class:bg-elevated={active && !tinted}
-            class:text-default={active && !tinted}
-            class:text-dim={!active && !tinted}
-            class:hover:bg-hover={!active && !tinted}
-            class:hover:text-default={!active && !tinted}
-            class:text-amber={tinted}
-            class:bg-amber-soft={active && tinted}
-            class:hover:bg-amber-soft={!active && tinted}
-          >
-            <button
-              class="flex cursor-pointer items-center gap-1.5"
-              onclick={() => onSelect(tab.path)}
-            >
-              {#if tab.pinned}<Icon
-                  icon="ph:push-pin-fill"
-                  width="11"
-                  height="11"
-                  class="text-amber"
-                />{/if}
-              <!-- Unsaved marker sits ahead of the file icon, so a scanning eye
-                 finds every dirty tab in one straight column. -->
-              {#if dirtyPaths[tab.path]}<span
-                  class="shrink-0 text-[8px] leading-none text-amber"
-                  title="Unsaved changes">●</span
-                >{/if}
-              <Icon icon={iconFor(tab)} width="13" height="13" class="shrink-0" />
-              <span>{tab.name}</span>
-              {#if tab.diff}
-                <span
-                  class="flex max-w-56 items-center gap-0.5 font-mono text-2xs opacity-70"
-                  title="{tab.diff.left} ⇄ {tab.diff.right}"
-                >
-                  <span class="truncate">{tab.diff.left}</span>
-                  <ArrowsLeftRightIcon size={10} class="shrink-0" />
-                  <span class="truncate">{tab.diff.right}</span>
-                </span>
-              {/if}
-            </button>
-            <button
-              class="inline-flex w-0 shrink-0 cursor-pointer items-center overflow-hidden text-dim opacity-0 transition-all duration-150 ease-out hover:text-red group-hover/tab:ml-1 group-hover/tab:w-3.5 group-hover/tab:opacity-100"
-              title="Close tab"
-              onclick={(event) => onClose(tab.path, event)}>✕</button
-            >
-          </div>
+        {#each entries as entry (entry.key)}
+          {#if entry.kind === 'tab'}
+            {@render plainTab(entry.tab)}
+          {:else}
+            {@render splitTab(entry.segments)}
+          {/if}
         {/each}
       </div>
     </div>

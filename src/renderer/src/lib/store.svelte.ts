@@ -37,6 +37,7 @@ import { review } from './review.svelte'
 import { intro } from './intro.svelte'
 import { allNvimSessions } from './nvim/registry'
 import { setup } from './setup.svelte'
+import { applyPins } from './tabPins'
 
 // The two sides a tab's diff is between, as the tab names them: refs, short
 // SHAs, "working tree".
@@ -401,6 +402,7 @@ export async function openRepoResult(result: {
 function restoreTabs(repoState: {
   openTabsByWorktree?: Record<string, string[]>
   activeTabByWorktree?: Record<string, string | null>
+  pinnedTabsByWorktree?: Record<string, string[]>
   openTabs?: string[]
   activeTabPath?: string | null
   selectedWorktreeId?: string | null
@@ -414,7 +416,8 @@ function restoreTabs(repoState: {
   if (repoState.openTabsByWorktree) {
     const tabs: Record<string, EditorTab[]> = {}
     for (const [worktreeId, paths] of Object.entries(repoState.openTabsByWorktree)) {
-      tabs[worktreeId] = paths.map((path) => toTab(worktreeId, path))
+      const restored = paths.map((path) => toTab(worktreeId, path))
+      tabs[worktreeId] = applyPins(restored, repoState.pinnedTabsByWorktree?.[worktreeId])
     }
     store.tabsByWorktree = tabs
     store.activeTabByWorktree = { ...repoState.activeTabByWorktree }

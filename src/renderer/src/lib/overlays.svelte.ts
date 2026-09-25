@@ -13,7 +13,8 @@ export interface OverlayItem {
   detail?: string
   // Iconify icon name.
   icon?: string
-  trailingIcon?: string
+  // Marks the item pinned with a trailing pin.
+  pinned?: boolean
   data?: unknown
 }
 

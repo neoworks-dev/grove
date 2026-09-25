@@ -127,13 +127,49 @@ function lhsToGroveKeys(lhs: string): string | null {
   return normalizeSequence(['leader', ...parts.slice(1)].join(' '))
 }
 
+// A which-key group: a leader prefix and the name nvim's config gave it.
+export interface NvimGroup {
+  lhs: string
+  name: string
+}
+
+// Group for a map whose prefix no which-key spec names.
+const FALLBACK_GROUP = 'Neovim'
+
+/**
+ * Leader-prefixed which-key groups as grove key sequences ("<Leader> c") to
+ * their names. The legacy `+name` spelling loses its plus; grove adds its own.
+ */
+export function nvimGroupLabels(groups: NvimGroup[]): Map<string, string> {
+  const labels = new Map<string, string>()
+  for (const group of groups) {
+    const keys = lhsToGroveKeys(group.lhs)
+    const name = group.name.trim().replace(/^\+/, '')
+    if (!keys || !name) continue
+    labels.set(keys, name)
+  }
+  return labels
+}
+
+/** The name of the group a binding's first key after the leader opens. */
+function topGroupFor(keys: string, labels: Map<string, string>): string {
+  const firstStep = keys.split(' ').slice(0, 2).join(' ')
+  const label = labels.get(firstStep)
+  if (label === undefined) {
+    return FALLBACK_GROUP
+  }
+  return label
+}
+
 // Build grove bindings for the leader-prefixed maps in `mappings`. `forward`
-// replays the original lhs into nvim when grove completes the sequence.
+// replays the original lhs into nvim when grove completes the sequence. Each
+// binding is filed under the which-key group of its first key, when one is named.
 export function nvimKeymapBindings(
   mappings: NvimMapping[],
   context: string,
   mode: string,
-  forward: (lhs: string) => void
+  forward: (lhs: string) => void,
+  groupLabels: Map<string, string> = new Map()
 ): KeyBinding[] {
   const bindings: KeyBinding[] = []
   const seen = new Set<string>()
@@ -145,14 +181,46 @@ export function nvimKeymapBindings(
     const description = (mapping.desc && mapping.desc.trim()) || mapping.rhs || mapping.lhs
     const lhs = mapping.lhs
     bindings.push({
-      id: `nvim:${mode}:${keys}`,
+      id: `nvim:${keys}`,
       keys,
       context,
       mode,
-      group: 'Neovim',
+      group: topGroupFor(keys, groupLabels),
       description,
       run: () => forward(lhs)
     })
+  }
+  return bindings
+}
+
+/**
+ * Grove bindings for nvim's leader maps in normal and visual mode, one per
+ * sequence. A sequence mapped in both modes becomes one mode-less binding —
+ * the leader only starts in those two, and nvim picks the map for the mode it
+ * is in — so it is listed and rebound once, not once per mode.
+ */
+export function nvimLeaderBindings(
+  normal: NvimMapping[],
+  visual: NvimMapping[],
+  context: string,
+  forward: (lhs: string) => void,
+  groupLabels: Map<string, string> = new Map()
+): KeyBinding[] {
+  const normalBindings = nvimKeymapBindings(normal, context, 'normal', forward, groupLabels)
+  const visualBindings = nvimKeymapBindings(visual, context, 'visual', forward, groupLabels)
+  const visualIds = new Set(visualBindings.map((binding) => binding.id))
+  const normalIds = new Set(normalBindings.map((binding) => binding.id))
+  const bindings: KeyBinding[] = []
+  for (const binding of normalBindings) {
+    if (visualIds.has(binding.id)) {
+      bindings.push({ ...binding, mode: undefined })
+      continue
+    }
+    bindings.push(binding)
+  }
+  for (const binding of visualBindings) {
+    if (normalIds.has(binding.id)) continue
+    bindings.push(binding)
   }
   return bindings
 }

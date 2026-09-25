@@ -68,6 +68,21 @@ describe('isPendingSequence', () => {
     expect(nextPending('g', 'r', mappings)).toBe('')
   })
 
+  it('resolves an exact map that shadows a builtin layer when nothing longer shares it', () => {
+    const mappings: NvimMapping[] = [{ lhs: 'q', desc: 'Close window' }]
+    expect(isPendingSequence('q', MAPS)).toBe(true)
+    expect(isPendingSequence('q', mappings)).toBe(false)
+    expect(nextPending('', 'q', mappings)).toBe('')
+  })
+
+  it('keeps waiting on an exact map that longer maps share, as nvim does', () => {
+    const mappings: NvimMapping[] = [
+      { lhs: 'gx', desc: 'open' },
+      { lhs: 'gxx', desc: 'open line' }
+    ]
+    expect(isPendingSequence('gx', mappings)).toBe(true)
+  })
+
   it('rejects resolved keys and unknown prefixes', () => {
     expect(isPendingSequence('p', MAPS)).toBe(false)
     expect(isPendingSequence('x', MAPS)).toBe(false)

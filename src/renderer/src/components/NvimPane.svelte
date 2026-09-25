@@ -6,7 +6,7 @@
   import { onMount, onDestroy } from 'svelte'
   import { store } from '../lib/store.svelte'
   import { layout } from '../lib/layout.svelte'
-  import { keymap } from '../lib/keymap.svelte'
+  import { keymap, type Direction } from '../lib/keymap.svelte'
   import { commands } from '../lib/commands.svelte'
   import BufferTabs from './BufferTabs.svelte'
   import Minimap from './Minimap.svelte'
@@ -16,6 +16,7 @@
   import ReviewHeaderBar from './ReviewHeaderBar.svelte'
   import ReviewOverlay from './ReviewOverlay.svelte'
   import NvimGridSurface from './NvimGridSurface.svelte'
+  import NvimSplitDivider from './NvimSplitDivider.svelte'
   import FileViewerHost from './FileViewerHost.svelte'
   import { fileViewers, type FileViewer } from '../lib/fileViewers.svelte'
   import { editorOverlays } from '../lib/editorOverlays.svelte'
@@ -34,6 +35,7 @@
   import { leaveDiff, restoreDiff } from '../lib/nvim/diffTabs'
   import { editorHasContent } from '../lib/nvim/visibility'
   import { closedTabPaths } from '../lib/nvim/closedTabs'
+  import { splitDividers } from '../lib/nvim/splitDividers'
   import {
     nvimGroupLabels,
     nvimLeaderBindings,
@@ -91,8 +93,8 @@
   // Git gutter for the minimap: the open file's changed-line ranges.
   let diffMarkers = $state<{ start: number; count: number; kind: 'add' | 'del' | 'mod' }[]>([])
   let nvimWindows = $state<NvimWindowPlacement[]>([])
-  // Ordinary windows drawn inside this pane rather than mirrored into Grove
-  // panes of their own. See applyWindowPlacements.
+  // nvim's windows other than the primary one, drawn inside this pane where
+  // nvim placed them. See applyWindowPlacements.
   let embeddedWindows = $state<NvimWindowPlacement[]>([])
   const floatingWindows = $derived(
     nvimWindows.filter((entry) => entry.kind === 'float' && !entry.hidden)
@@ -126,59 +128,23 @@
     return `left:${left}px;top:${top}px;width:${width}px;height:${height}px;z-index:${40 + (entry.compindex ?? entry.zindex)}`
   }
 
-  // Window handles Neovim has been told to keep inside this pane. Read back from
-  // Neovim rather than tracked here: a window can be closed, replaced or split
-  // again by anything the user types, and the mark travels with it.
-  const EMBEDDED_WINDOWS_LUA = `
-local wins = {}
-for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-  if vim.w[win].grove_embedded then table.insert(wins, win) end
-end
-return wins
-`
-
   /**
-   * Sort the session's windows into the ones that become Grove panes and the
-   * ones drawn inside this one. A diff marks its base side embedded, because its
-   * two halves are one view of one file — everything else is an editor in its
-   * own right and gets a pane.
+   * Draw every window of this pane's nvim inside the pane, where nvim put it:
+   * splits are nvim's own, laid out and sized by nvim as in any nvim UI. The
+   * primary window is the pane's main canvas; the rest get a surface each.
    */
-  async function applyWindowPlacements(windows: NvimWindowPlacement[]): Promise<void> {
-    const id = session?.id
-    if (!id) return
-    // Read while the pane is certainly still mounted: a `leafId` read after the
-    // await below throws once this pane's leaf has left the tree, which any
-    // reshuffle of the split it sits in does.
-    const ownerLeafId = leafId
-    let marked: number[] = []
-    try {
-      const result = await window.workbench.nvim.request(id, 'nvim_exec_lua', [
-        EMBEDDED_WINDOWS_LUA,
-        []
-      ])
-      if (Array.isArray(result)) {
-        marked = result.filter((win): win is number => typeof win === 'number')
-      }
-    } catch {
-      // session gone
-    }
-    if (!session || session.id !== id) return
+  function applyWindowPlacements(windows: NvimWindowPlacement[]): void {
+    if (!session) return
     const primaryWin = session.primaryWin
-    const ordinary = windows.filter((entry) => entry.kind === 'normal' && !entry.hidden)
-    // While a diff is open the pane lays out every window itself. Splitting the
-    // job — Grove sizing some windows from the panes they are mirrored into,
-    // Neovim sizing the rest inside this one — leaves the two disagreeing about
-    // every column, and each correction feeds the other.
-    const embed = marked.length > 0 ? ordinary.filter((entry) => entry.win !== primaryWin) : []
-    const embedded = new Set(embed.map((entry) => entry.win))
-    session.setEmbeddedWindows([...embedded])
-    embeddedWindows = embed
-    layout.syncNvimWindows(
-      ownerLeafId,
-      id,
-      windows.filter((entry) => !embedded.has(entry.win))
+    const embed = windows.filter(
+      (entry) => entry.kind === 'normal' && !entry.hidden && entry.win !== primaryWin
     )
+    session.setEmbeddedWindows(embed.map((entry) => entry.win))
+    embeddedWindows = embed
   }
+
+  // One divider per separator between the pane's splits (see splitDividers).
+  const dividers = $derived(splitDividers(nvimWindows))
 
   /** Place an embedded window on the pane, at the box Neovim gave it. */
   function embeddedStyle(entry: NvimWindowPlacement): string {
@@ -740,7 +706,7 @@ end, ns)
       },
       onWindowsChanged: (windows) => {
         nvimWindows = windows
-        void applyWindowPlacements(windows)
+        applyWindowPlacements(windows)
       },
       onExited: (exitCode) => {
         console.warn(`nvim editor pane crashed (code ${exitCode}); restarting`)
@@ -827,6 +793,41 @@ end, ns)
   // nvim's input otherwise. Pane navigation and a closing overlay both come
   // through here, so neither leaves focus on the leaf while keys belong inside.
   $effect(() => keymap.registerPaneFocus(leafId, focusFromNavigation))
+  $effect(() =>
+    keymap.registerPaneNavigator(leafId, { move: moveToWindow, enter: enterFromEdge })
+  )
+
+  // Steps to nvim's window in a direction and reports whether there was one.
+  const MOVE_WINDOW_LUA = `
+local direction = ...
+local before = vim.api.nvim_get_current_win()
+vim.cmd('wincmd ' .. direction)
+return vim.api.nvim_get_current_win() ~= before
+`
+
+  const OPPOSITE_DIRECTION: Record<Direction, Direction> = { h: 'l', l: 'h', j: 'k', k: 'j' }
+
+  /**
+   * Ctrl-h/j/k/l inside the editor: nvim's split in that direction first, so
+   * focus only leaves the pane from the window at its edge.
+   */
+  async function moveToWindow(dir: Direction): Promise<boolean> {
+    const id = session?.id
+    if (!id || !showEditor) return false
+    const moved = await window.workbench.nvim
+      .request(id, 'nvim_exec_lua', [MOVE_WINDOW_LUA, [dir]])
+      .catch(() => false)
+    return moved === true
+  }
+
+  /** Arriving from a neighbouring pane lands on the split at that edge. */
+  function enterFromEdge(dir: Direction): void {
+    const id = session?.id
+    if (!id || !showEditor) return
+    void window.workbench.nvim
+      .request(id, 'nvim_command', [`999wincmd ${OPPOSITE_DIRECTION[dir]}`])
+      .catch(() => {})
+  }
 
   /** Focuses what this pane shows; false leaves it to the leaf, e.g. under the empty state. */
   function focusFromNavigation(): boolean {
@@ -978,7 +979,6 @@ end, ns)
   <div class="relative min-h-0 flex-1">
     <div
       bind:this={hostEl}
-      data-nvim-ui={nvimId ?? undefined}
       class="absolute inset-0 overflow-hidden bg-surface"
       class:invisible={activeViewer !== null && showEditor}
       role="none"
@@ -1002,6 +1002,9 @@ end, ns)
                 class="pointer-events-auto"
               />
             </div>
+          {/each}
+          {#each dividers as divider (divider.key)}
+            <NvimSplitDivider {session} {divider} />
           {/each}
         {/if}
         {#if session && floatingWindows.length > 0}

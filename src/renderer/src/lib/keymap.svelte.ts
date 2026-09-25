@@ -33,6 +33,15 @@ export interface ResolvedBinding extends KeyBinding {
   sequence: ParsedSequence
 }
 
+// A spatial navigation direction, in vim's hjkl.
+export type Direction = 'h' | 'j' | 'k' | 'l'
+
+// A pane that navigates between windows of its own (see registerPaneNavigator).
+export interface PaneNavigator {
+  move: (dir: Direction) => Promise<boolean>
+  enter: (dir: Direction) => void
+}
+
 // A static which-key hint entry (see keymap.showHints).
 export interface HintEntry {
   keys: string
@@ -163,6 +172,7 @@ class Keymap {
   private panes = new Map<PaneId, HTMLElement>()
   private paneTypes = new Map<PaneId, string>()
   private focusDelegates = new Map<PaneId, () => boolean>()
+  private paneNavigators = new Map<PaneId, PaneNavigator>()
   private leaderTimer: ReturnType<typeof setTimeout> | null = null
 
   // Effective bindings: registered defaults with user/project overrides from
@@ -344,7 +354,7 @@ class Keymap {
 
   // Nearest pane whose center lies in the given direction from `fromId`,
   // optionally restricted to a candidate set (layout leaf swaps).
-  neighborPane(fromId: PaneId, dir: 'h' | 'j' | 'k' | 'l', candidates?: Set<PaneId>): PaneId | null {
+  neighborPane(fromId: PaneId, dir: Direction, candidates?: Set<PaneId>): PaneId | null {
     const from = this.panes.get(fromId)
     if (!from) return null
     const others: { id: string; rect: DOMRect }[] = []
@@ -359,11 +369,33 @@ class Keymap {
     return pickNeighbor(from.getBoundingClientRect(), others, dir)
   }
 
-  // Move focus to the nearest pane whose center lies in the given direction.
-  movePane(dir: 'h' | 'j' | 'k' | 'l'): void {
-    if (!this.activePane) return
-    const best = this.neighborPane(this.activePane, dir)
-    if (best) this.focusPane(best)
+  /**
+   * Let a pane with windows of its own take part in spatial navigation, the
+   * way vim-tmux-navigator joins nvim and tmux: `move` tries the direction
+   * inside the pane and reports whether it went anywhere, and `enter` is told
+   * which way focus arrived so it can start at that edge.
+   */
+  registerPaneNavigator(id: PaneId, navigator: PaneNavigator): () => void {
+    this.paneNavigators.set(id, navigator)
+    return () => {
+      if (this.paneNavigators.get(id) === navigator) this.paneNavigators.delete(id)
+    }
+  }
+
+  // Move focus one step in the given direction: inside the active pane when it
+  // has somewhere to go, else to the nearest pane whose center lies that way.
+  async movePane(dir: Direction): Promise<void> {
+    const from = this.activePane
+    if (!from) return
+    const inside = this.paneNavigators.get(from)
+    if (inside && (await inside.move(dir))) return
+    if (this.activePane !== from) return
+    const best = this.neighborPane(from, dir)
+    if (!best) return
+    this.focusPane(best)
+    const target = this.activePane
+    if (target === null) return
+    this.paneNavigators.get(target)?.enter(dir)
   }
 
   // ── Binding registry ──────────────────────────────────────────

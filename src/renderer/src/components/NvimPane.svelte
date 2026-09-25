@@ -40,7 +40,7 @@
   import { decodeNvimKey, nextPending, pendingHint } from '../lib/nvimPendingKeys'
   import { references } from '../lib/references.svelte'
   import {
-    closesPreview,
+    isAboutPreview,
     parsePreview,
     withFixes,
     type NvimPreview
@@ -81,6 +81,8 @@
   // The preview nvim handed over instead of drawing it: hover docs, signature
   // help, a line's diagnostics, Inspect. See lib/nvim/previews.ts.
   let preview = $state<NvimPreview | null>(null)
+  // Bumped when nvim asks the popover to take the keyboard (a second K).
+  let previewFocusRequest = $state(0)
   let disposePreviews: (() => void) | null = null
   let hostWidth = $state(0)
   let hostHeight = $state(0)
@@ -660,7 +662,9 @@ end, ns)
       preview = withFixes(preview, data)
       return
     }
-    if (method === 'grove_preview_close' && closesPreview(preview, data)) preview = null
+    if (!isAboutPreview(preview, data)) return
+    if (method === 'grove_preview_focus') previewFocusRequest += 1
+    if (method === 'grove_preview_close') preview = null
   }
 
   /** nvim's font in this pane at its current zoom, for the popover to match. */
@@ -1107,7 +1111,9 @@ end, ns)
             pane={{ width: hostWidth, height: hostHeight }}
             font={previewFont}
             onFix={applyPreviewFix}
+            focusRequest={previewFocusRequest}
             onDismiss={dismissPreview}
+            onRelease={() => session?.focus()}
           />
         {/if}
         {#if nvimId}

@@ -128,14 +128,6 @@ export function registerCoreBindings(): () => void {
       run: () => layout.ensurePane('keybindings')
     },
     {
-      id: 'leader.cheatsheet',
-      keys: '<Leader> ?',
-      context: 'global',
-      group: 'Help',
-      description: 'Show all keybindings',
-      run: () => keymap.toggleCheatsheet()
-    },
-    {
       id: 'leader.diagnostics',
       keys: '<Leader> d',
       context: 'global',
@@ -388,13 +380,6 @@ export function registerCoreBindings(): () => void {
       group: 'Window',
       keywords: 'close pane window',
       run: () => layout.closeFocused()
-    },
-    {
-      id: 'help.keybindings',
-      title: 'Help: Keybindings Cheatsheet',
-      group: 'Help',
-      keywords: 'keys shortcuts help cheatsheet which key reference',
-      run: () => keymap.toggleCheatsheet()
     },
     {
       id: 'panel.toggle',

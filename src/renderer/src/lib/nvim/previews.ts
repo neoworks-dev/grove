@@ -1,7 +1,6 @@
-// The previews nvim hands to grove instead of drawing them itself: hover docs,
-// signature help, Inspect and plugin previews as text or markdown, and a line's
-// diagnostics with the quick fixes the servers offer for them. The bundled
-// config sends them as `grove_preview`, `grove_preview_fixes` and
+// The line diagnostics nvim hands to grove instead of drawing them itself, so
+// the quick fixes the servers offer for the line can be listed and clicked.
+// The bundled config sends them as `grove_preview`, `grove_preview_fixes` and
 // `grove_preview_close`; this reads those payloads. Kept free of the DOM so the
 // parsing can be tested on its own.
 
@@ -13,26 +12,15 @@ export interface PreviewDiagnostic {
   code: string | null
 }
 
-interface PreviewBase {
+export interface NvimPreview {
   id: number
   // The cursor's screen cell, 0-based: the popover sits against this line.
   row: number
   col: number
-}
-
-export interface TextPreview extends PreviewBase {
-  kind: 'text' | 'markdown'
-  text: string
-}
-
-export interface DiagnosticsPreview extends PreviewBase {
-  kind: 'diagnostics'
   diagnostics: PreviewDiagnostic[]
   // Null until every server has answered the quick-fix request.
   fixes: string[] | null
 }
-
-export type NvimPreview = TextPreview | DiagnosticsPreview
 
 /** A plain object, or null for anything else. */
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -80,16 +68,10 @@ export function parsePreview(payload: unknown): NvimPreview | null {
   if (record === null) return null
   if (typeof record.id !== 'number' || typeof record.row !== 'number') return null
   if (typeof record.col !== 'number') return null
-  const base = { id: record.id, row: record.row, col: record.col }
-  if (record.kind === 'diagnostics') {
-    const diagnostics = parseDiagnostics(record.diagnostics)
-    if (diagnostics.length === 0) return null
-    return { ...base, kind: 'diagnostics', diagnostics, fixes: null }
-  }
-  const text = stringField(record, 'text')
-  if (text === null || text.trim() === '') return null
-  if (record.kind === 'markdown') return { ...base, kind: 'markdown', text }
-  return { ...base, kind: 'text', text }
+  if (record.kind !== 'diagnostics') return null
+  const diagnostics = parseDiagnostics(record.diagnostics)
+  if (diagnostics.length === 0) return null
+  return { id: record.id, row: record.row, col: record.col, diagnostics, fixes: null }
 }
 
 /**
@@ -99,7 +81,6 @@ export function parsePreview(payload: unknown): NvimPreview | null {
 export function withFixes(preview: NvimPreview, payload: unknown): NvimPreview {
   const record = asRecord(payload)
   if (record === null || record.id !== preview.id) return preview
-  if (preview.kind !== 'diagnostics') return preview
   let fixes: string[] = []
   if (Array.isArray(record.fixes)) {
     fixes = record.fixes.filter((title): title is string => typeof title === 'string')

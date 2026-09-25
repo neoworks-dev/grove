@@ -927,13 +927,12 @@ vim.keymap.set({ 'n', 'x', 'i' }, '<RightMouse>', grove_right_click, { desc = 'R
 -- The release would otherwise extend a selection to wherever the pointer is.
 vim.keymap.set({ 'n', 'x', 'i' }, '<RightRelease>', '<Nop>')
 
--- Previews: hover docs, signature help, line diagnostics, Inspect and any
--- plugin's preview go to grove, which draws them as popovers at the cursor
--- (markdown rendered, diagnostics with their quick fixes) instead of a grid
--- of cells nvim paints. nvim keeps the lifecycle: the preview's close events
--- and Escape end it here, and grove asks back through grove_preview_dismiss
--- and grove_preview_apply_fix. Windows opened directly with nvim_open_win are
--- untouched.
+-- A line's diagnostics go to grove, which draws them at the cursor with the
+-- quick fixes the servers offer for the line, clickable. Every other preview
+-- (hover docs, signature help, Inspect) stays an nvim float: nvim renders its
+-- markdown with the theme's highlighting, in the pane's font and zoom. nvim
+-- keeps the lifecycle: the preview's close events and Escape end it here, and
+-- grove asks back through grove_preview_dismiss and grove_preview_apply_fix.
 local grove_preview = { id = 0, open = false, fixes = {}, buf = nil }
 local grove_preview_group = vim.api.nvim_create_augroup('GrovePreview', { clear = true })
 
@@ -991,31 +990,6 @@ local function grove_preview_buffer(lines)
 end
 
 local grove_default_close_events = { 'CursorMoved', 'CursorMovedI', 'InsertCharPre' }
-
--- Markdown as it is; other syntaxes fenced so grove highlights them as code.
-local function grove_preview_markdown(contents, syntax)
-  local text = table.concat(contents, '\n')
-  if syntax == 'markdown' then
-    return 'markdown', text
-  end
-  if syntax == nil or syntax == '' or syntax == 'plaintext' then
-    return 'text', text
-  end
-  return 'markdown', '```' .. syntax .. '\n' .. text .. '\n```'
-end
-
-local grove_original_open_floating_preview = vim.lsp.util.open_floating_preview
-vim.lsp.util.open_floating_preview = function(contents, syntax, opts)
-  opts = opts or {}
-  -- An empty editor-relative float is a window to fill (checkhealth's), not a
-  -- preview.
-  if #contents == 0 or opts.relative == 'editor' then
-    return grove_original_open_floating_preview(contents, syntax, opts)
-  end
-  local kind, text = grove_preview_markdown(contents, syntax)
-  grove_show_preview({ kind = kind, text = text }, opts.close_events or grove_default_close_events)
-  return grove_preview_buffer(contents), nil
-end
 
 -- The LSP form of the line's diagnostics a client published, for its
 -- codeAction request's context.

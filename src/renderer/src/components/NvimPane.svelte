@@ -41,6 +41,8 @@
   import { operatorHintEntries, operatorTitle } from '../lib/nvimOperatorHints'
   import { decodeNvimKey, nextPending, pendingHint } from '../lib/nvimPendingKeys'
   import { references } from '../lib/references.svelte'
+  import { nvimSetup } from '../lib/nvim/setup.svelte'
+  import WaveSpinner from './WaveSpinner.svelte'
 
   let { leafId }: { leafId: string } = $props()
 
@@ -51,6 +53,7 @@
   // space leader still works while nvim is in normal mode.
   let inputEl = $state<HTMLDivElement>()
   let unavailable = $state(false)
+  nvimSetup.watch()
 
   // The template gates native multigrid surfaces on the live session. In runes
   // mode a plain variable never invalidates that branch after onMount assigns
@@ -1134,6 +1137,20 @@ return vim.api.nvim_get_current_win() ~= before
         {#each editorOverlays.overlays as overlay (overlay.id)}
           <overlay.component {leafId} tick={minimapTick} />
         {/each}
+        {#if nvimSetup.step !== null}
+          <!-- First-run setup holds every editor back until it is done. -->
+          <div
+            class="absolute inset-0 z-40 flex flex-col items-center justify-center gap-2 bg-surface text-dim"
+            role="status"
+          >
+            <div class="text-sm text-default">Setting up the editor</div>
+            <div class="flex items-center gap-2 text-xs">
+              <WaveSpinner count={3} />
+              <span>{nvimSetup.step}…</span>
+            </div>
+            <div class="text-xs">Only on first launch, and after an update.</div>
+          </div>
+        {/if}
         {#if !showEditor}
           <div
             class="absolute inset-0 z-30 flex flex-col items-center justify-center gap-4 bg-surface text-dim"

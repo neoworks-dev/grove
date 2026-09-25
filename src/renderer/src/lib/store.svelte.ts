@@ -243,7 +243,7 @@ class WorkbenchStore {
     }
   }
 
-  // ── Buffer operations (leader f b menu) ──────────────────────────
+  // ── Buffer operations (leader b group) ───────────────────────────
   // "Buffer" is just an open editor tab. Bulk closes act within the buffer's
   // own worktree and never touch pinned buffers.
   togglePin(path: string): void {

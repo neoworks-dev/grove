@@ -3,6 +3,9 @@
   // the overlay controller: input + streamed list, optional preview column,
   // multi-select marks, and footer action hints.
   import Icon from '@iconify/svelte'
+  import CheckSquareIcon from 'phosphor-svelte/lib/CheckSquareIcon'
+  import PushPinIcon from 'phosphor-svelte/lib/PushPinIcon'
+  import SquareIcon from 'phosphor-svelte/lib/SquareIcon'
   import { fade, scale } from 'svelte/transition'
   import { cubicOut } from 'svelte/easing'
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
@@ -210,11 +213,11 @@
               }}
             >
               {#if descriptor.multiSelect}
-                <Icon
-                  icon={overlays.selectedIds.has(item.id) ? 'ph:check-square-fill' : 'ph:square'}
-                  width="14"
-                  class="shrink-0 {overlays.selectedIds.has(item.id) ? 'text-accent' : 'text-dim'}"
-                />
+                {#if overlays.selectedIds.has(item.id)}
+                  <CheckSquareIcon weight="fill" size={14} class="shrink-0 text-accent" />
+                {:else}
+                  <SquareIcon size={14} class="shrink-0 text-dim" />
+                {/if}
               {/if}
               {#if ItemRow}
                 <ItemRow {item} {active} />
@@ -248,8 +251,8 @@
                 {#if item.detail}
                   <span class="max-w-[45%] shrink-0 truncate text-2xs text-dim">{item.detail}</span>
                 {/if}
-                {#if item.trailingIcon}
-                  <Icon icon={item.trailingIcon} width="12" class="shrink-0 text-amber" />
+                {#if item.pinned}
+                  <PushPinIcon weight="fill" size={12} class="shrink-0 text-amber" />
                 {/if}
               {/if}
             </button>

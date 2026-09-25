@@ -10,6 +10,7 @@ import type { ClientRecord } from '../api/clients'
 import type { PluginRegistry } from './loader'
 import { PermissionError } from '../api/broker'
 import { zodShapeFromJsonSchema, type JsonSchemaObject } from './zodSchema'
+import { resolveClaudeExecutable } from '../agents/claudeExecutable'
 
 export interface McpToolDeclaration {
   name: string
@@ -174,6 +175,7 @@ export class AiBridge {
       options: {
         cwd: worktree.path,
         abortController: abort,
+        pathToClaudeCodeExecutable: resolveClaudeExecutable(),
         systemPrompt: {
           type: 'preset',
           preset: 'claude_code',

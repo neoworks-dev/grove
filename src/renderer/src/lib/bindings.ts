@@ -8,6 +8,7 @@ import { keymap } from './keymap.svelte'
 import { commands } from './commands.svelte'
 import { layout } from './layout.svelte'
 import { bufferMenu } from './buffermenu.svelte'
+import { store } from './store.svelte'
 import { inlineEdit } from './inlineEdit.svelte'
 import { symbolsOutline } from './symbolsOutline.svelte'
 import { workspaceSymbols } from './workspaceSymbols.svelte'
@@ -28,16 +29,65 @@ function cycleReviewMode(): void {
   dialogs.notify({ level: 'info', message: `Edit mode: ${REVIEW_MODE_HINT[mode]}` })
 }
 
+/** Runs a tab operation on the active editor tab; does nothing when no tab is open. */
+function onActiveTab(operation: (path: string) => void): void {
+  if (!store.activeTabPath) {
+    return
+  }
+  operation(store.activeTabPath)
+}
+
 /** Register the core keybindings and their palette commands; returns the inverse. */
 export function registerCoreBindings(): () => void {
   const disposeBindings = keymap.registerBindings([
+    // Buffer management, LazyVim's +buffer group on Grove's tabs.
     {
       id: 'leader.buffers',
-      keys: '<Leader> b',
+      keys: '<Leader> b b',
       context: 'global',
       group: 'Buffer',
       description: 'Buffer menu',
       run: () => bufferMenu.show()
+    },
+    {
+      id: 'buffer.close',
+      keys: '<Leader> b d',
+      context: 'global',
+      group: 'Buffer',
+      description: 'Close buffer',
+      run: () => onActiveTab((path) => store.closeTab(path))
+    },
+    {
+      id: 'buffer.closeOthers',
+      keys: '<Leader> b o',
+      context: 'global',
+      group: 'Buffer',
+      description: 'Close other buffers',
+      run: () => onActiveTab((path) => store.closeOtherTabs(path))
+    },
+    {
+      id: 'buffer.pin',
+      keys: '<Leader> b p',
+      context: 'global',
+      group: 'Buffer',
+      description: 'Toggle pin',
+      run: () => onActiveTab((path) => store.togglePin(path))
+    },
+    {
+      id: 'buffer.closeLeft',
+      keys: '<Leader> b l',
+      context: 'global',
+      group: 'Buffer',
+      description: 'Close buffers to the left',
+      run: () => onActiveTab((path) => store.closeTabsToSide(path, 'left'))
+    },
+    {
+      id: 'buffer.closeRight',
+      keys: '<Leader> b r',
+      context: 'global',
+      group: 'Buffer',
+      description: 'Close buffers to the right',
+      run: () => onActiveTab((path) => store.closeTabsToSide(path, 'right'))
     },
     {
       id: 'leader.palette',
@@ -129,33 +179,33 @@ export function registerCoreBindings(): () => void {
     },
     {
       id: 'leader.diagnostics',
-      keys: '<Leader> d',
+      keys: '<Leader> x x',
       context: 'global',
-      group: 'Code',
+      group: 'Diagnostics',
       description: 'Open diagnostics',
       run: () => layout.ensurePane('diagnostics')
     },
     {
       id: 'leader.symbols',
-      keys: '<Leader> s',
+      keys: '<Leader> s s',
       context: 'editor',
-      group: 'Code',
+      group: 'Search',
       description: 'Symbol outline',
       run: () => symbolsOutline.toggle()
     },
     {
       id: 'leader.workspaceSymbols',
-      keys: '<Leader> S',
+      keys: '<Leader> s S',
       context: 'global',
-      group: 'Code',
+      group: 'Search',
       description: 'Search workspace symbols',
       run: () => workspaceSymbols.toggle()
     },
     {
       id: 'leader.undotree',
-      keys: '<Leader> u',
+      keys: '<Leader> s u',
       context: 'editor',
-      group: 'Code',
+      group: 'Search',
       description: 'Undo history',
       run: () => undoTree.toggle()
     },

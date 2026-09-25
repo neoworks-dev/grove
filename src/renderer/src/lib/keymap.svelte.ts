@@ -407,16 +407,43 @@ class Keymap {
     }
   }
 
+  // ── Prefix names ──────────────────────────────────────────────
+  // Names for prefixes that open a group ("<Leader> c" → "code"), from whoever
+  // knows them — the editor reads its nvim's which-key specs. Which-key shows a
+  // named prefix as `+name` and otherwise falls back to its bindings' group.
+  private prefixLabelSets = $state<{ context: string; labels: Map<string, string> }[]>([])
+
+  /** Name key prefixes (canonical sequences) within a context; returns the inverse. */
+  registerPrefixLabels(context: string, labels: Map<string, string>): () => void {
+    const entry = { context, labels }
+    this.prefixLabelSets = [...this.prefixLabelSets, entry]
+    return () => {
+      this.prefixLabelSets = this.prefixLabelSets.filter((candidate) => candidate.labels !== labels)
+    }
+  }
+
+  /** The name registered for a prefix in the current context, or null. */
+  prefixLabel(sequence: string): string | null {
+    for (const entry of this.prefixLabelSets) {
+      if (!this.inContext(entry.context)) continue
+      const label = entry.labels.get(sequence)
+      if (label !== undefined) return label
+    }
+    return null
+  }
+
+  /** Whether a binding context applies: 'global', the active pane id, or its pane type. */
+  private inContext(context: string): boolean {
+    return context === 'global' || context === this.activePane || context === this.activePaneType
+  }
+
   // Bindings reachable in the current context matching the typed step prefix.
   // A binding context matches 'global', the active pane id, or its pane type;
   // a binding mode must match the active pane's current mode.
   matching(prefix: KeyStep[], leader: boolean): ResolvedBinding[] {
     return this.effective.filter((binding) => {
       if (binding.sequence.leader !== leader) return false
-      const context = binding.context || 'global'
-      const inContext =
-        context === 'global' || context === this.activePane || context === this.activePaneType
-      if (!inContext) return false
+      if (!this.inContext(binding.context || 'global')) return false
       if (binding.mode && binding.mode !== this.mode) return false
       if (binding.when && !binding.when()) return false
       return sequenceStartsWith(binding.sequence.steps, prefix)

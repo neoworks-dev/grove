@@ -1,5 +1,11 @@
 import { expect, test } from 'bun:test'
-import { stripEntries, type StripEntry, type StripTab } from '../src/renderer/src/lib/nvim/splitTabs'
+import {
+  splitReplacement,
+  stripEntries,
+  swapTabs,
+  type StripEntry,
+  type StripTab
+} from '../src/renderer/src/lib/nvim/splitTabs'
 
 /** A tab for a file under /repo. */
 function tab(name: string): StripTab {
@@ -47,4 +53,28 @@ test('a split file without a tab yet still gets its segment', () => {
     { win: 1001, path: '/elsewhere/new.ts' }
   ]
   expect(describe(stripEntries(tabs, splits))).toEqual(['a.ts | new.ts', 'b.ts', 'c.ts', 'd.ts'])
+})
+
+test('opening a tab into a split keeps the split tab in place', () => {
+  const before = [
+    { win: 1000, path: '/repo/a.ts' },
+    { win: 1001, path: '/repo/d.ts' }
+  ]
+  const after = [
+    { win: 1000, path: '/repo/b.ts' },
+    { win: 1001, path: '/repo/d.ts' }
+  ]
+  const replacement = splitReplacement(before, after)
+  expect(replacement).toEqual({ left: '/repo/a.ts', entered: '/repo/b.ts' })
+  if (replacement === null) return
+  const reordered = swapTabs(tabs, replacement.left, replacement.entered)
+  expect(describe(stripEntries(tabs, before))).toEqual(['a.ts | d.ts', 'b.ts', 'c.ts'])
+  expect(describe(stripEntries(reordered, after))).toEqual(['b.ts | d.ts', 'a.ts', 'c.ts'])
+})
+
+test('no replacement without a split or when windows only come and go', () => {
+  const one = [{ win: 1000, path: '/repo/a.ts' }]
+  expect(splitReplacement(one, [{ win: 1000, path: '/repo/b.ts' }])).toBeNull()
+  const two = [...one, { win: 1001, path: '/repo/b.ts' }]
+  expect(splitReplacement(one, two)).toBeNull()
 })

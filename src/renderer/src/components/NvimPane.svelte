@@ -22,6 +22,7 @@
   import { review } from '../lib/review.svelte'
   import { settings } from '../lib/settings.svelte'
   import { NvimCanvasSession } from '../lib/nvim/session'
+  import { measureCell } from '../lib/nvim/metrics'
   import { resolveNvimWindowPosition, type NvimWindowPlacement } from '../lib/nvim/multigrid'
   import type { NvimSessionCallbacks, NvimSessionElements } from '../lib/nvim/session'
   import {
@@ -662,13 +663,22 @@ end, ns)
     if (method === 'grove_preview_close' && closesPreview(preview, data)) preview = null
   }
 
+  /** nvim's font in this pane at its current zoom, for the popover to match. */
+  const previewFont = $derived.by(() => {
+    const family = cssVar('--font-mono', 'monospace')
+    const sizePx = fontSize() * layout.fontScale(leafId)
+    return { family, sizePx, lineHeight: measureCell({ family, sizePx }).cellHeight }
+  })
+
   /** The preview's cursor cell in pane pixels, where the popover attaches. */
   const previewAnchor = $derived.by(() => {
     if (preview === null || !session) return null
+    // Read after a zoom so the anchor follows the re-measured cells.
+    const lineHeight = previewFont.lineHeight
     return {
       left: session.screenColToPixel(preview.col),
       top: session.screenRowToPixel(preview.row),
-      lineHeight: session.cellHeight
+      lineHeight
     }
   })
 
@@ -1095,6 +1105,7 @@ end, ns)
             {preview}
             anchor={previewAnchor}
             pane={{ width: hostWidth, height: hostHeight }}
+            font={previewFont}
             onFix={applyPreviewFix}
             onDismiss={dismissPreview}
           />

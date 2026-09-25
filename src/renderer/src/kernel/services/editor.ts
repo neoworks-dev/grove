@@ -13,7 +13,6 @@ import type { NvimCanvasSession } from '../../lib/nvim/session'
 import { CENTER_SLOT } from '../../lib/paneSlots'
 import { repoOpen } from '../plugins/guards'
 import NvimPane from '../../components/NvimPane.svelte'
-import NvimGridPane from '../../components/NvimGridPane.svelte'
 import EmptyCenter from '../../components/EmptyCenter.svelte'
 
 // Editor-family modes, reported live from the embedded nvim's mode_change events.
@@ -45,8 +44,8 @@ export class EditorService extends Service {
   }
 
   /**
-   * The panes the editor itself owns: the Neovim surface, a single Neovim
-   * window (multigrid), and the placeholder an empty center leaf shows.
+   * The panes the editor itself owns: the Neovim surface and the placeholder
+   * an empty center leaf shows.
    */
   private registerEditorPanes(): void {
     this.ctx.effect(
@@ -69,26 +68,6 @@ export class EditorService extends Service {
           when: repoOpen
         }),
       'pane:nvim'
-    )
-
-    this.ctx.effect(
-      () =>
-        panes.register({
-          id: 'nvim-grid',
-          title: 'Neovim Window',
-          component: NvimGridPane,
-          // One window of an editor that already has a pane; it appears when
-          // Neovim splits and goes when that window closes.
-          openable: false,
-          containerClass: 'bg-surface',
-          minWidth: 120,
-          minHeight: 80,
-          contextType: 'editor',
-          modes: NVIM_MODES,
-          ownsFontScale: true,
-          when: repoOpen
-        }),
-      'pane:nvim-grid'
     )
 
     // Renders its own empty state, so no `when` guard: it must show even before

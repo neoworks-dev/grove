@@ -57,6 +57,8 @@ export interface NvimSessionCallbacks {
   // Window topology changed. The owner projects floats into overlays and
   // ordinary nvim windows into Grove split leaves.
   onWindowsChanged?: (windows: NvimWindowPlacement[]) => void
+  // nvim's cursor moved to another grid: the window with focus changed.
+  onCursorGridChanged?: (grid: number) => void
 }
 
 export interface NvimSessionConfig {
@@ -1224,6 +1226,7 @@ export class NvimCanvasSession {
       dirty.set(gridId, { all: false, rows: new Set([grid.cursor.row]), flushed: true })
     }
     this.lastCursorGrid = cursorGrid
+    this.callbacks.onCursorGridChanged?.(cursorGrid)
   }
 
   focusWindow(win: number, focusInput = true): void {

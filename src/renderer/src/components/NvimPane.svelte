@@ -104,25 +104,44 @@
   const floatingWindows = $derived(
     nvimWindows.filter((entry) => entry.kind === 'float' && !entry.hidden)
   )
+  // The grid nvim's cursor is on, i.e. the focused window.
+  let cursorGrid = $state(0)
   // Neovim reserves zindex 100 and above for transient editor UI such as
   // completion menus. Those surfaces already draw their own chrome and must not
-  // acquire Grove's modal backdrop or close button.
-  const modalFloatingWindows = $derived(floatingWindows.filter((entry) => entry.zindex < 100))
+  // acquire Grove's modal backdrop or close button. Below that, only a float
+  // the cursor is in (Lazy, Mason) is modal; a preview the cursor never
+  // entered (hover, line diagnostics, Inspect) sits over the text undimmed.
+  const modalFloatingWindows = $derived(
+    floatingWindows.filter((entry) => entry.zindex < 100 && entry.grid === cursorGrid)
+  )
 
   function isTransientFloat(entry: NvimWindowPlacement): boolean {
     return entry.zindex >= 100
   }
 
+  // Room between a Grove-framed float's border and its text, in pixels.
+  const FLOAT_PADDING = 8
+
+  /** Padding around a float's text: none for transient UI, which frames itself. */
+  function floatPadding(entry: NvimWindowPlacement): number {
+    if (isTransientFloat(entry)) return 0
+    return FLOAT_PADDING
+  }
+
   function floatStyle(entry: NvimWindowPlacement): string {
     const cellWidth = session?.cellWidth ?? 8
     const cellHeight = session?.cellHeight ?? 18
+    const padding = floatPadding(entry)
     const maxWidth = Math.max(80, (hostEl?.clientWidth ?? entry.width * cellWidth) - 24)
     const maxHeight = Math.max(60, (hostEl?.clientHeight ?? entry.height * cellHeight) - 24)
-    const width = Math.min(entry.width * cellWidth, maxWidth)
-    const height = Math.min(entry.height * cellHeight, maxHeight)
+    const width = Math.min(entry.width * cellWidth + 2 * padding, maxWidth)
+    const height = Math.min(entry.height * cellHeight + 2 * padding, maxHeight)
     const position = resolveNvimWindowPosition(nvimWindows, entry)
-    let left = session?.screenColToPixel(position.col) ?? position.col * cellWidth
+    // The frame grows sideways around the text and vertically away from nvim's
+    // anchor, so it never covers the line the float was opened from.
+    let left = (session?.screenColToPixel(position.col) ?? position.col * cellWidth) - padding
     let top = session?.screenRowToPixel(position.row) ?? position.row * cellHeight
+    if (entry.anchor?.startsWith('S')) top -= 2 * padding
     left = Math.max(0, Math.min(left, (hostEl?.clientWidth ?? left + width) - width))
     // Completion surfaces must keep Neovim's below-cursor anchor even when the
     // full menu does not fit. The pane clips the excess at its bottom edge;
@@ -130,7 +149,7 @@
     top = isTransientFloat(entry)
       ? Math.max(0, top)
       : Math.max(0, Math.min(top, (hostEl?.clientHeight ?? top + height) - height))
-    return `left:${left}px;top:${top}px;width:${width}px;height:${height}px;z-index:${40 + (entry.compindex ?? entry.zindex)}`
+    return `left:${left}px;top:${top}px;width:${width}px;height:${height}px;padding:${padding}px;z-index:${40 + (entry.compindex ?? entry.zindex)}`
   }
 
   /**
@@ -769,6 +788,9 @@ end, ns)
       },
       onModeChange: (mode) => {
         void handleModeChange(mode)
+      },
+      onCursorGridChanged: (grid) => {
+        cursorGrid = grid
       },
       onWindowsChanged: (windows) => {
         nvimWindows = windows

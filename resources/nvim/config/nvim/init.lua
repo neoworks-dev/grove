@@ -992,7 +992,8 @@ leader('ghB', function()
   require('gitsigns').blame()
 end, 'Blame buffer')
 
-vim.keymap.set('n', '<leader>bb', '<cmd>buffer #<cr>', { desc = 'Switch to other buffer' })
+-- LazyVim's other key for it: <leader>b is Grove's buffer group, run on its tabs.
+vim.keymap.set('n', '<leader>`', '<cmd>buffer #<cr>', { desc = 'Switch to other buffer' })
 
 toggle('uf', 'Format on save', function()
   vim.g.grove_autoformat = vim.g.grove_autoformat == false

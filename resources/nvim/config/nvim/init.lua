@@ -40,6 +40,11 @@ vim.opt.mousescroll = 'ver:1,hor:1'
 vim.opt.clipboard = 'unnamedplus'
 -- Keep 4 context lines visible above/below the cursor when scrolling.
 vim.opt.scrolloff = 4
+-- How long nvim holds a key that starts a longer mapping before acting on it
+-- alone. nvim's own <C-W>d makes <C-w> such a key, and grove only hears a key
+-- once nvim acts on it, so this is also how long the <C-w> hint waits before
+-- its own which-key delay starts. LazyVim's value.
+vim.opt.timeoutlen = 300
 -- nvim's stock 8-column tab makes anything indented with tabs look twice as
 -- deep as the project meant it to. Two is the house style; .editorconfig and
 -- vim-sleuth both override this per project, so it only decides files that
@@ -564,6 +569,22 @@ vim.api.nvim_create_autocmd('DiagnosticChanged', {
   end
 })
 
+-- Diagnostic lists open in grove's Diagnostics pane, not a quickfix or location
+-- split: the right-click menu's "Show All Diagnostics" and any plugin or map
+-- that calls setqflist/setloclist all land there. A caller that asks for the
+-- list without opening it (open = false) still gets nvim's own.
+local function grove_diagnostics_list(original)
+  return function(opts)
+    if opts ~= nil and opts.open == false then
+      return original(opts)
+    end
+    grove_push_diagnostics()
+    vim.rpcnotify(0, 'grove_show_diagnostics')
+  end
+end
+vim.diagnostic.setqflist = grove_diagnostics_list(vim.diagnostic.setqflist)
+vim.diagnostic.setloclist = grove_diagnostics_list(vim.diagnostic.setloclist)
+
 -- Nvim's built-in LSP defaults deliberately leave `gd` as Vim's same-file
 -- declaration search and put references on `grr`. Grove's goto layer uses the
 -- conventional `gd`/`gD`/`gr` keys instead: imports follow their server target
@@ -888,6 +909,41 @@ end
 vim.keymap.set({ 'n', 'x', 'i' }, '<RightMouse>', grove_right_click, { desc = 'Right-click menu' })
 -- The release would otherwise extend a selection to wherever the pointer is.
 vim.keymap.set({ 'n', 'x', 'i' }, '<RightRelease>', '<Nop>')
+
+-- Previews nvim opens beside the cursor without entering (hover, line
+-- diagnostics, Inspect) only close when the cursor moves. Escape in normal
+-- mode closes them too, and clears the search highlight as LazyVim's does.
+local function grove_close_previews()
+  local current = vim.api.nvim_get_current_win()
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    local config = vim.api.nvim_win_get_config(win)
+    local preview = config.relative ~= '' and win ~= current and (config.zindex or 50) < 100
+    if preview and vim.bo[vim.api.nvim_win_get_buf(win)].buftype == 'nofile' then
+      pcall(vim.api.nvim_win_close, win, false)
+    end
+  end
+end
+vim.keymap.set('n', '<Esc>', function()
+  grove_close_previews()
+  vim.cmd.nohlsearch()
+end, { desc = 'Close previews and clear search highlight' })
+
+-- :Inspect echoes its report, several lines long, so nvim stops on its
+-- hit-enter prompt to show it. The menu's Inspect opens the same report as a
+-- float at the cursor instead, gone when the cursor moves.
+local function grove_inspect_float()
+  local report = vim.api.nvim_exec2('Inspect', { output = true }).output
+  local lines = vim.split(report, '\n', { trimempty = true })
+  if #lines == 0 then
+    return
+  end
+  vim.lsp.util.open_floating_preview(lines, '', { focus_id = 'grove_inspect' })
+end
+vim.api.nvim_create_user_command('GroveInspect', grove_inspect_float, { desc = 'Inspect in a float' })
+
+-- nvim's MenuPopup autocmd only enables and disables entries, so redefining
+-- this one sticks.
+vim.cmd([[anoremenu PopUp.Inspect <Cmd>GroveInspect<CR>]])
 
 -- Run the PopUp entry grove's menu picked, in the mode the menu was opened for.
 _G.grove_run_popup_item = function(name, mode)

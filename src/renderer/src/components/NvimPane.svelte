@@ -36,14 +36,14 @@
   import { leaveDiff, restoreDiff } from '../lib/nvim/diffTabs'
   import { editorHasContent } from '../lib/nvim/visibility'
   import { closedTabPaths } from '../lib/nvim/closedTabs'
-  import { splitDividers } from '../lib/nvim/splitDividers'
-  import { splitReplacement, swapTabs, type SplitWindow } from '../lib/nvim/splitTabs'
   import {
     nvimGroupLabels,
     nvimLeaderBindings,
     type NvimGroup,
     type NvimMapping
   } from '../lib/nvimKeymap'
+  import { splitDividers } from '../lib/nvim/splitDividers'
+  import { splitReplacement, swapTabs, type SplitWindow } from '../lib/nvim/splitTabs'
   import { operatorHintEntries, operatorTitle } from '../lib/nvimOperatorHints'
   import { decodeNvimKey, nextPending, pendingHint } from '../lib/nvimPendingKeys'
   import { references } from '../lib/references.svelte'

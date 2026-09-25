@@ -6,6 +6,7 @@
   import ArrowsLeftRightIcon from 'phosphor-svelte/lib/ArrowsLeftRightIcon'
   import CaretLeftIcon from 'phosphor-svelte/lib/CaretLeftIcon'
   import CaretRightIcon from 'phosphor-svelte/lib/CaretRightIcon'
+  import PushPinIcon from 'phosphor-svelte/lib/PushPinIcon'
   import { nextHiddenTab, tabOverflow, type TabOverflow, type TabSpan } from '../lib/tabOverflow'
   import { store, type TabDiff } from '../lib/store.svelte'
   import { fileIcon } from '../lib/icons'
@@ -139,12 +140,7 @@
               class="flex cursor-pointer items-center gap-1.5"
               onclick={() => onSelect(tab.path)}
             >
-              {#if tab.pinned}<Icon
-                  icon="ph:push-pin-fill"
-                  width="11"
-                  height="11"
-                  class="text-amber"
-                />{/if}
+              {#if tab.pinned}<PushPinIcon weight="fill" size={11} class="shrink-0 text-amber" />{/if}
               <!-- Unsaved marker sits ahead of the file icon, so a scanning eye
                  finds every dirty tab in one straight column. -->
               {#if dirtyPaths[tab.path]}<span

@@ -14,7 +14,7 @@ function bufferItems(query: string): OverlayItem[] {
     .filter((tab) => matchesQuery(`${tab.name} ${tab.path}`, query))
     .map((tab) => {
       const item: OverlayItem = { id: tab.path, label: tab.name, icon: fileIcon(tab.name) }
-      if (tab.pinned) item.trailingIcon = 'ph:push-pin-fill'
+      if (tab.pinned) item.pinned = true
       return item
     })
 }

@@ -75,6 +75,39 @@ vim.api.nvim_create_autocmd('SwapExists', {
   end
 })
 
+-- Grove shows no tab pages ('showtabline' is 0): its tab strip already is the
+-- list of open files. A tab page would take windows somewhere only gt reaches,
+-- so none are made. <C-w>T, which moves the current split to a tab page of its
+-- own, keeps it as the only window instead; the other files stay in the strip.
+vim.keymap.set('n', '<C-w>T', '<Cmd>only<CR>', { desc = 'Keep only this split' })
+
+-- Any other new tab page (:tabnew, :tabedit, :tab split, a plugin) is closed
+-- again once the command is done, and its buffer shown in the window it was
+-- opened from, where it becomes the active tab in the strip. An empty :tabnew
+-- leaves the window as it was and its empty buffer is dropped.
+local function grove_fold_tab_page()
+  if #vim.api.nvim_list_tabpages() < 2 then
+    return
+  end
+  local buffer = vim.api.nvim_get_current_buf()
+  local cursor = vim.api.nvim_win_get_cursor(0)
+  local named = vim.api.nvim_buf_get_name(buffer) ~= ''
+  vim.cmd('tabclose')
+  if not named then
+    if not vim.bo[buffer].modified then
+      pcall(vim.api.nvim_buf_delete, buffer, {})
+    end
+    return
+  end
+  vim.api.nvim_win_set_buf(0, buffer)
+  pcall(vim.api.nvim_win_set_cursor, 0, cursor)
+end
+vim.api.nvim_create_autocmd('TabNew', {
+  callback = function()
+    vim.schedule(grove_fold_tab_page)
+  end
+})
+
 -- Plugin manager bootstrap. lazy.nvim clones itself and the declared plugins
 -- into the writable data dir (XDG_DATA_HOME → grove userData) on first launch;
 -- the user's own nvim install is untouched. Offline-tolerant: a failed clone

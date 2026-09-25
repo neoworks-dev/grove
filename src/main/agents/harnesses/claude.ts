@@ -8,7 +8,7 @@
 
 import { accessSync, constants, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { delimiter, dirname, join } from 'node:path'
+import { delimiter, dirname, join, sep } from 'node:path'
 import type { Context } from '@neoworks/extension-system'
 import type {
   ModelInfo as SdkModelInfo,
@@ -124,18 +124,35 @@ const THINKING_BUDGETS: Record<ThinkingLevel, number> = {
 const SDK_PACKAGE = '@anthropic-ai/claude-agent-sdk'
 
 /**
- * Which Claude Code executable the SDK should spawn, or `undefined` to let it
- * pick its own.
+ * Which Claude Code executable the SDK should spawn, or `undefined` when there
+ * is none and the SDK should report that itself.
  *
  * The SDK ships the CLI as per-platform optional dependencies and refuses to
  * start when none of them is installed — which is what any install that skipped
  * optional packages leaves behind, and it surfaces as the whole harness being
  * unavailable. Grove looks those packages up itself and, when none is there,
  * falls back to a `claude` on PATH so a system install serves just as well.
+ *
+ * The bundled one is always named rather than left to the SDK: in a packaged
+ * build the SDK resolves it inside `app.asar`, which cannot be spawned.
  */
-function resolveClaudeExecutable(): string | undefined {
-  if (bundledExecutable() !== null) return undefined
+export function resolveClaudeExecutable(): string | undefined {
+  const bundled = bundledExecutable()
+  if (bundled !== null) {
+    return unpackedFromAsar(bundled)
+  }
   return executableOnPath('claude') ?? undefined
+}
+
+/**
+ * The on-disk copy of a path inside an asar archive.
+ *
+ * Electron reads files out of `app.asar` transparently, but a process can only
+ * be spawned from a real file. electron-builder unpacks executables beside the
+ * archive, into `app.asar.unpacked`, under the same relative path.
+ */
+export function unpackedFromAsar(path: string): string {
+  return path.replace(`${sep}app.asar${sep}`, `${sep}app.asar.unpacked${sep}`)
 }
 
 /**

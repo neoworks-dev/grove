@@ -4,7 +4,7 @@
 
 import { describe, expect, test } from 'bun:test'
 import { existsSync } from 'node:fs'
-import { resolveClaudeExecutable, unpackedFromAsar } from '../src/main/agents/harnesses/claude'
+import { resolveClaudeExecutable, unpackedFromAsar } from '../src/main/agents/claudeExecutable'
 
 describe('unpackedFromAsar', () => {
   test('moves a path inside app.asar to app.asar.unpacked', () => {

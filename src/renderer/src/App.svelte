@@ -10,7 +10,6 @@
   import StatusBar from './components/StatusBar.svelte'
   import DialogHost from './components/DialogHost.svelte'
   import NotificationHost from './components/NotificationHost.svelte'
-  import KeybindCheatsheet from './components/KeybindCheatsheet.svelte'
   import NvimPromptOverlay from './components/NvimPromptOverlay.svelte'
   import NvimPopupMenu from './components/NvimPopupMenu.svelte'
   import {
@@ -239,4 +238,3 @@
 <NvimPromptOverlay />
 <NvimPopupMenu />
 <NotificationHost />
-<KeybindCheatsheet />

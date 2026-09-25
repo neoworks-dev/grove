@@ -112,6 +112,7 @@ interface RepoStateShape {
   activeTabPath: string | null
   openTabsByWorktree: Record<string, string[]>
   activeTabByWorktree: Record<string, string | null>
+  pinnedTabsByWorktree: Record<string, string[]>
   selectedWorktreeId: string | null
   setupOnceDone: boolean
   introDismissed: boolean

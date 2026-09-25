@@ -10,7 +10,7 @@ import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
-import { bundledNvimConfigDir, nvimBinary, nvimEnvOverlay } from './nvimPaths'
+import { bundledNvimConfigDir, nvimBinary, nvimConfigArgs, nvimEnvOverlay } from './nvimPaths'
 
 const STEP_PREFIX = 'grove-setup: '
 const FIRST_STEP = 'Installing plugins'
@@ -80,7 +80,7 @@ function runHeadlessSetup(
   reportStep: (step: string) => void
 ): Promise<boolean> {
   return new Promise((resolve) => {
-    const child = spawn(nvimBinary(), ['--headless'], {
+    const child = spawn(nvimBinary(), ['--headless', ...nvimConfigArgs()], {
       cwd,
       env: { ...env, GROVE_PROVISION: '1' },
       stdio: ['ignore', 'ignore', 'pipe']

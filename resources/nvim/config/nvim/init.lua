@@ -262,6 +262,19 @@ local function acceptCopilotSuggestion()
   return true
 end
 
+-- The parsers every editor highlights with, installed by first-run setup.
+-- No 'jsonc': the main branch has no separate jsonc grammar (the json parser
+-- serves the jsonc filetype), so listing it warns "skipping unsupported
+-- language: jsonc".
+-- Every mason package, installed by mason-tool-installer. vtsls is the
+-- TypeScript server; tree-sitter-cli builds nvim-treesitter's parsers.
+local masonPackages = { 'vtsls', 'prettierd', 'eslint_d', 'stylua', 'tree-sitter-cli' }
+
+local treesitterParsers = {
+  'typescript', 'tsx', 'javascript', 'json',
+  'html', 'css', 'lua', 'vim', 'vimdoc', 'markdown', 'markdown_inline'
+}
+
 if (vim.uv or vim.loop).fs_stat(lazyEntry) then
   vim.opt.rtp:prepend(lazyPath)
   local installsPlugins = acquireInstallLock()
@@ -352,13 +365,7 @@ if (vim.uv or vim.loop).fs_stat(lazyEntry) then
         branch = 'main',
         config = function()
           local ok, ts = pcall(require, 'nvim-treesitter')
-          -- No 'jsonc': the main branch has no separate jsonc grammar (the json
-          -- parser serves the jsonc filetype), so listing it warns "skipping
-          -- unsupported language: jsonc".
-          local parsers = {
-            'typescript', 'tsx', 'javascript', 'json',
-            'html', 'css', 'lua', 'vim', 'vimdoc', 'markdown', 'markdown_inline'
-          }
+          local parsers = treesitterParsers
           -- The main branch compiles parsers with the `tree-sitter` CLI (installed
           -- via mason below). Skip when it's absent so init never errors; the CLI
           -- lands async on first launch, so also retry when mason signals done.
@@ -557,22 +564,24 @@ if (vim.uv or vim.loop).fs_stat(lazyEntry) then
       -- mason-lspconfig enables them through nvim's built-in LSP registry.
       { 'williamboman/mason.nvim', opts = {} },
 
-      -- Install the external formatter/linter binaries conform and nvim-lint
-      -- shell out to (mason-lspconfig only handles LSP servers).
+      -- Install every mason package: the language servers mason-lspconfig
+      -- enables and the binaries conform and nvim-lint shell out to.
       {
         'WhoIsSethDaniel/mason-tool-installer.nvim',
         dependencies = { 'williamboman/mason.nvim' },
         opts = {
-          -- tree-sitter-cli: required by nvim-treesitter (main) to build parsers.
-          ensure_installed = { 'prettierd', 'eslint_d', 'stylua', 'tree-sitter-cli' }
+          ensure_installed = masonPackages,
+          -- First-run setup installs these itself, synchronously; a second,
+          -- start-up run beside it would race it for the same packages.
+          run_on_start = vim.env.GROVE_PROVISION ~= '1'
         }
       },
       {
         'williamboman/mason-lspconfig.nvim',
         dependencies = { 'williamboman/mason.nvim', 'neovim/nvim-lspconfig', 'saghen/blink.cmp' },
         opts = {
-          ensure_installed = { 'vtsls' },
-          automatic_installation = true,
+          -- The tool installer above installs vtsls with everything else, so
+          -- first-run setup has one installer to wait for.
           -- vtsls is the TypeScript server here. mason-lspconfig enables every
           -- installed server, so a leftover ts_ls install would attach to the
           -- same buffers — two tsservers indexing the project, doubled
@@ -621,6 +630,132 @@ if (vim.uv or vim.loop).fs_stat(lazyEntry) then
     releaseInstallLock()
   end
   closeLazyView()
+end
+
+-- First-run setup. Grove runs this config once in a headless nvim with
+-- GROVE_PROVISION=1 before any editor starts, and waits for it: plugins, the
+-- completion binary, mason's tools and servers and the treesitter parsers are
+-- all installed here. Editors started while those installers ran would each
+-- raise a hit-enter prompt per progress message; headless has no UI to prompt
+-- in, and the editors that follow find nothing left to install. Each step is
+-- announced on stderr as "grove-setup: <step>" for grove to show; the exit code
+-- says whether everything landed, so a failure is retried next launch.
+local provisionTimeoutMs = 600000
+
+--- Tells grove which setup step is running.
+local function announceSetupStep(step)
+  -- Headless nvim ends its own messages without a newline; start a fresh line.
+  io.stderr:write('\ngrove-setup: ' .. step .. '\n')
+end
+
+--- Whether lazy installed every declared plugin.
+local function pluginsInstalled()
+  local ok, lazy = pcall(require, 'lazy')
+  if not ok then
+    return false
+  end
+  for _, plugin in ipairs(lazy.plugins()) do
+    if not plugin._.installed then
+      return false
+    end
+  end
+  return true
+end
+
+--- Downloads blink.cmp's prebuilt fuzzy matcher. Returns whether it is there.
+local function downloadCompletionBinary()
+  local ok, download = pcall(require, 'blink.cmp.fuzzy.download')
+  if not ok then
+    return false
+  end
+  local finished = false
+  local failure = nil
+  download.ensure_downloaded(function(err)
+    failure = err
+    finished = true
+  end)
+  vim.wait(provisionTimeoutMs, function()
+    return finished
+  end, 100)
+  return finished and failure == nil
+end
+
+--- Installs every mason package. Returns whether all landed.
+local function installMasonPackages()
+  local ok, toolInstaller = pcall(require, 'mason-tool-installer')
+  if not ok then
+    return false
+  end
+  toolInstaller.check_install(false, true)
+  local registry = require('mason-registry')
+  for _, name in ipairs(masonPackages) do
+    if not registry.is_installed(name) then
+      return false
+    end
+  end
+  return true
+end
+
+--- Installs the treesitter parsers. Returns whether every one is installed.
+local function installParsers()
+  local ok, treesitter = pcall(require, 'nvim-treesitter')
+  if not ok or vim.fn.executable('tree-sitter') ~= 1 then
+    return false
+  end
+  pcall(function()
+    treesitter.install(treesitterParsers):wait(provisionTimeoutMs)
+  end)
+  local installed = treesitter.get_installed()
+  for _, parser in ipairs(treesitterParsers) do
+    if not vim.tbl_contains(installed, parser) then
+      return false
+    end
+  end
+  return true
+end
+
+--- Runs one setup step. Returns whether it succeeded, saying so on stderr if not.
+local function runSetupStep(step, run)
+  if step ~= nil then
+    announceSetupStep(step)
+  end
+  local ok, succeeded = pcall(run)
+  if ok and succeeded then
+    return true
+  end
+  io.stderr:write('\ngrove-setup failed: ' .. (step or 'Installing plugins') .. ' ' .. tostring(succeeded) .. '\n')
+  return false
+end
+
+--- Runs every setup step, then quits with an exit code saying if all landed.
+local function provision()
+  local complete = runSetupStep(nil, pluginsInstalled)
+  complete = runSetupStep('Downloading the completion engine', downloadCompletionBinary) and complete
+  complete = runSetupStep('Installing language servers and tools', installMasonPackages) and complete
+  complete = runSetupStep('Installing syntax parsers', installParsers) and complete
+  if complete then
+    vim.cmd('qall!')
+  else
+    vim.cmd('cquit! 1')
+  end
+end
+
+if vim.env.GROVE_PROVISION == '1' then
+  vim.api.nvim_create_autocmd('VimEnter', {
+    once = true,
+    callback = function()
+      -- Scheduled so mason-lspconfig and the tool installer have queued the
+      -- installs they start on entering. An error must still quit: a headless
+      -- nvim left running would hold every editor back until grove's timeout.
+      vim.schedule(function()
+        local ok, err = pcall(provision)
+        if not ok then
+          io.stderr:write(tostring(err) .. '\n')
+          vim.cmd('cquit! 1')
+        end
+      end)
+    end
+  })
 end
 
 -- Each diagnostic's message at the end of its line, in the severity's colour

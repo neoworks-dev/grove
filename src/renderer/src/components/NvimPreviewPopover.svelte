@@ -1,25 +1,18 @@
 <script lang="ts">
-  // A preview nvim handed to grove (see lib/nvim/previews.ts), drawn at the
-  // cursor: hover docs and signature help as rendered markdown, Inspect and
-  // other plain previews as text, and a line's diagnostics with the quick fixes
-  // the servers offer for them. nvim still owns when it closes; this only asks
-  // (onDismiss) and applies fixes through onFix.
-  import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
-  import CircleNotchIcon from 'phosphor-svelte/lib/CircleNotchIcon'
-  import InfoIcon from 'phosphor-svelte/lib/InfoIcon'
-  import LightbulbIcon from 'phosphor-svelte/lib/LightbulbIcon'
-  import WarningIcon from 'phosphor-svelte/lib/WarningIcon'
+  // A line's diagnostics, handed over by nvim (see lib/nvim/previews.ts) so the
+  // quick fixes the servers offer can sit under them, clickable. Drawn to read
+  // like the nvim floats around it: the pane's font at its zoom, one cell per
+  // line, the float background, a dot and the message in the severity's
+  // colour. nvim still owns when it closes; this only asks (onDismiss) and
+  // applies fixes through onFix.
   import WrenchIcon from 'phosphor-svelte/lib/WrenchIcon'
-  import XCircleIcon from 'phosphor-svelte/lib/XCircleIcon'
-  import { renderMarkdown } from '../lib/markdown'
-  import { highlightCodeFences } from '../lib/markdownHighlight'
-  import { floatingCodeScrollbars } from '../lib/markdownScrollbars'
   import { placePopover, type NvimPreview } from '../lib/nvim/previews'
 
   let {
     preview,
     anchor,
     pane,
+    font,
     onFix,
     onDismiss
   }: {
@@ -27,18 +20,23 @@
     // The cursor cell's top-left and the line height, in pane pixels.
     anchor: { left: number; top: number; lineHeight: number }
     pane: { width: number; height: number }
+    // nvim's font in this pane: family, size at the pane's zoom, cell height.
+    font: { family: string; sizePx: number; lineHeight: number }
     onFix: (index: number) => void
     onDismiss: () => void
   } = $props()
 
-  // Gap between the popover and the line it belongs to.
-  const GAP = 4
+  // The frame's padding, as for the nvim floats Grove frames (NvimPane's
+  // FLOAT_PADDING): the text starts on the cursor's column, the frame outside it.
+  const PADDING = 8
 
   let width = $state(0)
   let height = $state(0)
-  const placement = $derived(placePopover(anchor, { width, height }, pane, GAP))
+  const placement = $derived(
+    placePopover({ ...anchor, left: anchor.left - PADDING }, { width, height }, pane, 0)
+  )
 
-  /** Severity label for screen readers and the icon's title. */
+  /** Severity label for screen readers and the dot's title. */
   function severityName(severity: number): string {
     if (severity === 1) return 'Error'
     if (severity === 2) return 'Warning'
@@ -59,80 +57,45 @@
      press a fix never lands on the canvas underneath and moves nvim's cursor,
      which would close it. -->
 <div
-  class="absolute z-overlay flex w-max max-w-[min(36rem,calc(100%-1rem))] flex-col overflow-hidden rounded-lg border border-line bg-elevated text-xs text-default shadow-2xl"
-  style="left:{placement.left}px;top:{placement.top}px"
+  class="absolute z-overlay w-max max-w-[calc(100%-1rem)] rounded-lg border border-line bg-elevated text-default shadow-2xl"
+  style="left:{placement.left}px;top:{placement.top}px;padding:{PADDING}px;font-family:{font.family};font-size:{font.sizePx}px;line-height:{font.lineHeight}px"
   bind:clientWidth={width}
   bind:clientHeight={height}
   role="dialog"
-  aria-label="Preview"
+  aria-label="Line diagnostics"
   tabindex="-1"
   onmousedown={(event) => event.stopPropagation()}
   onpointerdown={(event) => event.stopPropagation()}
   onwheel={(event) => event.stopPropagation()}
   onkeydown={onKeyDown}
 >
-  <FloatingScrollbar class="max-h-80 min-h-0">
-    {#if preview.kind === 'markdown'}
-      <div
-        class="agent-markdown prose max-w-none px-3 py-2 text-xs text-default"
-        use:floatingCodeScrollbars
-        use:highlightCodeFences
+  {#each preview.diagnostics as diagnostic, index (index)}
+    <div
+      class="flex whitespace-pre-wrap"
+      class:text-red={diagnostic.severity === 1}
+      class:text-amber={diagnostic.severity === 2}
+      class:text-blue={diagnostic.severity === 3}
+      class:text-dim={diagnostic.severity >= 4}
+    >
+      <span class="shrink-0" title={severityName(diagnostic.severity)}>●&nbsp;</span>
+      <span class="min-w-0">
+        {diagnostic.message}{#if diagnostic.source || diagnostic.code}<span class="text-dim"
+            >{#if diagnostic.source}&nbsp;{diagnostic.source}{/if}{#if diagnostic.code}&nbsp;{diagnostic.code}{/if}</span
+          >{/if}
+      </span>
+    </div>
+  {/each}
+  {#if preview.fixes === null}
+    <div class="text-dim">&nbsp;&nbsp;Looking for fixes…</div>
+  {:else}
+    {#each preview.fixes as fix, index (index)}
+      <button
+        class="-mx-1 flex w-[calc(100%+0.5rem)] cursor-pointer items-center rounded px-1 text-left hover:bg-hover"
+        onclick={() => onFix(index + 1)}
       >
-        <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-        {@html renderMarkdown(preview.text)}
-      </div>
-    {:else if preview.kind === 'text'}
-      <pre class="whitespace-pre-wrap px-3 py-2 font-mono text-xs">{preview.text}</pre>
-    {:else}
-      <ul class="flex flex-col gap-1.5 px-3 py-2">
-        {#each preview.diagnostics as diagnostic, index (index)}
-          <li class="flex items-start gap-2">
-            <span
-              class="mt-px shrink-0"
-              class:text-red={diagnostic.severity === 1}
-              class:text-amber={diagnostic.severity === 2}
-              class:text-blue={diagnostic.severity === 3}
-              class:text-dim={diagnostic.severity >= 4}
-              title={severityName(diagnostic.severity)}
-              aria-label={severityName(diagnostic.severity)}
-            >
-              {#if diagnostic.severity === 1}
-                <XCircleIcon size={14} weight="fill" />
-              {:else if diagnostic.severity === 2}
-                <WarningIcon size={14} weight="fill" />
-              {:else if diagnostic.severity === 3}
-                <InfoIcon size={14} weight="fill" />
-              {:else}
-                <LightbulbIcon size={14} weight="fill" />
-              {/if}
-            </span>
-            <span class="min-w-0 flex-1 whitespace-pre-wrap leading-snug">{diagnostic.message}</span>
-            {#if diagnostic.source || diagnostic.code}
-              <span class="shrink-0 pl-2 font-mono text-2xs leading-snug text-dim">
-                {#if diagnostic.source}{diagnostic.source}{/if}{#if diagnostic.source && diagnostic.code}&nbsp;{/if}{#if diagnostic.code}<span class="text-faint">{diagnostic.code}</span>{/if}
-              </span>
-            {/if}
-          </li>
-        {/each}
-      </ul>
-      {#if preview.fixes === null}
-        <div class="flex items-center gap-1.5 border-t border-line px-3 py-1.5 text-dim">
-          <CircleNotchIcon size={12} class="animate-spin" />
-          Looking for fixes…
-        </div>
-      {:else if preview.fixes.length > 0}
-        <div class="flex flex-col border-t border-line py-1">
-          {#each preview.fixes as fix, index (index)}
-            <button
-              class="flex cursor-pointer items-center gap-2 px-3 py-1 text-left hover:bg-hover"
-              onclick={() => onFix(index + 1)}
-            >
-              <WrenchIcon size={12} class="shrink-0 text-accent" />
-              <span class="min-w-0 truncate">{fix}</span>
-            </button>
-          {/each}
-        </div>
-      {/if}
-    {/if}
-  </FloatingScrollbar>
+        <WrenchIcon size={font.sizePx - 2} class="shrink-0 text-accent" />
+        <span class="min-w-0 truncate">&nbsp;{fix}</span>
+      </button>
+    {/each}
+  {/if}
 </div>

@@ -1,4 +1,4 @@
-// Buffer menu (leader f b) — an instance of the canonical overlay listing the
+// Buffer menu (leader b b) — an instance of the canonical overlay listing the
 // open editor tabs of the current worktree, with pin/close footer actions.
 
 import { overlays, matchesQuery, type OverlayItem } from './overlays.svelte'

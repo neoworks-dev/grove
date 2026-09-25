@@ -14,6 +14,7 @@ import {
   ensureNvimUserConfig,
   ensureCopilotConfigLink
 } from './nvimPaths'
+import { ensureNvimSetup } from './nvimSetup'
 
 export interface NvimEvents {
   onRedraw: (id: string, events: unknown[]) => void
@@ -21,6 +22,8 @@ export interface NvimEvents {
   // Custom RPC notifications the config raises via vim.rpcnotify (e.g. diagnostic
   // pushes). Redraw is handled separately; everything else lands here.
   onNotify: (id: string, method: string, args: unknown[]) => void
+  // First-run setup's progress: the step it is on, then null once it is over.
+  onSetupStep: (step: string | null) => void
 }
 
 export interface SpawnNvimOptions {
@@ -63,6 +66,8 @@ export class NeovimManager {
     await this.ensureStateDirs(env)
     await ensureNvimUserConfig()
     await ensureCopilotConfigLink()
+    // After the config link: setup runs that config.
+    await ensureNvimSetup(this.events.onSetupStep)
 
     const child = spawn(nvimBinary(), ['--embed'], { cwd: options.cwd, env })
     if (!child.stdin || !child.stdout) throw new Error('nvim spawn failed: no stdio')

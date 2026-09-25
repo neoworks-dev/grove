@@ -339,7 +339,8 @@ const workbench = {
     command: (id: string, command: string) => ipcRenderer.invoke('nvim:command', id, command),
     request: (id: string, method: string, args: unknown[]) =>
       ipcRenderer.invoke('nvim:request', id, method, args),
-    kill: (id: string) => ipcRenderer.invoke('nvim:kill', id)
+    kill: (id: string) => ipcRenderer.invoke('nvim:kill', id),
+    setupStep: (): Promise<string | null> => ipcRenderer.invoke('nvim:setupStep')
   },
   state: {
     getRepo: () => ipcRenderer.invoke('state:getRepo'),

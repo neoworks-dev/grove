@@ -646,6 +646,30 @@ vim.api.nvim_create_autocmd('LspAttach', {
   end
 })
 
+-- LazyVim's habit: q closes a split that shows something other than a file —
+-- git blame, help, quickfix, checkhealth, any plugin's nofile view — unless
+-- its plugin already uses q. Decided by buftype, not a filetype list, so a
+-- plugin grove doesn't know about gets it too. acwrite is left out: grove's
+-- scratch and review buffers are written like files and edited as such.
+local grove_view_buftypes = { nofile = true, nowrite = true, help = true, quickfix = true }
+
+local function grove_map_close_with_q()
+  if not grove_view_buftypes[vim.bo.buftype] then
+    return
+  end
+  if vim.fn.maparg('q', 'n', false, true).buffer == 1 then
+    return
+  end
+  -- pcall: the last window can't be closed (E444), and q then does nothing.
+  vim.keymap.set('n', 'q', function()
+    pcall(vim.cmd.close)
+  end, { buffer = true, silent = true, desc = 'Close window' })
+end
+
+vim.api.nvim_create_autocmd({ 'BufWinEnter', 'FileType' }, {
+  callback = grove_map_close_with_q
+})
+
 -- LazyVim's leader actions, as plain maps. Grove reads every <leader> map in
 -- normal and visual mode and lists it in its own overlay under the which-key
 -- group of its prefix, so these are rebindable in Keyboard Shortcuts like any

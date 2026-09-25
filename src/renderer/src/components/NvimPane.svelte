@@ -988,10 +988,13 @@ end, ns)
             <div
               class={isTransientFloat(floating)
                 ? 'absolute overflow-hidden'
-                : 'group absolute overflow-hidden rounded-lg border border-line bg-surface shadow-2xl'}
+                : 'group absolute overflow-hidden rounded-lg border border-line bg-elevated shadow-2xl'}
               style={floatStyle(floating)}
             >
-              {#if !isTransientFloat(floating)}
+              <!-- Only a float the cursor is in needs a way out by mouse; a
+                   preview closes on Escape or the next cursor move, and a ✕
+                   would sit on its text. -->
+              {#if modalFloatingWindows.includes(floating)}
                 <button
                   class="absolute right-1.5 top-1.5 z-40 flex h-5 w-5 items-center justify-center rounded text-xs text-dim opacity-60 transition-opacity hover:bg-hover hover:text-default hover:opacity-100"
                   title="Close window"

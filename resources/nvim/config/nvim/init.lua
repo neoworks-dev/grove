@@ -420,7 +420,13 @@ if (vim.uv or vim.loop).fs_stat(lazyEntry) then
             -- no formatter at all and format-on-save silently did nothing.
             svelte = { 'prettierd', 'prettier', stop_after_first = true }
           },
-          format_on_save = { timeout_ms = 1000, lsp_format = 'fallback' }
+          -- Grove's <leader>uf flips vim.g.grove_autoformat to false to pause it.
+          format_on_save = function()
+            if vim.g.grove_autoformat == false then
+              return nil
+            end
+            return { timeout_ms = 1000, lsp_format = 'fallback' }
+          end
         }
       },
 

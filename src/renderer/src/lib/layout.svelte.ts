@@ -7,6 +7,7 @@
 // resize and close the same way.
 
 import { store } from './store.svelte'
+import { pinnedPathsByWorktree } from './tabPins'
 import { keymap } from './keymap.svelte'
 import { panes } from './panes.svelte'
 import { views } from './views.svelte'
@@ -872,7 +873,8 @@ class LayoutStore {
             const fallback = files.length > 0 ? files[files.length - 1].path : null
             return [worktreeId, activeIsFile ? active : fallback]
           })
-        )
+        ),
+        pinnedTabsByWorktree: pinnedPathsByWorktree(store.tabsByWorktree)
       })
     } catch {
       // best-effort; layout is non-critical

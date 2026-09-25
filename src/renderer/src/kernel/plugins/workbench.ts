@@ -5,7 +5,6 @@
 import type { Context } from '@neoworks/extension-system'
 import { registerCoreMenu } from '../../lib/coreMenu'
 import { registerCoreBindings } from '../../lib/bindings'
-import { registerEditorActions } from '../../lib/editorActions'
 import { watchNvimSelect } from '../../lib/nvim/uiSelect'
 import { store, openRepoResult, applyIconPack } from '../../lib/store.svelte'
 import { availablePacks } from '../../lib/icons'
@@ -18,7 +17,6 @@ export const workbench = {
   apply(ctx: Context): void {
     ctx.effect(() => registerCoreMenu(), 'menu:core')
     ctx.effect(() => registerCoreBindings(), 'keymap:core')
-    ctx.effect(() => registerEditorActions(), 'keymap:editor-actions')
     ctx.effect(() => watchNvimSelect(), 'nvim:ui-select')
 
     ctx.effect(

@@ -34,7 +34,12 @@
   import { leaveDiff, restoreDiff } from '../lib/nvim/diffTabs'
   import { editorHasContent } from '../lib/nvim/visibility'
   import { closedTabPaths } from '../lib/nvim/closedTabs'
-  import { nvimKeymapBindings, type NvimMapping } from '../lib/nvimKeymap'
+  import {
+    nvimGroupLabels,
+    nvimLeaderBindings,
+    type NvimGroup,
+    type NvimMapping
+  } from '../lib/nvimKeymap'
   import { operatorHintEntries, operatorTitle } from '../lib/nvimOperatorHints'
   import { decodeNvimKey, nextPending, pendingHint } from '../lib/nvimPendingKeys'
   import { references } from '../lib/references.svelte'
@@ -336,31 +341,80 @@ return wins
     return 13
   }
 
-  // Surface nvim's own leader maps in grove's which-key. Global + buffer-local
-  // normal-mode maps are refetched on attach and on buffer change (plugins and
-  // buffers register maps lazily); buffer-local entries win on collision.
+  // The group names nvim's which-key specs give leader prefixes, from which-key's
+  // parsed spec list (it has no public getter). Empty when which-key is absent.
+  const WHICH_KEY_GROUPS_LUA = `
+local ok, config = pcall(require, 'which-key.config')
+if not ok or type(config.mappings) ~= 'table' then return {} end
+local leader = vim.g.mapleader or '\\\\'
+local localLeader = vim.g.maplocalleader or '\\\\'
+local groups = {}
+for _, mapping in ipairs(config.mappings) do
+  local name = mapping.desc
+  if type(name) == 'function' then
+    local called, value = pcall(name)
+    name = called and value or nil
+  end
+  if mapping.group and type(mapping.lhs) == 'string' and type(name) == 'string' then
+    local lhs = mapping.lhs:gsub('<[lL]eader>', leader):gsub('<[lL]ocal[lL]eader>', localLeader)
+    table.insert(groups, { lhs = lhs, name = name })
+  end
+end
+return groups
+`
+
+  /** Global and buffer-local maps of one mode; buffer-local ones first, so they win. */
+  async function nvimMaps(id: string, mode: string): Promise<NvimMapping[]> {
+    const [bufferMaps, globalMaps] = await Promise.all([
+      window.workbench.nvim.request(id, 'nvim_buf_get_keymap', [0, mode]),
+      window.workbench.nvim.request(id, 'nvim_get_keymap', [mode])
+    ])
+    const maps: NvimMapping[] = []
+    if (Array.isArray(bufferMaps)) maps.push(...(bufferMaps as NvimMapping[]))
+    if (Array.isArray(globalMaps)) maps.push(...(globalMaps as NvimMapping[]))
+    return maps
+  }
+
+  /** The which-key group names nvim's config registered. */
+  async function nvimGroups(id: string): Promise<NvimGroup[]> {
+    const result = await window.workbench.nvim
+      .request(id, 'nvim_exec_lua', [WHICH_KEY_GROUPS_LUA, []])
+      .catch(() => [])
+    if (!Array.isArray(result)) return []
+    return result as NvimGroup[]
+  }
+
+  /** Replays a leader map's lhs into this pane's nvim. */
+  function forwardToNvim(lhs: string): void {
+    if (session?.id) void window.workbench.nvim.input(session.id, lhs)
+  }
+
+  // Surface nvim's own leader maps in grove's which-key, from normal mode and
+  // `x` mode (charwise, linewise and block visual alike), each under its
+  // which-key group. Refetched on attach, on buffer
+  // change and whenever nvim reports new maps (grove_keymap_changed).
   async function syncNvimKeymap(): Promise<void> {
     const id = session?.id
     if (!id) return
     try {
-      const [bufferMaps, globalMaps, bufferOmaps, globalOmaps] = await Promise.all([
-        window.workbench.nvim.request(id, 'nvim_buf_get_keymap', [0, 'n']),
-        window.workbench.nvim.request(id, 'nvim_get_keymap', ['n']),
-        window.workbench.nvim.request(id, 'nvim_buf_get_keymap', [0, 'o']),
-        window.workbench.nvim.request(id, 'nvim_get_keymap', ['o'])
+      const [normal, visual, operator, groups] = await Promise.all([
+        nvimMaps(id, 'n'),
+        nvimMaps(id, 'x'),
+        nvimMaps(id, 'o'),
+        nvimGroups(id)
       ])
-      if (!session?.id || !Array.isArray(bufferMaps) || !Array.isArray(globalMaps)) return
-      const mappings = [...bufferMaps, ...globalMaps] as NvimMapping[]
-      normalMaps = mappings
-      const bindings = nvimKeymapBindings(mappings, 'editor', 'normal', (lhs) => {
-        if (session?.id) void window.workbench.nvim.input(session.id, lhs)
-      })
+      if (!session?.id) return
+      normalMaps = normal
+      operatorMaps = operator
+      const labels = nvimGroupLabels(groups)
+      const bindings = nvimLeaderBindings(normal, visual, 'editor', forwardToNvim, labels)
       disposeNvimBindings?.()
-      disposeNvimBindings = keymap.registerBindings(bindings)
-      const omaps: NvimMapping[] = []
-      if (Array.isArray(bufferOmaps)) omaps.push(...(bufferOmaps as NvimMapping[]))
-      if (Array.isArray(globalOmaps)) omaps.push(...(globalOmaps as NvimMapping[]))
-      operatorMaps = omaps
+      const disposeBindings = keymap.registerBindings(bindings)
+      const disposeLabels = keymap.registerPrefixLabels('editor', labels)
+      disposeNvimBindings = () => {
+        disposeBindings()
+        disposeLabels()
+      }
     } catch {
       // session gone
     }

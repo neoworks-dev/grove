@@ -103,6 +103,9 @@ local function bootstrapLazy()
   -- Another nvim may have finished first while this one was cloning.
   if cloned and not uv.fs_stat(lazyEntry) then
     vim.fn.delete(lazyPath, 'rf')
+    -- On a fresh profile nothing has made lazy's plugin root yet, and a rename
+    -- into a missing directory fails, leaving the editor without plugins.
+    vim.fn.mkdir(vim.fs.dirname(lazyPath), 'p')
     uv.fs_rename(staging, lazyPath)
   end
   vim.fn.delete(staging, 'rf')
@@ -185,6 +188,17 @@ local function acquireInstallLock()
     vim.wait(remaining, installLockFree, 200)
   end
   return true
+end
+
+--- Closes lazy's floating view if the startup install opened it. lazy shows it
+--- whenever a UI is attached, which grove always is, and grove then opens the
+--- pane's file in the current window — that float.
+local function closeLazyView()
+  local ok, view = pcall(require, 'lazy.view')
+  if not ok or not view.visible() then
+    return
+  end
+  view.view:close()
 end
 
 -- Accepts the Copilot ghost-text suggestion currently on screen. Returns true
@@ -510,6 +524,7 @@ if (vim.uv or vim.loop).fs_stat(lazyEntry) then
   if installsPlugins then
     releaseInstallLock()
   end
+  closeLazyView()
 end
 
 -- Each diagnostic's message at the end of its line, in the severity's colour

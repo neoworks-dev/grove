@@ -157,17 +157,6 @@ class Keymap {
     }
   }
 
-  // Full keybinding cheatsheet (leader ?) — a glanceable list of everything.
-  cheatsheetOpen = $state(false)
-
-  toggleCheatsheet(): void {
-    this.cheatsheetOpen = !this.cheatsheetOpen
-  }
-
-  closeCheatsheet(): void {
-    this.cheatsheetOpen = false
-  }
-
   // Pane elements are plain (geometry is read on demand, not reactive).
   private panes = new Map<PaneId, HTMLElement>()
   private paneTypes = new Map<PaneId, string>()

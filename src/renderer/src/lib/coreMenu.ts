@@ -59,7 +59,7 @@ export function registerCoreMenu(): () => void {
       label: 'Keyboard Shortcuts',
       group: '5-general',
       order: 4,
-      commandId: 'keybindings.open',
+      run: () => layout.ensurePane('keybindings'),
       accelerator: '␣ k'
     },
     {

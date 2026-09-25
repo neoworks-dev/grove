@@ -33,9 +33,9 @@ export function registerCoreBindings(): () => void {
   const disposeBindings = keymap.registerBindings([
     {
       id: 'leader.buffers',
-      keys: '<Leader> b',
+      keys: '<Leader> f b',
       context: 'global',
-      group: 'Buffer',
+      group: 'Find',
       description: 'Buffer menu',
       run: () => bufferMenu.show()
     },
@@ -137,33 +137,33 @@ export function registerCoreBindings(): () => void {
     },
     {
       id: 'leader.diagnostics',
-      keys: '<Leader> d',
+      keys: '<Leader> x x',
       context: 'global',
-      group: 'Code',
+      group: 'Diagnostics',
       description: 'Open diagnostics',
       run: () => layout.ensurePane('diagnostics')
     },
     {
       id: 'leader.symbols',
-      keys: '<Leader> s',
+      keys: '<Leader> s s',
       context: 'editor',
-      group: 'Code',
+      group: 'Search',
       description: 'Symbol outline',
       run: () => symbolsOutline.toggle()
     },
     {
       id: 'leader.workspaceSymbols',
-      keys: '<Leader> S',
+      keys: '<Leader> s S',
       context: 'global',
-      group: 'Code',
+      group: 'Search',
       description: 'Search workspace symbols',
       run: () => workspaceSymbols.toggle()
     },
     {
       id: 'leader.undotree',
-      keys: '<Leader> u',
+      keys: '<Leader> s u',
       context: 'editor',
-      group: 'Code',
+      group: 'Search',
       description: 'Undo history',
       run: () => undoTree.toggle()
     },

@@ -34,9 +34,15 @@ export function bundledNvimConfigDir(): string {
 
 // Grove's XDG_CONFIG_HOME: a user-visible config root at ~/.config/grove that
 // holds a `nvim/` config. Kept outside the app so it can be inspected and
-// hand-edited; the user's own ~/.config/nvim is never touched.
+// hand-edited; the user's own ~/.config/nvim is never touched. It follows the
+// app's own XDG_CONFIG_HOME, so an isolated profile (qa, e2e) links its config
+// inside the profile instead of repointing the one the user's instance loads.
 export function nvimConfigHome(): string {
-  return join(homedir(), '.config', 'grove')
+  let configRoot = process.env.XDG_CONFIG_HOME
+  if (!configRoot) {
+    configRoot = join(homedir(), '.config')
+  }
+  return join(configRoot, 'grove')
 }
 
 export function nvimUserConfigDir(): string {
@@ -89,7 +95,7 @@ async function moveNvimConfigAside(target: string): Promise<void> {
 }
 
 // Copilot keeps its device-flow token under $XDG_CONFIG_HOME/github-copilot.
-// Grove repoints XDG_CONFIG_HOME at ~/.config/grove, so copilot.lua would look
+// Grove repoints nvim's XDG_CONFIG_HOME at nvimConfigHome(), so copilot.lua would look
 // at a fresh directory and demand a second `:Copilot auth` from users already
 // signed in for their own nvim. Link grove's path at the real one so a single
 // login serves both. No global config means no link: copilot.lua then creates

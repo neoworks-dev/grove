@@ -46,6 +46,13 @@
   import { operatorHintEntries, operatorTitle } from '../lib/nvimOperatorHints'
   import { decodeNvimKey, nextPending, pendingHint } from '../lib/nvimPendingKeys'
   import { references } from '../lib/references.svelte'
+  import {
+    closesPreview,
+    parsePreview,
+    withFixes,
+    type NvimPreview
+  } from '../lib/nvim/previews'
+  import NvimPreviewPopover from './NvimPreviewPopover.svelte'
 
   let { leafId }: { leafId: string } = $props()
 
@@ -78,6 +85,12 @@
   let pendingNvimKeys = ''
   let disposePendingKeys: (() => void) | null = null
   let disposeReferences: (() => void) | null = null
+  // The preview nvim handed over instead of drawing it: hover docs, signature
+  // help, a line's diagnostics, Inspect. See lib/nvim/previews.ts.
+  let preview = $state<NvimPreview | null>(null)
+  let disposePreviews: (() => void) | null = null
+  let hostWidth = $state(0)
+  let hostHeight = $state(0)
 
   // Reactive mirrors for the child overlays: the session id once attached, and a
   // tick bumped on each redraw flush so the minimap re-reads the buffer view.
@@ -710,6 +723,61 @@ end, ns)
     })
   }
 
+  /** Subscribes to the previews a freshly attached session hands over. */
+  function watchPreviews(id: string): void {
+    disposePreviews?.()
+    preview = null
+    disposePreviews = window.workbench.on('event:nvim-notify', (payload) => {
+      const event = payload as { id: string; method: string; args: unknown[] }
+      if (event.id !== id) return
+      applyPreviewEvent(event.method, event.args?.[0])
+    })
+  }
+
+  /** Opens, fills in or closes the preview from one of nvim's notifications. */
+  function applyPreviewEvent(method: string, data: unknown): void {
+    if (method === 'grove_preview') {
+      preview = parsePreview(data)
+      return
+    }
+    if (preview === null) return
+    if (method === 'grove_preview_fixes') {
+      preview = withFixes(preview, data)
+      return
+    }
+    if (method === 'grove_preview_close' && closesPreview(preview, data)) preview = null
+  }
+
+  /** The preview's cursor cell in pane pixels, where the popover attaches. */
+  const previewAnchor = $derived.by(() => {
+    if (preview === null || !session) return null
+    return {
+      left: session.screenColToPixel(preview.col),
+      top: session.screenRowToPixel(preview.row),
+      lineHeight: session.cellHeight
+    }
+  })
+
+  /** Runs one of the preview's Lua callbacks in nvim, then hands the keyboard back to it. */
+  function answerPreview(lua: string, args: unknown[]): void {
+    const id = session?.id
+    if (!id) return
+    void window.workbench.nvim.request(id, 'nvim_exec_lua', [lua, args]).catch(() => {})
+    session?.focus()
+  }
+
+  /** Applies the preview's quick fix at `index` (1-based, as nvim lists them). */
+  function applyPreviewFix(index: number): void {
+    if (preview === null) return
+    answerPreview('grove_preview_apply_fix(...)', [preview.id, index])
+  }
+
+  /** Asks nvim to end the preview; its close notification removes the popover. */
+  function dismissPreview(): void {
+    if (preview === null) return
+    answerPreview('grove_preview_dismiss(...)', [preview.id])
+  }
+
   // Hides the pending panel without churning keymap state on every keystroke.
   function clearPendingKeys(): void {
     pendingNvimKeys = ''
@@ -778,6 +846,7 @@ end, ns)
         watchKeymapChanges(id)
         watchPendingKeys(id)
         watchReferences(id)
+        watchPreviews(id)
         // A renderer reload leaves a gated review's preview in the buffer with
         // nothing left to take it down; this editor is attaching fresh, so
         // whatever is flagged as previewed is stale by definition.
@@ -802,6 +871,7 @@ end, ns)
         nvimFileCount = 0
         dirtyPaths = {}
         splitWindows = []
+        preview = null
       },
       onClose: () => {
         nvimId = null
@@ -830,6 +900,7 @@ end, ns)
     watchBufferState(id)
     watchPendingKeys(id)
     watchReferences(id)
+    watchPreviews(id)
     return true
   }
 
@@ -1047,6 +1118,7 @@ return vim.api.nvim_get_current_win() ~= before
     disposeKeymapWatch?.()
     disposePendingKeys?.()
     disposeReferences?.()
+    disposePreviews?.()
     keymap.hideHints()
     unregisterNvimSession(registeredLeafId)
     // Park rather than dispose: the layout rebuilds this component whenever the
@@ -1077,6 +1149,8 @@ return vim.api.nvim_get_current_win() ~= before
   <div class="relative min-h-0 flex-1">
     <div
       bind:this={hostEl}
+      bind:clientWidth={hostWidth}
+      bind:clientHeight={hostHeight}
       class="absolute inset-0 overflow-hidden bg-surface"
       class:invisible={activeViewer !== null && showEditor}
       role="none"
@@ -1148,6 +1222,15 @@ return vim.api.nvim_get_current_win() ~= before
               />
             </div>
           {/each}
+        {/if}
+        {#if preview && previewAnchor}
+          <NvimPreviewPopover
+            {preview}
+            anchor={previewAnchor}
+            pane={{ width: hostWidth, height: hostHeight }}
+            onFix={applyPreviewFix}
+            onDismiss={dismissPreview}
+          />
         {/if}
         {#if nvimId}
           <Minimap

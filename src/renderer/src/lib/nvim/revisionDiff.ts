@@ -74,9 +74,6 @@ else
   vim.cmd('leftabove vsplit')
   existing = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_buf(existing, base)
-  -- Keeps the left side inside the editor pane instead of a Grove pane of its
-  -- own: the two halves are one view of one change.
-  vim.w[existing].grove_embedded = true
   vim.w[existing].grove_revision_base = true
 end
 -- Which right side the window is the base of, so leaving one diff for another

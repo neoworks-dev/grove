@@ -75,6 +75,17 @@ vim.api.nvim_create_autocmd('SwapExists', {
   end
 })
 
+-- nvim hands every column a resize adds to the current window, so splits end
+-- up 13 columns against 161 once the pane grows. Even them out on every resize,
+-- as LazyVim does; windows with winfixwidth/winfixheight keep their size.
+vim.api.nvim_create_autocmd('VimResized', {
+  callback = function()
+    local current = vim.fn.tabpagenr()
+    vim.cmd('tabdo wincmd =')
+    vim.cmd('tabnext ' .. current)
+  end
+})
+
 -- Plugin manager bootstrap. lazy.nvim clones itself and the declared plugins
 -- into the writable data dir (XDG_DATA_HOME → grove userData) on first launch;
 -- the user's own nvim install is untouched. Offline-tolerant: a failed clone

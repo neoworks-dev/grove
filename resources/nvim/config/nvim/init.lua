@@ -927,6 +927,436 @@ vim.keymap.set({ 'n', 'x', 'i' }, '<RightMouse>', grove_right_click, { desc = 'R
 -- The release would otherwise extend a selection to wherever the pointer is.
 vim.keymap.set({ 'n', 'x', 'i' }, '<RightRelease>', '<Nop>')
 
+-- Previews go to grove, which draws them at the cursor the way an nvim float
+-- looks: hover docs, signature help, Inspect and any plugin preview through
+-- open_floating_preview (markdown rendered, code highlighted by nvim's own
+-- treesitter and colours), and a line's diagnostics with the quick fixes the
+-- servers offer, clickable. nvim keeps the lifecycle: the preview's close
+-- events and Escape end it here, and grove asks back through
+-- grove_preview_dismiss and grove_preview_apply_fix. Windows opened directly
+-- with nvim_open_win are untouched.
+local grove_preview = { id = 0, open = false, fixes = {}, buf = nil, focus_id = nil }
+local grove_preview_group = vim.api.nvim_create_augroup('GrovePreview', { clear = true })
+
+-- The cursor's screen cell, 0-based, where grove anchors the popover.
+local function grove_cursor_cell()
+  local cursor = vim.api.nvim_win_get_cursor(0)
+  local position = vim.fn.screenpos(0, cursor[1], cursor[2] + 1)
+  return position.row - 1, position.col - 1
+end
+
+-- Ends the preview on grove's side.
+local function grove_close_preview()
+  vim.api.nvim_clear_autocmds({ group = grove_preview_group })
+  if not grove_preview.open then
+    return
+  end
+  grove_preview.open = false
+  grove_preview.fixes = {}
+  grove_preview.focus_id = nil
+  vim.rpcnotify(0, 'grove_preview_close', { id = grove_preview.id })
+end
+
+-- Hands grove one preview and arms the events that end it. Returns its id.
+local function grove_show_preview(message, close_events)
+  grove_close_preview()
+  grove_preview.id = grove_preview.id + 1
+  grove_preview.open = true
+  message.id = grove_preview.id
+  message.row, message.col = grove_cursor_cell()
+  vim.rpcnotify(0, 'grove_preview', message)
+  local events = vim.list_extend({ 'BufLeave', 'WinLeave' }, close_events)
+  -- Scheduled so the cursor move that opened the preview (a right-click
+  -- places the cursor first) doesn't close it straight away.
+  vim.schedule(function()
+    if grove_preview.id ~= message.id then
+      return
+    end
+    vim.api.nvim_create_autocmd(events, {
+      group = grove_preview_group,
+      buffer = vim.api.nvim_get_current_buf(),
+      once = true,
+      callback = grove_close_preview,
+    })
+  end)
+  return grove_preview.id
+end
+
+-- A hidden buffer holding the preview's text, for callers that decorate the
+-- buffer open_floating_preview returns (signature help highlights it).
+local function grove_preview_buffer(lines)
+  if grove_preview.buf == nil or not vim.api.nvim_buf_is_valid(grove_preview.buf) then
+    grove_preview.buf = vim.api.nvim_create_buf(false, true)
+  end
+  vim.api.nvim_buf_set_lines(grove_preview.buf, 0, -1, false, lines)
+  return grove_preview.buf
+end
+
+local grove_default_close_events = { 'CursorMoved', 'CursorMovedI', 'InsertCharPre' }
+
+-- Colours of an nvim highlight group as grove paints them: hex fg, and the
+-- attributes that change a glyph. A dotted treesitter group falls back to its
+-- parent (@keyword.typescript → @keyword) the way nvim resolves it.
+local function grove_group_style(group, cache)
+  if cache[group] then
+    return cache[group]
+  end
+  local name = group
+  local found = {}
+  while name do
+    local ok, hl = pcall(vim.api.nvim_get_hl, 0, { name = name, link = false })
+    if ok and hl and next(hl) then
+      found = hl
+      break
+    end
+    name = name:match('^(.*)%.[^.]+$')
+  end
+  local style = { bold = found.bold == true, italic = found.italic == true, underline = found.underline == true }
+  if found.fg then
+    style.fg = string.format('#%06x', found.fg)
+  end
+  if found.bg then
+    style.bg = string.format('#%06x', found.bg)
+  end
+  cache[group] = style
+  return style
+end
+
+-- The colours grove needs to draw a preview as nvim would: the float's text and
+-- background, the markdown elements, and each diagnostic severity.
+local function grove_preview_theme()
+  local cache = {}
+  local function fg(group)
+    return grove_group_style(group, cache).fg
+  end
+  local float = grove_group_style('NormalFloat', cache)
+  local normal = grove_group_style('Normal', cache)
+  return {
+    fg = float.fg or normal.fg,
+    bg = float.bg or normal.bg,
+    heading = fg('@markup.heading'),
+    strong = fg('@markup.strong'),
+    raw = fg('@markup.raw.markdown_inline') or fg('@markup.raw'),
+    link = fg('@markup.link.url') or fg('@markup.link'),
+    quote = fg('@markup.quote') or fg('Comment'),
+    dim = fg('Comment'),
+    error = fg('DiagnosticError'),
+    warn = fg('DiagnosticWarn'),
+    info = fg('DiagnosticInfo'),
+    hint = fg('DiagnosticHint'),
+  }
+end
+
+-- Marks the cells a capture covers with its group, later captures winning, as
+-- nvim layers them.
+local function grove_mark_capture(styles, lines, node, group)
+  local start_row, start_col, end_row, end_col = node:range()
+  for row = start_row, end_row do
+    local line = lines[row + 1] or ''
+    local from = 0
+    local to = #line
+    if row == start_row then
+      from = start_col
+    end
+    if row == end_row then
+      to = end_col
+    end
+    styles[row] = styles[row] or {}
+    for col = from, to - 1 do
+      styles[row][col] = group
+    end
+  end
+end
+
+-- Runs nvim's treesitter highlighting (injections included) over a code block
+-- and returns the highlight group of every cell, by row and 0-based column.
+local function grove_code_groups(lines, lang)
+  local styles = {}
+  local code = table.concat(lines, '\n')
+  local parser_lang = vim.treesitter.language.get_lang(lang) or lang
+  local ok, parser = pcall(vim.treesitter.get_string_parser, code, parser_lang)
+  if not ok or parser == nil then
+    return styles
+  end
+  pcall(parser.parse, parser, true)
+  parser:for_each_tree(function(tree, language_tree)
+    local tree_lang = language_tree:lang()
+    local query = vim.treesitter.query.get(tree_lang, 'highlights')
+    if query == nil then
+      return
+    end
+    for id, node in query:iter_captures(tree:root(), code) do
+      local capture = query.captures[id]
+      if not capture:match('^_') and capture ~= 'spell' and capture ~= 'nospell' and capture ~= 'conceal' then
+        grove_mark_capture(styles, lines, node, '@' .. capture .. '.' .. tree_lang)
+      end
+    end
+  end)
+  return styles
+end
+
+-- One line of a code block as runs of equally styled text.
+local function grove_line_runs(line, groups, cache)
+  local runs = {}
+  local start = 0
+  while start < #line do
+    local group = groups[start]
+    local stop = start + 1
+    while stop < #line and groups[stop] == group do
+      stop = stop + 1
+    end
+    local run = { text = line:sub(start + 1, stop) }
+    if group then
+      local style = grove_group_style(group, cache)
+      run.fg, run.bold, run.italic, run.underline = style.fg, style.bold, style.italic, style.underline
+    end
+    runs[#runs + 1] = run
+    start = stop
+  end
+  return runs
+end
+
+-- A code block with nvim's highlighting, as lines of styled runs.
+local function grove_code_block(lines, lang)
+  local groups = grove_code_groups(lines, lang)
+  local cache = {}
+  local styled = {}
+  for row, line in ipairs(lines) do
+    styled[row] = grove_line_runs(line, groups[row - 1] or {}, cache)
+  end
+  return { kind = 'code', lines = styled }
+end
+
+-- Splits markdown into prose and fenced code, each fence highlighted by nvim.
+local function grove_markdown_blocks(lines)
+  local blocks = {}
+  local prose = {}
+  local fence = nil
+  local function flush_prose()
+    if #prose > 0 then
+      blocks[#blocks + 1] = { kind = 'markdown', text = table.concat(prose, '\n') }
+      prose = {}
+    end
+  end
+  for _, line in ipairs(lines) do
+    local opening = line:match('^%s*```+%s*([%w_+#.-]*)%s*$')
+    if fence == nil and opening then
+      flush_prose()
+      fence = { lang = opening, lines = {} }
+    elseif fence and line:match('^%s*```+%s*$') then
+      blocks[#blocks + 1] = grove_code_block(fence.lines, fence.lang)
+      fence = nil
+    elseif fence then
+      fence.lines[#fence.lines + 1] = line
+    else
+      prose[#prose + 1] = line
+    end
+  end
+  if fence then
+    blocks[#blocks + 1] = grove_code_block(fence.lines, fence.lang)
+  end
+  flush_prose()
+  return blocks
+end
+
+-- A preview's contents as grove draws them: markdown with highlighted fences,
+-- code in another syntax highlighted whole, anything else as plain text.
+local function grove_preview_blocks(contents, syntax)
+  if syntax == 'markdown' then
+    return grove_markdown_blocks(contents)
+  end
+  if syntax == nil or syntax == '' or syntax == 'plaintext' then
+    return { { kind = 'text', text = table.concat(contents, '\n') } }
+  end
+  return { grove_code_block(contents, syntax) }
+end
+
+local grove_original_open_floating_preview = vim.lsp.util.open_floating_preview
+vim.lsp.util.open_floating_preview = function(contents, syntax, opts)
+  opts = opts or {}
+  -- An empty editor-relative float is a window to fill (checkhealth's), not a
+  -- preview.
+  if #contents == 0 or opts.relative == 'editor' then
+    return grove_original_open_floating_preview(contents, syntax, opts)
+  end
+  -- A second K (the same focus_id while it is open) moves the keyboard into the
+  -- preview, as nvim's own float does.
+  local wants_focus = opts.focus ~= false and opts.focusable ~= false
+  if wants_focus and opts.focus_id and grove_preview.open and grove_preview.focus_id == opts.focus_id then
+    vim.rpcnotify(0, 'grove_preview_focus', { id = grove_preview.id })
+    return grove_preview.buf, nil
+  end
+  local message = { kind = 'doc', blocks = grove_preview_blocks(contents, syntax), theme = grove_preview_theme() }
+  grove_show_preview(message, opts.close_events or grove_default_close_events)
+  grove_preview.focus_id = opts.focus_id
+  return grove_preview_buffer(contents), nil
+end
+
+-- The LSP form of the line's diagnostics a client published, for its
+-- codeAction request's context.
+local function grove_lsp_diagnostics(diagnostics, client_id)
+  local namespace = vim.lsp.diagnostic.get_namespace(client_id)
+  local lsp = {}
+  for _, diagnostic in ipairs(diagnostics) do
+    local original = vim.tbl_get(diagnostic, 'user_data', 'lsp')
+    if diagnostic.namespace == namespace and original then
+      lsp[#lsp + 1] = original
+    end
+  end
+  return lsp
+end
+
+-- Asks every attached server for the line's quick fixes and sends grove their
+-- titles once all have answered. Kept here, per preview, to apply by index.
+local function grove_request_fixes(id, bufnr, line, diagnostics)
+  local clients = vim.lsp.get_clients({ bufnr = bufnr, method = 'textDocument/codeAction' })
+  local fixes = {}
+  local pending = #clients
+  local function finish()
+    if grove_preview.id ~= id or not grove_preview.open then
+      return
+    end
+    grove_preview.fixes = fixes
+    local titles = {}
+    for index, fix in ipairs(fixes) do
+      titles[index] = fix.action.title
+    end
+    vim.rpcnotify(0, 'grove_preview_fixes', { id = id, fixes = titles })
+  end
+  if pending == 0 then
+    return finish()
+  end
+  local line_text = vim.api.nvim_buf_get_lines(bufnr, line, line + 1, false)[1] or ''
+  for _, client in ipairs(clients) do
+    local params = {
+      textDocument = vim.lsp.util.make_text_document_params(bufnr),
+      range = { start = { line = line, character = 0 }, ['end'] = { line = line, character = #line_text } },
+      context = { diagnostics = grove_lsp_diagnostics(diagnostics, client.id), only = { 'quickfix' }, triggerKind = 1 },
+    }
+    client:request('textDocument/codeAction', params, function(_, result)
+      for _, action in ipairs(result or {}) do
+        if not action.disabled then
+          fixes[#fixes + 1] = { client_id = client.id, action = action, bufnr = bufnr }
+        end
+      end
+      pending = pending - 1
+      if pending == 0 then
+        finish()
+      end
+    end, bufnr)
+  end
+end
+
+-- Applies a code action: its edit, then its command. A bare Command is its own
+-- command.
+local function grove_apply_action(client, action, bufnr)
+  if action.edit then
+    vim.lsp.util.apply_workspace_edit(action.edit, client.offset_encoding)
+  end
+  local command = action.command
+  if type(command) == 'string' then
+    command = action
+  end
+  if type(command) == 'table' then
+    client:exec_cmd(command, { bufnr = bufnr })
+  end
+end
+
+-- Resolves a lazily-filled action first when the server supports it.
+local function grove_resolve_and_apply(fix)
+  local client = vim.lsp.get_client_by_id(fix.client_id)
+  if client == nil then
+    return
+  end
+  if fix.action.edit or not client:supports_method('codeAction/resolve') then
+    return grove_apply_action(client, fix.action, fix.bufnr)
+  end
+  client:request('codeAction/resolve', fix.action, function(err, resolved)
+    if err then
+      vim.notify(err.message, vim.log.levels.WARN)
+      return
+    end
+    grove_apply_action(client, resolved or fix.action, fix.bufnr)
+  end, fix.bufnr)
+end
+
+_G.grove_preview_apply_fix = function(id, index)
+  if id ~= grove_preview.id then
+    return
+  end
+  local fix = grove_preview.fixes[index]
+  grove_close_preview()
+  if fix == nil then
+    return
+  end
+  vim.schedule(function()
+    grove_resolve_and_apply(fix)
+  end)
+end
+
+_G.grove_preview_dismiss = function(id)
+  if id == grove_preview.id then
+    grove_close_preview()
+  end
+end
+
+-- One diagnostic as grove lists it.
+local function grove_diagnostic_entry(diagnostic)
+  local code = diagnostic.code
+  if code ~= nil then
+    code = tostring(code)
+  end
+  return { severity = diagnostic.severity, message = diagnostic.message, source = diagnostic.source, code = code }
+end
+
+-- The line's (or, for scope = 'cursor', the cursor's) diagnostics, worst first.
+local function grove_float_diagnostics(bufnr, opts)
+  local line = vim.api.nvim_win_get_cursor(0)[1] - 1
+  local column = vim.api.nvim_win_get_cursor(0)[2]
+  if opts.pos then
+    line, column = opts.pos[1], opts.pos[2]
+  end
+  local diagnostics = vim.diagnostic.get(bufnr, { lnum = line, severity = opts.severity })
+  if opts.scope == 'cursor' then
+    diagnostics = vim.tbl_filter(function(diagnostic)
+      return diagnostic.col <= column and column <= (diagnostic.end_col or diagnostic.col)
+    end, diagnostics)
+  end
+  table.sort(diagnostics, function(left, right)
+    return left.severity < right.severity
+  end)
+  return line, diagnostics
+end
+
+local grove_original_open_float = vim.diagnostic.open_float
+vim.diagnostic.open_float = function(opts, ...)
+  -- The old (bufnr, opts) form and buffer-wide scope keep nvim's own float.
+  if (opts ~= nil and type(opts) ~= 'table') or (opts and opts.scope == 'buffer') then
+    return grove_original_open_float(opts, ...)
+  end
+  opts = opts or {}
+  -- Pressed again while open: move the keyboard into it, as nvim's float does.
+  local focus_id = opts.focus_id or opts.scope or 'line'
+  if opts.focus ~= false and grove_preview.open and grove_preview.focus_id == focus_id then
+    vim.rpcnotify(0, 'grove_preview_focus', { id = grove_preview.id })
+    return grove_preview.buf, nil
+  end
+  local bufnr = vim.api.nvim_get_current_buf()
+  if opts.bufnr and opts.bufnr ~= 0 then
+    bufnr = opts.bufnr
+  end
+  local line, diagnostics = grove_float_diagnostics(bufnr, opts)
+  if #diagnostics == 0 then
+    return
+  end
+  local entries = vim.tbl_map(grove_diagnostic_entry, diagnostics)
+  local message = { kind = 'diagnostics', diagnostics = entries, theme = grove_preview_theme() }
+  local id = grove_show_preview(message, opts.close_events or grove_default_close_events)
+  grove_preview.focus_id = focus_id
+  grove_request_fixes(id, bufnr, line, diagnostics)
+  return grove_preview_buffer(vim.tbl_map(function(entry) return entry.message end, entries)), nil
+end
+
 -- Previews nvim opens beside the cursor without entering (hover, line
 -- diagnostics, Inspect) only close when the cursor moves. Escape in normal
 -- mode closes them too, and clears the search highlight as LazyVim's does.
@@ -941,9 +1371,28 @@ local function grove_close_previews()
   end
 end
 vim.keymap.set('n', '<Esc>', function()
+  grove_close_preview()
   grove_close_previews()
   vim.cmd.nohlsearch()
 end, { desc = 'Close previews and clear search highlight' })
+
+-- A preview float the keyboard went into (a plugin's, entered with its own
+-- key) closes on Escape too, not only q, so it never traps the cursor.
+vim.api.nvim_create_autocmd('WinEnter', {
+  callback = function()
+    local win = vim.api.nvim_get_current_win()
+    local buffer = vim.api.nvim_get_current_buf()
+    if vim.api.nvim_win_get_config(win).relative == '' or vim.bo[buffer].buftype ~= 'nofile' then
+      return
+    end
+    if vim.fn.maparg('<Esc>', 'n', false, true).buffer == 1 then
+      return
+    end
+    vim.keymap.set('n', '<Esc>', function()
+      pcall(vim.api.nvim_win_close, win, false)
+    end, { buffer = buffer, desc = 'Close this float' })
+  end
+})
 
 -- :Inspect echoes its report, several lines long, so nvim stops on its
 -- hit-enter prompt to show it. The menu's Inspect opens the same report as a

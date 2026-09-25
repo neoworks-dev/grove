@@ -37,7 +37,7 @@
   import { editorHasContent } from '../lib/nvim/visibility'
   import { closedTabPaths } from '../lib/nvim/closedTabs'
   import { splitDividers } from '../lib/nvim/splitDividers'
-  import type { SplitWindow } from '../lib/nvim/splitTabs'
+  import { splitReplacement, swapTabs, type SplitWindow } from '../lib/nvim/splitTabs'
   import {
     nvimGroupLabels,
     nvimLeaderBindings,
@@ -619,13 +619,26 @@ pcall(vim.api.nvim_buf_delete, buf, {})
     store.attachEditorTab({ worktreeId, path, name })
   }
 
+  /**
+   * When a split window switches file, swaps the two files' tabs so the split
+   * tab stays where it is and the file it let go of reappears where the new one
+   * stood, rather than the split tab sliding to wherever the new file sat.
+   */
+  function keepSplitTabInPlace(previous: SplitWindow[], next: SplitWindow[]): void {
+    const replacement = splitReplacement(previous, next)
+    if (replacement === null) return
+    store.tabs = swapTabs(store.tabs, replacement.left, replacement.entered)
+  }
+
   /** Applies one snapshot from the buffer-state autocmd to the pane's state. */
   function applyBufferSnapshot(snapshot: BufferSnapshot): void {
     if (typeof snapshot.count === 'number') nvimFileCount = snapshot.count
     dirtyPaths = toDirtyPaths(snapshot.modified)
-    splitWindows = toSplitWindows(snapshot.splits)
     if (typeof snapshot.win === 'number') currentWin = snapshot.win
     attachActiveBuffer(snapshot.active)
+    const nextSplits = toSplitWindows(snapshot.splits)
+    keepSplitTabInPlace(splitWindows, nextSplits)
+    splitWindows = nextSplits
   }
 
   /** Closes the tab of a file whose buffer was deleted inside nvim (`:bd`). */

@@ -16,6 +16,7 @@
   import ReviewHeaderBar from './ReviewHeaderBar.svelte'
   import ReviewOverlay from './ReviewOverlay.svelte'
   import NvimGridSurface from './NvimGridSurface.svelte'
+  import NvimSplitDivider from './NvimSplitDivider.svelte'
   import FileViewerHost from './FileViewerHost.svelte'
   import { fileViewers, type FileViewer } from '../lib/fileViewers.svelte'
   import { editorOverlays } from '../lib/editorOverlays.svelte'
@@ -34,6 +35,7 @@
   import { leaveDiff, restoreDiff } from '../lib/nvim/diffTabs'
   import { editorHasContent } from '../lib/nvim/visibility'
   import { closedTabPaths } from '../lib/nvim/closedTabs'
+  import { splitDividers } from '../lib/nvim/splitDividers'
   import { nvimKeymapBindings, type NvimMapping } from '../lib/nvimKeymap'
   import { operatorHintEntries, operatorTitle } from '../lib/nvimOperatorHints'
   import { decodeNvimKey, nextPending, pendingHint } from '../lib/nvimPendingKeys'
@@ -135,6 +137,9 @@
     session.setEmbeddedWindows(embed.map((entry) => entry.win))
     embeddedWindows = embed
   }
+
+  // One divider per separator between the pane's splits (see splitDividers).
+  const dividers = $derived(splitDividers(nvimWindows))
 
   /** Place an embedded window on the pane, at the box Neovim gave it. */
   function embeddedStyle(entry: NvimWindowPlacement): string {
@@ -943,6 +948,9 @@ return vim.api.nvim_get_current_win() ~= before
                 class="pointer-events-auto"
               />
             </div>
+          {/each}
+          {#each dividers as divider (divider.key)}
+            <NvimSplitDivider {session} {divider} />
           {/each}
         {/if}
         {#if session && floatingWindows.length > 0}

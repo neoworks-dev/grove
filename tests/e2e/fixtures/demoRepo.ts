@@ -73,8 +73,6 @@ export async function createDemoRepo(root: string): Promise<DemoRepo> {
 /** Three commits, so the log and the git view have something to show. */
 async function writeHistory(root: string): Promise<void> {
   await write(root, 'README.md', '# Demo\n\nA fixture project for grove\'s end-to-end tests.\n')
-  // Grove treats an agent-instruction file at the root as "this repo is set
-  // up", which is what keeps the intro page out of the way on first open.
   await write(root, 'AGENTS.md', '# Agent notes\n\nThis is a generated fixture. Nothing here is real.\n')
   await commit(root, 'chore: initial commit')
 

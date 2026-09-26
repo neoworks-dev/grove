@@ -3,7 +3,7 @@
 // These used to be extensions loaded into the agent server, which meant they
 // could not call back into grove and had to reach it through files. Now they run
 // in grove's own process, so `send_message` posts on the worktree channel
-// directly and `set_phase` publishes a surface on the session's event log.
+// directly.
 //
 // Each harness adapter translates these into whatever its SDK calls a tool:
 // an in-process MCP server for Claude, `defineTool` for pi. A harness that
@@ -21,13 +21,6 @@ import {
   transcriptLines,
   type TranscriptLine
 } from './transcript'
-
-// The surface id the intro pane watches. Changing it means changing
-// src/renderer/src/lib/intro.svelte.ts.
-const INTRO_SURFACE_ID = 'grove.intro'
-
-// Kept in step with INTRO_PHASES in src/renderer/src/lib/intro/prompt.ts.
-const INTRO_PHASES = ['explore', 'interview', 'example', 'feedback', 'config', 'done']
 
 // Agent-to-agent chatter can loop; a ceiling per minute keeps a runaway cheap.
 const MAX_SENDS_PER_MINUTE = 30
@@ -73,47 +66,6 @@ function requestReviewTool(): GroveTool {
 
     execute() {
       return { content: 'Submitted for review.' }
-    }
-  }
-}
-
-/**
- * The onboarding stepper.
- *
- * The intro pane follows a fixed set of phases. Reporting one publishes a
- * surface on the session's own event log, which is the stream the pane is
- * already watching.
- */
-function setPhaseTool(): GroveTool {
-  return {
-    name: 'set_phase',
-    summary: 'Report which onboarding phase you are entering.',
-    description:
-      'Report the onboarding phase you are entering, so the introduction page can show ' +
-      'progress. Call this as you begin each phase, not after finishing it.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        phase: {
-          type: 'string',
-          enum: INTRO_PHASES,
-          description: 'The onboarding phase you are entering.'
-        }
-      },
-      required: ['phase'],
-      additionalProperties: false
-    },
-    policy: 'allow',
-    display: { label: '{phase}', input: 'hidden', result: 'hidden' },
-
-    execute(input, context) {
-      const phase = String(input.phase)
-      context.surface(INTRO_SURFACE_ID, 'panel', {
-        kind: 'text',
-        text: phase,
-        fallbackText: phase
-      })
-      return { content: `Phase set to ${phase}.` }
     }
   }
 }
@@ -682,5 +634,5 @@ function stringOrNothing(value: unknown): string | undefined {
 
 /** Every tool grove contributes, in the order they are offered to a harness. */
 export function groveTools(options: GroveToolOptions): GroveTool[] {
-  return [requestReviewTool(), setPhaseTool(), openFilesTool(), ...chatTools(options)]
+  return [requestReviewTool(), openFilesTool(), ...chatTools(options)]
 }

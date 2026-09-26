@@ -2,7 +2,7 @@
 
 import type { Context } from '@neoworks/extension-system'
 import { route } from '../kernel/route'
-import { shell, type IpcMainInvokeEvent } from 'electron'
+import type { IpcMainInvokeEvent } from 'electron'
 import type { SettingScope } from '../../shared/settings'
 
 export const settingsRoutes = {
@@ -22,10 +22,8 @@ export const settingsRoutes = {
         return snapshot
       }
     )
-    route(ctx, 'settings:openFile', (_e: IpcMainInvokeEvent, scope: SettingScope) => {
-      const path = ctx.settings.openPath(scope)
-      if (!path) return
-      return shell.openPath(path)
-    })
+    route(ctx, 'settings:filePath', (_e: IpcMainInvokeEvent, scope: SettingScope) =>
+      ctx.settings.ensureFile(scope)
+    )
   }
 }

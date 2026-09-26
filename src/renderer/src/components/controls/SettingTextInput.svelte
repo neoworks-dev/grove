@@ -14,7 +14,7 @@
 
 <input
   type="text"
-  class="w-56 rounded-md border border-line bg-input px-2 py-1 text-xs text-default disabled:opacity-50"
+  class="w-56 rounded-lg border border-line bg-input px-3 py-2 text-sm text-default transition-colors placeholder:text-faint hover:border-line-strong focus:border-line-strong focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
   {value}
   {placeholder}
   {disabled}

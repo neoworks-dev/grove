@@ -395,7 +395,7 @@ const workbench = {
     read: () => ipcRenderer.invoke('settings:read'),
     set: (key: string, value: unknown, scope: 'user' | 'project') =>
       ipcRenderer.invoke('settings:set', key, value, scope),
-    openFile: (scope: 'user' | 'project') => ipcRenderer.invoke('settings:openFile', scope)
+    filePath: (scope: 'user' | 'project') => ipcRenderer.invoke('settings:filePath', scope)
   },
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   raiseWindow: () => ipcRenderer.invoke('window:raise'),

@@ -227,6 +227,17 @@ export function pendingApprovals(state: TranscriptState): ToolItem[] {
   )
 }
 
+/**
+ * Whether the turn is out on a tool call, running or waiting on an approval,
+ * rather than with the model: what the agent is doing is then the call's to
+ * show, not the working bar's.
+ */
+export function toolCallOut(state: TranscriptState): boolean {
+  return visibleItems(state).some(
+    (item) => item.kind === 'tool' && (item.status === 'running' || item.status === 'pending')
+  )
+}
+
 export function applyEvent(state: TranscriptState, event: SessionEvent): void {
   // Replay and live stream overlap by design; the seq guard makes the fold idempotent.
   if (event.seq <= state.lastSeq) {

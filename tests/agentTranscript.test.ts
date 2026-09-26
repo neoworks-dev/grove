@@ -8,6 +8,7 @@ import {
   applyEvent,
   createTranscript,
   pendingApprovals,
+  toolCallOut,
   visibleItems,
   visiblePanels,
   type TranscriptItem
@@ -361,6 +362,31 @@ describe('transcript fold', () => {
     )
     expect(state.items[0]).toMatchObject({ status: 'ok', result: 'a\nb' })
     expect(pendingApprovals(state)).toEqual([])
+  })
+
+  // The working bar is for the model writing; while a call is out, the call's
+  // own row says the agent is busy.
+  test('knows when the turn is out on a tool call rather than with the model', () => {
+    const state = fold([
+      { type: 'session.status_running' },
+      { type: 'agent.message_delta', text: 'Let me look.' }
+    ])
+    expect(toolCallOut(state)).toBe(false)
+
+    applyEvent(
+      state,
+      event({ type: 'agent.tool_use', toolUseId: 't1', name: 'bash', input: {}, permission: 'ask' })
+    )
+    expect(toolCallOut(state)).toBe(true)
+
+    applyEvent(state, event({ type: 'user.tool_confirmation', toolUseId: 't1', result: 'allow' }))
+    expect(toolCallOut(state)).toBe(true)
+
+    applyEvent(
+      state,
+      event({ type: 'agent.tool_result', toolUseId: 't1', name: 'bash', content: '', isError: false })
+    )
+    expect(toolCallOut(state)).toBe(false)
   })
 
   // The Claude adapter reports a call as the model makes it and only then learns

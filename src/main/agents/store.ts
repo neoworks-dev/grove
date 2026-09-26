@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto'
 import { appendFile, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { AGENT_ID_LABEL, newAgentId } from './identity'
+import type { ProcessTotals } from './harness'
 import { firstPromptText, isDefaultTitle, lastMessagePreview, titleFromPrompt } from './sessionSummary'
 import type {
   EventBody,
@@ -44,6 +45,8 @@ export interface StoredSession {
   usage: Usage
   cost: number
   contextWindow: number
+  /** The harness process's own totals as last reported; absent until one has. */
+  processTotals?: ProcessTotals | null
   lastSeq: number
 }
 

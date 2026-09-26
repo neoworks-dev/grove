@@ -446,8 +446,11 @@ class AgentSessions {
       if (this.viewing !== session.id && isUnreadEvent(event)) session.unread += 1
       if (event.type === 'ui.open_files') this.openFiles(session.id, event.files)
       // Usage and the queue only live in the snapshot, so a turn boundary is
-      // worth a re-read.
-      if (event.type === 'session.status_idle') void this.refreshSnapshot(session.id)
+      // worth a re-read — and so is every response, which is when the harness
+      // counts its tokens.
+      if (event.type === 'session.status_idle' || event.type === 'agent.message_end') {
+        void this.refreshSnapshot(session.id)
+      }
     })
     this.closers.set(session.id, close)
   }

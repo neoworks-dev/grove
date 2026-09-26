@@ -781,6 +781,11 @@ export class AgentService {
       emit: (body) => void this.absorb(sessionId, body),
       emitFrom: (agent, body) => void this.subagents.absorb(sessionId, agent, body),
       stats: (update) => void this.store.patch(sessionId, update),
+      startingStats: {
+        usage: session.usage,
+        cost: session.cost,
+        processTotals: session.processTotals ?? null
+      },
       confirm: (request) => this.requestApproval(sessionId, request),
       storeImage: (image) => this.storeImageSync(sessionId, image)
     })

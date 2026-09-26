@@ -42,6 +42,7 @@ import type {
 import type { EndpointsService } from '../../endpoints'
 import { loadModelCatalog, type CatalogModel, type CatalogProvider } from '../../modelCatalog'
 import { zodShapeFromJsonSchema, type JsonSchemaObject } from '../../plugins/zodSchema'
+import { ClaudeUsageLedger } from './claudeUsage'
 import type {
   GroveTool,
   HarnessDescriptor,
@@ -179,6 +180,7 @@ class ClaudeRun implements HarnessRun {
   // What each tool call that is running an agent was asked to do, so the session
   // grove opens for it is named after the work rather than after a call id.
   private lanes = new Map<string, SubagentIdentity>()
+  private usage: ClaudeUsageLedger
 
   constructor(
     private options: HarnessRunOptions,
@@ -186,6 +188,7 @@ class ClaudeRun implements HarnessRun {
     private endpoints: EndpointsService
   ) {
     this.resumeKey = options.resumeKey
+    this.usage = new ClaudeUsageLedger(options.startingStats)
   }
 
   /** Open the query and start folding its messages onto the session log. */
@@ -363,6 +366,9 @@ class ClaudeRun implements HarnessRun {
       return
     }
     if (message.type === 'assistant') {
+      // Counted before the events go out: the renderer re-reads the totals
+      // when the message ends.
+      this.options.stats(this.usage.noteResponse(message.message.id, message.message.usage))
       this.rememberLanes(message.message.content)
       this.nameLane(message.parent_tool_use_id, message.subagent_type, message.task_description)
       this.report(message.parent_tool_use_id, assistantEvents(message.message.content))
@@ -474,17 +480,10 @@ class ClaudeRun implements HarnessRun {
   }
 
   private handleResult(message: Extract<SDKMessage, { type: 'result' }>): void {
+    // The result carries the process's totals, not the turn's; the ledger
+    // turns them into the session's.
     if ('usage' in message && message.usage) {
-      this.options.stats({
-        usage: {
-          inputTokens: message.usage.input_tokens ?? 0,
-          outputTokens: message.usage.output_tokens ?? 0,
-          cacheReadTokens: message.usage.cache_read_input_tokens ?? 0,
-          cacheWriteTokens: message.usage.cache_creation_input_tokens ?? 0
-        },
-        cost: message.total_cost_usd ?? 0,
-        contextWindow: 0
-      })
+      this.options.stats(this.usage.noteResult(message.usage, message.total_cost_usd ?? 0))
     }
     this.running = false
     const failed = message.subtype !== 'success'

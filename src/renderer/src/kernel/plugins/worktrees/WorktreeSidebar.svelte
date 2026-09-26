@@ -186,13 +186,25 @@
     store.selectedWorktreeId = null
   }
 
+  /**
+   * Removes a worktree after asking, keeping its branch. Asked through the
+   * app's own dialog: a native one hands window focus to the OS and back, and
+   * on Linux it can come back without a text cursor anywhere (#216).
+   */
   async function remove(worktree: Worktree, event: MouseEvent): Promise<void> {
     event.stopPropagation()
     const force = worktree.dirty
-    let question = `Remove worktree "${worktree.name}"?`
-    if (force) question += ' It has uncommitted changes (force).'
-    const confirmed = confirm(question)
-    if (!confirmed) return
+    let body = `Removes the worktree directory. The branch ${worktree.branch} is kept.`
+    if (force) body += ' Its uncommitted changes are lost.'
+    const picked = await dialogs.confirm({
+      title: `Remove ${worktree.name}?`,
+      body,
+      actions: [
+        { id: 'remove', label: 'Remove', kind: 'danger' },
+        { id: 'cancel', label: 'Cancel' }
+      ]
+    })
+    if (picked !== 'remove') return
     try {
       await window.workbench.worktrees.remove(worktree.id, force)
       await refreshWorktrees()

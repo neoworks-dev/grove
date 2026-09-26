@@ -10,7 +10,7 @@ import { chmod, mkdtemp, writeFile } from 'node:fs/promises'
 import { PassThrough } from 'node:stream'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
-import { executableOnPath } from '../src/main/agents/harnesses/claude'
+import { executableOnPath } from '../src/main/agents/claudeExecutable'
 import { readJsonLines } from '../src/main/agents/harnesses/codex'
 
 /** Run a body with PATH replaced, and put the real one back afterwards. */

@@ -4,7 +4,6 @@ import {
   mkdtemp,
   writeFile,
   readFile,
-  symlink,
   readlink,
   readdir,
   rm,
@@ -25,7 +24,7 @@ appStub.getPath = () => appRoot
 mock.module('electron', () => electronStub)
 mock.module('node:os', () => ({ ...nodeOs, homedir: () => testHome }))
 
-const { ensureNvimUserConfig, ensureCopilotConfigLink, nvimUserConfigDir, bundledNvimConfigDir } =
+const { ensureCopilotConfigLink, nvimConfigArgs, bundledNvimConfigDir } =
   await import('../src/main/nvimPaths')
 
 let sandbox = ''
@@ -61,75 +60,25 @@ function groveConfigRoot(): string {
   return join(testHome, '.config', 'grove')
 }
 
-async function linkTarget(): Promise<string> {
-  return realpath(await readlink(nvimUserConfigDir()))
-}
-
-async function backupNames(): Promise<string[]> {
-  const entries = await readdir(groveConfigRoot())
-  return entries.filter((entry) => entry.startsWith('nvim.replaced-'))
-}
-
-// The bundled config carries `swapfile = false` and the SwapExists answerer. If
-// anything else occupies ~/.config/grove/nvim, nvim starts without them and two
-// panes on one file hit a blocking E325 prompt — so the path gets repaired.
-describe('ensureNvimUserConfig', () => {
-  it('links the bundled config when nothing is there', async () => {
-    await ensureNvimUserConfig()
-    expect(await linkTarget()).toBe(await realpath(bundledNvimConfigDir()))
+// Every Grove on the machine shares ~/.config/grove. A config linked in there
+// was whichever install started last, so each launch relinked it and left an
+// nvim.replaced-* behind, and an AppImage's link dangled once it exited. nvim
+// is told which config to load instead.
+describe('nvimConfigArgs', () => {
+  it("loads this install's bundled init.lua", () => {
+    expect(nvimConfigArgs()).toEqual(['-u', join(bundledNvimConfigDir(), 'init.lua')])
   })
 
-  it('leaves an already-correct link alone', async () => {
-    await ensureNvimUserConfig()
-    await ensureNvimUserConfig()
-    expect(await linkTarget()).toBe(await realpath(bundledNvimConfigDir()))
-    expect(await backupNames()).toEqual([])
-  })
+  it('leaves the shared config root alone', async () => {
+    await mkdir(join(groveConfigRoot(), 'nvim'), { recursive: true })
+    await writeFile(join(groveConfigRoot(), 'nvim', 'init.lua'), '-- another install\n')
 
-  it('replaces a broken link', async () => {
-    await symlink(join(sandbox, 'gone'), nvimUserConfigDir(), 'dir')
-    await ensureNvimUserConfig()
-    expect(await linkTarget()).toBe(await realpath(bundledNvimConfigDir()))
-  })
+    nvimConfigArgs()
+    await ensureCopilotConfigLink()
 
-  it('replaces a link pointing at another install', async () => {
-    const stale = join(sandbox, 'old-install', 'config', 'nvim')
-    await mkdir(stale, { recursive: true })
-    await symlink(stale, nvimUserConfigDir(), 'dir')
-    await ensureNvimUserConfig()
-    expect(await linkTarget()).toBe(await realpath(bundledNvimConfigDir()))
-  })
-
-  // An isolated profile (qa, e2e, test-env) sets XDG_CONFIG_HOME. Linking under
-  // the real home instead repointed the user's own instance at the profile's
-  // checkout, and every run left another nvim.replaced-* behind.
-  it("links under the profile's XDG_CONFIG_HOME, not the real home", async () => {
-    const profileConfig = join(sandbox, 'profile', 'config')
-    const previous = process.env.XDG_CONFIG_HOME
-    process.env.XDG_CONFIG_HOME = profileConfig
-    try {
-      await ensureNvimUserConfig()
-    } finally {
-      restoreXdgConfigHome(previous)
-    }
-
-    const profileLink = join(profileConfig, 'grove', 'nvim')
-    expect(await realpath(await readlink(profileLink))).toBe(
-      await realpath(bundledNvimConfigDir())
-    )
-    expect(await readdir(groveConfigRoot())).toEqual([])
-  })
-
-  it('moves a real directory aside instead of deleting it', async () => {
-    await mkdir(nvimUserConfigDir(), { recursive: true })
-    await writeFile(join(nvimUserConfigDir(), 'init.lua'), '-- leftover\n')
-    await ensureNvimUserConfig()
-
-    expect(await linkTarget()).toBe(await realpath(bundledNvimConfigDir()))
-    const backups = await backupNames()
-    expect(backups).toHaveLength(1)
-    const moved = join(groveConfigRoot(), backups[0], 'init.lua')
-    expect(await readFile(moved, 'utf8')).toBe('-- leftover\n')
+    expect(await readdir(groveConfigRoot())).toEqual(['nvim'])
+    const kept = join(groveConfigRoot(), 'nvim', 'init.lua')
+    expect(await readFile(kept, 'utf8')).toBe('-- another install\n')
   })
 })
 

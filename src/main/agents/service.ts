@@ -58,6 +58,7 @@ import {
   type StoredSession
 } from './store'
 import { isSubagentSession, SUBAGENT_LABEL, SubagentSessions } from './subagents'
+import { interruptedTurn } from './interruptedTurn'
 
 const BLOBS_DIR = 'blobs'
 
@@ -265,7 +266,13 @@ export class AgentService {
   private async accept(sessionId: string, event: ClientEventBody): Promise<void> {
     if (event.type === 'user.tool_confirmation') {
       await this.store.append(sessionId, event)
-      await this.answerApproval(sessionId, event.toolUseId, event.result, event.input)
+      await this.answerApproval(
+        sessionId,
+        event.toolUseId,
+        event.result,
+        event.input,
+        event.reason
+      )
       return
     }
     if (event.type === 'user.interrupt') {
@@ -425,12 +432,21 @@ export class AgentService {
   private async interruptRun(sessionId: string): Promise<void> {
     const run = this.runtimeOrCreate(sessionId).run
     if (!run) {
+      // A turn left open by a restart still reads as running; stopping it is
+      // closing it.
+      if (interruptedTurn(this.store.peekEvents(sessionId))) {
+        await this.settleInterruptedTurn(sessionId)
+        return
+      }
       await this.store.append(sessionId, {
         type: 'session.notice',
         message: 'Nothing to stop: this session has no run.'
       })
       return
     }
+    // A call parked on an approval would keep its card up, and the harness
+    // waiting on it, after the turn it belonged to was stopped.
+    await this.denyParkedCalls(sessionId)
     try {
       await run.interrupt()
     } catch (cause) {
@@ -614,19 +630,27 @@ export class AgentService {
    * `input` is what the call should run with when the user changed it — an
    * edited command, or the answers to a call that asked them something. It
    * goes on the log as well, so the transcript shows what actually ran.
+   *
+   * A plain deny stops the turn, as it does in Claude Code: the user said no
+   * and gave nothing to try instead. A deny with a reason hands the reason to
+   * the agent and lets it carry on.
    */
   private async answerApproval(
     sessionId: string,
     toolUseId: string,
     result: ConfirmationResult,
-    input?: unknown
+    input?: unknown,
+    reason?: string
   ): Promise<void> {
     const runtime = this.runtimeOrCreate(sessionId)
     const pending = runtime.approvals.get(toolUseId)
-    if (!pending) return
+    if (!pending) {
+      // Nothing parked means nothing will ever answer — a turn the app was
+      // restarted in the middle of. Close it rather than leave it spinning.
+      if (!runtime.run) await this.settleInterruptedTurn(sessionId)
+      return
+    }
 
-    runtime.approvals.delete(toolUseId)
-    runtime.pendingApprovals = runtime.pendingApprovals.filter((id) => id !== toolUseId)
     if (result === 'always_session' || result === 'always_project') {
       await this.rememberAutoApproval(sessionId, pending.name)
     }
@@ -638,7 +662,69 @@ export class AgentService {
         input
       })
     }
-    pending.resolve({ result, input })
+    this.resolveApproval(sessionId, toolUseId, { result, input, reason })
+    if (result === 'deny' && !reason?.trim()) await this.interruptRun(sessionId)
+  }
+
+  /** Hands a parked call its decision and forgets it. */
+  private resolveApproval(sessionId: string, toolUseId: string, decision: ApprovalDecision): void {
+    const runtime = this.runtimeOrCreate(sessionId)
+    const pending = runtime.approvals.get(toolUseId)
+    if (!pending) return
+    runtime.approvals.delete(toolUseId)
+    runtime.pendingApprovals = runtime.pendingApprovals.filter((id) => id !== toolUseId)
+    pending.resolve(decision)
+  }
+
+  /**
+   * Denies every call still parked on an approval, on the log as well so the
+   * cards close. Stopping a turn is the user's answer to all of them.
+   */
+  private async denyParkedCalls(sessionId: string): Promise<void> {
+    const runtime = this.runtimeOrCreate(sessionId)
+    for (const toolUseId of [...runtime.approvals.keys()]) {
+      await this.store.append(sessionId, {
+        type: 'user.tool_confirmation',
+        toolUseId,
+        result: 'deny'
+      })
+      this.resolveApproval(sessionId, toolUseId, { result: 'deny' })
+    }
+  }
+
+  /**
+   * Closes every turn a previous run of the app left open. Called once at
+   * startup, before any run exists.
+   */
+  async settleInterruptedTurns(): Promise<void> {
+    for (const session of await this.store.list()) {
+      if (this.runtimes.get(session.id)?.run) continue
+      await this.settleInterruptedTurn(session.id)
+    }
+  }
+
+  /**
+   * Ends a turn no run is left to finish: each call it left open gets an error
+   * result saying it never ran, and the session goes idle. Does nothing when
+   * the log's last turn ended.
+   */
+  private async settleInterruptedTurn(sessionId: string): Promise<void> {
+    const openCalls = interruptedTurn(this.store.peekEvents(sessionId))
+    if (!openCalls) return
+    for (const call of openCalls) {
+      await this.store.append(sessionId, {
+        type: 'agent.tool_result',
+        toolUseId: call.toolUseId,
+        name: call.name,
+        content: 'Not run: Grove restarted before this call finished.',
+        isError: true
+      })
+    }
+    await this.store.append(sessionId, {
+      type: 'session.notice',
+      message: 'Grove restarted while this turn was running, so it was stopped.'
+    })
+    await this.absorb(sessionId, { type: 'session.status_idle', stopReason: 'aborted' })
   }
 
   private async rememberAutoApproval(sessionId: string, toolName: string): Promise<void> {

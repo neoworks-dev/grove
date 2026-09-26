@@ -10,7 +10,7 @@
 // already installed, and has the advantage that a human can attach a viewer and
 // watch a run happen.
 
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { existsSync, readFileSync, rmSync } from 'node:fs'
 
 export const GEOMETRY = { width: 1440, height: 900, depth: 24 }
@@ -121,11 +121,12 @@ function spawnDisplayServer(
   return null
 }
 
-/**
- * Open a VNC viewer on the user's own desktop, watching a test display. It
- * closes by itself when the display's server goes away. Returns whether one
- * was started.
- */
+/** Close the viewers `openViewer` started on a display; a lost server leaves them open on an error. */
+export function closeViewers(display: string): void {
+  spawnSync('pkill', ['-f', `^vncviewer ${display}$`], { stdio: 'ignore' })
+}
+
+/** Open a VNC viewer on the user's own desktop, watching a test display. Returns whether one was started. */
 export function openViewer(virtual: VirtualDisplay): boolean {
   if (!virtual.watchable || !hasCommand('vncviewer')) return false
   if (!process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) return false

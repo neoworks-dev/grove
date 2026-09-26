@@ -16,14 +16,6 @@ const FILE_ITEMS: MenuItem[] = [
     commandId: 'repo.open'
   },
   {
-    id: 'file.introSetup',
-    menuId: 'file',
-    label: 'Set up AGENTS.md…',
-    group: '1-open',
-    order: 2,
-    commandId: 'intro.setup'
-  },
-  {
     id: 'file.closeTab',
     menuId: 'file',
     label: 'Close Tab',

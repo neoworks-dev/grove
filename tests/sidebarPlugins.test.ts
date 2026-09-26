@@ -57,7 +57,6 @@ describe('sidebar plugin split', () => {
       'explorer',
       'extensions',
       'gitChanges',
-      'setup',
       'worktrees'
     ])
 

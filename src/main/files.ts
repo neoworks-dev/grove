@@ -1,7 +1,16 @@
 // File tree + read/write for the editor, scoped to a worktree root.
 // Paths are validated to stay inside the worktree (no traversal escapes).
 
-import { readdir, readFile, writeFile, stat, mkdir, rename as fsRename, rm, appendFile } from 'fs/promises'
+import {
+  readdir,
+  readFile,
+  writeFile,
+  stat,
+  mkdir,
+  rename as fsRename,
+  rm,
+  appendFile
+} from 'fs/promises'
 import { join, relative, resolve, sep, dirname, isAbsolute } from 'path'
 import { homedir } from 'os'
 import { randomUUID } from 'crypto'
@@ -177,7 +186,10 @@ async function excludeWorkbenchFromGit(worktreeRoot: string): Promise<void> {
     const existing = await readFile(excludePath, 'utf8').catch(() => '')
     if (existing.split('\n').some((line) => line.trim() === '.workbench/')) return
     await mkdir(dirname(excludePath), { recursive: true })
-    await appendFile(excludePath, `${existing.endsWith('\n') || existing === '' ? '' : '\n'}.workbench/\n`)
+    await appendFile(
+      excludePath,
+      `${existing.endsWith('\n') || existing === '' ? '' : '\n'}.workbench/\n`
+    )
   } catch {
     // Not a git repo / git missing — attachments still work, they just show up
     // as untracked files.
@@ -227,4 +239,35 @@ export async function removePath(worktreeRoot: string, relPath: string): Promise
     throw new Error('refusing to remove the worktree root')
   }
   await rm(abs, { recursive: true, force: true })
+}
+
+// A message can name any number of paths; checking more than this many at once
+// is a message listing files, not pointing at them.
+const MAX_EXISTENCE_CHECKS = 100
+
+/**
+ * The worktree-relative paths, of those given, that are files inside the
+ * worktree. Anything that escapes the root, is a directory or is missing is
+ * left out.
+ */
+export async function existingFiles(worktreeRoot: string, relPaths: string[]): Promise<string[]> {
+  const candidates = relPaths.slice(0, MAX_EXISTENCE_CHECKS)
+  const found = await Promise.all(candidates.map((relPath) => isFileInside(worktreeRoot, relPath)))
+  return candidates.filter((_relPath, index) => found[index])
+}
+
+/** Whether the worktree-relative path names a file inside the worktree. */
+async function isFileInside(worktreeRoot: string, relPath: string): Promise<boolean> {
+  if (typeof relPath !== 'string' || relPath.length === 0 || isAbsolute(relPath)) {
+    return false
+  }
+  const abs = join(worktreeRoot, relPath)
+  if (!isInside(worktreeRoot, abs)) {
+    return false
+  }
+  try {
+    return (await stat(abs)).isFile()
+  } catch {
+    return false
+  }
 }

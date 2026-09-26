@@ -859,3 +859,16 @@
 .agent-markdown.prose :not(pre) > code::after {
   content: '';
 }
+/* A path the agent named that is a file in the worktree (see codeReferenceLinks). */
+.agent-markdown.prose [data-code-ref] {
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-decoration-color: var(--text-dim);
+  text-underline-offset: 2px;
+}
+.agent-markdown.prose [data-code-ref]:hover,
+.agent-markdown.prose [data-code-ref]:focus-visible {
+  color: var(--color-blue);
+  text-decoration-color: var(--color-blue);
+  outline: none;
+}

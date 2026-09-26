@@ -242,6 +242,8 @@ const workbench = {
     listAll: (worktreeId: string) => ipcRenderer.invoke('files:listAll', worktreeId),
     listPath: (worktreeId: string, rawPath: string) =>
       ipcRenderer.invoke('files:listPath', worktreeId, rawPath),
+    existing: (worktreeId: string, relPaths: string[]) =>
+      ipcRenderer.invoke('files:existing', worktreeId, relPaths),
     read: (worktreeId: string, absPath: string) =>
       ipcRenderer.invoke('files:read', worktreeId, absPath),
     write: (worktreeId: string, absPath: string, content: string) =>

@@ -15,6 +15,8 @@
   import { renderMarkdown } from '../../../../lib/markdown'
   import { floatingCodeScrollbars } from '../../../../lib/markdownScrollbars'
   import { highlightCodeFences } from '../../../../lib/markdownHighlight'
+  import { linkCodeReferences } from '../../../../lib/agents/codeReferenceLinks'
+  import type { CodeReference } from '../../../../lib/agents/codeReferences'
   import { blobUrl } from '../../../../lib/agents/api'
   import {
     tallyOf,
@@ -106,6 +108,11 @@
 
   function toggleRun(key: string): void {
     expandedRuns = { ...expandedRuns, [key]: !expandedRuns[key] }
+  }
+
+  /** Opens a path the agent named in its text, marking the lines it gave. */
+  function openReference(reference: CodeReference): void {
+    onOpenLocation({ path: reference.path, startLine: reference.line, endLine: reference.endLine })
   }
 
   function displayOf(name: string): ToolInfo['display'] {
@@ -344,6 +351,7 @@
           class="agent-markdown prose max-w-none text-xs text-default"
           use:floatingCodeScrollbars
           use:highlightCodeFences
+          use:linkCodeReferences={{ root, onOpen: openReference }}
         >
           <!-- eslint-disable-next-line svelte/no-at-html-tags -->
           {@html renderMarkdown(item.text)}

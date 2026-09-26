@@ -18,6 +18,7 @@
   import CreateWorktreeDialog from './CreateWorktreeDialog.svelte'
   import MergeWorktreeDialog from './MergeWorktreeDialog.svelte'
   import WorktreeSessionRow from './WorktreeSessionRow.svelte'
+  import WaveSpinner from '../../../components/WaveSpinner.svelte'
   import { onMount } from 'svelte'
   import { agentSessions } from '../../../lib/agents/sessions.svelte'
   import type { Worktree, ServiceRuntime } from '../../../../../shared/types'
@@ -59,6 +60,13 @@
   function openCheckpoints(worktree: Worktree): void {
     selectWorktree(worktree.id)
     layout.ensurePane('checkpoints')
+  }
+
+  /** Selects the worktree and opens the Logs pane, where its setup output streams. */
+  function openSetupLog(worktree: Worktree, event: MouseEvent): void {
+    event.stopPropagation()
+    void selectWorktree(worktree.id)
+    layout.ensurePane('logs')
   }
 
   /** How many of the worktree's grove.config.yaml services run, and each one's state for the tooltip. */
@@ -227,6 +235,7 @@
       {@const flagged = sessionAttentionFor(worktree.id)}
       {@const position = branchPositionFor(worktree.id)}
       {@const pull = pullFor(worktree)}
+      {@const setup = store.worktreeSetup[worktree.id]}
       <div
         class="group/worktree flex cursor-pointer items-center gap-2 px-3 py-2 text-sm"
         class:bg-elevated={store.selectedWorktreeId === worktree.id}
@@ -253,6 +262,22 @@
                 class="rounded bg-raised px-1 text-2xs text-violet"
                 title="Its work is on the base branch; archive it to clean up">merged</span
               >
+            {/if}
+            {#if setup}
+              <button
+                class="flex shrink-0 cursor-pointer items-center gap-1 rounded bg-raised px-1 text-2xs"
+                class:text-amber={setup === 'running'}
+                class:text-red={setup === 'failed'}
+                title="Setup commands from grove.config.yaml; click for their output"
+                onclick={(event) => openSetupLog(worktree, event)}
+              >
+                {#if setup === 'running'}
+                  <WaveSpinner count={3} />
+                  setting up
+                {:else}
+                  setup failed
+                {/if}
+              </button>
             {/if}
             {#if store.unread[worktree.id]}
               <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber" title="Unread agent output"

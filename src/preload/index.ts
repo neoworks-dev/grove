@@ -17,6 +17,7 @@ const workbench = {
     remove: (worktreeId: string, force: boolean) =>
       ipcRenderer.invoke('worktrees:remove', worktreeId, force),
     positions: () => ipcRenderer.invoke('worktrees:positions'),
+    setupStates: () => ipcRenderer.invoke('worktrees:setupStates'),
     archive: (worktreeId: string, options: unknown) =>
       ipcRenderer.invoke('worktrees:archive', worktreeId, options)
   },

@@ -10,8 +10,7 @@ const FULL: WorkbenchConfig = {
   setup: {
     once: ['bun install'],
     per_worktree: ['bun install'],
-    copy_env: false,
-    install: true
+    copy_env: false
   },
   services: {
     web: {

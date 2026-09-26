@@ -117,6 +117,9 @@ class GithubStore {
   /** A comment is being posted, or an action is running. */
   busy = $state(false)
 
+  /** What "Work on this" is doing right now, for the button to say; null when idle. */
+  workProgress = $state<'worktree' | 'agent' | null>(null)
+
   /** The new-issue composer is open. */
   composing = $state(false)
   /**
@@ -1357,7 +1360,11 @@ function switchLabel(worktree: Worktree, count: number): string {
   return `Switch to ${worktree.name}`
 }
 
-/** Creates the issue's worktree and selects it, starting an agent on the issue if asked. */
+/**
+ * Creates the issue's worktree and selects it, starting an agent on the issue if
+ * asked. Resolves once the worktree is checked out; its setup commands carry on
+ * behind it, shown on the worktree's row.
+ */
 async function createIssueWorktree(
   detail: GithubItemDetail,
   branch: string,
@@ -1365,6 +1372,7 @@ async function createIssueWorktree(
   withAgent: boolean
 ): Promise<void> {
   github.busy = true
+  github.workProgress = 'worktree'
   try {
     const created = await window.workbench.worktrees.create({
       name: branch,
@@ -1374,11 +1382,15 @@ async function createIssueWorktree(
     await refreshWorktrees()
     await selectWorktree(created.id)
     dialogs.notify({ level: 'info', message: `Working on #${detail.number} in ${branch}` })
-    if (withAgent) await briefAgent(created.path, detail)
+    if (withAgent) {
+      github.workProgress = 'agent'
+      await briefAgent(created.path, detail)
+    }
   } catch (err) {
     dialogs.notify({ level: 'error', message: (err as Error).message })
   } finally {
     github.busy = false
+    github.workProgress = null
   }
 }
 

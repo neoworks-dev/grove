@@ -9,6 +9,7 @@ import type {
 } from 'vscode-languageserver-types'
 import type {
   Worktree,
+  WorktreeSetupState,
   BranchList,
   BranchStatus,
   BranchCommits,
@@ -179,6 +180,8 @@ export interface WorkbenchApi {
     remove: (worktreeId: string, force: boolean) => Promise<Worktree[]>
     // Each worktree's commits ahead of and behind the base branch, by worktree id.
     positions: () => Promise<Record<string, BranchPosition>>
+    // Setup still running or failed, by worktree id; `event:worktree-setup` streams changes.
+    setupStates: () => Promise<Record<string, WorktreeSetupState>>
     archive: (worktreeId: string, options: ArchiveOptions) => Promise<Worktree[]>
   }
   git: {

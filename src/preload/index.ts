@@ -227,6 +227,8 @@ const workbench = {
     shellOutput: (sessionId: string) => ipcRenderer.invoke('agents:shellOutput', sessionId),
     interruptShell: (sessionId: string, toolUseId: string) =>
       ipcRenderer.invoke('agents:interruptShell', sessionId, toolUseId),
+    resolveLocations: (worktreeId: string, locations: unknown[]) =>
+      ipcRenderer.invoke('agents:resolveLocations', worktreeId, locations),
 
     completeShell: (sessionId: string, line: string) =>
       ipcRenderer.invoke('agents:completeShell', sessionId, line),

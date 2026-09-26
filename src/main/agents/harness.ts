@@ -67,6 +67,27 @@ export interface SessionStats {
   usage: Usage
   cost: number
   contextWindow: number
+  /** The runtime's own process totals, for a runtime whose count restarts with its process. */
+  processTotals?: ProcessTotals
+}
+
+/**
+ * What a runtime's process has counted since it started — including anything
+ * it picked back up from an earlier process. Stored with the session so the
+ * next run can tell whether its process resumed the count or began again.
+ */
+export interface ProcessTotals {
+  /** Every token of every kind, across all models. */
+  tokens: number
+  cost: number
+}
+
+/** The session's totals as a run starts, for a runtime that counts per process. */
+export interface StartingStats {
+  usage: Usage
+  cost: number
+  /** What the last process reported, or null when none has. */
+  processTotals: ProcessTotals | null
 }
 
 export interface ApprovalRequest {
@@ -138,6 +159,11 @@ export interface HarnessRunOptions {
    * happened, and the renderer reads it from the snapshot.
    */
   stats(update: SessionStats): void
+  /**
+   * The totals the session already had when this run started. A runtime that
+   * counts only its own process adds onto these rather than replacing them.
+   */
+  startingStats: StartingStats
   /**
    * Park a tool call until grove decides. Adapters only call this when their
    * capabilities declare `approvals`; grove answers from the review flow, the

@@ -18,7 +18,7 @@ import type {
   WorktreeChatMessage,
   WorktreeSetupState
 } from '../../../shared/types'
-import type { FileBlock, LineAnnotation, SessionEvent } from './agents/types'
+import type { FileBlock, LineAnnotation, SessionEvent, ShellOutputUpdate } from './agents/types'
 
 export interface LogLine {
   source: 'service'
@@ -33,6 +33,7 @@ import { layout } from './layout.svelte'
 import { settings } from './settings.svelte'
 import { agentSessions } from './agents/sessions.svelte'
 import { notifyAttention } from './agents/notifications'
+import { shellOutputs } from './agents/shellOutput.svelte'
 import { inlineEdit } from './inlineEdit.svelte'
 import { review } from './review.svelte'
 import { allNvimSessions } from './nvim/registry'
@@ -620,6 +621,10 @@ export function subscribeEvents(): void {
   window.workbench.on('event:agent-event', (payload) => {
     agentSessions.noteEvent(payload as SessionEvent)
     void notifyAttention(payload as SessionEvent)
+  })
+  // What agents' commands print as they run; off the event log.
+  window.workbench.on('event:agent-shell-output', (payload) => {
+    shellOutputs.apply(payload as ShellOutputUpdate)
   })
   window.workbench.on('event:log', (payload) => {
     const event = payload as {

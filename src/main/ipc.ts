@@ -157,6 +157,7 @@ const agents = new AgentService({
   systemPrompt: (session) => buildSystemPrompt(session),
   sessionRemoved: (session) => agentHandoffBridge.reportClosed(session),
   publish: (event) => send('event:agent-event', event),
+  publishShellOutput: (update) => send('event:agent-shell-output', update),
   defaultHarness: () => settings.get<string>('workbench.agentHarness'),
   // fish consults its bundled completions before a directory with exactly this
   // name, so a man-page git.fish cannot shadow the real one.

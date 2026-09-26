@@ -32,6 +32,7 @@
     type SessionBadge
   } from '../../../../lib/agents/sessions.svelte'
   import { pendingApprovals, toolCallOut, visibleItems } from '../../../../lib/agents/transcript'
+  import { shellOutputs } from '../../../../lib/agents/shellOutput.svelte'
   import {
     liveAgentIds,
     parentIdOf,
@@ -84,6 +85,11 @@
     activeId ? agentSessions.live[activeId] : undefined
   )
   const snapshot = $derived(live?.snapshot ?? null)
+
+  // A session opened mid-command catches up on what its commands printed so far.
+  $effect(() => {
+    if (activeId) void shellOutputs.load(activeId)
+  })
 
   // Reviews are recorded under the harness that made the changes, so the queue
   // for this session is looked up by the harness it is running on.

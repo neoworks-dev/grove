@@ -23,6 +23,10 @@ extraResources:
   # current build target only — CI fetches per platform).
   - from: resources/nvim
     to: nvim
+  # The shell prefix Claude Code runs its commands through, so grove can show
+  # them as they run (src/main/agents/harnesses/claudeShellTee.ts).
+  - from: resources/agent-shell
+    to: agent-shell
 asarUnpack:
   - resources/**
   # Ripgrep ships a native binary that must run from disk, not inside the asar.

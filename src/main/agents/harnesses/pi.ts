@@ -34,9 +34,13 @@ import type {
   PromptAttachment,
   ToolIntent
 } from '../harness'
+import { addedOutput } from '../shellOutput'
 import { jsonSchemaToTypebox } from './typeboxSchema'
 
 const HARNESS_ID = 'pi'
+
+// pi's shell tool, whose output is streamed while it runs.
+const BASH_TOOL = 'bash'
 
 /**
  * pi's commands as grove runs them.
@@ -73,6 +77,9 @@ class PiRun implements HarnessRun {
   private turnFailed = false
   // Counted so a command can tell whether what it sent started a turn at all.
   private turnsEnded = 0
+  // pi's bash tool reports a running command's output as everything so far;
+  // this is what each one had last time, so only the rest is passed on.
+  private commandOutputs = new Map<string, string>()
 
   constructor(
     private options: HarnessRunOptions,
@@ -364,7 +371,15 @@ class PiRun implements HarnessRun {
       this.handleToolStart(event.toolCallId, event.toolName, event.args)
       return
     }
+    if (event.type === 'tool_execution_update') {
+      if (event.toolName === BASH_TOOL) this.streamCommand(event.toolCallId, event.partialResult)
+      return
+    }
     if (event.type === 'tool_execution_end') {
+      if (this.commandOutputs.has(event.toolCallId)) {
+        this.options.shellOutput.end(event.toolCallId)
+        this.commandOutputs.delete(event.toolCallId)
+      }
       const result: Extract<ServerEventBody, { type: 'agent.tool_result' }> = {
         type: 'agent.tool_result',
         toolUseId: event.toolCallId,
@@ -386,6 +401,15 @@ class PiRun implements HarnessRun {
     if (event.type === 'agent_end') {
       this.endTurn()
     }
+  }
+
+  /** Pass on what a running bash command printed since its last update. */
+  private streamCommand(toolUseId: string, partialResult: unknown): void {
+    const output = resultText(partialResult)
+    const previous = this.commandOutputs.get(toolUseId)
+    if (previous === undefined) this.options.shellOutput.begin(toolUseId)
+    this.options.shellOutput.append(toolUseId, addedOutput(previous ?? '', output))
+    this.commandOutputs.set(toolUseId, output)
   }
 
   /** A turn that ended on a failed request must not read as one that answered. */

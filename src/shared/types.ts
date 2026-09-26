@@ -865,10 +865,6 @@ export interface AgentLaunchOptions {
   mode?: string
   model?: string
   effort?: string
-  // Extra text appended to the adapter's system prompt (claude only today).
-  appendSystemPrompt?: string
-  // Marks an AGENTS.md onboarding run; claude mounts the grove-intro tools.
-  intro?: boolean
 }
 
 // ── Mid-run message queue ────────────────────────────────────────
@@ -1100,19 +1096,5 @@ export interface RepoInfo {
   path: string
   name: string
   currentBranch: string
-  // No AGENTS.md/CLAUDE.md at the repo root -> offer the AGENTS.md setup stage.
-  hasAgentsFile: boolean
-  // No workbench.yaml at the repo root -> offer the config setup stage.
-  hasConfig: boolean
 }
 
-// A service entry a detector proposes for workbench.yaml. Crosses IPC so the
-// setup wizard can render proposals for the user to review and edit.
-export interface ServiceProposal extends ServiceConfig {
-  name: string
-  // Detector id, so the wizard can show where a proposal came from.
-  source: string
-  // False when the command keeps a port Grove does not control, meaning two
-  // worktrees running this service will collide.
-  usesPort: boolean
-}

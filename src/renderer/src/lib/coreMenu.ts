@@ -6,6 +6,9 @@ import { layout } from './layout.svelte'
 import { store, switchTab } from './store.svelte'
 import { runEditAction } from './editActions'
 
+const DOCUMENTATION_URL = 'https://grove.neoworks.dev'
+const NEOWORKS_URL = 'https://neoworks.dev'
+
 const FILE_ITEMS: MenuItem[] = [
   {
     id: 'file.openRepo',
@@ -201,6 +204,25 @@ const WINDOW_ITEMS: MenuItem[] = [
   }
 ]
 
+const HELP_ITEMS: MenuItem[] = [
+  {
+    id: 'help.documentation',
+    menuId: 'help',
+    label: 'Documentation',
+    group: '1-links',
+    order: 1,
+    run: () => window.workbench.openExternal(DOCUMENTATION_URL)
+  },
+  {
+    id: 'help.neoworks',
+    menuId: 'help',
+    label: 'neoworks.dev',
+    group: '1-links',
+    order: 2,
+    run: () => window.workbench.openExternal(NEOWORKS_URL)
+  }
+]
+
 /** Closes the active editor tab, if one is open. */
 function closeActiveTab(): void {
   if (!store.activeTabPath) {
@@ -216,14 +238,16 @@ export function registerCoreMenu(): () => void {
     menu.registerMenu({ id: 'edit', label: 'Edit', order: 2 }),
     menu.registerMenu({ id: 'view', label: 'View', order: 3 }),
     menu.registerMenu({ id: 'go', label: 'Go', order: 4 }),
-    menu.registerMenu({ id: 'window', label: 'Window', order: 5 })
+    menu.registerMenu({ id: 'window', label: 'Window', order: 5 }),
+    menu.registerMenu({ id: 'help', label: 'Help', order: 6 })
   ]
   const disposeItems = menu.registerItems([
     ...FILE_ITEMS,
     ...EDIT_ITEMS,
     ...VIEW_ITEMS,
     ...GO_ITEMS,
-    ...WINDOW_ITEMS
+    ...WINDOW_ITEMS,
+    ...HELP_ITEMS
   ])
 
   return () => {

@@ -11,6 +11,8 @@ export type {
   BlobDescriptor,
   CodeLocation,
   LineAnnotation,
+  LocationState,
+  ResolvedLocation,
   ClientEventBody,
   CommandInfo,
   ConfirmationResult,

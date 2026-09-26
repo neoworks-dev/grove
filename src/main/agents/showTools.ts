@@ -16,6 +16,7 @@ import type {
   UiNode
 } from '../../shared/agents'
 import type { GroveTool, GroveToolContext, GroveToolResult } from './harness'
+import { anchorLocations } from './locationAnchor'
 
 /** What the renderer can open, as far as the main process knows. */
 export interface AgentScreen {
@@ -112,9 +113,10 @@ function locationsTool(): GroveTool {
     display: { label: '{title}', input: 'hidden', result: 'hidden' },
     alwaysLoad: true,
 
-    execute(input, context) {
-      const locations = locationsOf(input.locations)
-      if (locations.length === 0) return { content: 'No locations to show.', isError: true }
+    async execute(input, context) {
+      const listed = locationsOf(input.locations)
+      if (listed.length === 0) return { content: 'No locations to show.', isError: true }
+      const locations = await anchorLocations(context.workspaceRoot, listed)
 
       const view: UiNode = {
         kind: 'locations',

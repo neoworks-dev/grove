@@ -235,6 +235,39 @@ export interface CodeLocation {
   note?: string
   /** Remarks on single lines, shown above each of them in the editor. */
   annotations?: LineAnnotation[]
+  /** What the place looked like when the agent pointed at it, to find it again after edits. */
+  anchor?: LocationAnchor
+}
+
+/**
+ * A location as it was taken down. Line numbers go stale as soon as anything
+ * above them changes; the text they held and the commit the file was read at
+ * are what find the place again.
+ */
+export interface LocationAnchor {
+  /** HEAD when the agent pointed here, to follow the file through a rename. */
+  commit?: string
+  /** The range's lines, with up to two lines either side; absent for a whole file. */
+  text?: AnchorText
+}
+
+export interface AnchorText {
+  lines: string[]
+  before: string[]
+  after: string[]
+}
+
+/**
+ * Where a location is now. `current`: still at its lines. `moved`: its text
+ * was found elsewhere, or its file under another name, and `location` says
+ * where. `changed`: its lines no longer read as they did. `removed`: its file
+ * is gone.
+ */
+export type LocationState = 'current' | 'moved' | 'changed' | 'removed'
+
+export interface ResolvedLocation {
+  location: CodeLocation
+  state: LocationState
 }
 
 /** A remark an agent pinned to one line of a location, 1-based. */

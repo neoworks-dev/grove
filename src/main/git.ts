@@ -567,6 +567,45 @@ export async function fileAtRef(
   }
 }
 
+/** The commit a worktree has checked out, or null outside a repository or before its first commit. */
+export async function headCommit(worktreePath: string): Promise<string | null> {
+  try {
+    return (await gitFor(worktreePath).raw(['rev-parse', 'HEAD'])).trim()
+  } catch {
+    return null
+  }
+}
+
+/**
+ * How the tracked files differ between `commit` and the working tree, renames
+ * detected; empty when git cannot say.
+ */
+export async function changesSince(worktreePath: string, commit: string): Promise<DiffFile[]> {
+  try {
+    const output = await gitFor(worktreePath).raw([
+      'diff',
+      '-M',
+      '--name-status',
+      '-z',
+      commit,
+      '--'
+    ])
+    return parseNameStatusZ(output, false)
+  } catch {
+    return []
+  }
+}
+
+/** Untracked files that are not ignored, relative to the worktree. */
+export async function untrackedFiles(worktreePath: string): Promise<string[]> {
+  try {
+    const output = await gitFor(worktreePath).raw(['ls-files', '--others', '--exclude-standard', '-z'])
+    return output.split('\0').filter((path) => path.length > 0)
+  } catch {
+    return []
+  }
+}
+
 async function workingTreeFile(worktreePath: string, relPath: string): Promise<string> {
   try {
     return await readFile(join(worktreePath, relPath), 'utf8')

@@ -17,7 +17,6 @@ import type {
   HarnessCapabilities,
   HarnessInfo,
   ImageBlock,
-  OpenFileTarget,
   ModelEntry,
   ServerEventBody,
   ShowTarget,
@@ -35,8 +34,6 @@ export interface GroveToolContext {
   workspaceRoot: string
   /** Publish a declarative view under a surface id the renderer watches. */
   surface(surfaceId: string, slot: 'transcript' | 'panel', view: unknown): void
-  /** Ask the renderer to open files in the editor. */
-  openFiles(files: OpenFileTarget[]): void
   /** Ask the renderer to put something else in front of the user. */
   show(target: ShowTarget): void
 }
@@ -60,6 +57,12 @@ export interface GroveTool {
   /** `ask` parks the call until grove answers it; `allow` runs straight away. */
   policy: ToolPolicy
   display?: ToolDisplay
+  /**
+   * Offer the tool up front on a runtime that otherwise hides tools behind a
+   * search. For a tool the model should reach for unprompted: one it has to go
+   * looking for first only gets used when the user names it.
+   */
+  alwaysLoad?: boolean
   execute(
     input: Record<string, unknown>,
     context: GroveToolContext

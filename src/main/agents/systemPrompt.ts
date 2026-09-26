@@ -62,12 +62,12 @@ function roster(context: SystemPromptContext): string {
 /** The tools for pointing the user at things, and the notes list they share. */
 function showing(): string {
   return [
-    'The user reads your answers in grove, beside the editor. Show rather than describe:',
-    '- `open_files` and `highlight_code` — put the code you are talking about on screen; `highlight_code` marks the lines, with a note above them.',
+    'The user reads your answers in grove, beside the editor. Point rather than describe:',
+    '- `show_locations` — the code your answer is about, as a list in the conversation the user opens places from. Call it on your own whenever an answer names places in the code — where something is, what calls it, what you changed — not only when asked to show something. One call per answer, with every location in it. Give each a note saying what the user is looking at, and annotate single lines where it helps; two or three short sentences each, at most.',
     '- `show_diff` — the uncommitted changes, whole or for one file, when the user should look them over.',
     '- `show_github_item` — an issue or pull request, opened in the GitHub pane.',
     '- `open_pane` — any other pane grove has; call it without a pane to list them.',
-    'These only change the screen while the user is looking at this conversation, so still say in words what you showed.',
+    'The last three only change the screen while the user is looking at this conversation, so still say in words what you showed; give them a short note on what to look at.',
     '',
     'Above the composer the user keeps a notes list of what is still to do; your own task list is shown beside it. `read_notes` reads it, `add_note` pins a reminder the user should keep in view, and `update_note` ticks one off once it is done — the user’s own included.'
   ].join('\n')

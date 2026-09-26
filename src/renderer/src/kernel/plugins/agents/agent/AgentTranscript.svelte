@@ -28,7 +28,7 @@
   import { foldedCalls, foldedMessages, foldTurn } from '../../../../lib/agents/turns'
   import { agentIdIn, senderOf } from '../../../../lib/agents/transcript'
   import type { ToolItem, TranscriptItem } from '../../../../lib/agents/transcript'
-  import type { ToolInfo } from '../../../../lib/agents/types'
+  import type { CodeLocation, ToolInfo } from '../../../../lib/agents/types'
   import AgentImage from './AgentImage.svelte'
   import AgentMessageCards from './AgentMessageCards.svelte'
   import AgentToolCall from './AgentToolCall.svelte'
@@ -44,6 +44,7 @@
     running,
     toggleTool,
     onOpenFile,
+    onOpenLocation,
     onOpenAgent,
     onOpenSession,
     subagentSessions,
@@ -63,6 +64,8 @@
     running: boolean
     toggleTool: (toolUseId: string) => void
     onOpenFile: (path: string) => void
+    /** Open a place an agent pointed at, with its lines marked. */
+    onOpenLocation: (location: CodeLocation) => void
     /** Show the conversation of the agent a message came from. */
     onOpenAgent: (agentId: string) => void
     /** Show one session: the conversation a tool call ran, from the call itself. */
@@ -392,7 +395,7 @@
         class="max-h-72 overflow-auto whitespace-pre-wrap font-mono text-2xs text-muted">{item.text}</pre>
     </div>
   {:else if item.kind === 'surface'}
-    <AgentSurface node={item.view} />
+    <AgentSurface node={item.view} {root} {onOpenLocation} />
   {/if}
 {/snippet}
 

@@ -18,7 +18,7 @@ import type {
   WorktreeChatMessage,
   WorktreeSetupState
 } from '../../../shared/types'
-import type { FileBlock, SessionEvent } from './agents/types'
+import type { FileBlock, LineAnnotation, SessionEvent } from './agents/types'
 
 export interface LogLine {
   source: 'service'
@@ -50,7 +50,14 @@ export interface TabDiff {
 export interface RevealTarget {
   path: string
   line: number
-  mark?: { endLine: number; note?: string }
+  mark?: LineMark
+}
+
+// Lines an agent pointed at: the range, its note, and remarks on single lines.
+export interface LineMark {
+  endLine: number
+  note?: string
+  annotations?: LineAnnotation[]
 }
 
 export interface EditorTab {
@@ -348,20 +355,18 @@ export function openFileAtLine(worktreeId: string, path: string, line: number): 
 }
 
 /**
- * Open a file and mark lines in it for the user to look at, with a note above
- * them. The marks stay until `clearAgentMarks` wipes them.
+ * Open a file at a location an agent pointed at, marking its lines with the
+ * agent's note above them. The mark replaces the last one, and stays until the
+ * next location is opened or `clearAgentMarks` wipes it.
  */
 export function markLinesInEditor(
   worktreeId: string,
   path: string,
-  mark: { startLine: number; endLine: number; note?: string }
+  startLine: number,
+  mark: LineMark
 ): void {
-  openFileInEditor(worktreeId, path, { focus: false })
-  store.revealTarget = {
-    path,
-    line: mark.startLine,
-    mark: { endLine: mark.endLine, note: mark.note }
-  }
+  openFileInEditor(worktreeId, path)
+  store.revealTarget = { path, line: startLine, mark }
 }
 
 /** Wipe every range an agent marked in the editor. */

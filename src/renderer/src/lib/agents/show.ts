@@ -5,6 +5,7 @@
 // way it registers its panes. A kind nobody handles is dropped — the tool call
 // is still in the transcript, and the agent was told the user may not see it.
 
+import { dialogs } from '../dialogs.svelte'
 import { keymap } from '../keymap.svelte'
 import type { ShowTarget } from './types'
 
@@ -53,6 +54,16 @@ export async function showTarget(worktree: ShowWorktree, target: ShowTarget): Pr
   const element = document.activeElement
   await handler(worktree, target)
   restoreFocus(leafId, element)
+  announce(target)
+}
+
+// Long enough to read two or three sentences, which is what a note may hold.
+const NOTE_TOAST_MS = 12_000
+
+/** Say what the user is looking at, when the agent wrote it down. */
+function announce(target: ShowTarget): void {
+  if (!target.note) return
+  dialogs.notify({ level: 'info', message: target.note, timeoutMs: NOTE_TOAST_MS })
 }
 
 /**
@@ -68,12 +79,6 @@ function restoreFocus(leafId: string | null, element: Element | null): void {
       }
     })
   )
-}
-
-/** A path an agent wrote, made absolute against the worktree. */
-export function absoluteIn(worktree: ShowWorktree, path: string): string {
-  if (path.startsWith('/')) return path
-  return `${worktree.path}/${path}`
 }
 
 /** A path an agent wrote, made relative to the worktree. */

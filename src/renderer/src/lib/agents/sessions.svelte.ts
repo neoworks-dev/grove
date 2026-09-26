@@ -23,7 +23,7 @@ import { untrack } from 'svelte'
 import { openStream } from './stream'
 import { attentionOf, type SessionAttention } from './attention'
 import type { AgentMode } from './modes'
-import { clearAgentMarks, openFileAtLine, openFileInEditor, store } from '../store.svelte'
+import { clearAgentMarks, store } from '../store.svelte'
 import { showTarget } from './show'
 import {
   applyEvent,
@@ -35,7 +35,6 @@ import {
 import type {
   ClientEventBody,
   CreateSessionOptions,
-  OpenFileTarget,
   SessionEvent,
   SessionMeta,
   SessionSnapshot,
@@ -446,7 +445,6 @@ class AgentSessions {
     const close = openStream(session.id, session.transcript.lastSeq, (event) => {
       applyEvent(session.transcript, event)
       if (this.viewing !== session.id && isUnreadEvent(event)) session.unread += 1
-      if (event.type === 'ui.open_files') this.openFiles(session.id, event.files)
       if (event.type === 'ui.show') this.show(session.id, event.target)
       // What the agent pointed at was for the answer the user is now replying to.
       if (event.type === 'user.message' && this.viewing === session.id) clearAgentMarks()
@@ -461,28 +459,9 @@ class AgentSessions {
   }
 
   /**
-   * Put the files an agent asked for in the editor.
-   *
-   * Only the session on screen may do this: streams stay open for sessions in
-   * other worktrees, and one of those opening files would drag the editor away
-   * from what the user is looking at. They are opened last-first, so the entry
-   * the agent put first is the one left in view.
-   */
-  private openFiles(sessionId: string, files: OpenFileTarget[]): void {
-    if (this.viewing !== sessionId) return
-    const worktree = this.worktreeOf(sessionId)
-    if (!worktree) return
-
-    for (const target of [...files].reverse()) {
-      const path = absolutePath(worktree.path, target.path)
-      if (typeof target.line === 'number') openFileAtLine(worktree.id, path, target.line)
-      else openFileInEditor(worktree.id, path)
-    }
-  }
-
-  /**
-   * Put what an agent pointed at on screen — under the same rule as opening
-   * files: only for the session the user is looking at.
+   * Put what an agent asked for on screen. Only the session on screen may do
+   * this: streams stay open for sessions in other worktrees, and one of those
+   * opening a pane would drag the screen away from what the user is looking at.
    */
   private show(sessionId: string, target: ShowTarget): void {
     if (this.viewing !== sessionId) return
@@ -523,11 +502,6 @@ function liveBadge(session: LiveSession): SessionBadge {
   return 'idle'
 }
 
-/** Agents name files either way; the editor only opens absolute paths. */
-function absolutePath(root: string, path: string): string {
-  if (path.startsWith('/')) return path
-  return `${root}/${path}`
-}
 
 function messageOf(cause: unknown): string {
   if (cause instanceof Error) return cause.message

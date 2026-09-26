@@ -9,6 +9,7 @@
 // instead of vanishing. Repeated failures within a short window are treated as
 // fatal and handed to onFatal.
 
+import { AGENT_MARK_HIGHLIGHTS_LUA } from './agentMarks'
 import { keymap } from '../keymap.svelte'
 import { keyDispatch } from '../keyDispatch'
 import { store } from '../store.svelte'
@@ -83,6 +84,7 @@ vim.g.grove_theme = { palette = palette, scheme = scheme }
 if type(_G.grove_apply_theme) == 'function' then
   _G.grove_apply_theme(palette, scheme)
 end
+${AGENT_MARK_HIGHLIGHTS_LUA}
 `
 
 /** Whether nvim's cursor is in the message grid shown on the cmdline row. */

@@ -1,12 +1,20 @@
 // Putting things in front of the user.
 //
-// An answer about code lands better with the code on screen. `open_files` puts
-// files in the editor; these go further — a marked range with a note beside it,
-// a diff, an issue, any pane grove has — so the agent can point rather than
-// describe. Each only asks: the renderer shows it when the user is looking at
-// this session, and leaves the screen alone when they are not.
+// An answer about code lands better with the code at hand, so the agent can
+// point rather than describe. Code is pointed at, never opened: an answer that
+// names four places used to open four files and mark each of them, which buried
+// the editor. `show_locations` lists them as a card in the conversation, and the
+// user opens the one they want. A diff, an issue or a pane is one thing, so
+// those do open — when the user is looking at this session, and not otherwise.
 
-import type { PaneTypeInfo, ShowTarget } from '../../shared/agents'
+import { randomUUID } from 'node:crypto'
+import type {
+  CodeLocation,
+  LineAnnotation,
+  PaneTypeInfo,
+  ShowTarget,
+  UiNode
+} from '../../shared/agents'
 import type { GroveTool, GroveToolContext, GroveToolResult } from './harness'
 
 /** What the renderer can open, as far as the main process knows. */
@@ -20,7 +28,7 @@ const SHOWN_IF_VIEWING = 'The user sees it if they are looking at this conversat
 
 /** Every tool that shows the user something. */
 export function showTools(screen: AgentScreen): GroveTool[] {
-  return [highlightTool(), diffTool(), githubTool(), paneTool(screen)]
+  return [locationsTool(), diffTool(), githubTool(), paneTool(screen)]
 }
 
 /** Asks for a target to be shown, and says so. */
@@ -29,45 +37,174 @@ function show(context: GroveToolContext, target: ShowTarget, what: string): Grov
   return { content: `Showing ${what}. ${SHOWN_IF_VIEWING}` }
 }
 
-/** Marks a range of lines, with a note, in the editor. */
-function highlightTool(): GroveTool {
+// More than this is a search result, not an answer; the card stops there.
+const MAX_LOCATIONS = 20
+const MAX_ANNOTATIONS = 8
+
+// A note says what the user is looking at, not everything about it: two or
+// three short sentences. Longer ones are cut, so the editor stays readable.
+const MAX_NOTE_LENGTH = 240
+const NOTE_GUIDANCE = 'Two or three short sentences at most.'
+
+/** The schema of a note field, with what it is for. */
+function noteProperty(what: string): Record<string, unknown> {
+  return { type: 'string', description: `${what} ${NOTE_GUIDANCE}` }
+}
+
+/** Lists places in the code as a card the user opens them from. */
+function locationsTool(): GroveTool {
   return {
-    name: 'highlight_code',
-    summary: 'Mark lines of a file for the user to look at.',
+    name: 'show_locations',
+    summary: 'Point the user at places in the code.',
     description:
-      'Open a file in the editor and mark a range of lines, with an optional note shown above ' +
-      'them. Use it to point at the code your answer is about — the bug, the call site, the ' +
-      'line you want a decision on. Marks stay until the user next sends a message; call it ' +
-      'once per range to mark several.',
+      'Point the user at the code your answer is about — where something is defined, where it ' +
+      'is used, what you changed. Call it whenever your answer names places in the code, ' +
+      'without waiting to be asked: the user reads your answer beside the editor and expects ' +
+      'to jump to what it mentions. The locations appear as a card in the conversation, each ' +
+      'with your note; nothing opens until the user picks one, which opens that file with the ' +
+      'lines marked and your note and line annotations written above them, so listing them ' +
+      'never gets in the way. Always say in the note what the user is looking at — a bare ' +
+      'range leaves them guessing. Put every location for one answer ' +
+      'in a single call, most relevant first. This does not read the files, so keep using ' +
+      'your own read tools for that.',
     inputSchema: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'Absolute path, or relative to the workspace root.' },
-        startLine: { type: 'number', description: 'First line to mark, 1-based.' },
-        endLine: { type: 'number', description: 'Last line to mark, inclusive. Defaults to startLine.' },
-        note: { type: 'string', description: 'A short note shown above the marked lines.' }
+        title: { type: 'string', description: 'What the locations are, in a few words.' },
+        locations: {
+          type: 'array',
+          description: 'The places, most relevant first.',
+          items: {
+            type: 'object',
+            properties: {
+              path: {
+                type: 'string',
+                description: 'Absolute path, or relative to the workspace root.'
+              },
+              startLine: { type: 'number', description: 'First line, 1-based. Optional.' },
+              endLine: { type: 'number', description: 'Last line, inclusive. Optional.' },
+              note: noteProperty('What is here and why it matters, shown above the lines.'),
+              annotations: {
+                type: 'array',
+                description:
+                  'Optional remarks on single lines, shown above each of them in the editor: ' +
+                  'what a line does, what is wrong with it.',
+                items: {
+                  type: 'object',
+                  properties: {
+                    line: { type: 'number', description: 'The line, 1-based.' },
+                    text: noteProperty('The remark.')
+                  },
+                  required: ['line', 'text'],
+                  additionalProperties: false
+                }
+              }
+            },
+            required: ['path'],
+            additionalProperties: false
+          }
+        }
       },
-      required: ['path', 'startLine'],
+      required: ['locations'],
       additionalProperties: false
     },
     policy: 'allow',
-    display: { label: '{path}', input: 'hidden', result: 'hidden' },
+    display: { label: '{title}', input: 'hidden', result: 'hidden' },
+    alwaysLoad: true,
 
     execute(input, context) {
-      const path = textOf(input.path)
-      const startLine = lineOf(input.startLine)
-      if (!path || startLine === null) {
-        return { content: 'Name a file and the line to start at.', isError: true }
-      }
-      let endLine = lineOf(input.endLine)
-      if (endLine === null || endLine < startLine) endLine = startLine
+      const locations = locationsOf(input.locations)
+      if (locations.length === 0) return { content: 'No locations to show.', isError: true }
 
-      const target: ShowTarget = { kind: 'code', path, startLine, endLine }
-      const note = textOf(input.note)
-      if (note) target.note = note
-      return show(context, target, `${path}:${startLine}-${endLine}`)
+      const view: UiNode = {
+        kind: 'locations',
+        locations,
+        fallbackText: locations.map(describeLocation).join('\n')
+      }
+      const title = textOf(input.title)
+      if (title) view.title = title
+      context.surface(`locations:${randomUUID()}`, 'transcript', view)
+      return {
+        content:
+          `Listed ${locations.length} location(s) for the user to open. They are not on ` +
+          'screen until the user picks one, so say in words what each is.'
+      }
     }
   }
+}
+
+/** Tool inputs arrive unvalidated; entries without a usable path are dropped. */
+function locationsOf(value: unknown): CodeLocation[] {
+  if (!Array.isArray(value)) return []
+  const locations: CodeLocation[] = []
+  for (const entry of value.slice(0, MAX_LOCATIONS)) {
+    const location = locationOf(entry)
+    if (location) locations.push(location)
+  }
+  return locations
+}
+
+/** One location, with its range made sensible, or null when it names no file. */
+function locationOf(value: unknown): CodeLocation | null {
+  if (typeof value !== 'object' || value === null) return null
+  const fields = value as Record<string, unknown>
+  const path = textOf(fields.path)
+  if (!path) return null
+
+  const location: CodeLocation = { path }
+  const startLine = lineOf(fields.startLine)
+  if (startLine !== null) {
+    location.startLine = startLine
+    let endLine = lineOf(fields.endLine)
+    if (endLine === null || endLine < startLine) endLine = startLine
+    location.endLine = endLine
+  }
+  const note = noteOf(fields.note)
+  if (note) location.note = note
+  const annotations = annotationsOf(fields.annotations)
+  if (annotations.length > 0) location.annotations = annotations
+  return location
+}
+
+/** Line remarks a model wrote; entries without a line or text are dropped. */
+function annotationsOf(value: unknown): LineAnnotation[] {
+  if (!Array.isArray(value)) return []
+  const annotations: LineAnnotation[] = []
+  for (const entry of value.slice(0, MAX_ANNOTATIONS)) {
+    if (typeof entry !== 'object' || entry === null) continue
+    const fields = entry as Record<string, unknown>
+    const line = lineOf(fields.line)
+    const text = noteOf(fields.text)
+    if (line === null || !text) continue
+    annotations.push({ line, text })
+  }
+  return annotations
+}
+
+/** A note a model wrote, cut to the length a note should have; null when empty. */
+function noteOf(value: unknown): string | null {
+  const text = textOf(value)
+  if (!text) return null
+  if (text.length <= MAX_NOTE_LENGTH) return text
+  return `${text.slice(0, MAX_NOTE_LENGTH - 1).trimEnd()}…`
+}
+
+/** Adds the note a model wrote to a target, when it wrote one. */
+function withNote(target: ShowTarget, value: unknown): ShowTarget {
+  const note = noteOf(value)
+  if (!note) return target
+  return { ...target, note }
+}
+
+/** One location as plain text, for a client that cannot draw the card. */
+function describeLocation(location: CodeLocation): string {
+  let place = location.path
+  if (location.startLine !== undefined) place += `:${location.startLine}`
+  if (location.endLine !== undefined && location.endLine !== location.startLine) {
+    place += `-${location.endLine}`
+  }
+  if (!location.note) return place
+  return `${place} — ${location.note}`
 }
 
 /** Opens the uncommitted changes, whole or for one file. */
@@ -82,7 +219,8 @@ function diffTool(): GroveTool {
     inputSchema: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'Optional file, absolute or workspace-relative.' }
+        path: { type: 'string', description: 'Optional file, absolute or workspace-relative.' },
+        note: noteProperty('What to look for in the changes, shown as the diff opens.')
       },
       additionalProperties: false
     },
@@ -91,8 +229,8 @@ function diffTool(): GroveTool {
 
     execute(input, context) {
       const path = textOf(input.path)
-      if (!path) return show(context, { kind: 'diff' }, 'the changed files')
-      return show(context, { kind: 'diff', path }, `the diff of ${path}`)
+      if (!path) return show(context, withNote({ kind: 'diff' }, input.note), 'the changed files')
+      return show(context, withNote({ kind: 'diff', path }, input.note), `the diff of ${path}`)
     }
   }
 }
@@ -109,7 +247,8 @@ function githubTool(): GroveTool {
     inputSchema: {
       type: 'object',
       properties: {
-        number: { type: 'number', description: 'The issue or pull request number.' }
+        number: { type: 'number', description: 'The issue or pull request number.' },
+        note: noteProperty('Why you are showing it, shown as it opens.')
       },
       required: ['number'],
       additionalProperties: false
@@ -120,7 +259,7 @@ function githubTool(): GroveTool {
     execute(input, context) {
       const number = lineOf(input.number)
       if (number === null) return { content: 'Name the issue or pull request.', isError: true }
-      return show(context, { kind: 'github', number }, `#${number}`)
+      return show(context, withNote({ kind: 'github', number }, input.note), `#${number}`)
     }
   }
 }
@@ -137,7 +276,8 @@ function paneTool(screen: AgentScreen): GroveTool {
     inputSchema: {
       type: 'object',
       properties: {
-        pane: { type: 'string', description: 'The pane id. Leave out to list them.' }
+        pane: { type: 'string', description: 'The pane id. Leave out to list them.' },
+        note: noteProperty('What to look at in the pane, shown as it opens.')
       },
       additionalProperties: false
     },
@@ -152,7 +292,8 @@ function paneTool(screen: AgentScreen): GroveTool {
       if (!type) {
         return { content: `No pane "${requested}". ${describePanes(types)}`, isError: true }
       }
-      return show(context, { kind: 'pane', pane: type.id }, `the ${type.title} pane`)
+      const target = withNote({ kind: 'pane', pane: type.id }, input.note)
+      return show(context, target, `the ${type.title} pane`)
     }
   }
 }

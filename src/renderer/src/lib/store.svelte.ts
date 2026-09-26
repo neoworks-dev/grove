@@ -32,7 +32,7 @@ import type { ColorTheme } from './themes'
 import { layout } from './layout.svelte'
 import { settings } from './settings.svelte'
 import { agentSessions } from './agents/sessions.svelte'
-import { notifyTurnEnded } from './agents/notifications'
+import { notifyAttention } from './agents/notifications'
 import { inlineEdit } from './inlineEdit.svelte'
 import { review } from './review.svelte'
 import { allNvimSessions } from './nvim/registry'
@@ -124,11 +124,6 @@ class WorkbenchStore {
   // Shared per-worktree chat messages (agent↔agent + agent↔user), keyed by
   // worktreeId.
   worktreeChat = $state<Record<string, WorktreeChatMessage[]>>({})
-
-  // A request from the agents overview/sidebar to show a specific agent session
-  // in the Agent pane. The pane consumes it once its worktree matches, then
-  // clears it.
-  requestedAgent = $state<{ worktreeId: string; sessionId?: string } | null>(null)
 
   // Set by the fs watcher when a running agent edits a file → the Git Changes
   // sidebar highlights it.
@@ -590,10 +585,10 @@ export async function selectWorktree(worktreeId: string): Promise<void> {
   syncWatched()
 }
 
-// Select a worktree and ask the Agent pane to show one of its sessions.
+/** Selects a worktree and switches the Agent pane to one of its sessions. A worktree's id is its path. */
 export async function focusAgentInPane(worktreeId: string, sessionId?: string): Promise<void> {
+  if (sessionId !== undefined) agentSessions.setActive(worktreeId, sessionId)
   await selectWorktree(worktreeId)
-  store.requestedAgent = { worktreeId, sessionId }
 }
 
 export async function refreshRuntimes(worktreeId: string): Promise<void> {
@@ -620,10 +615,11 @@ function noteWorktreeSetup(event: { worktreeId: string; state: WorktreeSetupStat
 
 // Subscribe to streamed main-process events. Call once at app start.
 export function subscribeEvents(): void {
-  // Every session's events, so a turn that ends out of sight is flagged.
+  // Every session's events, so a turn that ends or waits on you out of sight is
+  // flagged. The flag goes first: the notification reads it.
   window.workbench.on('event:agent-event', (payload) => {
     agentSessions.noteEvent(payload as SessionEvent)
-    void notifyTurnEnded(payload as SessionEvent)
+    void notifyAttention(payload as SessionEvent)
   })
   window.workbench.on('event:log', (payload) => {
     const event = payload as {

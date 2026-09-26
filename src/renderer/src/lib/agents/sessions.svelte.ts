@@ -21,7 +21,7 @@ import {
 } from './api'
 import { untrack } from 'svelte'
 import { openStream } from './stream'
-import { attentionOf, type SessionAttention } from './attention'
+import { foldAttention, type SessionAttention } from './attention'
 import type { AgentMode } from './modes'
 import { clearAgentMarks, store } from '../store.svelte'
 import { showTarget } from './show'
@@ -79,6 +79,8 @@ class AgentSessions {
   // Cleared by opening the session.
   attention = $state<Record<string, SessionAttention>>({})
 
+  // Each session's calls waiting on an approval, as the event stream reports them.
+  private parkedCalls = new Map<string, Set<string>>()
   private closers = new Map<string, () => void>()
   // Most recently viewed last, which is the order streams are evicted in.
   private recency: string[] = []
@@ -353,18 +355,27 @@ class AgentSessions {
   }
 
   /**
-   * Note a turn that ended in any session, from the event stream every session
-   * shares. One nobody is looking at is flagged, so the worktrees view can say
-   * something happened; a new turn starting takes the flag back down.
+   * Note an event from any session, off the stream every session shares. One
+   * nobody is looking at is flagged when a turn ends or a call waits on an
+   * approval, so the worktrees view can say something happened; a new turn
+   * starting, or the last approval being answered, takes the flag back down.
    */
   noteEvent(event: SessionEvent): void {
-    if (event.type === 'session.status_running') {
-      if (this.attention[event.sessionId]) delete this.attention[event.sessionId]
+    const sessionId = event.sessionId
+    let parked = this.parkedCalls.get(sessionId)
+    if (!parked) {
+      parked = new Set()
+      this.parkedCalls.set(sessionId, parked)
+    }
+    const current = this.attention[sessionId]
+    let next = foldAttention(current, parked, event)
+    if (sessionId === this.viewing) next = undefined
+    if (next === current) return
+    if (next === undefined) {
+      delete this.attention[sessionId]
       return
     }
-    const attention = attentionOf(event)
-    if (!attention || event.sessionId === this.viewing) return
-    this.attention[event.sessionId] = attention
+    this.attention[sessionId] = next
   }
 
   close(sessionId: string): void {

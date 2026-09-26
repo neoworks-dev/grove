@@ -3,17 +3,30 @@
   // grouped with separators and delegate to commands where possible.
   import { menu, type MenuItem } from '../lib/menu.svelte'
   import { keyDispatch, KeyPriority } from '../lib/keyDispatch'
+  import { fade, scale } from 'svelte/transition'
+  import { cubicOut } from 'svelte/easing'
 
   let openMenuId = $state<string | null>(null)
+  // Opening from closed animates; sliding from one open menu to the next swaps
+  // instantly, the way a native menubar does.
+  let switching = $state(false)
 
   function toggle(menuId: string): void {
+    switching = false
     openMenuId = openMenuId === menuId ? null : menuId
   }
 
   // Standard menubar affordance: while one menu is open, hovering another
   // top-level switches to it.
   function hover(menuId: string): void {
-    if (openMenuId && openMenuId !== menuId) openMenuId = menuId
+    if (!openMenuId || openMenuId === menuId) return
+    switching = true
+    openMenuId = menuId
+  }
+
+  /** Keeps focus where it was, so Edit actions reach the field or editor the user was in. */
+  function keepFocus(event: MouseEvent): void {
+    event.preventDefault()
   }
 
   function runItem(item: MenuItem): void {
@@ -23,12 +36,15 @@
 
   function onWindowPointerDown(event: PointerEvent): void {
     const target = event.target as HTMLElement | null
-    if (!target?.closest('[data-menubar]')) openMenuId = null
+    if (target?.closest('[data-menubar]')) return
+    switching = false
+    openMenuId = null
   }
 
   /** Escape closes the open menu and is swallowed, so it never reaches a pane. */
   function onMenuKeyDown(event: KeyboardEvent): boolean {
     if (event.key !== 'Escape') return false
+    switching = false
     openMenuId = null
     event.preventDefault()
     event.stopPropagation()
@@ -55,7 +71,8 @@
   }
 </script>
 
-<div class="flex items-center" data-menubar>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="flex items-center" data-menubar onmousedown={keepFocus}>
   {#each menu.menus as top (top.id)}
     <div class="relative">
       <button
@@ -69,7 +86,9 @@
       </button>
       {#if openMenuId === top.id}
         <div
-          class="absolute left-0 top-full z-overlay mt-1 min-w-52 rounded-lg border border-line bg-elevated py-1 shadow-overlay"
+          class="absolute left-0 top-full z-overlay mt-1 min-w-52 origin-top-left rounded-lg border border-line bg-elevated py-1 shadow-overlay"
+          in:scale={{ duration: switching ? 0 : 120, start: 0.96, opacity: 0, easing: cubicOut }}
+          out:fade={{ duration: switching ? 0 : 80 }}
         >
           {#each withSeparators(menu.itemsFor(top.id)) as entry (entry.item.id)}
             {#if entry.separator}

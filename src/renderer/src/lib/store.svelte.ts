@@ -15,7 +15,8 @@ import type {
   BranchPull,
   DiffStats,
   ReviewBatch,
-  WorktreeChatMessage
+  WorktreeChatMessage,
+  WorktreeSetupState
 } from '../../../shared/types'
 import type { FileBlock, SessionEvent } from './agents/types'
 
@@ -128,6 +129,10 @@ class WorkbenchStore {
 
   // Streamed logs keyed by worktreeId.
   logs = $state<Record<string, LogLine[]>>({})
+
+  // New worktrees whose setup commands are running or failed, keyed by
+  // worktreeId. A worktree whose setup finished has no entry.
+  worktreeSetup = $state<Record<string, WorktreeSetupState>>({})
 
   // Open editor tabs and the active tab are scoped per worktree, so each
   // worktree keeps its own set of open buffers (not synced across worktrees).
@@ -359,6 +364,7 @@ export async function openRepoResult(result: {
 }): Promise<void> {
   store.repo = result.info
   store.worktrees = result.worktrees
+  store.worktreeSetup = await window.workbench.worktrees.setupStates().catch(() => ({}))
   void refreshBranchPositions()
   void refreshBranchPulls()
   store.config = await window.workbench.config.load()
@@ -556,6 +562,23 @@ export async function refreshRuntimes(worktreeId: string): Promise<void> {
   store.services = { ...store.services, [worktreeId]: services }
 }
 
+/**
+ * Records a worktree's setup state. Finishing clears the entry; failing keeps
+ * it and says so, since the output is in the worktree's logs rather than in view.
+ */
+function noteWorktreeSetup(event: { worktreeId: string; state: WorktreeSetupState }): void {
+  const next = { ...store.worktreeSetup }
+  if (event.state === 'done') {
+    delete next[event.worktreeId]
+  } else {
+    next[event.worktreeId] = event.state
+  }
+  store.worktreeSetup = next
+  if (event.state === 'failed') {
+    store.setError('Worktree setup failed; its output is in the Logs pane.')
+  }
+}
+
 // Subscribe to streamed main-process events. Call once at app start.
 export function subscribeEvents(): void {
   // Every session's events, so a turn that ends out of sight is flagged.
@@ -575,6 +598,9 @@ export function subscribeEvents(): void {
       name: event.name,
       line: event.line
     })
+  })
+  window.workbench.on('event:worktree-setup', (payload) => {
+    noteWorktreeSetup(payload as { worktreeId: string; state: WorktreeSetupState })
   })
   window.workbench.on('event:service-status', (payload) => {
     store.updateServiceRuntime(payload as ServiceRuntime)

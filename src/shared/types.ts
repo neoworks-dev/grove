@@ -12,6 +12,10 @@ export interface Worktree {
   portSlot: number // deterministic port-allocation slot
 }
 
+// Where a new worktree's setup commands stand. `done` is only ever sent as an
+// event; a worktree without a state has nothing running.
+export type WorktreeSetupState = 'running' | 'done' | 'failed'
+
 // How far a worktree's branch has moved from the base branch it is compared to.
 export interface BranchPosition {
   /** The base branch it is measured against. */
@@ -830,8 +834,6 @@ export interface WorkbenchConfig {
     per_worktree: string[]
     /** Copy untracked `.env*` files from the main worktree into a new one. */
     copy_env: boolean
-    /** Install dependencies in a new worktree with the package manager its lockfile names. */
-    install: boolean
   }
   services: Record<string, ServiceConfig>
   agents: Record<string, AgentConfig>

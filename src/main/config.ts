@@ -20,8 +20,7 @@ const DEFAULT_CONFIG: WorkbenchConfig = {
   setup: {
     once: [],
     per_worktree: [],
-    copy_env: true,
-    install: true
+    copy_env: true
   },
   services: {},
   agents: {}
@@ -47,8 +46,7 @@ export function applyDefaults(raw: unknown): WorkbenchConfig {
     setup: {
       once: input.setup?.once ?? [],
       per_worktree: input.setup?.per_worktree ?? [],
-      copy_env: input.setup?.copy_env ?? DEFAULT_CONFIG.setup.copy_env,
-      install: input.setup?.install ?? DEFAULT_CONFIG.setup.install
+      copy_env: input.setup?.copy_env ?? DEFAULT_CONFIG.setup.copy_env
     },
     services: input.services ?? {},
     agents: input.agents ?? {}
@@ -90,7 +88,6 @@ setup:
   per_worktree:
     - echo "setup per worktree"
   copy_env: true
-  install: true
 
 services:
   web:

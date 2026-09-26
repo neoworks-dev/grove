@@ -4,8 +4,10 @@
   // edits user- or project-level values; rows show a "modified" dot when the
   // viewed scope overrides the effective default.
   import { settings } from '../lib/settings.svelte'
-  import { store } from '../lib/store.svelte'
+  import { store, openFileInEditor } from '../lib/store.svelte'
   import { matchesQuery } from '../lib/overlays.svelte'
+  import { catalog } from '../lib/agents/catalog.svelte'
+  import { onMount } from 'svelte'
   import SettingToggle from './controls/SettingToggle.svelte'
   import SettingSelect from './controls/SettingSelect.svelte'
   import SettingTextInput from './controls/SettingTextInput.svelte'
@@ -18,6 +20,12 @@
   import ArrowCounterClockwiseIcon from 'phosphor-svelte/lib/ArrowCounterClockwiseIcon'
 
   let { leafId }: { leafId: string } = $props()
+
+  // The Agent Harness dropdown lists the catalog's harnesses; nothing else may
+  // have loaded it yet.
+  onMount(() => {
+    void catalog.load()
+  })
 
   let filter = $state('')
   let scope = $state<SettingScope>('user')
@@ -77,8 +85,13 @@
     void settings.set(definition.key, undefined, scope)
   }
 
-  function openFile(): void {
-    void window.workbench.settings.openFile(scope)
+  /** Opens the viewed scope's settings.json as a tab in Grove's own editor. */
+  async function openFile(): Promise<void> {
+    const worktreeId = store.selectedWorktreeId
+    if (!worktreeId) return
+    const path = await window.workbench.settings.filePath(scope)
+    if (!path) return
+    openFileInEditor(worktreeId, path)
   }
 </script>
 
@@ -119,7 +132,12 @@
         Project
       </button>
     </div>
-    <button class="ml-auto text-xs text-dim hover:text-default" onclick={openFile}>
+    <button
+      class="ml-auto text-xs text-dim hover:text-default disabled:cursor-not-allowed disabled:opacity-40"
+      disabled={!store.selectedWorktreeId}
+      title={store.selectedWorktreeId ? '' : 'Open a repository to edit settings in the editor'}
+      onclick={openFile}
+    >
       Open settings.json
     </button>
     <PaneControls />

@@ -6,9 +6,15 @@ import { settings } from './settings.svelte'
 import { store, applyColorTheme } from './store.svelte'
 import { availableThemes } from './themes'
 import { availablePacks, setIconPack } from './icons'
+import { catalog } from './agents/catalog.svelte'
+import type { SettingEnumValue } from '../../../shared/settings'
 
 const MIGRATION_MARKER = 'settingsMigrated'
 
+/**
+ * Registers the base app's settings. Safe to call again: the contribution is
+ * replaced, which is how the harness list picks up what the catalog found.
+ */
 export function registerBaseSettings(): void {
   settings.registerSchemas({
     contributorId: 'workbench',
@@ -31,21 +37,14 @@ export function registerBaseSettings(): void {
         enumValues: availablePacks().map((pack) => ({ value: pack.name, label: pack.label }))
       },
       {
-        key: 'workbench.defaultAgent',
-        type: 'string',
-        default: '',
-        title: 'Default Agent',
-        description: 'Agent preselected in the agent pane and used by AI keybind actions.',
-        category: 'Agents'
-      },
-      {
         key: 'workbench.agentHarness',
-        type: 'string',
+        type: 'enum',
         default: '',
         title: 'Agent Harness',
         description:
-          'The agent runtime new sessions start on: claude, codex or pi. Leave empty to use the first one that can run.',
-        category: 'Agents'
+          'The agent runtime new sessions start on. Automatic uses the first one that can run.',
+        category: 'Agents',
+        enumValues: harnessOptions()
       },
       {
         key: 'workbench.reviewMode',
@@ -102,6 +101,19 @@ export function registerBaseSettings(): void {
   })
 }
 
+/** The harnesses the catalog knows, after an "Automatic" entry for the empty value. */
+function harnessOptions(): SettingEnumValue[] {
+  const options: SettingEnumValue[] = [{ value: '', label: 'Automatic' }]
+  for (const harness of catalog.harnesses) {
+    let label = harness.label
+    if (!harness.available) {
+      label = `${label} (unavailable)`
+    }
+    options.push({ value: harness.id, label })
+  }
+  return options
+}
+
 interface LegacyMapping {
   key: string
   read: () => unknown | undefined
@@ -109,11 +121,7 @@ interface LegacyMapping {
 
 const LEGACY_MAPPINGS: LegacyMapping[] = [
   { key: 'workbench.colorTheme', read: () => localStorage.getItem('colorTheme') ?? undefined },
-  { key: 'workbench.iconPack', read: () => localStorage.getItem('iconPack') ?? undefined },
-  {
-    key: 'workbench.defaultAgent',
-    read: () => localStorage.getItem('agent.selected') ?? undefined
-  }
+  { key: 'workbench.iconPack', read: () => localStorage.getItem('iconPack') ?? undefined }
 ]
 
 // Copy legacy localStorage values into user-scope settings once. The old keys

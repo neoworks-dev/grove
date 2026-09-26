@@ -565,7 +565,8 @@ export interface WorkbenchApi {
   settings: {
     read: () => Promise<SettingsSnapshotShape>
     set: (key: string, value: unknown, scope: 'user' | 'project') => Promise<SettingsSnapshotShape>
-    openFile: (scope: 'user' | 'project') => Promise<string | void>
+    // The scope's settings file, created if missing; null for project scope with no repo.
+    filePath: (scope: 'user' | 'project') => Promise<string | null>
   }
   openExternal: (url: string) => Promise<void>
   // Bring grove's window to the front, e.g. from a desktop notification.

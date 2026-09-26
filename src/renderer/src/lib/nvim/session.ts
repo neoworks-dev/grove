@@ -29,6 +29,7 @@ import { nvimBlockingPrompt } from './blockingPrompt'
 import { nvimPrompts } from './prompts.svelte'
 import { nvimPopupMenu } from './popupMenu.svelte'
 import { WheelAccumulator } from './wheel'
+import type { EditAction } from '../editActions'
 
 export interface NvimSessionElements {
   host: HTMLDivElement
@@ -218,6 +219,31 @@ if line < 1 then line = 1 end
 vim.api.nvim_win_set_cursor(0, { line, 0 })
 vim.cmd('normal! zz^')
 return line
+`
+
+// Run an Edit-menu action the way the current mode would. Copy and cut only
+// act on a live visual selection; the rest leave whatever mode they were in.
+// Yanks go to '+' explicitly so they reach the desktop clipboard even if a user
+// config drops 'unnamedplus'.
+const EDIT_ACTION_LUA = `
+local action = ...
+local mode = vim.api.nvim_get_mode().mode
+local visual = mode == 'v' or mode == 'V' or mode == vim.keycode('<C-v>')
+if action == 'undo' then
+  vim.cmd('silent! undo')
+elseif action == 'redo' then
+  vim.cmd('silent! redo')
+elseif action == 'copy' then
+  if visual then vim.api.nvim_input('"+y') end
+elseif action == 'cut' then
+  if visual then vim.api.nvim_input('"+d') end
+elseif action == 'paste' then
+  vim.api.nvim_paste(vim.fn.getreg('+'), true, -1)
+elseif action == 'selectAll' then
+  vim.api.nvim_input('<Esc>ggVG')
+elseif action == 'find' then
+  vim.api.nvim_input('<Esc>/')
+end
 `
 
 // Resolve the buffer path and the selected line range. While in a visual mode
@@ -616,6 +642,23 @@ export class NvimCanvasSession {
 
   focus(): void {
     this.elements.input.focus()
+  }
+
+  /** Whether keyboard focus is on this editor's input, rather than a widget beside it. */
+  ownsKeyboard(): boolean {
+    return document.activeElement === this.elements.input
+  }
+
+  /** Runs an Edit-menu action (undo, copy, …) in this editor, then gives it focus. */
+  async runEditAction(action: EditAction): Promise<void> {
+    const id = this.nvimId
+    if (!id) return
+    this.focus()
+    try {
+      await window.workbench.nvim.request(id, 'nvim_exec_lua', [EDIT_ACTION_LUA, [action]])
+    } catch {
+      // session gone
+    }
   }
 
   // The current editor selection: buffer path, 1-based inclusive line range and

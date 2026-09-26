@@ -127,8 +127,7 @@ async function exists(path: string): Promise<boolean> {
  * Only `lastRepoPath` is written. The per-repo record has a dozen fields that
  * are read without a default, so a partial one seeded from here would crash the
  * open and would drift the moment a field is added — grove builds its own
- * through `emptyRepoState()`. The intro page stays away because the demo repo
- * has an AGENTS.md, which is what grove reads as "already set up".
+ * through `emptyRepoState()`.
  */
 async function seedWorkbenchState(userData: string, repoPath: string): Promise<void> {
   const statePath = join(userData, 'workbench-state.json')

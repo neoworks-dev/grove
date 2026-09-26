@@ -67,7 +67,6 @@ function createWindow(): void {
     minWidth: 1024,
     minHeight: 640,
     show: false,
-    autoHideMenuBar: true,
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -75,6 +74,10 @@ function createWindow(): void {
       webviewTag: true
     }
   })
+
+  // Grove draws its own menu bar. Electron's default one would still pop up on
+  // Alt and steal the keypress from the editor, so the window gets none at all.
+  mainWindow.removeMenu()
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()

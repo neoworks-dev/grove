@@ -61,7 +61,6 @@ import type {
   WorkbenchConfig,
   ServiceRuntime,
   ServiceConfig,
-  ServiceProposal,
   AgentRuntime,
   AgentConfig,
   AgentOption,
@@ -115,8 +114,6 @@ interface RepoStateShape {
   pinnedTabsByWorktree: Record<string, string[]>
   selectedWorktreeId: string | null
   setupOnceDone: boolean
-  introDismissed: boolean
-  setupDismissed: boolean
   agentSessions: Record<string, string>
   trustedActionHashes: string[]
   viewLayouts: Record<string, unknown>
@@ -336,8 +333,6 @@ export interface WorkbenchApi {
     load: () => Promise<WorkbenchConfig>
     exists: () => Promise<boolean>
     writeSample: () => Promise<boolean>
-    detect: () => Promise<ServiceProposal[]>
-    writeServices: (services: Record<string, ServiceConfig>) => Promise<WorkbenchConfig>
   }
   services: {
     list: (worktreeId: string) => Promise<ServiceRuntime[]>

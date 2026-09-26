@@ -34,9 +34,7 @@ import { agentSessions } from './agents/sessions.svelte'
 import { notifyTurnEnded } from './agents/notifications'
 import { inlineEdit } from './inlineEdit.svelte'
 import { review } from './review.svelte'
-import { intro } from './intro.svelte'
 import { allNvimSessions } from './nvim/registry'
-import { setup } from './setup.svelte'
 import { applyPins } from './tabPins'
 
 // The two sides a tab's diff is between, as the tab names them: refs, short
@@ -385,15 +383,6 @@ export async function openRepoResult(result: {
     await refreshWorktreeStatus(store.selectedWorktreeId)
   }
   syncWatched()
-  // Unconfigured workspace and never dismissed: offer the setup wizard in the
-  // left sidebar. introDismissed is honoured too, so a repo that finished the
-  // AGENTS.md flow before the wizard existed is not nagged about it again.
-  const needsSetup = !result.info.hasConfig || !result.info.hasAgentsFile
-  const dismissed = repoState.setupDismissed || repoState.introDismissed
-  if (needsSetup && !dismissed) {
-    await setup.begin()
-    layout.ensurePane('setup')
-  }
 }
 
 // Rebuild the per-worktree open-tab maps from persisted state, preferring the
@@ -636,9 +625,6 @@ export function subscribeEvents(): void {
     // An inline edit under review keeps the change in the editor overlay, so it
     // claims its own writes instead of the changes view taking over.
     if (isFile && inlineEdit.claimFsChange(event.worktreeId, event.relPath)) return
-    // An onboarding session shows AGENTS.md / example changes in the intro
-    // pane, so the git-changes sidebar must not hijack focus for them.
-    if (isFile && intro.claimFsChange(event.worktreeId, event.relPath)) return
     // Otherwise just mark the file in the Git Changes sidebar. Agent writes are
     // staged into a review batch and surfaced as one request when that batch
     // closes, so stealing focus on every individual write would fight it.

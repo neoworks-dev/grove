@@ -63,8 +63,9 @@ An issue is done when its fix has been shown to work, not when the code is writt
 As soon as one issue is done, before starting the next:
 
 1. Comment on the issue with `bun run qa evidence --issue <n> --body … --screenshot …`: what changed, in a sentence or two, plus the screenshots or the test's output.
-2. Tick its box in the PR body and link that comment.
-3. Merge the branch into `next` and push.
+2. Label it `ready for review` (`gh bot issue edit <n> --add-label "ready for review"`). That label is how I find what's waiting on me; leave the issue open for me to close.
+3. Tick its box in the PR body and link that comment.
+4. Merge the branch into `next` and push.
 
 Once every box is ticked, `gh pr ready`. Don't leave a PR in draft with its work finished, and don't tick a box without evidence to show for it.
 

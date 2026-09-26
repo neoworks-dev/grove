@@ -6,7 +6,7 @@ import { join } from 'path'
 import type { WorkbenchConfig } from '../shared/types'
 import { renderConfig } from './configRender'
 
-export const CONFIG_FILENAME = 'workbench.yaml'
+export const CONFIG_FILENAME = 'grove.config.yaml'
 
 const DEFAULT_CONFIG: WorkbenchConfig = {
   workbench: {
@@ -110,7 +110,7 @@ export async function writeSampleConfig(repoPath: string): Promise<boolean> {
   return true
 }
 
-// Writes through the annotated renderer rather than js-yaml's dump: workbench.yaml
+// Writes through the annotated renderer rather than js-yaml's dump: grove.config.yaml
 // is meant to stay hand-editable, and dump would strip every explanatory comment
 // and reorder the sections.
 export async function saveConfig(repoPath: string, config: WorkbenchConfig): Promise<void> {

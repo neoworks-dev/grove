@@ -121,7 +121,7 @@ function mainWorktreePath(repoPath: string, worktrees: Worktree[]): string {
 
 /**
  * Gives a new worktree what git does not: the main worktree's untracked env
- * files and installed dependencies, each unless workbench.yaml turns it off.
+ * files and installed dependencies, each unless grove.config.yaml turns it off.
  * Runs before the setup commands, which may well need both.
  */
 async function bootstrapWorktree(

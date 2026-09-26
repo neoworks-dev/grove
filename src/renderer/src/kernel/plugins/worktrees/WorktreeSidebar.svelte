@@ -61,7 +61,7 @@
     layout.ensurePane('checkpoints')
   }
 
-  /** How many of the worktree's workbench.yaml services run, and each one's state for the tooltip. */
+  /** How many of the worktree's grove.config.yaml services run, and each one's state for the tooltip. */
   function serviceSummary(worktreeId: string): { running: number; total: number; detail: string } {
     const list: ServiceRuntime[] = store.services[worktreeId] || []
     const running = list.filter((service) => service.status === 'running').length

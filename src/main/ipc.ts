@@ -161,6 +161,9 @@ const agents = new AgentService({
   shellCompletionsDir: join(app.getPath('userData'), 'fish', 'generated_completions')
 })
 
+// No run outlives the app, so a turn the last one quit in the middle of is over.
+void agents.settleInterruptedTurns()
+
 // Addresses the sessions in a worktree, delivers between them, and starts new
 // ones: what grove's inter-agent tools are built on.
 const agentRoster = new AgentRoster({ agents, harnesses })

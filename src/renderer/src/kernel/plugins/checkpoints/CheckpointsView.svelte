@@ -7,6 +7,7 @@
   import { store, refreshDiffStats } from '../../../lib/store.svelte'
   import type { CheckpointMeta } from '../../../../../shared/types'
   import PaneControls from '../../../components/PaneControls.svelte'
+  import { dialogs } from '../../../lib/dialogs.svelte'
 
   const worktree = $derived(store.selectedWorktree)
 
@@ -58,10 +59,17 @@
   async function restore(commit: string): Promise<void> {
     const id = worktree?.id
     if (!id) return
-    const confirmed = confirm(
-      'Restore the working tree to this checkpoint? Current uncommitted changes will be checkpointed first, then replaced.'
-    )
-    if (!confirmed) return
+    // The app's own dialog: a native one can leave the window without a text
+    // cursor anywhere once it closes (#216).
+    const picked = await dialogs.confirm({
+      title: 'Restore this checkpoint?',
+      body: 'Current uncommitted changes are checkpointed first, then replaced.',
+      actions: [
+        { id: 'restore', label: 'Restore', kind: 'danger' },
+        { id: 'cancel', label: 'Cancel' }
+      ]
+    })
+    if (picked !== 'restore') return
     busy = true
     localError = null
     try {

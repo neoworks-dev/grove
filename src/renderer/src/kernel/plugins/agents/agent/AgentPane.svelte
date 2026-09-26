@@ -31,7 +31,7 @@
     type LiveSession,
     type SessionBadge
   } from '../../../../lib/agents/sessions.svelte'
-  import { pendingApprovals, visibleItems } from '../../../../lib/agents/transcript'
+  import { pendingApprovals, toolCallOut, visibleItems } from '../../../../lib/agents/transcript'
   import {
     liveAgentIds,
     parentIdOf,
@@ -133,6 +133,9 @@
   // harness named the tool.
   const questions = $derived(approvals[0] ? questionsOf(approvals[0].input) : null)
   const running = $derived(live?.transcript.status === 'running')
+  // The model is writing: the turn is running and not out on a tool call, which
+  // shows its own progress on its row.
+  const writing = $derived(running && live !== undefined && !toolCallOut(live.transcript))
   // A session standing for an agent the harness ran inside a tool call. It is a
   // record of that conversation: the runtime is the only thing that ever spoke
   // there, so there is nothing to write to.
@@ -807,7 +810,7 @@
       </div>
     {/if}
 
-    {#if running && !overviewOpen}
+    {#if writing && !overviewOpen}
       <AgentWorkingBar tokensLabel={contextLabel} />
     {/if}
 

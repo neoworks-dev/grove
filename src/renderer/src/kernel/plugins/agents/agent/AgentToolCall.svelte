@@ -8,6 +8,7 @@
   import CaretRight from 'phosphor-svelte/lib/CaretRight'
   import Icon from '@iconify/svelte'
   import CodeBlock from '../../../../components/CodeBlock.svelte'
+  import ShimmerText from '../../../../components/ShimmerText.svelte'
   import { fileIcon } from '../../../../lib/icons'
   import { formatShellCommand } from '../../../../lib/shellFormat'
   import { diffLines, statsOf } from '../../../../lib/agents/diff'
@@ -154,7 +155,12 @@
       >
         <CaretRight width="10" height="10" weight="bold" />
       </span>
-      <span class="shrink-0 font-semibold {STATUS_COLOR[item.status]}">{item.name}</span>
+      {#if item.status === 'running'}
+        <!-- The working bar steps aside while a call runs; the call says it is busy. -->
+        <ShimmerText text={item.name} class="shrink-0 font-semibold" />
+      {:else}
+        <span class="shrink-0 font-semibold {STATUS_COLOR[item.status]}">{item.name}</span>
+      {/if}
       {#if inputView === 'message' && message.to}
         <!-- Who the message is for reads better than the tool's arguments do. -->
         <span class="shrink-0 rounded bg-blue-soft px-1 text-blue">→ {message.to}</span>

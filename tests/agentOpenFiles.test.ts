@@ -29,7 +29,12 @@ const ROSTER = {
 }
 
 function openFilesTool(): GroveTool {
-  const tool = groveTools({ chat: CHANNEL as never, roster: ROSTER as never }).find(
+  const tool = groveTools({
+    chat: CHANNEL as never,
+    roster: ROSTER as never,
+    notes: {} as never,
+    screen: { paneTypes: () => [] }
+  }).find(
     (entry) => entry.name === 'open_files'
   )
   if (!tool) throw new Error('open_files is not offered')
@@ -43,7 +48,8 @@ function recordingContext(): { context: GroveToolContext; opened: OpenFileTarget
     sessionId: 'session-1',
     workspaceRoot: '/repo',
     surface: () => {},
-    openFiles: (files) => opened.push(files)
+    openFiles: (files) => opened.push(files),
+    show: () => {}
   }
   return { context, opened }
 }

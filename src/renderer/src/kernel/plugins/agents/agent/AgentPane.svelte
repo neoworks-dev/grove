@@ -42,11 +42,14 @@
     ClientEventBody,
     ConfirmationResult,
     SessionMeta,
+    SessionNote,
     ThinkingLevel,
     ToolInfo
   } from '../../../../lib/agents/types'
+  import { saveNotes as saveSessionNotes } from '../../../../lib/agents/api'
   import AgentApproval from './AgentApproval.svelte'
   import AgentComposer from './AgentComposer.svelte'
+  import AgentNotes from './AgentNotes.svelte'
   import AgentQuestion from './AgentQuestion.svelte'
   import AgentControls from './AgentControls.svelte'
   import AgentOverview from './AgentOverview.svelte'
@@ -363,6 +366,14 @@
   function unqueue(messageId: string): void {
     if (!activeId) return
     void agentSessions.send(activeId, [{ type: 'user.unqueue', messageId }])
+  }
+
+  /** Save the notes list; it comes back through the stream like any change. */
+  function saveNotes(notes: SessionNote[]): void {
+    if (!activeId) return
+    void saveSessionNotes(activeId, notes).catch((cause: unknown) =>
+      store.setError(`Could not save the notes: ${(cause as Error).message}`)
+    )
   }
 
   // ── Session settings ────────────────────────────────────────────
@@ -779,6 +790,10 @@
 
     {#if !overviewOpen}
       <div class="relative shrink-0 p-2">
+        {#if live && !subagent}
+          <AgentNotes notes={live.transcript.notes} tasks={live.transcript.tasks} onSave={saveNotes} />
+        {/if}
+
         {#if postReviews.length > 0}
           <!-- Post-approve reviews: the writes are already on disk, so nothing is
              blocked on these. Opening one shows its diff in the editor. -->

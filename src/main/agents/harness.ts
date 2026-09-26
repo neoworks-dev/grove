@@ -10,6 +10,7 @@
 
 import type {
   AgentMode,
+  AgentTask,
   CommandInfo,
   ConfirmationResult,
   DeliverAs,
@@ -19,6 +20,7 @@ import type {
   OpenFileTarget,
   ModelEntry,
   ServerEventBody,
+  ShowTarget,
   SkillInfo,
   ThinkingLevel,
   ToolDisplay,
@@ -35,6 +37,8 @@ export interface GroveToolContext {
   surface(surfaceId: string, slot: 'transcript' | 'panel', view: unknown): void
   /** Ask the renderer to open files in the editor. */
   openFiles(files: OpenFileTarget[]): void
+  /** Ask the renderer to put something else in front of the user. */
+  show(target: ShowTarget): void
 }
 
 export interface GroveToolResult {
@@ -164,6 +168,11 @@ export interface HarnessRunOptions {
    * counts only its own process adds onto these rather than replacing them.
    */
   startingStats: StartingStats
+  /**
+   * The plan the session's last `agent.tasks` left, for a runtime that keeps
+   * one across runs and only reports changes to it.
+   */
+  startingTasks: AgentTask[]
   /**
    * Park a tool call until grove decides. Adapters only call this when their
    * capabilities declare `approvals`; grove answers from the review flow, the

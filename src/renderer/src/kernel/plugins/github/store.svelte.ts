@@ -546,6 +546,60 @@ export async function openReference(kind: GithubItemKind, number: number): Promi
   await selectItem({ kind, number })
 }
 
+/**
+ * Open an item known only by its number. GitHub numbers issues and pull
+ * requests from one sequence, so fetching it is what says which it is — and
+ * the fetched thread is kept, so the pane puts it up without a second wait.
+ */
+export async function openItemByNumber(number: number): Promise<void> {
+  const detail = await fetchItemByNumber(number)
+  await openReference(detail.kind, number)
+}
+
+// The repository's name as asked for outside the pane, by repository path, so
+// a link in an agent's message can be told apart from one to another repository.
+const repoNames = new Map<string, Promise<string | null>>()
+
+/** The open repository's `owner/name`, or null when GitHub cannot say. */
+export function openRepoName(): Promise<string | null> {
+  const known = github.status?.repo?.nameWithOwner
+  if (known) return Promise.resolve(known)
+  let repoPath = ''
+  if (store.repo) repoPath = store.repo.path
+  const asked = repoNames.get(repoPath)
+  if (asked) return asked
+  const asking = window.workbench.github
+    .status()
+    .then((status) => status.repo?.nameWithOwner ?? null)
+    .catch(() => null)
+  repoNames.set(repoPath, asking)
+  return asking
+}
+
+// Fetches by number already under way, so a transcript naming #12 three times
+// asks GitHub once.
+const fetchesByNumber = new Map<number, Promise<GithubItemDetail>>()
+
+/** An item by number alone, from what this session has read or from GitHub. */
+export function fetchItemByNumber(number: number): Promise<GithubItemDetail> {
+  const known = github.details[detailKey({ kind: 'issue', number })]
+  if (known) return Promise.resolve(known)
+  const alsoKnown = github.details[detailKey({ kind: 'pull', number })]
+  if (alsoKnown) return Promise.resolve(alsoKnown)
+  const running = fetchesByNumber.get(number)
+  if (running) return running
+
+  const fetching = window.workbench.github
+    .item('issue', number)
+    .then((detail) => {
+      github.details = { ...github.details, [detailKey({ kind: detail.kind, number })]: detail }
+      return detail
+    })
+    .finally(() => fetchesByNumber.delete(number))
+  fetchesByNumber.set(number, fetching)
+  return fetching
+}
+
 /** (Re)load the open item's thread. */
 async function loadDetail(selection: GithubSelection, options: { silent: boolean }): Promise<void> {
   githubInternals.detailToken += 1

@@ -9,6 +9,7 @@ import AgentPane from './agent/AgentPane.svelte'
 import WorktreeChatPane from './WorktreeChatPane.svelte'
 import { initHarnessIcons } from '../../../lib/agents/harnessIcons'
 import { repoOpen } from '../guards'
+import { registerCoreShowHandlers, reportPaneTypes } from './screen.svelte'
 
 export const agents = {
   name: 'core/agents',
@@ -16,6 +17,10 @@ export const agents = {
 
   apply(ctx: Context): void {
     initHarnessIcons()
+
+    // What agents can put in front of the user, and the panes they can ask for.
+    ctx.effect(() => registerCoreShowHandlers(), 'agents:show-handlers')
+    ctx.effect(() => reportPaneTypes(), 'agents:pane-types')
 
     ctx.effect(
       () =>

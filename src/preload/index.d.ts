@@ -96,6 +96,8 @@ import type {
   HarnessCatalog,
   HarnessInfo,
   SessionEvent,
+  SessionNote,
+  PaneTypeInfo,
   SessionMeta,
   SessionSnapshot,
   SessionUpdate
@@ -363,6 +365,8 @@ export interface WorkbenchApi {
 
     listEvents: (sessionId: string, after: number) => Promise<SessionEvent[]>
     sendEvents: (sessionId: string, events: ClientEventBody[]) => Promise<{ lastSeq: number }>
+    saveNotes: (sessionId: string, notes: SessionNote[]) => Promise<void>
+    setPaneTypes: (types: PaneTypeInfo[]) => Promise<void>
 
     completeShell: (sessionId: string, line: string) => Promise<ShellCompletion[]>
     shellName: () => Promise<string>

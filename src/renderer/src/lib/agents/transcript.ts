@@ -13,11 +13,13 @@
 
 import { commandLine } from './types'
 import type {
+  AgentTask,
   ContentBlock,
   FileBlock,
   IdleReason,
   ImageBlock,
   SessionEvent,
+  SessionNote,
   SessionStatus,
   ToolPermission,
   UiNode,
@@ -143,6 +145,10 @@ export interface TranscriptState {
   status: SessionStatus
   stopReason: IdleReason | null
   lastSeq: number
+  /** The notes list, as last saved. It belongs to the session, not to a branch. */
+  notes: SessionNote[]
+  /** The harness's own plan, as last reported. */
+  tasks: AgentTask[]
 }
 
 const ROOT = 0
@@ -155,7 +161,9 @@ export function createTranscript(): TranscriptState {
     activeSeqs: new Set(),
     status: 'idle',
     stopReason: null,
-    lastSeq: 0
+    lastSeq: 0,
+    notes: [],
+    tasks: []
   }
 }
 
@@ -240,6 +248,16 @@ export function applyEvent(state: TranscriptState, event: SessionEvent): void {
   }
   // The request to branch is what moves the head, so it belongs to no branch itself.
   if (event.type === 'user.branch') {
+    return
+  }
+  // The lists above the composer are the session's, whichever branch is in
+  // play, so they are not steps in the conversation either.
+  if (event.type === 'session.notes') {
+    state.notes = event.notes
+    return
+  }
+  if (event.type === 'agent.tasks') {
+    state.tasks = event.tasks
     return
   }
 

@@ -514,3 +514,38 @@ describe('surfaces', () => {
     expect(visiblePanels(state)).toEqual([])
   })
 })
+
+describe('notes and the harness plan', () => {
+  test('keep the last version of each, outside the conversation', () => {
+    const state = fold([
+      { type: 'user.message', content: [{ type: 'text', text: 'hi' }] },
+      {
+        type: 'session.notes',
+        notes: [{ id: 'n1', text: 'Ask about the API', done: false, author: 'user' }]
+      },
+      { type: 'agent.tasks', tasks: [{ id: '1', text: 'Read', status: 'in_progress' }] },
+      { type: 'agent.tasks', tasks: [{ id: '1', text: 'Read', status: 'completed' }] }
+    ])
+
+    expect(state.notes).toEqual([
+      { id: 'n1', text: 'Ask about the API', done: false, author: 'user' }
+    ])
+    expect(state.tasks).toEqual([{ id: '1', text: 'Read', status: 'completed' }])
+    // Neither is a step in the conversation, so the head is still the message.
+    expect(state.head).toBe(1)
+    expect(textsOf(visibleItems(state))).toEqual(['hi'])
+  })
+
+  test('survive clearing the conversation', () => {
+    const state = fold([
+      { type: 'user.message', content: [{ type: 'text', text: 'hi' }] },
+      {
+        type: 'session.notes',
+        notes: [{ id: 'n1', text: 'Ask about the API', done: false, author: 'user' }]
+      },
+      { type: 'session.cleared' }
+    ])
+
+    expect(state.notes).toHaveLength(1)
+  })
+})

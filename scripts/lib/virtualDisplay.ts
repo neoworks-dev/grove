@@ -23,6 +23,8 @@ export interface VirtualDisplay {
   display: string
   /** The X server's process id. */
   pid: number
+  /** Whether a VNC viewer can attach to it: Xvnc can, Xvfb cannot. */
+  watchable: boolean
   /** Stop the server. Only meaningful for one this process started. */
   stop(): void
 }
@@ -48,8 +50,9 @@ export async function startVirtualDisplay(
   if (number === null) return null
 
   const display = `:${number}`
-  const server = spawnDisplayServer(display, options.detached === true)
-  if (!server) return null
+  const spawned = spawnDisplayServer(display, options.detached === true)
+  if (!spawned) return null
+  const server = spawned.child
 
   const ready = await waitForSocket(number)
   if (!ready) {
@@ -61,6 +64,7 @@ export async function startVirtualDisplay(
   return {
     display,
     pid: server.pid ?? 0,
+    watchable: spawned.watchable,
     stop: () => stopDisplay(number, server.pid ?? 0)
   }
 }
@@ -89,14 +93,18 @@ function stopDisplay(number: number, pid: number): void {
  * Xvnc is told to accept no connections beyond the loopback interface: this is
  * a display for a test run, not a remote desktop.
  */
-function spawnDisplayServer(display: string, detached: boolean): ChildProcess | null {
+function spawnDisplayServer(
+  display: string,
+  detached: boolean
+): { child: ChildProcess; watchable: boolean } | null {
   const geometry = `${GEOMETRY.width}x${GEOMETRY.height}x${GEOMETRY.depth}`
 
   if (hasCommand('Xvfb')) {
-    return spawnQuietly('Xvfb', [display, '-screen', '0', geometry, '-nolisten', 'tcp'], detached)
+    const args = [display, '-screen', '0', geometry, '-nolisten', 'tcp']
+    return { child: spawnQuietly('Xvfb', args, detached), watchable: false }
   }
   if (hasCommand('Xvnc')) {
-    return spawnQuietly(
+    const child = spawnQuietly(
       'Xvnc',
       [
         display,
@@ -108,8 +116,25 @@ function spawnDisplayServer(display: string, detached: boolean): ChildProcess | 
       ],
       detached
     )
+    return { child, watchable: true }
   }
   return null
+}
+
+/**
+ * Open a VNC viewer on the user's own desktop, watching a test display. It
+ * closes by itself when the display's server goes away. Returns whether one
+ * was started.
+ */
+export function openViewer(virtual: VirtualDisplay): boolean {
+  if (!virtual.watchable || !hasCommand('vncviewer')) return false
+  if (!process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) return false
+  const viewer = spawn('vncviewer', [virtual.display], { stdio: 'ignore', detached: true })
+  viewer.on('error', () => {
+    // Watching is a convenience; the run goes on without it.
+  })
+  viewer.unref()
+  return true
 }
 
 function spawnQuietly(command: string, args: string[], detached: boolean): ChildProcess {

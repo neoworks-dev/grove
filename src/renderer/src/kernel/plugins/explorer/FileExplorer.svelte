@@ -2,6 +2,7 @@
   import { tick, untrack } from 'svelte'
   import Icon from '@iconify/svelte'
   import { store } from '../../../lib/store.svelte'
+  import { dialogs } from '../../../lib/dialogs.svelte'
   import { keymap, pane } from '../../../lib/keymap.svelte'
   import { openScratch } from '../../../lib/nvim/scratch.svelte'
   import { fileIcon, folderIcon } from '../../../lib/icons'
@@ -407,8 +408,25 @@
     }
   }
 
+  /**
+   * Asks before deleting, in the app's own dialog: a native one can leave the
+   * window without a text cursor anywhere once it closes (#216).
+   */
+  async function confirmDelete(title: string, body: string): Promise<boolean> {
+    const picked = await dialogs.confirm({
+      title,
+      body,
+      actions: [
+        { id: 'delete', label: 'Delete', kind: 'danger' },
+        { id: 'cancel', label: 'Cancel' }
+      ]
+    })
+    return picked === 'delete'
+  }
+
   async function deleteNode(node: FileNode): Promise<void> {
-    if (!confirm(`Delete "${node.relPath}"? This cannot be undone.`)) return
+    const confirmed = await confirmDelete(`Delete ${node.relPath}?`, 'This cannot be undone.')
+    if (!confirmed) return
     try {
       await window.workbench.files.delete(worktreeId, node.relPath)
     } catch (err) {
@@ -423,11 +441,14 @@
     const targets = markedRows()
     if (targets.length === 0) return
     const paths = targets.map((row) => row.node.relPath)
-    const summary =
-      paths.length === 1
-        ? `Delete "${paths[0]}"?`
-        : `Delete ${paths.length} items?\n\n${paths.join('\n')}`
-    if (!confirm(`${summary}\n\nThis cannot be undone.`)) return
+    let title = `Delete ${paths[0]}?`
+    let body = 'This cannot be undone.'
+    if (paths.length > 1) {
+      title = `Delete ${paths.length} items?`
+      body = `${paths.join(', ')}. This cannot be undone.`
+    }
+    const confirmed = await confirmDelete(title, body)
+    if (!confirmed) return
     exitVisual()
     for (const path of paths) {
       try {

@@ -77,7 +77,10 @@ describe('transcript fold', () => {
   })
 
   test('a message written mid-turn waits until the agent starts its next message', () => {
-    const steered = { type: 'user.message', content: [{ type: 'text', text: 'also this' }] } as const
+    const steered = {
+      type: 'user.message',
+      content: [{ type: 'text', text: 'also this' }]
+    } as const
     const waiting = fold([
       { type: 'user.message', content: [{ type: 'text', text: 'go' }] },
       { type: 'session.status_running' },
@@ -384,7 +387,13 @@ describe('transcript fold', () => {
 
     applyEvent(
       state,
-      event({ type: 'agent.tool_result', toolUseId: 't1', name: 'bash', content: '', isError: false })
+      event({
+        type: 'agent.tool_result',
+        toolUseId: 't1',
+        name: 'bash',
+        content: '',
+        isError: false
+      })
     )
     expect(toolCallOut(state)).toBe(false)
   })

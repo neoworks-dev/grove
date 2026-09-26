@@ -29,6 +29,25 @@ do
 end
 `
 
+// Defines clear_all(): wipes every agent mark, in every buffer, along with what
+// was set up to wipe them — the autocmd watching for an edit and the
+// buffer-local Esc.
+const CLEAR_ALL_LUA = `
+local ns = vim.api.nvim_create_namespace('grove_agent_marks')
+local function clear_all()
+  pcall(vim.api.nvim_del_augroup_by_name, 'grove_agent_marks')
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_loaded(buf) then
+      vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
+      if vim.b[buf].grove_agent_marked then
+        vim.b[buf].grove_agent_marked = nil
+        pcall(vim.keymap.del, 'n', '<Esc>', { buffer = buf })
+      end
+    end
+  end
+end
+`
+
 // Mark lines start..end (1-based, inclusive) of the current buffer. The note —
 // when there is one — goes above the first line, and each annotation above the
 // line it is about, all wrapped to the window so nothing runs off its edge.
@@ -36,14 +55,14 @@ end
 // One location is open at a time, so the previous mark goes first, in whichever
 // buffer it was. Lines are clamped to the buffer, since a model can name lines
 // past the end of a file.
+//
+// The user dismisses the mark by editing the buffer or pressing Esc in normal
+// mode. The Esc is buffer-local and hands the key on once it has cleared, so
+// whatever Esc otherwise does in normal mode still happens.
 export const MARK_LINES_LUA = `
 local start_line, end_line, note, annotations = ...
-local ns = vim.api.nvim_create_namespace('grove_agent_marks')
-for _, other in ipairs(vim.api.nvim_list_bufs()) do
-  if vim.api.nvim_buf_is_loaded(other) then
-    vim.api.nvim_buf_clear_namespace(other, ns, 0, -1)
-  end
-end
+${CLEAR_ALL_LUA}
+clear_all()
 
 local buf = vim.api.nvim_get_current_buf()
 local last = vim.api.nvim_buf_line_count(buf)
@@ -101,14 +120,27 @@ end
 if above[1] and vim.fn.line('w0') == 1 then
   vim.fn.winrestview({ topline = 1, topfill = #above[1] })
 end
+
+-- Compared against the tick rather than trusting the event alone, since
+-- TextChanged can fire for a buffer nobody has typed in yet.
+local tick = vim.api.nvim_buf_get_changedtick(buf)
+vim.api.nvim_create_autocmd({ 'TextChanged', 'TextChangedI' }, {
+  group = vim.api.nvim_create_augroup('grove_agent_marks', { clear = true }),
+  buffer = buf,
+  callback = function()
+    if vim.api.nvim_buf_get_changedtick(buf) ~= tick then clear_all() end
+  end
+})
+
+vim.b[buf].grove_agent_marked = true
+vim.keymap.set('n', '<Esc>', function()
+  clear_all()
+  vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes('<Esc>', true, false, true), 'm', false)
+end, { buffer = buf, desc = 'Clear the agent marks' })
 `
 
 // Wipe every agent mark, in every buffer.
 export const CLEAR_MARKS_LUA = `
-local ns = vim.api.nvim_create_namespace('grove_agent_marks')
-for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-  if vim.api.nvim_buf_is_loaded(buf) then
-    vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
-  end
-end
+${CLEAR_ALL_LUA}
+clear_all()
 `

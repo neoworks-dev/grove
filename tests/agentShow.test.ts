@@ -1,4 +1,4 @@
-// The tools an agent uses to put something in front of the user.
+// The tools an agent uses to point the user at things.
 //
 // They only ask the renderer to show a target, so what matters here is that the
 // target they ask for is the one the model meant — whatever it wrote into the
@@ -8,7 +8,7 @@
 import { describe, expect, test } from 'bun:test'
 import { groveTools } from '../src/main/agents/tools'
 import type { GroveTool, GroveToolContext } from '../src/main/agents/harness'
-import type { ShowTarget } from '../src/shared/agents'
+import type { CodeLocation, ShowTarget } from '../src/shared/agents'
 
 const PANES = [
   { id: 'terminal', title: 'Terminal' },
@@ -27,58 +27,141 @@ function toolNamed(name: string): GroveTool {
   return tool
 }
 
+interface Surface {
+  surfaceId: string
+  slot: string
+  view: unknown
+}
+
 /** A tool context that records what the tool asked the renderer to show. */
-function recordingContext(): { context: GroveToolContext; shown: ShowTarget[] } {
+function recordingContext(): { context: GroveToolContext; shown: ShowTarget[]; surfaces: Surface[] } {
   const shown: ShowTarget[] = []
+  const surfaces: Surface[] = []
   const context: GroveToolContext = {
     sessionId: 'session-1',
     workspaceRoot: '/repo',
-    surface: () => {},
-    openFiles: () => {},
+    surface: (surfaceId, slot, view) => surfaces.push({ surfaceId, slot, view }),
     show: (target) => shown.push(target)
   }
-  return { context, shown }
+  return { context, shown, surfaces }
+}
+
+/** The locations a card view holds. */
+function locationsIn(view: unknown): CodeLocation[] {
+  return (view as { locations: CodeLocation[] }).locations
 }
 
 describe('showing the user something', () => {
   test('never stops the turn on an approval', () => {
-    for (const name of ['highlight_code', 'show_diff', 'show_github_item', 'open_pane']) {
+    for (const name of ['show_locations', 'show_diff', 'show_github_item', 'open_pane']) {
       expect(toolNamed(name).policy).toBe('allow')
     }
   })
 
-  test('marks a range with its note', async () => {
-    const { context, shown } = recordingContext()
+  test('lists locations as a card in the conversation, opening nothing', async () => {
+    const { context, shown, surfaces } = recordingContext()
 
-    await toolNamed('highlight_code').execute(
-      { path: 'src/a.ts', startLine: 12, endLine: 18, note: 'This loop never ends' },
+    const result = await toolNamed('show_locations').execute(
+      {
+        title: 'Where tokens are checked',
+        locations: [
+          { path: 'src/auth.ts', startLine: 42, endLine: 48, note: 'Expiry compared with <.' },
+          { path: 'src/session.ts' }
+        ]
+      },
       context
     )
 
-    expect(shown).toEqual([
-      { kind: 'code', path: 'src/a.ts', startLine: 12, endLine: 18, note: 'This loop never ends' }
-    ])
+    expect(result.isError).toBeUndefined()
+    expect(shown).toEqual([])
+    expect(surfaces).toHaveLength(1)
+    expect(surfaces[0].slot).toBe('transcript')
+    expect(surfaces[0].view).toMatchObject({
+      kind: 'locations',
+      title: 'Where tokens are checked',
+      locations: [
+        { path: 'src/auth.ts', startLine: 42, endLine: 48, note: 'Expiry compared with <.' },
+        { path: 'src/session.ts' }
+      ]
+    })
+  })
+
+  test('is offered up front, since it is used without being asked for', () => {
+    expect(toolNamed('show_locations').alwaysLoad).toBe(true)
+  })
+
+  test('each call gets a card of its own', async () => {
+    const { context, surfaces } = recordingContext()
+
+    await toolNamed('show_locations').execute({ locations: [{ path: 'a.ts' }] }, context)
+    await toolNamed('show_locations').execute({ locations: [{ path: 'b.ts' }] }, context)
+
+    expect(surfaces[0].surfaceId).not.toBe(surfaces[1].surfaceId)
   })
 
   test('a range without an end, or ending before it starts, is one line', async () => {
-    const { context, shown } = recordingContext()
+    const { context, surfaces } = recordingContext()
 
-    await toolNamed('highlight_code').execute({ path: 'a.ts', startLine: 7 }, context)
-    await toolNamed('highlight_code').execute({ path: 'a.ts', startLine: 7, endLine: 3 }, context)
+    await toolNamed('show_locations').execute(
+      { locations: [{ path: 'a.ts', startLine: 7 }, { path: 'a.ts', startLine: 7, endLine: 3 }] },
+      context
+    )
 
-    expect(shown).toEqual([
-      { kind: 'code', path: 'a.ts', startLine: 7, endLine: 7 },
-      { kind: 'code', path: 'a.ts', startLine: 7, endLine: 7 }
+    expect(locationsIn(surfaces[0].view)).toEqual([
+      { path: 'a.ts', startLine: 7, endLine: 7 },
+      { path: 'a.ts', startLine: 7, endLine: 7 }
     ])
   })
 
-  test('a mark without a usable line shows nothing', async () => {
-    const { context, shown } = recordingContext()
+  test('keeps line annotations, dropping the ones without a line or text', async () => {
+    const { context, surfaces } = recordingContext()
 
-    const result = await toolNamed('highlight_code').execute({ path: 'a.ts', startLine: 0 }, context)
+    await toolNamed('show_locations').execute(
+      {
+        locations: [
+          {
+            path: 'a.ts',
+            startLine: 10,
+            endLine: 20,
+            annotations: [
+              { line: 12, text: 'Off by one here.' },
+              { line: 0, text: 'No line.' },
+              { line: 14, text: '  ' }
+            ]
+          }
+        ]
+      },
+      context
+    )
+
+    expect(locationsIn(surfaces[0].view)[0].annotations).toEqual([
+      { line: 12, text: 'Off by one here.' }
+    ])
+  })
+
+  test('cuts a note longer than two or three sentences', async () => {
+    const { context, surfaces } = recordingContext()
+
+    await toolNamed('show_locations').execute(
+      { locations: [{ path: 'a.ts', note: 'word '.repeat(100) }] },
+      context
+    )
+
+    const note = locationsIn(surfaces[0].view)[0].note ?? ''
+    expect(note.length).toBe(240)
+    expect(note.endsWith('…')).toBe(true)
+  })
+
+  test('drops entries without a path, and refuses a call left with none', async () => {
+    const { context, surfaces } = recordingContext()
+
+    const result = await toolNamed('show_locations').execute(
+      { locations: [{ startLine: 3 }, 'nope'] },
+      context
+    )
 
     expect(result.isError).toBe(true)
-    expect(shown).toEqual([])
+    expect(surfaces).toEqual([])
   })
 
   test('shows the whole diff, or one file of it', async () => {
@@ -88,6 +171,18 @@ describe('showing the user something', () => {
     await toolNamed('show_diff').execute({ path: 'src/a.ts' }, context)
 
     expect(shown).toEqual([{ kind: 'diff' }, { kind: 'diff', path: 'src/a.ts' }])
+  })
+
+  test('carries a note on what to look at', async () => {
+    const { context, shown } = recordingContext()
+
+    await toolNamed('show_diff').execute({ path: 'a.ts', note: 'The retry loop is new.' }, context)
+    await toolNamed('open_pane').execute({ pane: 'terminal', note: '  ' }, context)
+
+    expect(shown).toEqual([
+      { kind: 'diff', path: 'a.ts', note: 'The retry loop is new.' },
+      { kind: 'pane', pane: 'terminal' }
+    ])
   })
 
   test('opens an issue by number', async () => {

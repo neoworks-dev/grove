@@ -245,7 +245,7 @@ export function stringOf(value: unknown): string {
 /**
  * One entry of a list-shaped field, for a header line.
  *
- * A call that takes several files — grove's own `open_files`, an edit batch —
+ * A call that takes several files — grove's own `show_locations`, an edit batch —
  * reads as the files it names, not as `[object Object]`.
  */
 function entryLabel(entry: unknown): string {

@@ -1070,15 +1070,18 @@ return vim.api.nvim_get_current_win() ~= before
       if (target.mark) {
         await window.workbench.nvim.request(id, 'nvim_exec_lua', [
           MARK_LINES_LUA,
-          [target.line, target.mark.endLine, target.mark.note ?? null]
+          [
+            target.line,
+            target.mark.endLine,
+            target.mark.note ?? null,
+            (target.mark.annotations ?? []).map((entry) => ({ line: entry.line, text: entry.text }))
+          ]
         ])
       }
     } catch {
       // session gone or file vanished
     }
-    // An agent pointing at code shows it; the user may be mid-sentence in the
-    // composer, so the keyboard stays where it is.
-    if (!target.mark) session?.focus()
+    session?.focus()
   }
 
   // Wipe the agents' marks when asked to; the first run is the pane mounting.

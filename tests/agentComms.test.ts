@@ -156,7 +156,6 @@ function context(sessionId: string): GroveToolContext {
     sessionId,
     workspaceRoot: '/repo',
     surface: () => {},
-    openFiles: () => {},
     show: () => {}
   }
 }

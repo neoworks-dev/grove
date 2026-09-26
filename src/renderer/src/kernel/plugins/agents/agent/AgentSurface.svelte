@@ -7,10 +7,20 @@
 
   import { renderMarkdown } from '../../../../lib/markdown'
   import { floatingCodeScrollbars } from '../../../../lib/markdownScrollbars'
-  import type { UiNode, UiTone } from '../../../../lib/agents/types'
+  import type { CodeLocation, UiNode, UiTone } from '../../../../lib/agents/types'
+  import AgentLocations from './AgentLocations.svelte'
   import AgentSurface from './AgentSurface.svelte'
 
-  let { node }: { node: UiNode } = $props()
+  let {
+    node,
+    root = '',
+    onOpenLocation
+  }: {
+    node: UiNode
+    /** The worktree the session runs in, for paths shown relative to it. */
+    root?: string
+    onOpenLocation?: (location: CodeLocation) => void
+  } = $props()
 
   const TONE_CLASS: Record<UiTone, string> = {
     normal: 'text-default',
@@ -33,7 +43,7 @@
 {#if node.kind === 'stack'}
   <div class="mb-2 flex flex-col gap-1">
     {#each node.children as child, index (index)}
-      <AgentSurface node={child} />
+      <AgentSurface node={child} {root} {onOpenLocation} />
     {/each}
   </div>
 {:else if node.kind === 'text'}
@@ -92,6 +102,13 @@
   >
 {:else if node.kind === 'divider'}
   <hr class="my-2 border-line" />
+{:else if node.kind === 'locations'}
+  <AgentLocations
+    title={node.title}
+    locations={node.locations}
+    {root}
+    onOpen={onOpenLocation}
+  />
 {:else if fallback}
   <p class="mb-1 whitespace-pre-wrap text-2xs text-dim">{fallback}</p>
 {/if}

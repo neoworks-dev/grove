@@ -9,7 +9,12 @@
   import Icon from '@iconify/svelte'
   import Eye from 'phosphor-svelte/lib/Eye'
   import { onDestroy, onMount } from 'svelte'
-  import { openFileInEditor, selectWorktree, store } from '../../../../lib/store.svelte'
+  import {
+    markLinesInEditor,
+    openFileInEditor,
+    selectWorktree,
+    store
+  } from '../../../../lib/store.svelte'
   import { keymap } from '../../../../lib/keymap.svelte'
   import { settings } from '../../../../lib/settings.svelte'
   import { review } from '../../../../lib/review.svelte'
@@ -40,6 +45,7 @@
   import { nextThinkingLevel } from '../../../../lib/agents/thinking'
   import type {
     ClientEventBody,
+    CodeLocation,
     ConfirmationResult,
     SessionMeta,
     SessionNote,
@@ -468,6 +474,26 @@
     openFileInEditor(worktreeId, absolute, options)
   }
 
+  /**
+   * Open a place an agent pointed at: the file, with its lines marked and the
+   * agent's notes above them, or just the file when no lines were named.
+   */
+  function openLocation(location: CodeLocation): void {
+    const worktreeId = store.selectedWorktreeId
+    if (!worktreeId) return
+    let absolute = location.path
+    if (!absolute.startsWith('/')) absolute = `${worktreePath}/${location.path}`
+    if (location.startLine === undefined) {
+      openFileInEditor(worktreeId, absolute)
+      return
+    }
+    markLinesInEditor(worktreeId, absolute, location.startLine, {
+      endLine: location.endLine ?? location.startLine,
+      note: location.note,
+      annotations: location.annotations
+    })
+  }
+
   function showChange(): void {
     if (gatedReview) void review.open(gatedReview.id)
   }
@@ -744,6 +770,7 @@
         {running}
         toggleTool={(id) => (expandedTools = { ...expandedTools, [id]: !expandedTools[id] })}
         onOpenFile={openFile}
+        onOpenLocation={openLocation}
         onOpenAgent={openAgent}
         onOpenSession={selectSession}
         subagentSessions={agentCallSessions}

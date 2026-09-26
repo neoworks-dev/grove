@@ -43,7 +43,6 @@ const CONTEXT: GroveToolContext = {
   sessionId: 'session-1',
   workspaceRoot: '/repo',
   surface: () => {},
-  openFiles: () => {},
   show: () => {}
 }
 

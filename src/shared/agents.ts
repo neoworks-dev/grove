@@ -152,9 +152,7 @@ export type ServerEventBody =
     }
   | { type: 'ui.surface'; surfaceId: string; slot: UiSlot; view: UiNode }
   | { type: 'ui.surface'; surfaceId: string; view: null }
-  /** Files the agent wants on screen, opened in the editor as the event arrives. */
-  | { type: 'ui.open_files'; files: OpenFileTarget[] }
-  /** Something else the agent wants on screen, shown as the event arrives. */
+  /** Something the agent wants on screen, shown as the event arrives. */
   | { type: 'ui.show'; target: ShowTarget }
   /** The session's notes list, whole, after the user or the agent changed it. */
   | { type: 'session.notes'; notes: SessionNote[] }
@@ -192,22 +190,37 @@ export interface PaneTypeInfo {
 }
 
 /**
- * What an agent can put in front of the user besides files. Paths are absolute
- * or relative to the session's workspace root; lines are 1-based.
+ * What an agent can open in front of the user. Paths are absolute or relative
+ * to the session's workspace root.
  */
-export type ShowTarget =
-  | { kind: 'code'; path: string; startLine: number; endLine: number; note?: string }
+export type ShowTarget = (
   | { kind: 'diff'; path?: string }
   | { kind: 'github'; number: number }
   | { kind: 'pane'; pane: string }
+) & {
+  /** What the user is looking at and why, in two or three sentences at most. */
+  note?: string
+}
 
 /**
- * One file the agent asked grove to show. The path is absolute or relative to
- * the session's workspace root, and the line — when there is one — is 1-based.
+ * A place in the code an agent points at. The path is absolute or relative to
+ * the session's workspace root; lines are 1-based and inclusive, and a location
+ * without them is the whole file.
  */
-export interface OpenFileTarget {
+export interface CodeLocation {
   path: string
-  line?: number
+  startLine?: number
+  endLine?: number
+  /** What this place is, shown on the card and above the marked lines. */
+  note?: string
+  /** Remarks on single lines, shown above each of them in the editor. */
+  annotations?: LineAnnotation[]
+}
+
+/** A remark an agent pinned to one line of a location, 1-based. */
+export interface LineAnnotation {
+  line: number
+  text: string
 }
 
 /**
@@ -235,6 +248,8 @@ export type UiNode =
   | (UiNodeBase & { kind: 'table'; columns: string[]; rows: string[][] })
   | (UiNodeBase & { kind: 'badge'; text: string; tone?: UiTone })
   | (UiNodeBase & { kind: 'divider' })
+  /** Places in the code, listed for the user to open one at a time. */
+  | (UiNodeBase & { kind: 'locations'; title?: string; locations: CodeLocation[] })
 
 export type EventBody = ClientEventBody | ServerEventBody
 

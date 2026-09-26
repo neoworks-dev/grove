@@ -9,24 +9,39 @@
   // The code moves on after the agent answers. Each place is looked up again as
   // the card comes into view and when it is picked, so a row follows its code to
   // new lines or a new name, and says so when the code it meant is gone.
+  //
+  // A card of steps is a walkthrough: numbered, started from its header, and
+  // stepped through from the editor. Picking a step jumps the walkthrough there.
   import Icon from '@iconify/svelte'
   import CrosshairIcon from 'phosphor-svelte/lib/CrosshairIcon'
+  import PathIcon from 'phosphor-svelte/lib/PathIcon'
+  import PlayIcon from 'phosphor-svelte/lib/PlayIcon'
   import { fileIcon } from '../../../../lib/icons'
   import { resolveLocations } from '../../../../lib/agents/locations'
+  import { walkthrough } from '../../../../lib/agents/walkthrough.svelte'
   import type { CodeLocation, LocationState, ResolvedLocation } from '../../../../lib/agents/types'
 
   let {
     title,
     locations,
+    steps = false,
+    cardId = '',
     root = '',
     onOpen
   }: {
     title?: string
     locations: CodeLocation[]
+    /** The locations are the steps of a walkthrough, in order. */
+    steps?: boolean
+    /** Names this card to the walkthrough, which outlives it. */
+    cardId?: string
     /** The worktree the session runs in; paths show relative to it. */
     root?: string
     onOpen?: (location: CodeLocation, state: LocationState) => void
   } = $props()
+
+  // The step on screen, while this card's walkthrough runs.
+  const currentStep = $derived(steps ? walkthrough.stepOf(cardId) : null)
 
   // A card scrolled past and back is not looked up again sooner than this.
   const RECHECK_AFTER_MS = 3000
@@ -107,16 +122,39 @@
     return `Open ${target}`
   }
 
-  /** Look one place up and open it where it is now. */
+  /** Look one place up and open it where it is now; for steps, walk to it. */
   async function open(index: number): Promise<void> {
+    if (steps) {
+      walkTo(index)
+      return
+    }
     openedIndex = index
     const [place] = await resolveLocations(root, [locations[index]])
     if (resolved) resolved[index] = place
     onOpen?.(place.location, place.state)
   }
 
+  /** Jump the running walkthrough to a step, or start this card's at it. */
+  function walkTo(index: number): void {
+    if (currentStep !== null) {
+      void walkthrough.go(index)
+      return
+    }
+    walkthrough.start(cardId, root, locations, title, index)
+  }
+
+  /** Whether a row is the place on screen. */
+  function isOpen(index: number): boolean {
+    if (steps) return currentStep === index
+    return openedIndex === index
+  }
+
   /** How many places the card holds, in words. */
   function countLabel(count: number): string {
+    if (steps) {
+      if (count === 1) return '1 step'
+      return `${count} steps`
+    }
     if (count === 1) return '1 location'
     return `${count} locations`
   }
@@ -134,12 +172,30 @@
   {@attach whenVisible}
 >
   <div class="flex items-center gap-1.5 border-b border-line px-2.5 py-1.5 text-2xs">
-    <span class="text-violet"><CrosshairIcon size={12} /></span>
+    <span class="text-violet">
+      {#if steps}
+        <PathIcon size={12} />
+      {:else}
+        <CrosshairIcon size={12} />
+      {/if}
+    </span>
     <span class="min-w-0 flex-1 truncate font-medium text-default">
       {title ?? countLabel(locations.length)}
     </span>
     {#if title}
       <span class="shrink-0 text-dim">{countLabel(locations.length)}</span>
+    {/if}
+    {#if steps && currentStep === null}
+      <button
+        class="-my-0.5 flex shrink-0 items-center gap-1 rounded bg-violet/15 px-1.5 py-0.5 font-medium text-violet transition-colors duration-100 hover:bg-violet/25"
+        title="Walk through these steps in the editor"
+        onclick={() => walkTo(0)}
+      >
+        <PlayIcon size={10} weight="fill" />
+        Start
+      </button>
+    {:else if steps}
+      <span class="shrink-0 text-violet">step {(currentStep ?? 0) + 1} on screen</span>
     {/if}
   </div>
   <ul>
@@ -148,15 +204,25 @@
       <li>
         <button
           class="flex w-full flex-col gap-0.5 border-l-2 px-2.5 py-1.5 text-left transition-colors duration-100 enabled:hover:bg-hover disabled:cursor-default"
-          class:border-l-violet={openedIndex === index}
-          class:bg-hover={openedIndex === index}
-          class:border-l-transparent={openedIndex !== index}
+          class:border-l-violet={isOpen(index)}
+          class:bg-hover={isOpen(index)}
+          class:border-l-transparent={!isOpen(index)}
           title={tooltipOf(index)}
           disabled={place.state === 'removed'}
           onclick={() => open(index)}
         >
+          {#if steps && location.title}
+            <span class="flex min-w-0 items-center gap-1.5 text-2xs">
+              <span class="w-3 shrink-0 text-center font-mono text-violet">{index + 1}</span>
+              <span class="min-w-0 truncate font-medium text-default">{location.title}</span>
+            </span>
+          {/if}
           <span class="flex min-w-0 items-center gap-1.5 font-mono text-2xs">
-            <Icon icon={fileIcon(location.path)} width="12" height="12" class="shrink-0" />
+            {#if steps && !location.title}
+              <span class="w-3 shrink-0 text-center text-violet">{index + 1}</span>
+            {:else}
+              <Icon icon={fileIcon(location.path)} width="12" height="12" class="shrink-0" />
+            {/if}
             <span
               class="min-w-0 truncate"
               class:text-default={place.state !== 'removed'}

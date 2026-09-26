@@ -9,13 +9,15 @@ import AgentsOverview from './AgentsOverview.svelte'
 import AgentPane from './agent/AgentPane.svelte'
 import AgentShellPane from './AgentShellPane.svelte'
 import WorktreeChatPane from './WorktreeChatPane.svelte'
+import WalkthroughBar from './WalkthroughBar.svelte'
+import { walkthrough } from '../../../lib/agents/walkthrough.svelte'
 import { initHarnessIcons } from '../../../lib/agents/harnessIcons'
 import { repoOpen } from '../guards'
 import { registerCoreShowHandlers, reportPaneTypes } from './screen.svelte'
 
 export const agents = {
   name: 'core/agents',
-  inject: ['sidebar', 'panes', 'panel'],
+  inject: ['sidebar', 'panes', 'panel', 'editor', 'keymap'],
 
   apply(ctx: Context): void {
     initHarnessIcons()
@@ -85,6 +87,38 @@ export const agents = {
           order: 15
         }),
       'panel:agent-shell'
+    )
+
+    // A walkthrough plays in the editor: its bar rides over the buffer, and
+    // its keys work from there. Alt with an arrow, since nvim leaves those
+    // unmapped, and only while one runs.
+    ctx.effect(
+      () => ctx.editor.registerOverlay({ id: 'agents.walkthrough', component: WalkthroughBar }),
+      'overlay:walkthrough'
+    )
+    ctx.effect(
+      () =>
+        ctx.keymap.registerBindings([
+          {
+            id: 'agents.walkthrough.next',
+            keys: '<Alt-Right>',
+            context: 'global',
+            group: 'Walkthrough',
+            description: 'Next step',
+            when: () => walkthrough.current !== null,
+            run: () => walkthrough.next()
+          },
+          {
+            id: 'agents.walkthrough.previous',
+            keys: '<Alt-Left>',
+            context: 'global',
+            group: 'Walkthrough',
+            description: 'Previous step',
+            when: () => walkthrough.current !== null,
+            run: () => walkthrough.previous()
+          }
+        ]),
+      'keymap:walkthrough'
     )
 
     // Opened from a pane's own menu or the worktree row's chat button; no rail

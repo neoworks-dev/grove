@@ -231,6 +231,8 @@ export interface CodeLocation {
   path: string
   startLine?: number
   endLine?: number
+  /** A few words naming the place, for a walkthrough step. */
+  title?: string
   /** What this place is, shown on the card and above the marked lines. */
   note?: string
   /** Remarks on single lines, shown above each of them in the editor. */
@@ -301,8 +303,17 @@ export type UiNode =
   | (UiNodeBase & { kind: 'table'; columns: string[]; rows: string[][] })
   | (UiNodeBase & { kind: 'badge'; text: string; tone?: UiTone })
   | (UiNodeBase & { kind: 'divider' })
-  /** Places in the code, listed for the user to open one at a time. */
-  | (UiNodeBase & { kind: 'locations'; title?: string; locations: CodeLocation[] })
+  /**
+   * Places in the code, listed for the user to open one at a time. With
+   * `steps`, they are a walkthrough: read in order, stepped through from the
+   * editor.
+   */
+  | (UiNodeBase & {
+      kind: 'locations'
+      title?: string
+      locations: CodeLocation[]
+      steps?: boolean
+    })
 
 export type EventBody = ClientEventBody | ServerEventBody
 

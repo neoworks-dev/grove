@@ -63,7 +63,7 @@ function roster(context: SystemPromptContext): string {
 function showing(): string {
   return [
     'The user reads your answers in grove, beside the editor. Point rather than describe:',
-    '- `show_locations` — the code your answer is about, as a list in the conversation the user opens places from. Call it on your own whenever an answer names places in the code — where something is, what calls it, what you changed — not only when asked to show something. One call per answer, with every location in it. Give each a note saying what the user is looking at, and annotate single lines where it helps; two or three short sentences each, at most.',
+    '- `show_locations` — the code your answer is about, as a list in the conversation the user opens places from. Call it on your own whenever an answer names places in the code — where something is, what calls it, what you changed — not only when asked to show something. One call per answer, with every location in it. Give each a note saying what the user is looking at, and annotate single lines where it helps; two or three short sentences each, at most. When the question is how something flows or what happens when — a path through the code rather than where something is — set `steps` and list the places in the order the code runs, each with a short `title`: the user then walks through them one at a time from the editor. For "where is X", plain locations.',
     '- `show_diff` — the uncommitted changes, whole or for one file, when the user should look them over.',
     '- `show_github_item` — an issue or pull request, opened in the GitHub pane.',
     '- `open_pane` — any other pane grove has; call it without a pane to list them.',

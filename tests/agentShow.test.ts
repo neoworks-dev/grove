@@ -34,7 +34,11 @@ interface Surface {
 }
 
 /** A tool context that records what the tool asked the renderer to show. */
-function recordingContext(): { context: GroveToolContext; shown: ShowTarget[]; surfaces: Surface[] } {
+function recordingContext(): {
+  context: GroveToolContext
+  shown: ShowTarget[]
+  surfaces: Surface[]
+} {
   const shown: ShowTarget[] = []
   const surfaces: Surface[] = []
   const context: GroveToolContext = {
@@ -86,6 +90,39 @@ describe('showing the user something', () => {
     })
   })
 
+  test('lays out a flow as steps to walk through, each with its title', async () => {
+    const { context, surfaces } = recordingContext()
+
+    const result = await toolNamed('show_locations').execute(
+      {
+        title: 'From the router to the database',
+        steps: true,
+        locations: [
+          { path: 'src/router.ts', startLine: 12, title: 'The route matches' },
+          { path: 'src/db.ts', startLine: 40, title: `  ${'A title far too long. '.repeat(5)}` }
+        ]
+      },
+      context
+    )
+
+    expect(result.content).toContain('step(s) for the user to walk through')
+    const view = surfaces[0].view as { steps?: boolean; fallbackText: string }
+    expect(view.steps).toBe(true)
+    const [first, second] = locationsIn(view)
+    expect(first.title).toBe('The route matches')
+    expect(second.title!.length).toBeLessThanOrEqual(60)
+    expect(second.title!.endsWith('…')).toBe(true)
+    expect(view.fallbackText.split('\n')[0]).toBe('1. The route matches: src/router.ts:12')
+  })
+
+  test('plain locations are not steps', async () => {
+    const { context, surfaces } = recordingContext()
+
+    await toolNamed('show_locations').execute({ locations: [{ path: 'a.ts' }] }, context)
+
+    expect((surfaces[0].view as { steps?: boolean }).steps).toBeUndefined()
+  })
+
   test('is offered up front, since it is used without being asked for', () => {
     expect(toolNamed('show_locations').alwaysLoad).toBe(true)
   })
@@ -103,7 +140,12 @@ describe('showing the user something', () => {
     const { context, surfaces } = recordingContext()
 
     await toolNamed('show_locations').execute(
-      { locations: [{ path: 'a.ts', startLine: 7 }, { path: 'a.ts', startLine: 7, endLine: 3 }] },
+      {
+        locations: [
+          { path: 'a.ts', startLine: 7 },
+          { path: 'a.ts', startLine: 7, endLine: 3 }
+        ]
+      },
       context
     )
 

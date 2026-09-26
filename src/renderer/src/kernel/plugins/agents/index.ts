@@ -3,9 +3,11 @@
 
 import Robot from 'phosphor-svelte/lib/Robot'
 import ChatCircle from 'phosphor-svelte/lib/ChatCircle'
+import TerminalWindow from 'phosphor-svelte/lib/TerminalWindow'
 import type { Context } from '@neoworks/extension-system'
 import AgentsOverview from './AgentsOverview.svelte'
 import AgentPane from './agent/AgentPane.svelte'
+import AgentShellPane from './AgentShellPane.svelte'
 import WorktreeChatPane from './WorktreeChatPane.svelte'
 import { initHarnessIcons } from '../../../lib/agents/harnessIcons'
 import { repoOpen } from '../guards'
@@ -13,7 +15,7 @@ import { registerCoreShowHandlers, reportPaneTypes } from './screen.svelte'
 
 export const agents = {
   name: 'core/agents',
-  inject: ['sidebar', 'panes'],
+  inject: ['sidebar', 'panes', 'panel'],
 
   apply(ctx: Context): void {
     initHarnessIcons()
@@ -54,6 +56,35 @@ export const agents = {
           modes: ['normal', 'insert']
         }),
       'pane:agent'
+    )
+
+    // What the session on screen's commands print, as they run. Beside the
+    // shell terminal in the bottom panel, and opened from a command's card.
+    ctx.effect(
+      () =>
+        ctx.panes.register({
+          id: 'agent-shell',
+          title: 'Agent terminal',
+          icon: TerminalWindow,
+          component: AgentShellPane,
+          containerClass: 'bg-surface',
+          minHeight: 120,
+          ownsFontScale: true,
+          keywords: 'agent terminal commands output bash shell running',
+          when: repoOpen
+        }),
+      'pane:agent-shell'
+    )
+    ctx.effect(
+      () =>
+        ctx.panel.registerTab({
+          id: 'agent-shell',
+          title: 'Agent terminal',
+          icon: TerminalWindow,
+          paneTypeId: 'agent-shell',
+          order: 15
+        }),
+      'panel:agent-shell'
     )
 
     // Opened from a pane's own menu or the worktree row's chat button; no rail

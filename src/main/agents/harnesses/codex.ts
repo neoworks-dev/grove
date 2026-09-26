@@ -9,13 +9,9 @@
 import { spawn } from 'node:child_process'
 import type { Context } from '@neoworks/extension-system'
 import type { Codex, Thread, ThreadEvent, ThreadItem } from '@openai/codex-sdk'
-import type {
-  AgentTask,
-  AgentTaskStatus,
-  ModelEntry,
-  ThinkingLevel
-} from '../../../shared/agents'
+import type { AgentTask, AgentTaskStatus, ModelEntry, ThinkingLevel } from '../../../shared/agents'
 import type { HarnessDescriptor, HarnessRun, HarnessRunOptions } from '../harness'
+import { addedOutput } from '../shellOutput'
 
 const HARNESS_ID = 'codex'
 
@@ -37,6 +33,9 @@ class CodexRun implements HarnessRun {
   resumeKey: string | null
   private thread: Thread | null = null
   private turn: AbortController | null = null
+  // Codex reports a running command's output as everything so far; this is what
+  // each one had last time, so only the rest is passed on.
+  private commandOutputs = new Map<string, string>()
 
   constructor(
     private options: HarnessRunOptions,
@@ -153,6 +152,22 @@ class CodexRun implements HarnessRun {
         message: call.progress
       })
     }
+    if (item.type === 'command_execution') this.streamCommand(item.id, item.aggregated_output)
+  }
+
+  /** Pass on what a running command printed since the last update. */
+  private streamCommand(toolUseId: string, output: string): void {
+    const previous = this.commandOutputs.get(toolUseId)
+    if (previous === undefined) this.options.shellOutput.begin(toolUseId)
+    this.options.shellOutput.append(toolUseId, addedOutput(previous ?? '', output))
+    this.commandOutputs.set(toolUseId, output)
+  }
+
+  /** A command is done: the last of its output, then the end of it. */
+  private finishCommand(toolUseId: string, output: string): void {
+    this.streamCommand(toolUseId, output)
+    this.options.shellOutput.end(toolUseId)
+    this.commandOutputs.delete(toolUseId)
   }
 
   private handleItemCompleted(item: ThreadItem): void {
@@ -175,6 +190,7 @@ class CodexRun implements HarnessRun {
 
     const call = toolCallOf(item)
     if (!call) return
+    if (item.type === 'command_execution') this.finishCommand(item.id, item.aggregated_output)
     this.options.emit({
       type: 'agent.tool_result',
       toolUseId: item.id,

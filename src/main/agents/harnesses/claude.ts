@@ -42,6 +42,12 @@ import type {
 import type { EndpointsService } from '../../endpoints'
 import { loadModelCatalog, type CatalogModel, type CatalogProvider } from '../../modelCatalog'
 import { zodShapeFromJsonSchema, type JsonSchemaObject } from '../../plugins/zodSchema'
+import {
+  forgetShellTeeSession,
+  matchBashCall,
+  shellTeeEnvironment,
+  type ShellTeeSession
+} from './claudeShellTee'
 import { ClaudeTaskList } from './claudeTasks'
 import { ClaudeUsageLedger } from './claudeUsage'
 import type {
@@ -183,6 +189,10 @@ class ClaudeRun implements HarnessRun {
   private lanes = new Map<string, SubagentIdentity>()
   private usage: ClaudeUsageLedger
   private tasks: ClaudeTaskList
+  // Bash calls that have started and not reported back, by id, with their
+  // command: what a command copied to grove as it runs is matched against.
+  private openBashCalls = new Map<string, string>()
+  private shellTee: ShellTeeSession
 
   constructor(
     private options: HarnessRunOptions,
@@ -192,6 +202,10 @@ class ClaudeRun implements HarnessRun {
     this.resumeKey = options.resumeKey
     this.usage = new ClaudeUsageLedger(options.startingStats)
     this.tasks = new ClaudeTaskList(options.startingTasks)
+    this.shellTee = {
+      callFor: (command) => matchBashCall(this.openBashCalls, command),
+      sink: options.shellOutput
+    }
   }
 
   /** Open the query and start folding its messages onto the session log. */
@@ -246,6 +260,7 @@ class ClaudeRun implements HarnessRun {
 
   async dispose(): Promise<void> {
     this.disposed = true
+    forgetShellTeeSession(this.options.sessionId, this.shellTee)
     this.queue.close()
     await this.query?.return(undefined).catch(() => {})
     this.query = null
@@ -258,7 +273,7 @@ class ClaudeRun implements HarnessRun {
     return {
       cwd: this.options.workspaceRoot,
       pathToClaudeCodeExecutable: resolveClaudeExecutable(),
-      env: await sessionEnvironment(this.options.provider, this.credentials, this.endpoints),
+      env: await this.environment(),
       model: this.options.model ?? undefined,
       resume: this.options.resumeKey ?? undefined,
       includePartialMessages: true,
@@ -400,6 +415,7 @@ class ClaudeRun implements HarnessRun {
       for (const event of events) {
         this.options.emit(event)
         this.followTasks(event)
+        this.followBashCalls(event)
       }
       return
     }
@@ -421,6 +437,31 @@ class ClaudeRun implements HarnessRun {
       changed = this.tasks.noteToolResult(event.toolUseId, event.content, event.isError)
     }
     if (changed) this.emitTasks()
+  }
+
+  /** Keep track of the Bash calls in flight, for matching the commands the tee reports. */
+  private followBashCalls(event: ServerEventBody): void {
+    if (event.type === 'agent.tool_use' && event.name === 'Bash') {
+      const command = (event.input as { command?: unknown } | null)?.command
+      if (typeof command === 'string') this.openBashCalls.set(event.toolUseId, command)
+      return
+    }
+    if (event.type === 'agent.tool_result') this.openBashCalls.delete(event.toolUseId)
+  }
+
+  /** The session's environment, plus what lets grove watch its Bash commands run. */
+  private async environment(): Promise<Record<string, string | undefined> | undefined> {
+    const session = await sessionEnvironment(
+      this.options.provider,
+      this.credentials,
+      this.endpoints
+    )
+    const tee = await shellTeeEnvironment(this.options.sessionId, this.shellTee)
+    if (Object.keys(tee).length === 0) return session
+    // The SDK replaces the child's environment rather than adding to it.
+    let base: Record<string, string | undefined> = process.env
+    if (session) base = session
+    return { ...base, ...tee }
   }
 
   /** Put the whole plan on the log as it now stands. */

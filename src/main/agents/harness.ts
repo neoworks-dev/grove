@@ -27,6 +27,7 @@ import type {
   ToolPolicy,
   Usage
 } from '../../shared/agents'
+import type { ShellOutputSink } from './shellOutput'
 
 /** What a grove-owned tool needs from the session that called it. */
 export interface GroveToolContext {
@@ -188,6 +189,13 @@ export interface HarnessRunOptions {
    * the result event it belongs to is emitted in order.
    */
   storeImage(image: PromptAttachment): ImageBlock
+  /**
+   * Report what a command the agent runs prints, as it prints it, so the user
+   * can watch it. Kept off the event log; the call's result records the output
+   * once the command is done. A harness that only learns the output at the end
+   * reports nothing here.
+   */
+  shellOutput: ShellOutputSink
 }
 
 /**

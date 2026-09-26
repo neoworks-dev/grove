@@ -52,6 +52,11 @@ export const agentRoutes = {
     route(ctx, 'agents:saveNotes', (_e, sessionId: string, notes: unknown) =>
       ctx.agents.saveNotes(sessionId, cleanNotes(notes))
     )
+    // Output of the commands a session is running, for a view that opens mid-run.
+    route(ctx, 'agents:shellOutput', (_e, sessionId: string) => ctx.agents.shellOutput(sessionId))
+    route(ctx, 'agents:interruptShell', (_e, sessionId: string, toolUseId: string) =>
+      ctx.agents.interruptShell(sessionId, toolUseId)
+    )
     route(ctx, 'agents:setPaneTypes', (_e, types: PaneTypeInfo[]) =>
       ctx.agents.setPaneTypes(types)
     )

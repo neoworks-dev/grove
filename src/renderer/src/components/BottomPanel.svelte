@@ -41,6 +41,14 @@
     updateState({ activeTab: id })
   }
 
+  // A tab asked for from elsewhere (a command's "Open in terminal").
+  $effect(() => {
+    const requested = panels.requested
+    if (!requested || !views.some((view) => view.id === requested)) return
+    selectTab(requested)
+    panels.requested = null
+  })
+
   // Keep the active tab and its mounted set in sync with the resolved view (e.g.
   // when the initial/persisted tab is gone, or a plugin registers late).
   $effect(() => {

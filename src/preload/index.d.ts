@@ -98,6 +98,7 @@ import type {
   SessionEvent,
   SessionNote,
   PaneTypeInfo,
+  ShellOutputSnapshot,
   SessionMeta,
   SessionSnapshot,
   SessionUpdate
@@ -367,6 +368,10 @@ export interface WorkbenchApi {
     sendEvents: (sessionId: string, events: ClientEventBody[]) => Promise<{ lastSeq: number }>
     saveNotes: (sessionId: string, notes: SessionNote[]) => Promise<void>
     setPaneTypes: (types: PaneTypeInfo[]) => Promise<void>
+    /** What the session's running commands have printed so far. */
+    shellOutput: (sessionId: string) => Promise<ShellOutputSnapshot[]>
+    /** Ctrl+C for a command the session is running; false when there was none. */
+    interruptShell: (sessionId: string, toolUseId: string) => Promise<boolean>
 
     completeShell: (sessionId: string, line: string) => Promise<ShellCompletion[]>
     shellName: () => Promise<string>

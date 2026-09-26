@@ -32,11 +32,14 @@ import type {
   SessionSnapshot,
   SessionUpdate,
   ShellCompletion,
+  ShellOutputSnapshot,
+  ShellOutputUpdate,
   ThinkingLevel,
   ToolInfo,
   UserContentBlock
 } from '../../shared/agents'
 import { ATTACHABLE_IMAGE_TYPES } from '../../shared/agents'
+import { ShellOutputHub } from './shellOutput'
 import * as files from '../files'
 import { PARENT_LABEL } from './handoffBridge'
 import type {
@@ -100,6 +103,8 @@ export interface AgentServiceOptions {
   sessionRemoved?: (session: StoredSession) => Promise<void>
   /** Push an event to the renderer. */
   publish(event: SessionEvent): void
+  /** Push what a running command printed to the renderer; off the log. */
+  publishShellOutput?: (update: ShellOutputUpdate) => void
   /** The harness to use when a session does not name one. */
   defaultHarness: () => string | undefined
   /** Where man-page completions generated for fish are kept. */
@@ -119,6 +124,9 @@ export class AgentService {
     open: (parentSessionId, agent) => this.openSubagentSession(parentSessionId, agent),
     absorb: (sessionId, body) => this.absorb(sessionId, body)
   })
+
+  // What the commands agents are running have printed so far.
+  private shellOutputs = new ShellOutputHub((update) => this.options.publishShellOutput?.(update))
 
   constructor(private options: AgentServiceOptions) {}
 
@@ -244,6 +252,7 @@ export class AgentService {
     const session = await this.store.get(sessionId)
     await this.stopRun(sessionId)
     this.runtimes.delete(sessionId)
+    this.shellOutputs.forgetSession(sessionId)
     await this.store.remove(sessionId)
     if (session) await this.announceRemoval(session)
   }
@@ -283,6 +292,18 @@ export class AgentService {
     return this.knownPaneTypes
   }
 
+  // ── Running commands ────────────────────────────────────────────
+
+  /** What the session's commands have printed that the log does not have yet. */
+  shellOutput(sessionId: string): ShellOutputSnapshot[] {
+    return this.shellOutputs.snapshot(sessionId)
+  }
+
+  /** Stops a command the session is running, as Ctrl+C would. */
+  interruptShell(sessionId: string, toolUseId: string): boolean {
+    return this.shellOutputs.interrupt(sessionId, toolUseId)
+  }
+
   // ── Client events ───────────────────────────────────────────────
 
   /** Accept a batch of client events, in order. */
@@ -295,13 +316,7 @@ export class AgentService {
   private async accept(sessionId: string, event: ClientEventBody): Promise<void> {
     if (event.type === 'user.tool_confirmation') {
       await this.store.append(sessionId, event)
-      await this.answerApproval(
-        sessionId,
-        event.toolUseId,
-        event.result,
-        event.input,
-        event.reason
-      )
+      await this.answerApproval(sessionId, event.toolUseId, event.result, event.input, event.reason)
       return
     }
     if (event.type === 'user.interrupt') {
@@ -817,7 +832,8 @@ export class AgentService {
       },
       startingTasks: tasksOf(this.store.peekEvents(sessionId)),
       confirm: (request) => this.requestApproval(sessionId, request),
-      storeImage: (image) => this.storeImageSync(sessionId, image)
+      storeImage: (image) => this.storeImageSync(sessionId, image),
+      shellOutput: this.shellOutputs.sinkFor(sessionId)
     })
 
     runtime.run = run
@@ -888,6 +904,7 @@ export class AgentService {
     // the tabs claiming to work forever.
     if (body.type === 'agent.tool_result') {
       await this.subagents.close(sessionId, body.toolUseId)
+      this.shellOutputs.settle(sessionId, body.toolUseId)
     }
     if (body.type === 'session.status_running') {
       runtime.status = 'running'

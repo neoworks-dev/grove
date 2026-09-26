@@ -39,6 +39,8 @@ export type {
   SessionMeta,
   SessionNote,
   SessionSnapshot,
+  ShellOutputSnapshot,
+  ShellOutputUpdate,
   ShowTarget,
   SessionStatus,
   SessionUpdate,

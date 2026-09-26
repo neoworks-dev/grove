@@ -183,6 +183,26 @@ export interface AgentTask {
   status: AgentTaskStatus
 }
 
+/**
+ * Output of a command an agent is running, streamed as it prints. Not on the
+ * event log: the call's result records the output once the command is done.
+ */
+export interface ShellOutputUpdate {
+  sessionId: string
+  toolUseId: string
+  /** Printed since the last update. */
+  text: string
+  /** False once the command has exited. */
+  running: boolean
+}
+
+/** Everything a running (or just finished) command has printed so far. */
+export interface ShellOutputSnapshot {
+  toolUseId: string
+  text: string
+  running: boolean
+}
+
 /** A kind of pane the renderer can open, as it reports them to the agents. */
 export interface PaneTypeInfo {
   id: string

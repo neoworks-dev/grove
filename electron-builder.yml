@@ -10,6 +10,8 @@ files:
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  # The qa harness's isolated profile, demo repo and screenshots.
+  - '!{.grove-test,.grove-qa}/**'
   # musl-libc variant of the bundled claude binary. Desktop AppImage targets
   # glibc, so drop it to save ~240MB. Breaks only on musl systems (Alpine).
   - '!**/node_modules/@anthropic-ai/claude-agent-sdk-linux-*-musl/**'

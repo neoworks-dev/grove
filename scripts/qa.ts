@@ -27,7 +27,7 @@ import {
 import { existsSync, mkdirSync, openSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { demoWorktreePathFor } from '../tests/e2e/fixtures/demoRepo'
 import { prepareProfile, profileAt, type GroveProfile } from '../tests/e2e/fixtures/profile'
@@ -104,9 +104,12 @@ async function start(args: string[]): Promise<void> {
     console.log('a session is already running — "qa stop" first, or "qa probe" to see it')
     return
   }
+  const packaged = packagedExecutable(args)
   if (args.includes('--fresh')) await resetProfile()
   if (args.includes('--build')) build()
-  requireBuild()
+  if (packaged === null) {
+    requireBuild()
+  }
 
   mkdirSync(paths.shots, { recursive: true })
   mkdirSync(paths.reports, { recursive: true })
@@ -124,7 +127,7 @@ async function start(args: string[]): Promise<void> {
   }
 
   const port = await freePort()
-  const appPid = launchApp(profile, virtual.display, port)
+  const appPid = launchApp(profile, virtual.display, port, packaged)
   const session: Session = {
     display: virtual.display,
     displayPid: virtual.pid,
@@ -485,7 +488,32 @@ function showLogs(args: string[]): void {
 
 // ------------------------------------------------------------------ the app
 
-function launchApp(profile: GroveProfile, display: string, port: number): number {
+/**
+ * The packaged executable `--packaged <path>` names, or null to run `out/`.
+ *
+ * A packaged build (dist/linux-unpacked/grove, or an AppImage) resolves its
+ * resources from `process.resourcesPath` and its node modules out of an asar,
+ * which `electron .` never exercises.
+ */
+function packagedExecutable(args: string[]): string | null {
+  const index = args.indexOf('--packaged')
+  if (index === -1) {
+    return null
+  }
+  const path = args[index + 1]
+  if (path === undefined || !existsSync(path)) {
+    throw new Error('usage: qa start --packaged <path to the built executable>')
+  }
+  return resolve(path)
+}
+
+/** Start the app on the profile: `out/` through electron, or a packaged executable. */
+function launchApp(
+  profile: GroveProfile,
+  display: string,
+  port: number,
+  packaged: string | null
+): number {
   const log = openSync(paths.appLog, 'a')
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
@@ -494,13 +522,19 @@ function launchApp(profile: GroveProfile, display: string, port: number): number
   }
   delete env.WAYLAND_DISPLAY
 
+  let executable = join(repoRoot, 'node_modules', '.bin', 'electron')
+  // The repo root, not out/main/index.js: electron takes the app name from
+  // the package.json beside the entry point it is handed, and out/main has
+  // none — the profile would silently move to $XDG_CONFIG_HOME/Electron.
+  let entry = ['.']
+  if (packaged !== null) {
+    executable = packaged
+    entry = []
+  }
   const child = spawn(
-    join(repoRoot, 'node_modules', '.bin', 'electron'),
+    executable,
     [
-      // The repo root, not out/main/index.js: electron takes the app name from
-      // the package.json beside the entry point it is handed, and out/main has
-      // none — the profile would silently move to $XDG_CONFIG_HOME/Electron.
-      '.',
+      ...entry,
       `--remote-debugging-port=${port}`,
       // Chromium refuses a devtools websocket from an unlisted origin, and
       // Playwright's CDP connection sends one.
@@ -1062,7 +1096,10 @@ function requireArgument(value: string | undefined, form: string): void {
 function usage(): void {
   console.log(`qa — drive grove the way a person does (bun run qa <command>)
 
-  start [--fresh] [--build]   launch a session on a display of its own
+  start [--fresh] [--build] [--packaged <executable>]
+                              launch a session on a display of its own; with
+                              --packaged, a built app (dist/linux-unpacked/grove)
+                              instead of out/
   stop                        kill the app, its children, and the display
 
 Seeing:

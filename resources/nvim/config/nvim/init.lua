@@ -1,7 +1,6 @@
--- Grove-managed Neovim config for the embedded editor pane. Lives at
--- ~/.config/grove/nvim (XDG_CONFIG_HOME=~/.config/grove) — for now a symlink
--- to the bundled resources/nvim/config/nvim, so the user's own ~/.config/nvim
--- is never touched. Grove owns tabs and the statusline, so nvim's chrome is
+-- Grove-managed Neovim config for the embedded editor pane. Grove starts nvim
+-- with `-u` on this file and XDG_CONFIG_HOME=~/.config/grove, so the user's own
+-- ~/.config/nvim is never touched. Grove owns tabs and the statusline, so nvim's chrome is
 -- disabled; the in-grid cmdline row stays (search/:s preview, wildmenu,
 -- hit-enter prompts).
 

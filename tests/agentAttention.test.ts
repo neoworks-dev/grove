@@ -26,7 +26,9 @@ describe('attentionOf', () => {
 
   test('an error or a dead session failed', () => {
     expect(attentionOf(event({ type: 'session.status_idle', stopReason: 'error' }))).toBe('failed')
-    expect(attentionOf(event({ type: 'session.status_terminated', reason: 'crash' }))).toBe('failed')
+    expect(attentionOf(event({ type: 'session.status_terminated', reason: 'crash' }))).toBe(
+      'failed'
+    )
   })
 
   test('a turn you stopped, and everything that is not a turn ending, asks nothing', () => {

@@ -64,7 +64,10 @@ async function markCount(): Promise<number> {
 
 /** Marks lines 2–3 with a note, as opening a location does. */
 async function markLines(): Promise<void> {
-  await nvim.request('nvim_exec_lua', [MARK_LINES_LUA, [2, 3, 'Look here.', [{ line: 3, text: 'And here.' }]]])
+  await nvim.request('nvim_exec_lua', [
+    MARK_LINES_LUA,
+    [2, 3, 'Look here.', [{ line: 3, text: 'And here.' }]]
+  ])
 }
 
 /** Types keys as the user would, and waits for nvim to have handled them. */

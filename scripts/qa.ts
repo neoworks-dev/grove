@@ -31,7 +31,12 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { demoWorktreePathFor } from '../tests/e2e/fixtures/demoRepo'
 import { prepareProfile, profileAt, type GroveProfile } from '../tests/e2e/fixtures/profile'
-import { displayEnv, startVirtualDisplay, stopVirtualDisplay } from './lib/virtualDisplay'
+import {
+  displayEnv,
+  openViewer,
+  startVirtualDisplay,
+  stopVirtualDisplay
+} from './lib/virtualDisplay'
 import { renderTranscript } from './qa/transcript'
 import { renderPaneTypes, renderSnapshot, type PaneTypeEntry } from './qa/tree'
 import { parseRegion, type Region } from './qa/targets'
@@ -125,6 +130,9 @@ async function start(args: string[]): Promise<void> {
         'install one (sudo pacman -S xorg-server-xvfb) or free a display.'
     )
   }
+  // Opened before the app, so start-up is on screen too.
+  let watching = false
+  if (!args.includes('--no-viewer')) watching = openViewer(virtual)
 
   const port = await freePort()
   const appPid = launchApp(profile, virtual.display, port, packaged)
@@ -141,7 +149,8 @@ async function start(args: string[]): Promise<void> {
   await waitForDebugPort(port)
   const ready = drive(session, { action: 'ready', timeout: 90_000 })
 
-  console.log(`display:   ${virtual.display}  (watch it: vncviewer ${virtual.display})`)
+  if (watching) console.log(`display:   ${virtual.display}  (vncviewer opened on it)`)
+  else console.log(`display:   ${virtual.display}  (watch it: vncviewer ${virtual.display})`)
   console.log(`profile:   ${profile.userData}`)
   console.log(`demo repo: ${demo.root}  →  ${SANDBOX_REMOTE}`)
   console.log(`app log:   ${paths.appLog}`)
@@ -1096,10 +1105,11 @@ function requireArgument(value: string | undefined, form: string): void {
 function usage(): void {
   console.log(`qa — drive grove the way a person does (bun run qa <command>)
 
-  start [--fresh] [--build] [--packaged <executable>]
+  start [--fresh] [--build] [--packaged <executable>] [--no-viewer]
                               launch a session on a display of its own; with
                               --packaged, a built app (dist/linux-unpacked/grove)
-                              instead of out/
+                              instead of out/. A VNC viewer opens on the display
+                              unless --no-viewer.
   stop                        kill the app, its children, and the display
 
 Seeing:

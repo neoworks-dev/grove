@@ -28,8 +28,9 @@ bun run qa stop             # the app, everything it spawned, and the display
 profile and the demo repo away and makes new ones. Start-up takes about half a
 minute: the app builds an nvim runtime on a cold profile.
 
-The session runs on a virtual X display (`:90`–`:99`), not the desktop. To watch
-it happen: `vncviewer :90`, with whatever display `start` printed.
+The session runs on a virtual X display (`:90`–`:99`), not the desktop. When the
+display is Xvnc, `start` opens a `vncviewer` on it so the user can watch the run;
+it closes with `stop`. `--no-viewer` leaves it closed.
 
 The profile is `.grove-test/`, the same isolated one the e2e suite and
 `scripts/test-env.ts` use — the user's own `~/.config/grove` is never opened, so

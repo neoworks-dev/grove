@@ -385,6 +385,8 @@ export interface WorkbenchApi {
     listDir: (worktreeId: string, relPath: string) => Promise<FileNode[]>
     listAll: (worktreeId: string) => Promise<string[]>
     listPath: (worktreeId: string, rawPath: string) => Promise<FileNode[]>
+    /** Of the worktree-relative paths given, the ones that are files in the worktree. */
+    existing: (worktreeId: string, relPaths: string[]) => Promise<string[]>
     read: (worktreeId: string, absPath: string) => Promise<string>
     write: (worktreeId: string, absPath: string, content: string) => Promise<void>
     create: (worktreeId: string, relPath: string) => Promise<string>

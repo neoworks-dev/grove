@@ -45,6 +45,8 @@ const MAX_ANNOTATIONS = 8
 // A note says what the user is looking at, not everything about it: two or
 // three short sentences. Longer ones are cut, so the editor stays readable.
 const MAX_NOTE_LENGTH = 240
+// A step's title names it in a bar across the editor.
+const MAX_TITLE_LENGTH = 60
 const NOTE_GUIDANCE = 'Two or three short sentences at most.'
 
 /** The schema of a note field, with what it is for. */
@@ -67,20 +69,35 @@ function locationsTool(): GroveTool {
       'never gets in the way. Always say in the note what the user is looking at — a bare ' +
       'range leaves them guessing. Put every location for one answer ' +
       'in a single call, most relevant first. This does not read the files, so keep using ' +
-      'your own read tools for that.',
+      'your own read tools for that.\n\n' +
+      'Set `steps` when the answer is a path through the code rather than a set of places — ' +
+      '"how does a request get from the router to the database", "what happens when the user ' +
+      'saves". The locations then become a walkthrough the user steps through in order from ' +
+      'the editor, one place at a time, so list them in the order the code runs and give each ' +
+      'a `title`. For "where is X", leave `steps` out.',
     inputSchema: {
       type: 'object',
       properties: {
         title: { type: 'string', description: 'What the locations are, in a few words.' },
+        steps: {
+          type: 'boolean',
+          description:
+            'The locations are steps of one flow, in order, for the user to walk through. ' +
+            'Optional; leave out for places that are not a sequence.'
+        },
         locations: {
           type: 'array',
-          description: 'The places, most relevant first.',
+          description: 'The places, most relevant first; with `steps`, in the order they run.',
           items: {
             type: 'object',
             properties: {
               path: {
                 type: 'string',
                 description: 'Absolute path, or relative to the workspace root.'
+              },
+              title: {
+                type: 'string',
+                description: 'A few words naming this step, for a walkthrough. Optional.'
               },
               startLine: { type: 'number', description: 'First line, 1-based. Optional.' },
               endLine: { type: 'number', description: 'Last line, inclusive. Optional.' },
@@ -118,14 +135,23 @@ function locationsTool(): GroveTool {
       if (listed.length === 0) return { content: 'No locations to show.', isError: true }
       const locations = await anchorLocations(context.workspaceRoot, listed)
 
+      const steps = input.steps === true
       const view: UiNode = {
         kind: 'locations',
         locations,
-        fallbackText: locations.map(describeLocation).join('\n')
+        fallbackText: describeLocations(locations, steps)
       }
       const title = textOf(input.title)
       if (title) view.title = title
+      if (steps) view.steps = true
       context.surface(`locations:${randomUUID()}`, 'transcript', view)
+      if (steps) {
+        return {
+          content:
+            `Laid out ${locations.length} step(s) for the user to walk through. They are not ` +
+            'on screen until the user starts, so say in words how the flow goes.'
+        }
+      }
       return {
         content:
           `Listed ${locations.length} location(s) for the user to open. They are not on ` +
@@ -161,6 +187,8 @@ function locationOf(value: unknown): CodeLocation | null {
     if (endLine === null || endLine < startLine) endLine = startLine
     location.endLine = endLine
   }
+  const title = titleOf(fields.title)
+  if (title) location.title = title
   const note = noteOf(fields.note)
   if (note) location.note = note
   const annotations = annotationsOf(fields.annotations)
@@ -191,6 +219,14 @@ function noteOf(value: unknown): string | null {
   return `${text.slice(0, MAX_NOTE_LENGTH - 1).trimEnd()}…`
 }
 
+/** A step's title, cut to fit the editor's walkthrough bar; null when empty. */
+function titleOf(value: unknown): string | null {
+  const text = textOf(value)
+  if (!text) return null
+  if (text.length <= MAX_TITLE_LENGTH) return text
+  return `${text.slice(0, MAX_TITLE_LENGTH - 1).trimEnd()}…`
+}
+
 /** Adds the note a model wrote to a target, when it wrote one. */
 function withNote(target: ShowTarget, value: unknown): ShowTarget {
   const note = noteOf(value)
@@ -198,9 +234,19 @@ function withNote(target: ShowTarget, value: unknown): ShowTarget {
   return { ...target, note }
 }
 
-/** One location as plain text, for a client that cannot draw the card. */
+/** The card as plain text, for a client that cannot draw it; steps are numbered. */
+function describeLocations(locations: CodeLocation[], steps: boolean): string {
+  const lines = locations.map((location, index) => {
+    if (!steps) return describeLocation(location)
+    return `${index + 1}. ${describeLocation(location)}`
+  })
+  return lines.join('\n')
+}
+
+/** One location as plain text. */
 function describeLocation(location: CodeLocation): string {
   let place = location.path
+  if (location.title) place = `${location.title}: ${place}`
   if (location.startLine !== undefined) place += `:${location.startLine}`
   if (location.endLine !== undefined && location.endLine !== location.startLine) {
     place += `-${location.endLine}`

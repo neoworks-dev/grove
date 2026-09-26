@@ -61,7 +61,13 @@ class MenuRegistry {
     }
     if (!item.commandId) return
     const command = commands.commands.find((entry) => entry.id === item.commandId)
-    if (command) void command.run()
+    if (!command) {
+      // A menu item pointing at a command nobody registered is a wiring bug;
+      // say so instead of leaving a click that does nothing.
+      console.error(`menu item ${item.id} runs unknown command ${item.commandId}`)
+      return
+    }
+    void command.run()
   }
 }
 

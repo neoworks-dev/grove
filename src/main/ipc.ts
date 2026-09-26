@@ -3,7 +3,6 @@
 // single source of truth for the API exposed via preload.
 
 import { app, dialog, BrowserWindow } from 'electron'
-import { access } from 'fs/promises'
 import { join } from 'path'
 import type { Context } from '@neoworks/extension-system'
 import { mainContext } from './kernel/context'
@@ -518,21 +517,6 @@ async function refreshWorktrees(): Promise<Worktree[]> {
   return context.worktrees
 }
 
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await access(path)
-    return true
-  } catch {
-    return false
-  }
-}
-
-// Any agent-instruction file at the repo root suppresses the intro page.
-async function hasAgentsFile(root: string): Promise<boolean> {
-  if (await pathExists(join(root, 'AGENTS.md'))) return true
-  return pathExists(join(root, 'CLAUDE.md'))
-}
-
 // Open a repo: validate, load config, remember it, list worktrees.
 async function openRepo(repoPath: string): Promise<{
   info: RepoInfo
@@ -555,9 +539,7 @@ async function openRepo(repoPath: string): Promise<{
     info: {
       path: root,
       name: root.split('/').pop() || root,
-      currentBranch: await git.currentBranch(root),
-      hasAgentsFile: await hasAgentsFile(root),
-      hasConfig: await config.configExists(root)
+      currentBranch: await git.currentBranch(root)
     },
     worktrees: list
   }

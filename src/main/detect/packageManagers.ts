@@ -1,6 +1,5 @@
-// Which package manager a JavaScript project uses, read off its lockfile. Shared
-// by service detection (how a script is run) and worktree setup (how
-// dependencies are installed), so the two can never disagree.
+// Which package manager a JavaScript project uses, read off its lockfile, so
+// worktree setup installs dependencies with the right one.
 
 /** A lockfile and the package manager that writes it. */
 export interface LockfileManager {

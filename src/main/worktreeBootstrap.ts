@@ -1,6 +1,6 @@
 // What a new worktree needs before anything runs in it, beyond what git checks
 // out: the env files git never tracked, and installed dependencies. Both are on
-// unless workbench.yaml turns them off.
+// unless grove.config.yaml turns them off.
 
 import { copyFile, mkdir, readdir, access } from 'fs/promises'
 import { basename, dirname, join } from 'path'

@@ -2,7 +2,7 @@
 //
 // `saveConfig` uses js-yaml's `dump`, which strips every comment and reorders
 // keys — a config written that way is worse than the commented sample it would
-// replace, and workbench.yaml is a file the user is expected to keep editing by
+// replace, and grove.config.yaml is a file the user is expected to keep editing by
 // hand. So the wizard renders its own text: fixed section order, the same
 // explanatory comments the sample carries, and values quoted only where YAML
 // requires it.

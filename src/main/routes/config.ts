@@ -1,4 +1,4 @@
-// The repository's workbench.yaml: read it and seed it.
+// The repository's grove.config.yaml: read it and seed it.
 
 import type { Context } from '@neoworks/extension-system'
 import { route } from '../kernel/route'

@@ -11,7 +11,7 @@ Not a terminal-first app — terminals/exec are implementation details behind a 
 - **Worktrees** — list, create (from a base branch, optionally a new branch), remove,
   with per-worktree dirty status and current branch. All operations shell out to the
   Git CLI (via `simple-git`); no custom Git behavior.
-- **Config** — a YAML file (`workbench.yaml`) at the repo root defines setup commands,
+- **Config** — a YAML file (`grove.config.yaml`) at the repo root defines setup commands,
   named services, per-service commands / logs / preview URLs / health checks, agents,
   and deterministic port allocation.
 - **Service supervisor** — start/stop/restart services per worktree, capture output to

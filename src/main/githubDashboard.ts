@@ -911,10 +911,15 @@ export async function fetchItem(
     .map(toEntry)
     .filter((entry): entry is GithubTimelineEntry => entry !== null)
     .sort((a, b) => a.at.localeCompare(b.at))
+  // The query answers for either kind, so what came back says which it is — a
+  // caller that only had a number asks as if for an issue.
+  let resolvedKind = kind
+  if (node.__typename === 'PullRequest') resolvedKind = 'pull'
+  if (node.__typename === 'Issue') resolvedKind = 'issue'
   return {
     ...optionalMetadata(node),
     ...relationships(node),
-    kind,
+    kind: resolvedKind,
     id: node.id,
     viewerSubscription: node.viewerSubscription,
     locked: node.locked,

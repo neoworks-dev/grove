@@ -23,10 +23,12 @@ import type {
   HarnessInfo,
   ImageBlock,
   ModelEntry,
+  PaneTypeInfo,
   QueuedMessage,
   ServerEventBody,
   SessionEvent,
   SessionMeta,
+  SessionNote,
   SessionSnapshot,
   SessionUpdate,
   ShellCompletion,
@@ -59,6 +61,7 @@ import {
 } from './store'
 import { isSubagentSession, SUBAGENT_LABEL, SubagentSessions } from './subagents'
 import { interruptedTurn } from './interruptedTurn'
+import { notesOf, tasksOf } from './notes'
 
 const BLOBS_DIR = 'blobs'
 
@@ -105,6 +108,7 @@ export interface AgentServiceOptions {
 
 export class AgentService {
   private runtimes = new Map<string, Runtime>()
+  private knownPaneTypes: PaneTypeInfo[] = []
 
   /**
    * The sessions standing for the agents harnesses run inside their tool calls.
@@ -252,6 +256,31 @@ export class AgentService {
 
   listEvents(sessionId: string, after = 0): Promise<SessionEvent[]> {
     return this.store.eventsSince(sessionId, after)
+  }
+
+  // ── Notes ───────────────────────────────────────────────────────
+
+  /** The session's notes list, as last saved by the user or its agent. */
+  async notes(sessionId: string): Promise<SessionNote[]> {
+    await this.store.require(sessionId)
+    return notesOf(this.store.peekEvents(sessionId))
+  }
+
+  /** Replace the session's notes list; the log keeps every version. */
+  async saveNotes(sessionId: string, notes: SessionNote[]): Promise<void> {
+    await this.store.append(sessionId, { type: 'session.notes', notes })
+  }
+
+  // ── What agents can show ────────────────────────────────────────
+
+  /** Record the panes the renderer can open, which it reports as plugins register them. */
+  setPaneTypes(types: PaneTypeInfo[]): void {
+    this.knownPaneTypes = types
+  }
+
+  /** The panes an agent may ask to open. */
+  paneTypes(): PaneTypeInfo[] {
+    return this.knownPaneTypes
   }
 
   // ── Client events ───────────────────────────────────────────────
@@ -786,6 +815,7 @@ export class AgentService {
         cost: session.cost,
         processTotals: session.processTotals ?? null
       },
+      startingTasks: tasksOf(this.store.peekEvents(sessionId)),
       confirm: (request) => this.requestApproval(sessionId, request),
       storeImage: (image) => this.storeImageSync(sessionId, image)
     })

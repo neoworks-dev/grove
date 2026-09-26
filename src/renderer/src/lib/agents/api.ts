@@ -15,6 +15,7 @@ import type {
   HarnessInfo,
   SessionEvent,
   SessionMeta,
+  SessionNote,
   SessionSnapshot,
   SessionUpdate
 } from './types'
@@ -61,6 +62,11 @@ export function sendEvents(
   events: ClientEventBody[]
 ): Promise<{ lastSeq: number }> {
   return agents().sendEvents(sessionId, events)
+}
+
+/** Replace a session's notes list. */
+export function saveNotes(sessionId: string, notes: SessionNote[]): Promise<void> {
+  return agents().saveNotes(sessionId, notes)
 }
 
 /**

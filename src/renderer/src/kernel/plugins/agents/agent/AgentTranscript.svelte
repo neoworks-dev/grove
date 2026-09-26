@@ -30,6 +30,7 @@
   import type { ToolItem, TranscriptItem } from '../../../../lib/agents/transcript'
   import type { ToolInfo } from '../../../../lib/agents/types'
   import AgentImage from './AgentImage.svelte'
+  import AgentMessageCards from './AgentMessageCards.svelte'
   import AgentToolCall from './AgentToolCall.svelte'
   import AgentSurface from './AgentSurface.svelte'
 
@@ -344,6 +345,7 @@
           <!-- eslint-disable-next-line svelte/no-at-html-tags -->
           {@html renderMarkdown(item.text)}
         </div>
+        <AgentMessageCards text={item.text} />
       {/if}
     </div>
   {:else if item.kind === 'tool'}

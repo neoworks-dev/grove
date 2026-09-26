@@ -1166,6 +1166,11 @@ local function apply_chrome(palette)
   set(0, 'DiffAdd', { bg = blend(palette.surface, palette.ctxGreen, 0.22) })
   set(0, 'DiffDelete', { bg = blend(palette.surface, palette.ctxRed, 0.22) })
   set(0, 'DiffChange', { bg = blend(palette.surface, palette.ctxAmber, 0.22) })
+  -- Lines an agent marked for the user to look at: a violet wash, a bar in the
+  -- sign column, and its note above them in the same colour.
+  set(0, 'GroveAgentMark', { bg = blend(palette.surface, palette.ctxViolet, 0.16) })
+  set(0, 'GroveAgentMarkSign', { fg = palette.ctxViolet, bg = palette.surface })
+  set(0, 'GroveAgentMarkNote', { fg = palette.ctxViolet, italic = true })
 
   -- Terminal ANSI palette (0-15) dynamically bound to Grove's theme tokens
   vim.g.terminal_color_0 = palette.surface

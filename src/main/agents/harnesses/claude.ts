@@ -42,6 +42,7 @@ import type {
 import type { EndpointsService } from '../../endpoints'
 import { loadModelCatalog, type CatalogModel, type CatalogProvider } from '../../modelCatalog'
 import { zodShapeFromJsonSchema, type JsonSchemaObject } from '../../plugins/zodSchema'
+import { ClaudeTaskList } from './claudeTasks'
 import { ClaudeUsageLedger } from './claudeUsage'
 import type {
   GroveTool,
@@ -181,6 +182,7 @@ class ClaudeRun implements HarnessRun {
   // grove opens for it is named after the work rather than after a call id.
   private lanes = new Map<string, SubagentIdentity>()
   private usage: ClaudeUsageLedger
+  private tasks: ClaudeTaskList
 
   constructor(
     private options: HarnessRunOptions,
@@ -189,6 +191,7 @@ class ClaudeRun implements HarnessRun {
   ) {
     this.resumeKey = options.resumeKey
     this.usage = new ClaudeUsageLedger(options.startingStats)
+    this.tasks = new ClaudeTaskList(options.startingTasks)
   }
 
   /** Open the query and start folding its messages onto the session log. */
@@ -335,7 +338,8 @@ class ClaudeRun implements HarnessRun {
           workspaceRoot: this.options.workspaceRoot,
           surface: (surfaceId, slot, view) =>
             this.options.emit({ type: 'ui.surface', surfaceId, slot, view } as ServerEventBody),
-          openFiles: (files) => this.options.emit({ type: 'ui.open_files', files })
+          openFiles: (files) => this.options.emit({ type: 'ui.open_files', files }),
+          show: (target) => this.options.emit({ type: 'ui.show', target })
         })
         return { content: [{ type: 'text' as const, text: result.content }] }
       }
@@ -393,11 +397,35 @@ class ClaudeRun implements HarnessRun {
    */
   private report(parentToolUseId: string | null, events: ServerEventBody[]): void {
     if (!parentToolUseId) {
-      for (const event of events) this.options.emit(event)
+      for (const event of events) {
+        this.options.emit(event)
+        this.followTasks(event)
+      }
       return
     }
     const agent = this.laneOf(parentToolUseId)
     for (const event of events) this.options.emitFrom(agent, event)
+  }
+
+  /**
+   * Keep Claude's plan on the log. Its task tools change the list one call at a
+   * time; the list is put out whole after each change, so the renderer and the
+   * next run both read it from the last `agent.tasks` alone.
+   */
+  private followTasks(event: ServerEventBody): void {
+    let changed = false
+    if (event.type === 'agent.tool_use') {
+      changed = this.tasks.noteToolUse(event.toolUseId, event.name, event.input)
+    }
+    if (event.type === 'agent.tool_result') {
+      changed = this.tasks.noteToolResult(event.toolUseId, event.content, event.isError)
+    }
+    if (changed) this.emitTasks()
+  }
+
+  /** Put the whole plan on the log as it now stands. */
+  private emitTasks(): void {
+    this.options.emit({ type: 'agent.tasks', tasks: this.tasks.current() })
   }
 
   /**
@@ -465,6 +493,7 @@ class ClaudeRun implements HarnessRun {
     if (message.type === 'conversation_reset') {
       this.resumeKey = message.new_conversation_id
       this.options.emit({ type: 'session.cleared' })
+      if (this.tasks.clear()) this.emitTasks()
       return true
     }
     if (message.type !== 'system') return false

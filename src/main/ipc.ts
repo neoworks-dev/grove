@@ -151,7 +151,9 @@ const sessionStore = new SessionStore(join(app.getPath('userData'), 'agents'), (
 const agents = new AgentService({
   store: sessionStore,
   harnesses,
-  tools: () => groveTools({ chat: channel, roster: agentRoster }),
+  // The service keeps the notes and knows the renderer's panes, so the tools it
+  // runs reach back into it.
+  tools: () => groveTools({ chat: channel, roster: agentRoster, notes: agents, screen: agents }),
   systemPrompt: (session) => buildSystemPrompt(session),
   sessionRemoved: (session) => agentHandoffBridge.reportClosed(session),
   publish: (event) => send('event:agent-event', event),

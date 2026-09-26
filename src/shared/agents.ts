@@ -154,6 +154,52 @@ export type ServerEventBody =
   | { type: 'ui.surface'; surfaceId: string; view: null }
   /** Files the agent wants on screen, opened in the editor as the event arrives. */
   | { type: 'ui.open_files'; files: OpenFileTarget[] }
+  /** Something else the agent wants on screen, shown as the event arrives. */
+  | { type: 'ui.show'; target: ShowTarget }
+  /** The session's notes list, whole, after the user or the agent changed it. */
+  | { type: 'session.notes'; notes: SessionNote[] }
+  /** The plan the harness keeps for itself, whole, after it changed. */
+  | { type: 'agent.tasks'; tasks: AgentTask[] }
+
+/**
+ * One entry on a session's notes list: a reminder of what is still to do,
+ * written by the user or by the agent through grove's note tools.
+ */
+export interface SessionNote {
+  id: string
+  text: string
+  done: boolean
+  author: 'user' | 'agent'
+}
+
+export type AgentTaskStatus = 'pending' | 'in_progress' | 'completed'
+
+/**
+ * One step of the plan a harness keeps on its own — Claude's tasks, Codex's
+ * to-do list. The harness owns it, so it is shown beside the notes but only the
+ * harness changes it.
+ */
+export interface AgentTask {
+  id: string
+  text: string
+  status: AgentTaskStatus
+}
+
+/** A kind of pane the renderer can open, as it reports them to the agents. */
+export interface PaneTypeInfo {
+  id: string
+  title: string
+}
+
+/**
+ * What an agent can put in front of the user besides files. Paths are absolute
+ * or relative to the session's workspace root; lines are 1-based.
+ */
+export type ShowTarget =
+  | { kind: 'code'; path: string; startLine: number; endLine: number; note?: string }
+  | { kind: 'diff'; path?: string }
+  | { kind: 'github'; number: number }
+  | { kind: 'pane'; pane: string }
 
 /**
  * One file the agent asked grove to show. The path is absolute or relative to

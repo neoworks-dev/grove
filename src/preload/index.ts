@@ -221,6 +221,9 @@ const workbench = {
       ipcRenderer.invoke('agents:listEvents', sessionId, after),
     sendEvents: (sessionId: string, events: unknown) =>
       ipcRenderer.invoke('agents:sendEvents', sessionId, events),
+    saveNotes: (sessionId: string, notes: unknown) =>
+      ipcRenderer.invoke('agents:saveNotes', sessionId, notes),
+    setPaneTypes: (types: unknown) => ipcRenderer.invoke('agents:setPaneTypes', types),
 
     completeShell: (sessionId: string, line: string) =>
       ipcRenderer.invoke('agents:completeShell', sessionId, line),

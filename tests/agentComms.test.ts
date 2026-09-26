@@ -133,6 +133,9 @@ function testRoster(
   return { roster, delivered, created, removed }
 }
 
+// The note and show tools are not what these tests are about.
+const NO_SCREEN = { notes: {} as never, screen: { paneTypes: () => [] } }
+
 function toolNamed(name: string, roster: AgentRoster, posted: Posted[]): GroveTool {
   const chat = {
     post: (_root: string, from: { name: string }, text: string, to?: string) => {
@@ -141,13 +144,21 @@ function toolNamed(name: string, roster: AgentRoster, posted: Posted[]): GroveTo
     },
     list: () => Promise.resolve([])
   }
-  const tool = groveTools({ chat: chat as never, roster }).find((entry) => entry.name === name)
+  const tool = groveTools({ chat: chat as never, roster, ...NO_SCREEN }).find(
+    (entry) => entry.name === name
+  )
   if (!tool) throw new Error(`${name} is not offered`)
   return tool
 }
 
 function context(sessionId: string): GroveToolContext {
-  return { sessionId, workspaceRoot: '/repo', surface: () => {}, openFiles: () => {} }
+  return {
+    sessionId,
+    workspaceRoot: '/repo',
+    surface: () => {},
+    openFiles: () => {},
+    show: () => {}
+  }
 }
 
 describe('addressing another agent', () => {
@@ -332,7 +343,11 @@ describe('starting another agent', () => {
   test('is the only tool that asks first', () => {
     const { roster } = testRoster([sessionMeta('a', 'Planner')])
     const posted: Posted[] = []
-    const asking = groveTools({ chat: { post: () => {}, list: () => [] } as never, roster })
+    const asking = groveTools({
+      chat: { post: () => {}, list: () => [] } as never,
+      roster,
+      ...NO_SCREEN
+    })
       .filter((tool) => tool.policy === 'ask')
       .map((tool) => tool.name)
 

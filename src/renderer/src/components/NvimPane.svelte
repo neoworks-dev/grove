@@ -4,7 +4,8 @@
   // lives in NvimCanvasSession; this component adds the editor-specific chrome
   // (buffer tabs, minimap) and effects (tab follow, reveal, theme, keymap sync).
   import { onMount, onDestroy } from 'svelte'
-  import { store } from '../lib/store.svelte'
+  import { store, type RevealTarget } from '../lib/store.svelte'
+  import { CLEAR_MARKS_LUA, MARK_LINES_LUA } from '../lib/nvim/agentMarks'
   import { layout } from '../lib/layout.svelte'
   import { keymap, type Direction } from '../lib/keymap.svelte'
   import { commands } from '../lib/commands.svelte'
@@ -1049,25 +1050,46 @@ return vim.api.nvim_get_current_win() ~= before
     store.revealTarget = null
     if (hasViewer(target.path)) return
     lastPushedPath = target.path
-    void revealLine(target.path, target.line)
+    void revealLine(target)
   })
 
-  async function revealLine(path: string, line: number): Promise<void> {
+  async function revealLine(target: RevealTarget): Promise<void> {
     const id = session?.id
     if (!id) return
     try {
-      await window.workbench.nvim.request(id, 'nvim_cmd', [{ cmd: 'edit', args: [path] }, {}])
-      await window.workbench.nvim.request(id, 'nvim_win_set_cursor', [0, [line, 0]])
+      await window.workbench.nvim.request(id, 'nvim_cmd', [
+        { cmd: 'edit', args: [target.path] },
+        {}
+      ])
+      await window.workbench.nvim.request(id, 'nvim_win_set_cursor', [0, [target.line, 0]])
       // Center the target line and drop to the first non-blank column.
       await window.workbench.nvim.request(id, 'nvim_cmd', [
         { cmd: 'normal', args: ['zz^'], bang: true },
         {}
       ])
+      if (target.mark) {
+        await window.workbench.nvim.request(id, 'nvim_exec_lua', [
+          MARK_LINES_LUA,
+          [target.line, target.mark.endLine, target.mark.note ?? null]
+        ])
+      }
     } catch {
       // session gone or file vanished
     }
-    session?.focus()
+    // An agent pointing at code shows it; the user may be mid-sentence in the
+    // composer, so the keyboard stays where it is.
+    if (!target.mark) session?.focus()
   }
+
+  // Wipe the agents' marks when asked to; the first run is the pane mounting.
+  let seenMarksGeneration = store.agentMarksGeneration
+  $effect(() => {
+    const generation = store.agentMarksGeneration
+    const id = session?.id
+    if (!id || generation === seenMarksGeneration) return
+    seenMarksGeneration = generation
+    void window.workbench.nvim.request(id, 'nvim_exec_lua', [CLEAR_MARKS_LUA, []]).catch(() => {})
+  })
 
   // Restyle nvim when grove's theme changes.
   $effect(() => {

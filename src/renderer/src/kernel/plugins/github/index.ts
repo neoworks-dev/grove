@@ -10,7 +10,12 @@ import GithubPrCommentBox from './GithubPrCommentBox.svelte'
 import { CENTER_SLOT } from '../../../lib/paneSlots'
 import { repoOpen } from '../guards'
 import { onPrReviewKey } from './prReview'
-import { handlePrReviewKey } from './store.svelte'
+import { handlePrReviewKey, openItemByNumber } from './store.svelte'
+import { layout } from '../../../lib/layout.svelte'
+import { registerShowHandler } from '../../../lib/agents/show'
+import { messageCards } from '../../../lib/agents/messageCards.svelte'
+import GithubReferenceCard from './GithubReferenceCard.svelte'
+import { githubReferences } from './references'
 
 export const githubDashboard = {
   name: 'core/github',
@@ -43,5 +48,26 @@ export const githubDashboard = {
     )
 
     onPrReviewKey(handlePrReviewKey)
+
+    // An agent pointing at an issue or pull request opens it here.
+    ctx.effect(
+      () =>
+        registerShowHandler('github', async (_worktree, target) => {
+          layout.ensurePane('github')
+          await openItemByNumber(target.number)
+        }),
+      'agents:show-github'
+    )
+
+    // An issue or pull request an agent's message names gets a card under it.
+    ctx.effect(
+      () =>
+        messageCards.register({
+          id: 'github',
+          find: githubReferences,
+          component: GithubReferenceCard
+        }),
+      'agents:github-cards'
+    )
   }
 }

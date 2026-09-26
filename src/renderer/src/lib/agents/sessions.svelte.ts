@@ -23,7 +23,8 @@ import { untrack } from 'svelte'
 import { openStream } from './stream'
 import { attentionOf, type SessionAttention } from './attention'
 import type { AgentMode } from './modes'
-import { openFileAtLine, openFileInEditor, store } from '../store.svelte'
+import { clearAgentMarks, openFileAtLine, openFileInEditor, store } from '../store.svelte'
+import { showTarget } from './show'
 import {
   applyEvent,
   createTranscript,
@@ -38,7 +39,8 @@ import type {
   SessionEvent,
   SessionMeta,
   SessionSnapshot,
-  SessionUpdate
+  SessionUpdate,
+  ShowTarget
 } from './types'
 
 // Each open session keeps its transcript folded in memory for as long as it is
@@ -445,6 +447,9 @@ class AgentSessions {
       applyEvent(session.transcript, event)
       if (this.viewing !== session.id && isUnreadEvent(event)) session.unread += 1
       if (event.type === 'ui.open_files') this.openFiles(session.id, event.files)
+      if (event.type === 'ui.show') this.show(session.id, event.target)
+      // What the agent pointed at was for the answer the user is now replying to.
+      if (event.type === 'user.message' && this.viewing === session.id) clearAgentMarks()
       // Usage and the queue only live in the snapshot, so a turn boundary is
       // worth a re-read — and so is every response, which is when the harness
       // counts its tokens.
@@ -473,6 +478,17 @@ class AgentSessions {
       if (typeof target.line === 'number') openFileAtLine(worktree.id, path, target.line)
       else openFileInEditor(worktree.id, path)
     }
+  }
+
+  /**
+   * Put what an agent pointed at on screen — under the same rule as opening
+   * files: only for the session the user is looking at.
+   */
+  private show(sessionId: string, target: ShowTarget): void {
+    if (this.viewing !== sessionId) return
+    const worktree = this.worktreeOf(sessionId)
+    if (!worktree) return
+    void showTarget(worktree, target).catch((cause: unknown) => store.setError(messageOf(cause)))
   }
 
   /** The open worktree a session belongs to, or null when grove has no such tab. */

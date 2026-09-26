@@ -34,6 +34,7 @@ export function groveSystemPrompt(context: SystemPromptContext): string {
     identity(context),
     roster(context),
     coordination(context),
+    showing(),
     'Everything above is grove, the editor hosting this session. The user sees the same channel you post on.'
   ]
   return sections.join('\n\n')
@@ -56,6 +57,20 @@ function roster(context: SystemPromptContext): string {
       `- ${peer.agentId} — "${peer.title}" (${peer.harness}, ${peer.model || 'default model'})`
   )
   return ['Also working in this worktree, id first:', ...lines].join('\n')
+}
+
+/** The tools for pointing the user at things, and the notes list they share. */
+function showing(): string {
+  return [
+    'The user reads your answers in grove, beside the editor. Show rather than describe:',
+    '- `open_files` and `highlight_code` — put the code you are talking about on screen; `highlight_code` marks the lines, with a note above them.',
+    '- `show_diff` — the uncommitted changes, whole or for one file, when the user should look them over.',
+    '- `show_github_item` — an issue or pull request, opened in the GitHub pane.',
+    '- `open_pane` — any other pane grove has; call it without a pane to list them.',
+    'These only change the screen while the user is looking at this conversation, so still say in words what you showed.',
+    '',
+    'Above the composer the user keeps a notes list of what is still to do; your own task list is shown beside it. `read_notes` reads it, `add_note` pins a reminder the user should keep in view, and `update_note` ticks one off once it is done — the user’s own included.'
+  ].join('\n')
 }
 
 function coordination(context: SystemPromptContext): string {

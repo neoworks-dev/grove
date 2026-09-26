@@ -3,7 +3,13 @@
 import type { Context } from '@neoworks/extension-system'
 import { route } from '../kernel/route'
 import { registerAgentProtocol } from '../agents/protocol'
-import type { ClientEventBody, CreateSessionOptions, SessionUpdate } from '../../shared/agents'
+import { cleanNotes } from '../agents/notes'
+import type {
+  ClientEventBody,
+  CreateSessionOptions,
+  PaneTypeInfo,
+  SessionUpdate
+} from '../../shared/agents'
 
 export const agentRoutes = {
   name: 'main/routes/agents',
@@ -42,6 +48,12 @@ export const agentRoutes = {
     )
     route(ctx, 'agents:sendEvents', (_e, sessionId: string, events: ClientEventBody[]) =>
       ctx.agents.send(sessionId, events)
+    )
+    route(ctx, 'agents:saveNotes', (_e, sessionId: string, notes: unknown) =>
+      ctx.agents.saveNotes(sessionId, cleanNotes(notes))
+    )
+    route(ctx, 'agents:setPaneTypes', (_e, types: PaneTypeInfo[]) =>
+      ctx.agents.setPaneTypes(types)
     )
 
     // ── Composer helpers ──────────────────────────────────────────

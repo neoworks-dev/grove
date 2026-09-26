@@ -6,6 +6,8 @@
 
 export type {
   AgentMode,
+  AgentTask,
+  AgentTaskStatus,
   BlobDescriptor,
   ClientEventBody,
   CommandInfo,
@@ -34,7 +36,9 @@ export type {
   ServerEventBody,
   SessionEvent,
   SessionMeta,
+  SessionNote,
   SessionSnapshot,
+  ShowTarget,
   SessionStatus,
   SessionUpdate,
   SkillInfo,

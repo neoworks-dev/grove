@@ -45,6 +45,14 @@ export interface TabDiff {
   right: string
 }
 
+// A line for the editor to bring into view once the file is loaded, and — when
+// an agent pointed at it — the range to mark from there, with its note.
+export interface RevealTarget {
+  path: string
+  line: number
+  mark?: { endLine: number; note?: string }
+}
+
 export interface EditorTab {
   worktreeId: string
   path: string // absolute file path, or a synthetic `scratch://…` key
@@ -121,7 +129,11 @@ class WorkbenchStore {
 
   // Set when opening a file at a specific line (ripgrep search) → the editor
   // scrolls the cursor there once the file is loaded.
-  revealTarget = $state<{ path: string; line: number } | null>(null)
+  revealTarget = $state<RevealTarget | null>(null)
+
+  // Bumped to wipe every range agents marked in the editor; the editor pane
+  // clears its marks whenever this changes.
+  agentMarksGeneration = $state(0)
 
   // One-shot request to expand/select a worktree-relative path in the file
   // explorer (breadcrumb clicks); the explorer consumes and clears it.
@@ -333,6 +345,28 @@ export function openFileInEditor(
 export function openFileAtLine(worktreeId: string, path: string, line: number): void {
   openFileInEditor(worktreeId, path)
   store.revealTarget = { path, line }
+}
+
+/**
+ * Open a file and mark lines in it for the user to look at, with a note above
+ * them. The marks stay until `clearAgentMarks` wipes them.
+ */
+export function markLinesInEditor(
+  worktreeId: string,
+  path: string,
+  mark: { startLine: number; endLine: number; note?: string }
+): void {
+  openFileInEditor(worktreeId, path, { focus: false })
+  store.revealTarget = {
+    path,
+    line: mark.startLine,
+    mark: { endLine: mark.endLine, note: mark.note }
+  }
+}
+
+/** Wipe every range an agent marked in the editor. */
+export function clearAgentMarks(): void {
+  store.agentMarksGeneration += 1
 }
 
 // Queue text for insertion into the agent composer at its caret, optionally with

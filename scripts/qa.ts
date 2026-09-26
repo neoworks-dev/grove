@@ -32,6 +32,7 @@ import { fileURLToPath } from 'node:url'
 import { demoWorktreePathFor } from '../tests/e2e/fixtures/demoRepo'
 import { prepareProfile, profileAt, type GroveProfile } from '../tests/e2e/fixtures/profile'
 import {
+  closeViewers,
   displayEnv,
   openViewer,
   startVirtualDisplay,
@@ -164,7 +165,10 @@ async function stop(): Promise<void> {
   const profile = profileAt(TEST_ROOT)
 
   const killed = killProfileProcesses(profile)
-  if (session) stopVirtualDisplay(session.display, session.displayPid)
+  if (session) {
+    closeViewers(session.display)
+    stopVirtualDisplay(session.display, session.displayPid)
+  }
   await rm(paths.session, { force: true })
 
   console.log(`stopped ${killed} of the test profile's processes`)

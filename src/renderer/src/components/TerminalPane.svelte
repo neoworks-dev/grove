@@ -20,6 +20,9 @@
   import { keymap } from '../lib/keymap.svelte'
   import { claimTerminal, releaseTerminal } from '../lib/terminalClaims'
   import PaneControls from './PaneControls.svelte'
+  import ContextMenu, { type MenuItem } from './ContextMenu.svelte'
+  import type { FailedCommand } from '../lib/terminalCommands'
+  import { fixMenuItems } from '../lib/agents/fixWithAgent'
 
   let {
     leafId,
@@ -68,6 +71,43 @@
 
   function setStatus(key: string, status: { running: boolean; exitCode?: number }): void {
     statuses = { ...statuses, [key]: status }
+    if (status.running) dismissFailure(key)
+  }
+
+  // Each terminal's last command, when it failed, until the next one starts or
+  // the user dismisses it: what Fix with agent hands over.
+  let failures = $state<Record<string, FailedCommand>>({})
+  let fixMenu = $state<{ x: number; y: number; items: MenuItem[] } | null>(null)
+  const activeFailure = $derived(failureOf(activeKey))
+
+  /** A terminal's failed last command, if it has one on show. */
+  function failureOf(key: string | null): FailedCommand | undefined {
+    if (!key) return undefined
+    return failures[key]
+  }
+
+  function setFailure(key: string, failure: FailedCommand): void {
+    failures = { ...failures, [key]: failure }
+  }
+
+  function dismissFailure(key: string): void {
+    if (!(key in failures)) return
+    const next = { ...failures }
+    delete next[key]
+    failures = next
+  }
+
+  /**
+   * Opens the Fix with agent menu for a terminal's failed command, above its
+   * button. Handing it over puts the chip away, so it isn't sent twice.
+   */
+  function openFixMenu(event: MouseEvent, key: string, failure: FailedCommand): void {
+    const box = (event.currentTarget as HTMLElement).getBoundingClientRect()
+    const items = fixMenuItems(shownWorktreeId, async () => {
+      dismissFailure(key)
+      return { kind: 'command', ...failure }
+    })
+    fixMenu = { x: box.left, y: box.top - items.length * 28 - 12, items }
   }
 
   // Exported focus() of each mounted TerminalView, keyed by session.
@@ -339,6 +379,29 @@
   </div>
 {/snippet}
 
+{#snippet failedCommand(key: string, failure: FailedCommand)}
+  <!-- Over the terminal's bottom-right corner, clear of the prompt on the left. -->
+  <div
+    class="absolute bottom-2 right-3 z-10 flex max-w-[70%] items-center gap-2 rounded-md border border-line bg-elevated py-1 pl-2 pr-1 text-xs shadow-overlay"
+  >
+    <span class="min-w-0 truncate font-mono text-muted" title={failure.command}
+      >{failure.command}</span
+    >
+    <span class="shrink-0 text-red">exited {failure.exitCode}</span>
+    <button
+      class="shrink-0 cursor-pointer rounded-md bg-action px-2 py-0.5 text-action-fg hover:opacity-90"
+      onclick={(event) => openFixMenu(event, key, failure)}
+    >
+      Fix with agent
+    </button>
+    <button
+      class="shrink-0 cursor-pointer rounded-md px-1 text-dim hover:bg-hover hover:text-default"
+      title="Dismiss"
+      onclick={() => dismissFailure(key)}>✕</button
+    >
+  </div>
+{/snippet}
+
 {#snippet pinButton()}
   <!-- Pinned, the pane names the worktree it stays on; the tabs alone would not
        say that they are not the selected worktree's. -->
@@ -405,9 +468,13 @@
           onExit={() => closeTerminal(session.key)}
           onTitle={(title) => setTitle(session.key, title)}
           onStatus={(status) => setStatus(session.key, status)}
+          onCommandFailed={(failure) => setFailure(session.key, failure)}
         />
       </div>
     {/each}
+    {#if activeKey && activeFailure}
+      {@render failedCommand(activeKey, activeFailure)}
+    {/if}
     {#if shownSessions.length === 0}
       <div class="absolute inset-0 flex flex-col items-center justify-center gap-2 px-3">
         <p class="text-xs text-dim">No terminal in {shownWorktreeName}.</p>
@@ -417,6 +484,15 @@
       </div>
     {/if}
   </div>
+
+  {#if fixMenu}
+    <ContextMenu
+      x={fixMenu.x}
+      y={fixMenu.y}
+      items={fixMenu.items}
+      onClose={() => (fixMenu = null)}
+    />
+  {/if}
 
   {#if sideStrip}
     <!-- Right: the same terminal list as a column beside the wide terminal. -->

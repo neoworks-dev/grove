@@ -135,6 +135,7 @@
     subscribeEvents()
     void loadInstalledExtensions()
     const stopKeyDispatch = startGlobalKeyDispatch()
+    const stopWindowFocus = keymap.watchWindowFocus()
     const unsubscribeKeys = [
       keyDispatch.subscribe(KeyPriority.hardKey, handleCommandPaletteKey),
       keyDispatch.subscribe(KeyPriority.overlay, handleOverlayOwnership),
@@ -163,6 +164,7 @@
     return () => {
       for (const unsubscribe of unsubscribeKeys) unsubscribe()
       stopKeyDispatch()
+      stopWindowFocus()
       stopPaneZoom()
       stopWorktreeStatus()
     }

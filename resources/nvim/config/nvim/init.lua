@@ -1417,6 +1417,65 @@ vim.api.nvim_create_user_command('GroveInspect', grove_inspect_float, { desc = '
 -- this one sticks.
 vim.cmd([[anoremenu PopUp.Inspect <Cmd>GroveInspect<CR>]])
 
+-- Fix with Agent: on a line with diagnostics, the right-click menu hands them
+-- to an agent. Grove lists the entry once per agent it could go to and reads
+-- the problem through grove_fix_context; run from nvim's own :emenu, it goes to
+-- grove as grove_fix_with_agent, for the worktree's agent.
+
+-- The cursor line's diagnostics and the code `radius` lines either side of it,
+-- or nil when the line has none.
+_G.grove_fix_context = function(radius)
+  local bufnr = vim.api.nvim_get_current_buf()
+  local line = vim.api.nvim_win_get_cursor(0)[1] - 1
+  local found = vim.diagnostic.get(bufnr, { lnum = line })
+  if #found == 0 then
+    return nil
+  end
+  local diagnostics = {}
+  for _, d in ipairs(found) do
+    diagnostics[#diagnostics + 1] = {
+      lnum = d.lnum,
+      col = d.col,
+      severity = d.severity,
+      message = d.message,
+      source = d.source
+    }
+  end
+  local first = math.max(0, line - radius)
+  local last = math.min(vim.api.nvim_buf_line_count(bufnr), line + radius + 1)
+  return {
+    path = vim.api.nvim_buf_get_name(bufnr),
+    diagnostics = diagnostics,
+    startLine = first + 1,
+    endLine = last,
+    text = table.concat(vim.api.nvim_buf_get_lines(bufnr, first, last, false), '\n')
+  }
+end
+
+_G.grove_fix_with_agent = function()
+  local context = grove_fix_context(10)
+  if context == nil then
+    return
+  end
+  vim.rpcnotify(0, 'grove_fix_with_agent', context)
+end
+
+-- First in the menu: on a line with a problem, fixing it is the likeliest ask.
+vim.cmd([[anoremenu .400 PopUp.Fix\ with\ Agent <Cmd>lua grove_fix_with_agent()<CR>]])
+vim.cmd([[anoremenu .401 PopUp.-fix- <Nop>]])
+vim.api.nvim_create_autocmd('MenuPopup', {
+  group = vim.api.nvim_create_augroup('grove.fix_with_agent', {}),
+  desc = 'Offer Fix with Agent on lines with diagnostics',
+  callback = function()
+    local line = vim.api.nvim_win_get_cursor(0)[1] - 1
+    if #vim.diagnostic.get(0, { lnum = line }) > 0 then
+      vim.cmd([[anoremenu enable PopUp.Fix\ with\ Agent]])
+      return
+    end
+    vim.cmd([[anoremenu disable PopUp.Fix\ with\ Agent]])
+  end
+})
+
 -- Run the PopUp entry grove's menu picked, in the mode the menu was opened for.
 _G.grove_run_popup_item = function(name, mode)
   local entry = vim.fn.menu_info('PopUp.' .. name, mode)

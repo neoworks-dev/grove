@@ -21,3 +21,6 @@ resources/nib/dist/
 /test-results/
 /playwright-report/
 /blob-report/
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/

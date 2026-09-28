@@ -155,12 +155,22 @@
     return event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey
   }
 
-  /** Enter sends the reason and Escape goes back to the choices; Shift+Enter is a new line. */
+  /**
+   * Enter sends the reason and Escape goes back to the choices; Tab moves on
+   * through them, keeping what was typed. Shift+Enter is a new line.
+   */
   function onReasonKey(event: KeyboardEvent): void {
     if (event.key === 'Escape') {
       event.preventDefault()
       event.stopPropagation()
       denyReasonMode = false
+      return
+    }
+    if (event.key === 'Tab') {
+      event.preventDefault()
+      event.stopPropagation()
+      denyReasonMode = false
+      move(event.shiftKey ? -1 : 1)
       return
     }
     if (event.key === 'Enter' && !event.shiftKey) {
@@ -177,9 +187,16 @@
 
   function onKey(event: KeyboardEvent): void {
     if (denyReasonMode) return
-    if (event.key === 'ArrowDown' || event.key === 'Tab') {
+    // Tabbing onto the reason opens its box, so it can be typed straight away.
+    if (event.key === 'Tab') {
       event.preventDefault()
       move(event.shiftKey ? -1 : 1)
+      if (choices[index]?.takesText) denyReasonMode = true
+      return
+    }
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      move(1)
       return
     }
     if (event.key === 'ArrowUp') {

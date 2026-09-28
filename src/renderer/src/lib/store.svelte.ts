@@ -639,6 +639,10 @@ export function subscribeEvents(): void {
       line: event.line
     })
   })
+  // Worktrees made outside the sidebar, by an agent.
+  window.workbench.on('event:worktrees-changed', (payload) => {
+    store.worktrees = payload as Worktree[]
+  })
   window.workbench.on('event:worktree-setup', (payload) => {
     noteWorktreeSetup(payload as { worktreeId: string; state: WorktreeSetupState })
   })

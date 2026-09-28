@@ -14,6 +14,7 @@ import type { WorktreeChannel } from '../worktreeChannel'
 import type { GroveTool } from './harness'
 import { noteTools, type AgentNotes } from './noteTools'
 import { showTools, type AgentScreen } from './showTools'
+import { findWorktree, worktreeTools, type AgentWorktrees } from './worktreeTools'
 import { signatureOf, type AgentPeer, type AgentRoster, type AgentRuntime } from './roster'
 import {
   renderHit,
@@ -35,6 +36,8 @@ export interface GroveToolOptions {
   notes: AgentNotes
   /** What the renderer can put on screen. */
   screen: AgentScreen
+  /** The repository's worktrees, to list, create and spawn agents into. */
+  worktrees: AgentWorktrees
   now?: () => number
 }
 
@@ -379,7 +382,9 @@ function spawnTool(options: GroveToolOptions): GroveTool {
       'at the end of each of its turns is delivered back to you, and it shares the worktree and ' +
       'the message channel with you. It does not see this conversation: the prompt has to carry ' +
       'everything it needs. Set `removeWhenDone` for a one-shot helper, so its conversation is ' +
-      'cleared away once it has answered.',
+      'cleared away once it has answered. Set `worktree` to start it in another worktree ' +
+      'instead — one per task, made with `create_worktree`; it still reports back to you, but ' +
+      "works on that branch and shares that worktree's channel rather than yours.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -397,6 +402,12 @@ function spawnTool(options: GroveToolOptions): GroveTool {
           description:
             'Optional model id, as `list_runtimes` reports it for the chosen runtime. The ' +
             "runtime's own default is used when this is left out."
+        },
+        worktree: {
+          type: 'string',
+          description:
+            'Start it in this worktree instead of yours: a branch or path as `list_worktrees` ' +
+            'reports it.'
         },
         removeWhenDone: {
           type: 'boolean',
@@ -429,8 +440,15 @@ function spawnTool(options: GroveToolOptions): GroveTool {
       const modelError = await checkModel(options.roster, context.sessionId, harness, model)
       if (modelError) return modelError
 
+      const workspace = await spawnWorkspace(
+        options.worktrees,
+        context.workspaceRoot,
+        input.worktree
+      )
+      if ('error' in workspace) return workspace.error
+
       const peer = await options.roster.spawn({
-        workspaceRoot: context.workspaceRoot,
+        workspaceRoot: workspace.root,
         title,
         harness,
         model,
@@ -438,18 +456,47 @@ function spawnTool(options: GroveToolOptions): GroveTool {
         parentSessionId: context.sessionId,
         removeWhenDone: input.removeWhenDone === true
       })
+      let where = ''
+      if (workspace.root !== context.workspaceRoot) where = ` in ${workspace.root}`
       if (input.removeWhenDone === true) {
         return {
           content:
-            `Started "${peer.title}" on ${peer.harness}. Its answer is delivered to you and ` +
+            `Started "${peer.title}" on ${peer.harness}${where}. Its answer is delivered to you and ` +
             'the agent is removed afterwards, so do not plan on messaging it.'
         }
       }
       return {
         content:
-          `Started "${peer.title}" on ${peer.harness}. Address it as ${peer.agentId}; ` +
+          `Started "${peer.title}" on ${peer.harness}${where}. Address it as ${peer.agentId}; ` +
           'what it says at the end of each of its turns is delivered to you.'
       }
+    }
+  }
+}
+
+/**
+ * Where a spawned agent runs: the caller's worktree, or the one it named.
+ *
+ * A named worktree that does not exist is refused rather than created, so a
+ * typo cannot start a branch nobody asked for.
+ */
+async function spawnWorkspace(
+  worktrees: AgentWorktrees,
+  callerRoot: string,
+  named: unknown
+): Promise<{ root: string } | { error: { content: string; isError: true } }> {
+  const reference = stringOrNothing(named)
+  if (!reference) return { root: callerRoot }
+
+  const all = await worktrees.list()
+  const worktree = findWorktree(all, reference)
+  if (worktree) return { root: worktree.path }
+
+  const known = all.map((entry) => entry.branch).join(', ')
+  return {
+    error: {
+      content: `No worktree "${reference}". Existing: ${known}. Make one with \`create_worktree\` first.`,
+      isError: true
     }
   }
 }
@@ -561,6 +608,7 @@ export function groveTools(options: GroveToolOptions): GroveTool[] {
     requestReviewTool(),
     ...showTools(options.screen),
     ...noteTools(options.notes),
-    ...chatTools(options)
+    ...chatTools(options),
+    ...worktreeTools(options.worktrees)
   ]
 }

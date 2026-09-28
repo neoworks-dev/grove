@@ -11,21 +11,26 @@ export const SDK_PACKAGE = '@anthropic-ai/claude-agent-sdk'
  * Which Claude Code executable the SDK should spawn, or `undefined` when there
  * is none and the SDK should report that itself.
  *
- * The SDK ships the CLI as per-platform optional dependencies and refuses to
- * start when none of them is installed — which is what any install that skipped
- * optional packages leaves behind, and it surfaces as the whole harness being
- * unavailable. Grove looks those packages up itself and, when none is there,
- * falls back to a `claude` on PATH so a system install serves just as well.
+ * A `claude` on PATH wins: it updates itself, while the bundled CLI only moves
+ * when the SDK is bumped, and the API refuses newer models to an older CLI.
+ * The bundled one is the fallback for machines without a system install.
  *
- * The bundled one is always named rather than left to the SDK: in a packaged
- * build the SDK resolves it inside `app.asar`, which cannot be spawned.
+ * The SDK ships that CLI as per-platform optional dependencies and refuses to
+ * start when none of them is installed — which is what any install that skipped
+ * optional packages leaves behind. Grove looks those packages up itself, and
+ * names the result rather than leaving it to the SDK: in a packaged build the
+ * SDK resolves it inside `app.asar`, which cannot be spawned.
  */
 export function resolveClaudeExecutable(): string | undefined {
-  const bundled = bundledExecutable()
-  if (bundled !== null) {
-    return unpackedFromAsar(bundled)
+  const system = executableOnPath('claude')
+  if (system !== null) {
+    return system
   }
-  return executableOnPath('claude') ?? undefined
+  const bundled = bundledExecutable()
+  if (bundled === null) {
+    return undefined
+  }
+  return unpackedFromAsar(bundled)
 }
 
 /**
@@ -46,13 +51,23 @@ export function unpackedFromAsar(path: string): string {
  * rebuilt from `process.platform`, so grove does not have to track how the SDK
  * names its targets: only the package for this platform is ever installed, so
  * the first one that resolves is the right one.
+ *
+ * They are resolved from the SDK's own location: an isolated install (bun's
+ * default) links them beside the SDK only, out of reach from grove's modules.
  */
 export function bundledExecutable(): string | null {
   const require = createRequire(__filename)
+  let sdkEntry: string
+  try {
+    sdkEntry = require.resolve(SDK_PACKAGE)
+  } catch {
+    return null
+  }
+  const sdkRequire = createRequire(sdkEntry)
   for (const name of platformPackages(require)) {
     for (const entry of ['claude', 'claude.exe']) {
       try {
-        return require.resolve(`${name}/${entry}`)
+        return sdkRequire.resolve(`${name}/${entry}`)
       } catch {
         continue
       }

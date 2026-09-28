@@ -1367,6 +1367,7 @@ function createClaudeHarness(
     intentOf(name, input) {
       const bare = bareName(name)
       if (bare === 'request_review') return { kind: 'review', summary: summaryOf(input) }
+      if (bare === 'AskUserQuestion') return { kind: 'question' }
       const pathField = WRITE_TOOLS[name]
       if (!pathField) return null
       const path = input[pathField]

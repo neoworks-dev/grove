@@ -37,31 +37,37 @@ async function branchPositions(
 // succeeded is dropped, so a reloaded renderer only hears what still matters.
 const setupStates: Record<string, WorktreeSetupState> = {}
 
+/** Delivers an event to the renderer. */
+type SendEvent = (channel: string, payload: unknown) => void
+
 /** Records a worktree's setup state and tells the renderer. */
-function reportSetup(ctx: Context, worktreeId: string, state: WorktreeSetupState): void {
+function reportSetup(send: SendEvent, worktreeId: string, state: WorktreeSetupState): void {
   if (state === 'done') {
     delete setupStates[worktreeId]
   } else {
     setupStates[worktreeId] = state
   }
-  ctx.workbench.send('event:worktree-setup', { worktreeId, state })
+  send('event:worktree-setup', { worktreeId, state })
 }
 
-/** Runs a new worktree's setup, streaming its output to the worktree's logs. */
-async function runSetup(
-  ctx: Context,
+/**
+ * Runs a new worktree's setup, streaming its output to the worktree's logs, and
+ * resolves to whether it succeeded.
+ */
+export async function runSetup(
+  send: SendEvent,
   repoPath: string,
   config: WorkbenchConfig,
   worktree: Worktree
-): Promise<void> {
-  reportSetup(ctx, worktree.id, 'running')
+): Promise<boolean> {
+  reportSetup(send, worktree.id, 'running')
   let succeeded = false
   try {
     succeeded = await worktrees.setupWorktree(repoPath, config, worktree, (worktreeId, line) =>
-      ctx.workbench.send('event:log', { worktreeId, source: 'service', name: 'setup', line })
+      send('event:log', { worktreeId, source: 'service', name: 'setup', line })
     )
   } catch (error) {
-    ctx.workbench.send('event:log', {
+    send('event:log', {
       worktreeId: worktree.id,
       source: 'service',
       name: 'setup',
@@ -69,10 +75,11 @@ async function runSetup(
     })
   }
   if (succeeded) {
-    reportSetup(ctx, worktree.id, 'done')
+    reportSetup(send, worktree.id, 'done')
   } else {
-    reportSetup(ctx, worktree.id, 'failed')
+    reportSetup(send, worktree.id, 'failed')
   }
+  return succeeded
 }
 
 export const worktreesRoutes = {
@@ -93,7 +100,8 @@ export const worktreesRoutes = {
         const { repoPath, config: cfg } = ctx.workbench.requireRepo()
         const created = await worktrees.addWorktree(repoPath, cfg, options)
         await ctx.workbench.refreshWorktrees()
-        void runSetup(ctx, repoPath, cfg, created)
+        const send: SendEvent = (channel, payload) => ctx.workbench.send(channel, payload)
+        void runSetup(send, repoPath, cfg, created)
         return created
       }
     )

@@ -15,6 +15,7 @@ import { groveSystemPrompt } from '../src/main/agents/systemPrompt'
 import { senderOf, type AppItem } from '../src/renderer/src/lib/agents/transcript'
 import type { GroveTool, GroveToolContext } from '../src/main/agents/harness'
 import type { SessionEvent, SessionMeta } from '../src/shared/agents'
+import type { Worktree } from '../src/shared/types'
 
 interface Posted {
   from: string
@@ -51,6 +52,12 @@ function sessionMeta(id: string, title: string, overrides: Partial<SessionMeta> 
   }
 }
 
+interface CreatedSession {
+  workspace: string
+  title: string
+  labels: Record<string, string> | undefined
+}
+
 /** A roster over a fixed session list, recording what it was asked to deliver. */
 function testRoster(
   sessions: SessionMeta[],
@@ -58,17 +65,25 @@ function testRoster(
 ): {
   roster: AgentRoster
   delivered: Delivered[]
-  created: { title: string; labels: Record<string, string> | undefined }[]
+  created: CreatedSession[]
   removed: string[]
 } {
   const delivered: Delivered[] = []
-  const created: { title: string; labels: Record<string, string> | undefined }[] = []
+  const created: CreatedSession[] = []
   const removed: string[] = []
   const agents = {
     listSessions: () => Promise.resolve(sessions),
     listEvents: (sessionId: string) => Promise.resolve(logs[sessionId] ?? []),
-    createSession: (options: { title?: string; labels?: Record<string, string> }) => {
-      created.push({ title: options.title ?? '', labels: options.labels })
+    createSession: (options: {
+      workspace: string
+      title?: string
+      labels?: Record<string, string>
+    }) => {
+      created.push({
+        workspace: options.workspace,
+        title: options.title ?? '',
+        labels: options.labels
+      })
       const spawned = sessionMeta('spawned', options.title ?? '', {
         labels: { [AGENT_ID_LABEL]: 'id-spawned', ...options.labels }
       })
@@ -133,8 +148,35 @@ function testRoster(
   return { roster, delivered, created, removed }
 }
 
-// The note and show tools are not what these tests are about.
-const NO_SCREEN = { notes: {} as never, screen: { paneTypes: () => [] } }
+// The note and show tools are not what these tests are about. Of the
+// worktrees, only the one a spawned agent may be sent to matters.
+const WORKTREES: Worktree[] = [
+  worktree('main', '/repo', { isMain: true }),
+  worktree('12-parser', '/repo/.worktrees/12-parser')
+]
+const NO_SCREEN = {
+  notes: {} as never,
+  screen: { paneTypes: () => [] },
+  worktrees: {
+    list: () => Promise.resolve(WORKTREES),
+    create: () => Promise.reject(new Error('not in these tests'))
+  }
+}
+
+function worktree(branch: string, path: string, overrides: Partial<Worktree> = {}): Worktree {
+  return {
+    id: branch,
+    name: branch,
+    path,
+    branch,
+    isMain: false,
+    isDetached: false,
+    locked: false,
+    dirty: false,
+    portSlot: 0,
+    ...overrides
+  }
+}
 
 function toolNamed(name: string, roster: AgentRoster, posted: Posted[]): GroveTool {
   const chat = {
@@ -352,8 +394,8 @@ describe('starting another agent', () => {
 
     expect(posted).toEqual([])
     // `request_review` parks the turn on purpose: that is how the review flow
-    // holds the agent. Of the rest, only spawning asks.
-    expect(asking).toEqual(['request_review', 'spawn_agent'])
+    // holds the agent. Of the rest, only spawning an agent or a worktree asks.
+    expect(asking).toEqual(['request_review', 'spawn_agent', 'create_worktree'])
   })
 
   test('labels the new session with the agent that asked for it', async () => {
@@ -371,6 +413,51 @@ describe('starting another agent', () => {
     // The brief is the spawning agent talking, so the child opens on a message
     // from it rather than on an unattributed task.
     expect(delivered[0].from).toBe('Planner (id-a)')
+  })
+
+  test('starts the agent in the worktree it was given', async () => {
+    const sessions = [sessionMeta('a', 'Planner')]
+    const { roster, created } = testRoster(sessions)
+    const posted: Posted[] = []
+
+    const result = await toolNamed('spawn_agent', roster, posted).execute(
+      { title: 'Parser', prompt: 'fix #12', worktree: '12-parser' },
+      context('a')
+    )
+
+    expect(result.isError).toBeUndefined()
+    expect(created[0].workspace).toBe('/repo/.worktrees/12-parser')
+    // It is still the caller's child, so its answers come back across worktrees.
+    expect(created[0].labels).toEqual({ [PARENT_LABEL]: 'a' })
+  })
+
+  test("stays in the caller's worktree when none is named", async () => {
+    const sessions = [sessionMeta('a', 'Planner')]
+    const { roster, created } = testRoster(sessions)
+    const posted: Posted[] = []
+
+    await toolNamed('spawn_agent', roster, posted).execute(
+      { title: 'Reviewer', prompt: 'review it' },
+      context('a')
+    )
+
+    expect(created[0].workspace).toBe('/repo')
+  })
+
+  test('refuses a worktree that does not exist, before a session exists', async () => {
+    const sessions = [sessionMeta('a', 'Planner')]
+    const { roster, created } = testRoster(sessions)
+    const posted: Posted[] = []
+
+    const result = await toolNamed('spawn_agent', roster, posted).execute(
+      { title: 'Parser', prompt: 'fix #13', worktree: '13-lexer' },
+      context('a')
+    )
+
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('12-parser')
+    expect(result.content).toContain('create_worktree')
+    expect(created).toEqual([])
   })
 
   test('reports which runtimes can run, and on what', async () => {

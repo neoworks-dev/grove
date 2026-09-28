@@ -32,7 +32,8 @@ function toolNamed(name: string, notes: AgentNotes): GroveTool {
     chat: {} as never,
     roster: { harnessIds: () => ['claude'] } as never,
     notes,
-    screen: { paneTypes: () => [] }
+    screen: { paneTypes: () => [] },
+    worktrees: {} as never
   })
   const tool = tools.find((entry) => entry.name === name)
   if (!tool) throw new Error(`${name} is not offered`)
@@ -130,7 +131,10 @@ describe('the note tools', () => {
   test('an unknown id is an error, and nothing is saved', async () => {
     const notes = memoryNotes([USER_NOTE])
 
-    const result = await toolNamed('update_note', notes).execute({ id: 'nope', done: true }, CONTEXT)
+    const result = await toolNamed('update_note', notes).execute(
+      { id: 'nope', done: true },
+      CONTEXT
+    )
 
     expect(result.isError).toBe(true)
     expect(notes.saved).toEqual([])

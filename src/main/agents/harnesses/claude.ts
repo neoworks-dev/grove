@@ -49,7 +49,7 @@ import {
   type ShellTeeSession
 } from './claudeShellTee'
 import { ClaudeTaskList } from './claudeTasks'
-import { ClaudeUsageLedger } from './claudeUsage'
+import { ClaudeUsageLedger, contextWindowOf } from './claudeUsage'
 import type {
   GroveTool,
   HarnessDescriptor,
@@ -385,6 +385,8 @@ class ClaudeRun implements HarnessRun {
     if (this.handleSessionChange(message)) return
     if (signalsWork(message)) this.markRunning()
     if (message.type === 'stream_event') {
+      const stats = this.usage.noteStreamEvent(message.parent_tool_use_id ?? '', message.event)
+      if (stats) this.options.stats(stats)
       this.report(message.parent_tool_use_id, streamEvents(message.event))
       return
     }
@@ -557,7 +559,10 @@ class ClaudeRun implements HarnessRun {
     // The result carries the process's totals, not the turn's; the ledger
     // turns them into the session's.
     if ('usage' in message && message.usage) {
-      this.options.stats(this.usage.noteResult(message.usage, message.total_cost_usd ?? 0))
+      const contextWindow = contextWindowOf(message.modelUsage)
+      this.options.stats(
+        this.usage.noteResult(message.usage, message.total_cost_usd ?? 0, contextWindow)
+      )
     }
     this.running = false
     const ending = turnEnding(message.subtype, this.interrupted)

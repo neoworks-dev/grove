@@ -18,6 +18,7 @@ import type { SessionEvent, SessionMeta } from '../src/shared/agents'
 import type { Worktree } from '../src/shared/types'
 
 interface Posted {
+  root: string
   from: string
   text: string
   to: string | undefined
@@ -180,8 +181,8 @@ function worktree(branch: string, path: string, overrides: Partial<Worktree> = {
 
 function toolNamed(name: string, roster: AgentRoster, posted: Posted[]): GroveTool {
   const chat = {
-    post: (_root: string, from: { name: string }, text: string, to?: string) => {
-      posted.push({ from: from.name, text, to })
+    post: (root: string, from: { name: string }, text: string, to?: string) => {
+      posted.push({ root, from: from.name, text, to })
       return Promise.resolve()
     },
     list: () => Promise.resolve([])
@@ -215,7 +216,7 @@ describe('addressing another agent', () => {
 
     expect(delivered).toEqual([{ sessionId: 'b', from: 'Planner (id-a)', text: 'take the parser' }])
     expect(posted).toEqual([
-      { from: 'Planner (id-a)', text: 'take the parser', to: 'Builder (id-b)' }
+      { root: '/repo', from: 'Planner (id-a)', text: 'take the parser', to: 'Builder (id-b)' }
     ])
     expect(result.content).toContain('id-b')
   })
@@ -377,6 +378,73 @@ describe('the roster an agent reads', () => {
     expect(result.content).toContain('held on a permission request')
     expect(result.content).toContain('id-b')
     expect(result.content).toContain('you')
+  })
+})
+
+describe('reaching agents in other worktrees', () => {
+  const CHILD_ROOT = '/repo/.worktrees/12-parser'
+
+  function crossWorktreeSessions(): SessionMeta[] {
+    return [
+      sessionMeta('a', 'Planner'),
+      sessionMeta('c', 'Parser', {
+        workspaceRoot: CHILD_ROOT,
+        labels: { [AGENT_ID_LABEL]: 'id-c', [PARENT_LABEL]: 'a' }
+      }),
+      sessionMeta('d', 'Lexer', { workspaceRoot: '/repo/.worktrees/13-lexer' })
+    ]
+  }
+
+  test('a message by id reaches an agent in another worktree, and both channels show it', async () => {
+    const { roster, delivered } = testRoster(crossWorktreeSessions())
+    const posted: Posted[] = []
+
+    const result = await toolNamed('send_message', roster, posted).execute(
+      { to: 'id-c', text: 'rebase on main first' },
+      context('a')
+    )
+
+    expect(result.isError).toBeUndefined()
+    expect(delivered).toEqual([
+      { sessionId: 'c', from: 'Planner (id-a)', text: 'rebase on main first' }
+    ])
+    expect(posted.map((entry) => entry.root)).toEqual(['/repo', CHILD_ROOT])
+  })
+
+  test('a title does not reach across worktrees', async () => {
+    const { roster, delivered } = testRoster(crossWorktreeSessions())
+    const posted: Posted[] = []
+
+    const result = await toolNamed('send_message', roster, posted).execute(
+      { to: 'Parser', text: 'hello' },
+      context('a')
+    )
+
+    expect(result.isError).toBe(true)
+    expect(delivered).toEqual([])
+  })
+
+  test('lists relatives in other worktrees, and everyone only when asked', async () => {
+    const { roster } = testRoster(crossWorktreeSessions())
+    const posted: Posted[] = []
+    const list = toolNamed('list_agents', roster, posted)
+
+    const relativesOnly = await list.execute({}, context('a'))
+    expect(relativesOnly.content).toContain('In other worktrees:')
+    expect(relativesOnly.content).toContain(`id-c · Parser`)
+    expect(relativesOnly.content).toContain(`in ${CHILD_ROOT} · spawned by you`)
+    expect(relativesOnly.content).not.toContain('id-d')
+
+    const everyone = await list.execute({ all_worktrees: true }, context('a'))
+    expect(everyone.content).toContain('id-d')
+  })
+
+  test('the child sees the parent that spawned it from another worktree', async () => {
+    const { roster } = testRoster(crossWorktreeSessions())
+
+    const relatives = await roster.relativesElsewhere('c')
+
+    expect(relatives.map((peer) => peer.agentId)).toEqual(['id-a'])
   })
 })
 
@@ -802,6 +870,8 @@ describe('what grove tells an agent about the worktree', () => {
       sessionId: agentId,
       agentId,
       title,
+      workspaceRoot: '/repo',
+      parentSessionId: null,
       harness: 'claude',
       model: 'opus',
       status: 'idle',
@@ -815,6 +885,7 @@ describe('what grove tells an agent about the worktree', () => {
       title: 'Planner',
       workspaceRoot: '/repo',
       peers: [peer('id-a', 'Planner'), peer('id-b', 'Builder')],
+      relatives: [],
       harnesses: ['claude', 'pi']
     })
 
@@ -831,10 +902,26 @@ describe('what grove tells an agent about the worktree', () => {
       title: 'Planner',
       workspaceRoot: '/repo',
       peers: [peer('id-a', 'Planner')],
+      relatives: [],
       harnesses: ['claude']
     })
 
     expect(prompt).toContain('No other agent')
+    expect(prompt).not.toContain('from other worktrees')
+  })
+
+  test('names the parent working in another worktree, so a child knows who to ask', () => {
+    const prompt = groveSystemPrompt({
+      agentId: 'id-c',
+      title: 'Parser',
+      workspaceRoot: '/repo/.worktrees/12-parser',
+      peers: [peer('id-c', 'Parser')],
+      relatives: [peer('id-a', 'Planner')],
+      harnesses: ['claude']
+    })
+
+    expect(prompt).toContain('Working with you from other worktrees')
+    expect(prompt).toContain('id-a — "Planner", in /repo')
   })
 })
 

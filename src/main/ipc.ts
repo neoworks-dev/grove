@@ -214,15 +214,17 @@ async function buildSystemPrompt(session: {
   title: string
   workspaceRoot: string
 }): Promise<string> {
-  const [agentId, peers] = await Promise.all([
+  const [agentId, peers, relatives] = await Promise.all([
     agentRoster.agentIdOf(session.id),
-    agentRoster.peers(session.workspaceRoot)
+    agentRoster.peers(session.workspaceRoot),
+    agentRoster.relativesElsewhere(session.id)
   ])
   return groveSystemPrompt({
     agentId,
     title: session.title,
     workspaceRoot: session.workspaceRoot,
     peers,
+    relatives,
     harnesses: agentRoster.harnessIds()
   })
 }

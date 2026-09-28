@@ -314,6 +314,46 @@ class Keymap {
   private static readonly TYPING_FOCUS_GRACE_MS = 300
   private lastKeydownAt = 0
 
+  // ── Window focus ───────────────────────────────────────────────
+  // Leaving the window and coming back must land on the element that had focus.
+  // Chromium sends a mousemove from wherever the cursor is once the window is
+  // back in front, which focus-follows-mouse would otherwise take as a choice.
+  private focusBeforeBlur: HTMLElement | null = null
+  private pointerSettling = false
+
+  /** Keeps keyboard focus on the same element across the window losing and regaining it. Returns the stop. */
+  watchWindowFocus(): () => void {
+    const onBlur = (): void => this.rememberWindowFocus()
+    const onFocus = (): void => this.restoreWindowFocus()
+    window.addEventListener('blur', onBlur)
+    window.addEventListener('focus', onFocus)
+    return () => {
+      window.removeEventListener('blur', onBlur)
+      window.removeEventListener('focus', onFocus)
+    }
+  }
+
+  /** Notes what held focus as the window lost it; focus moving into a frame inside the window is not leaving. */
+  private rememberWindowFocus(): void {
+    const active = document.activeElement
+    this.focusBeforeBlur = null
+    if (!(active instanceof HTMLElement)) return
+    if (active === document.body || active.tagName === 'IFRAME' || active.tagName === 'WEBVIEW') {
+      return
+    }
+    this.focusBeforeBlur = active
+  }
+
+  /** Puts focus back where it was before the window lost it, and ignores the pointer's first report after. */
+  private restoreWindowFocus(): void {
+    this.pointerSettling = true
+    const previous = this.focusBeforeBlur
+    this.focusBeforeBlur = null
+    if (previous === null || !previous.isConnected) return
+    if (document.activeElement === previous) return
+    previous.focus({ preventScroll: true })
+  }
+
   // Called by the global key dispatcher on every keydown.
   noteKeyActivity(): void {
     this.lastKeydownAt = performance.now()
@@ -326,6 +366,13 @@ class Keymap {
     if (clientX === this.lastPointerX && clientY === this.lastPointerY) return
     this.lastPointerX = clientX
     this.lastPointerY = clientY
+    // The pointer crossing the window while another one is in front is not the
+    // user choosing a pane here.
+    if (!document.hasFocus()) return
+    if (this.pointerSettling) {
+      this.pointerSettling = false
+      return
+    }
     if (performance.now() - this.lastKeydownAt < Keymap.TYPING_FOCUS_GRACE_MS) return
     if (this.activePane === id) return
     this.focusPane(id)

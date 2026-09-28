@@ -141,6 +141,15 @@
     queueMicrotask(() => rootEl?.focus())
   })
 
+  /** Gives the card the keyboard again, on the reason box when that is open. */
+  export function focus(): void {
+    if (denyReasonMode) {
+      reasonEl?.focus()
+      return
+    }
+    rootEl?.focus()
+  }
+
   /** A key that types a character, rather than moving, confirming or chording. */
   function isTyping(event: KeyboardEvent): boolean {
     return event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey

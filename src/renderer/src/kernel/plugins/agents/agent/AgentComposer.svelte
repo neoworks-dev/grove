@@ -27,6 +27,7 @@
     ImageBlock,
     UserContentBlock
   } from '../../../../lib/agents/types'
+  import type { Snippet } from 'svelte'
 
   let {
     sessionId,
@@ -40,7 +41,8 @@
     onFocusChange,
     onInterrupt,
     onCycleMode,
-    onBack
+    onBack,
+    header
   }: {
     sessionId: string
     running: boolean
@@ -74,6 +76,8 @@
      * from an empty draft, so ArrowLeft stays a cursor key while typing.
      */
     onBack?: () => void
+    /** Drawn flush on top of the prompt box, as its top section: the notes list. */
+    header?: Snippet
   } = $props()
 
   let draft = $state('')
@@ -528,6 +532,10 @@
     <div class="mb-1.5 truncate text-2xs text-red">{error}</div>
   {/if}
 
+  {#if header}
+    {@render header()}
+  {/if}
+
   <!-- A `!` draft switches the box to shell: monospace in a heavier weight, and an
        amber frame that says whether the model will see the output. Both copies of
        the text take the same font classes so they stay in register. The textarea
@@ -535,6 +543,7 @@
        the painted copy doesn't and the caret would drift off the text. -->
   <div
     class="relative mb-2 rounded-md border bg-elevated"
+    class:rounded-t-none={header !== undefined}
     class:border-line-strong={!shell}
     class:border-amber={shell !== null}
   >

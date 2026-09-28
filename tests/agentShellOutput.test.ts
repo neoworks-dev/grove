@@ -158,6 +158,8 @@ function runPrefix(
 ): Promise<{ stdout: string; stderr: string; code: number | null }> {
   const env: Record<string, string> = { ...(process.env as Record<string, string>) }
   delete env.GROVE_SHELL_SOCKET
+  // Claude Code's own environment never has it; only the prefix sets it, for the tee.
+  delete env.ELECTRON_RUN_AS_NODE
   if (socketPath) {
     env.GROVE_SHELL_SOCKET = socketPath
     env.GROVE_NODE = process.execPath
@@ -193,6 +195,16 @@ describe.skipIf(process.platform === 'win32')("Claude's shell prefix", () => {
       { type: 'output', stream: 'stderr', text: 'its\n' },
       { type: 'exit', code: 3, signal: null }
     ])
+  })
+
+  // The tee runs on grove's Electron as Node; a command that starts Electron
+  // itself (`bun run qa start`) must not inherit that (#267).
+  test("keeps the tee's ELECTRON_RUN_AS_NODE out of the command", async () => {
+    const grove = await fakeGrove()
+
+    const result = await runPrefix(claudeCommand('echo "${ELECTRON_RUN_AS_NODE-unset}"'), grove.path)
+
+    expect(result.stdout).toBe('unset\n')
   })
 
   test('runs the command as before when grove is not listening', async () => {

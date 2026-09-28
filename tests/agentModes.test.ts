@@ -118,8 +118,9 @@ interface Fixture {
   cleanup: () => Promise<void>
 }
 
-/** `write_file` writes; everything else is an ordinary call. */
+/** `write_file` writes, `ask_user` asks; everything else is an ordinary call. */
 function intentOf(name: string, input: Record<string, unknown>): ToolIntent | null {
+  if (name === 'ask_user') return { kind: 'question' }
   if (name !== 'write_file') return null
   return {
     kind: 'write',
@@ -226,6 +227,33 @@ describe('permission modes, as the service enforces them', () => {
       const run = await runningIn(fixture, 'bypass')
       expect(await answeredWithout(run.ask(call('bash')))).toBe(true)
       expect(await answeredWithout(run.ask(call('write_file')))).toBe(true)
+    } finally {
+      await fixture.cleanup()
+    }
+  })
+
+  // Allowing a question unasked runs it with no answers, and the agent carries
+  // on as though the user had declined (#259).
+  test('bypass still puts a question to the user', async () => {
+    const fixture = await setup()
+    try {
+      const run = await runningIn(fixture, 'bypass')
+      expect(await answeredWithout(run.ask(call('ask_user')))).toBe(false)
+    } finally {
+      await fixture.cleanup()
+    }
+  })
+
+  test("\"don't ask again\" does not answer a question either", async () => {
+    const fixture = await setup()
+    try {
+      const run = await runningIn(fixture, 'default')
+      const first = run.ask(call('ask_user'))
+      await fixture.service.send(run.options.sessionId, [
+        { type: 'user.tool_confirmation', toolUseId: 'call-ask_user', result: 'always_session' }
+      ])
+      await first
+      expect(await answeredWithout(run.ask({ ...call('ask_user'), toolUseId: 'again' }))).toBe(false)
     } finally {
       await fixture.cleanup()
     }

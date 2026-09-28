@@ -40,9 +40,19 @@ function send(message) {
 
 send({ type: 'start', sessionId: process.env.GROVE_SESSION_ID, command: commandOf(commandLine) })
 
+// The environment Claude gave the command. prefix.sh set ELECTRON_RUN_AS_NODE
+// only so this script could run; left in, it turns any Electron the command
+// starts into plain Node.
+function commandEnvironment() {
+  const env = { ...process.env }
+  delete env.ELECTRON_RUN_AS_NODE
+  return env
+}
+
 // Its own process group, so an interrupt reaches everything the command started
 // rather than only the shell running it.
 const child = spawn(shell, ['-c', commandLine], {
+  env: commandEnvironment(),
   stdio: ['inherit', 'pipe', 'pipe'],
   detached: true
 })

@@ -49,7 +49,7 @@ import {
   type ShellTeeSession
 } from './claudeShellTee'
 import { ClaudeTaskList } from './claudeTasks'
-import { ClaudeUsageLedger } from './claudeUsage'
+import { ClaudeUsageLedger, contextWindowOf } from './claudeUsage'
 import type {
   GroveTool,
   HarnessDescriptor,
@@ -184,6 +184,9 @@ class ClaudeRun implements HarnessRun {
   // What grove has already told the session about: a turn grove did not start
   // still has to raise the status, or the pane offers no way to stop it.
   private running = false
+  // The user stopped the turn in flight. The CLI ends such a turn with an
+  // `error_during_execution` result, which is the stop, not a failure.
+  private interrupted = false
   // What each tool call that is running an agent was asked to do, so the session
   // grove opens for it is named after the work rather than after a call id.
   private lanes = new Map<string, SubagentIdentity>()
@@ -242,6 +245,7 @@ class ClaudeRun implements HarnessRun {
   }
 
   async interrupt(): Promise<void> {
+    if (this.running) this.interrupted = true
     await this.query?.interrupt()
   }
 
@@ -381,6 +385,8 @@ class ClaudeRun implements HarnessRun {
     if (this.handleSessionChange(message)) return
     if (signalsWork(message)) this.markRunning()
     if (message.type === 'stream_event') {
+      const stats = this.usage.noteStreamEvent(message.parent_tool_use_id ?? '', message.event)
+      if (stats) this.options.stats(stats)
       this.report(message.parent_tool_use_id, streamEvents(message.event))
       return
     }
@@ -553,18 +559,35 @@ class ClaudeRun implements HarnessRun {
     // The result carries the process's totals, not the turn's; the ledger
     // turns them into the session's.
     if ('usage' in message && message.usage) {
-      this.options.stats(this.usage.noteResult(message.usage, message.total_cost_usd ?? 0))
+      const contextWindow = contextWindowOf(message.modelUsage)
+      this.options.stats(
+        this.usage.noteResult(message.usage, message.total_cost_usd ?? 0, contextWindow)
+      )
     }
     this.running = false
-    const failed = message.subtype !== 'success'
-    if (failed) {
-      this.options.emit({ type: 'session.error', message: `run ended: ${message.subtype}` })
-    }
-    this.options.emit({
-      type: 'session.status_idle',
-      stopReason: failed ? 'error' : 'end_turn'
-    })
+    const ending = turnEnding(message.subtype, this.interrupted)
+    this.interrupted = false
+    if (ending.error) this.options.emit({ type: 'session.error', message: ending.error })
+    this.options.emit({ type: 'session.status_idle', stopReason: ending.stopReason })
   }
+}
+
+/**
+ * How a turn ended, from its result's subtype and whether the user stopped it.
+ *
+ * Claude Code reports a turn it was interrupted in as `error_during_execution`;
+ * when grove asked for that interrupt — Stop, or a plain Deny — it is the stop
+ * the user wanted, not a failure to show them.
+ */
+export function turnEnding(
+  subtype: string,
+  interrupted: boolean
+): { stopReason: 'end_turn' | 'aborted' | 'error'; error: string | null } {
+  if (subtype === 'success') return { stopReason: 'end_turn', error: null }
+  if (interrupted && subtype === 'error_during_execution') {
+    return { stopReason: 'aborted', error: null }
+  }
+  return { stopReason: 'error', error: `run ended: ${subtype}` }
 }
 
 /** Reads a provider's credential, wherever the user put it. */
@@ -1367,6 +1390,7 @@ function createClaudeHarness(
     intentOf(name, input) {
       const bare = bareName(name)
       if (bare === 'request_review') return { kind: 'review', summary: summaryOf(input) }
+      if (bare === 'AskUserQuestion') return { kind: 'question' }
       const pathField = WRITE_TOOLS[name]
       if (!pathField) return null
       const path = input[pathField]

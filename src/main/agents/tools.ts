@@ -105,8 +105,9 @@ function chatTools(options: GroveToolOptions): GroveTool[] {
       "Post a message on this worktree's shared channel, which the user and every other agent " +
       'working here can read. Put an agent id in "to" (the id `list_agents` reports, not its ' +
       "title) and the message is delivered into that agent's conversation as well, interrupting " +
-      'what it is doing; leave "to" out to address the room. Use this to hand work over, ask for ' +
-      'a result, or report one back — not for routine progress.',
+      'what it is doing; leave "to" out to address the room. An id reaches an agent in another ' +
+      "worktree too, and the message is then posted on that worktree's channel as well. Use this " +
+      'to hand work over, ask for a result, or report one back — not for routine progress.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -133,12 +134,7 @@ function chatTools(options: GroveToolOptions): GroveTool[] {
       const target = await resolveAddressee(options.roster, context.workspaceRoot, addressee)
       if (target.kind === 'unknown') return target.error
 
-      await options.chat.post(
-        context.workspaceRoot,
-        { kind: 'agent', name: from, instanceId: context.sessionId },
-        text,
-        addresseeOf(target)
-      )
+      await postOnChannels(options.chat, context, from, text, target)
       if (target.kind !== 'agent') return { content: 'Posted on the channel.' }
       if (target.peer.sessionId === context.sessionId) {
         return { content: 'That is you; the message was posted on the channel only.' }
@@ -180,16 +176,36 @@ function chatTools(options: GroveToolOptions): GroveTool[] {
     description:
       'List every agent session in this worktree: the id to address it by, its title, the ' +
       'runtime it runs on, its model, and whether it is working, idle or held on a permission ' +
-      'request. Address agents by id — a title can change, an id cannot. Call this before ' +
-      'handing work over, and again when an answer is overdue.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      'request. The agent that spawned you and the ones you spawned are listed too when they ' +
+      'work in another worktree; set "all_worktrees" to list everyone in every worktree. ' +
+      'Address agents by id — a title can change, an id cannot. Call this before handing work ' +
+      'over, and again when an answer is overdue.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        all_worktrees: {
+          type: 'boolean',
+          description: 'List the agents in every worktree, not only yours. Default false.'
+        }
+      },
+      additionalProperties: false
+    },
     policy: 'allow',
     display: { label: 'agents', input: 'hidden', result: 'list' },
 
-    async execute(_input, context) {
-      const peers = await options.roster.peers(context.workspaceRoot)
-      if (peers.length === 0) return { content: 'No agents are running in this worktree.' }
-      return { content: peers.map((peer) => describePeer(peer, context.sessionId)).join('\n') }
+    async execute(input, context) {
+      const here = await options.roster.peers(context.workspaceRoot)
+      const elsewhere = await agentsElsewhere(options.roster, context, input.all_worktrees === true)
+      if (here.length === 0 && elsewhere.length === 0) {
+        return { content: 'No agents are running in this worktree.' }
+      }
+
+      const lines = here.map((peer) => describePeer(peer, context.sessionId))
+      if (elsewhere.length > 0) {
+        lines.push('In other worktrees:')
+        lines.push(...elsewhere.map((peer) => describePeerElsewhere(peer, context.sessionId)))
+      }
+      return { content: lines.join('\n') }
     }
   }
 
@@ -383,8 +399,9 @@ function spawnTool(options: GroveToolOptions): GroveTool {
       'the message channel with you. It does not see this conversation: the prompt has to carry ' +
       'everything it needs. Set `removeWhenDone` for a one-shot helper, so its conversation is ' +
       'cleared away once it has answered. Set `worktree` to start it in another worktree ' +
-      'instead — one per task, made with `create_worktree`; it still reports back to you, but ' +
-      "works on that branch and shares that worktree's channel rather than yours.",
+      'instead — one per task, made with `create_worktree`. It works on that branch and posts ' +
+      "on that worktree's channel, but it still reports back to you, and the two of you can " +
+      'message each other by id.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -565,6 +582,38 @@ function describeRuntime(runtime: AgentRuntime): string {
   return `- ${parts.join(' · ')}`
 }
 
+/**
+ * The agents outside the caller's worktree that `list_agents` shows: its
+ * relatives by default, everyone when asked.
+ */
+async function agentsElsewhere(
+  roster: AgentRoster,
+  context: { sessionId: string; workspaceRoot: string },
+  everyWorktree: boolean
+): Promise<AgentPeer[]> {
+  if (!everyWorktree) return roster.relativesElsewhere(context.sessionId)
+  const everyone = await roster.everyone()
+  return everyone.filter((peer) => peer.workspaceRoot !== context.workspaceRoot)
+}
+
+/**
+ * Posts a message on the sender's channel, and on the addressee's as well when
+ * it works in another worktree, so the user reading either sees it.
+ */
+async function postOnChannels(
+  chat: WorktreeChannel,
+  context: { sessionId: string; workspaceRoot: string },
+  from: string,
+  text: string,
+  target: Addressee
+): Promise<void> {
+  const sender = { kind: 'agent' as const, name: from, instanceId: context.sessionId }
+  await chat.post(context.workspaceRoot, sender, text, addresseeOf(target))
+  if (target.kind !== 'agent') return
+  if (target.peer.workspaceRoot === context.workspaceRoot) return
+  await chat.post(target.peer.workspaceRoot, sender, text, addresseeOf(target))
+}
+
 /** The name a message is filed under on the channel. */
 function addresseeOf(target: Addressee): string | undefined {
   if (target.kind !== 'agent') return undefined
@@ -588,6 +637,13 @@ function describePeer(peer: AgentPeer, selfSessionId: string): string {
   ]
   if (peer.sessionId === selfSessionId) parts.push('you')
   return `- ${parts.join(' · ')}`
+}
+
+/** A roster line for an agent in another worktree: where it is, and how it is related. */
+function describePeerElsewhere(peer: AgentPeer, selfSessionId: string): string {
+  const parts = [describePeer(peer, selfSessionId), `in ${peer.workspaceRoot}`]
+  if (peer.parentSessionId === selfSessionId) parts.push('spawned by you')
+  return parts.join(' · ')
 }
 
 function stateOf(peer: AgentPeer): string {

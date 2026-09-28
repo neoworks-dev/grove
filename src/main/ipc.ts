@@ -55,6 +55,8 @@ import { AgentService } from './agents/service'
 import { AgentReviewBridge } from './agents/reviewBridge'
 import { AgentHandoffBridge } from './agents/handoffBridge'
 import { AgentRoster } from './agents/roster'
+import type { AgentWorktrees } from './agents/worktreeTools'
+import { runSetup } from './routes/worktrees'
 import { groveSystemPrompt } from './agents/systemPrompt'
 import { groveTools } from './agents/tools'
 
@@ -153,7 +155,14 @@ const agents = new AgentService({
   harnesses,
   // The service keeps the notes and knows the renderer's panes, so the tools it
   // runs reach back into it.
-  tools: () => groveTools({ chat: channel, roster: agentRoster, notes: agents, screen: agents }),
+  tools: () =>
+    groveTools({
+      chat: channel,
+      roster: agentRoster,
+      notes: agents,
+      screen: agents,
+      worktrees: agentWorktrees
+    }),
   systemPrompt: (session) => buildSystemPrompt(session),
   sessionRemoved: (session) => agentHandoffBridge.reportClosed(session),
   publish: (event) => send('event:agent-event', event),
@@ -171,21 +180,51 @@ void agents.settleInterruptedTurns()
 // ones: what grove's inter-agent tools are built on.
 const agentRoster = new AgentRoster({ agents, harnesses })
 
+// The worktrees agents can list, create and spawn into.
+const agentWorktrees: AgentWorktrees = {
+  list: () => refreshWorktrees(),
+  create: (options) => createWorktreeForAgent(options.branch, options.base)
+}
+
+/**
+ * Checks out a new branch in a new worktree for an agent, and runs its setup.
+ *
+ * The sidebar is told as soon as the worktree exists, since nothing the user
+ * did will make it look. Unlike the dialog, the agent waits for setup: whatever
+ * it starts there next expects the dependencies to be installed.
+ */
+async function createWorktreeForAgent(branch: string, base: string | undefined): Promise<Worktree> {
+  const { repoPath, config: cfg } = requireRepo()
+  let baseBranch = base
+  if (baseBranch === undefined) baseBranch = cfg.workbench.default_base_branch
+
+  const created = await worktrees.addWorktree(repoPath, cfg, {
+    name: branch,
+    baseBranch,
+    newBranch: branch
+  })
+  send('event:worktrees-changed', await refreshWorktrees())
+  await runSetup(send, repoPath, cfg, created)
+  return created
+}
+
 /** grove's part of a session's system prompt: who it is here, and who else is. */
 async function buildSystemPrompt(session: {
   id: string
   title: string
   workspaceRoot: string
 }): Promise<string> {
-  const [agentId, peers] = await Promise.all([
+  const [agentId, peers, relatives] = await Promise.all([
     agentRoster.agentIdOf(session.id),
-    agentRoster.peers(session.workspaceRoot)
+    agentRoster.peers(session.workspaceRoot),
+    agentRoster.relativesElsewhere(session.id)
   ])
   return groveSystemPrompt({
     agentId,
     title: session.title,
     workspaceRoot: session.workspaceRoot,
     peers,
+    relatives,
     harnesses: agentRoster.harnessIds()
   })
 }

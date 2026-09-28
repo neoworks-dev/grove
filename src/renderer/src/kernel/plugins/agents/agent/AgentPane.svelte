@@ -163,7 +163,10 @@
   let overviewOpen = $state(false)
   let expandedTools = $state<Record<string, boolean>>({})
   let transcriptViewport = $state<HTMLDivElement>()
-  let composer = $state<{ focus: () => void }>()
+  let composer = $state<{ focus: () => boolean }>()
+  // The approval or question card standing in for the composer, while one is up.
+  let promptCard = $state<{ focus: () => void }>()
+  let rootEl = $state<HTMLDivElement>()
   let stickToBottom = $state(true)
   let disposeBindings: (() => void) | undefined
 
@@ -555,6 +558,76 @@
     composer?.focus()
   }
 
+  // ── Focus ───────────────────────────────────────────────────────
+  //
+  // However the pane gains focus, the keyboard goes where typing goes: the card
+  // the agent is waiting on, else the composer. Pane navigation, focus-follows-
+  // mouse and focus handed back after a dialog come through the delegate; a
+  // click from another pane lands on the pane's own surface and moves on from
+  // there.
+
+  /** Focuses the card the agent is waiting on, else the composer; false if neither can take it. */
+  function focusPromptTarget(): boolean {
+    if (overviewOpen) return false
+    if (promptCard) {
+      promptCard.focus()
+      return true
+    }
+    if (!composer) return false
+    return composer.focus()
+  }
+
+  $effect(() => keymap.registerPaneFocus(leafId, focusPromptTarget))
+
+  $effect(() => {
+    const leafEl = rootEl?.closest<HTMLElement>('[data-leaf]')
+    if (!leafEl) return
+    return steerSurfaceFocus(leafEl)
+  })
+
+  /**
+   * Moves focus that lands on the pane's surface — a click on the transcript —
+   * on to the composer, unless the press dragged out a selection, which keeps
+   * it. Returns the teardown.
+   */
+  function steerSurfaceFocus(leafEl: HTMLElement): () => void {
+    let pressed = false
+    const onPointerDown = (): void => {
+      pressed = true
+    }
+    const onPointerUp = (): void => {
+      pressed = false
+    }
+    const afterPress = (): void => {
+      if (!window.getSelection()?.isCollapsed) return
+      focusPromptTarget()
+    }
+    const onFocusIn = (event: FocusEvent): void => {
+      if (!landedOnSurface(event)) return
+      if (pressed) {
+        window.addEventListener('pointerup', afterPress, { once: true })
+        return
+      }
+      focusPromptTarget()
+    }
+    leafEl.addEventListener('pointerdown', onPointerDown, true)
+    window.addEventListener('pointerup', onPointerUp, true)
+    leafEl.addEventListener('focusin', onFocusIn)
+    return () => {
+      leafEl.removeEventListener('pointerdown', onPointerDown, true)
+      window.removeEventListener('pointerup', onPointerUp, true)
+      window.removeEventListener('pointerup', afterPress)
+      leafEl.removeEventListener('focusin', onFocusIn)
+    }
+  }
+
+  /** Whether focus landed on an element wrapping this pane rather than on a control inside it. */
+  function landedOnSurface(event: FocusEvent): boolean {
+    const target = event.target
+    if (!(target instanceof HTMLElement) || !rootEl) return false
+    return target.contains(rootEl)
+  }
+
   function scrollTranscript(delta: number): void {
     transcriptViewport?.scrollBy({ top: delta })
   }
@@ -644,6 +717,8 @@
         context: leafId,
         group: 'Agent',
         description: 'Cycle permission mode',
+        // A card up for an answer uses Shift+Tab to step back through its choices.
+        when: () => shownApproval === undefined,
         run: cycleMode
       },
       {
@@ -707,7 +782,7 @@
   const errorText = $derived(live?.error || agentSessions.serverError || catalog.error)
 </script>
 
-<div class="flex h-full flex-col">
+<div bind:this={rootEl} class="flex h-full flex-col">
   {#if !worktree}
     <p class="px-3 py-3 text-xs text-dim">Select a worktree.</p>
   {:else}
@@ -808,10 +883,6 @@
 
     {#if !overviewOpen}
       <div class="relative shrink-0 p-2">
-        {#if live && !subagent}
-          <AgentNotes notes={live.transcript.notes} tasks={live.transcript.tasks} onSave={saveNotes} />
-        {/if}
-
         {#if postReviews.length > 0}
           <!-- Post-approve reviews: the writes are already on disk, so nothing is
              blocked on these. Opening one shows its diff in the editor. -->
@@ -855,6 +926,7 @@
              what lets it run, so the card asks rather than asking permission. -->
           {#key shownApproval.toolUseId}
             <AgentQuestion
+              bind:this={promptCard}
               {questions}
               input={shownApproval.input}
               onAnswer={answerQuestion}
@@ -866,6 +938,7 @@
              answered. Keyed so its selection state resets per request. -->
           {#key shownApproval.toolUseId}
             <AgentApproval
+              bind:this={promptCard}
               item={shownApproval}
               tool={catalog.toolNamed(shownApproval.name)}
               batch={gatedReview}
@@ -912,6 +985,7 @@
               onInterrupt={interrupt}
               onCycleMode={cycleMode}
               onBack={showOverview}
+              header={live ? notesHeader : undefined}
             />
           {/if}
 
@@ -958,3 +1032,10 @@
     onClose={closeCredentialPrompt}
   />
 {/if}
+
+<!-- The notes list, drawn as the top of the composer rather than a card of its own. -->
+{#snippet notesHeader()}
+  {#if live}
+    <AgentNotes notes={live.transcript.notes} tasks={live.transcript.tasks} onSave={saveNotes} />
+  {/if}
+{/snippet}

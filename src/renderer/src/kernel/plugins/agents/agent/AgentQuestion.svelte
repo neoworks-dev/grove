@@ -212,6 +212,11 @@
       rootEl?.focus()
     }
   }
+
+  /** Gives the card the keyboard again. */
+  export function focus(): void {
+    rootEl?.focus()
+  }
 </script>
 
 <div

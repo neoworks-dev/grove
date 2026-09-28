@@ -13,6 +13,9 @@
   import { fileIcon } from '../lib/icons'
   import { diagnostics, SEVERITY, type Diagnostic } from '../lib/diagnostics.svelte'
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
+  import WrenchIcon from 'phosphor-svelte/lib/WrenchIcon'
+  import ContextMenu, { type MenuItem } from './ContextMenu.svelte'
+  import { diagnosticProblem, fixMenuItems, worktreeForPath } from '../lib/agents/fixWithAgent'
 
   // Severity → color + label. The line:col prefix carries the color, so severity
   // reads without spending a column on a glyph.
@@ -41,6 +44,8 @@
   let selectedIndex = $state(0)
   let pendingG = false
   let rootEl = $state<HTMLDivElement>()
+  // The Fix with agent menu, open over the diagnostic it was asked for.
+  let menu = $state<{ x: number; y: number; items: MenuItem[] } | null>(null)
   let listViewport = $state<HTMLDivElement>()
 
   // Group the merged list by file. Within a group the sort is by position rather
@@ -136,6 +141,40 @@
     if (!row) return
     if (row.kind === 'file') toggleGroup(row.group)
     else jumpTo(row.diagnostic)
+  }
+
+  /** The worktree a diagnostic belongs to: the one holding its file, else the open one. */
+  function worktreePathFor(diagnostic: Diagnostic): string | null {
+    const owner = worktreeForPath(diagnostic.path)
+    if (owner) return owner.path
+    const selected = store.selectedWorktree
+    if (!selected) return null
+    return selected.path
+  }
+
+  /** Opens the Fix with agent menu for a diagnostic at a point on screen. */
+  function openFixMenu(index: number, diagnostic: Diagnostic, x: number, y: number): void {
+    selectedIndex = index
+    const worktreePath = worktreePathFor(diagnostic)
+    if (!worktreePath) return
+    const items = fixMenuItems(worktreePath, () =>
+      diagnosticProblem(worktreePath, diagnostic.path, [diagnostic])
+    )
+    menu = { x, y, items }
+  }
+
+  /** Right-click on a diagnostic row. */
+  function onRowContextMenu(event: MouseEvent, index: number, diagnostic: Diagnostic): void {
+    event.preventDefault()
+    openFixMenu(index, diagnostic, event.clientX, event.clientY)
+  }
+
+  /** The row's own Fix with agent button: the menu opens under it. */
+  function onFixButton(event: MouseEvent, index: number, diagnostic: Diagnostic): void {
+    event.stopPropagation()
+    const button = event.currentTarget as HTMLElement
+    const box = button.getBoundingClientRect()
+    openFixMenu(index, diagnostic, box.left, box.bottom + 2)
   }
 
   // ── Navigation ─────────────────────────────────────────────────
@@ -299,7 +338,7 @@
         {:else}
           {@const style = severityStyle[row.diagnostic.severity] ?? severityStyle[SEVERITY.HINT]}
           <div
-            class="flex w-full cursor-pointer select-none items-center gap-2 py-[2px] pl-6 pr-2 text-left text-xs {rowClass(
+            class="group/row flex w-full cursor-pointer select-none items-center gap-2 py-[2px] pl-6 pr-2 text-left text-xs {rowClass(
               index
             )} hover:bg-hover"
             role="treeitem"
@@ -307,6 +346,7 @@
             aria-selected={index === selectedIndex}
             title="{style.label}: {row.diagnostic.message}"
             onclick={() => activate(index)}
+            oncontextmenu={(event) => onRowContextMenu(event, index, row.diagnostic)}
           >
             <span class="shrink-0 font-mono text-2xs tabular-nums {style.color}">
               {row.diagnostic.lnum + 1}:{row.diagnostic.col + 1}
@@ -315,6 +355,13 @@
             {#if row.diagnostic.source}
               <span class="shrink-0 font-mono text-2xs text-dim">{row.diagnostic.source}</span>
             {/if}
+            <button
+              class="hidden shrink-0 cursor-pointer rounded-sm p-0.5 text-dim hover:bg-elevated hover:text-default group-hover/row:block"
+              title="Fix with agent"
+              onclick={(event) => onFixButton(event, index, row.diagnostic)}
+            >
+              <WrenchIcon size={12} />
+            </button>
           </div>
         {/if}
       {/each}
@@ -325,3 +372,7 @@
     </div>
   </FloatingScrollbar>
 </div>
+
+{#if menu}
+  <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => (menu = null)} />
+{/if}

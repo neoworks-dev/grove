@@ -842,6 +842,7 @@ export class AgentService {
       startingStats: {
         usage: session.usage,
         cost: session.cost,
+        contextWindow: session.contextWindow,
         processTotals: session.processTotals ?? null
       },
       startingTasks: tasksOf(this.store.peekEvents(sessionId)),

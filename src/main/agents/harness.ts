@@ -266,6 +266,8 @@ export interface HarnessOffering {
  */
 export type ToolIntent =
   | { kind: 'review'; summary: string }
+  /** The call asks the user something; only they can answer it, whatever the mode. */
+  | { kind: 'question' }
   | {
       kind: 'write'
       /** Absolute, or relative to the workspace root. */

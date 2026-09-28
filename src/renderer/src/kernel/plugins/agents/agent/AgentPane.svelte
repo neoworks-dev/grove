@@ -883,10 +883,6 @@
 
     {#if !overviewOpen}
       <div class="relative shrink-0 p-2">
-        {#if live && !subagent}
-          <AgentNotes notes={live.transcript.notes} tasks={live.transcript.tasks} onSave={saveNotes} />
-        {/if}
-
         {#if postReviews.length > 0}
           <!-- Post-approve reviews: the writes are already on disk, so nothing is
              blocked on these. Opening one shows its diff in the editor. -->
@@ -989,6 +985,7 @@
               onInterrupt={interrupt}
               onCycleMode={cycleMode}
               onBack={showOverview}
+              header={live ? notesHeader : undefined}
             />
           {/if}
 
@@ -1035,3 +1032,10 @@
     onClose={closeCredentialPrompt}
   />
 {/if}
+
+<!-- The notes list, drawn as the top of the composer rather than a card of its own. -->
+{#snippet notesHeader()}
+  {#if live}
+    <AgentNotes notes={live.transcript.notes} tasks={live.transcript.tasks} onSave={saveNotes} />
+  {/if}
+{/snippet}

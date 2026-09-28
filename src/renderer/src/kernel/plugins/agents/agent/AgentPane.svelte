@@ -717,6 +717,8 @@
         context: leafId,
         group: 'Agent',
         description: 'Cycle permission mode',
+        // A card up for an answer uses Shift+Tab to step back through its choices.
+        when: () => shownApproval === undefined,
         run: cycleMode
       },
       {

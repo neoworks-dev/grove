@@ -49,7 +49,8 @@ import type {
   HarnessRegistry,
   HarnessRun,
   PromptAttachment,
-  SubagentIdentity
+  SubagentIdentity,
+  ToolIntent
 } from './harness'
 import { runShellCommand, type ShellResult } from './shell'
 import { completeShellLine } from './shellCompletion'
@@ -649,6 +650,9 @@ export class AgentService {
   private autoDecisionFor(sessionId: string, request: ApprovalRequest): ConfirmationResult | null {
     const session = this.store.peek(sessionId)
     if (!session) return null
+    // Allowing a question unanswered runs it with no answers, which the agent
+    // reads as the user declining to answer.
+    if (this.asksTheUser(session.harness, request)) return null
     if (session.permissionMode === 'bypass') return 'allow'
     // "Don't ask again" for this tool, answered earlier in the session.
     if (session.autoApproveTools.includes(request.name)) return 'allow'
@@ -664,10 +668,20 @@ export class AgentService {
    * that names its tools differently needs no change here.
    */
   private writesAFile(harnessId: string, request: ApprovalRequest): boolean {
+    return this.intentOf(harnessId, request)?.kind === 'write'
+  }
+
+  /** Whether a call is a question for the user, as the harness itself reports it. */
+  private asksTheUser(harnessId: string, request: ApprovalRequest): boolean {
+    return this.intentOf(harnessId, request)?.kind === 'question'
+  }
+
+  /** What the session's harness makes of a call, or null when it has no opinion. */
+  private intentOf(harnessId: string, request: ApprovalRequest): ToolIntent | null {
     const descriptor = this.options.harnesses.get(harnessId)
-    if (!descriptor) return false
+    if (!descriptor) return null
     const input = (request.input as Record<string, unknown>) ?? {}
-    return descriptor.intentOf(request.name, input)?.kind === 'write'
+    return descriptor.intentOf(request.name, input)
   }
 
   /**
@@ -828,6 +842,7 @@ export class AgentService {
       startingStats: {
         usage: session.usage,
         cost: session.cost,
+        contextWindow: session.contextWindow,
         processTotals: session.processTotals ?? null
       },
       startingTasks: tasksOf(this.store.peekEvents(sessionId)),

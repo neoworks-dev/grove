@@ -75,6 +75,12 @@ export interface SessionStats {
   usage: Usage
   cost: number
   contextWindow: number
+  /**
+   * How much of the context window the conversation fills now: the last
+   * response's whole prompt, system prompt and cached turns included, plus its
+   * output. Absent when the runtime does not say.
+   */
+  contextTokens?: number
   /** The runtime's own process totals, for a runtime whose count restarts with its process. */
   processTotals?: ProcessTotals
 }
@@ -94,6 +100,8 @@ export interface ProcessTotals {
 export interface StartingStats {
   usage: Usage
   cost: number
+  /** The model's context window as last reported, or 0 when none has been. */
+  contextWindow: number
   /** What the last process reported, or null when none has. */
   processTotals: ProcessTotals | null
 }
@@ -266,6 +274,8 @@ export interface HarnessOffering {
  */
 export type ToolIntent =
   | { kind: 'review'; summary: string }
+  /** The call asks the user something; only they can answer it, whatever the mode. */
+  | { kind: 'question' }
   | {
       kind: 'write'
       /** Absolute, or relative to the workspace root. */

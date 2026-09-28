@@ -122,11 +122,16 @@
   }
 </script>
 
-<div class="mb-2 rounded-md border border-line bg-elevated text-2xs" data-testid="agent-notes">
-  <div class="flex items-center gap-1 px-1.5 py-1">
+<!-- The top of the composer: square below, where the prompt box carries on. -->
+<div
+  class="rounded-t-md border border-b-0 border-line-strong bg-elevated text-2xs"
+  data-testid="agent-notes"
+>
+  <div class="flex items-center gap-1 px-1 py-0.5">
     <button
-      class="flex min-w-0 flex-1 items-center gap-1.5 rounded px-0.5 text-left text-muted hover:text-default"
+      class="flex min-w-0 flex-1 items-center gap-1.5 rounded px-0.5 text-left text-dim hover:text-default"
       aria-expanded={open}
+      aria-label="Notes"
       disabled={empty}
       onclick={() => (open = !open)}
     >
@@ -135,16 +140,16 @@
           <CaretRightIcon size={10} />
         </span>
       {/if}
-      <span class="font-semibold uppercase tracking-caps text-dim">Notes</span>
       {#if notes.length > 0}
-        <span class="text-dim">{notesDone}/{notes.length}</span>
+        <span>{notesDone}/{notes.length}</span>
       {/if}
       {#if tasks.length > 0}
-        <span class="text-dim">· Plan {tasksDone}/{tasks.length}</span>
+        {#if notes.length > 0}<span>·</span>{/if}
+        <span>Plan {tasksDone}/{tasks.length}</span>
       {/if}
     </button>
     <button
-      class="flex size-5 shrink-0 items-center justify-center rounded text-dim hover:bg-hover hover:text-default"
+      class="flex size-4 shrink-0 items-center justify-center rounded text-dim hover:bg-hover hover:text-default"
       title="Add a note"
       aria-label="Add a note"
       onclick={startAdding}
@@ -154,7 +159,7 @@
   </div>
 
   {#if open && !empty}
-    <ul class="max-h-40 overflow-auto px-1.5 pb-1">
+    <ul class="max-h-40 overflow-auto px-1 pb-0.5">
       {#each notes as note (note.id)}
         <li class="group/row flex items-center gap-1.5 rounded px-0.5 py-0.5 hover:bg-hover">
           <Checkbox
@@ -236,7 +241,7 @@
   {/if}
 
   {#if adding}
-    <div class="px-1.5 pb-1.5">
+    <div class="px-1 pb-1">
       <input
         class="w-full rounded border border-line bg-input px-1.5 py-0.5 text-default outline-none placeholder:text-dim focus:border-line-strong"
         placeholder="Add a note — Enter to pin, Esc to close"

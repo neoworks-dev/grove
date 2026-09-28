@@ -244,10 +244,27 @@
   }
 
   // Hiding a focused textarea doesn't reliably fire `blur`, which would leave the
-  // pane in insert mode with nothing visible to type into.
+  // pane in insert mode with nothing visible to type into. Coming back, the card
+  // that stood in for the composer took focus away with it, so the caret returns
+  // here — unless something else has claimed it since.
+  let wasHidden = false
   $effect(() => {
-    if (hidden) promptEl?.blur()
+    if (hidden) {
+      wasHidden = true
+      promptEl?.blur()
+      return
+    }
+    if (!wasHidden) return
+    wasHidden = false
+    requestAnimationFrame(takeDroppedFocus)
   })
+
+  /** Focuses the prompt when nothing holds the keyboard. */
+  function takeDroppedFocus(): void {
+    const active = document.activeElement
+    if (active !== null && active !== document.body) return
+    promptEl?.focus()
+  }
 
   // An @file:lines reference pushed in from the editor selection ("Send
   // Selection to Composer"). Taken off the store as it lands, so a composer
@@ -452,8 +469,11 @@
     void attach(files)
   }
 
-  export function focus(): void {
-    promptEl?.focus()
+  /** Puts the caret in the prompt, and says whether it got there: a hidden composer can't take it. */
+  export function focus(): boolean {
+    if (!promptEl || hidden) return false
+    promptEl.focus()
+    return document.activeElement === promptEl
   }
 </script>
 

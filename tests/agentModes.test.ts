@@ -17,8 +17,7 @@ import {
   HarnessRegistry,
   type ApprovalDecision,
   type ApprovalRequest,
-  type HarnessRunOptions,
-  type ToolIntent
+  type HarnessRunOptions
 } from '../src/main/agents/harness'
 import { SessionStore } from '../src/main/agents/store'
 import { modeOf, nextMode, MODE_ORDER } from '../src/renderer/src/lib/agents/modes'
@@ -118,16 +117,6 @@ interface Fixture {
   cleanup: () => Promise<void>
 }
 
-/** `write_file` writes; everything else is an ordinary call. */
-function intentOf(name: string, input: Record<string, unknown>): ToolIntent | null {
-  if (name !== 'write_file') return null
-  return {
-    kind: 'write',
-    path: String(input.path ?? 'file.txt'),
-    apply: () => String(input.text ?? '')
-  }
-}
-
 async function setup(): Promise<Fixture> {
   const root = await mkdtemp(join(tmpdir(), 'grove-agent-modes-'))
   const store = new SessionStore(root)
@@ -160,8 +149,7 @@ async function setup(): Promise<Fixture> {
       const run = new FakeRun(options)
       runs.push(run)
       return run
-    },
-    intentOf
+    }
   })
 
   const service = new AgentService({
@@ -185,8 +173,27 @@ async function runningIn(fixture: Fixture, mode: AgentMode): Promise<FakeRun> {
   return fixture.runs[fixture.runs.length - 1]
 }
 
+/** A permission request as ACP sends one: `write_file` carries a diff, anything else runs a command. */
 function call(name: string): ApprovalRequest {
-  return { toolUseId: `call-${name}`, name, input: { path: 'a.txt', text: 'hi' } }
+  const input = { path: 'a.txt', text: 'hi' }
+  if (name === 'write_file') {
+    return {
+      sessionId: 'thread-1',
+      toolCall: {
+        toolCallId: `call-${name}`,
+        name,
+        kind: 'edit',
+        rawInput: input,
+        content: [{ type: 'diff', path: '/tmp/worktree/a.txt', oldText: null, newText: 'hi' }]
+      },
+      options: []
+    }
+  }
+  return {
+    sessionId: 'thread-1',
+    toolCall: { toolCallId: `call-${name}`, name, kind: 'execute', rawInput: { command: 'ls' } },
+    options: []
+  }
 }
 
 /** Whether an approval was answered without anyone being asked. */
@@ -241,18 +248,16 @@ describe('permission modes, as the service enforces them', () => {
     }
   })
 
-  test('an auto-approved call is logged as allowed, so the review flow lets it be', async () => {
+  test('an auto-approved call never reaches the log as a request, so the review flow lets it be', async () => {
     const fixture = await setup()
     try {
       const run = await runningIn(fixture, 'acceptEdits')
       await run.ask(call('write_file'))
 
       const events = await fixture.service.listEvents(run.options.sessionId)
-      const toolUse = events.find((event) => event.type === 'agent.tool_use')
-      // The review bridge only gates calls logged as "ask"; this is what keeps
-      // accept-edits from raising the diff it exists to skip.
-      expect(toolUse).toBeDefined()
-      expect(toolUse && 'permission' in toolUse && toolUse.permission).toBe('allow')
+      // The review bridge only gates permission requests on the log; this is
+      // what keeps accept-edits from raising the diff it exists to skip.
+      expect(events.some((event) => event.type === 'permission')).toBe(false)
     } finally {
       await fixture.cleanup()
     }

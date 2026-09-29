@@ -1,18 +1,19 @@
-// grove's own tools, offered to every harness that can host them.
+// grove's own tools, served over MCP to whichever harness a session runs on.
 //
-// These used to be extensions loaded into the agent server, which meant they
-// could not call back into grove and had to reach it through files. Now they run
-// in grove's own process, so `send_message` posts on the worktree channel
-// directly.
-//
-// Each harness adapter translates these into whatever its SDK calls a tool. A
-// harness that cannot host tools is given none and loses only the features they
-// add.
+// They run in grove's own process, so `send_message` posts on the worktree
+// channel directly and the workspace tools read the editor's buffers. A
+// harness that cannot host tools is given none and loses only the features
+// they add.
 
 import type { WorktreeChannel } from '../../worktreeChannel'
 import type { GroveTool } from '../harness'
 import type { AgentRoster } from '../roster'
 import { chatTools } from './chatTools'
+import { fileTools } from './fileTools'
+import { lspTool, type AgentLanguages } from './lspTools'
+import { searchTools } from './searchTools'
+import { shellTool } from './shellTool'
+import type { WorkspaceFiles, WorktreeLocation } from './workspaceFiles'
 import { noteTools, type AgentNotes } from './noteTools'
 import { requestReviewTool } from './reviewTools'
 import { showTools, type AgentScreen } from './showTools'
@@ -44,5 +45,25 @@ export function groveTools(options: GroveToolOptions): GroveTool[] {
     spawnTool(options.roster, options.worktrees),
     ...transcriptTools(options.roster),
     ...worktreeTools(options.worktrees)
+  ]
+}
+
+export interface WorkspaceToolOptions {
+  files: WorkspaceFiles
+  languages: AgentLanguages
+  worktrees: () => WorktreeLocation[]
+}
+
+/**
+ * The tools grove mode works with in place of a harness's own: reading and
+ * editing files, finding them, asking the language server, running commands.
+ * Made per session, since the edit tool remembers what it was last asked.
+ */
+export function workspaceTools(options: WorkspaceToolOptions): GroveTool[] {
+  return [
+    ...fileTools(options.files),
+    ...searchTools(),
+    lspTool(options.languages, options.files, options.worktrees),
+    shellTool()
   ]
 }

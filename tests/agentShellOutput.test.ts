@@ -2,20 +2,14 @@
 //
 // Three parts: the hub that holds what each command printed and passes it on;
 // the helper for harnesses that report everything-so-far rather than what is
-// new; and Claude's prefix and tee, which must run every command exactly as it
-// would have run while copying a Bash command's output to grove.
+// new; and grove mode's own shell tool, which streams into the hub as it runs.
 
-import { afterEach, describe, expect, test } from 'bun:test'
-import { spawn } from 'node:child_process'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { createServer, type Server, type Socket } from 'node:net'
+import { describe, expect, test } from 'bun:test'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { addedOutput, ShellOutputHub } from '../src/main/agents/shellOutput'
-import { matchBashCall } from '../src/main/agents/harnesses/claudeShellTee'
+import { commandResult, shellTool } from '../src/main/agents/tools/shellTool'
+import type { GroveToolContext } from '../src/main/agents/harness'
 import type { ShellOutputUpdate } from '../src/shared/agents'
-
-const PREFIX = join(import.meta.dir, '..', 'resources', 'agent-shell', 'prefix.sh')
 
 /** A hub that records what it publishes. */
 function recordingHub(): { hub: ShellOutputHub; updates: ShellOutputUpdate[] } {
@@ -101,127 +95,50 @@ describe('output reported as everything so far', () => {
   })
 })
 
-describe('matching a copied command to its call', () => {
-  test('only an exact command matches', () => {
-    const open = new Map([
-      ['t1', 'bun test'],
-      ['t2', 'ls']
-    ])
-    expect(matchBashCall(open, 'ls')).toBe('t2')
-    expect(matchBashCall(open, 'ls -la')).toBeNull()
-    expect(matchBashCall(new Map([['t1', 'bun test']]), 'bun run build')).toBeNull()
-  })
-})
-
-// ── Claude's prefix and tee ───────────────────────────────────────
-
-let directory: string | null = null
-let server: Server | null = null
-
-afterEach(async () => {
-  server?.close()
-  server = null
-  if (directory) await rm(directory, { recursive: true, force: true })
-  directory = null
-})
-
-/** A stand-in for grove's socket: records every message, and can answer one. */
-async function fakeGrove(
-  onStart?: (socket: Socket) => void
-): Promise<{ path: string; messages: unknown[] }> {
-  directory = await mkdtemp(join(tmpdir(), 'grove-tee-'))
-  const path = join(directory, 'shell.sock')
-  const messages: unknown[] = []
-  server = createServer((socket) => {
-    let pending = ''
-    socket.setEncoding('utf8')
-    socket.on('data', (data: string) => {
-      pending += data
-      let newline = pending.indexOf('\n')
-      while (newline >= 0) {
-        const message = JSON.parse(pending.slice(0, newline)) as { type: string }
-        messages.push(message)
-        if (message.type === 'start') onStart?.(socket)
-        pending = pending.slice(newline + 1)
-        newline = pending.indexOf('\n')
-      }
-    })
-  })
-  await new Promise<void>((resolve) => server!.listen(path, resolve))
-  return { path, messages }
-}
-
-/** Runs the prefix the way Claude Code does: the whole command line as one argument. */
-function runPrefix(
-  commandLine: string,
-  socketPath: string | null
-): Promise<{ stdout: string; stderr: string; code: number | null }> {
-  const env: Record<string, string> = { ...(process.env as Record<string, string>) }
-  delete env.GROVE_SHELL_SOCKET
-  if (socketPath) {
-    env.GROVE_SHELL_SOCKET = socketPath
-    env.GROVE_NODE = process.execPath
-    env.GROVE_SESSION_ID = 's1'
+describe("grove mode's shell", () => {
+  /** A tool context whose live output lands in the given hub. */
+  function contextFor(hub: ShellOutputHub): GroveToolContext {
+    return {
+      sessionId: 's1',
+      workspaceRoot: tmpdir(),
+      surface: () => {},
+      show: () => {},
+      toolCallId: 't1',
+      shellOutput: hub.sinkFor('s1')
+    }
   }
-  return new Promise((resolve) => {
-    const child = spawn(PREFIX, [commandLine], { env })
-    let stdout = ''
-    let stderr = ''
-    child.stdout.on('data', (data) => (stdout += data))
-    child.stderr.on('data', (data) => (stderr += data))
-    child.on('close', (code) => resolve({ stdout, stderr, code }))
-  })
-}
 
-/** A command line in the shape Claude Code builds for its Bash tool. */
-function claudeCommand(command: string): string {
-  const quoted = command.replace(/'/g, "'\\''")
-  return `source /nonexistent/snapshot-bash-1.sh 2>/dev/null || true && eval '${quoted}' < /dev/null && pwd -P >| /dev/null`
-}
+  test('streams what the command prints to the call it belongs to', async () => {
+    const { hub } = recordingHub()
+    const result = await shellTool().execute({ command: 'echo one; echo two >&2' }, contextFor(hub))
 
-describe.skipIf(process.platform === 'win32')("Claude's shell prefix", () => {
-  test('runs a Bash command unchanged and copies its output to grove', async () => {
-    const grove = await fakeGrove()
-
-    const result = await runPrefix(claudeCommand("echo out; echo 'it''s' >&2; exit 3"), grove.path)
-    await Bun.sleep(50)
-
-    expect(result).toEqual({ stdout: 'out\n', stderr: 'its\n', code: 3 })
-    expect(grove.messages).toEqual([
-      { type: 'start', sessionId: 's1', command: "echo out; echo 'it''s' >&2; exit 3" },
-      { type: 'output', stream: 'stdout', text: 'out\n' },
-      { type: 'output', stream: 'stderr', text: 'its\n' },
-      { type: 'exit', code: 3, signal: null }
-    ])
+    expect(result).toEqual({ content: 'one\ntwo', isError: false })
+    expect(hub.snapshot('s1')).toEqual([{ toolUseId: 't1', text: 'one\ntwo\n', running: false }])
   })
 
-  test('runs the command as before when grove is not listening', async () => {
-    const result = await runPrefix(claudeCommand('echo alone'), null)
+  test('runs in the working directory and reports a failing exit code', async () => {
+    const { hub } = recordingHub()
+    const result = await shellTool().execute({ command: 'pwd; exit 3' }, contextFor(hub))
 
-    expect(result).toEqual({ stdout: 'alone\n', stderr: '', code: 0 })
+    expect(result.content).toBe(`${tmpdir()}\n[Exit code 3.]`)
+    expect(result.isError).toBe(true)
   })
 
-  test('leaves hooks and servers alone', async () => {
-    const grove = await fakeGrove()
+  test('stops a command that runs past its timeout', async () => {
+    const { hub } = recordingHub()
+    const result = await shellTool().execute({ command: 'sleep 5', timeout: 1 }, contextFor(hub))
 
-    const result = await runPrefix('echo hook', grove.path)
-    await Bun.sleep(50)
-
-    expect(result).toEqual({ stdout: 'hook\n', stderr: '', code: 0 })
-    expect(grove.messages).toEqual([])
+    expect(result.content).toBe('[Stopped after 1s.]')
+    expect(result.isError).toBe(true)
   })
 
-  test('stops the command when grove sends Ctrl+C', async () => {
-    const grove = await fakeGrove((socket) => {
-      setTimeout(() => socket.write(`${JSON.stringify({ type: 'interrupt' })}\n`), 100)
-    })
+  test('hands the model the start and end of a long run, not all of it', () => {
+    const lines = Array.from({ length: 5000 }, (_, index) => `line ${index}`).join('\n')
+    const result = commandResult(lines, 0, null, false, 120)
 
-    const started = Date.now()
-    const result = await runPrefix(claudeCommand('sleep 5; echo finished'), grove.path)
-
-    expect(Date.now() - started).toBeLessThan(3000)
-    expect(result.stdout).toBe('')
-    // The agent is told the user stopped it, not left to guess at the exit code.
-    expect(result.stderr).toContain('Stopped by the user')
+    expect(result.content.startsWith('line 0\n')).toBe(true)
+    expect(result.content.endsWith('line 4999')).toBe(true)
+    expect(result.content).toContain('lines cut')
+    expect(result.content.length).toBeLessThan(lines.length)
   })
 })

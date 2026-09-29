@@ -79,8 +79,7 @@ function serviceAt(root: string): Fixture {
       const run = new FakeRun(options)
       runs.push(run)
       return run
-    },
-    intentOf: () => null
+    }
   })
   const service = new AgentService({
     store,
@@ -101,7 +100,11 @@ async function parkedCall(
     { type: 'user.message', content: [{ type: 'text', text: 'go' }] }
   ])
   const run = fixture.runs[fixture.runs.length - 1]
-  const decision = run.ask({ toolUseId: 'call-1', name: 'bash', input: { command: 'ls' } })
+  const decision = run.ask({
+    sessionId: 'thread-1',
+    toolCall: { toolCallId: 'call-1', name: 'bash', kind: 'execute', rawInput: { command: 'ls' } },
+    options: []
+  })
   return { run, sessionId: session.id, decision }
 }
 
@@ -181,8 +184,10 @@ describe('a turn the app restarted in the middle of', () => {
       await restarted.service.settleInterruptedTurns()
 
       const events = await restarted.service.listEvents(sessionId)
-      const result = events.find((event) => event.type === 'agent.tool_result')
-      expect(result).toMatchObject({ toolUseId: 'call-1', isError: true })
+      const result = events.find(
+        (event) => event.type === 'update' && event.update.sessionUpdate === 'tool_call_update'
+      )
+      expect(result).toMatchObject({ update: { toolCallId: 'call-1', status: 'failed' } })
       expect(events.at(-1)).toMatchObject({ type: 'session.status_idle', stopReason: 'aborted' })
       expect(interruptedTurn(events)).toBeNull()
     })
@@ -223,10 +228,18 @@ describe('interruptedTurn', () => {
     )
   }
 
+  function permission(toolCallId: string, name: string): object {
+    return { type: 'permission', request: { sessionId: 'h', toolCall: { toolCallId, name }, options: [] } }
+  }
+
+  function toolUpdate(update: object): object {
+    return { type: 'update', update }
+  }
+
   test('is null once the last turn ended, whatever an earlier turn left open', () => {
     const events = log(
       { type: 'session.status_running' },
-      { type: 'agent.tool_use', toolUseId: 'a', name: 'bash', input: {}, permission: 'ask' },
+      permission('a', 'bash'),
       { type: 'session.status_idle', stopReason: 'end_turn' }
     )
     expect(interruptedTurn(events)).toBeNull()
@@ -235,12 +248,16 @@ describe('interruptedTurn', () => {
   test('lists the calls still open, leaving out answered and denied ones', () => {
     const events = log(
       { type: 'session.status_running' },
-      { type: 'agent.tool_use', toolUseId: 'done', name: 'read', input: {}, permission: 'allow' },
-      { type: 'agent.tool_result', toolUseId: 'done', name: 'read', content: '', isError: false },
-      { type: 'agent.tool_use', toolUseId: 'denied', name: 'bash', input: {}, permission: 'ask' },
+      toolUpdate({ sessionUpdate: 'tool_call', toolCallId: 'done', name: 'read', status: 'in_progress' }),
+      toolUpdate({ sessionUpdate: 'tool_call_update', toolCallId: 'done', status: 'completed' }),
+      permission('denied', 'bash'),
       { type: 'user.tool_confirmation', toolUseId: 'denied', result: 'deny' },
-      { type: 'agent.tool_use', toolUseId: 'open', name: 'bash', input: {}, permission: 'ask' }
+      toolUpdate({ sessionUpdate: 'tool_call', toolCallId: 'open', name: 'bash', status: 'pending' }),
+      permission('parked', 'mcp__grove__edit')
     )
-    expect(interruptedTurn(events)).toEqual([{ toolUseId: 'open', name: 'bash' }])
+    expect(interruptedTurn(events)).toEqual([
+      { toolUseId: 'open', name: 'bash' },
+      { toolUseId: 'parked', name: 'mcp__grove__edit' }
+    ])
   })
 })

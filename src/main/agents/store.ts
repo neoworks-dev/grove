@@ -12,7 +12,6 @@ import { randomUUID } from 'node:crypto'
 import { appendFile, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { AGENT_ID_LABEL, newAgentId } from './identity'
-import type { ProcessTotals } from './harness'
 import { firstPromptText, isDefaultTitle, lastMessagePreview, titleFromPrompt } from './sessionSummary'
 import type {
   EventBody,
@@ -44,9 +43,9 @@ export interface StoredSession {
   resumeKey: string | null
   usage: Usage
   cost: number
+  /** Tokens the conversation occupied when the harness last said. */
+  contextUsed?: number
   contextWindow: number
-  /** The harness process's own totals as last reported; absent until one has. */
-  processTotals?: ProcessTotals | null
   lastSeq: number
 }
 
@@ -276,7 +275,8 @@ export class SessionStore {
     messageCount: number,
     preview: SessionPreview | null
   ): SessionSnapshot {
-    const used = session.usage.inputTokens + session.usage.outputTokens
+    let used = 0
+    if (session.contextUsed !== undefined) used = session.contextUsed
     const window = session.contextWindow
     return {
       ...SessionStore.metaOf(session, live, runtime, preview),

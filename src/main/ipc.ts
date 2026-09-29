@@ -50,6 +50,7 @@ import { createHash } from 'crypto'
 import { PluginRegistry } from './plugins/loader'
 import { AiBridge } from './plugins/aiBridge'
 import { HarnessRegistry } from './agents/harness'
+import { SwitchboardHost } from './agents/switchboard/host'
 import { SessionStore } from './agents/store'
 import { AgentService } from './agents/service'
 import { AgentReviewBridge } from './agents/reviewBridge'
@@ -146,7 +147,13 @@ const endpoints = new EndpointsService()
 // into, the store that persists sessions, and the service that drives them.
 const harnesses = new HarnessRegistry()
 
-const sessionStore = new SessionStore(join(app.getPath('userData'), 'agents'), (message) =>
+// switchboard, which runs every harness, and the MCP server grove's tools reach
+// them through.
+const switchboard = new SwitchboardHost()
+
+// Sessions are stored as switchboard reports them. The log grove kept before
+// (`agents/`) is left on disk untouched; it is no longer read.
+const sessionStore = new SessionStore(join(app.getPath('userData'), 'agent-sessions'), (message) =>
   console.error(`[agents] ${message}`)
 )
 
@@ -155,14 +162,17 @@ const agents = new AgentService({
   harnesses,
   // The service keeps the notes and knows the renderer's panes, so the tools it
   // runs reach back into it.
-  tools: () =>
-    groveTools({
+  // Plugins' MCP tools ride along with grove's own.
+  tools: () => [
+    ...groveTools({
       chat: channel,
       roster: agentRoster,
       notes: agents,
       screen: agents,
       worktrees: agentWorktrees
     }),
+    ...aiBridge.pluginTools()
+  ],
   systemPrompt: (session) => buildSystemPrompt(session),
   sessionRemoved: (session) => agentHandoffBridge.reportClosed(session),
   publish: (event) => send('event:agent-event', event),
@@ -219,7 +229,7 @@ async function buildSystemPrompt(session: {
     agentRoster.peers(session.workspaceRoot),
     agentRoster.relativesElsewhere(session.id)
   ])
-  return groveSystemPrompt({
+  const prompt = groveSystemPrompt({
     agentId,
     title: session.title,
     workspaceRoot: session.workspaceRoot,
@@ -227,6 +237,8 @@ async function buildSystemPrompt(session: {
     relatives,
     harnesses: agentRoster.harnessIds()
   })
+  // Skills plugins registered go to every agent run.
+  return prompt + aiBridge.systemAppend()
 }
 
 // Hands a spawned agent's closing words back to the agent that started it.
@@ -238,7 +250,6 @@ const agentReviewBridge = new AgentReviewBridge({
   review,
   agents,
   store: sessionStore,
-  harnesses,
   reviewMode: () => settings.get<string>('workbench.reviewMode') ?? 'pre'
 })
 
@@ -305,6 +316,7 @@ const pluginRegistry = new PluginRegistry(pluginBroker)
 const aiBridge = new AiBridge({
   broker: pluginBroker,
   registry: pluginRegistry,
+  switchboard,
   send
 })
 const eventHub = new EventHub()
@@ -652,10 +664,12 @@ const mainServices = {
     ctx.provide('endpoints', endpoints)
     ctx.provide('terminals', terminals)
     ctx.provide('lsp', lsp)
+    ctx.provide('documents', editorDocs)
     ctx.provide('watcher', watcher)
     ctx.provide('chat', channel)
     ctx.provide('actions', actionRunner)
     ctx.provide('harnesses', harnesses)
+    ctx.provide('switchboard', switchboard)
     ctx.provide('agents', agents)
     ctx.provide('agentReview', agentReviewBridge)
 
@@ -721,6 +735,7 @@ export async function shutdown(): Promise<void> {
   await mainContext.fiber.dispose().catch(() => {})
   await apiSocketServer?.close().catch(() => {})
   await agents.stopAll().catch(() => {})
+  await switchboard.close().catch(() => {})
   await sessionStore.flush().catch(() => {})
   await supervisor.stopAll()
   await watcher.closeAll()

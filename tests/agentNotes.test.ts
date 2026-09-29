@@ -7,7 +7,7 @@
 
 import { describe, expect, test } from 'bun:test'
 import { groveTools } from '../src/main/agents/tools'
-import { cleanNotes, notesOf, tasksOf } from '../src/main/agents/notes'
+import { cleanNotes, notesOf } from '../src/main/agents/notes'
 import type { GroveTool, GroveToolContext } from '../src/main/agents/harness'
 import type { AgentNotes } from '../src/main/agents/tools/noteTools'
 import type { SessionEvent, SessionNote } from '../src/shared/agents'
@@ -54,22 +54,22 @@ function logged(seq: number, body: Record<string, unknown>): SessionEvent {
 
 const USER_NOTE: SessionNote = { id: 'u1', text: 'Ask about the API', done: false, author: 'user' }
 
-describe('reading the lists back off the log', () => {
-  test('the last version of each counts', () => {
+describe('reading the notes back off the log', () => {
+  test('the last version counts', () => {
     const events = [
       logged(1, { type: 'session.notes', notes: [USER_NOTE] }),
-      logged(2, { type: 'agent.tasks', tasks: [{ id: '1', text: 'A', status: 'pending' }] }),
-      logged(3, { type: 'session.notes', notes: [] }),
-      logged(4, { type: 'agent.message_delta', text: 'hi' })
+      logged(2, { type: 'session.notes', notes: [] }),
+      logged(3, {
+        type: 'update',
+        update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'hi' } }
+      })
     ]
 
     expect(notesOf(events)).toEqual([])
-    expect(tasksOf(events)).toEqual([{ id: '1', text: 'A', status: 'pending' }])
   })
 
   test('a session that never had any has none', () => {
     expect(notesOf([])).toEqual([])
-    expect(tasksOf([])).toEqual([])
   })
 })
 

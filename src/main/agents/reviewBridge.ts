@@ -4,26 +4,28 @@
 // on the ReviewService:
 //
 //   session.status_running   a turn started      → open a staging batch
-//   agent.tool_use (ask)     a write is pending  → raise it as a gated review
-//   agent.tool_use (ask)     request_review      → close the batch and raise it
+//   permission (a diff)      a write is pending  → raise it as a gated review
+//   permission               request_review      → close the batch and raise it
 //   session.status_idle      the turn ended      → close whatever is still staged
 //
 // It runs beside the store rather than in the renderer on purpose: a review
 // writes files and blocks the agent, and both have to keep working whether or
 // not the agent pane is open.
 //
-// Which tool call counts as a write is the harness's business — `intentOf` on
-// its descriptor answers that, so a harness with different tool names needs no
-// change here.
+// A write is recognised by what the permission request carries, not by the
+// tool's name: ACP describes a file change as a diff whichever harness makes
+// it, so no harness's tool names are known here.
 
 import { relative } from 'node:path'
 import type { HunkDecision, ReviewBatch } from '../../shared/types'
+import type { RequestPermissionRequest } from '@neoworks/harness'
 import type { SessionEvent } from '../../shared/agents'
 import type { ReviewService } from '../review'
 import { describeResolution } from '../review'
 import * as inlineDiff from '../inlineDiff'
 import * as files from '../files'
-import type { HarnessRegistry } from './harness'
+import { diffsOf, toolNameOf } from './acpLog'
+import { groveToolName } from './switchboard/mcpServer'
 import type { AgentService } from './service'
 import type { SessionStore } from './store'
 
@@ -31,7 +33,6 @@ export interface ReviewBridgeOptions {
   review: ReviewService
   agents: AgentService
   store: SessionStore
-  harnesses: HarnessRegistry
   reviewMode: () => string
 }
 
@@ -121,25 +122,17 @@ export class AgentReviewBridge {
       await this.options.review.closeTurn(worktreePath, agent, event.sessionId)
       return
     }
-    if (event.type !== 'agent.tool_use' || event.permission !== 'ask') return
+    if (event.type !== 'permission') return
 
-    const intent = this.intentOf(agent, event.name, event.input)
-    if (!intent) return
-    if (intent.kind === 'review') {
-      await this.handleReviewRequest(event, worktreePath, agent, intent.summary)
+    const toolCall = event.request.toolCall
+    const name = toolNameOf(toolCall)
+    if (name && groveToolName(name) === 'request_review') {
+      await this.handleReviewRequest(event, worktreePath, agent, summaryOf(toolCall.rawInput))
       return
     }
-    await this.raiseGated(event, worktreePath, agent, intent)
-  }
-
-  private intentOf(
-    harnessId: string,
-    name: string,
-    input: unknown
-  ): ReturnType<NonNullable<ReturnType<HarnessRegistry['get']>>['intentOf']> {
-    const descriptor = this.options.harnesses.get(harnessId)
-    if (!descriptor) return null
-    return descriptor.intentOf(name, (input as Record<string, unknown>) ?? {})
+    const write = writeOf(event.request)
+    if (!write) return
+    await this.raiseGated(event, worktreePath, agent, toolLabelOf(name, toolCall.title), write)
   }
 
   /**
@@ -148,7 +141,7 @@ export class AgentReviewBridge {
    * the blocking request_review the review service already expects.
    */
   private async handleReviewRequest(
-    event: Extract<SessionEvent, { type: 'agent.tool_use' }>,
+    event: Extract<SessionEvent, { type: 'permission' }>,
     worktreePath: string,
     agent: string,
     summary: string
@@ -162,7 +155,7 @@ export class AgentReviewBridge {
     // requestReview only returns once the user has decided (or immediately, when
     // the run is not configured to pause). Either way the call itself is
     // allowed; what the user said travels as a message.
-    await this.confirm(event.sessionId, event.toolUseId, 'allow', null)
+    await this.confirm(event.sessionId, event.request.toolCall.toolCallId, 'allow', null)
     if (outcome) await this.sendMessage(event.sessionId, outcome)
   }
 
@@ -171,30 +164,94 @@ export class AgentReviewBridge {
    * untouched, so the "current" side is what the agent proposes to write.
    */
   private async raiseGated(
-    event: Extract<SessionEvent, { type: 'agent.tool_use' }>,
+    event: Extract<SessionEvent, { type: 'permission' }>,
     worktreePath: string,
     agent: string,
-    intent: { kind: 'write'; path: string; apply(original: string): string | null }
+    toolName: string,
+    write: PendingWrite
   ): Promise<void> {
     if (this.options.reviewMode() === 'post') return
 
-    const absolute = intent.path.startsWith('/') ? intent.path : `${worktreePath}/${intent.path}`
+    const absolute = write.path.startsWith('/') ? write.path : `${worktreePath}/${write.path}`
     // A file the agent is creating has no original; an empty baseline is right.
     const original = await files.readFileContent(worktreePath, absolute).catch(() => '')
-    const proposed = intent.apply(original)
+    const proposed = write.apply(original)
     if (proposed === null || proposed === original) return
 
     const hunks = await inlineDiff.hunksBetween(worktreePath, original, proposed)
     if (hunks.length === 0) return
 
+    const toolUseId = event.request.toolCall.toolCallId
     const batchId = await this.options.review.raiseGated(
       worktreePath,
       agent,
       event.sessionId,
-      event.toolUseId,
-      event.name,
+      toolUseId,
+      toolName,
       { relPath: relative(worktreePath, absolute), baseline: original, current: proposed, hunks }
     )
-    if (batchId) this.gated.set(batchId, { sessionId: event.sessionId, toolUseId: event.toolUseId })
+    if (batchId) this.gated.set(batchId, { sessionId: event.sessionId, toolUseId })
   }
+}
+
+/** A file change a permission request is asking to make. */
+interface PendingWrite {
+  path: string
+  /** What the file would contain afterwards, or null when it cannot be known. */
+  apply(original: string): string | null
+}
+
+/**
+ * The write a permission request asks for, from the diffs it carries. A call
+ * that changes several files is left to the plain approval: a gated review
+ * answers one call for one file.
+ */
+export function writeOf(request: RequestPermissionRequest): PendingWrite | null {
+  const diffs = diffsOf(request.toolCall.content)
+  if (diffs.length === 0) return null
+  const path = diffs[0].path
+  if (diffs.some((diff) => diff.path !== path)) return null
+  return { path, apply: (original) => applyDiffs(original, diffs) }
+}
+
+/**
+ * The file after a call's diffs. A diff with no old text writes the file whole;
+ * one with old text replaces that text, which is how harnesses describe an edit
+ * of part of a file. Old text the file no longer contains means the diff cannot
+ * be placed, and the answer is unknown rather than a guess.
+ */
+function applyDiffs(
+  original: string,
+  diffs: { oldText: string | null; newText: string }[]
+): string | null {
+  let text = original
+  for (const diff of diffs) {
+    if (diff.oldText === null) {
+      text = diff.newText
+      continue
+    }
+    if (diff.oldText.length === 0 && text.length === 0) {
+      text = diff.newText
+      continue
+    }
+    const at = text.indexOf(diff.oldText)
+    if (at < 0) return null
+    text = text.slice(0, at) + diff.newText + text.slice(at + diff.oldText.length)
+  }
+  return text
+}
+
+/** What to call the tool in the review: its name, else its title. */
+function toolLabelOf(name: string | null, title: string | null | undefined): string {
+  if (name) return name
+  if (title) return title
+  return 'edit'
+}
+
+/** The summary a review request was made with. */
+function summaryOf(input: unknown): string {
+  if (typeof input !== 'object' || input === null) return ''
+  const summary = (input as { summary?: unknown }).summary
+  if (typeof summary !== 'string') return ''
+  return summary
 }

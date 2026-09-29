@@ -26,7 +26,7 @@
     type ToolTally,
     type TranscriptRow
   } from '../../../../lib/agents/toolRuns'
-  import { fileOfCall } from '../../../../lib/agents/tools'
+  import { displayOfCall, fileOfCall } from '../../../../lib/agents/tools'
   import { foldedCalls, foldedMessages, foldTurn } from '../../../../lib/agents/turns'
   import { agentIdIn, senderOf } from '../../../../lib/agents/transcript'
   import type { ToolItem, TranscriptItem } from '../../../../lib/agents/transcript'
@@ -115,8 +115,8 @@
     onOpenLocation({ path: reference.path, startLine: reference.line, endLine: reference.endLine })
   }
 
-  function displayOf(name: string): ToolInfo['display'] {
-    return tools.find((tool) => tool.name === name)?.display
+  function displayOf(call: ToolItem): ToolInfo['display'] {
+    return displayOfCall(tools, call)
   }
 
   /**
@@ -124,7 +124,7 @@
    * to a file, with the file it changed, and a call whose images are its point.
    */
   function standsAlone(call: ToolItem): boolean {
-    if (displayOf(call.name)?.edits === true) {
+    if (displayOf(call)?.edits === true) {
       return true
     }
     return call.images.length > 0
@@ -133,7 +133,7 @@
   /** What a folded summary says a run of calls did, file names included. */
   function tallyCalls(calls: ToolItem[]): ToolTally[] {
     return tallyOf(calls, (call) =>
-      fileOfCall(displayOf(call.name), call.editedInput ?? call.input, root)
+      fileOfCall(displayOf(call), call.editedInput ?? call.input, root)
     )
   }
 
@@ -203,7 +203,7 @@
           <AgentToolCall
             {sessionId}
             item={call}
-            display={displayOf(call.name)}
+            display={displayOf(call)}
             {root}
             expanded={Boolean(expandedTools[call.toolUseId])}
             onToggle={() => toggleTool(call.toolUseId)}
@@ -363,7 +363,7 @@
     <AgentToolCall
       {sessionId}
       {item}
-      display={displayOf(item.name)}
+      display={displayOf(item)}
       {root}
       expanded={Boolean(expandedTools[item.toolUseId])}
       onToggle={() => toggleTool(item.toolUseId)}
@@ -395,12 +395,6 @@
         : 'border-line bg-elevated text-muted'}"
     >
       <span class="whitespace-pre-wrap">{item.text}</span>
-    </div>
-  {:else if item.kind === 'commandOutput'}
-    <!-- A command the harness ran itself (/usage, /help): its output, verbatim. -->
-    <div class="mb-2 rounded-md border border-line bg-elevated px-2.5 py-2">
-      <pre
-        class="max-h-72 overflow-auto whitespace-pre-wrap font-mono text-2xs text-muted">{item.text}</pre>
     </div>
   {:else if item.kind === 'surface'}
     <AgentSurface node={item.view} surfaceId={item.surfaceId} {root} {onOpenLocation} />

@@ -33,6 +33,8 @@ import {
   CodeActionResolveRequest,
   ExecuteCommandRequest,
   InlayHintRequest,
+  DocumentSymbolRequest,
+  WorkspaceSymbolRequest,
   ConfigurationRequest,
   WorkspaceFoldersRequest,
   RegistrationRequest,
@@ -52,7 +54,10 @@ import {
   type Range,
   type CodeAction,
   type Command,
-  type InlayHint
+  type InlayHint,
+  type DocumentSymbol,
+  type SymbolInformation,
+  type WorkspaceSymbol
 } from 'vscode-languageserver-protocol'
 import { catalogEntry, listInstalled } from './editorCatalog'
 import type { CatalogEntry, LspCompletion, LspDiagnostic, LspPosition } from '../shared/types'
@@ -66,6 +71,9 @@ interface Server {
   child: ChildProcess
   ready: Promise<void>
   open: Set<string> // open document uris
+  // The version and text last sent for each open document, so a sync sends a
+  // change only when the text moved and always with a higher version.
+  sent: Map<string, { version: number; text: string }>
   alive: boolean // false once the process/stream dies — never write again
 }
 
@@ -105,8 +113,16 @@ function hoverToText(hover: Hover | null): string | null {
   return null
 }
 
+/** Diagnostics a server last published for a document, and when. */
+interface Published {
+  diagnostics: LspDiagnostic[]
+  at: number
+}
+
 export class LspManager {
   private servers = new Map<string, Server>()
+  private published = new Map<string, Published>()
+  private diagnosticWaiters = new Map<string, Set<() => void>>()
 
   constructor(private events: LspEvents) {}
 
@@ -158,6 +174,7 @@ export class LspManager {
     }
     if (!server.open.has(uri)) {
       server.open.add(uri)
+      server.sent.set(uri, { version: 1, text })
       this.safeSend(server, () =>
         server!.connection.sendNotification(DidOpenTextDocumentNotification.type, {
           textDocument: { uri, languageId: language, version: 1, text }
@@ -206,7 +223,9 @@ export class LspManager {
     connection.onError(drop)
 
     connection.onNotification(PublishDiagnosticsNotification.type, (params) => {
-      this.events.onDiagnostics(params.uri, params.diagnostics.map(toLspDiagnostic))
+      const diagnostics = params.diagnostics.map(toLspDiagnostic)
+      this.remember(params.uri, diagnostics)
+      this.events.onDiagnostics(params.uri, diagnostics)
     })
 
     // Answer the server→client requests that put it into full project mode.
@@ -237,7 +256,8 @@ export class LspManager {
             configuration: true,
             applyEdit: true,
             didChangeConfiguration: { dynamicRegistration: true },
-            didChangeWatchedFiles: { dynamicRegistration: true }
+            didChangeWatchedFiles: { dynamicRegistration: true },
+            symbol: { dynamicRegistration: false }
           },
           textDocument: {
             synchronization: { dynamicRegistration: false },
@@ -255,7 +275,11 @@ export class LspManager {
               dynamicRegistration: false,
               resolveSupport: { properties: ['edit'] }
             },
-            inlayHint: { dynamicRegistration: false }
+            inlayHint: { dynamicRegistration: false },
+            documentSymbol: {
+              dynamicRegistration: false,
+              hierarchicalDocumentSymbolSupport: true
+            }
           }
         }
       }
@@ -267,7 +291,14 @@ export class LspManager {
         .catch(() => {})
     })()
 
-    const server: Server = { connection, child, ready, open: new Set(), alive: true }
+    const server: Server = {
+      connection,
+      child,
+      ready,
+      open: new Set(),
+      sent: new Map(),
+      alive: true
+    }
     this.servers.set(key, server)
     ready.catch(() => drop())
     return server
@@ -282,12 +313,80 @@ export class LspManager {
   ): Promise<void> {
     const server = await this.serverFor(worktreeId, language)
     if (!server || !server.open.has(uri)) return
+    server.sent.set(uri, { version, text })
     this.safeSend(server, () =>
       server.connection.sendNotification(DidChangeTextDocumentNotification.type, {
         textDocument: { uri, version },
         contentChanges: [{ text }] // full-document sync
       })
     )
+  }
+
+  /**
+   * Open the document with this text, or bring an open one up to it. Returns
+   * false when no server handles the language. For callers that hold no
+   * version of their own, such as an agent's tools reading from disk.
+   */
+  async sync(
+    worktreeId: string,
+    worktreePath: string,
+    language: string,
+    uri: string,
+    text: string
+  ): Promise<boolean> {
+    const handled = await this.ensure(worktreeId, worktreePath, language, uri, text)
+    if (!handled) return false
+    const server = await this.serverFor(worktreeId, language)
+    const sent = server?.sent.get(uri)
+    if (!server || !sent || sent.text === text) return true
+    await this.didChange(worktreeId, language, uri, sent.version + 1, text)
+    return true
+  }
+
+  /**
+   * The diagnostics for a document once its server has published after
+   * `since` (a `Date.now()`), or whatever it last published when it has not
+   * within `timeoutMs`. Null when it never has.
+   */
+  async diagnosticsAfter(uri: string, since: number, timeoutMs: number): Promise<LspDiagnostic[] | null> {
+    const current = this.published.get(uri)
+    if (current && current.at > since) return current.diagnostics
+    await new Promise<void>((resolve) => {
+      let waiters = this.diagnosticWaiters.get(uri)
+      if (!waiters) {
+        waiters = new Set()
+        this.diagnosticWaiters.set(uri, waiters)
+      }
+      const done = (): void => {
+        clearTimeout(timer)
+        waiters.delete(done)
+        resolve()
+      }
+      const timer = setTimeout(done, timeoutMs)
+      waiters.add(done)
+    })
+    const published = this.published.get(uri)
+    if (!published) return null
+    return published.diagnostics
+  }
+
+  /** Every document with diagnostics published, under a directory's file URI. */
+  diagnosticsUnder(directoryUri: string): Map<string, LspDiagnostic[]> {
+    let prefix = directoryUri
+    if (!prefix.endsWith('/')) prefix = `${prefix}/`
+    const found = new Map<string, LspDiagnostic[]>()
+    for (const [uri, published] of this.published) {
+      if (!uri.startsWith(prefix) || published.diagnostics.length === 0) continue
+      found.set(uri, published.diagnostics)
+    }
+    return found
+  }
+
+  private remember(uri: string, diagnostics: LspDiagnostic[]): void {
+    this.published.set(uri, { diagnostics, at: Date.now() })
+    const waiters = this.diagnosticWaiters.get(uri)
+    if (!waiters) return
+    for (const wake of waiters) wake()
   }
 
   async completion(
@@ -409,6 +508,37 @@ export class LspManager {
       })
       .catch(() => null)
     return Array.isArray(result) ? result : []
+  }
+
+  /** The symbols a document declares, as the server outlines them. */
+  async documentSymbols(
+    worktreeId: string,
+    language: string,
+    uri: string
+  ): Promise<(DocumentSymbol | SymbolInformation)[]> {
+    const server = await this.serverFor(worktreeId, language)
+    if (!server || !server.alive) return []
+    const result = await server.connection
+      .sendRequest(DocumentSymbolRequest.type, { textDocument: { uri } })
+      .catch(() => null)
+    if (!Array.isArray(result)) return []
+    return result
+  }
+
+  /** Symbols matching a query, from every server running for the worktree. */
+  async workspaceSymbols(
+    worktreeId: string,
+    query: string
+  ): Promise<(SymbolInformation | WorkspaceSymbol)[]> {
+    const found: (SymbolInformation | WorkspaceSymbol)[] = []
+    for (const [key, server] of this.servers) {
+      if (!key.startsWith(`${worktreeId}::`) || !server.alive) continue
+      const result = await server.connection
+        .sendRequest(WorkspaceSymbolRequest.type, { query })
+        .catch(() => null)
+      if (Array.isArray(result)) found.push(...result)
+    }
+    return found
   }
 
   // ── Refactor (rename, format, code action) ──────────────────────

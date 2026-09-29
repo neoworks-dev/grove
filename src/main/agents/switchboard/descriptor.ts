@@ -39,17 +39,22 @@ export function switchboardHarness(
   spec: SwitchboardHarnessSpec
 ): HarnessDescriptor {
   let offering: Promise<HarnessOffering> | null = null
+  let capabilities = spec.capabilities
 
   return {
     id: spec.id,
     label: spec.label,
     description: spec.description,
     icon: spec.icon,
-    capabilities: spec.capabilities,
+    // What the spec claims until switchboard has said what the harnesses can do.
+    get capabilities() {
+      return capabilities
+    },
 
     async probe() {
       const detected = await detect(host, spec.runsOn)
       const available = detected.filter((harness) => harness.available)
+      if (available.length > 0) capabilities = capabilitiesOf(spec.capabilities, available)
       if (available.length > 0) return { available: true, detail: null }
       const details = detected.map((harness) => harness.detail).filter(Boolean)
       return { available: false, detail: details.join('; ') || 'not installed' }
@@ -137,13 +142,27 @@ function providerFor(spec: SwitchboardHarnessSpec, harness: HarnessId, modelId: 
   return harness
 }
 
-/** The commands a harness offers, from switchboard versions that list them. */
+/** The commands and skills a harness offers under the user's own setup. */
 async function commandsOn(host: SwitchboardHost, harness: HarnessId): Promise<CommandInfo[]> {
-  const switchboard = (await host.switchboard()) as unknown as {
-    listCommands?(harness: HarnessId): Promise<CommandInfo[]>
+  const switchboard = await host.switchboard()
+  return switchboard.listCommands(harness).catch((): CommandInfo[] => [])
+}
+
+/**
+ * What grove can offer on the harnesses a descriptor runs on: a feature only
+ * when every one of them has it, since the model picked decides which runs.
+ * grove answers approvals and hosts its tools itself, so those stay as claimed.
+ */
+function capabilitiesOf(claimed: HarnessCapabilities, harnesses: SwitchboardInfo[]): HarnessCapabilities {
+  const all = (has: (capabilities: SwitchboardInfo['capabilities']) => boolean): boolean =>
+    harnesses.every((harness) => has(harness.capabilities))
+  return {
+    ...claimed,
+    liveModelSwitch: all((capabilities) => capabilities.liveModel),
+    thinking: all((capabilities) => capabilities.effort !== 'none'),
+    steering: all((capabilities) => capabilities.steering),
+    attachments: all((capabilities) => capabilities.images)
   }
-  if (!switchboard.listCommands) return []
-  return switchboard.listCommands(harness).catch(() => [])
 }
 
 export function modelEntryOf(model: ModelInfo, provider: string): ModelEntry {

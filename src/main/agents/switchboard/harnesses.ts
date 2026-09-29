@@ -36,10 +36,7 @@ export const CAPABILITIES: HarnessCapabilities = {
 export function nativeOptions(options: HarnessRunOptions): SessionOptions {
   const sessionOptions: SessionOptions = {
     systemPrompt: { append: options.systemPrompt },
-    permissions: permissionPolicyOf(options.permissionMode),
-    // Another agent is started through grove's `spawn_agent`, so it gets a tab,
-    // a transcript and a place in the roster of its own.
-    disable: ['subagents']
+    permissions: permissionPolicyOf(options.permissionMode)
   }
   if (options.model) sessionOptions.model = options.model
   const effort = effortOf(options.thinkingLevel)

@@ -9,6 +9,8 @@ import type {
   HarnessEvent,
   PermissionReply,
   PromptResult,
+  QuestionReply,
+  QuestionRequest,
   RequestPermissionRequest,
   SessionInit,
   SessionUpdate
@@ -62,6 +64,10 @@ class FakeSession {
     return Promise.resolve()
   }
 
+  setPermissions(): Promise<void> {
+    return Promise.resolve()
+  }
+
   cancel(): Promise<void> {
     return Promise.resolve()
   }
@@ -75,7 +81,17 @@ class FakeSession {
   }
 
   ask(request: RequestPermissionRequest): Promise<PermissionReply> {
-    return Promise.resolve(this.init.onPermission!(request))
+    if (!this.init.onPermission) throw new Error('no permission handler')
+    return Promise.resolve(this.init.onPermission(request))
+  }
+
+  question(request: QuestionRequest): Promise<QuestionReply> {
+    if (!this.init.onQuestion) throw new Error('no question handler')
+    return Promise.resolve(this.init.onQuestion(request))
+  }
+
+  send(event: HarnessEvent): void {
+    this.listener(event)
   }
 }
 
@@ -87,16 +103,23 @@ interface Fixture {
   fromSubagents: { agent: SubagentIdentity; body: ServerEventBody }[]
   stats: SessionStats[]
   confirmed: RequestPermissionRequest[]
+  shell: string[]
 }
 
 async function started(
-  options: { decide?: (request: RequestPermissionRequest) => ApprovalDecision; profileTools?: GroveTool[] } = {}
+  options: {
+    decide?: (request: RequestPermissionRequest) => ApprovalDecision
+    profileTools?: GroveTool[]
+    editedInput?: boolean
+  } = {}
 ): Promise<Fixture> {
   let session: FakeSession | null = null
   let binding: ToolBinding | null = null
   const host = {
     switchboard: () =>
       Promise.resolve({
+        listHarnesses: () =>
+          Promise.resolve([{ id: 'claude', available: true, capabilities: { editedInput: options.editedInput === true } }]),
         createSession: (init: SessionInit) => {
           session = new FakeSession(init)
           return Promise.resolve(session)
@@ -117,6 +140,7 @@ async function started(
   const fromSubagents: { agent: SubagentIdentity; body: ServerEventBody }[] = []
   const stats: SessionStats[] = []
   const confirmed: RequestPermissionRequest[] = []
+  const shell: string[] = []
   let decide = options.decide
   if (!decide) decide = () => ({ result: 'allow' })
   const decideWith = decide
@@ -144,7 +168,11 @@ async function started(
       return Promise.resolve(decideWith(request))
     },
     storeImage: () => ({ type: 'image', ref: 'blob-1', mediaType: 'image/png' }) as never,
-    shellOutput: { begin: () => {}, append: () => {}, end: () => {} }
+    shellOutput: {
+      begin: (toolUseId) => shell.push(`begin ${toolUseId}`),
+      append: (toolUseId, text) => shell.push(`append ${toolUseId} ${text}`),
+      end: (toolUseId) => shell.push(`end ${toolUseId}`)
+    }
   }
   const profile: RunProfile = { harness: 'claude', sessionOptions: () => ({}) }
   if (options.profileTools) {
@@ -155,7 +183,7 @@ async function started(
   const run = new SwitchboardRun(host, profile, runOptions)
   await run.start()
   if (!session || !binding) throw new Error('the run did not open a session')
-  return { run, session, binding, emitted, fromSubagents, stats, confirmed }
+  return { run, session, binding, emitted, fromSubagents, stats, confirmed, shell }
 }
 
 function settle(): Promise<void> {
@@ -182,24 +210,79 @@ describe('a switchboard run', () => {
     ])
   })
 
-  test("adds a turn's usage onto what the session already had", async () => {
-    const { run, session, stats } = await started()
-    await run.prompt('go')
-    session.turns[0].finish({ stopReason: 'end_turn', usage: { input: 5, output: 7, costUsd: 0.5 } } as PromptResult)
-    await settle()
+  test('seeds switchboard with the totals the session already had', async () => {
+    const { session } = await started()
+    expect(session.init.usage).toEqual({ input: 10, output: 0, cacheRead: 0, cacheWrite: 0, costUsd: 1 })
+  })
 
-    expect(stats.at(-1)).toMatchObject({
-      usage: { inputTokens: 15, outputTokens: 7 },
-      cost: 1.5
+  test("reports switchboard's running totals and context fill, off the log", async () => {
+    const { session, emitted, stats } = await started()
+    session.report({ sessionUpdate: 'usage_update', used: 1200, size: 200000 } as SessionUpdate)
+    session.send({
+      type: 'usage',
+      total: { input: 15, output: 7, costUsd: 1.5 },
+      context: { used: 1200, size: 200000 }
+    })
+
+    expect(emitted).toEqual([])
+    expect(stats.at(-1)).toEqual({
+      usage: { inputTokens: 15, outputTokens: 7, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      cost: 1.5,
+      contextUsed: 1200,
+      contextWindow: 200000
     })
   })
 
-  test('keeps the context window off the log and on the stats', async () => {
-    const { session, emitted, stats } = await started()
-    session.report({ sessionUpdate: 'usage_update', used: 1200, size: 200000 } as SessionUpdate)
+  test("streams a command's output live and logs it once, when the command ends", async () => {
+    const { session, emitted, shell } = await started()
+    session.report({
+      sessionUpdate: 'tool_call',
+      toolCallId: 'sh1',
+      name: 'shell',
+      kind: 'execute',
+      content: [{ type: 'terminal', terminalId: 'sh1' }],
+      _meta: { terminal_info: { terminal_id: 'sh1' } }
+    } as SessionUpdate)
+    session.report({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'sh1',
+      _meta: { terminal_output_delta: { terminal_id: 'sh1', data: 'one\n' } }
+    } as SessionUpdate)
+    session.report({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'sh1',
+      status: 'completed',
+      _meta: {
+        terminal_output_delta: { terminal_id: 'sh1', data: 'two\n' },
+        terminal_exit: { terminal_id: 'sh1', exit_code: 0, signal: null }
+      }
+    } as SessionUpdate)
 
-    expect(emitted).toEqual([])
-    expect(stats.at(-1)).toMatchObject({ contextUsed: 1200, contextWindow: 200000 })
+    expect(shell).toEqual(['begin sh1', 'append sh1 one\n', 'append sh1 two\n', 'end sh1'])
+    expect(emitted).toHaveLength(2)
+    expect(emitted[1]).toMatchObject({
+      update: {
+        status: 'completed',
+        content: [{ type: 'content', content: { type: 'text', text: 'one\ntwo\n' } }]
+      }
+    })
+  })
+
+  test("puts the agent's questions to the user and hands back the answers", async () => {
+    const { session, confirmed } = await started({
+      decide: () => ({ result: 'allow', input: { answers: { 'Which one?': 'B' } } })
+    })
+    const questions = [{ question: 'Which one?', options: [{ label: 'A' }, { label: 'B' }] }]
+    const reply = await session.question({ toolCallId: 'q1', questions })
+
+    expect(reply).toEqual({ answers: { 'Which one?': 'B' } })
+    expect(confirmed[0].toolCall).toMatchObject({ toolCallId: 'q1', rawInput: { questions } })
+  })
+
+  test('a skipped question cancels the call', async () => {
+    const { session } = await started({ decide: () => ({ result: 'deny' }) })
+    const reply = await session.question({ toolCallId: 'q1', questions: [] })
+    expect(reply).toBe('cancel')
   })
 
   test('a failed turn is an error, and the session goes idle', async () => {
@@ -267,11 +350,23 @@ describe('a switchboard run', () => {
     expect(session.steered).toEqual(['use rg'])
   })
 
-  test('an edited call runs with what the user changed', async () => {
-    const { session } = await started({ decide: () => ({ result: 'allow', input: { command: 'ls -la' } }) })
+  test('an edited call runs with what the user changed, where the harness can', async () => {
+    const { session } = await started({
+      editedInput: true,
+      decide: () => ({ result: 'allow', input: { command: 'ls -la' } })
+    })
     const reply = await session.ask({ sessionId: 'harness-1', toolCall: { toolCallId: 'c1', name: 'Bash' }, options: [] })
 
-    expect(reply).toEqual({ outcome: 'once', updatedInput: { command: 'ls -la' } } as unknown as PermissionReply)
+    expect(reply).toEqual({ outcome: 'once', updatedInput: { command: 'ls -la' } })
+  })
+
+  test('where it cannot, the call is refused and the agent told what to run instead', async () => {
+    const { session } = await started({ decide: () => ({ result: 'allow', input: { command: 'ls -la' } }) })
+    const reply = await session.ask({ sessionId: 'harness-1', toolCall: { toolCallId: 'c1', name: 'Bash' }, options: [] })
+    await settle()
+
+    expect(reply).toBe('reject')
+    expect(String(session.steered[0])).toContain('{"command":"ls -la"}')
   })
 
   test("keeps the diff a grove tool reported when the harness's result arrives", async () => {

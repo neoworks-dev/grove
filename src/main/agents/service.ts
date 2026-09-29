@@ -644,6 +644,8 @@ export class AgentService {
   ): ConfirmationResult | null {
     const session = this.store.peek(sessionId)
     if (!session) return null
+    // A question is answered by the user, whatever the mode.
+    if (asksTheUser(request)) return null
     if (session.permissionMode === 'bypass') return 'allow'
     // "Don't ask again" for this tool, answered earlier in the session.
     if (session.autoApproveTools.includes(name)) return 'allow'
@@ -1107,6 +1109,13 @@ function writesAFile(request: ApprovalRequest): boolean {
   if (diffsOf(request.toolCall.content).length > 0) return true
   const kind = request.toolCall.kind
   return kind === 'edit' || kind === 'delete' || kind === 'move'
+}
+
+/** Whether a request is the agent asking the user something rather than asking to act. */
+function asksTheUser(request: ApprovalRequest): boolean {
+  const input = request.toolCall.rawInput
+  if (typeof input !== 'object' || input === null) return false
+  return Array.isArray((input as { questions?: unknown }).questions)
 }
 
 /** The tool call an event settles, if it is the update that finished one. */

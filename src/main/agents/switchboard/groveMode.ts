@@ -10,7 +10,7 @@
 // buffers and language servers, and run commands where the user can watch.
 
 import type { Context } from '@neoworks/extension-system'
-import type { SessionOptions } from '@neoworks/harness'
+import type { Feature, SessionOptions } from '@neoworks/harness'
 import type { HarnessRunOptions } from '../harness'
 import { workspaceTools } from '../tools'
 import { EditorWorkspaceFiles } from '../tools/workspaceFiles'
@@ -19,6 +19,19 @@ import { groveModePrompt } from './groveModePrompt'
 import { CAPABILITIES } from './harnesses'
 import type { SwitchboardHost } from './host'
 import { effortOf, permissionPolicyOf } from './run'
+
+const EXTRAS_OFF: Feature[] = [
+  'subagents',
+  'workflows',
+  'todos',
+  'scheduling',
+  'worktrees',
+  'plan_mode',
+  'skills',
+  'memory',
+  'tool_search',
+  'images'
+]
 
 /** The options a grove mode session runs with. */
 export function groveModeOptions(options: HarnessRunOptions, today: Date = new Date()): SessionOptions {
@@ -34,7 +47,8 @@ export function groveModeOptions(options: HarnessRunOptions, today: Date = new D
     systemPrompt: { replace: prompt },
     tools: 'none',
     isolation: 'full',
-    disable: 'all',
+    // Every extra but the agent asking the user: grove answers questions itself.
+    disable: EXTRAS_OFF,
     permissions: permissionPolicyOf(options.permissionMode)
   }
   if (options.model) sessionOptions.model = options.model

@@ -1,6 +1,7 @@
-// Vendored from @neoworks/harness (neoworks-dev/switchboard, src/hashline), which
-// does not export it yet: neoworks-dev/switchboard#21. Keep in step with it so a
-// model sees one LINE#ID format whether switchboard or grove serves the tools.
+// Vendored from @neoworks/harness (neoworks-dev/switchboard, src/hashline). The
+// package exports it as `@neoworks/harness/hashline`, but only as ESM, and main
+// is bundled as CommonJS with the package left external. Keep in step with it so
+// a model sees one LINE#ID format whether switchboard or grove serves the tools.
 
 /**
  * Hashline addressing: every line is shown as `LINE#ID:text`, where ID is a

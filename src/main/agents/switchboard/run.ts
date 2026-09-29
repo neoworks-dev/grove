@@ -8,6 +8,7 @@
 // differs between them is the profile it is started with.
 
 import type {
+  Capabilities,
   ContentBlock,
   Effort,
   HarnessEvent,
@@ -16,12 +17,15 @@ import type {
   PermissionPolicy,
   PermissionReply,
   PromptResult,
+  QuestionReply,
+  QuestionRequest,
   RequestPermissionRequest,
   SessionInit,
   SessionOptions,
   SessionUpdate,
   StopReason,
-  ToolCallUpdate
+  ToolCallUpdate,
+  Usage as SwitchboardUsage
 } from '@neoworks/harness'
 import type { AgentMode, IdleReason, ThinkingLevel, Usage } from '../../../shared/agents'
 import type {
@@ -35,6 +39,7 @@ import type {
 import { toolNameOf } from '../acpLog'
 import { groveToolName, type BoundServer, type ToolBinding } from './mcpServer'
 import type { SwitchboardHost } from './host'
+import { TerminalRelay } from './terminalRelay'
 
 /** What sets one kind of run apart: the harness it runs on and how it is configured. */
 export interface RunProfile {
@@ -50,20 +55,6 @@ export interface RunProfile {
   environment?(options: HarnessRunOptions): Promise<Record<string, string> | undefined>
 }
 
-/**
- * The parts of a session switchboard only offers on some harnesses, and only
- * from some versions on. Each is looked for before it is used, so a harness
- * that lacks one loses that feature rather than the run.
- */
-interface LiveSession extends HarnessSession {
-  steer?(content: string | ContentBlock[]): Promise<void>
-  command?(name: string, args: string): PromiseLike<PromptResult>
-  setModel?(model: string): Promise<void>
-  setEffort?(effort: Effort): Promise<void>
-  setPermissions?(policy: PermissionPolicy): Promise<void>
-  dispose?(): Promise<void>
-}
-
 type ToolCallContent = NonNullable<ToolCallUpdate['content']>[number]
 
 /** A tool call as the harness has reported it so far. */
@@ -77,7 +68,7 @@ interface TrackedCall {
 export const BLOB_URI_SCHEME = 'grove-blob:'
 
 export class SwitchboardRun implements HarnessRun {
-  private session: LiveSession | null = null
+  private session: HarnessSession | null = null
   private bound: BoundServer | null = null
   private turn: PromiseLike<PromptResult> | null = null
   private calls = new Map<string, TrackedCall>()
@@ -88,6 +79,9 @@ export class SwitchboardRun implements HarnessRun {
   private contextUsed = 0
   private contextWindow = 0
   private mode: AgentMode
+  private terminals: TerminalRelay
+  /** What the harness this run is on can do, once switchboard has said. */
+  private capabilities: Capabilities | null = null
 
   constructor(
     private host: SwitchboardHost,
@@ -97,6 +91,7 @@ export class SwitchboardRun implements HarnessRun {
     this.usage = { ...options.startingStats.usage }
     this.cost = options.startingStats.cost
     this.mode = options.permissionMode
+    this.terminals = new TerminalRelay(options.shellOutput)
   }
 
   get resumeKey(): string | null {
@@ -107,9 +102,12 @@ export class SwitchboardRun implements HarnessRun {
   /** Open the harness session, resuming the stored conversation when there is one. */
   async start(): Promise<void> {
     const switchboard = await this.host.switchboard()
+    const harnesses = await switchboard.listHarnesses()
+    const info = harnesses.find((harness) => harness.id === this.profile.harness)
+    if (info) this.capabilities = info.capabilities
     this.bound = await this.host.toolServer.bind(this.toolBinding())
     const init = await this.sessionInit(this.bound)
-    let session: LiveSession
+    let session: HarnessSession
     if (this.options.resumeKey) {
       session = await switchboard.resumeSession(this.options.resumeKey, init)
     } else {
@@ -127,14 +125,11 @@ export class SwitchboardRun implements HarnessRun {
   }
 
   async steer(text: string): Promise<void> {
-    const session = this.requireSession()
-    if (!session.steer) throw new Error('This harness cannot take a message while it works.')
-    await session.steer(text)
+    await this.requireSession().steer(text)
   }
 
   command(name: string, args: string): Promise<void> {
     const session = this.requireSession()
-    if (!session.command) return this.prompt(commandText(name, args))
     this.options.emit({ type: 'session.status_running' })
     this.follow(session.command(name, args))
     return Promise.resolve()
@@ -145,23 +140,18 @@ export class SwitchboardRun implements HarnessRun {
   }
 
   async setModel(_provider: string | null, model: string): Promise<void> {
-    const session = this.requireSession()
-    if (!session.setModel) throw new Error('This harness cannot change model mid-session.')
-    await session.setModel(model)
+    await this.requireSession().setModel(model)
   }
 
   async setThinkingLevel(level: ThinkingLevel): Promise<void> {
-    const session = this.requireSession()
     const effort = effortOf(level)
-    if (!session.setEffort || !effort) return
-    await session.setEffort(effort)
+    if (!effort) return
+    await this.requireSession().setEffort(effort)
   }
 
   async setPermissionMode(mode: AgentMode): Promise<void> {
-    const session = this.requireSession()
     this.mode = mode
-    if (!session.setPermissions) return
-    await session.setPermissions(permissionPolicyOf(mode))
+    await this.requireSession().setPermissions(permissionPolicyOf(mode))
   }
 
   async dispose(): Promise<void> {
@@ -170,22 +160,20 @@ export class SwitchboardRun implements HarnessRun {
     const session = this.session
     this.session = null
     if (!session) return
-    if (session.dispose) {
-      await session.dispose()
-      return
-    }
-    await session.close()
+    await session.dispose()
   }
 
   // ── Setting up ──────────────────────────────────────────────────
 
   private async sessionInit(bound: BoundServer): Promise<SessionInit> {
-    const init: SessionInit & { env?: Record<string, string> } = {
+    const init: SessionInit = {
       harness: this.profile.harness,
       cwd: this.options.workspaceRoot,
       mcpServers: [bound.server],
       options: this.profile.sessionOptions(this.options),
-      onPermission: (request) => this.answerPermission(request)
+      onPermission: (request) => this.answerPermission(request),
+      onQuestion: (request) => this.answerQuestion(request),
+      usage: switchboardUsageOf(this.options.startingStats)
     }
     if (this.profile.environment) init.env = await this.profile.environment(this.options)
     return init
@@ -230,7 +218,7 @@ export class SwitchboardRun implements HarnessRun {
     return `${tool.name} is not available in plan mode. Present the plan instead.`
   }
 
-  private requireSession(): LiveSession {
+  private requireSession(): HarnessSession {
     if (!this.session) throw new Error('The harness session is not open.')
     return this.session
   }
@@ -248,7 +236,6 @@ export class SwitchboardRun implements HarnessRun {
 
   private finishTurn(turn: PromiseLike<PromptResult>, result: PromptResult): void {
     if (this.turn === turn) this.turn = null
-    this.addTurnUsage(result)
     const notice = stopNotice(result.stopReason)
     if (notice) this.options.emit({ type: 'session.notice', message: notice })
     this.options.emit({ type: 'session.status_idle', stopReason: idleReasonOf(result.stopReason) })
@@ -267,25 +254,27 @@ export class SwitchboardRun implements HarnessRun {
       this.absorbUpdate(event.update)
       return
     }
-    const other = event as unknown as { type: string; sessionId?: string }
+    if (event.type === 'usage') {
+      this.absorbUsage(event)
+      return
+    }
     // The harness left its conversation for a new one (`/clear`): the log says
     // so, and the new id is what the session resumes from now on.
-    if (other.type === 'session_changed' && typeof other.sessionId === 'string') {
-      this.options.emit({ type: 'session_changed', sessionId: other.sessionId })
+    if (event.type === 'session_changed') {
+      this.options.emit({ type: 'session_changed', sessionId: event.sessionId })
     }
   }
 
   private absorbUpdate(update: SessionUpdate): void {
-    if (update.sessionUpdate === 'usage_update') {
-      this.contextUsed = update.used
-      this.contextWindow = update.size
-      this.reportStats()
-      return
-    }
+    // The context fill arrives again on the `usage` event that follows.
+    if (update.sessionUpdate === 'usage_update') return
+    let logged: SessionUpdate | null = update
     if (update.sessionUpdate === 'tool_call' || update.sessionUpdate === 'tool_call_update') {
       this.track(update)
+      logged = this.terminals.relay(update)
     }
-    const stored = this.withReportedContent(this.withStoredImages(update))
+    if (!logged) return
+    const stored = this.withReportedContent(this.withStoredImages(logged))
     const parent = parentToolCallOf(update)
     if (parent) {
       this.options.emitFrom(this.laneOf(parent), { type: 'update', update: stored })
@@ -380,26 +369,66 @@ export class SwitchboardRun implements HarnessRun {
     if (decision.result === 'deny') {
       // ACP carries no reason with a refusal, so the reason follows as a
       // message the agent reads before it carries on.
-      if (decision.reason?.trim()) void this.steer(decision.reason).catch(() => {})
+      if (decision.reason?.trim()) this.tellAgent(decision.reason)
       return 'reject'
     }
-    const outcome = decision.result === 'allow' ? 'once' : 'always'
+    let outcome: 'once' | 'always' = 'always'
+    if (decision.result === 'allow') outcome = 'once'
     if (decision.input === undefined) return outcome
-    return { outcome, updatedInput: decision.input } as unknown as PermissionReply
+    if (this.capabilities?.editedInput) return { outcome, updatedInput: decision.input }
+    // A harness that runs a call only as it asked is told what the user
+    // changed instead, and makes the call again.
+    this.tellAgent(`The user changed that call before allowing it. Make it again with this input:\n${JSON.stringify(decision.input)}`)
+    return 'reject'
+  }
+
+  /** Hand the agent a message in the turn it is running. */
+  private tellAgent(text: string): void {
+    void this.steer(text).catch(() => {})
+  }
+
+  /**
+   * Put the agent's questions to the user. They are parked like an approval
+   * of the call that asks them, and the answers come back as that call's
+   * edited input, which is how the transcript already asks and answers.
+   */
+  private async answerQuestion(request: QuestionRequest): Promise<QuestionReply> {
+    let name = this.calls.get(request.toolCallId)?.name
+    if (!name) name = 'AskUserQuestion'
+    const decision = await this.options.confirm({
+      sessionId: this.requireSession().id,
+      toolCall: {
+        toolCallId: request.toolCallId,
+        name,
+        title: 'Question',
+        kind: 'other',
+        rawInput: { questions: request.questions }
+      },
+      options: [
+        { optionId: 'answer', name: 'Answer', kind: 'allow_once' },
+        { optionId: 'skip', name: 'Skip', kind: 'reject_once' }
+      ]
+    })
+    if (decision.result === 'deny') return 'cancel'
+    return { answers: answersOf(decision.input) }
   }
 
   // ── Totals ──────────────────────────────────────────────────────
 
-  private addTurnUsage(result: PromptResult): void {
-    const turn = result.usage
-    if (!turn) return
+  /** The session's totals, as switchboard keeps them across turns. */
+  private absorbUsage(event: Extract<HarnessEvent, { type: 'usage' }>): void {
+    const total = event.total
     this.usage = {
-      inputTokens: this.usage.inputTokens + (turn.input ?? 0),
-      outputTokens: this.usage.outputTokens + (turn.output ?? 0),
-      cacheReadTokens: this.usage.cacheReadTokens + (turn.cacheRead ?? 0),
-      cacheWriteTokens: this.usage.cacheWriteTokens + (turn.cacheWrite ?? 0)
+      inputTokens: countOf(total.input),
+      outputTokens: countOf(total.output),
+      cacheReadTokens: countOf(total.cacheRead),
+      cacheWriteTokens: countOf(total.cacheWrite)
     }
-    if (typeof turn.costUsd === 'number') this.cost += turn.costUsd
+    if (typeof total.costUsd === 'number') this.cost = total.costUsd
+    if (event.context) {
+      this.contextUsed = event.context.used
+      this.contextWindow = event.context.size
+    }
     this.reportStats()
   }
 
@@ -422,9 +451,30 @@ function promptContent(text: string, attachments: PromptAttachment[]): ContentBl
   return content
 }
 
-function commandText(name: string, args: string): string {
-  if (args.trim().length === 0) return `/${name}`
-  return `/${name} ${args.trim()}`
+/** A session's totals as switchboard seeds a session with them. */
+function switchboardUsageOf(stats: HarnessRunOptions['startingStats']): SwitchboardUsage {
+  return {
+    input: stats.usage.inputTokens,
+    output: stats.usage.outputTokens,
+    cacheRead: stats.usage.cacheReadTokens,
+    cacheWrite: stats.usage.cacheWriteTokens,
+    costUsd: stats.cost
+  }
+}
+
+function countOf(value: number | undefined): number {
+  if (value === undefined) return 0
+  return value
+}
+
+/** The answers in the input a question call was allowed with. */
+function answersOf(input: unknown): Record<string, string> {
+  const answers = asRecord(asRecord(input).answers)
+  const found: Record<string, string> = {}
+  for (const [question, answer] of Object.entries(answers)) {
+    if (typeof answer === 'string') found[question] = answer
+  }
+  return found
 }
 
 /** A thinking level as switchboard's effort; `off` leaves the harness's own default. */

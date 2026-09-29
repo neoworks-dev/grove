@@ -14,9 +14,9 @@ import type {
   PaneTypeInfo,
   ShowTarget,
   UiNode
-} from '../../shared/agents'
-import type { GroveTool, GroveToolContext, GroveToolResult } from './harness'
-import { anchorLocations } from './locationAnchor'
+} from '../../../shared/agents'
+import type { GroveTool, GroveToolContext, GroveToolResult } from '../harness'
+import { anchorLocations } from '../locationAnchor'
 
 /** What the renderer can open, as far as the main process knows. */
 export interface AgentScreen {

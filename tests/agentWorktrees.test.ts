@@ -4,7 +4,7 @@
 // in agentComms.
 
 import { describe, expect, test } from 'bun:test'
-import { worktreeTools, type AgentWorktrees } from '../src/main/agents/worktreeTools'
+import { worktreeTools, type AgentWorktrees } from '../src/main/agents/tools/worktreeTools'
 import type { GroveTool, GroveToolContext } from '../src/main/agents/harness'
 import type { Worktree } from '../src/shared/types'
 

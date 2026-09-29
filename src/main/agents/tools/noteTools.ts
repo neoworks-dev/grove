@@ -4,9 +4,9 @@
 // kept by the user and the agent alike. These tools are the agent's half — the
 // same list the user edits, so either can tick off what the other wrote.
 
-import type { SessionNote } from '../../shared/agents'
-import type { GroveTool } from './harness'
-import { newNote, noteText } from './notes'
+import type { SessionNote } from '../../../shared/agents'
+import type { GroveTool } from '../harness'
+import { newNote, noteText } from '../notes'
 
 /** Where a session's notes list is kept. */
 export interface AgentNotes {

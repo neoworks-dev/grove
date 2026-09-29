@@ -4,8 +4,8 @@
 // task and start an agent in each with `spawn_agent`'s `worktree`, instead of
 // the user preparing every one by hand.
 
-import type { Worktree } from '../../shared/types'
-import type { GroveTool } from './harness'
+import type { Worktree } from '../../../shared/types'
+import type { GroveTool } from '../harness'
 
 /** What grove does with worktrees on an agent's behalf. */
 export interface AgentWorktrees {

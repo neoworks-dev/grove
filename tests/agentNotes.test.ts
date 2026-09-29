@@ -9,7 +9,7 @@ import { describe, expect, test } from 'bun:test'
 import { groveTools } from '../src/main/agents/tools'
 import { cleanNotes, notesOf, tasksOf } from '../src/main/agents/notes'
 import type { GroveTool, GroveToolContext } from '../src/main/agents/harness'
-import type { AgentNotes } from '../src/main/agents/noteTools'
+import type { AgentNotes } from '../src/main/agents/tools/noteTools'
 import type { SessionEvent, SessionNote } from '../src/shared/agents'
 
 /** An in-memory notes store, one list per session. */

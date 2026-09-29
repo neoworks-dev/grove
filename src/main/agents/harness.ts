@@ -1,16 +1,17 @@
 // The harness contract and the registry plugins publish into.
 //
-// A harness is one coding agent runtime — the Claude Agent SDK, the Codex SDK,
-// pi — wrapped so grove can drive it through a single vocabulary. Everything
-// grove needs from a runtime is here: whether it can run at all, what it can
-// offer (models, commands, skills), and how to start and steer one session.
+// A harness is one way of running a coding agent — Claude Code, Codex or pi
+// through switchboard, or grove's own mode on top of one of them. Everything
+// grove needs from one is here: whether it can run at all, what it can offer
+// (models, commands, skills), and how to start and steer one session.
 //
-// Adapters never touch grove's session store. They emit normalized event bodies
-// and the store stamps sequence numbers, persists them and fans them out.
+// Runs never touch grove's session store. They emit what the harness reported,
+// as switchboard reported it, and the store stamps sequence numbers, persists
+// the events and fans them out.
 
+import type { RequestPermissionRequest, ToolCallUpdate } from '@neoworks/harness'
 import type {
   AgentMode,
-  AgentTask,
   CommandInfo,
   ConfirmationResult,
   DeliverAs,
@@ -37,6 +38,15 @@ export interface GroveToolContext {
   surface(surfaceId: string, slot: 'transcript' | 'panel', view: unknown): void
   /** Ask the renderer to put something else in front of the user. */
   show(target: ShowTarget): void
+  /** The harness's id for this call, when it has reported the call already. */
+  toolCallId?: string
+  /** Where a tool that runs a command reports what it prints, as it prints it. */
+  shellOutput?: ShellOutputSink
+  /**
+   * Add to what the transcript shows of this call — the diff an edit made —
+   * the way a harness reports its own tools. Kept when the call's result comes.
+   */
+  report?(update: Omit<ToolCallUpdate, 'toolCallId'>): void
 }
 
 export interface GroveToolResult {
@@ -64,45 +74,52 @@ export interface GroveTool {
    * looking for first only gets used when the user names it.
    */
   alwaysLoad?: boolean
+  /**
+   * What a call would do, for its approval to show before it runs: the diff a
+   * file edit would make, the kind of call it is.
+   */
+  describe?(
+    input: Record<string, unknown>,
+    context: GroveToolContext
+  ): Promise<Partial<ToolCallUpdate>>
   execute(
     input: Record<string, unknown>,
     context: GroveToolContext
   ): Promise<GroveToolResult> | GroveToolResult
 }
 
+/** One of grove's tools as the renderer's catalog describes a tool. */
+export function toolInfoOf(tool: GroveTool): ToolInfo {
+  return {
+    name: tool.name,
+    description: tool.description,
+    summary: tool.summary,
+    policy: tool.policy,
+    // Two calls to the same grove tool in one batch would race on the channel
+    // or start two sessions; none of them is worth parallelising.
+    parallelSafe: false,
+    display: tool.display,
+    inputSchema: tool.inputSchema
+  }
+}
+
 /** Running totals for a session, as the harness reports them. */
 export interface SessionStats {
   usage: Usage
   cost: number
+  /** Tokens the conversation currently occupies, and how many it may. */
+  contextUsed: number
   contextWindow: number
-  /** The runtime's own process totals, for a runtime whose count restarts with its process. */
-  processTotals?: ProcessTotals
 }
 
-/**
- * What a runtime's process has counted since it started — including anything
- * it picked back up from an earlier process. Stored with the session so the
- * next run can tell whether its process resumed the count or began again.
- */
-export interface ProcessTotals {
-  /** Every token of every kind, across all models. */
-  tokens: number
-  cost: number
-}
-
-/** The session's totals as a run starts, for a runtime that counts per process. */
+/** The session's totals as a run starts, for the harness to continue from. */
 export interface StartingStats {
   usage: Usage
   cost: number
-  /** What the last process reported, or null when none has. */
-  processTotals: ProcessTotals | null
 }
 
-export interface ApprovalRequest {
-  toolUseId: string
-  name: string
-  input: Record<string, unknown>
-}
+/** A tool call held for a decision, as ACP asks for one. */
+export type ApprovalRequest = RequestPermissionRequest
 
 export interface ApprovalDecision {
   result: ConfirmationResult
@@ -173,20 +190,15 @@ export interface HarnessRunOptions {
    */
   startingStats: StartingStats
   /**
-   * The plan the session's last `agent.tasks` left, for a runtime that keeps
-   * one across runs and only reports changes to it.
-   */
-  startingTasks: AgentTask[]
-  /**
-   * Park a tool call until grove decides. Adapters only call this when their
-   * capabilities declare `approvals`; grove answers from the review flow, the
-   * session's permission mode, or the user.
+   * Park a tool call until grove decides. grove answers from the review flow,
+   * the session's permission mode, or the user, and logs the request as it
+   * parks it.
    */
   confirm(request: ApprovalRequest): Promise<ApprovalDecision>
   /**
    * Store an image a tool returned and get back the blob it is shown by, so
    * the event log carries a reference rather than the bytes. Synchronous so
-   * the result event it belongs to is emitted in order.
+   * the update it belongs to is emitted in order.
    */
   storeImage(image: PromptAttachment): ImageBlock
   /**
@@ -256,24 +268,6 @@ export interface HarnessOffering {
   default: { provider: string; model: string } | null
 }
 
-/**
- * What grove should make of a tool call.
- *
- * Every harness names and shapes its tools differently — `Write` with a
- * `file_path` here, `write` with a `path` there — and the review flow needs to
- * know which calls change files and what they would leave on disk. Each adapter
- * answers for its own tools, so nothing outside it has to learn their names.
- */
-export type ToolIntent =
-  | { kind: 'review'; summary: string }
-  | {
-      kind: 'write'
-      /** Absolute, or relative to the workspace root. */
-      path: string
-      /** What the file would contain afterwards, or null when it cannot be known. */
-      apply(original: string): string | null
-    }
-
 export interface HarnessDescriptor {
   id: string
   label: string
@@ -290,8 +284,6 @@ export interface HarnessDescriptor {
   /** Models, commands and skills this harness can offer right now. */
   offering(): Promise<HarnessOffering>
   start(options: HarnessRunOptions): Promise<HarnessRun>
-  /** Classify a tool call for the review flow; null for calls it does not care about. */
-  intentOf(name: string, input: Record<string, unknown>): ToolIntent | null
 }
 
 /**

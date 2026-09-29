@@ -23,7 +23,10 @@ function userSays(text: string): SessionEvent {
 }
 
 function agentSays(text: string): SessionEvent {
-  return stamped({ type: 'agent.message_end', content: [{ type: 'text', text }], stopReason: 'end' })
+  return stamped({
+    type: 'update',
+    update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } }
+  })
 }
 
 describe('isDefaultTitle', () => {

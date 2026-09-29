@@ -35,7 +35,6 @@ import type {
   ShellOutputSnapshot,
   ShellOutputUpdate,
   ThinkingLevel,
-  ToolInfo,
   UserContentBlock
 } from '../../shared/agents'
 import { ATTACHABLE_IMAGE_TYPES } from '../../shared/agents'
@@ -51,6 +50,7 @@ import type {
   PromptAttachment,
   SubagentIdentity
 } from './harness'
+import { toolInfoOf } from './harness'
 import { runShellCommand, type ShellResult } from './shell'
 import { completeShellLine } from './shellCompletion'
 import { firstPromptText, isDefaultTitle, titleFromPrompt } from './sessionSummary'
@@ -64,7 +64,9 @@ import {
 } from './store'
 import { isSubagentSession, SUBAGENT_LABEL, SubagentSessions } from './subagents'
 import { interruptedTurn } from './interruptedTurn'
-import { notesOf, tasksOf } from './notes'
+import { notesOf } from './notes'
+import { diffsOf, isSettled, toolNameOf } from './acpLog'
+import { groveToolName } from './switchboard/mcpServer'
 
 const BLOBS_DIR = 'blobs'
 
@@ -78,8 +80,6 @@ interface Runtime extends RuntimeState {
   run: HarnessRun | null
   starting: Promise<HarnessRun> | null
   approvals: Map<string, PendingApproval>
-  /** Tool calls already announced on the log, so an adapter cannot double-report. */
-  announced: Set<string>
   messageCount: number
 }
 
@@ -601,7 +601,8 @@ export class AgentService {
   // ── Approvals ───────────────────────────────────────────────────
 
   /**
-   * Park a tool call and announce it as a pending approval.
+   * Park a tool call and put the request on the log, where the transcript
+   * shows it and the review bridge raises its diff.
    *
    * The answer arrives as a `user.tool_confirmation` client event — from the
    * user, from the session's permission mode, or from the review flow once the
@@ -609,27 +610,17 @@ export class AgentService {
    */
   private requestApproval(sessionId: string, request: ApprovalRequest): Promise<ApprovalDecision> {
     const runtime = this.runtimeOrCreate(sessionId)
-    // Claimed before anything is awaited: the adapter reports the same call on
-    // its own stream a moment later, and whichever arrives second must not
-    // duplicate it — or, worse, report it as ungated.
-    const fresh = !runtime.announced.has(request.toolUseId)
-    runtime.announced.add(request.toolUseId)
+    const toolUseId = request.toolCall.toolCallId
+    const name = approvalName(request)
 
-    const automatic = this.autoDecisionFor(sessionId, request)
-    if (automatic) {
-      if (fresh) void this.recordToolUse(sessionId, request, 'allow')
-      return Promise.resolve({ result: automatic })
-    }
+    const automatic = this.autoDecisionFor(sessionId, name, request)
+    if (automatic) return Promise.resolve({ result: automatic })
 
-    runtime.pendingApprovals = [...runtime.pendingApprovals, request.toolUseId]
-    // Recorded even when the adapter got there first with an ungated call: the
-    // harness reports the call as it is made and only then asks whether it may
-    // run it, so the second record is what says the call is parked. The fold
-    // updates the call it already has rather than adding another.
-    void this.recordToolUse(sessionId, request, 'ask')
+    runtime.pendingApprovals = [...runtime.pendingApprovals, toolUseId]
+    void this.store.append(sessionId, { type: 'permission', request })
 
     return new Promise((resolve) => {
-      runtime.approvals.set(request.toolUseId, { name: request.name, resolve })
+      runtime.approvals.set(toolUseId, { name, resolve })
     })
   }
 
@@ -643,31 +634,22 @@ export class AgentService {
    * made in the renderer arrives after the diff it was meant to prevent.
    *
    * Answering here also keeps the review flow consistent for free — an
-   * auto-approved call is logged as `allow`, and the review bridge only gates
-   * calls logged as `ask`.
+   * auto-approved call never reaches the log as a request, and the review
+   * bridge only gates requests on the log.
    */
-  private autoDecisionFor(sessionId: string, request: ApprovalRequest): ConfirmationResult | null {
+  private autoDecisionFor(
+    sessionId: string,
+    name: string,
+    request: ApprovalRequest
+  ): ConfirmationResult | null {
     const session = this.store.peek(sessionId)
     if (!session) return null
     if (session.permissionMode === 'bypass') return 'allow'
     // "Don't ask again" for this tool, answered earlier in the session.
-    if (session.autoApproveTools.includes(request.name)) return 'allow'
+    if (session.autoApproveTools.includes(name)) return 'allow'
     if (session.permissionMode !== 'acceptEdits') return null
-    return this.writesAFile(session.harness, request) ? 'allow' : null
-  }
-
-  /**
-   * Whether a call writes a file, as the harness itself reports it.
-   *
-   * `intentOf` is the same answer the review flow reads, so accept-edits covers
-   * exactly the calls that would have been raised as a diff — and a harness
-   * that names its tools differently needs no change here.
-   */
-  private writesAFile(harnessId: string, request: ApprovalRequest): boolean {
-    const descriptor = this.options.harnesses.get(harnessId)
-    if (!descriptor) return false
-    const input = (request.input as Record<string, unknown>) ?? {}
-    return descriptor.intentOf(request.name, input)?.kind === 'write'
+    if (writesAFile(request)) return 'allow'
+    return null
   }
 
   /**
@@ -697,14 +679,6 @@ export class AgentService {
 
     if (result === 'always_session' || result === 'always_project') {
       await this.rememberAutoApproval(sessionId, pending.name)
-    }
-    if (input !== undefined) {
-      await this.store.append(sessionId, {
-        type: 'agent.tool_use_edited',
-        toolUseId,
-        name: pending.name,
-        input
-      })
     }
     this.resolveApproval(sessionId, toolUseId, { result, input, reason })
     if (result === 'deny' && !reason?.trim()) await this.interruptRun(sessionId)
@@ -757,11 +731,18 @@ export class AgentService {
     if (!openCalls) return
     for (const call of openCalls) {
       await this.store.append(sessionId, {
-        type: 'agent.tool_result',
-        toolUseId: call.toolUseId,
-        name: call.name,
-        content: 'Not run: Grove restarted before this call finished.',
-        isError: true
+        type: 'update',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: call.toolUseId,
+          status: 'failed',
+          content: [
+            {
+              type: 'content',
+              content: { type: 'text', text: 'Not run: Grove restarted before this call finished.' }
+            }
+          ]
+        }
       })
     }
     await this.store.append(sessionId, {
@@ -775,21 +756,6 @@ export class AgentService {
     const session = await this.store.require(sessionId)
     if (session.autoApproveTools.includes(toolName)) return
     await this.store.patch(sessionId, { autoApproveTools: [...session.autoApproveTools, toolName] })
-  }
-
-  /** Put a tool call on the log. The caller has already claimed its id. */
-  private async recordToolUse(
-    sessionId: string,
-    request: ApprovalRequest,
-    permission: 'allow' | 'ask'
-  ): Promise<void> {
-    await this.store.append(sessionId, {
-      type: 'agent.tool_use',
-      toolUseId: request.toolUseId,
-      name: request.name,
-      input: request.input,
-      permission
-    })
   }
 
   // ── Runs ────────────────────────────────────────────────────────
@@ -825,12 +791,7 @@ export class AgentService {
       emit: (body) => void this.absorb(sessionId, body),
       emitFrom: (agent, body) => void this.subagents.absorb(sessionId, agent, body),
       stats: (update) => void this.store.patch(sessionId, update),
-      startingStats: {
-        usage: session.usage,
-        cost: session.cost,
-        processTotals: session.processTotals ?? null
-      },
-      startingTasks: tasksOf(this.store.peekEvents(sessionId)),
+      startingStats: { usage: session.usage, cost: session.cost },
       confirm: (request) => this.requestApproval(sessionId, request),
       storeImage: (image) => this.storeImageSync(sessionId, image),
       shellOutput: this.shellOutputs.sinkFor(sessionId)
@@ -895,16 +856,13 @@ export class AgentService {
   private async absorb(sessionId: string, body: ServerEventBody): Promise<void> {
     const runtime = this.runtimeOrCreate(sessionId)
 
-    if (body.type === 'agent.tool_use') {
-      if (runtime.announced.has(body.toolUseId)) return
-      runtime.announced.add(body.toolUseId)
-    }
     // The result of a call is the last word of whatever agent that call was
     // running, so the session standing for it stops here rather than sitting in
     // the tabs claiming to work forever.
-    if (body.type === 'agent.tool_result') {
-      await this.subagents.close(sessionId, body.toolUseId)
-      this.shellOutputs.settle(sessionId, body.toolUseId)
+    const settled = settledCallOf(body)
+    if (settled) {
+      await this.subagents.close(sessionId, settled)
+      this.shellOutputs.settle(sessionId, settled)
     }
     if (body.type === 'session.status_running') {
       runtime.status = 'running'
@@ -1068,7 +1026,6 @@ export class AgentService {
       run: null,
       starting: null,
       approvals: new Map(),
-      announced: new Set(),
       messageCount: 0
     }
     this.runtimes.set(sessionId, runtime)
@@ -1129,19 +1086,35 @@ export class AgentService {
   }
 }
 
-/** One of grove's tools as the renderer's catalog describes a tool. */
-function toolInfoOf(tool: GroveTool): ToolInfo {
-  return {
-    name: tool.name,
-    description: tool.description,
-    summary: tool.summary,
-    policy: tool.policy,
-    // Two calls to the same grove tool in one batch would race on the channel
-    // or start two sessions; none of them is worth parallelising.
-    parallelSafe: false,
-    display: tool.display,
-    inputSchema: tool.inputSchema
-  }
+/**
+ * The name a tool is approved and remembered under: grove's own tools by their
+ * bare name, whatever prefix the harness gave them; anything else as the
+ * harness names it.
+ */
+function approvalName(request: ApprovalRequest): string {
+  const name = toolNameOf(request.toolCall)
+  if (!name) return request.toolCall.title ?? ''
+  const grove = groveToolName(name)
+  if (grove) return grove
+  return name
+}
+
+/**
+ * Whether a call changes files, as ACP describes it: a diff in what it carries,
+ * or a kind that edits, deletes or moves. Accept-edits covers exactly these.
+ */
+function writesAFile(request: ApprovalRequest): boolean {
+  if (diffsOf(request.toolCall.content).length > 0) return true
+  const kind = request.toolCall.kind
+  return kind === 'edit' || kind === 'delete' || kind === 'move'
+}
+
+/** The tool call an event settles, if it is the update that finished one. */
+function settledCallOf(body: ServerEventBody): string | null {
+  if (body.type !== 'update') return null
+  if (body.update.sessionUpdate !== 'tool_call_update') return null
+  if (!body.update.status || !isSettled(body.update.status)) return null
+  return body.update.toolCallId
 }
 
 function textOf(event: Extract<ClientEventBody, { type: 'user.message' | 'app.message' }>): string {

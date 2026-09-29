@@ -1,16 +1,24 @@
-// Bridges plugin AI contributions into agent runs. Plugin MCP tools run
-// in-process in main via the agent SDK's SDK-MCP transport — the tool handler
-// proxies back into the plugin's worker (no child processes). Skills append
-// to the agent's system prompt. ai.prompt runs a standalone one-shot query
-// that never touches the user's chat slots.
+// Bridges plugin AI contributions into agent runs. Plugin MCP tools are served
+// beside grove's own tools, and each call proxies back into the plugin's worker.
+// Skills append to the agent's system prompt. ai.prompt runs a standalone
+// one-shot Claude Code session through switchboard that never touches the
+// user's chat slots.
 
 import type { Worktree } from '../../shared/types'
 import type { PermissionBroker } from '../api/broker'
 import type { ClientRecord } from '../api/clients'
 import type { PluginRegistry } from './loader'
 import { PermissionError } from '../api/broker'
-import { zodShapeFromJsonSchema, type JsonSchemaObject } from './zodSchema'
-import { resolveClaudeExecutable } from '../agents/claudeExecutable'
+import type { RequestPermissionRequest } from '@neoworks/harness'
+import type { GroveTool } from '../agents/harness'
+import type { SwitchboardHost } from '../agents/switchboard/host'
+
+export interface JsonSchemaObject {
+  type: 'object'
+  properties?: Record<string, unknown>
+  required?: string[]
+  [key: string]: unknown
+}
 
 export interface McpToolDeclaration {
   name: string
@@ -41,8 +49,12 @@ interface PendingToolCall {
 interface BridgeDeps {
   broker: PermissionBroker
   registry: PluginRegistry
+  switchboard: SwitchboardHost
   send: (channel: string, payload: unknown) => void
 }
+
+// Tool kinds a one-shot prompt may use without asking: they only look.
+const READ_ONLY_KINDS = new Set(['read', 'search', 'think', 'fetch'])
 
 export class AiBridge {
   private deps: BridgeDeps
@@ -89,32 +101,41 @@ export class AiBridge {
     }
   }
 
-  // ── Adapter integration ───────────────────────────────────────
-  // Build SDK-MCP server configs for every registered plugin server.
-  async buildMcpServers(): Promise<Record<string, unknown>> {
-    if (this.servers.size === 0) return {}
-    const { createSdkMcpServer, tool } = await import('@anthropic-ai/claude-agent-sdk')
-    const configs: Record<string, unknown> = {}
+  // ── Agent integration ─────────────────────────────────────────
+
+  /**
+   * Every tool a plugin registered, as grove tools agent runs are offered. A
+   * plugin's tool is its own business, so it runs when called; the plugin was
+   * granted `ai.mcp` to register it.
+   */
+  pluginTools(): GroveTool[] {
+    const tools: GroveTool[] = []
     for (const [pluginId, byName] of this.servers) {
       for (const declaration of byName.values()) {
-        const key = `plugin-${pluginId}-${declaration.name}`
-        configs[key] = createSdkMcpServer({
-          name: key,
-          tools: declaration.tools.map((toolDeclaration) =>
-            tool(
-              toolDeclaration.name,
-              toolDeclaration.description,
-              zodShapeFromJsonSchema(toolDeclaration.inputSchema),
-              async (input: unknown) => {
-                const result = await this.invokePluginTool(pluginId, toolDeclaration.name, input)
-                return result as { content: { type: 'text'; text: string }[] }
-              }
-            )
-          )
-        })
+        for (const toolDeclaration of declaration.tools) {
+          tools.push(this.pluginTool(pluginId, declaration.name, toolDeclaration))
+        }
       }
     }
-    return configs
+    return tools
+  }
+
+  private pluginTool(
+    pluginId: string,
+    serverName: string,
+    toolDeclaration: McpToolDeclaration
+  ): GroveTool {
+    return {
+      name: `${pluginId}_${serverName}_${toolDeclaration.name}`.replace(/[^A-Za-z0-9_-]/g, '_'),
+      summary: toolDeclaration.description,
+      description: toolDeclaration.description,
+      inputSchema: toolDeclaration.inputSchema,
+      policy: 'allow',
+      execute: async (input) => {
+        const result = await this.invokePluginTool(pluginId, toolDeclaration.name, input)
+        return { content: textOfToolResult(result) }
+      }
+    }
   }
 
   // Skill blocks appended to the agent's system prompt (v1 mechanism; swaps
@@ -154,10 +175,10 @@ export class AiBridge {
   }
 
   // ── ai.prompt: standalone one-shot runs ───────────────────────
-  // Streams SDK messages through io.emit; resolves when the run ends and
-  // aborts on io.signal (the dispatcher owns cancellation). Write/exec tools
-  // route through the plugin consent dialog; read-only tools are
-  // auto-allowed like agent runs.
+  // Streams switchboard's events through io.emit; resolves when the turn ends
+  // and cancels on io.signal (the dispatcher owns cancellation). Tools that
+  // change anything route through the plugin consent dialog; tools that only
+  // look are allowed like agent runs.
   async runPrompt(
     client: ClientRecord,
     params: { prompt: string; model?: string; systemAppend?: string },
@@ -165,45 +186,42 @@ export class AiBridge {
     io: { emit: (chunk: unknown) => void; signal: AbortSignal }
   ): Promise<null> {
     await this.deps.broker.ensure(client, 'ai.prompt', truncate(params.prompt))
-    const abort = new AbortController()
-    if (io.signal.aborted) abort.abort()
-    io.signal.addEventListener('abort', () => abort.abort())
-
-    const { query } = await import('@anthropic-ai/claude-agent-sdk')
-    const iterator = query({
-      prompt: params.prompt,
-      options: {
-        cwd: worktree.path,
-        abortController: abort,
-        pathToClaudeCodeExecutable: resolveClaudeExecutable(),
-        systemPrompt: {
-          type: 'preset',
-          preset: 'claude_code',
-          append: params.systemAppend || undefined
-        },
-        model: params.model || undefined,
-        includePartialMessages: false,
-        canUseTool: async (toolName, input) => {
-          const allowed = await this.allowPromptTool(client, toolName, input)
-          if (allowed) return { behavior: 'allow', updatedInput: input }
-          return { behavior: 'deny', message: 'denied by the user' }
-        }
+    const switchboard = await this.deps.switchboard.switchboard()
+    const session = await switchboard.createSession({
+      harness: 'claude',
+      cwd: worktree.path,
+      options: promptOptions(params),
+      onPermission: async (request) => {
+        const allowed = await this.allowPromptTool(client, request)
+        if (allowed) return 'once'
+        return 'reject'
       }
     })
-    for await (const message of iterator) {
-      io.emit([{ type: (message as { type?: string }).type ?? 'message', payload: message }])
+    try {
+      const run = session.prompt(params.prompt)
+      const cancel = (): void => void session.cancel()
+      io.signal.addEventListener('abort', cancel)
+      if (io.signal.aborted) cancel()
+      for await (const event of run) {
+        let type: string = event.type
+        if (event.type === 'update') type = event.update.sessionUpdate
+        io.emit([{ type, payload: event }])
+      }
+      io.signal.removeEventListener('abort', cancel)
+    } finally {
+      await session.close()
     }
     return null
   }
 
   private async allowPromptTool(
     client: ClientRecord,
-    toolName: string,
-    input: Record<string, unknown>
+    request: RequestPermissionRequest
   ): Promise<boolean> {
-    const readOnly = new Set(['Read', 'Grep', 'Glob', 'LS'])
-    if (readOnly.has(toolName)) return true
-    const detail = `${toolName}: ${truncate(JSON.stringify(input))}`
+    const kind = request.toolCall.kind
+    if (kind && READ_ONLY_KINDS.has(kind)) return true
+    const title = request.toolCall.title ?? 'tool call'
+    const detail = `${title}: ${truncate(JSON.stringify(request.toolCall.rawInput ?? {}))}`
     try {
       await this.deps.broker.ensure(client, 'ai.prompt', detail)
       return true
@@ -212,6 +230,32 @@ export class AiBridge {
       throw error
     }
   }
+}
+
+/** The switchboard options a plugin's one-shot prompt runs with. */
+function promptOptions(params: { model?: string; systemAppend?: string }): {
+  model?: string
+  systemPrompt?: { append: string }
+} {
+  const options: { model?: string; systemPrompt?: { append: string } } = {}
+  if (params.model) options.model = params.model
+  if (params.systemAppend) options.systemPrompt = { append: params.systemAppend }
+  return options
+}
+
+/** A plugin tool's answer as the text an agent reads. */
+function textOfToolResult(result: unknown): string {
+  const content = (result as { content?: unknown } | null)?.content
+  if (!Array.isArray(content)) {
+    if (typeof result === 'string') return result
+    return JSON.stringify(result ?? '')
+  }
+  return content
+    .map((block: { type?: unknown; text?: unknown }) => {
+      if (block.type === 'text' && typeof block.text === 'string') return block.text
+      return ''
+    })
+    .join('\n')
 }
 
 function truncate(text: string): string {

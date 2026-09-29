@@ -5,12 +5,12 @@
 // agent found out. This folds it into speaker-tagged lines, which is what the
 // transcript tools hand back and what a search matches against.
 //
-// The fold is deliberately lossy: message deltas are dropped in favour of the
-// finished message, and tool traffic is left out unless it is asked for, since
-// most questions about another session are about what was said, not what was
-// called.
+// The fold is deliberately lossy: message chunks are joined into the finished
+// message, and tool traffic is left out unless it is asked for, since most
+// questions about another session are about what was said, not what was called.
 
-import type { ContentBlock, SessionEvent, UserContentBlock } from '../../shared/agents'
+import type { SessionEvent, UserContentBlock } from '../../shared/agents'
+import { agentMessages, resultText, toolCalls } from './acpLog'
 
 export type Speaker = 'user' | 'agent' | 'tool' | 'system'
 
@@ -40,13 +40,53 @@ export function transcriptLines(
   events: SessionEvent[],
   options: FoldOptions = {}
 ): TranscriptLine[] {
+  const lines = [...groveLines(events), ...messageLines(events)]
+  if (options.includeTools) lines.push(...toolLines(events))
+  return lines
+    .filter((line) => line.text.trim() !== '')
+    .sort((left, right) => left.seq - right.seq)
+}
+
+/** What the user, other agents and grove itself put on the log. */
+function groveLines(events: SessionEvent[]): TranscriptLine[] {
   const lines: TranscriptLine[] = []
   for (const event of events) {
     const line = lineOf(event)
-    if (!line) continue
-    if (line.speaker === 'tool' && !options.includeTools) continue
-    if (line.text.trim() === '') continue
-    lines.push(line)
+    if (line) lines.push(line)
+  }
+  return lines
+}
+
+/** The agent's messages, each whole, at the event that began it. */
+function messageLines(events: SessionEvent[]): TranscriptLine[] {
+  return agentMessages(events).map((message) => ({
+    seq: message.seq,
+    at: message.at,
+    speaker: 'agent',
+    text: message.text
+  }))
+}
+
+/** Each tool call where it was made, and its result where it settled. */
+function toolLines(events: SessionEvent[]): TranscriptLine[] {
+  const lines: TranscriptLine[] = []
+  for (const call of toolCalls(events).values()) {
+    const label = call.name || call.title
+    lines.push({
+      seq: call.seq,
+      at: call.at,
+      speaker: 'tool',
+      label,
+      text: clip(inputText(call.input))
+    })
+    if (call.settledSeq === null) continue
+    lines.push({
+      seq: call.settledSeq,
+      at: call.at,
+      speaker: 'tool',
+      label,
+      text: resultLine(resultText(call), call.status === 'failed')
+    })
   }
   return lines
 }
@@ -59,12 +99,6 @@ function lineOf(event: SessionEvent): TranscriptLine | null {
       return { ...at, speaker: 'user', text: userText(event.content) }
     case 'app.message':
       return { ...at, speaker: 'user', label: event.from ?? event.label, text: event.text }
-    case 'agent.message_end':
-      return { ...at, speaker: 'agent', text: blockText(event.content) }
-    case 'agent.tool_use':
-      return { ...at, speaker: 'tool', label: event.name, text: clip(inputText(event.input)) }
-    case 'agent.tool_result':
-      return { ...at, speaker: 'tool', label: event.name, text: resultText(event) }
     case 'session.shell_result':
       return {
         ...at,
@@ -72,10 +106,6 @@ function lineOf(event: SessionEvent): TranscriptLine | null {
         label: 'shell',
         text: clip(`${event.command}\n${event.output}`)
       }
-    case 'session.command_output':
-      return { ...at, speaker: 'system', text: event.text }
-    case 'session.compacted':
-      return { ...at, speaker: 'system', label: 'compacted', text: event.summary }
     case 'session.error':
       return { ...at, speaker: 'system', label: 'error', text: event.message }
     case 'session.notice':
@@ -96,16 +126,9 @@ function userText(content: UserContentBlock[]): string {
     .join('\n')
 }
 
-function blockText(content: ContentBlock[]): string {
-  return content
-    .filter((block) => block.type === 'text' && typeof block.text === 'string')
-    .map((block) => block.text)
-    .join('\n')
-}
-
-function resultText(event: { content: string; isError: boolean }): string {
-  if (event.isError) return clip(`error: ${event.content}`)
-  return clip(event.content)
+function resultLine(text: string, failed: boolean): string {
+  if (failed) return clip(`error: ${text}`)
+  return clip(text)
 }
 
 /** A tool's input as one readable string, whatever shape it came in. */

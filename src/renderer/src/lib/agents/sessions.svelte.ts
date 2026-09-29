@@ -21,7 +21,7 @@ import {
 } from './api'
 import { untrack } from 'svelte'
 import { openStream } from './stream'
-import { foldAttention, type SessionAttention } from './attention'
+import { foldAttention, settledApproval, type SessionAttention } from './attention'
 import type { AgentMode } from './modes'
 import { clearAgentMarks, store } from '../store.svelte'
 import { showTarget } from './show'
@@ -460,9 +460,9 @@ class AgentSessions {
       // What the agent pointed at was for the answer the user is now replying to.
       if (event.type === 'user.message' && this.viewing === session.id) clearAgentMarks()
       // Usage and the queue only live in the snapshot, so a turn boundary is
-      // worth a re-read — and so is every response, which is when the harness
-      // counts its tokens.
-      if (event.type === 'session.status_idle' || event.type === 'agent.message_end') {
+      // worth a re-read — and so is every settled tool call, a step in the turn
+      // after which the harness has counted its tokens.
+      if (event.type === 'session.status_idle' || settledApproval(event) !== null) {
         void this.refreshSnapshot(session.id)
       }
     })

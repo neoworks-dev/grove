@@ -47,7 +47,7 @@ export function foldAttention(
     return undefined
   }
   if (isApprovalRequest(event)) {
-    parked.add(event.toolUseId)
+    parked.add(event.request.toolCall.toolCallId)
     return 'needs_you'
   }
   const settled = settledApproval(event)
@@ -71,8 +71,8 @@ export function foldAttention(
 /** Whether the event parks a call until the user approves or denies it. */
 export function isApprovalRequest(
   event: SessionEvent
-): event is Extract<SessionEvent, { type: 'agent.tool_use' }> {
-  return event.type === 'agent.tool_use' && event.permission === 'ask'
+): event is Extract<SessionEvent, { type: 'permission' }> {
+  return event.type === 'permission'
 }
 
 /**
@@ -80,8 +80,15 @@ export function isApprovalRequest(
  * other way. Null for any other event.
  */
 export function settledApproval(event: SessionEvent): string | null {
-  if (event.type === 'user.tool_confirmation' || event.type === 'agent.tool_result') {
+  if (event.type === 'user.tool_confirmation') {
     return event.toolUseId
+  }
+  if (event.type !== 'update' || event.update.sessionUpdate !== 'tool_call_update') {
+    return null
+  }
+  const status = event.update.status
+  if (status === 'completed' || status === 'failed') {
+    return event.update.toolCallId
   }
   return null
 }

@@ -1,7 +1,7 @@
 // Folding a session's event log into lines somebody else can read.
 //
 // The rules worth pinning are the ones that decide what another agent sees:
-// deltas must not double the finished message, an attachment must not be pasted
+// chunks must join into one message, an attachment must not be pasted
 // a second time, and a search must come back with the newest hits rather than
 // the first ones.
 
@@ -19,21 +19,35 @@ function event(seq: number, body: Record<string, unknown>): SessionEvent {
   } as SessionEvent
 }
 
+/** One piece of an agent message or thought, as ACP streams it. */
+function chunk(
+  seq: number,
+  text: string,
+  kind: 'agent_message_chunk' | 'agent_thought_chunk' = 'agent_message_chunk',
+  messageId?: string
+): SessionEvent {
+  return event(seq, {
+    type: 'update',
+    update: { sessionUpdate: kind, content: { type: 'text', text }, messageId }
+  })
+}
+
 describe('transcript lines', () => {
-  test('keeps the finished message and drops the deltas it was streamed as', () => {
+  test('joins the chunks a message was streamed as into one line, leaving thoughts out', () => {
     const lines = transcriptLines([
-      event(1, { type: 'agent.message_start' }),
-      event(2, { type: 'agent.message_delta', text: 'half ' }),
-      event(3, { type: 'agent.thinking_delta', text: 'hmm' }),
-      event(4, {
-        type: 'agent.message_end',
-        content: [{ type: 'text', text: 'half a thought' }],
-        stopReason: 'end_turn'
-      })
+      chunk(1, 'half '),
+      chunk(2, 'hmm', 'agent_thought_chunk'),
+      chunk(3, 'a thought')
     ])
 
     expect(lines).toHaveLength(1)
-    expect(lines[0]).toMatchObject({ seq: 4, speaker: 'agent', text: 'half a thought' })
+    expect(lines[0]).toMatchObject({ seq: 1, speaker: 'agent', text: 'half a thought' })
+  })
+
+  test('a new message id starts a new line', () => {
+    const lines = transcriptLines([chunk(1, 'first', undefined, 'm1'), chunk(2, 'second', undefined, 'm2')])
+
+    expect(lines.map((line) => line.text)).toEqual(['first', 'second'])
   })
 
   test('names an attached file instead of repeating its contents', () => {
@@ -62,28 +76,31 @@ describe('transcript lines', () => {
     const lines = transcriptLines(
       [
         event(1, {
-          type: 'agent.tool_result',
-          toolUseId: 't',
-          name: 'bash',
-          content: 'x'.repeat(2000),
-          isError: false
+          type: 'update',
+          update: { sessionUpdate: 'tool_call', toolCallId: 't', title: 'bash', rawInput: {} }
+        }),
+        event(2, {
+          type: 'update',
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 't',
+            status: 'completed',
+            content: [{ type: 'content', content: { type: 'text', text: 'x'.repeat(2000) } }]
+          }
         })
       ],
       { includeTools: true }
     )
 
-    expect(lines[0].text.length).toBeLessThan(500)
-    expect(lines[0].text).toContain('(2000 chars)')
+    const result = lines.find((line) => line.seq === 2)
+    expect(result?.text.length).toBeLessThan(500)
+    expect(result?.text).toContain('(2000 chars)')
   })
 
   test('returns the newest hits when there are more than asked for', () => {
     const lines = transcriptLines(
       Array.from({ length: 5 }, (_unused, index) =>
-        event(index + 1, {
-          type: 'agent.message_end',
-          content: [{ type: 'text', text: `pass ${index + 1} of the parser` }],
-          stopReason: 'end_turn'
-        })
+        chunk(index + 1, `pass ${index + 1} of the parser`, undefined, `m${index + 1}`)
       )
     )
 

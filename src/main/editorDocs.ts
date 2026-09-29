@@ -174,6 +174,31 @@ return {
 }
 `
 
+// Like LUA_READ, but only for a buffer that is loaded: an unloaded buffer's
+// lines are empty, not the file's.
+const LUA_PEEK = `
+local path = ...
+local buf = vim.fn.bufnr(path)
+if buf == -1 or not vim.api.nvim_buf_is_loaded(buf) then return nil end
+return {
+  tick = vim.api.nvim_buf_get_changedtick(buf),
+  lineCount = vim.api.nvim_buf_line_count(buf),
+  languageId = vim.bo[buf].filetype,
+  dirty = vim.bo[buf].modified,
+  lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+}
+`
+
+const LUA_REPLACE_LINES = `
+local path, expected, lines = ...
+local buf = vim.fn.bufnr(path)
+if buf == -1 then return { missing = true } end
+local tick = vim.api.nvim_buf_get_changedtick(buf)
+if tick ~= expected then return { stale = true, currentVersion = tick } end
+vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+return { version = vim.api.nvim_buf_get_changedtick(buf) }
+`
+
 const LUA_APPLY_EDITS = `
 local path, expected, edits = ...
 local buf = vim.fn.bufnr(path)
@@ -324,6 +349,39 @@ export class DocumentRegistry {
       document: this.docInfo(worktreeId, path, raw),
       lines: raw.lines ?? []
     }
+  }
+
+  /**
+   * A document's buffer as the editor holds it, unsaved changes included, or
+   * null when no editor has it loaded. Unlike `read`, never opens one.
+   */
+  async peek(
+    worktreeId: string,
+    path: string
+  ): Promise<{ document: DocumentInfo; lines: string[] } | null> {
+    const sessionId = this.deps.sessionFor(worktreeId)
+    if (!sessionId) return null
+    const raw = (await this.lua(sessionId, LUA_PEEK, [
+      this.absPath(worktreeId, path)
+    ])) as LuaDocShape | null
+    if (!raw) return null
+    return { document: this.docInfo(worktreeId, path, raw), lines: raw.lines ?? [] }
+  }
+
+  /** Replace a loaded buffer's whole text, if it is still at `expectedVersion`. */
+  async replaceLines(
+    worktreeId: string,
+    path: string,
+    expectedVersion: number,
+    lines: string[]
+  ): Promise<EditOutcome> {
+    const sessionId = this.session(worktreeId)
+    const raw = (await this.lua(sessionId, LUA_REPLACE_LINES, [
+      this.absPath(worktreeId, path),
+      expectedVersion,
+      lines
+    ])) as LuaMutationShape | null
+    return this.mutationOutcome(raw, path)
   }
 
   async applyEdit(

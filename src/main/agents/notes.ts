@@ -1,11 +1,11 @@
-// A session's notes list and the harness's plan, read back off its event log.
+// A session's notes list, read back off its event log.
 //
-// Both are kept on the log as whole lists — `session.notes` and `agent.tasks` —
-// so the one that counts is simply the last of each, whichever branch of the
-// conversation it was written on.
+// It is kept on the log as a whole list — `session.notes` — so the one that
+// counts is simply the last, whichever branch of the conversation it was
+// written on.
 
 import { randomUUID } from 'node:crypto'
-import type { AgentTask, SessionEvent, SessionNote } from '../../shared/agents'
+import type { SessionEvent, SessionNote } from '../../shared/agents'
 
 // A note is a line to remember, not a document; longer text is cut here so a
 // runaway model cannot fill the strip above the composer.
@@ -17,15 +17,6 @@ export function notesOf(events: readonly SessionEvent[]): SessionNote[] {
   for (let index = events.length - 1; index >= 0; index--) {
     const event = events[index]
     if (event.type === 'session.notes') return event.notes
-  }
-  return []
-}
-
-/** The harness's plan as the log last recorded it. */
-export function tasksOf(events: readonly SessionEvent[]): AgentTask[] {
-  for (let index = events.length - 1; index >= 0; index--) {
-    const event = events[index]
-    if (event.type === 'agent.tasks') return event.tasks
   }
   return []
 }

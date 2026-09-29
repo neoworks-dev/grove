@@ -33,7 +33,14 @@ describe('attentionOf', () => {
 
   test('a turn you stopped, and everything that is not a turn ending, asks nothing', () => {
     expect(attentionOf(event({ type: 'session.status_idle', stopReason: 'aborted' }))).toBeNull()
-    expect(attentionOf(event({ type: 'agent.message_delta', text: 'x' }))).toBeNull()
+    expect(
+      attentionOf(
+        event({
+          type: 'update',
+          update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'x' } }
+        })
+      )
+    ).toBeNull()
   })
 
   test('a call parked on an approval needs you, mid-turn', () => {
@@ -42,8 +49,22 @@ describe('attentionOf', () => {
   })
 })
 
-function toolUse(toolUseId: string, permission: 'allow' | 'ask'): SessionEvent {
-  return event({ type: 'agent.tool_use', toolUseId, name: 'Bash', input: {}, permission })
+/**
+ * A call the harness reported: parked on an approval (a permission request),
+ * or run straight away (a plain tool call).
+ */
+function toolUse(toolCallId: string, permission: 'allow' | 'ask'): SessionEvent {
+  const toolCall = { toolCallId, title: 'Bash', kind: 'execute', rawInput: {} }
+  if (permission === 'ask') {
+    return event({
+      type: 'permission',
+      request: { sessionId: 'h', toolCall, options: [] }
+    })
+  }
+  return event({
+    type: 'update',
+    update: { sessionUpdate: 'tool_call', ...toolCall, status: 'in_progress' }
+  })
 }
 
 function confirmation(toolUseId: string): SessionEvent {
@@ -77,11 +98,8 @@ describe('foldAttention', () => {
 
   test('a call ending some other way counts as answered', () => {
     const result = event({
-      type: 'agent.tool_result',
-      toolUseId: 't1',
-      name: 'Bash',
-      content: '',
-      isError: true
+      type: 'update',
+      update: { sessionUpdate: 'tool_call_update', toolCallId: 't1', status: 'failed' }
     })
     expect(flagAfter([toolUse('t1', 'ask'), result])).toBeUndefined()
   })

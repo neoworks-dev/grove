@@ -5,10 +5,15 @@
 // a translating proxy is a base URL that speaks the Anthropic Messages API, and
 // that is the whole of what Claude Code needs.
 
-import { describe, expect, test } from 'bun:test'
-import { modelIdsOf } from '../src/main/endpoints'
-import { endpointVariables, modelsOf } from '../src/main/agents/harnesses/claude'
+import { describe, expect, mock, test } from 'bun:test'
+import { electronStub } from './electronStub'
 import type { CustomEndpoint } from '../src/shared/agents'
+
+// endpoints.ts reads the app's paths from electron at import.
+mock.module('electron', () => electronStub)
+
+const { modelIdsOf } = await import('../src/main/endpoints')
+const { endpointVariables, modelsOf } = await import('../src/main/agents/switchboard/claudeModels')
 
 const openrouter: CustomEndpoint = {
   id: 'openrouter',

@@ -271,34 +271,47 @@ describe('addressing another agent', () => {
 })
 
 describe("reading another agent's transcript", () => {
+  /**
+   * A log of one event per line, and a tool line as the call and its result.
+   * Agent lines are separate messages.
+   */
   function log(sessionId: string, lines: [string, string][]): SessionEvent[] {
-    return lines.map(([type, text], index) => {
-      const envelope = {
-        id: `${sessionId}-${index}`,
-        seq: index + 1,
-        sessionId,
-        createdAt: '2026-01-01T00:00:00.000Z'
-      }
+    const bodies: Record<string, unknown>[] = []
+    for (const [type, text] of lines) {
       if (type === 'user') {
-        return { ...envelope, type: 'user.message', content: [{ type: 'text', text }] }
+        bodies.push({ type: 'user.message', content: [{ type: 'text', text }] })
+      } else if (type === 'tool') {
+        bodies.push({
+          type: 'update',
+          update: { sessionUpdate: 'tool_call', toolCallId: 't', name: 'bash', title: 'bash', rawInput: {} }
+        })
+        bodies.push({
+          type: 'update',
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 't',
+            status: 'completed',
+            content: [{ type: 'content', content: { type: 'text', text } }]
+          }
+        })
+      } else {
+        bodies.push({
+          type: 'update',
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            messageId: `m${bodies.length}`,
+            content: { type: 'text', text }
+          }
+        })
       }
-      if (type === 'tool') {
-        return {
-          ...envelope,
-          type: 'agent.tool_result',
-          toolUseId: 't',
-          name: 'bash',
-          content: text,
-          isError: false
-        }
-      }
-      return {
-        ...envelope,
-        type: 'agent.message_end',
-        content: [{ type: 'text', text }],
-        stopReason: 'end_turn'
-      }
-    }) as SessionEvent[]
+    }
+    return bodies.map((body, index) => ({
+      ...body,
+      id: `${sessionId}-${index}`,
+      seq: index + 1,
+      sessionId,
+      createdAt: '2026-01-01T00:00:00.000Z'
+    })) as SessionEvent[]
   }
 
   const logs = {
@@ -321,7 +334,7 @@ describe("reading another agent's transcript", () => {
     expect(said.content).not.toContain('cargo bench')
 
     const withTools = await read.execute({ agent: 'id-a', include_tools: true }, context('b'))
-    expect(withTools.content).toContain('#3 tool (bash): cargo bench')
+    expect(withTools.content).toContain('#4 tool (bash): cargo bench')
   })
 
   test('takes the last lines, and only those after a given event', async () => {
@@ -599,18 +612,22 @@ describe('starting another agent', () => {
 })
 
 describe('a spawned agent finishing a turn, or being closed', () => {
-  /** A store stub that only does what the bridge asks of it. */
+  /** A store stub that only does what the bridge asks of it, keeping what it was given. */
   function testStore(sessions: SessionMeta[]): {
     store: {
       subscribe: (listener: (event: SessionEvent) => void) => () => void
       get: unknown
       list: unknown
+      peekEvents: unknown
     }
     emit: (event: SessionEvent) => void
   } {
     let listener: ((event: SessionEvent) => void) | null = null
+    const logs = new Map<string, SessionEvent[]>()
+    let seq = 0
     return {
       store: {
+        peekEvents: (sessionId: string) => logs.get(sessionId) ?? [],
         subscribe: (next: (event: SessionEvent) => void) => {
           listener = next
           return () => {
@@ -621,8 +638,26 @@ describe('a spawned agent finishing a turn, or being closed', () => {
           Promise.resolve(sessions.find((session) => session.id === sessionId)),
         list: () => Promise.resolve(sessions)
       },
-      emit: (event) => listener?.(event)
+      emit: (event) => {
+        seq += 1
+        const stamped = { ...event, seq, id: `e${seq}` } as SessionEvent
+        logs.set(event.sessionId, [...(logs.get(event.sessionId) ?? []), stamped])
+        listener?.(stamped)
+      }
     }
+  }
+
+  /** A whole message from the agent, as one ACP chunk. */
+  function says(sessionId: string, text: string): SessionEvent {
+    return chunk(sessionId, text)
+  }
+
+  function chunk(sessionId: string, text: string): SessionEvent {
+    return {
+      ...envelope(sessionId),
+      type: 'update',
+      update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } }
+    } as SessionEvent
   }
 
   function envelope(sessionId: string): {
@@ -646,12 +681,7 @@ describe('a spawned agent finishing a turn, or being closed', () => {
     const { store, emit } = testStore(sessions)
     new AgentHandoffBridge({ store: store as never, roster }).watch()
 
-    emit({
-      ...envelope('child'),
-      type: 'agent.message_end',
-      content: [{ type: 'text', text: 'the parser is fine' }],
-      stopReason: 'end_turn'
-    })
+    emit(says('child', 'the parser is fine'))
     emit({ ...envelope('child'), type: 'session.status_idle', stopReason: 'end_turn' })
     await settle()
 
@@ -668,12 +698,7 @@ describe('a spawned agent finishing a turn, or being closed', () => {
     const { store, emit } = testStore(sessions)
     new AgentHandoffBridge({ store: store as never, roster }).watch()
 
-    emit({
-      ...envelope('child'),
-      type: 'agent.message_end',
-      content: [{ type: 'text', text: 'done' }],
-      stopReason: 'end_turn'
-    })
+    emit(says('child', 'done'))
     emit({ ...envelope('child'), type: 'session.status_idle', stopReason: 'end_turn' })
     emit({ ...envelope('child'), type: 'session.status_idle', stopReason: 'end_turn' })
     await settle()
@@ -681,43 +706,19 @@ describe('a spawned agent finishing a turn, or being closed', () => {
     expect(delivered).toHaveLength(1)
   })
 
-  test('reports what a delta-only harness streamed, since pi closes no message', async () => {
+  test('reports the whole of an answer streamed in chunks', async () => {
     const child = sessionMeta('child', 'PiEcho', { labels: { [PARENT_LABEL]: 'a' } })
     const sessions = [sessionMeta('a', 'Planner'), child]
     const { roster, delivered } = testRoster(sessions)
     const { store, emit } = testStore(sessions)
     new AgentHandoffBridge({ store: store as never, roster }).watch()
 
-    emit({ ...envelope('child'), type: 'agent.message_start' })
-    emit({ ...envelope('child'), type: 'agent.message_delta', text: 'pi-' })
-    emit({ ...envelope('child'), type: 'agent.message_delta', text: 'pong' })
+    emit(chunk('child', 'pi-'))
+    emit(chunk('child', 'pong'))
     emit({ ...envelope('child'), type: 'session.status_idle', stopReason: 'end_turn' })
     await settle()
 
     expect(delivered).toEqual([{ sessionId: 'a', from: 'PiEcho (child)', text: 'pi-pong' }])
-  })
-
-  test('a closing message wins over the deltas that streamed towards it', async () => {
-    const child = sessionMeta('child', 'Reviewer', { labels: { [PARENT_LABEL]: 'a' } })
-    const sessions = [sessionMeta('a', 'Planner'), child]
-    const { roster, delivered } = testRoster(sessions)
-    const { store, emit } = testStore(sessions)
-    new AgentHandoffBridge({ store: store as never, roster }).watch()
-
-    emit({ ...envelope('child'), type: 'agent.message_start' })
-    emit({ ...envelope('child'), type: 'agent.message_delta', text: 'half an ans' })
-    emit({
-      ...envelope('child'),
-      type: 'agent.message_end',
-      content: [{ type: 'text', text: 'the whole answer' }],
-      stopReason: 'end_turn'
-    })
-    emit({ ...envelope('child'), type: 'session.status_idle', stopReason: 'end_turn' })
-    await settle()
-
-    expect(delivered).toEqual([
-      { sessionId: 'a', from: 'Reviewer (child)', text: 'the whole answer' }
-    ])
   })
 
   test('a one-shot helper is removed once its answer has been delivered', async () => {
@@ -729,12 +730,7 @@ describe('a spawned agent finishing a turn, or being closed', () => {
     const { store, emit } = testStore(sessions)
     new AgentHandoffBridge({ store: store as never, roster }).watch()
 
-    emit({
-      ...envelope('child'),
-      type: 'agent.message_end',
-      content: [{ type: 'text', text: 'the file says hello' }],
-      stopReason: 'end_turn'
-    })
+    emit(says('child', 'the file says hello'))
     emit({ ...envelope('child'), type: 'session.status_idle', stopReason: 'end_turn' })
     await settle()
 
@@ -765,12 +761,7 @@ describe('a spawned agent finishing a turn, or being closed', () => {
     const { store, emit } = testStore(sessions)
     new AgentHandoffBridge({ store: store as never, roster }).watch()
 
-    emit({
-      ...envelope('child'),
-      type: 'agent.message_end',
-      content: [{ type: 'text', text: 'done' }],
-      stopReason: 'end_turn'
-    })
+    emit(says('child', 'done'))
     emit({ ...envelope('child'), type: 'session.status_idle', stopReason: 'end_turn' })
     await settle()
 
@@ -783,12 +774,7 @@ describe('a spawned agent finishing a turn, or being closed', () => {
     const { store, emit } = testStore(sessions)
     new AgentHandoffBridge({ store: store as never, roster }).watch()
 
-    emit({
-      ...envelope('solo'),
-      type: 'agent.message_end',
-      content: [{ type: 'text', text: 'finished' }],
-      stopReason: 'end_turn'
-    })
+    emit(says('solo', 'finished'))
     emit({ ...envelope('solo'), type: 'session.status_idle', stopReason: 'end_turn' })
     await settle()
 
@@ -836,12 +822,7 @@ describe('a spawned agent finishing a turn, or being closed', () => {
     const bridge = new AgentHandoffBridge({ store: store as never, roster })
     bridge.watch()
 
-    emit({
-      ...envelope('child'),
-      type: 'agent.message_end',
-      content: [{ type: 'text', text: 'the file says hello' }],
-      stopReason: 'end_turn'
-    })
+    emit(says('child', 'the file says hello'))
     emit({ ...envelope('child'), type: 'session.status_idle', stopReason: 'end_turn' })
     await settle()
     await bridge.reportClosed(child as never)

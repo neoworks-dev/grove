@@ -7,6 +7,7 @@
 // and a prompt whose answer goes nowhere.
 
 import type { SessionEvent } from '../../shared/agents'
+import { applyToolUpdate, isSettled, updateOf, type ToolCallState } from './acpLog'
 
 /** A tool call that was made and never got a result. */
 export interface OpenToolCall {
@@ -21,20 +22,28 @@ export interface OpenToolCall {
  */
 export function interruptedTurn(events: readonly SessionEvent[]): OpenToolCall[] | null {
   let running = false
-  const open = new Map<string, string>()
+  let calls = new Map<string, ToolCallState>()
+  const denied = new Set<string>()
   for (const event of events) {
     if (event.type === 'session.status_running') running = true
     // A call an ended turn never resolved is that turn's business, not this one's.
     if (event.type === 'session.status_idle' || event.type === 'session.status_terminated') {
       running = false
-      open.clear()
+      calls = new Map()
+      denied.clear()
     }
-    if (event.type === 'agent.tool_use') open.set(event.toolUseId, event.name)
-    if (event.type === 'agent.tool_result') open.delete(event.toolUseId)
+    const update = updateOf(event)
+    if (update?.sessionUpdate === 'tool_call' || update?.sessionUpdate === 'tool_call_update') {
+      applyToolUpdate(calls, update, event)
+    }
+    // A call grove serves can be parked before the harness has reported it.
+    if (event.type === 'permission') applyToolUpdate(calls, event.request.toolCall, event)
     if (event.type === 'user.tool_confirmation' && event.result === 'deny') {
-      open.delete(event.toolUseId)
+      denied.add(event.toolUseId)
     }
   }
   if (!running) return null
-  return [...open].map(([toolUseId, name]) => ({ toolUseId, name }))
+  return [...calls.values()]
+    .filter((call) => !isSettled(call.status) && !denied.has(call.toolCallId))
+    .map((call) => ({ toolUseId: call.toolCallId, name: call.name }))
 }

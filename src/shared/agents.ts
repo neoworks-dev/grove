@@ -1,13 +1,20 @@
 // The agent protocol, shared by the main process and the renderer.
 //
-// grove drives several coding harnesses (Claude, Codex, pi) through one
-// vocabulary: a session is an append-only log of sequenced events, and every
-// harness adapter translates its SDK's stream into these bodies. The renderer
-// folds the log into a transcript and never learns which harness produced it.
+// grove drives its coding harnesses (Claude Code, Codex, pi) through switchboard
+// (`@neoworks/harness`), which speaks ACP for all of them. A session is an
+// append-only log of sequenced events: what the harness reported, stored as it
+// reported it, beside what the user sent and what grove itself had to say. The
+// renderer folds the log into a transcript and never learns which harness
+// produced it.
 //
 // Events are split into what a client sends (`ClientEventBody`) and what the
 // run produces (`ServerEventBody`). Both are persisted, so replaying the log
 // reconstructs the whole conversation.
+
+import type {
+  RequestPermissionRequest,
+  SessionUpdate as AcpSessionUpdate
+} from '@neoworks/harness'
 
 export type SessionStatus = 'idle' | 'running' | 'terminated'
 
@@ -106,18 +113,31 @@ export type ClientEventBody =
   | { type: 'user.branch'; fromSeq: number }
   | { type: 'user.shell'; command: string; share?: boolean }
 
-export type ServerEventBody =
+/**
+ * What a harness reported, stored exactly as switchboard (`@neoworks/harness`)
+ * hands it over.
+ *
+ * grove adds no vocabulary of its own for what an agent says or does: messages,
+ * thoughts, tool calls, plans and compactions are ACP session updates, and
+ * everything that reads a transcript folds those. Running totals and a
+ * command's streaming output are left off the log — the first is a number on
+ * the session, the second is only worth watching while it runs.
+ */
+export type HarnessEventBody =
+  | { type: 'update'; update: AcpSessionUpdate }
+  /** A tool call held for a decision; answered by a `user.tool_confirmation`. */
+  | { type: 'permission'; request: RequestPermissionRequest }
+  /** The harness moved on to another conversation of its own (`/clear`). */
+  | { type: 'session_changed'; sessionId: string }
+
+/** What grove itself says about a session: its status, its UI, its notes. */
+export type GroveEventBody =
   | { type: 'session.status_running' }
   | { type: 'session.status_idle'; stopReason: IdleReason }
   | { type: 'session.status_terminated'; reason: string }
   | { type: 'session.error'; message: string }
   | { type: 'session.notice'; message: string }
   | { type: 'session.info_changed'; changed: string[] }
-  | { type: 'session.compacted'; summary: string; droppedMessages: number }
-  /** The harness dropped the conversation and started a fresh one (`/clear`). */
-  | { type: 'session.cleared' }
-  /** What a command the harness ran itself has to say (`/usage`, `/help`, …). */
-  | { type: 'session.command_output'; text: string }
   | { type: 'session.forked'; childSessionId: string; afterSeq: number }
   | { type: 'session.branched'; fromSeq: number }
   | {
@@ -128,36 +148,14 @@ export type ServerEventBody =
       outcome: string
       share: boolean
     }
-  | { type: 'agent.message_start' }
-  | { type: 'agent.thinking_delta'; text: string }
-  | { type: 'agent.message_delta'; text: string }
-  | { type: 'agent.message_end'; content: ContentBlock[]; stopReason: string }
-  | {
-      type: 'agent.tool_use'
-      toolUseId: string
-      name: string
-      input: unknown
-      permission: ToolPermission
-    }
-  | { type: 'agent.tool_use_edited'; toolUseId: string; name: string; input: unknown }
-  | { type: 'agent.tool_progress'; toolUseId: string; name: string; message: string }
-  | {
-      type: 'agent.tool_result'
-      toolUseId: string
-      name: string
-      content: string
-      isError: boolean
-      /** Images the tool returned (a screenshot, an image file it read), as session blobs. */
-      images?: ImageBlock[]
-    }
   | { type: 'ui.surface'; surfaceId: string; slot: UiSlot; view: UiNode }
   | { type: 'ui.surface'; surfaceId: string; view: null }
   /** Something the agent wants on screen, shown as the event arrives. */
   | { type: 'ui.show'; target: ShowTarget }
   /** The session's notes list, whole, after the user or the agent changed it. */
   | { type: 'session.notes'; notes: SessionNote[] }
-  /** The plan the harness keeps for itself, whole, after it changed. */
-  | { type: 'agent.tasks'; tasks: AgentTask[] }
+
+export type ServerEventBody = HarnessEventBody | GroveEventBody
 
 /**
  * One entry on a session's notes list: a reminder of what is still to do,
@@ -168,19 +166,6 @@ export interface SessionNote {
   text: string
   done: boolean
   author: 'user' | 'agent'
-}
-
-export type AgentTaskStatus = 'pending' | 'in_progress' | 'completed'
-
-/**
- * One step of the plan a harness keeps on its own — Claude's tasks, Codex's
- * to-do list. The harness owns it, so it is shown beside the notes but only the
- * harness changes it.
- */
-export interface AgentTask {
-  id: string
-  text: string
-  status: AgentTaskStatus
 }
 
 /**

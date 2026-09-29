@@ -27,7 +27,12 @@
     type LiveSession,
     type SessionBadge
   } from '../../../../lib/agents/sessions.svelte'
-  import { pendingApprovals, toolCallOut, visibleItems } from '../../../../lib/agents/transcript'
+  import {
+    pendingApprovals,
+    toolCallOut,
+    visibleItems,
+    type ToolItem
+  } from '../../../../lib/agents/transcript'
   import { shellOutputs } from '../../../../lib/agents/shellOutput.svelte'
   import {
     liveAgentIds,
@@ -36,7 +41,7 @@
     subagentOf,
     subagentSessions
   } from '../../../../lib/agents/sessionTree'
-  import { fileOfCall } from '../../../../lib/agents/tools'
+  import { displayOfCall, fileOfCall } from '../../../../lib/agents/tools'
   import { questionsOf } from '../../../../lib/agents/questions'
   import { modeOf, nextMode, type AgentMode } from '../../../../lib/agents/modes'
   import { nextThinkingLevel } from '../../../../lib/agents/thinking'
@@ -518,8 +523,8 @@
     return new Set(ids)
   }
 
-  function displayOf(name: string): ToolInfo['display'] {
-    return catalog.tools.find((tool) => tool.name === name)?.display
+  function displayOf(call: ToolItem): ToolInfo['display'] {
+    return displayOfCall(catalog.tools, call)
   }
 
   /** Opens the file of every call seen for the first time; only ever moves forward. */
@@ -531,7 +536,7 @@
       if (item.kind !== 'tool') continue
       if (followedCalls.has(item.toolUseId)) continue
       newlySeen.push(item.toolUseId)
-      const path = fileOfCall(displayOf(item.name), item.editedInput ?? item.input, worktreePath)
+      const path = fileOfCall(displayOf(item), item.editedInput ?? item.input, worktreePath)
       // The agent opened this, not the user: show it, but leave focus where the
       // user is, which is often mid-sentence in the composer.
       if (path) openFile(path, { focus: false })

@@ -10,7 +10,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { AgentService } from '../src/main/agents/service'
-import { HarnessRegistry, type HarnessRunOptions } from '../src/main/agents/harness'
+import { HarnessRegistry, type ApprovalRequest, type HarnessRunOptions } from '../src/main/agents/harness'
 import { SessionStore } from '../src/main/agents/store'
 
 class FakeRun {
@@ -141,6 +141,11 @@ function openService(root: string): Harness {
 
 function say(text: string): { type: 'user.message'; content: { type: 'text'; text: string }[] } {
   return { type: 'user.message', content: [{ type: 'text', text }] }
+}
+
+/** A permission request as ACP sends one. */
+function approvalRequest(toolCallId: string, name: string, rawInput: Record<string, unknown>): ApprovalRequest {
+  return { sessionId: 'harness-1', toolCall: { toolCallId, name, rawInput }, options: [] }
 }
 
 describe('AgentService', () => {
@@ -284,11 +289,7 @@ describe('AgentService', () => {
       const session = await service.createSession({ workspace: '/tmp/worktree' })
       await service.send(session.id, [say('go')])
 
-      const confirm = service['requestApproval'](session.id, {
-        toolUseId: 'call-1',
-        name: 'write',
-        input: { path: 'a.ts' }
-      })
+      const confirm = service['requestApproval'](session.id, approvalRequest('call-1', 'write', { path: 'a.ts' }))
       const snapshot = await service.getSession(session.id)
       expect(snapshot.pendingApprovals).toEqual(['call-1'])
 
@@ -308,52 +309,32 @@ describe('AgentService', () => {
       const session = await service.createSession({ workspace: '/tmp/worktree' })
       await service.send(session.id, [say('go')])
 
-      const first = service['requestApproval'](session.id, {
-        toolUseId: 'call-1',
-        name: 'write',
-        input: {}
-      })
+      const first = service['requestApproval'](session.id, approvalRequest('call-1', 'write', {}))
       await service.send(session.id, [
         { type: 'user.tool_confirmation', toolUseId: 'call-1', result: 'always_session' }
       ])
       expect(await first).toEqual({ result: 'always_session' })
 
-      const second = await service['requestApproval'](session.id, {
-        toolUseId: 'call-2',
-        name: 'write',
-        input: {}
-      })
+      const second = await service['requestApproval'](session.id, approvalRequest('call-2', 'write', {}))
       expect(second).toEqual({ result: 'allow' })
     } finally {
       await cleanup()
     }
   })
 
-  test('a tool call reaches the log exactly once, whoever reports it', async () => {
-    const { service, store, runs, cleanup } = await setup()
+  test('a parked call reaches the log once, as the request the harness made', async () => {
+    const { service, store, cleanup } = await setup()
     try {
       const session = await service.createSession({ workspace: '/tmp/worktree' })
       await service.send(session.id, [say('go')])
 
-      void service['requestApproval'](session.id, {
-        toolUseId: 'call-1',
-        name: 'write',
-        input: {}
-      })
-      // The adapter reports the same call again once the model's message lands.
-      runs[0].options.emit({
-        type: 'agent.tool_use',
-        toolUseId: 'call-1',
-        name: 'write',
-        input: {},
-        permission: 'allow'
-      })
+      void service['requestApproval'](session.id, approvalRequest('call-1', 'write', {}))
       await settle()
 
       const events = await store.eventsSince(session.id, 0)
-      const calls = events.filter((event) => event.type === 'agent.tool_use')
-      expect(calls).toHaveLength(1)
-      expect(calls[0]).toMatchObject({ permission: 'ask' })
+      const requests = events.filter((event) => event.type === 'permission')
+      expect(requests).toHaveLength(1)
+      expect(requests[0]).toMatchObject({ request: { toolCall: { toolCallId: 'call-1' } } })
     } finally {
       await cleanup()
     }

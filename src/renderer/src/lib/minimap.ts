@@ -158,6 +158,11 @@ export function clampCursorLine(
  * in diff mode; buffer text and colours only when the buffer or its content
  * changed (changedtick is per-buffer, so the buffer number is part of the gate).
  *
+ * The window is the text window the cursor is in, or when the cursor is in a
+ * terminal, quickfix list or float, the one it came from: a `:terminal` split
+ * above the file must not turn the file's minimap into the terminal's output.
+ * Its id comes back as `win`, for scrolling that window from the map.
+ *
  * Colours come from whatever is colouring the buffer on screen: treesitter's
  * captures when its highlighter is running — every language tree, so injected
  * code is coloured too, and captures spanning lines split across them — and
@@ -165,6 +170,32 @@ export function clampCursorLine(
  */
 export const MINIMAP_VIEW_LUA = `
 local prevTick, prevBuf = ...
+
+-- Windows whose buffer is not text the minimap should stand for.
+local SKIPPED_BUFTYPES = { terminal = true, quickfix = true, prompt = true }
+
+local function is_text_window(win)
+  if not vim.api.nvim_win_is_valid(win) then return false end
+  if vim.api.nvim_win_get_config(win).relative ~= '' then return false end
+  local buftype = vim.bo[vim.api.nvim_win_get_buf(win)].buftype
+  return not SKIPPED_BUFTYPES[buftype]
+end
+
+-- The current window when it holds text, else the previous one, else the
+-- first text window on the tab page, else the current window after all.
+local function minimap_window()
+  local current = vim.api.nvim_get_current_win()
+  if is_text_window(current) then return current end
+  local previous = vim.fn.win_getid(vim.fn.winnr('#'))
+  if previous ~= 0 and is_text_window(previous) then return previous end
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if is_text_window(win) then return win end
+  end
+  return current
+end
+
+local win = minimap_window()
+return vim.api.nvim_win_call(win, function()
 local buf = vim.api.nvim_get_current_buf()
 local total = vim.api.nvim_buf_line_count(buf)
 local TREESITTER_LINE_LIMIT = 8000
@@ -288,6 +319,7 @@ end
 local view = vim.fn.winsaveview()
 local out = {
   view = view,
+  win = win,
   tick = vim.b.changedtick,
   bufnr = buf,
   total = total,
@@ -304,4 +336,12 @@ if out.tick == prevTick and out.bufnr == prevBuf then return out end
 out.lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
 out.spans = treesitter_spans(out.lines) or syntax_spans(out.lines)
 return out
+end)
+`
+
+/** Scrolls the window the minimap stands for, which need not be the current one. */
+export const MINIMAP_RESTORE_VIEW_LUA = `
+local win, view = ...
+if not vim.api.nvim_win_is_valid(win) then return end
+vim.api.nvim_win_call(win, function() vim.fn.winrestview(view) end)
 `

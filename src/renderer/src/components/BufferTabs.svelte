@@ -4,10 +4,18 @@
   // 'modified' flag and marks those tabs with a dot ahead of the file icon.
   // Files side by side in nvim's splits share one tab, `a | b | c`.
   import Icon from '@iconify/svelte'
+  import { untrack } from 'svelte'
   import ArrowsLeftRightIcon from 'phosphor-svelte/lib/ArrowsLeftRightIcon'
   import CaretLeftIcon from 'phosphor-svelte/lib/CaretLeftIcon'
   import CaretRightIcon from 'phosphor-svelte/lib/CaretRightIcon'
-  import { nextHiddenTab, tabOverflow, type TabOverflow, type TabSpan } from '../lib/tabOverflow'
+  import {
+    nextHiddenTab,
+    revealScrollLeft,
+    tabOverflow,
+    type EdgeInsets,
+    type TabOverflow,
+    type TabSpan
+  } from '../lib/tabOverflow'
   import { stripEntries, type SplitSegment, type SplitWindow } from '../lib/nvim/splitTabs'
   import { store, type TabDiff } from '../lib/store.svelte'
   import { fileIcon } from '../lib/icons'
@@ -62,6 +70,8 @@
   // Tabs scrolled out of view on either side, shown at that edge so a long
   // row says how much more there is and which way.
   let overflow = $state<TabOverflow>({ left: 0, right: 0 })
+  let leftCounterEl = $state<HTMLButtonElement>()
+  let rightCounterEl = $state<HTMLButtonElement>()
 
   /** Each tab's extent within the scrolled row, in order. */
   function measureSpans(strip: HTMLElement): TabSpan[] {
@@ -75,11 +85,34 @@
     return spans
   }
 
-  /** Recounts the tabs out of view. */
+  /** How far the counters on screen cover the strip's edges; 0 on a side without one. */
+  function measureInsets(): EdgeInsets {
+    let left = 0
+    let right = 0
+    if (leftCounterEl) left = leftCounterEl.offsetWidth
+    if (rightCounterEl) right = rightCounterEl.offsetWidth
+    return { left, right }
+  }
+
+  /** Recounts the tabs out of view, counting a tab under a counter as out of it. */
   function measureOverflow(): void {
     if (!stripEl) return
+    const insets = measureInsets()
     const viewStart = stripEl.scrollLeft
-    overflow = tabOverflow(measureSpans(stripEl), viewStart, viewStart + stripEl.clientWidth)
+    const viewEnd = viewStart + stripEl.clientWidth
+    overflow = tabOverflow(measureSpans(stripEl), viewStart + insets.left, viewEnd - insets.right)
+  }
+
+  /** Scrolls the strip so the tab at `index` shows in full, clear of the counters. */
+  function revealTab(index: number, behavior: ScrollBehavior): void {
+    if (!stripEl) return
+    const span = measureSpans(stripEl)[index]
+    if (!span) return
+    const viewStart = stripEl.scrollLeft
+    const viewEnd = viewStart + stripEl.clientWidth
+    const target = revealScrollLeft(span, viewStart, viewEnd, measureInsets())
+    if (target === viewStart) return
+    stripEl.scrollTo({ left: target, behavior })
   }
 
   /** The edge counter's tooltip, e.g. "3 more tabs to the right". */
@@ -91,12 +124,13 @@
   /** Scrolls the nearest tab cut off on `side` into view. */
   function revealHidden(side: 'left' | 'right'): void {
     if (!stripEl) return
+    const insets = measureInsets()
     const viewStart = stripEl.scrollLeft
+    const viewEnd = viewStart + stripEl.clientWidth
     const spans = measureSpans(stripEl)
-    const index = nextHiddenTab(spans, viewStart, viewStart + stripEl.clientWidth, side)
+    const index = nextHiddenTab(spans, viewStart + insets.left, viewEnd - insets.right, side)
     if (index < 0) return
-    const tabEls = stripEl.querySelectorAll<HTMLElement>('[data-tab]')
-    tabEls[index]?.scrollIntoView({ inline: 'nearest', block: 'nearest', behavior: 'smooth' })
+    revealTab(index, 'smooth')
   }
 
   // Recount as the strip scrolls, as the pane resizes, and as tabs come and go
@@ -119,11 +153,12 @@
   $effect(() => {
     const active = store.activeTabPath
     if (!stripEl || !active) return
-    for (const el of stripEl.querySelectorAll<HTMLElement>('[data-tab]')) {
-      if (el.dataset.tab !== active) continue
-      el.scrollIntoView({ inline: 'nearest', block: 'nearest' })
-      return
-    }
+    const tabEls = [...stripEl.querySelectorAll<HTMLElement>('[data-tab]')]
+    const index = tabEls.findIndex((el) => el.dataset.tab === active)
+    if (index < 0) return
+    // Untracked: the counters coming and going as the user scrolls must not
+    // pull the strip back to the active tab.
+    untrack(() => revealTab(index, 'auto'))
   })
 </script>
 
@@ -239,6 +274,7 @@
        brings the nearest one in. -->
     {#if overflow.left > 0}
       <button
+        bind:this={leftCounterEl}
         class="absolute inset-y-0 left-0 z-10 flex cursor-pointer items-center gap-0.5 bg-linear-to-r from-surface from-60% to-transparent pl-0.5 pr-5 text-2xs tabular-nums text-dim hover:text-default"
         title={moreTabsLabel(overflow.left, 'left')}
         aria-label={moreTabsLabel(overflow.left, 'left')}
@@ -249,6 +285,7 @@
     {/if}
     {#if overflow.right > 0}
       <button
+        bind:this={rightCounterEl}
         class="absolute inset-y-0 right-0 z-10 flex cursor-pointer items-center gap-0.5 bg-linear-to-l from-surface from-60% to-transparent pl-5 pr-0.5 text-2xs tabular-nums text-dim hover:text-default"
         title={moreTabsLabel(overflow.right, 'right')}
         aria-label={moreTabsLabel(overflow.right, 'right')}

@@ -277,6 +277,21 @@ describe('permission modes, as the service enforces them', () => {
     }
   })
 
+  test('a session created in a mode starts in it', async () => {
+    const fixture = await setup()
+    try {
+      const session = await fixture.service.createSession({
+        workspace: '/tmp/worktree',
+        permissionMode: 'bypass'
+      })
+
+      expect(session.permissionMode).toBe('bypass')
+      expect((await fixture.store.require(session.id)).permissionMode).toBe('bypass')
+    } finally {
+      await fixture.cleanup()
+    }
+  })
+
   test('switching mode on a live run tells the harness, for the modes it owns', async () => {
     const fixture = await setup()
     try {

@@ -180,6 +180,7 @@ export class AgentService {
       model: model.model,
       thinkingLevel: options.thinkingLevel ?? 'off',
       activeTools: options.activeTools ?? null,
+      permissionMode: options.permissionMode,
       groveMode: options.groveMode,
       labels: options.labels
     })
@@ -853,6 +854,7 @@ export class AgentService {
       title: agent.title,
       provider: parent.provider,
       model: parent.model,
+      permissionMode: parent.permissionMode,
       groveMode: parent.groveMode,
       labels: { [PARENT_LABEL]: parentSessionId, [SUBAGENT_LABEL]: agent.toolUseId }
     })

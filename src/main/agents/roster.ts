@@ -16,7 +16,7 @@
 // task has to be able to steer the agents it put there, and they to ask it
 // back.
 
-import type { HarnessInfo, SessionEvent, SessionMeta } from '../../shared/agents'
+import type { AgentMode, HarnessInfo, SessionEvent, SessionMeta } from '../../shared/agents'
 import { DISPOSE_LABEL, PARENT_LABEL } from './handoffBridge'
 import type { HarnessRegistry } from './harness'
 import { agentIdOf } from './identity'
@@ -184,6 +184,7 @@ export class AgentRoster {
 
   /** Start a new session in the same worktree and give it its first instruction. */
   async spawn(options: SpawnOptions): Promise<AgentPeer> {
+    const inherited = inheritedFrom(await this.sessionNamed(options.parentSessionId))
     const snapshot = await this.options.agents.createSession({
       workspace: options.workspaceRoot,
       title: options.title,
@@ -193,7 +194,8 @@ export class AgentRoster {
       // session on: pi, for one, ignores a half-named model and falls back to
       // its own default, which is not what the spawning agent asked for.
       provider: await this.providerOf(options.harness, options.model),
-      groveMode: await this.groveModeOf(options.parentSessionId),
+      groveMode: inherited.groveMode,
+      permissionMode: inherited.permissionMode,
       labels: labelsFor(options)
     })
     // The brief is the parent talking, so it arrives as the parent talking: the
@@ -206,12 +208,10 @@ export class AgentRoster {
     return peerOf(snapshot)
   }
 
-  /** Whether the spawning session runs in grove mode, which its agents then do too. */
-  private async groveModeOf(sessionId: string): Promise<boolean> {
+  /** The session with this id, or undefined when it is gone. */
+  private async sessionNamed(sessionId: string): Promise<SessionMeta | undefined> {
     const sessions = await this.options.agents.listSessions()
-    const parent = sessions.find((session) => session.id === sessionId)
-    if (!parent) return false
-    return parent.groveMode
+    return sessions.find((session) => session.id === sessionId)
   }
 
   /** Which provider serves a model on a runtime, when the caller named one. */
@@ -343,4 +343,20 @@ export function signatureOfSession(session: {
 
 function nameWithId(title: string, agentId: string): string {
   return `${title} (${agentId})`
+}
+
+/**
+ * What a spawned agent takes from the session that started it: grove mode, and
+ * the permission mode, so a parent running in bypass does not start a helper
+ * that stalls on approvals nobody is watching for. A parent that is gone passes
+ * on nothing.
+ */
+function inheritedFrom(parent: SessionMeta | undefined): {
+  groveMode: boolean
+  permissionMode: AgentMode | undefined
+} {
+  if (!parent) {
+    return { groveMode: false, permissionMode: undefined }
+  }
+  return { groveMode: parent.groveMode, permissionMode: parent.permissionMode }
 }

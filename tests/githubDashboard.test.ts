@@ -47,6 +47,16 @@ describe('dashboardQuery', () => {
     expect(query).toContain('states: [OPEN, CLOSED, MERGED]')
   })
 
+  it('asks whether each issue is pinned, so the list can show it', () => {
+    const query = dashboardQuery('open', PLAIN)
+    expect(query).toMatch(/issues\(first[^]*isPinned[^]*pullRequests\(/)
+  })
+
+  it('asks for assignee avatars, so the list can draw them', () => {
+    const query = dashboardQuery('open', PLAIN)
+    expect(query.match(/assignees\(first: 5\) \{ nodes \{ login avatarUrl \} \}/g)?.length).toBe(2)
+  })
+
   it('fetches both sides and the viewer in one request', () => {
     const query = dashboardQuery('open', PLAIN)
     expect(query).toContain('viewer { login }')

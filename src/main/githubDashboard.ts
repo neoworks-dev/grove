@@ -327,11 +327,11 @@ query($owner: String!, $name: String!, $limit: Int!) {
     url
     issues(first: $limit, states: ${ISSUE_STATES[filter]}, orderBy: {field: UPDATED_AT, direction: DESC}) {
       nodes {
-        number title url state createdAt updatedAt
+        number title url state createdAt updatedAt isPinned
         author { login }
         comments { totalCount }
         labels(first: 10) { nodes { name color } }
-        assignees(first: 5) { nodes { login } }
+        assignees(first: 5) { nodes { ${ACTOR_FIELDS} } }
         ${optionalFields(capabilities, true)}
       }
     }
@@ -342,7 +342,7 @@ query($owner: String!, $name: String!, $limit: Int!) {
         author { login }
         comments { totalCount }
         labels(first: 10) { nodes { name color } }
-        assignees(first: 5) { nodes { login } }
+        assignees(first: 5) { nodes { ${ACTOR_FIELDS} } }
         ${optionalFields(capabilities, false)}
         commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
       }
@@ -372,7 +372,9 @@ interface GraphqlItemNode extends GraphqlOptionalNode {
   author: GraphqlAuthor | null
   comments: { totalCount: number }
   labels: { nodes: GithubLabel[] }
-  assignees: { nodes: { login: string }[] }
+  assignees: { nodes: GraphqlActor[] }
+  /** Selected on issues only; pull requests cannot be pinned. */
+  isPinned?: boolean
 }
 
 interface GraphqlPullNode extends GraphqlItemNode {
@@ -432,7 +434,8 @@ function toIssueItem(node: GraphqlItemNode): GithubIssueItem {
     updatedAt: node.updatedAt,
     commentCount: node.comments.totalCount,
     labels: node.labels.nodes,
-    assignees: node.assignees.nodes.map((assignee) => assignee.login)
+    assignees: node.assignees.nodes.map(toActor),
+    isPinned: node.isPinned === true
   }
 }
 
@@ -665,7 +668,7 @@ export function itemDetailQuery(capabilities: GithubCapabilities): string {
         viewerSubscription locked
         author { ${ACTOR_FIELDS} }
         labels(first: 20) { nodes { name color } }
-        assignees(first: 10) { nodes { login } }`
+        assignees(first: 10) { nodes { ${ACTOR_FIELDS} } }`
   return `
 query($owner: String!, $name: String!, $number: Int!, $limit: Int!) {
   repository(owner: $owner, name: $name) {
@@ -744,7 +747,7 @@ interface DetailNode extends GraphqlOptionalNode {
   authorAssociation: string
   author: GraphqlActor | null
   labels: { nodes: GithubLabel[] }
-  assignees: { nodes: { login: string }[] }
+  assignees: { nodes: GraphqlActor[] }
   timelineItems: { nodes: TimelineNode[] }
   isDraft?: boolean
   additions?: number
@@ -935,7 +938,7 @@ export async function fetchItem(
     updatedAt: node.updatedAt,
     body: node.body,
     labels: node.labels.nodes,
-    assignees: node.assignees.nodes.map((assignee) => assignee.login),
+    assignees: node.assignees.nodes.map(toActor),
     timeline,
     isDraft: node.isDraft,
     additions: node.additions,

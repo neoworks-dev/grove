@@ -29,7 +29,7 @@ function issue(overrides: Partial<GithubIssueItem> = {}): GithubIssueItem {
     updatedAt: '2026-09-18T10:00:00Z',
     commentCount: 0,
     labels: [{ name: 'bug', color: 'd73a4a' }],
-    assignees: ['ada'],
+    assignees: [{ login: 'ada', avatarUrl: 'https://avatars.githubusercontent.com/u/1' }],
     ...overrides
   }
 }

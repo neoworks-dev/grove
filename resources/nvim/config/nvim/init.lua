@@ -1476,7 +1476,26 @@ vim.api.nvim_create_autocmd('MenuPopup', {
   end
 })
 
+-- Each buffer's own snacks_scroll setting while a PopUp entry holds it off.
+local grove_popup_scroll_setting = {}
+
+-- Give a buffer its snacks.scroll setting back once a PopUp entry's keys are
+-- done. Scheduled, so the WinScrolled the entry caused is seen while scrolling
+-- is still off and the next scroll starts from where the entry left the view.
+_G.grove_popup_item_done = function(buffer)
+  vim.schedule(function()
+    local setting = grove_popup_scroll_setting[buffer]
+    grove_popup_scroll_setting[buffer] = nil
+    if vim.api.nvim_buf_is_valid(buffer) then
+      vim.b[buffer].snacks_scroll = setting
+    end
+  end)
+end
+
 -- Run the PopUp entry grove's menu picked, in the mode the menu was opened for.
+-- snacks.scroll is held off while its keys run: it animates a jump by putting
+-- the cursor back where it was and walking it over, so the V of Select All's
+-- ggVG landed mid-walk and anchored the selection at the right-clicked line.
 _G.grove_run_popup_item = function(name, mode)
   local entry = vim.fn.menu_info('PopUp.' .. name, mode)
   if entry.rhs == nil or entry.rhs == '' then
@@ -1487,7 +1506,12 @@ _G.grove_run_popup_item = function(name, mode)
   if entry.noremenu then
     flags = 'n'
   end
+  local buffer = vim.api.nvim_get_current_buf()
+  grove_popup_scroll_setting[buffer] = vim.b[buffer].snacks_scroll
+  vim.b[buffer].snacks_scroll = false
   vim.api.nvim_feedkeys(keys, flags, false)
+  local done = ('<Cmd>lua grove_popup_item_done(%d)<CR>'):format(buffer)
+  vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(done, true, false, true), 'n', false)
 end
 
 -- A dependency-free popup terminal for exercising (and using) Grove's native

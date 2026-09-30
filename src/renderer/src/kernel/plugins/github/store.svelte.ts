@@ -24,7 +24,7 @@ import { registerDiffRestore } from '../../../lib/nvim/diffTabs'
 import { buildPrFileTree, nextUnreadFile } from './prFileTree'
 import { installPrReviewKeys, paintPrComments, type PrReviewRequest } from './prReview'
 import { clearRefusals, loadOnce, newReferenceLoads } from './referenceLoads'
-import { authorsOf, projectsOf, typesOf } from './filter'
+import { assigneeLogins, authorsOf, projectsOf, typesOf } from './filter'
 import {
   DEFAULT_QUERY,
   filterItems,
@@ -485,8 +485,9 @@ export async function applyAssignees(next: string[]): Promise<void> {
   const selection = github.selection
   const detail = github.detail
   if (!selection || !detail) return
-  const add = next.filter((login) => !detail.assignees.includes(login))
-  const remove = detail.assignees.filter((login) => !next.includes(login))
+  const current = assigneeLogins(detail)
+  const add = next.filter((login) => !current.includes(login))
+  const remove = current.filter((login) => !next.includes(login))
   if (add.length === 0 && remove.length === 0) return
   github.busy = true
   try {

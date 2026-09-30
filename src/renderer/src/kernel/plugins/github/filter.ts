@@ -20,7 +20,7 @@ export function matchesQuery(item: GithubItem, query: string): boolean {
     item.title,
     item.author,
     ...item.labels.map((label) => label.name),
-    ...item.assignees
+    ...assigneeLogins(item)
   ]
   return haystack.some((field) => field.toLowerCase().includes(needle))
 }
@@ -28,6 +28,28 @@ export function matchesQuery(item: GithubItem, query: string): boolean {
 // The narrowing that used to live here — an ItemFilters record of arrays, one
 // per menu — is now search.ts: the query string is the only place a filter is
 // written down, so the menus and the box cannot disagree.
+
+/** The logins of whoever is assigned to an item. */
+export function assigneeLogins(item: Pick<GithubItem, 'assignees'>): string[] {
+  return item.assignees.map((assignee) => assignee.login)
+}
+
+/**
+ * Issues split into the pinned ones, which GitHub keeps at the top of the list,
+ * and the rest, each in the order they came in.
+ */
+export function partitionPinned(items: GithubItem[]): { pinned: GithubItem[]; rest: GithubItem[] } {
+  const pinned: GithubItem[] = []
+  const rest: GithubItem[] = []
+  for (const item of items) {
+    if (item.isPinned) {
+      pinned.push(item)
+      continue
+    }
+    rest.push(item)
+  }
+  return { pinned, rest }
+}
 
 /** Every author present in a list, alphabetical — the options the menu offers. */
 export function authorsOf(items: GithubItem[]): string[] {

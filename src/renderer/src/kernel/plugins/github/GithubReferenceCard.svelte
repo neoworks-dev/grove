@@ -66,8 +66,8 @@
       else actor = entry.event.actor
       if (!people.has(actor.login)) people.set(actor.login, actor)
     }
-    for (const login of item.assignees) {
-      if (!people.has(login)) people.set(login, { login, avatarUrl: null })
+    for (const assignee of item.assignees) {
+      if (!people.has(assignee.login)) people.set(assignee.login, assignee)
     }
     return [...people.values()]
   }

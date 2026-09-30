@@ -14,7 +14,14 @@
   import GithubBadge from './GithubBadge.svelte'
   import GithubLabelPill from './GithubLabelPill.svelte'
   import GithubStateIcon from './GithubStateIcon.svelte'
-  import { assigneeLogins, checkGlyph, checkTone, relativeTime, reviewLabel, reviewTone } from './filter'
+  import {
+    assigneeLogins,
+    checkGlyph,
+    checkTone,
+    relativeTime,
+    reviewLabel,
+    reviewTone
+  } from './filter'
   import type { GithubItem } from '../../../../../shared/types'
 
   let {

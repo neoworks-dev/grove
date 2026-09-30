@@ -708,11 +708,30 @@ pcall(vim.api.nvim_buf_delete, buf, {})
   // else without ext_messages, which grove does not attach with. Keys produced
   // by mappings or feedkeys have an empty `typed` and are ignored — only what
   // the user actually pressed builds the sequence.
+  //
+  // Keys a plugin reads for itself with getchar() — flash.nvim's search chars
+  // and jump labels — reach on_key too, as typed normal-mode keys, and a label
+  // like `g` would open a which-key layer nvim never entered. Such a key is
+  // read under the plugin's Lua frames; one nvim reads for itself has only
+  // nvim's own on_key dispatch (the `vim/` modules) beneath this callback.
+  // A plugin reading keys from Vimscript leaves no Lua frame and still gets
+  // through.
   const PENDING_KEYS_LUA = `
 local ns = vim.api.nvim_create_namespace('grove_pending_keys')
+local function read_by_plugin()
+  -- 1 is this function, 2 the on_key callback; what called the callback starts at 3.
+  local level = 3
+  while true do
+    local info = debug.getinfo(level, 'S')
+    if not info then return false end
+    if info.what == 'Lua' and not info.source:match('^@?vim/') then return true end
+    level = level + 1
+  end
+end
 vim.on_key(function(key, typed)
   local pressed = typed
   if pressed == nil or pressed == '' then return end
+  if read_by_plugin() then return end
   local ok, state = pcall(vim.api.nvim_get_mode)
   if not ok then return end
   local mode = state.mode

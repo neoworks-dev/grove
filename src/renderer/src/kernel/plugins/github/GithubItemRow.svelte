@@ -14,7 +14,14 @@
   import GithubBadge from './GithubBadge.svelte'
   import GithubLabelPill from './GithubLabelPill.svelte'
   import GithubStateIcon from './GithubStateIcon.svelte'
-  import { checkGlyph, checkTone, relativeTime, reviewLabel, reviewTone } from './filter'
+  import {
+    assigneeLogins,
+    checkGlyph,
+    checkTone,
+    relativeTime,
+    reviewLabel,
+    reviewTone
+  } from './filter'
   import type { GithubItem } from '../../../../../shared/types'
 
   let {
@@ -114,6 +121,18 @@
       {#if review}
         <GithubBadge tone={reviewTone(item.reviewDecision)}>{review}</GithubBadge>
       {/if}
+    {/if}
+
+    {#if item.assignees.length > 0}
+      <!-- Overlapping, GitHub's way: a face each, the rest of the row stays put. -->
+      <span
+        class="flex items-center -space-x-1"
+        title="Assigned to {assigneeLogins(item).join(', ')}"
+      >
+        {#each item.assignees as assignee (assignee.login)}
+          <GithubAvatar actor={assignee} size={14} />
+        {/each}
+      </span>
     {/if}
 
     {#if item.commentCount > 0}

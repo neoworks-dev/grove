@@ -8,7 +8,7 @@
 // Everything here is pure and free of runes, so the rules can be pinned by test
 // rather than by looking at a list and counting rows.
 
-import { matchesQuery } from './filter'
+import { assigneeLogins, matchesQuery } from './filter'
 import type { GithubItem, GithubStateFilter } from '../../../../../shared/types'
 
 export type QualifierKey =
@@ -260,7 +260,7 @@ function holds(
   if (key === 'is' || key === 'state') return holdsIs(item, value)
   if (key === 'no') return holdsNo(item, value)
   if (key === 'author') return sameValue(item.author, loginFor(value, viewer))
-  if (key === 'assignee') return includesValue(item.assignees, loginFor(value, viewer))
+  if (key === 'assignee') return includesValue(assigneeLogins(item), loginFor(value, viewer))
   if (key === 'label')
     return includesValue(
       item.labels.map((label) => label.name),

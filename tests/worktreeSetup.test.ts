@@ -1,10 +1,11 @@
 // Creating a worktree is two steps: checking it out, which a caller waits on,
 // and running its setup, which may take minutes and runs only what
-// grove.config.yaml lists — no install guessed from a lockfile.
+// grove.config.yaml lists — no install guessed from a lockfile — and only once
+// the user has trusted those commands.
 
 import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test'
 import { execSync } from 'child_process'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { appStub, electronStub } from './electronStub'
@@ -15,6 +16,9 @@ const { addWorktree, setupWorktree } = await import('../src/main/worktrees')
 const { applyDefaults } = await import('../src/main/config')
 
 let root: string
+
+/** Answers every trust prompt with yes. */
+const trustAll = async (): Promise<boolean> => true
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'grove-setup-'))
@@ -62,7 +66,13 @@ describe('setupWorktree', () => {
     const created = await addWorktree(repo, config, { name: 'feature', newBranch: 'feature' })
     const lines: string[] = []
 
-    const succeeded = await setupWorktree(repo, config, created, (_id, line) => lines.push(line))
+    const succeeded = await setupWorktree(
+      repo,
+      config,
+      created,
+      (_id, line) => lines.push(line),
+      trustAll
+    )
 
     expect(succeeded).toBe(true)
     expect(existsSync(join(created.path, 'once-ran'))).toBe(true)
@@ -76,9 +86,71 @@ describe('setupWorktree', () => {
     const config = applyDefaults({ setup: { per_worktree: ['exit 3', 'touch after-failure'] } })
     const created = await addWorktree(repo, config, { name: 'feature', newBranch: 'feature' })
 
-    const succeeded = await setupWorktree(repo, config, created, () => {})
+    const succeeded = await setupWorktree(repo, config, created, () => {}, trustAll)
 
     expect(succeeded).toBe(false)
     expect(existsSync(join(created.path, 'after-failure'))).toBe(true)
+  })
+})
+
+describe('setup trust', () => {
+  it('runs nothing when the user does not trust the commands', async () => {
+    const repo = javascriptRepo()
+    const config = applyDefaults({
+      setup: { once: ['touch once-ran'], per_worktree: ['touch per-worktree-ran'] }
+    })
+    const created = await addWorktree(repo, config, { name: 'feature', newBranch: 'feature' })
+    const asked: string[][] = []
+
+    await setupWorktree(
+      repo,
+      config,
+      created,
+      () => {},
+      async (commands) => {
+        asked.push(commands)
+        return false
+      }
+    )
+
+    expect(asked).toEqual([['touch once-ran', 'touch per-worktree-ran']])
+    expect(existsSync(join(created.path, 'once-ran'))).toBe(false)
+    expect(existsSync(join(created.path, 'per-worktree-ran'))).toBe(false)
+  })
+
+  it('asks once for the same commands, and again when they change', async () => {
+    const repo = javascriptRepo()
+    const config = applyDefaults({ setup: { per_worktree: ['touch ran'] } })
+    let prompts = 0
+    const countingTrust = async (): Promise<boolean> => {
+      prompts += 1
+      return true
+    }
+
+    const first = await addWorktree(repo, config, { name: 'one', newBranch: 'one' })
+    await setupWorktree(repo, config, first, () => {}, countingTrust)
+    const second = await addWorktree(repo, config, { name: 'two', newBranch: 'two' })
+    await setupWorktree(repo, config, second, () => {}, countingTrust)
+    expect(prompts).toBe(1)
+    expect(existsSync(join(second.path, 'ran'))).toBe(true)
+
+    const changed = applyDefaults({ setup: { per_worktree: ['touch ran', 'touch more'] } })
+    const third = await addWorktree(repo, changed, { name: 'three', newBranch: 'three' })
+    await setupWorktree(repo, changed, third, () => {}, countingTrust)
+    expect(prompts).toBe(2)
+  })
+})
+
+describe('setup variables', () => {
+  it('passes a branch name as data, never as shell syntax', async () => {
+    const repo = javascriptRepo()
+    const branch = 'x;touch${IFS}injected'
+    const config = applyDefaults({ setup: { per_worktree: ['echo "$WT_BRANCH" > branch.txt'] } })
+    const created = await addWorktree(repo, config, { name: 'feature', newBranch: branch })
+
+    await setupWorktree(repo, config, created, () => {}, trustAll)
+
+    expect(existsSync(join(created.path, 'injected'))).toBe(false)
+    expect(readFileSync(join(created.path, 'branch.txt'), 'utf8').trim()).toBe(branch)
   })
 })

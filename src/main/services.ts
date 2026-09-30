@@ -79,7 +79,6 @@ export class ServiceSupervisor {
     await this.stop(worktree.id, name) // idempotent restart
 
     const vars = buildWorktreeEnv(worktree, ports)
-    const command = substitute(service.command, vars)
     const logFile = service.log || `${name}.log`
     const dir = logsDir(worktree.path)
     await mkdir(dir, { recursive: true })
@@ -88,7 +87,9 @@ export class ServiceSupervisor {
     await writeFile(logPath, '', 'utf8').catch(() => truncate(logPath, 0).catch(() => {}))
 
     const logStream = createWriteStream(logPath, { flags: 'a' })
-    const child = spawn(command, {
+    // The variables reach the command through its environment only; splicing
+    // them in would let a branch name run as shell syntax.
+    const child = spawn(service.command, {
       cwd: worktree.path,
       env: spawnEnv(vars),
       shell: true,

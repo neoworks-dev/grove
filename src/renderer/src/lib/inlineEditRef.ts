@@ -34,3 +34,17 @@ export function selectionRef(relPath: string, startLine: number, endLine: number
   if (startLine === endLine) return `${relPath}:${startLine}`
   return `${relPath}:${startLine}-${endLine}`
 }
+
+/**
+ * Whether a pane should draw an in-buffer review: it has to be the pane the
+ * review was started in and be showing the reviewed file right now. A pane that
+ * has moved on to another file keeps the review, but not its controls.
+ */
+export function reviewShownIn(
+  review: { leafId: string; absPath: string },
+  leafId: string,
+  bufferPath: string | null
+): boolean {
+  if (review.leafId !== leafId) return false
+  return bufferPath === review.absPath
+}

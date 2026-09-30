@@ -48,3 +48,22 @@ export function reviewShownIn(
   if (review.leafId !== leafId) return false
   return bufferPath === review.absPath
 }
+
+/**
+ * Whether a review of a file's uncommitted changes has nothing left to review:
+ * its file is no longer among the worktree's changes, because they were
+ * committed or discarded. Its hunks were diffed against the HEAD of the moment
+ * it opened, so left up it would offer to "reject" what is now committed.
+ *
+ * Only a working-tree review settles this way; an inline edit is diffed against
+ * its own snapshot, not against git.
+ */
+export function workingTreeReviewSettled(
+  review: { origin: 'inlineEdit' | 'workingTree'; worktreeId: string; relPath: string },
+  worktreeId: string,
+  changedPaths: string[]
+): boolean {
+  if (review.origin !== 'workingTree') return false
+  if (review.worktreeId !== worktreeId) return false
+  return !changedPaths.includes(review.relPath)
+}

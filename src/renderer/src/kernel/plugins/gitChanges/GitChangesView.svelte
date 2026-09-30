@@ -82,6 +82,10 @@
         window.workbench.git.branchStatus(id)
       ])
       allFiles = changed
+      inlineEdit.settleWorkingTreeReview(
+        id,
+        changed.map((file) => file.path)
+      )
       merge = mergeState
       branchStatus = status
       refreshKey += 1

@@ -35,6 +35,15 @@ export function defaultSessionThinking(): ThinkingLevel {
   return remembered
 }
 
+// What grove mode is, for the controls that switch it.
+export const GROVE_MODE_DESCRIPTION =
+  "Run the harness on Grove's own prompt and tools — edits by line tags, the editor's language servers — instead of its own. Far fewer tokens a turn."
+
+/** Whether a new session starts in grove mode: as the last one was switched, else off. */
+export function defaultSessionGroveMode(): boolean {
+  return settings.get<boolean>('workbench.agentGroveMode') === true
+}
+
 // The last model picked on each harness, keyed by harness id. Remembered per
 // harness because model ids only mean something to the runtime that lists them.
 const MODELS_SETTING = 'workbench.agentModels'
@@ -99,7 +108,8 @@ export async function startSessionWithMessage(
     harness: harness || undefined,
     provider: model?.provider,
     model: model?.model,
-    thinkingLevel: defaultSessionThinking()
+    thinkingLevel: defaultSessionThinking(),
+    groveMode: defaultSessionGroveMode()
   })
   if (!sessionId) {
     return null

@@ -23,7 +23,6 @@ import { endpointRoutes } from './endpoints'
 import { secretsRoutes } from './secrets'
 import { settingsRoutes } from './settings'
 import { miscRoutes } from './misc'
-import { groveMode } from '../agents/switchboard/groveMode'
 import { switchboardHarnesses } from '../agents/switchboard/harnesses'
 
 export const routePlugins = [
@@ -51,6 +50,5 @@ export const routePlugins = [
   miscRoutes,
   // Agent harnesses. Each registers itself into the harness registry and can be
   // unloaded without the rest noticing; adding another means adding a file here.
-  switchboardHarnesses,
-  groveMode
+  switchboardHarnesses
 ]

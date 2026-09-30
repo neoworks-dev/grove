@@ -193,6 +193,7 @@ export class AgentRoster {
       // session on: pi, for one, ignores a half-named model and falls back to
       // its own default, which is not what the spawning agent asked for.
       provider: await this.providerOf(options.harness, options.model),
+      groveMode: await this.groveModeOf(options.parentSessionId),
       labels: labelsFor(options)
     })
     // The brief is the parent talking, so it arrives as the parent talking: the
@@ -203,6 +204,14 @@ export class AgentRoster {
       { type: 'app.message', label: 'Task', from, text: options.prompt, deliverAs: 'followUp' }
     ])
     return peerOf(snapshot)
+  }
+
+  /** Whether the spawning session runs in grove mode, which its agents then do too. */
+  private async groveModeOf(sessionId: string): Promise<boolean> {
+    const sessions = await this.options.agents.listSessions()
+    const parent = sessions.find((session) => session.id === sessionId)
+    if (!parent) return false
+    return parent.groveMode
   }
 
   /** Which provider serves a model on a runtime, when the caller named one. */

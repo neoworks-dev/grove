@@ -180,6 +180,7 @@ export class AgentService {
       model: model.model,
       thinkingLevel: options.thinkingLevel ?? 'off',
       activeTools: options.activeTools ?? null,
+      groveMode: options.groveMode,
       labels: options.labels
     })
     return this.snapshot(session)
@@ -238,6 +239,14 @@ export class AgentService {
       }
       await this.stopRun(sessionId)
       await this.store.patch(sessionId, { resumeKey: null })
+    }
+    if (changes.groveMode !== undefined && changes.groveMode !== before.groveMode) {
+      // Grove mode swaps the prompt and every tool, and a conversation carried
+      // across would be full of calls to tools that are no longer there.
+      if (hasStarted(before)) {
+        throw new Error('Grove mode cannot be changed once a session has started')
+      }
+      await this.stopRun(sessionId)
     }
 
     const session = await this.store.patch(sessionId, changes as Partial<StoredSession>)
@@ -787,6 +796,7 @@ export class AgentService {
       thinkingLevel: session.thinkingLevel,
       activeTools: session.activeTools,
       permissionMode: session.permissionMode,
+      groveMode: session.groveMode,
       resumeKey: session.resumeKey,
       tools: this.toolsFor(descriptor),
       systemPrompt: await this.systemPromptFor(session),
@@ -843,6 +853,7 @@ export class AgentService {
       title: agent.title,
       provider: parent.provider,
       model: parent.model,
+      groveMode: parent.groveMode,
       labels: { [PARENT_LABEL]: parentSessionId, [SUBAGENT_LABEL]: agent.toolUseId }
     })
     if (agent.description) {

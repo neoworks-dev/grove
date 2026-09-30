@@ -65,6 +65,7 @@ function serviceAt(root: string): Fixture {
       thinking: false,
       steering: false,
       groveTools: false,
+      groveMode: false,
       attachments: false
     },
     probe: async () => ({ available: true, detail: null }),

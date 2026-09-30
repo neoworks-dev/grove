@@ -60,7 +60,8 @@ async function setup(): Promise<Fixture> {
       liveModelSwitch: true,
       thinking: true,
       steering: true,
-      groveTools: true
+      groveTools: true,
+      groveMode: true
     },
     probe: async () => ({ available: true, detail: null }),
     offering: async () => ({

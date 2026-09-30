@@ -363,6 +363,11 @@ export interface SessionMeta {
   autoApproveTools: string[]
   /** How much this session may do without asking. */
   permissionMode: AgentMode
+  /**
+   * Whether the harness runs with grove's prompt and workspace tools in place
+   * of its own. Fixed once the session has started, like the harness.
+   */
+  groveMode: boolean
   labels: Record<string, string>
   createdAt: string
   updatedAt: string
@@ -401,6 +406,7 @@ export interface CreateSessionOptions {
   thinkingLevel?: ThinkingLevel
   activeTools?: string[]
   permissionMode?: AgentMode
+  groveMode?: boolean
   /** Free-form marks on the session; `grove.parent` names the agent that spawned it. */
   labels?: Record<string, string>
 }
@@ -414,6 +420,7 @@ export interface SessionUpdate {
   activeTools?: string[] | null
   autoApproveTools?: string[]
   permissionMode?: AgentMode
+  groveMode?: boolean
   labels?: Record<string, string>
 }
 
@@ -578,6 +585,8 @@ export interface HarnessCapabilities {
   steering: boolean
   /** grove's own tools (review, chat, onboarding) can be injected. */
   groveTools: boolean
+  /** Sessions can run in grove mode: grove's prompt and workspace tools in place of the harness's. */
+  groveMode: boolean
   /** Images attached to a message reach the model. */
   attachments: boolean
 }

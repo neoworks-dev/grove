@@ -1,16 +1,17 @@
 // Claude Code, Codex and pi, each as switchboard runs it.
 //
-// These are the harnesses as they come: their own system prompt with grove's
-// part appended, their own tools, the user's own configuration. grove's tools
-// reach them over MCP. grove's reduced mode is a harness of its own
-// (`groveMode.ts`).
+// As they come, these run their own system prompt with grove's part appended,
+// their own tools and the user's own configuration; grove's tools reach them
+// over MCP. A session in grove mode (`groveMode.ts`) runs the same harness on
+// grove's prompt and workspace tools instead.
 
 import type { Context } from '@neoworks/extension-system'
 import type { BuiltinTool, SessionOptions } from '@neoworks/harness'
 import type { HarnessCapabilities } from '../../../shared/agents'
-import type { HarnessRunOptions } from '../harness'
+import type { GroveTool, HarnessRunOptions } from '../harness'
 import { claudeModels, sessionEnvironment, type CredentialSource } from './claudeModels'
 import { switchboardHarness } from './descriptor'
+import { groveModeTools } from './groveMode'
 import { effortOf, permissionPolicyOf } from './run'
 import type { EndpointsService } from '../../endpoints'
 import type { SwitchboardHost } from './host'
@@ -29,6 +30,7 @@ export const CAPABILITIES: HarnessCapabilities = {
   thinking: true,
   steering: true,
   groveTools: true,
+  groveMode: true,
   attachments: true
 }
 
@@ -73,10 +75,11 @@ async function claudeEnvironment(
 
 export const switchboardHarnesses = {
   name: 'main/harness/switchboard',
-  inject: ['harnesses', 'switchboard', 'secrets', 'endpoints'],
+  inject: ['harnesses', 'switchboard', 'secrets', 'endpoints', 'documents', 'lsp', 'workbench'],
 
   apply(ctx: Context): void {
     const host: SwitchboardHost = ctx.switchboard
+    const workspaceTools = (): GroveTool[] => groveModeTools(ctx)
 
     ctx.effect(
       () =>
@@ -92,7 +95,8 @@ export const switchboardHarnesses = {
               sessionOptions: nativeOptions,
               environment: (options) => claudeEnvironment(options, ctx.secrets, ctx.endpoints)
             }),
-            models: (_harness, listed) => claudeModels(listed, ctx.secrets, ctx.endpoints)
+            models: (_harness, listed) => claudeModels(listed, ctx.secrets, ctx.endpoints),
+            groveModeTools: workspaceTools
           })
         ),
       'harness:claude'
@@ -108,7 +112,8 @@ export const switchboardHarnesses = {
             icon: 'grove:codex',
             capabilities: CAPABILITIES,
             runsOn: ['codex'],
-            profile: () => ({ sessionOptions: nativeOptions })
+            profile: () => ({ sessionOptions: nativeOptions }),
+            groveModeTools: workspaceTools
           })
         ),
       'harness:codex'
@@ -124,7 +129,8 @@ export const switchboardHarnesses = {
             icon: 'grove:pi',
             capabilities: CAPABILITIES,
             runsOn: ['pi'],
-            profile: () => ({ sessionOptions: nativeOptions })
+            profile: () => ({ sessionOptions: nativeOptions }),
+            groveModeTools: workspaceTools
           })
         ),
       'harness:pi'

@@ -401,11 +401,12 @@ class InlineEdit {
   private async applyDecisions(review: ActiveReview, reloadBuffer: boolean): Promise<void> {
     const applied = review.status.map((status) => status !== 'rejected')
     try {
+      // The hunks live in $state, and IPC cannot clone its Proxy.
       review.ranges = await window.workbench.git.applyInlineReview(
         review.worktreeId,
         review.relPath,
         review.snapshot,
-        review.hunks,
+        $state.snapshot(review.hunks),
         applied
       )
     } catch (err) {

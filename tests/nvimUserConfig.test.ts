@@ -7,7 +7,9 @@ import {
   readlink,
   readdir,
   rm,
-  realpath
+  realpath,
+  symlink,
+  lstat
 } from 'node:fs/promises'
 import * as nodeOs from 'node:os'
 import { join } from 'node:path'
@@ -131,5 +133,40 @@ describe('ensureCopilotConfigLink', () => {
     expect(await realpath(await readlink(groveCopilotConfigDir()))).toBe(
       await realpath(globalCopilotConfigDir())
     )
+  })
+})
+
+// A link inside the user's copilot config pointing back at it is a loop that a
+// language server's file watcher follows until ELOOP and crashes on (#263).
+describe('ensureCopilotConfigLink with a looping link', () => {
+  it('removes a self-referencing link inside the global copilot config', async () => {
+    await writeGlobalCopilotAuth()
+    const selfLink = join(globalCopilotConfigDir(), 'github-copilot')
+    await symlink(globalCopilotConfigDir(), selfLink)
+
+    await ensureCopilotConfigLink()
+
+    await expect(lstat(selfLink)).rejects.toThrow()
+    expect(await readFile(join(groveCopilotConfigDir(), 'apps.json'), 'utf8')).toBe(
+      '{"github.com":{}}\n'
+    )
+  })
+
+  it("replaces grove's link when it loops", async () => {
+    await writeGlobalCopilotAuth()
+    await symlink(groveCopilotConfigDir(), groveCopilotConfigDir())
+
+    await ensureCopilotConfigLink()
+
+    expect(await realpath(groveCopilotConfigDir())).toBe(await realpath(globalCopilotConfigDir()))
+  })
+
+  it('refuses to link from inside the global copilot config', async () => {
+    await writeGlobalCopilotAuth()
+    process.env.XDG_CONFIG_HOME = globalCopilotConfigDir()
+
+    await ensureCopilotConfigLink()
+
+    await expect(lstat(join(globalCopilotConfigDir(), 'grove', 'github-copilot'))).rejects.toThrow()
   })
 })

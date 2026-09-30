@@ -3,6 +3,7 @@
 // store already keeps in memory, so listing every session costs no extra I/O.
 
 import type { SessionEvent, SessionPreview } from '../../shared/agents'
+import { lastAgentMessage } from './acpLog'
 
 /** Longest title taken from a prompt before it is cut at a word boundary. */
 const TITLE_MAX_CHARS = 48
@@ -36,8 +37,19 @@ export function titleFromPrompt(prompt: string): string | null {
 
 /** The last message in the log that has text, from either side. */
 export function lastMessagePreview(events: readonly SessionEvent[]): SessionPreview | null {
+  const agent = lastAgentMessage(events)
+  if (agent) {
+    const preview = previewFrom('agent', agent.text)
+    if (preview) {
+      return preview
+    }
+  }
   for (let index = events.length - 1; index >= 0; index -= 1) {
-    const preview = previewOf(events[index])
+    const event = events[index]
+    if (event.type !== 'user.message') {
+      continue
+    }
+    const preview = previewFrom('user', joinedText(event.content))
     if (preview) {
       return preview
     }
@@ -55,17 +67,6 @@ export function firstPromptText(events: readonly SessionEvent[]): string | null 
     if (text.length > 0) {
       return text
     }
-  }
-  return null
-}
-
-/** A preview for one event, when it is a message with text. */
-function previewOf(event: SessionEvent): SessionPreview | null {
-  if (event.type === 'user.message') {
-    return previewFrom('user', joinedText(event.content))
-  }
-  if (event.type === 'agent.message_end') {
-    return previewFrom('agent', joinedText(event.content))
   }
   return null
 }

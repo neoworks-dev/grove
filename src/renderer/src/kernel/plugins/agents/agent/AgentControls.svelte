@@ -1,10 +1,10 @@
 <script lang="ts">
-  // The status line under the composer: which harness runs the session, what
-  // model it will use, how hard it will think, how freely it may act, and when
+  // The status line under the composer: which harness runs the session and
+  // whether in grove mode, what model it will use, how hard it will think, how freely it may act, and when
   // its changes get reviewed. The selects wrap onto a second row as the pane
   // narrows rather than squeezing.
   //
-  // Harness, provider, model and thinking level are session state in the main
+  // Harness, grove mode, provider, model and thinking level are session state in the main
   // process, so picking one updates the session. Mode is derived from the same
   // state (see lib/agents/modes.ts) rather than stored here.
 
@@ -14,12 +14,14 @@
   import { findRoute } from '../../../../lib/agents/modelSelection'
   import ModelMenu from './ModelMenu.svelte'
   import { THINKING_LABELS, THINKING_LEVELS } from '../../../../lib/agents/thinking'
+  import { GROVE_MODE_DESCRIPTION } from '../../../../lib/agents/newSession'
   import type { HarnessInfo, ModelEntry, ThinkingLevel } from '../../../../lib/agents/types'
 
   let {
     harness,
     harnesses,
     started,
+    groveMode,
     provider,
     model,
     thinking,
@@ -32,6 +34,7 @@
     costLabel,
     contextTokens,
     onPickHarness,
+    onPickGroveMode,
     onPickModel,
     onRequestKey,
     onAddEndpoint,
@@ -44,6 +47,8 @@
     harnesses: HarnessInfo[]
     /** Whether the harness has already answered, which fixes the choice. */
     started: boolean
+    /** Whether the harness runs on grove's prompt and tools instead of its own. */
+    groveMode: boolean
     provider: string
     model: string
     thinking: ThinkingLevel
@@ -58,6 +63,7 @@
     /** Context the session has already built up, which a model switch re-reads. */
     contextTokens: number
     onPickHarness: (harness: string) => void
+    onPickGroveMode: (groveMode: boolean) => void
     onPickModel: (provider: string, model: string) => void
     /** Ask the user for the key a route needs before it can be taken. */
     onRequestKey: (request: { provider: string; variables: string[] }) => void
@@ -159,6 +165,9 @@
         <Icon icon={current.icon} class="size-3.5 shrink-0" />
       {/if}
       <span class="font-medium text-default">{current?.label ?? harness ?? 'harness'}</span>
+      {#if groveMode}
+        <Icon icon="grove:grove" class="size-3.5 shrink-0" aria-label="Grove mode" />
+      {/if}
       {#if !started}
         <span class="text-dim">▾</span>
       {/if}
@@ -191,6 +200,25 @@
         {/each}
         {#if harnesses.length === 0}
           <div class="px-2 py-1 text-2xs text-dim">No harness is mounted</div>
+        {/if}
+        {#if capabilities?.groveMode}
+          <div class="mt-1 border-t border-line pt-1">
+            <button
+              class="flex w-full items-center gap-2 px-2 py-1 text-left hover:bg-hover"
+              class:text-default={groveMode}
+              class:text-dim={!groveMode}
+              title={GROVE_MODE_DESCRIPTION}
+              aria-pressed={groveMode}
+              onclick={() => {
+                onPickGroveMode(!groveMode)
+                close()
+              }}
+            >
+              <span class="w-3">{groveMode ? '✓' : ''}</span>
+              <Icon icon="grove:grove" class="size-3.5 shrink-0" />
+              Grove mode
+            </button>
+          </div>
         {/if}
       </div>
     {/if}

@@ -7,7 +7,7 @@
  * `{"path": "src/app.ts"}` twenty times is worse than reading `read  src/app.ts`.
  */
 
-import type { ToolDisplay, ToolInputView, ToolResultView } from './types'
+import type { ToolDisplay, ToolInfo, ToolInputView, ToolResultView } from './types'
 
 const EXTENSIONS: Record<string, string> = {
   c: 'c',
@@ -56,6 +56,55 @@ export function languageOfPath(path: string): string | undefined {
 }
 
 const FIELD = /\{([^}]+)\}/g
+
+/** What the transcript knows about a call when it picks how to draw it. */
+export interface CallShape {
+  name: string
+  /** ACP's kind of call: read, edit, execute, search, … */
+  toolKind: string
+  input: unknown
+  /** Diffs and terminals the call carries. */
+  content: { type: string }[]
+}
+
+/**
+ * How a call is drawn. A tool that describes itself — grove's own, a plugin's —
+ * is taken at its word; anything else is drawn by the kind of call ACP says it
+ * is, so a harness's own tools read the same whichever harness brought them.
+ */
+export function displayOfCall(tools: ToolInfo[], call: CallShape): ToolDisplay | undefined {
+  const described = tools.find((tool) => tool.name === call.name)?.display
+  if (described) {
+    return described
+  }
+  if (call.content.some((entry) => entry.type === 'diff')) {
+    return { edits: true }
+  }
+  if (call.toolKind === 'execute') {
+    return { input: 'command' }
+  }
+  if (call.toolKind === 'edit' || call.toolKind === 'delete' || call.toolKind === 'move') {
+    return { edits: true }
+  }
+  if (call.toolKind === 'read') {
+    return { input: 'hidden', result: 'code', languageFrom: pathFieldOf(call.input) }
+  }
+  return undefined
+}
+
+/** The input field naming the file a call is about: the first that reads as a path. */
+function pathFieldOf(input: unknown): string | undefined {
+  const fields = asRecord(input)
+  if (fields === null) {
+    return undefined
+  }
+  for (const [name, value] of Object.entries(fields)) {
+    if (typeof value === 'string' && pathLabelOf(value, '') !== null) {
+      return name
+    }
+  }
+  return undefined
+}
 
 /**
  * A one-line description of what the call is about, for the collapsed header.
@@ -245,7 +294,7 @@ export function stringOf(value: unknown): string {
 /**
  * One entry of a list-shaped field, for a header line.
  *
- * A call that takes several files — grove's own `open_files`, an edit batch —
+ * A call that takes several files — grove's own `show_locations`, an edit batch —
  * reads as the files it names, not as `[object Object]`.
  */
 function entryLabel(entry: unknown): string {

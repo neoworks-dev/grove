@@ -36,6 +36,7 @@ export interface StoredSession {
   activeTools: string[] | null
   autoApproveTools: string[]
   permissionMode: AgentMode
+  groveMode: boolean
   labels: Record<string, string>
   createdAt: string
   updatedAt: string
@@ -43,6 +44,8 @@ export interface StoredSession {
   resumeKey: string | null
   usage: Usage
   cost: number
+  /** Tokens the conversation occupied when the harness last said. */
+  contextUsed?: number
   contextWindow: number
   lastSeq: number
 }
@@ -56,6 +59,7 @@ export interface CreateRecordOptions {
   thinkingLevel: ThinkingLevel
   activeTools: string[] | null
   permissionMode?: AgentMode
+  groveMode?: boolean
   /** Marks the session is created with, such as the agent that spawned it. */
   labels?: Record<string, string>
 }
@@ -144,6 +148,7 @@ export class SessionStore {
       activeTools: options.activeTools,
       autoApproveTools: [],
       permissionMode: options.permissionMode ?? 'default',
+      groveMode: options.groveMode === true,
       // Every session is addressable from the moment it exists, whoever made it.
       labels: { [AGENT_ID_LABEL]: newAgentId(), ...options.labels },
       createdAt: now,
@@ -252,6 +257,7 @@ export class SessionStore {
       activeTools: session.activeTools,
       autoApproveTools: session.autoApproveTools,
       permissionMode: session.permissionMode,
+      groveMode: session.groveMode,
       labels: session.labels,
       createdAt: session.createdAt,
       updatedAt: session.updatedAt,
@@ -273,7 +279,8 @@ export class SessionStore {
     messageCount: number,
     preview: SessionPreview | null
   ): SessionSnapshot {
-    const used = session.usage.inputTokens + session.usage.outputTokens
+    let used = 0
+    if (session.contextUsed !== undefined) used = session.contextUsed
     const window = session.contextWindow
     return {
       ...SessionStore.metaOf(session, live, runtime, preview),
@@ -384,11 +391,40 @@ function parseJson<T>(text: string): T {
  *
  * Sessions are long-lived on disk, so a record from before `permissionMode`
  * existed has to read back as the mode it was actually running under, which is
- * the asking one.
+ * the asking one, and one from before `groveMode` as running without it.
  */
-function parseSession(text: string): StoredSession {
+export function parseSession(text: string): StoredSession {
   const session = parseJson<StoredSession>(text)
-  return { ...session, permissionMode: session.permissionMode ?? 'default' }
+  const parsed = {
+    ...session,
+    permissionMode: session.permissionMode ?? 'default',
+    groveMode: session.groveMode === true
+  }
+  if (parsed.harness === GROVE_HARNESS) return fromGroveHarness(parsed)
+  return parsed
+}
+
+// The harness grove mode was before it became a switch on every harness.
+const GROVE_HARNESS = 'grove'
+const GROVE_RUNTIMES = ['claude', 'codex', 'pi']
+
+/**
+ * A session stored while grove mode was a harness of its own, moved onto the
+ * harness it was actually running on. That harness was named as the provider;
+ * the provider becomes the one the harness itself offers the model under.
+ */
+function fromGroveHarness(session: StoredSession): StoredSession {
+  let harness = 'claude'
+  if (GROVE_RUNTIMES.includes(session.provider)) harness = session.provider
+  return { ...session, harness, provider: providerOn(harness, session.model), groveMode: true }
+}
+
+/** The provider a harness offers a model under: Anthropic on Claude, else the model's own prefix. */
+function providerOn(harness: string, model: string): string {
+  if (harness === 'claude') return 'anthropic'
+  const slash = model.indexOf('/')
+  if (slash > 0) return model.slice(0, slash)
+  return harness
 }
 
 function parseEvent(line: string): SessionEvent {

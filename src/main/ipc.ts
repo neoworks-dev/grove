@@ -3,7 +3,9 @@
 // single source of truth for the API exposed via preload.
 
 import { app, dialog, BrowserWindow } from 'electron'
-import { join } from 'path'
+import { dirname, join } from 'path'
+import { mkdirSync } from 'fs'
+import { profileHash, profileSocketPath } from './socketPath'
 import type { Context } from '@neoworks/extension-system'
 import { mainContext } from './kernel/context'
 import { routePlugins } from './routes'
@@ -46,16 +48,18 @@ import { EventHub } from './api/events'
 import { VersionCounter } from './api/versions'
 import { AppPairing } from './api/socket/pairing'
 import { ApiSocketServer } from './api/socket/server'
-import { createHash } from 'crypto'
 import { PluginRegistry } from './plugins/loader'
 import { AiBridge } from './plugins/aiBridge'
 import { HarnessRegistry } from './agents/harness'
+import { SwitchboardHost } from './agents/switchboard/host'
 import { SessionStore } from './agents/store'
 import { AgentService } from './agents/service'
 import { AgentReviewBridge } from './agents/reviewBridge'
 import { AgentHandoffBridge } from './agents/handoffBridge'
 import { AgentRoster } from './agents/roster'
-import { groveSystemPrompt } from './agents/systemPrompt'
+import type { AgentWorktrees } from './agents/tools/worktreeTools'
+import { runSetup } from './routes/worktrees'
+import { agentSection, section } from './agents/systemPrompt'
 import { groveTools } from './agents/tools'
 
 interface RepoContext {
@@ -144,44 +148,92 @@ const endpoints = new EndpointsService()
 // into, the store that persists sessions, and the service that drives them.
 const harnesses = new HarnessRegistry()
 
-const sessionStore = new SessionStore(join(app.getPath('userData'), 'agents'), (message) =>
+// switchboard, which runs every harness, and the MCP server grove's tools reach
+// them through.
+const switchboard = new SwitchboardHost()
+
+// Sessions are stored as switchboard reports them. The log grove kept before
+// (`agents/`) is left on disk untouched; it is no longer read.
+const sessionStore = new SessionStore(join(app.getPath('userData'), 'agent-sessions'), (message) =>
   console.error(`[agents] ${message}`)
 )
 
 const agents = new AgentService({
   store: sessionStore,
   harnesses,
-  tools: () => groveTools({ chat: channel, roster: agentRoster }),
+  // The service keeps the notes and knows the renderer's panes, so the tools it
+  // runs reach back into it.
+  // Plugins' MCP tools ride along with grove's own.
+  tools: () => [
+    ...groveTools({
+      chat: channel,
+      roster: agentRoster,
+      notes: agents,
+      screen: agents,
+      worktrees: agentWorktrees
+    }),
+    ...aiBridge.pluginTools()
+  ],
   systemPrompt: (session) => buildSystemPrompt(session),
   sessionRemoved: (session) => agentHandoffBridge.reportClosed(session),
   publish: (event) => send('event:agent-event', event),
+  publishShellOutput: (update) => send('event:agent-shell-output', update),
   defaultHarness: () => settings.get<string>('workbench.agentHarness'),
   // fish consults its bundled completions before a directory with exactly this
   // name, so a man-page git.fish cannot shadow the real one.
   shellCompletionsDir: join(app.getPath('userData'), 'fish', 'generated_completions')
 })
 
+// No run outlives the app, so a turn the last one quit in the middle of is over.
+void agents.settleInterruptedTurns()
+
 // Addresses the sessions in a worktree, delivers between them, and starts new
 // ones: what grove's inter-agent tools are built on.
 const agentRoster = new AgentRoster({ agents, harnesses })
 
-/** grove's part of a session's system prompt: who it is here, and who else is. */
+// The worktrees agents can list, create and spawn into.
+const agentWorktrees: AgentWorktrees = {
+  list: () => refreshWorktrees(),
+  create: (options) => createWorktreeForAgent(options.branch, options.base)
+}
+
+/**
+ * Checks out a new branch in a new worktree for an agent, and runs its setup.
+ *
+ * The sidebar is told as soon as the worktree exists, since nothing the user
+ * did will make it look. Unlike the dialog, the agent waits for setup: whatever
+ * it starts there next expects the dependencies to be installed.
+ */
+async function createWorktreeForAgent(branch: string, base: string | undefined): Promise<Worktree> {
+  const { repoPath, config: cfg } = requireRepo()
+  let baseBranch = base
+  if (baseBranch === undefined) baseBranch = cfg.workbench.default_base_branch
+
+  const created = await worktrees.addWorktree(repoPath, cfg, {
+    name: branch,
+    baseBranch,
+    newBranch: branch
+  })
+  send('event:worktrees-changed', await refreshWorktrees())
+  await runSetup(send, repoPath, cfg, created)
+  return created
+}
+
+/** A session's context sections: who it is here, who else is, and plugin skills. */
 async function buildSystemPrompt(session: {
   id: string
   title: string
   workspaceRoot: string
 }): Promise<string> {
-  const [agentId, peers] = await Promise.all([
+  const [agentId, peers, relatives] = await Promise.all([
     agentRoster.agentIdOf(session.id),
-    agentRoster.peers(session.workspaceRoot)
+    agentRoster.peers(session.workspaceRoot),
+    agentRoster.relativesElsewhere(session.id)
   ])
-  return groveSystemPrompt({
-    agentId,
-    title: session.title,
-    workspaceRoot: session.workspaceRoot,
-    peers,
-    harnesses: agentRoster.harnessIds()
-  })
+  const agent = agentSection({ agentId, title: session.title, peers, relatives })
+  // Skills plugins registered go to every agent run.
+  const skills = section('skills', aiBridge.systemAppend())
+  return [agent, skills].filter((part) => part.length > 0).join('\n\n')
 }
 
 // Hands a spawned agent's closing words back to the agent that started it.
@@ -193,7 +245,6 @@ const agentReviewBridge = new AgentReviewBridge({
   review,
   agents,
   store: sessionStore,
-  harnesses,
   reviewMode: () => settings.get<string>('workbench.reviewMode') ?? 'pre'
 })
 
@@ -218,8 +269,18 @@ const terminals = new TerminalManager(
     },
     onTitle: (id, title) => send('event:terminal-title', { id, title })
   },
-  { socketPath: join(app.getPath('userData'), 'terminals.sock') }
+  { socketPath: terminalSocketPath(app.getPath('userData')) }
 )
+
+/**
+ * The terminal daemon's socket for this profile. The daemon binds it without
+ * creating its directory, so a short fallback directory is made here.
+ */
+function terminalSocketPath(userData: string): string {
+  const path = profileSocketPath(userData, join(userData, 'terminals.sock'), 'terminals.sock')
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+  return path
+}
 
 // Session → worktree tracking so the editor API can pick the canonical
 // (most recently active) nvim session for a worktree.
@@ -260,6 +321,7 @@ const pluginRegistry = new PluginRegistry(pluginBroker)
 const aiBridge = new AiBridge({
   broker: pluginBroker,
   registry: pluginRegistry,
+  switchboard,
   send
 })
 const eventHub = new EventHub()
@@ -452,15 +514,15 @@ const appPairing = new AppPairing({
 let apiSocketServer: ApiSocketServer | null = null
 let apiSocketPath: string | null = null
 
-// Per-profile socket location: unix socket in a 0700 dir under userData;
-// a hashed named pipe on Windows (pipes have no fs permissions there — the
-// pairing token is the boundary).
+// Per-profile socket location: unix socket in a 0700 dir under userData (or a
+// short fallback when that path is too long for sun_path); a hashed named pipe
+// on Windows (pipes have no fs permissions there — the pairing token is the
+// boundary).
 function socketPathFor(userData: string): string {
   if (process.platform === 'win32') {
-    const hash = createHash('sha256').update(userData).digest('hex').slice(0, 12)
-    return `\\\\.\\pipe\\grove-${hash}`
+    return `\\\\.\\pipe\\grove-${profileHash(userData)}`
   }
-  return join(userData, 'sock', 'grove.sock')
+  return profileSocketPath(userData, join(userData, 'sock', 'grove.sock'), 'grove.sock')
 }
 
 function startApiSocket(): void {
@@ -607,10 +669,12 @@ const mainServices = {
     ctx.provide('endpoints', endpoints)
     ctx.provide('terminals', terminals)
     ctx.provide('lsp', lsp)
+    ctx.provide('documents', editorDocs)
     ctx.provide('watcher', watcher)
     ctx.provide('chat', channel)
     ctx.provide('actions', actionRunner)
     ctx.provide('harnesses', harnesses)
+    ctx.provide('switchboard', switchboard)
     ctx.provide('agents', agents)
     ctx.provide('agentReview', agentReviewBridge)
 
@@ -676,6 +740,7 @@ export async function shutdown(): Promise<void> {
   await mainContext.fiber.dispose().catch(() => {})
   await apiSocketServer?.close().catch(() => {})
   await agents.stopAll().catch(() => {})
+  await switchboard.close().catch(() => {})
   await sessionStore.flush().catch(() => {})
   await supervisor.stopAll()
   await watcher.closeAll()

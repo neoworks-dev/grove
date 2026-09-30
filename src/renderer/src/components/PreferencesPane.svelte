@@ -4,8 +4,10 @@
   // edits user- or project-level values; rows show a "modified" dot when the
   // viewed scope overrides the effective default.
   import { settings } from '../lib/settings.svelte'
-  import { store } from '../lib/store.svelte'
+  import { store, openFileInEditor } from '../lib/store.svelte'
   import { matchesQuery } from '../lib/overlays.svelte'
+  import { catalog } from '../lib/agents/catalog.svelte'
+  import { onMount } from 'svelte'
   import SettingToggle from './controls/SettingToggle.svelte'
   import SettingSelect from './controls/SettingSelect.svelte'
   import SettingTextInput from './controls/SettingTextInput.svelte'
@@ -14,8 +16,16 @@
   import KeybindCapture from './controls/KeybindCapture.svelte'
   import type { SettingDefinition, SettingScope, SettingsContribution } from '../../../shared/settings'
   import PaneControls from './PaneControls.svelte'
+  import MagnifyingGlassIcon from 'phosphor-svelte/lib/MagnifyingGlassIcon'
+  import ArrowCounterClockwiseIcon from 'phosphor-svelte/lib/ArrowCounterClockwiseIcon'
 
   let { leafId }: { leafId: string } = $props()
+
+  // The Agent Harness dropdown lists the catalog's harnesses; nothing else may
+  // have loaded it yet.
+  onMount(() => {
+    void catalog.load()
+  })
 
   let filter = $state('')
   let scope = $state<SettingScope>('user')
@@ -75,30 +85,46 @@
     void settings.set(definition.key, undefined, scope)
   }
 
-  function openFile(): void {
-    void window.workbench.settings.openFile(scope)
+  /** Opens the viewed scope's settings.json as a tab in Grove's own editor. */
+  async function openFile(): Promise<void> {
+    const worktreeId = store.selectedWorktreeId
+    if (!worktreeId) return
+    const path = await window.workbench.settings.filePath(scope)
+    if (!path) return
+    openFileInEditor(worktreeId, path)
   }
 </script>
 
 <div class="flex h-full min-h-0 flex-col">
   <div class="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2">
-    <input
-      type="text"
-      class="w-64 rounded-md border border-line bg-input px-2 py-1 text-xs"
-      placeholder="Search settings…"
-      bind:value={filter}
-    />
-    <div class="flex overflow-hidden rounded-md border border-line text-2xs">
+    <label
+      class="flex w-64 items-center gap-2 rounded-lg border border-line bg-input px-2.5 py-1.5 transition-colors focus-within:border-line-strong hover:border-line-strong"
+    >
+      <MagnifyingGlassIcon size={13} class="shrink-0 text-faint" />
+      <input
+        type="text"
+        class="min-w-0 flex-1 bg-transparent text-xs text-default placeholder:text-faint focus:outline-none"
+        placeholder="Search settings…"
+        bind:value={filter}
+      />
+    </label>
+    <div class="flex gap-0.5 rounded-lg border border-line bg-input p-0.5 text-xs">
       <button
-        class="px-2 py-1 {scope === 'user' ? 'bg-surface text-default' : 'text-dim hover:text-default'}"
+        class="rounded-md px-2.5 py-1 transition-colors"
+        class:bg-raised={scope === 'user'}
+        class:text-default={scope === 'user'}
+        class:text-dim={scope !== 'user'}
+        class:hover:text-default={scope !== 'user'}
         onclick={() => (scope = 'user')}
       >
         User
       </button>
       <button
-        class="px-2 py-1 {scope === 'project'
-          ? 'bg-surface text-default'
-          : 'text-dim hover:text-default'} disabled:opacity-40"
+        class="rounded-md px-2.5 py-1 transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+        class:bg-raised={scope === 'project'}
+        class:text-default={scope === 'project'}
+        class:text-dim={scope !== 'project'}
+        class:hover:text-default={scope !== 'project'}
         disabled={!projectAvailable}
         title={projectAvailable ? '' : 'Open a repository to edit project settings'}
         onclick={() => (scope = 'project')}
@@ -106,7 +132,12 @@
         Project
       </button>
     </div>
-    <button class="ml-auto text-2xs text-dim hover:text-default" onclick={openFile}>
+    <button
+      class="ml-auto text-xs text-dim hover:text-default disabled:cursor-not-allowed disabled:opacity-40"
+      disabled={!store.selectedWorktreeId}
+      title={store.selectedWorktreeId ? '' : 'Open a repository to edit settings in the editor'}
+      onclick={openFile}
+    >
       Open settings.json
     </button>
     <PaneControls />
@@ -179,11 +210,11 @@
               {/if}
               {#if isModified(definition)}
                 <button
-                  class="text-2xs text-dim hover:text-default"
+                  class="flex h-6 w-6 items-center justify-center rounded-md text-dim transition-colors hover:bg-hover hover:text-default"
                   title="Reset to default"
                   onclick={() => reset(definition)}
                 >
-                  ↺
+                  <ArrowCounterClockwiseIcon size={13} />
                 </button>
               {/if}
             </div>

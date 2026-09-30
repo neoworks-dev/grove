@@ -31,7 +31,13 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { demoWorktreePathFor } from '../tests/e2e/fixtures/demoRepo'
 import { prepareProfile, profileAt, type GroveProfile } from '../tests/e2e/fixtures/profile'
-import { displayEnv, startVirtualDisplay, stopVirtualDisplay } from './lib/virtualDisplay'
+import {
+  closeViewers,
+  displayEnv,
+  openViewer,
+  startVirtualDisplay,
+  stopVirtualDisplay
+} from './lib/virtualDisplay'
 import { renderTranscript } from './qa/transcript'
 import { renderPaneTypes, renderSnapshot, type PaneTypeEntry } from './qa/tree'
 import { parseRegion, type Region } from './qa/targets'
@@ -68,7 +74,25 @@ const paths = {
   shots: join(QA_ROOT, 'shots'),
   reports: join(QA_ROOT, 'reports'),
   appLog: join(QA_ROOT, 'app.log'),
-  pace: join(QA_ROOT, 'pace.json')
+  pace: join(QA_ROOT, 'pace.json'),
+  recording: join(QA_ROOT, 'recording.json')
+}
+
+/** Where `qa finding` writes a repro spec, and `qa replay` runs it from. */
+const REPRO_DIR = join(repoRoot, 'tests', 'e2e', 'repro')
+
+/**
+ * What a session has done so far, as the Playwright code that does it again.
+ *
+ * Every action and every `qa expect` appends the lines the driver answered
+ * with; `qa finding` turns them into a repro spec. The window size is kept
+ * because layout bugs depend on it, and a replay's window starts at another.
+ */
+interface Recording {
+  startedAt: string
+  startedAtMs: number
+  window: { width: number; height: number } | null
+  lines: string[]
 }
 
 async function main(): Promise<void> {
@@ -86,6 +110,9 @@ async function main(): Promise<void> {
   if (command === 'charters') return listCharters()
   if (command === 'logs') return showLogs(args)
   if (command === 'nvim') return nvim(args)
+  if (command === 'recording') return showRecording(args)
+  if (command === 'replay') return replay(args)
+  if (command === 'repro') return attachRepro(args)
   return act(command, args)
 }
 
@@ -125,6 +152,9 @@ async function start(args: string[]): Promise<void> {
         'install one (sudo pacman -S xorg-server-xvfb) or free a display.'
     )
   }
+  // Opened before the app, so start-up is on screen too.
+  let watching = false
+  if (!args.includes('--no-viewer')) watching = openViewer(virtual)
 
   const port = await freePort()
   const appPid = launchApp(profile, virtual.display, port, packaged)
@@ -137,11 +167,13 @@ async function start(args: string[]): Promise<void> {
   }
   writeFileSync(paths.session, JSON.stringify(session, null, 2), 'utf8')
   await rm(paths.pace, { force: true })
+  await rm(paths.recording, { force: true })
 
   await waitForDebugPort(port)
   const ready = drive(session, { action: 'ready', timeout: 90_000 })
 
-  console.log(`display:   ${virtual.display}  (watch it: vncviewer ${virtual.display})`)
+  if (watching) console.log(`display:   ${virtual.display}  (vncviewer opened on it)`)
+  else console.log(`display:   ${virtual.display}  (watch it: vncviewer ${virtual.display})`)
   console.log(`profile:   ${profile.userData}`)
   console.log(`demo repo: ${demo.root}  →  ${SANDBOX_REMOTE}`)
   console.log(`app log:   ${paths.appLog}`)
@@ -155,7 +187,10 @@ async function stop(): Promise<void> {
   const profile = profileAt(TEST_ROOT)
 
   const killed = killProfileProcesses(profile)
-  if (session) stopVirtualDisplay(session.display, session.displayPid)
+  if (session) {
+    closeViewers(session.display)
+    stopVirtualDisplay(session.display, session.displayPid)
+  }
   await rm(paths.session, { force: true })
 
   console.log(`stopped ${killed} of the test profile's processes`)
@@ -193,13 +228,96 @@ function act(command: string, args: string[]): void {
   let screenshot: string | undefined = undefined
   if (label !== undefined) screenshot = nextShotPath(label)
 
+  // A check always photographs what it measured, repeat or not: the picture is
+  // the evidence that goes with the verdict.
+  if (command === 'expect' && screenshot === undefined) {
+    screenshot = nextShotPath(`expect-${positional(args)[0] ?? 'check'}`)
+  }
+
   const crop = cropOf(args)
   const wantsPicture = screenshot !== undefined || command === 'screenshot' || command === 'shot'
-  if (wantsPicture) refuseRepeatPicture(args, crop)
+  if (wantsPicture && command !== 'expect') refuseRepeatPicture(args, crop)
 
-  const output = drive(session, { ...actionFor(command, args), screenshot, crop })
-  console.log(printable(command, output))
+  const recording = readRecording(session)
+  const action: Record<string, unknown> = { ...actionFor(command, args), screenshot, crop }
+  if (command === 'expect') action.sinceMs = recording.startedAtMs
+  const output = drive(session, action)
+
+  const recorded = takeRecorded(output)
+  if (recorded.lines.length > 0) {
+    recording.lines.push(...recorded.lines)
+    writeFileSync(paths.recording, JSON.stringify(recording, null, 2), 'utf8')
+  }
+  console.log(printable(command, recorded.output))
+  for (const line of recorded.lines) console.log(`recorded: ${line}`)
   notePace(command, wantsPicture, framing(args, crop))
+}
+
+/**
+ * The session's recording, begun now if it has not been.
+ *
+ * A session started before recording existed, or one whose recording was
+ * cleared, starts one on its next action — with the window size read off the
+ * renderer, since a replay has to open at the same size to lay out the same.
+ */
+function readRecording(session: Session): Recording {
+  try {
+    return JSON.parse(readFileSync(paths.recording, 'utf8')) as Recording
+  } catch {
+    const window = parse<{ width: number; height: number }>(
+      drive(session, {
+        action: 'eval',
+        expression: '({ width: window.innerWidth, height: window.innerHeight })'
+      })
+    )
+    return { startedAt: new Date().toISOString(), startedAtMs: Date.now(), window, lines: [] }
+  }
+}
+
+/** Split the recorded code off the driver's answer, so the rest prints as before. */
+function takeRecorded(output: string): { output: string; lines: string[] } {
+  let answer: Record<string, unknown>
+  try {
+    answer = JSON.parse(output) as Record<string, unknown>
+  } catch {
+    return { output, lines: [] }
+  }
+  if (answer === null || typeof answer !== 'object' || !Array.isArray(answer.recorded)) {
+    return { output, lines: [] }
+  }
+  const lines = answer.recorded as string[]
+  delete answer.recorded
+  return { output: JSON.stringify(answer, null, 2), lines }
+}
+
+/**
+ *   qa recording          the code this session has recorded so far
+ *   qa recording clear    start again from here
+ *
+ * Clearing is for a session that wandered before it found the bug. What was
+ * cleared still happened to the app, though: a replay starts from a fresh
+ * profile, so a repro recorded after a clear may be missing its setup. The
+ * replay says so by passing when it should fail.
+ */
+function showRecording(args: string[]): void {
+  if (args[0] === 'clear') {
+    writeFileSync(paths.recording, '', 'utf8')
+    console.log('recording cleared; the next action starts a new one')
+    return
+  }
+  let recording: Recording
+  try {
+    recording = JSON.parse(readFileSync(paths.recording, 'utf8')) as Recording
+  } catch {
+    console.log('nothing recorded yet')
+    return
+  }
+  const size = recording.window
+  if (size !== null)
+    console.log(`window ${size.width}x${size.height}, since ${recording.startedAt}`)
+  recording.lines.forEach((line, index) => {
+    console.log(`${String(index + 1).padStart(3)}  ${line}`)
+  })
 }
 
 /** Which commands change the app, and so make a new picture worth taking. */
@@ -267,6 +385,14 @@ function printable(command: string, output: string): string {
     // The path, and nothing else: it is the one thing to do something with, and
     // what to do with it is read it.
     return `screenshot: ${parse<{ shot: string }>(output).shot}`
+  }
+  if (command === 'expect') {
+    const verdict = parse<{ passed: boolean; detail: string; label: string; screenshot: string }>(
+      output
+    )
+    let word = 'FAIL'
+    if (verdict.passed) word = 'PASS'
+    return `${word}  ${verdict.label}: ${verdict.detail}\nscreenshot: ${verdict.screenshot}`
   }
   if (command !== 'probe' && command !== 'status' && command !== 'pane') return output
 
@@ -394,7 +520,59 @@ function actionFor(command: string, args: string[]): Record<string, unknown> {
     requireArgument(rest[0], 'eval <expression>')
     return { action: 'eval', expression: rest[0] }
   }
+  if (command === 'expect') return expectationFor(args)
   throw new Error(`unknown command: ${command} (try "qa help")`)
+}
+
+/** The checks `qa expect` knows, and what each one takes after its name. */
+const CHECK_FORMS: Record<string, string> = {
+  'inside-window': 'expect inside-window <target>',
+  'not-clipped': 'expect not-clipped <target>',
+  'not-overlapping': 'expect not-overlapping <target> <other>',
+  visible: 'expect visible <target>',
+  gone: 'expect gone <target>',
+  eval: 'expect eval <expression> <expected JSON>',
+  'no-errors': 'expect no-errors'
+}
+
+/**
+ * `qa expect <check> …` — what is true when the app works.
+ *
+ * Written the way the app should be, not the way the bug is: while the bug is
+ * there the check fails, and a recorded repro fails with it until the fix lands.
+ */
+function expectationFor(args: string[]): Record<string, unknown> {
+  const [check, first, second] = positional(args)
+  const form = CHECK_FORMS[check]
+  if (form === undefined) {
+    throw new Error(
+      `usage: qa expect <check> …, one of:\n  ${Object.values(CHECK_FORMS).join('\n  ')}`
+    )
+  }
+  let label = optional(args, '--label')
+  if (label === undefined)
+    label = [check, first, second].filter((part) => part !== undefined).join(' ')
+
+  if (check === 'no-errors') return { action: 'expect', check, label }
+  requireArgument(first, form)
+  if (check === 'eval') {
+    requireArgument(second, form)
+    return { action: 'expect', check, label, expression: first, expected: jsonOrText(second) }
+  }
+  if (check === 'not-overlapping') {
+    requireArgument(second, form)
+    return { action: 'expect', check, label, target: first, other: second }
+  }
+  return { action: 'expect', check, label, target: first }
+}
+
+/** An expected value: JSON when it parses as JSON, the text itself otherwise. */
+function jsonOrText(value: string): unknown {
+  try {
+    return JSON.parse(value)
+  } catch {
+    return value
+  }
 }
 
 /** `--crop x,y,w,h`, when only one part of the window is the question. */
@@ -890,7 +1068,224 @@ function fileFinding(args: string[]): void {
     { cwd: repoRoot, encoding: 'utf8' }
   )
   if (created.status !== 0) throw new Error(`could not file the issue:\n${created.stderr.trim()}`)
-  console.log(created.stdout.trim())
+  const url = created.stdout.trim()
+  console.log(url)
+  if (args.includes('--no-repro')) return
+
+  const issue = Number(url.split('/').pop())
+  const spec = writeReproSpec(issue, title as string)
+  if (spec === null) return
+  // The bot's own issue, so the spec goes into its body, beside the report.
+  const edited = github(
+    [
+      'issue',
+      'edit',
+      String(issue),
+      '--repo',
+      FINDINGS_REPO,
+      '--body',
+      [...sections, reproSection(issue, spec)].join('\n\n')
+    ],
+    { cwd: repoRoot, encoding: 'utf8' }
+  )
+  if (edited.status !== 0)
+    console.warn(`could not put the spec on #${issue}:\n${edited.stderr.trim()}`)
+}
+
+// --------------------------------------------------------------------- repros
+
+/** Marks the spec in an issue body, so `qa replay` can find it again. */
+const REPRO_MARKER = '<!-- qa-repro -->'
+
+/**
+ * Attach this session's recording to an issue that is already filed.
+ *
+ *   qa repro 271               write the spec here, and comment it on #271
+ *   qa repro 271 --no-post     only write it, to replay before anyone sees it
+ *
+ * A comment rather than an edit: the issue may be a person's, and its text is
+ * theirs.
+ */
+function attachRepro(args: string[]): void {
+  const issue = positional(args)[0]
+  requireArgument(issue, 'repro <issue> [--no-post]')
+  const viewed = spawnSync(
+    'gh',
+    ['issue', 'view', issue, '--repo', FINDINGS_REPO, '--json', 'title'],
+    {
+      encoding: 'utf8'
+    }
+  )
+  if (viewed.status !== 0) throw new Error(`could not read #${issue}:\n${viewed.stderr.trim()}`)
+  const title = (JSON.parse(viewed.stdout) as { title: string }).title
+
+  const spec = writeReproSpec(Number(issue), title)
+  if (spec === null || args.includes('--no-post')) return
+  const commented = github(
+    [
+      'issue',
+      'comment',
+      issue,
+      '--repo',
+      FINDINGS_REPO,
+      '--body',
+      reproSection(Number(issue), spec)
+    ],
+    { cwd: repoRoot, encoding: 'utf8' }
+  )
+  if (commented.status !== 0)
+    throw new Error(`could not comment on #${issue}:\n${commented.stderr.trim()}`)
+  console.log(commented.stdout.trim())
+}
+
+/**
+ * Write the session's recording as the issue's repro spec in this checkout, and
+ * hand back its text — or null, saying why, when there is nothing to write.
+ *
+ * Without a `qa expect` there is nothing that could fail, so no spec: a repro
+ * that cannot fail cannot show a fix either.
+ */
+function writeReproSpec(issue: number, title: string): string | null {
+  let recording: Recording
+  try {
+    recording = JSON.parse(readFileSync(paths.recording, 'utf8')) as Recording
+  } catch {
+    console.log('no recording in this session, so no repro spec')
+    return null
+  }
+  if (!recording.lines.some((line) => line.startsWith('await verify('))) {
+    console.log('no "qa expect" in this recording, so no repro spec — nothing in it could fail')
+    return null
+  }
+
+  const spec = reproSpec(issue, title, recording)
+  const path = join(REPRO_DIR, reproFileName(issue, title))
+  mkdirSync(REPRO_DIR, { recursive: true })
+  writeFileSync(path, spec, 'utf8')
+  console.log(`repro spec: ${path}`)
+  return spec
+}
+
+/**
+ * The spec as it goes on an issue: folded away, and marked so `qa replay` can
+ * write it back out in a checkout that does not have the file.
+ */
+function reproSection(issue: number, spec: string): string {
+  return `${REPRO_MARKER}\n<details><summary>Repro spec — <code>bun run qa replay ${issue}</code></summary>\n\n\`\`\`ts\n${spec}\`\`\`\n\n</details>`
+}
+
+/** A recording, as a Playwright spec on the e2e fixture. */
+function reproSpec(issue: number, title: string, recording: Recording): string {
+  let size = { width: 1440, height: 900 }
+  if (recording.window !== null) size = recording.window
+  const oneLineTitle = title.replace(/\s+/g, ' ')
+  const body = recording.lines.map((line) => `  ${line}`).join('\n')
+  return `// Repro for #${issue}: ${oneLineTitle}
+//
+// Recorded by \`bun run qa\` on ${headCommit()}. Each \`verify\` is a \`qa expect\`
+// from that session, written as the app should behave: it fails while the bug
+// is there. \`bun run qa replay ${issue}\` runs this file.
+
+import { test } from '../fixtures/groveApp'
+import { verify } from '../fixtures/repro'
+import * as qa from '../../../scripts/qa/steps'
+
+test(${JSON.stringify(`#${issue} ${oneLineTitle}`)}, async ({ grove }) => {
+  const page = grove.page
+  await qa.begin(grove.electron, page, { width: ${size.width}, height: ${size.height} })
+
+${body}
+})
+`
+}
+
+/**
+ * Run an issue's repro spec against a fresh build and a fresh profile.
+ *
+ *   qa replay 271              build, then run tests/e2e/repro/271-*.e2e.ts
+ *   qa replay 271 --no-build   against the last build
+ *   qa replay 271 --debug      pause at the start; attach with playwright cli
+ *
+ * Fails while the bug is there and passes once it is fixed, so the same command
+ * is the reproduction and the verification. Every check's screenshot lands in
+ * one directory under the shots, named pass or fail, ready for `qa evidence`.
+ */
+function replay(args: string[]): void {
+  const issue = positional(args)[0]
+  requireArgument(issue, 'replay <issue> [--no-build] [--debug]')
+  const spec = findReproSpec(issue)
+
+  const shots = join(paths.shots, `replay-${issue}-${stamp()}`)
+  const env: Record<string, string> = {
+    ...(process.env as Record<string, string>),
+    QA_REPLAY_SHOTS: shots,
+    PLAYWRIGHT_HTML_OPEN: 'never'
+  }
+  if (args.includes('--no-build')) env.GROVE_E2E_SKIP_BUILD = '1'
+  const playwrightArgs = [relativeToRoot(spec), '--reporter=list']
+  if (args.includes('--debug')) playwrightArgs.push('--debug=cli')
+
+  const result = spawnSync('bun', ['scripts/e2e.ts', ...playwrightArgs], {
+    cwd: repoRoot,
+    env,
+    stdio: 'inherit'
+  })
+  if (existsSync(shots)) console.log(`\nscreenshots: ${shots}`)
+  process.exit(result.status ?? 1)
+}
+
+/** The repro spec for an issue: in this checkout, or written out from the issue. */
+function findReproSpec(issue: string): string {
+  if (existsSync(REPRO_DIR)) {
+    const local = readdirSync(REPRO_DIR).find((name) => name.startsWith(`${issue}-`))
+    if (local !== undefined) return join(REPRO_DIR, local)
+  }
+
+  const viewed = spawnSync(
+    'gh',
+    ['issue', 'view', issue, '--repo', FINDINGS_REPO, '--json', 'title,body,comments'],
+    { encoding: 'utf8' }
+  )
+  if (viewed.status !== 0) throw new Error(`could not read #${issue}:\n${viewed.stderr.trim()}`)
+  const found = JSON.parse(viewed.stdout) as {
+    title: string
+    body: string
+    comments: Array<{ body: string }>
+  }
+  // The latest one wins: a repro attached later is a better one.
+  const texts = [found.body, ...found.comments.map((comment) => comment.body)].reverse()
+  let spec: string | null = null
+  for (const text of texts) {
+    spec = specFromBody(text)
+    if (spec !== null) break
+  }
+  if (spec === null) {
+    throw new Error(`#${issue} has no repro spec — it was filed without a "qa expect", or by hand`)
+  }
+
+  const path = join(REPRO_DIR, reproFileName(issue, found.title))
+  mkdirSync(REPRO_DIR, { recursive: true })
+  writeFileSync(path, spec, 'utf8')
+  console.log(`wrote the spec from #${issue} to ${path}`)
+  return path
+}
+
+/** `271-agent-mode-menu-runs-off-the-right.e2e.ts`: the issue first, so `qa replay` finds it by number. */
+function reproFileName(issue: number | string, title: string): string {
+  return `${issue}-${slug(title).replace(/^-+|-+$/g, '')}.e2e.ts`
+}
+
+/** The spec an issue body carries after its marker, or null. */
+function specFromBody(body: string): string | null {
+  const start = body.indexOf(REPRO_MARKER)
+  if (start === -1) return null
+  const fenced = /```ts\n([\s\S]*?)```/.exec(body.slice(start))
+  if (fenced === null) return null
+  return fenced[1]
+}
+
+function relativeToRoot(path: string): string {
+  return path.slice(repoRoot.length + 1)
 }
 
 /**
@@ -979,10 +1374,9 @@ function ensureShotBranch(): void {
   })
   if (found.status === 0) return
 
-  const main = github(
-    ['api', `repos/${FINDINGS_REPO}/git/ref/heads/main`, '--jq', '.object.sha'],
-    { encoding: 'utf8' }
-  )
+  const main = github(['api', `repos/${FINDINGS_REPO}/git/ref/heads/main`, '--jq', '.object.sha'], {
+    encoding: 'utf8'
+  })
   if (main.status !== 0) throw new Error(`could not read main:\n${main.stderr.trim()}`)
 
   const created = github(
@@ -1096,10 +1490,11 @@ function requireArgument(value: string | undefined, form: string): void {
 function usage(): void {
   console.log(`qa — drive grove the way a person does (bun run qa <command>)
 
-  start [--fresh] [--build] [--packaged <executable>]
+  start [--fresh] [--build] [--packaged <executable>] [--no-viewer]
                               launch a session on a display of its own; with
                               --packaged, a built app (dist/linux-unpacked/grove)
-                              instead of out/
+                              instead of out/. A VNC viewer opens on the display
+                              unless --no-viewer.
   stop                        kill the app, its children, and the display
 
 Seeing:
@@ -1130,10 +1525,27 @@ Every action takes --screenshot <label>, which photographs the result in the
 same connection the action ran in. A menu closes when the driver disconnects, so
 this is the only way to see one.
 
+Checking and replaying:
+
+  expect <check> … [--label …]   what is true when the app works; PASS or FAIL,
+                                 with a screenshot. inside-window <t>,
+                                 not-clipped <t>, not-overlapping <t> <other>,
+                                 visible <t>, gone <t>, eval <expr> <json>,
+                                 no-errors
+  recording [clear]              the Playwright code this session has recorded
+  repro <issue> [--no-post]      the recording as a filed issue's repro spec,
+                                 commented on the issue unless --no-post
+  replay <issue> [--no-build] [--debug]
+                                 run the issue's repro spec on a fresh profile:
+                                 fails while the bug is there, passes once fixed
+
   explore [scope] [--dry-run] [--model <model>]
                                  hand the app to a Claude Code instance to test
                                  (sonnet by default; haiku and opus also work)
-  finding --title … --body …     file what it found, screenshot attached
+  finding --title … --body … [--no-repro]
+                                 file what it found, screenshot attached, and
+                                 the recording as a repro spec when it has a
+                                 "qa expect" in it
   evidence --issue <n> --body …  show on an issue that its fix works
   charters                       the charters that ship with the harness
 

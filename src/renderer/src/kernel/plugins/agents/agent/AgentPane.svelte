@@ -10,6 +10,7 @@
   import Eye from 'phosphor-svelte/lib/Eye'
   import { onDestroy, onMount } from 'svelte'
   import { openFileInEditor, selectWorktree, store } from '../../../../lib/store.svelte'
+  import { openLocationInEditor } from '../../../../lib/agents/locations'
   import { keymap } from '../../../../lib/keymap.svelte'
   import { settings } from '../../../../lib/settings.svelte'
   import { review } from '../../../../lib/review.svelte'
@@ -17,6 +18,8 @@
   import {
     defaultSessionHarness,
     defaultSessionThinking,
+    defaultSessionGroveMode,
+    GROVE_MODE_DESCRIPTION,
     rememberedModel,
     rememberModel
   } from '../../../../lib/agents/newSession'
@@ -26,7 +29,13 @@
     type LiveSession,
     type SessionBadge
   } from '../../../../lib/agents/sessions.svelte'
-  import { pendingApprovals, visibleItems } from '../../../../lib/agents/transcript'
+  import {
+    pendingApprovals,
+    toolCallOut,
+    visibleItems,
+    type ToolItem
+  } from '../../../../lib/agents/transcript'
+  import { shellOutputs } from '../../../../lib/agents/shellOutput.svelte'
   import {
     liveAgentIds,
     parentIdOf,
@@ -34,19 +43,24 @@
     subagentOf,
     subagentSessions
   } from '../../../../lib/agents/sessionTree'
-  import { fileOfCall } from '../../../../lib/agents/tools'
+  import { displayOfCall, fileOfCall } from '../../../../lib/agents/tools'
   import { questionsOf } from '../../../../lib/agents/questions'
   import { modeOf, nextMode, type AgentMode } from '../../../../lib/agents/modes'
   import { nextThinkingLevel } from '../../../../lib/agents/thinking'
   import type {
     ClientEventBody,
+    CodeLocation,
     ConfirmationResult,
+    LocationState,
     SessionMeta,
+    SessionNote,
     ThinkingLevel,
     ToolInfo
   } from '../../../../lib/agents/types'
+  import { saveNotes as saveSessionNotes } from '../../../../lib/agents/api'
   import AgentApproval from './AgentApproval.svelte'
   import AgentComposer from './AgentComposer.svelte'
+  import AgentNotes from './AgentNotes.svelte'
   import AgentQuestion from './AgentQuestion.svelte'
   import AgentControls from './AgentControls.svelte'
   import AgentOverview from './AgentOverview.svelte'
@@ -75,6 +89,11 @@
     activeId ? agentSessions.live[activeId] : undefined
   )
   const snapshot = $derived(live?.snapshot ?? null)
+
+  // A session opened mid-command catches up on what its commands printed so far.
+  $effect(() => {
+    if (activeId) void shellOutputs.load(activeId)
+  })
 
   // Reviews are recorded under the harness that made the changes, so the queue
   // for this session is looked up by the harness it is running on.
@@ -124,6 +143,9 @@
   // harness named the tool.
   const questions = $derived(approvals[0] ? questionsOf(approvals[0].input) : null)
   const running = $derived(live?.transcript.status === 'running')
+  // The model is writing: the turn is running and not out on a tool call, which
+  // shows its own progress on its row.
+  const writing = $derived(running && live !== undefined && !toolCallOut(live.transcript))
   // A session standing for an agent the harness ran inside a tool call. It is a
   // record of that conversation: the runtime is the only thing that ever spoke
   // there, so there is nothing to write to.
@@ -148,7 +170,10 @@
   let overviewOpen = $state(false)
   let expandedTools = $state<Record<string, boolean>>({})
   let transcriptViewport = $state<HTMLDivElement>()
-  let composer = $state<{ focus: () => void }>()
+  let composer = $state<{ focus: () => boolean }>()
+  // The approval or question card standing in for the composer, while one is up.
+  let promptCard = $state<{ focus: () => void }>()
+  let rootEl = $state<HTMLDivElement>()
   let stickToBottom = $state(true)
   let disposeBindings: (() => void) | undefined
 
@@ -156,6 +181,7 @@
 
   const newSessionHarness = $derived(defaultSessionHarness())
   const rememberedThinking = $derived(defaultSessionThinking())
+  const newSessionGroveMode = $derived(defaultSessionGroveMode())
 
   const reviewMode = $derived(settings.get<string>('workbench.reviewMode') ?? 'pre')
   const reviewPause = $derived(settings.get<boolean>('workbench.reviewPause') ?? false)
@@ -256,7 +282,8 @@
       harness: newSessionHarness || undefined,
       provider: model?.provider,
       model: model?.model,
-      thinkingLevel: rememberedThinking
+      thinkingLevel: rememberedThinking,
+      groveMode: newSessionGroveMode
     })
   }
 
@@ -365,6 +392,14 @@
     void agentSessions.send(activeId, [{ type: 'user.unqueue', messageId }])
   }
 
+  /** Save the notes list; it comes back through the stream like any change. */
+  function saveNotes(notes: SessionNote[]): void {
+    if (!activeId) return
+    void saveSessionNotes(activeId, notes).catch((cause: unknown) =>
+      store.setError(`Could not save the notes: ${(cause as Error).message}`)
+    )
+  }
+
   // ── Session settings ────────────────────────────────────────────
 
   /** Switch the session's model, and remember it for new sessions on the same harness. */
@@ -415,6 +450,17 @@
     void agentSessions.update(activeId, { harness: next, ...model })
   }
 
+  /**
+   * Switch grove mode for a session that has not started yet, and for the ones
+   * started from now on. Like the harness, a started session keeps what it
+   * started with.
+   */
+  function pickGroveMode(groveMode: boolean): void {
+    void settings.set('workbench.agentGroveMode', groveMode, 'user')
+    if (!activeId || snapshot?.started) return
+    void agentSessions.update(activeId, { groveMode })
+  }
+
   function pickThinking(thinkingLevel: ThinkingLevel): void {
     void settings.set('workbench.agentThinking', thinkingLevel, 'user')
     if (!activeId) return
@@ -457,6 +503,11 @@
     openFileInEditor(worktreeId, absolute, options)
   }
 
+  /** Open a place an agent pointed at, as it was found in the code now. */
+  function openLocation(location: CodeLocation, state: LocationState = 'current'): void {
+    openLocationInEditor(worktreePath, location, state)
+  }
+
   function showChange(): void {
     if (gatedReview) void review.open(gatedReview.id)
   }
@@ -487,8 +538,8 @@
     return new Set(ids)
   }
 
-  function displayOf(name: string): ToolInfo['display'] {
-    return catalog.tools.find((tool) => tool.name === name)?.display
+  function displayOf(call: ToolItem): ToolInfo['display'] {
+    return displayOfCall(catalog.tools, call)
   }
 
   /** Opens the file of every call seen for the first time; only ever moves forward. */
@@ -500,7 +551,7 @@
       if (item.kind !== 'tool') continue
       if (followedCalls.has(item.toolUseId)) continue
       newlySeen.push(item.toolUseId)
-      const path = fileOfCall(displayOf(item.name), item.editedInput ?? item.input, worktreePath)
+      const path = fileOfCall(displayOf(item), item.editedInput ?? item.input, worktreePath)
       // The agent opened this, not the user: show it, but leave focus where the
       // user is, which is often mid-sentence in the composer.
       if (path) openFile(path, { focus: false })
@@ -525,6 +576,76 @@
 
   function focusComposer(): void {
     composer?.focus()
+  }
+
+  // ── Focus ───────────────────────────────────────────────────────
+  //
+  // However the pane gains focus, the keyboard goes where typing goes: the card
+  // the agent is waiting on, else the composer. Pane navigation, focus-follows-
+  // mouse and focus handed back after a dialog come through the delegate; a
+  // click from another pane lands on the pane's own surface and moves on from
+  // there.
+
+  /** Focuses the card the agent is waiting on, else the composer; false if neither can take it. */
+  function focusPromptTarget(): boolean {
+    if (overviewOpen) return false
+    if (promptCard) {
+      promptCard.focus()
+      return true
+    }
+    if (!composer) return false
+    return composer.focus()
+  }
+
+  $effect(() => keymap.registerPaneFocus(leafId, focusPromptTarget))
+
+  $effect(() => {
+    const leafEl = rootEl?.closest<HTMLElement>('[data-leaf]')
+    if (!leafEl) return
+    return steerSurfaceFocus(leafEl)
+  })
+
+  /**
+   * Moves focus that lands on the pane's surface — a click on the transcript —
+   * on to the composer, unless the press dragged out a selection, which keeps
+   * it. Returns the teardown.
+   */
+  function steerSurfaceFocus(leafEl: HTMLElement): () => void {
+    let pressed = false
+    const onPointerDown = (): void => {
+      pressed = true
+    }
+    const onPointerUp = (): void => {
+      pressed = false
+    }
+    const afterPress = (): void => {
+      if (!window.getSelection()?.isCollapsed) return
+      focusPromptTarget()
+    }
+    const onFocusIn = (event: FocusEvent): void => {
+      if (!landedOnSurface(event)) return
+      if (pressed) {
+        window.addEventListener('pointerup', afterPress, { once: true })
+        return
+      }
+      focusPromptTarget()
+    }
+    leafEl.addEventListener('pointerdown', onPointerDown, true)
+    window.addEventListener('pointerup', onPointerUp, true)
+    leafEl.addEventListener('focusin', onFocusIn)
+    return () => {
+      leafEl.removeEventListener('pointerdown', onPointerDown, true)
+      window.removeEventListener('pointerup', onPointerUp, true)
+      window.removeEventListener('pointerup', afterPress)
+      leafEl.removeEventListener('focusin', onFocusIn)
+    }
+  }
+
+  /** Whether focus landed on an element wrapping this pane rather than on a control inside it. */
+  function landedOnSurface(event: FocusEvent): boolean {
+    const target = event.target
+    if (!(target instanceof HTMLElement) || !rootEl) return false
+    return target.contains(rootEl)
   }
 
   function scrollTranscript(delta: number): void {
@@ -616,6 +737,8 @@
         context: leafId,
         group: 'Agent',
         description: 'Cycle permission mode',
+        // A card up for an answer uses Shift+Tab to step back through its choices.
+        when: () => shownApproval === undefined,
         run: cycleMode
       },
       {
@@ -679,7 +802,7 @@
   const errorText = $derived(live?.error || agentSessions.serverError || catalog.error)
 </script>
 
-<div class="flex h-full flex-col">
+<div bind:this={rootEl} class="flex h-full flex-col">
   {#if !worktree}
     <p class="px-3 py-3 text-xs text-dim">Select a worktree.</p>
   {:else}
@@ -733,6 +856,7 @@
         {running}
         toggleTool={(id) => (expandedTools = { ...expandedTools, [id]: !expandedTools[id] })}
         onOpenFile={openFile}
+        onOpenLocation={openLocation}
         onOpenAgent={openAgent}
         onOpenSession={selectSession}
         subagentSessions={agentCallSessions}
@@ -759,6 +883,17 @@
               {entry.label}
             </button>
           {/each}
+          <button
+            class="flex items-center gap-1.5 rounded border border-line px-2 py-1 text-2xs hover:bg-hover"
+            class:text-default={newSessionGroveMode}
+            class:text-dim={!newSessionGroveMode}
+            title={GROVE_MODE_DESCRIPTION}
+            aria-pressed={newSessionGroveMode}
+            onclick={() => pickGroveMode(!newSessionGroveMode)}
+          >
+            <Icon icon="grove:grove" class="size-3.5 shrink-0" />
+            Grove mode
+          </button>
         </div>
         <button
           class="rounded-md bg-action px-3 py-1 text-xs text-action-fg"
@@ -769,7 +904,7 @@
       </div>
     {/if}
 
-    {#if running && !overviewOpen}
+    {#if writing && !overviewOpen}
       <AgentWorkingBar tokensLabel={contextLabel} />
     {/if}
 
@@ -822,6 +957,7 @@
              what lets it run, so the card asks rather than asking permission. -->
           {#key shownApproval.toolUseId}
             <AgentQuestion
+              bind:this={promptCard}
               {questions}
               input={shownApproval.input}
               onAnswer={answerQuestion}
@@ -833,6 +969,7 @@
              answered. Keyed so its selection state resets per request. -->
           {#key shownApproval.toolUseId}
             <AgentApproval
+              bind:this={promptCard}
               item={shownApproval}
               tool={catalog.toolNamed(shownApproval.name)}
               batch={gatedReview}
@@ -879,6 +1016,7 @@
               onInterrupt={interrupt}
               onCycleMode={cycleMode}
               onBack={showOverview}
+              header={live ? notesHeader : undefined}
             />
           {/if}
 
@@ -887,6 +1025,7 @@
               harness={snapshot.harness}
               harnesses={catalog.harnesses}
               started={snapshot.started}
+              groveMode={snapshot.groveMode}
               provider={snapshot.provider}
               model={snapshot.model}
               thinking={snapshot.thinkingLevel}
@@ -899,6 +1038,7 @@
               {costLabel}
               contextTokens={snapshot.context.usedTokens}
               onPickHarness={pickHarness}
+              onPickGroveMode={pickGroveMode}
               onPickModel={pickModel}
               onRequestKey={requestCredential}
               onAddEndpoint={() => (addingEndpoint = true)}
@@ -925,3 +1065,10 @@
     onClose={closeCredentialPrompt}
   />
 {/if}
+
+<!-- The notes list, drawn as the top of the composer rather than a card of its own. -->
+{#snippet notesHeader()}
+  {#if live}
+    <AgentNotes notes={live.transcript.notes} tasks={live.transcript.tasks} onSave={saveNotes} />
+  {/if}
+{/snippet}

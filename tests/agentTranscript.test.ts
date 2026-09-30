@@ -1,13 +1,12 @@
-// Ported from nib's tests/renderer.test.ts, pointed at grove's vendored copies of
-// the fold. It exists to catch a re-vendor that changed behaviour: if these stop
-// passing after copying nib's files over, the transcript renders something other
-// than what nib intends.
+// The renderer's fold of a session log — ACP updates as the harness reported
+// them, and grove's own events — into what the agent pane draws.
 
 import { describe, expect, test } from 'bun:test'
 import {
   applyEvent,
   createTranscript,
   pendingApprovals,
+  toolCallOut,
   visibleItems,
   visiblePanels,
   type TranscriptItem
@@ -46,16 +45,70 @@ function fold(bodies: EventBody[]) {
   return state
 }
 
+/** A piece of the agent's message, as ACP streams it. */
+function chunk(text: string, messageId?: string): EventBody {
+  return {
+    type: 'update',
+    update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text }, messageId }
+  }
+}
+
+function thought(text: string): EventBody {
+  return {
+    type: 'update',
+    update: { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text } }
+  }
+}
+
+/** A call as the harness first reports it. */
+function toolCall(toolCallId: string, name: string, rawInput: unknown): EventBody {
+  return {
+    type: 'update',
+    update: { sessionUpdate: 'tool_call', toolCallId, name, title: name, status: 'in_progress', rawInput }
+  } as EventBody
+}
+
+/** A call settling with a text result. */
+function toolResult(
+  toolCallId: string,
+  text: string,
+  status: 'completed' | 'failed' = 'completed'
+): EventBody {
+  return {
+    type: 'update',
+    update: {
+      sessionUpdate: 'tool_call_update',
+      toolCallId,
+      status,
+      content: [{ type: 'content', content: { type: 'text', text } }]
+    }
+  }
+}
+
+/** A call parked on the user's approval. */
+function permission(toolCallId: string, name: string, rawInput: unknown): EventBody {
+  return {
+    type: 'permission',
+    request: { sessionId: 'h1', toolCall: { toolCallId, name, title: name, rawInput }, options: [] }
+  } as EventBody
+}
+
+/** The harness's plan with one entry. */
+function plan(status: 'pending' | 'in_progress' | 'completed'): EventBody {
+  return {
+    type: 'update',
+    update: { sessionUpdate: 'plan', entries: [{ content: 'Read', status, priority: 'medium' }] }
+  }
+}
+
 describe('transcript fold', () => {
   test('assembles a streamed agent turn', () => {
     const state = fold([
       { type: 'user.message', content: [{ type: 'text', text: 'hi' }] },
       { type: 'session.status_running' },
-      { type: 'agent.message_start' },
-      { type: 'agent.thinking_delta', text: 'hmm' },
-      { type: 'agent.message_delta', text: 'he' },
-      { type: 'agent.message_delta', text: 'llo' },
-      { type: 'agent.message_end', content: [], stopReason: 'end_turn' },
+      thought('hmm'),
+      chunk('he'),
+      chunk('llo'),
       { type: 'session.status_idle', stopReason: 'end_turn' }
     ])
 
@@ -69,26 +122,37 @@ describe('transcript fold', () => {
         references: [],
         pending: false
       },
-      { kind: 'agent', seq: 3, eventId: 'evt_3', thinking: 'hmm', text: 'hello', streaming: false }
+      {
+        kind: 'agent',
+        seq: 3,
+        eventId: 'evt_3',
+        messageId: null,
+        thinking: 'hmm',
+        text: 'hello',
+        streaming: false
+      }
     ])
     expect(state.status).toBe('idle')
     expect(state.stopReason).toBe('end_turn')
   })
 
   test('a message written mid-turn waits until the agent starts its next message', () => {
-    const steered = { type: 'user.message', content: [{ type: 'text', text: 'also this' }] } as const
+    const steered = {
+      type: 'user.message',
+      content: [{ type: 'text', text: 'also this' }]
+    } as const
     const waiting = fold([
       { type: 'user.message', content: [{ type: 'text', text: 'go' }] },
       { type: 'session.status_running' },
-      { type: 'agent.message_start' },
+      chunk('on it'),
       steered
     ])
     const taken = fold([
       { type: 'user.message', content: [{ type: 'text', text: 'go' }] },
       { type: 'session.status_running' },
-      { type: 'agent.message_start' },
+      chunk('on it'),
       steered,
-      { type: 'agent.message_start' }
+      chunk('and that too')
     ])
 
     expect(waiting.items.map((item) => item.kind === 'user' && item.pending)).toEqual([
@@ -99,10 +163,10 @@ describe('transcript fold', () => {
     expect(taken.items.some((item) => item.kind === 'user' && item.pending)).toBe(false)
   })
 
-  test('a cleared conversation empties the transcript without losing the log', () => {
+  test('a new harness conversation empties the transcript without losing the log', () => {
     const state = fold([
       { type: 'user.message', content: [{ type: 'text', text: 'first' }] },
-      { type: 'session.cleared' },
+      { type: 'session_changed', sessionId: 'h2' },
       { type: 'user.message', content: [{ type: 'text', text: 'second' }] }
     ])
 
@@ -110,13 +174,13 @@ describe('transcript fold', () => {
     expect(state.items).toHaveLength(2)
   })
 
-  test('a harness-run command shows its output', () => {
+  test('a harness-run command reads back as the line typed, its output as the agent', () => {
     const state = fold([
       { type: 'user.command', name: 'usage', args: '' },
-      { type: 'session.command_output', text: 'Session cost: $0.42' }
+      chunk('Session cost: $0.42')
     ])
 
-    expect(visibleItems(state).map((item) => item.kind)).toEqual(['user', 'commandOutput'])
+    expect(visibleItems(state).map((item) => item.kind)).toEqual(['user', 'agent'])
     expect(textsOf(visibleItems(state))).toEqual(['/usage', 'Session cost: $0.42'])
   })
 
@@ -192,29 +256,22 @@ describe('transcript fold', () => {
     })
   })
 
-  test('drops an assistant turn that only called tools', () => {
-    const state = fold([
-      { type: 'agent.message_start' },
-      {
-        type: 'agent.message_end',
-        content: [{ type: 'tool_use', id: 't1', name: 'bash', input: {} }],
-        stopReason: 'tool_use'
-      }
-    ])
+  test('a turn that only called tools leaves no empty agent block', () => {
+    const state = fold([toolCall('t1', 'bash', {})])
 
-    expect(state.items).toEqual([])
+    expect(state.items.map((item) => item.kind)).toEqual(['tool'])
+  })
+
+  test('a new message id starts a new agent block', () => {
+    const state = fold([chunk('first', 'm1'), chunk('second', 'm2')])
+
+    expect(textsOf(state.items)).toEqual(['first', 'second'])
   })
 
   test("records an edited tool input alongside the model's own", () => {
     const state = fold([
-      {
-        type: 'agent.tool_use',
-        toolUseId: 't1',
-        name: 'bash',
-        input: { command: 'rm -rf /' },
-        permission: 'ask'
-      },
-      { type: 'agent.tool_use_edited', toolUseId: 't1', name: 'bash', input: { command: 'ls' } }
+      permission('t1', 'bash', { command: 'rm -rf /' }),
+      { type: 'user.tool_confirmation', toolUseId: 't1', result: 'allow', input: { command: 'ls' } }
     ])
 
     expect(state.items[0]).toMatchObject({
@@ -271,9 +328,9 @@ describe('transcript fold', () => {
   test('branching takes the abandoned turns out of view without losing them', () => {
     const state = fold([
       { type: 'user.message', content: [{ type: 'text', text: 'first' }] }, // 1
-      { type: 'agent.message_start' }, // 2
-      { type: 'agent.message_delta', text: 'reply' }, // 3
-      { type: 'agent.message_end', content: [], stopReason: 'end_turn' }, // 4
+      chunk('rep'), // 2
+      chunk('ly'), // 3
+      { type: 'session.status_idle', stopReason: 'end_turn' }, // 4
       { type: 'user.message', content: [{ type: 'text', text: 'wrong turn' }] }, // 5
       { type: 'session.branched', fromSeq: 4 } // 6
     ])
@@ -298,11 +355,9 @@ describe('transcript fold', () => {
   test("a new turn after branching does not reuse the abandoned branch's open message", () => {
     const state = fold([
       { type: 'user.message', content: [{ type: 'text', text: 'first' }] }, // 1
-      { type: 'agent.message_start' }, // 2
-      { type: 'agent.message_delta', text: 'half a thou' }, // 3
-      { type: 'session.branched', fromSeq: 1 }, // 4
-      { type: 'agent.message_start' }, // 5
-      { type: 'agent.message_delta', text: 'a fresh answer' } // 6
+      chunk('half a thou'), // 2
+      { type: 'session.branched', fromSeq: 1 }, // 3
+      chunk('a fresh answer') // 4
     ])
 
     expect(textsOf(visibleItems(state))).toEqual(['first', 'a fresh answer'])
@@ -319,28 +374,10 @@ describe('transcript fold', () => {
     expect(textsOf(visibleItems(state))).toEqual(['starting over'])
   })
 
-  test('falls back to assembled blocks when no deltas arrive', () => {
-    const state = fold([
-      { type: 'agent.message_start' },
-      {
-        type: 'agent.message_end',
-        content: [{ type: 'text', text: 'done' }],
-        stopReason: 'end_turn'
-      }
-    ])
-
-    expect(state.items[0]).toMatchObject({ kind: 'agent', text: 'done', streaming: false })
-  })
-
   test('tracks a tool call from approval to result', () => {
     const state = fold([
-      {
-        type: 'agent.tool_use',
-        toolUseId: 't1',
-        name: 'bash',
-        input: { command: 'ls' },
-        permission: 'ask'
-      },
+      toolCall('t1', 'bash', { command: 'ls' }),
+      permission('t1', 'bash', { command: 'ls' }),
       { type: 'session.status_idle', stopReason: 'requires_action' }
     ])
 
@@ -349,51 +386,62 @@ describe('transcript fold', () => {
     applyEvent(state, event({ type: 'user.tool_confirmation', toolUseId: 't1', result: 'allow' }))
     expect(state.items[0]).toMatchObject({ status: 'running' })
 
-    applyEvent(
-      state,
-      event({
-        type: 'agent.tool_result',
-        toolUseId: 't1',
-        name: 'bash',
-        content: 'a\nb',
-        isError: false
-      })
-    )
+    applyEvent(state, event(toolResult('t1', 'a\nb')))
     expect(state.items[0]).toMatchObject({ status: 'ok', result: 'a\nb' })
     expect(pendingApprovals(state)).toEqual([])
   })
 
-  // The Claude adapter reports a call as the model makes it and only then learns
-  // the harness wants it approved, so the same call arrives twice.
-  test('a re-announced tool call becomes pending in place', () => {
+  // The working bar is for the model writing; while a call is out, the call's
+  // own row says the agent is busy.
+  test('knows when the turn is out on a tool call rather than with the model', () => {
     const state = fold([
-      {
-        type: 'agent.tool_use',
-        toolUseId: 't1',
-        name: 'write',
-        input: { path: 'a' },
-        permission: 'allow'
-      },
-      {
-        type: 'agent.tool_use',
-        toolUseId: 't1',
-        name: 'write',
-        input: { path: 'a' },
-        permission: 'ask'
-      }
+      { type: 'session.status_running' },
+      chunk('Let me look.')
     ])
+    expect(toolCallOut(state)).toBe(false)
+
+    applyEvent(state, event(permission('t1', 'bash', {})))
+    expect(toolCallOut(state)).toBe(true)
+
+    applyEvent(state, event({ type: 'user.tool_confirmation', toolUseId: 't1', result: 'allow' }))
+    expect(toolCallOut(state)).toBe(true)
+
+    applyEvent(state, event(toolResult('t1', '')))
+    expect(toolCallOut(state)).toBe(false)
+  })
+
+  // A harness reports a call as the model makes it and only then asks for it to
+  // be approved, so the same call arrives twice.
+  test('a call asked about after it was reported becomes pending in place', () => {
+    const state = fold([toolCall('t1', 'write', { path: 'a' }), permission('t1', 'write', { path: 'a' })])
 
     expect(state.items).toHaveLength(1)
     expect(state.items[0]).toMatchObject({ status: 'pending', permission: 'ask' })
     expect(pendingApprovals(state).map((tool) => tool.toolUseId)).toEqual(['t1'])
   })
 
+  // Claude Code reports a slow MCP call as in progress every 30 seconds,
+  // whether or not it has been approved yet.
+  test('a pending call stays pending through progress reports until it is decided', () => {
+    const heartbeat = {
+      type: 'update',
+      update: { sessionUpdate: 'tool_call_update', toolCallId: 't1', status: 'in_progress' }
+    } as EventBody
+    const state = fold([toolCall('t1', 'rename', {}), permission('t1', 'rename', {}), heartbeat])
+
+    expect(pendingApprovals(state).map((tool) => tool.toolUseId)).toEqual(['t1'])
+
+    applyEvent(state, event({ type: 'user.tool_confirmation', toolUseId: 't1', result: 'allow' }))
+    applyEvent(state, event(heartbeat))
+    expect(state.items[0]).toMatchObject({ status: 'running' })
+  })
+
   test('marks a denied tool call and an errored result', () => {
     const state = fold([
-      { type: 'agent.tool_use', toolUseId: 't1', name: 'write', input: {}, permission: 'ask' },
+      permission('t1', 'write', {}),
       { type: 'user.tool_confirmation', toolUseId: 't1', result: 'deny' },
-      { type: 'agent.tool_use', toolUseId: 't2', name: 'read', input: {}, permission: 'allow' },
-      { type: 'agent.tool_result', toolUseId: 't2', name: 'read', content: 'boom', isError: true }
+      toolCall('t2', 'read', {}),
+      toolResult('t2', 'boom', 'failed')
     ])
 
     expect(state.items[0]).toMatchObject({ status: 'denied' })
@@ -512,5 +560,40 @@ describe('surfaces', () => {
     // Still in the fold, which is what lets branching back put it on screen again.
     expect(state.items.some((item) => item.kind === 'surface')).toBe(true)
     expect(visiblePanels(state)).toEqual([])
+  })
+})
+
+describe('notes and the harness plan', () => {
+  test('keep the last version of each, outside the conversation', () => {
+    const state = fold([
+      { type: 'user.message', content: [{ type: 'text', text: 'hi' }] },
+      {
+        type: 'session.notes',
+        notes: [{ id: 'n1', text: 'Ask about the API', done: false, author: 'user' }]
+      },
+      plan('in_progress'),
+      plan('completed')
+    ])
+
+    expect(state.notes).toEqual([
+      { id: 'n1', text: 'Ask about the API', done: false, author: 'user' }
+    ])
+    expect(state.tasks).toEqual([{ id: '1', text: 'Read', status: 'completed' }])
+    // Neither is a step in the conversation, so the head is still the message.
+    expect(state.head).toBe(1)
+    expect(textsOf(visibleItems(state))).toEqual(['hi'])
+  })
+
+  test('survive the harness starting a new conversation', () => {
+    const state = fold([
+      { type: 'user.message', content: [{ type: 'text', text: 'hi' }] },
+      {
+        type: 'session.notes',
+        notes: [{ id: 'n1', text: 'Ask about the API', done: false, author: 'user' }]
+      },
+      { type: 'session_changed', sessionId: 'h2' }
+    ])
+
+    expect(state.notes).toHaveLength(1)
   })
 })

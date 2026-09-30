@@ -9,6 +9,7 @@
 // the child's working-out, which the parent can read in its own pane if it cares.
 
 import type { SessionEvent } from '../../shared/agents'
+import { lastAgentMessage } from './acpLog'
 import type { AgentRoster } from './roster'
 import { signatureOfSession } from './roster'
 import type { SessionStore, StoredSession } from './store'
@@ -32,12 +33,11 @@ export interface HandoffBridgeOptions {
 }
 
 export class AgentHandoffBridge {
-  // The last thing each session said, kept until its turn ends.
-  private lastMessage = new Map<string, string>()
-  // The answer being streamed, for harnesses that only report deltas.
-  private streaming = new Map<string, string>()
   // Sessions this bridge removed itself, whose parent has already been told.
   private cleanedUp = new Set<string>()
+  // The last message each session reported, so a turn that says nothing new —
+  // a command, a second idle — does not send the previous answer again.
+  private reported = new Map<string, number>()
 
   constructor(private options: HandoffBridgeOptions) {}
 
@@ -46,58 +46,26 @@ export class AgentHandoffBridge {
     return this.options.store.subscribe((event) => void this.handle(event))
   }
 
-  /**
-   * Follow what a session is saying.
-   *
-   * Harnesses differ on how an answer arrives: Claude and Codex close each
-   * message with the blocks it was made of, pi only ever streams deltas. Both
-   * are followed, and a closing message wins over what was streamed towards it.
-   */
+  /** A turn ended: whatever the agent said last in it is its answer. */
   private async handle(event: SessionEvent): Promise<void> {
-    if (event.type === 'agent.message_start') {
-      this.streaming.delete(event.sessionId)
-      return
-    }
-    if (event.type === 'agent.message_delta') {
-      const sofar = this.streaming.get(event.sessionId) ?? ''
-      this.streaming.set(event.sessionId, sofar + event.text)
-      return
-    }
-    if (event.type === 'agent.message_end') {
-      this.streaming.delete(event.sessionId)
-      this.remember(event.sessionId, textOf(event.content))
-      return
-    }
-    if (event.type === 'session.status_idle') {
-      this.settleStreamed(event.sessionId)
-      await this.reportBack(event.sessionId)
-    }
-  }
-
-  /** Whatever was streamed and never closed is still the session's last word. */
-  private settleStreamed(sessionId: string): void {
-    const streamed = this.streaming.get(sessionId)
-    this.streaming.delete(sessionId)
-    if (!streamed) return
-    this.remember(sessionId, streamed.trim())
-  }
-
-  private remember(sessionId: string, text: string): void {
-    if (text.length === 0) return
-    this.lastMessage.set(sessionId, text)
+    if (event.type !== 'session.status_idle') return
+    const last = lastAgentMessage(this.options.store.peekEvents(event.sessionId))
+    if (!last) return
+    const previous = this.reported.get(event.sessionId)
+    if (previous !== undefined && previous >= last.seq) return
+    this.reported.set(event.sessionId, last.seq)
+    await this.reportBack(event.sessionId, last.text.trim())
   }
 
   /**
    * A child's turn ended: hand its answer to the agent that started it.
    *
-   * The text is cleared either way, so a turn that produces nothing new — an
-   * interrupted run, a turn spent entirely in tools — reports nothing rather
-   * than sending the previous answer a second time.
+   * Only a message said since the last prompt counts, so a turn that produces
+   * nothing new — an interrupted run, a turn spent entirely in tools — reports
+   * nothing rather than sending the previous answer a second time.
    */
-  private async reportBack(sessionId: string): Promise<void> {
-    const text = this.lastMessage.get(sessionId)
-    this.lastMessage.delete(sessionId)
-    if (!text) return
+  private async reportBack(sessionId: string, text: string): Promise<void> {
+    if (text.length === 0) return
 
     const session = await this.options.store.get(sessionId)
     const parentSessionId = session?.labels[PARENT_LABEL]
@@ -130,8 +98,6 @@ export class AgentHandoffBridge {
    * removal is the thing it asked for.
    */
   async reportClosed(session: StoredSession): Promise<void> {
-    this.lastMessage.delete(session.id)
-    this.streaming.delete(session.id)
     if (this.cleanedUp.delete(session.id)) return
 
     const from = signatureOfSession(session)
@@ -172,12 +138,3 @@ const CLOSED_NOTICE =
 /** What a spawned agent is told when the agent that briefed it is closed. */
 const REQUESTER_CLOSED_NOTICE =
   'The agent that gave you this task was closed and is no longer reachable. Stop when the current step is done, and report to the user here instead.'
-
-/** The text of an assistant message, with non-text blocks left out. */
-function textOf(content: { type: string; text?: string }[]): string {
-  return content
-    .filter((block) => block.type === 'text' && typeof block.text === 'string')
-    .map((block) => block.text as string)
-    .join('\n')
-    .trim()
-}

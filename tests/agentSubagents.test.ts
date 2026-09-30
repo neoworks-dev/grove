@@ -9,19 +9,12 @@ import { describe, expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import {
-  assistantEvents,
-  signalsWork,
-  streamEvents,
-  toolResultEvents
-} from '../src/main/agents/harnesses/claude'
 import { HarnessRegistry, type HarnessRunOptions } from '../src/main/agents/harness'
 import { AgentService } from '../src/main/agents/service'
 import { SessionStore } from '../src/main/agents/store'
 import { SUBAGENT_LABEL } from '../src/main/agents/subagents'
 import { PARENT_LABEL } from '../src/main/agents/handoffBridge'
-import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk'
-import type { SessionEvent } from '../src/shared/agents'
+import type { ServerEventBody, SessionEvent } from '../src/shared/agents'
 
 const EXPLORER = { toolUseId: 'toolu_task', title: 'explore', description: 'map the review flow' }
 
@@ -67,7 +60,8 @@ async function setup(): Promise<Fixture> {
       liveModelSwitch: true,
       thinking: true,
       steering: true,
-      groveTools: true
+      groveTools: true,
+      groveMode: true
     },
     probe: async () => ({ available: true, detail: null }),
     offering: async () => ({
@@ -83,8 +77,7 @@ async function setup(): Promise<Fixture> {
       const run = new FakeRun(options)
       runs.push(run)
       return run
-    },
-    intentOf: () => null
+    }
   })
 
   const service = new AgentService({
@@ -117,9 +110,19 @@ async function others(
   return sessions.filter((session) => session.id !== sessionId)
 }
 
+/** An agent message chunk as switchboard reports one. */
+function chunk(text: string): ServerEventBody {
+  return { type: 'update', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } } }
+}
+
+/** The text of every message chunk on a log. */
 function texts(events: SessionEvent[]): string[] {
-  const deltas = events.filter((event) => event.type === 'agent.message_delta')
-  return deltas.map((event) => event.text)
+  const found: string[] = []
+  for (const event of events) {
+    if (event.type !== 'update' || event.update.sessionUpdate !== 'agent_message_chunk') continue
+    if (event.update.content.type === 'text') found.push(event.update.content.text)
+  }
+  return found
 }
 
 describe('a harness running its own agent', () => {
@@ -127,7 +130,7 @@ describe('a harness running its own agent', () => {
     const fixture = await setup()
     try {
       const { sessionId, run } = await running(fixture)
-      run.options.emitFrom(EXPLORER, { type: 'agent.message_delta', text: 'looking' })
+      run.options.emitFrom(EXPLORER, chunk('looking'))
       await settle()
 
       const [child] = await others(fixture, sessionId)
@@ -147,13 +150,13 @@ describe('a harness running its own agent', () => {
     const fixture = await setup()
     try {
       const { sessionId, run } = await running(fixture)
-      run.options.emitFrom(EXPLORER, { type: 'agent.message_delta', text: 'looking' })
+      run.options.emitFrom(EXPLORER, chunk('looking'))
       await settle()
 
       const [child] = await others(fixture, sessionId)
       const events = await fixture.service.listEvents(child.id)
       expect(events[0].type).toBe('user.message')
-      expect(events[1]).toMatchObject({ type: 'agent.message_delta', text: 'looking' })
+      expect(events[1]).toMatchObject(chunk('looking'))
     } finally {
       await fixture.cleanup()
     }
@@ -163,9 +166,9 @@ describe('a harness running its own agent', () => {
     const fixture = await setup()
     try {
       const { sessionId, run } = await running(fixture)
-      run.options.emit({ type: 'agent.message_delta', text: 'the answer is ' })
-      run.options.emitFrom(EXPLORER, { type: 'agent.message_delta', text: 'still looking' })
-      run.options.emit({ type: 'agent.message_delta', text: 'forty-two' })
+      run.options.emit(chunk('the answer is '))
+      run.options.emitFrom(EXPLORER, chunk('still looking'))
+      run.options.emit(chunk('forty-two'))
       await settle()
 
       expect(texts(await fixture.service.listEvents(sessionId))).toEqual([
@@ -181,10 +184,10 @@ describe('a harness running its own agent', () => {
     const fixture = await setup()
     try {
       const { sessionId, run } = await running(fixture)
-      run.options.emitFrom(EXPLORER, { type: 'agent.message_delta', text: 'one' })
+      run.options.emitFrom(EXPLORER, chunk('one'))
       run.options.emitFrom(
         { toolUseId: 'toolu_other', title: 'review' },
-        { type: 'agent.message_delta', text: 'two' }
+        chunk('two')
       )
       await settle()
 
@@ -201,9 +204,9 @@ describe('a harness running its own agent', () => {
     const fixture = await setup()
     try {
       const { sessionId, run } = await running(fixture)
-      run.options.emitFrom(EXPLORER, { type: 'agent.message_delta', text: 'one ' })
+      run.options.emitFrom(EXPLORER, chunk('one '))
       await settle()
-      run.options.emitFrom(EXPLORER, { type: 'agent.message_delta', text: 'two' })
+      run.options.emitFrom(EXPLORER, chunk('two'))
       await settle()
 
       const children = await others(fixture, sessionId)
@@ -218,14 +221,11 @@ describe('a harness running its own agent', () => {
     const fixture = await setup()
     try {
       const { sessionId, run } = await running(fixture)
-      run.options.emitFrom(EXPLORER, { type: 'agent.message_delta', text: 'looking' })
+      run.options.emitFrom(EXPLORER, chunk('looking'))
       await settle()
       run.options.emit({
-        type: 'agent.tool_result',
-        toolUseId: 'toolu_task',
-        name: 'Task',
-        content: 'here is what I found',
-        isError: false
+        type: 'update',
+        update: { sessionUpdate: 'tool_call_update', toolCallId: 'toolu_task', status: 'completed' }
       })
       await settle()
 
@@ -240,7 +240,7 @@ describe('a harness running its own agent', () => {
     const fixture = await setup()
     try {
       const { sessionId, run } = await running(fixture)
-      run.options.emitFrom(EXPLORER, { type: 'agent.message_delta', text: 'looking' })
+      run.options.emitFrom(EXPLORER, chunk('looking'))
       await settle()
 
       const [child] = await others(fixture, sessionId)
@@ -255,82 +255,5 @@ describe('a harness running its own agent', () => {
     } finally {
       await fixture.cleanup()
     }
-  })
-})
-
-describe('what a Claude message carries', () => {
-  test('an assistant message announces its calls and ends its block', () => {
-    const content = [
-      { type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'ls' } },
-      { type: 'text', text: 'done' }
-    ]
-
-    expect(assistantEvents(content).map((event) => event.type)).toEqual([
-      'agent.tool_use',
-      'agent.message_end'
-    ])
-  })
-
-  test('grove knows its own tools by the name it gave them', () => {
-    const content = [{ type: 'tool_use', id: 'toolu_1', name: 'mcp__grove__review', input: {} }]
-
-    expect(assistantEvents(content)[0]).toMatchObject({ name: 'review' })
-  })
-
-  test('a user message carries what the tools answered', () => {
-    const content = [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'ok' }]
-
-    expect(toolResultEvents(content)).toEqual([
-      { type: 'agent.tool_result', toolUseId: 'toolu_1', name: '', content: 'ok', isError: false }
-    ])
-  })
-
-  test('an image a tool returned is stored and travels as a blob reference', () => {
-    const content = [
-      {
-        type: 'tool_result',
-        tool_use_id: 'toolu_1',
-        content: [
-          { type: 'text', text: 'screenshot taken' },
-          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0K' } }
-        ]
-      }
-    ]
-    const stored: string[] = []
-
-    const events = toolResultEvents(content, (image) => {
-      stored.push(`${image.mediaType}:${image.data}`)
-      return { type: 'image', ref: 'blob-1', mediaType: image.mediaType }
-    })
-
-    expect(stored).toEqual(['image/png:iVBORw0K'])
-    expect(events).toEqual([
-      {
-        type: 'agent.tool_result',
-        toolUseId: 'toolu_1',
-        name: '',
-        content: 'screenshot taken',
-        isError: false,
-        images: [{ type: 'image', ref: 'blob-1', mediaType: 'image/png' }]
-      }
-    ])
-  })
-
-  test('deltas stream as text and thinking separately', () => {
-    const text = { type: 'content_block_delta', delta: { type: 'text_delta', text: 'hello' } }
-    const thinking = {
-      type: 'content_block_delta',
-      delta: { type: 'thinking_delta', thinking: 'hm' }
-    }
-
-    expect(streamEvents(text)).toEqual([{ type: 'agent.message_delta', text: 'hello' }])
-    expect(streamEvents(thinking)).toEqual([{ type: 'agent.thinking_delta', text: 'hm' }])
-  })
-
-  test('anything the model produces means the session is working', () => {
-    for (const type of ['stream_event', 'assistant', 'user'] as SDKMessage['type'][]) {
-      expect(signalsWork({ type } as SDKMessage)).toBe(true)
-    }
-    expect(signalsWork({ type: 'result' } as SDKMessage)).toBe(false)
   })
 })

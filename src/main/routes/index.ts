@@ -23,9 +23,7 @@ import { endpointRoutes } from './endpoints'
 import { secretsRoutes } from './secrets'
 import { settingsRoutes } from './settings'
 import { miscRoutes } from './misc'
-import { claudeHarness } from '../agents/harnesses/claude'
-import { codexHarness } from '../agents/harnesses/codex'
-import { piHarness } from '../agents/harnesses/pi'
+import { switchboardHarnesses } from '../agents/switchboard/harnesses'
 
 export const routePlugins = [
   repoRoutes,
@@ -52,7 +50,5 @@ export const routePlugins = [
   miscRoutes,
   // Agent harnesses. Each registers itself into the harness registry and can be
   // unloaded without the rest noticing; adding another means adding a file here.
-  claudeHarness,
-  codexHarness,
-  piHarness
+  switchboardHarnesses
 ]

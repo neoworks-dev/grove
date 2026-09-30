@@ -11,12 +11,14 @@ import { groveTools } from '../src/main/agents/tools'
 import { AgentRoster, type AgentPeer } from '../src/main/agents/roster'
 import { AgentHandoffBridge, DISPOSE_LABEL, PARENT_LABEL } from '../src/main/agents/handoffBridge'
 import { AGENT_ID_LABEL } from '../src/main/agents/identity'
-import { groveSystemPrompt } from '../src/main/agents/systemPrompt'
+import { agentSection } from '../src/main/agents/systemPrompt'
 import { senderOf, type AppItem } from '../src/renderer/src/lib/agents/transcript'
 import type { GroveTool, GroveToolContext } from '../src/main/agents/harness'
 import type { SessionEvent, SessionMeta } from '../src/shared/agents'
+import type { Worktree } from '../src/shared/types'
 
 interface Posted {
+  root: string
   from: string
   text: string
   to: string | undefined
@@ -51,6 +53,12 @@ function sessionMeta(id: string, title: string, overrides: Partial<SessionMeta> 
   }
 }
 
+interface CreatedSession {
+  workspace: string
+  title: string
+  labels: Record<string, string> | undefined
+}
+
 /** A roster over a fixed session list, recording what it was asked to deliver. */
 function testRoster(
   sessions: SessionMeta[],
@@ -58,17 +66,25 @@ function testRoster(
 ): {
   roster: AgentRoster
   delivered: Delivered[]
-  created: { title: string; labels: Record<string, string> | undefined }[]
+  created: CreatedSession[]
   removed: string[]
 } {
   const delivered: Delivered[] = []
-  const created: { title: string; labels: Record<string, string> | undefined }[] = []
+  const created: CreatedSession[] = []
   const removed: string[] = []
   const agents = {
     listSessions: () => Promise.resolve(sessions),
     listEvents: (sessionId: string) => Promise.resolve(logs[sessionId] ?? []),
-    createSession: (options: { title?: string; labels?: Record<string, string> }) => {
-      created.push({ title: options.title ?? '', labels: options.labels })
+    createSession: (options: {
+      workspace: string
+      title?: string
+      labels?: Record<string, string>
+    }) => {
+      created.push({
+        workspace: options.workspace,
+        title: options.title ?? '',
+        labels: options.labels
+      })
       const spawned = sessionMeta('spawned', options.title ?? '', {
         labels: { [AGENT_ID_LABEL]: 'id-spawned', ...options.labels }
       })
@@ -133,21 +149,58 @@ function testRoster(
   return { roster, delivered, created, removed }
 }
 
+// The note and show tools are not what these tests are about. Of the
+// worktrees, only the one a spawned agent may be sent to matters.
+const WORKTREES: Worktree[] = [
+  worktree('main', '/repo', { isMain: true }),
+  worktree('12-parser', '/repo/.worktrees/12-parser')
+]
+const NO_SCREEN = {
+  notes: {} as never,
+  screen: { paneTypes: () => [] },
+  worktrees: {
+    list: () => Promise.resolve(WORKTREES),
+    create: () => Promise.reject(new Error('not in these tests'))
+  }
+}
+
+function worktree(branch: string, path: string, overrides: Partial<Worktree> = {}): Worktree {
+  return {
+    id: branch,
+    name: branch,
+    path,
+    branch,
+    isMain: false,
+    isDetached: false,
+    locked: false,
+    dirty: false,
+    portSlot: 0,
+    ...overrides
+  }
+}
+
 function toolNamed(name: string, roster: AgentRoster, posted: Posted[]): GroveTool {
   const chat = {
-    post: (_root: string, from: { name: string }, text: string, to?: string) => {
-      posted.push({ from: from.name, text, to })
+    post: (root: string, from: { name: string }, text: string, to?: string) => {
+      posted.push({ root, from: from.name, text, to })
       return Promise.resolve()
     },
     list: () => Promise.resolve([])
   }
-  const tool = groveTools({ chat: chat as never, roster }).find((entry) => entry.name === name)
+  const tool = groveTools({ chat: chat as never, roster, ...NO_SCREEN }).find(
+    (entry) => entry.name === name
+  )
   if (!tool) throw new Error(`${name} is not offered`)
   return tool
 }
 
 function context(sessionId: string): GroveToolContext {
-  return { sessionId, workspaceRoot: '/repo', surface: () => {}, openFiles: () => {} }
+  return {
+    sessionId,
+    workspaceRoot: '/repo',
+    surface: () => {},
+    show: () => {}
+  }
 }
 
 describe('addressing another agent', () => {
@@ -163,7 +216,7 @@ describe('addressing another agent', () => {
 
     expect(delivered).toEqual([{ sessionId: 'b', from: 'Planner (id-a)', text: 'take the parser' }])
     expect(posted).toEqual([
-      { from: 'Planner (id-a)', text: 'take the parser', to: 'Builder (id-b)' }
+      { root: '/repo', from: 'Planner (id-a)', text: 'take the parser', to: 'Builder (id-b)' }
     ])
     expect(result.content).toContain('id-b')
   })
@@ -218,34 +271,47 @@ describe('addressing another agent', () => {
 })
 
 describe("reading another agent's transcript", () => {
+  /**
+   * A log of one event per line, and a tool line as the call and its result.
+   * Agent lines are separate messages.
+   */
   function log(sessionId: string, lines: [string, string][]): SessionEvent[] {
-    return lines.map(([type, text], index) => {
-      const envelope = {
-        id: `${sessionId}-${index}`,
-        seq: index + 1,
-        sessionId,
-        createdAt: '2026-01-01T00:00:00.000Z'
-      }
+    const bodies: Record<string, unknown>[] = []
+    for (const [type, text] of lines) {
       if (type === 'user') {
-        return { ...envelope, type: 'user.message', content: [{ type: 'text', text }] }
+        bodies.push({ type: 'user.message', content: [{ type: 'text', text }] })
+      } else if (type === 'tool') {
+        bodies.push({
+          type: 'update',
+          update: { sessionUpdate: 'tool_call', toolCallId: 't', name: 'bash', title: 'bash', rawInput: {} }
+        })
+        bodies.push({
+          type: 'update',
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 't',
+            status: 'completed',
+            content: [{ type: 'content', content: { type: 'text', text } }]
+          }
+        })
+      } else {
+        bodies.push({
+          type: 'update',
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            messageId: `m${bodies.length}`,
+            content: { type: 'text', text }
+          }
+        })
       }
-      if (type === 'tool') {
-        return {
-          ...envelope,
-          type: 'agent.tool_result',
-          toolUseId: 't',
-          name: 'bash',
-          content: text,
-          isError: false
-        }
-      }
-      return {
-        ...envelope,
-        type: 'agent.message_end',
-        content: [{ type: 'text', text }],
-        stopReason: 'end_turn'
-      }
-    }) as SessionEvent[]
+    }
+    return bodies.map((body, index) => ({
+      ...body,
+      id: `${sessionId}-${index}`,
+      seq: index + 1,
+      sessionId,
+      createdAt: '2026-01-01T00:00:00.000Z'
+    })) as SessionEvent[]
   }
 
   const logs = {
@@ -268,7 +334,7 @@ describe("reading another agent's transcript", () => {
     expect(said.content).not.toContain('cargo bench')
 
     const withTools = await read.execute({ agent: 'id-a', include_tools: true }, context('b'))
-    expect(withTools.content).toContain('#3 tool (bash): cargo bench')
+    expect(withTools.content).toContain('#4 tool (bash): cargo bench')
   })
 
   test('takes the last lines, and only those after a given event', async () => {
@@ -328,18 +394,89 @@ describe('the roster an agent reads', () => {
   })
 })
 
+describe('reaching agents in other worktrees', () => {
+  const CHILD_ROOT = '/repo/.worktrees/12-parser'
+
+  function crossWorktreeSessions(): SessionMeta[] {
+    return [
+      sessionMeta('a', 'Planner'),
+      sessionMeta('c', 'Parser', {
+        workspaceRoot: CHILD_ROOT,
+        labels: { [AGENT_ID_LABEL]: 'id-c', [PARENT_LABEL]: 'a' }
+      }),
+      sessionMeta('d', 'Lexer', { workspaceRoot: '/repo/.worktrees/13-lexer' })
+    ]
+  }
+
+  test('a message by id reaches an agent in another worktree, and both channels show it', async () => {
+    const { roster, delivered } = testRoster(crossWorktreeSessions())
+    const posted: Posted[] = []
+
+    const result = await toolNamed('send_message', roster, posted).execute(
+      { to: 'id-c', text: 'rebase on main first' },
+      context('a')
+    )
+
+    expect(result.isError).toBeUndefined()
+    expect(delivered).toEqual([
+      { sessionId: 'c', from: 'Planner (id-a)', text: 'rebase on main first' }
+    ])
+    expect(posted.map((entry) => entry.root)).toEqual(['/repo', CHILD_ROOT])
+  })
+
+  test('a title does not reach across worktrees', async () => {
+    const { roster, delivered } = testRoster(crossWorktreeSessions())
+    const posted: Posted[] = []
+
+    const result = await toolNamed('send_message', roster, posted).execute(
+      { to: 'Parser', text: 'hello' },
+      context('a')
+    )
+
+    expect(result.isError).toBe(true)
+    expect(delivered).toEqual([])
+  })
+
+  test('lists relatives in other worktrees, and everyone only when asked', async () => {
+    const { roster } = testRoster(crossWorktreeSessions())
+    const posted: Posted[] = []
+    const list = toolNamed('list_agents', roster, posted)
+
+    const relativesOnly = await list.execute({}, context('a'))
+    expect(relativesOnly.content).toContain('In other worktrees:')
+    expect(relativesOnly.content).toContain(`id-c · Parser`)
+    expect(relativesOnly.content).toContain(`in ${CHILD_ROOT} · spawned by you`)
+    expect(relativesOnly.content).not.toContain('id-d')
+
+    const everyone = await list.execute({ all_worktrees: true }, context('a'))
+    expect(everyone.content).toContain('id-d')
+  })
+
+  test('the child sees the parent that spawned it from another worktree', async () => {
+    const { roster } = testRoster(crossWorktreeSessions())
+
+    const relatives = await roster.relativesElsewhere('c')
+
+    expect(relatives.map((peer) => peer.agentId)).toEqual(['id-a'])
+  })
+})
+
 describe('starting another agent', () => {
   test('is the only tool that asks first', () => {
     const { roster } = testRoster([sessionMeta('a', 'Planner')])
     const posted: Posted[] = []
-    const asking = groveTools({ chat: { post: () => {}, list: () => [] } as never, roster })
+    const asking = groveTools({
+      chat: { post: () => {}, list: () => [] } as never,
+      roster,
+      ...NO_SCREEN
+    })
       .filter((tool) => tool.policy === 'ask')
       .map((tool) => tool.name)
 
     expect(posted).toEqual([])
     // `request_review` parks the turn on purpose: that is how the review flow
-    // holds the agent. Of the rest, only spawning asks.
-    expect(asking).toEqual(['request_review', 'spawn_agent'])
+    // holds the agent. Of the rest, only spawning an agent or a worktree asks.
+    expect(asking).toEqual(['request_review', 'spawn_agent', 'create_worktree'])
   })
 
   test('labels the new session with the agent that asked for it', async () => {
@@ -357,6 +494,51 @@ describe('starting another agent', () => {
     // The brief is the spawning agent talking, so the child opens on a message
     // from it rather than on an unattributed task.
     expect(delivered[0].from).toBe('Planner (id-a)')
+  })
+
+  test('starts the agent in the worktree it was given', async () => {
+    const sessions = [sessionMeta('a', 'Planner')]
+    const { roster, created } = testRoster(sessions)
+    const posted: Posted[] = []
+
+    const result = await toolNamed('spawn_agent', roster, posted).execute(
+      { title: 'Parser', prompt: 'fix #12', worktree: '12-parser' },
+      context('a')
+    )
+
+    expect(result.isError).toBeUndefined()
+    expect(created[0].workspace).toBe('/repo/.worktrees/12-parser')
+    // It is still the caller's child, so its answers come back across worktrees.
+    expect(created[0].labels).toEqual({ [PARENT_LABEL]: 'a' })
+  })
+
+  test("stays in the caller's worktree when none is named", async () => {
+    const sessions = [sessionMeta('a', 'Planner')]
+    const { roster, created } = testRoster(sessions)
+    const posted: Posted[] = []
+
+    await toolNamed('spawn_agent', roster, posted).execute(
+      { title: 'Reviewer', prompt: 'review it' },
+      context('a')
+    )
+
+    expect(created[0].workspace).toBe('/repo')
+  })
+
+  test('refuses a worktree that does not exist, before a session exists', async () => {
+    const sessions = [sessionMeta('a', 'Planner')]
+    const { roster, created } = testRoster(sessions)
+    const posted: Posted[] = []
+
+    const result = await toolNamed('spawn_agent', roster, posted).execute(
+      { title: 'Parser', prompt: 'fix #13', worktree: '13-lexer' },
+      context('a')
+    )
+
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('12-parser')
+    expect(result.content).toContain('create_worktree')
+    expect(created).toEqual([])
   })
 
   test('reports which runtimes can run, and on what', async () => {
@@ -430,18 +612,22 @@ describe('starting another agent', () => {
 })
 
 describe('a spawned agent finishing a turn, or being closed', () => {
-  /** A store stub that only does what the bridge asks of it. */
+  /** A store stub that only does what the bridge asks of it, keeping what it was given. */
   function testStore(sessions: SessionMeta[]): {
     store: {
       subscribe: (listener: (event: SessionEvent) => void) => () => void
       get: unknown
       list: unknown
+      peekEvents: unknown
     }
     emit: (event: SessionEvent) => void
   } {
     let listener: ((event: SessionEvent) => void) | null = null
+    const logs = new Map<string, SessionEvent[]>()
+    let seq = 0
     return {
       store: {
+        peekEvents: (sessionId: string) => logs.get(sessionId) ?? [],
         subscribe: (next: (event: SessionEvent) => void) => {
           listener = next
           return () => {
@@ -452,8 +638,26 @@ describe('a spawned agent finishing a turn, or being closed', () => {
           Promise.resolve(sessions.find((session) => session.id === sessionId)),
         list: () => Promise.resolve(sessions)
       },
-      emit: (event) => listener?.(event)
+      emit: (event) => {
+        seq += 1
+        const stamped = { ...event, seq, id: `e${seq}` } as SessionEvent
+        logs.set(event.sessionId, [...(logs.get(event.sessionId) ?? []), stamped])
+        listener?.(stamped)
+      }
     }
+  }
+
+  /** A whole message from the agent, as one ACP chunk. */
+  function says(sessionId: string, text: string): SessionEvent {
+    return chunk(sessionId, text)
+  }
+
+  function chunk(sessionId: string, text: string): SessionEvent {
+    return {
+      ...envelope(sessionId),
+      type: 'update',
+      update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } }
+    } as SessionEvent
   }
 
   function envelope(sessionId: string): {
@@ -477,12 +681,7 @@ describe('a spawned agent finishing a turn, or being closed', () => {
     const { store, emit } = testStore(sessions)
     new AgentHandoffBridge({ store: store as never, roster }).watch()
 
-    emit({
-      ...envelope('child'),
-      type: 'agent.message_end',
-      content: [{ type: 'text', text: 'the parser is fine' }],
-      stopReason: 'end_turn'
-    })
+    emit(says('child', 'the parser is fine'))
     emit({ ...envelope('child'), type: 'session.status_idle', stopReason: 'end_turn' })
     await settle()
 
@@ -499,12 +698,7 @@ describe('a spawned agent finishing a turn, or being closed', () => {
     const { store, emit } = testStore(sessions)
     new AgentHandoffBridge({ store: store as never, roster }).watch()
 
-    emit({
-      ...envelope('child'),
-      type: 'agent.message_end',
-      content: [{ type: 'text', text: 'done' }],
-      stopReason: 'end_turn'
-    })
+    emit(says('child', 'done'))
     emit({ ...envelope('child'), type: 'session.status_idle', stopReason: 'end_turn' })
     emit({ ...envelope('child'), type: 'session.status_idle', stopReason: 'end_turn' })
     await settle()
@@ -512,43 +706,19 @@ describe('a spawned agent finishing a turn, or being closed', () => {
     expect(delivered).toHaveLength(1)
   })
 
-  test('reports what a delta-only harness streamed, since pi closes no message', async () => {
+  test('reports the whole of an answer streamed in chunks', async () => {
     const child = sessionMeta('child', 'PiEcho', { labels: { [PARENT_LABEL]: 'a' } })
     const sessions = [sessionMeta('a', 'Planner'), child]
     const { roster, delivered } = testRoster(sessions)
     const { store, emit } = testStore(sessions)
     new AgentHandoffBridge({ store: store as never, roster }).watch()
 
-    emit({ ...envelope('child'), type: 'agent.message_start' })
-    emit({ ...envelope('child'), type: 'agent.message_delta', text: 'pi-' })
-    emit({ ...envelope('child'), type: 'agent.message_delta', text: 'pong' })
+    emit(chunk('child', 'pi-'))
+    emit(chunk('child', 'pong'))
     emit({ ...envelope('child'), type: 'session.status_idle', stopReason: 'end_turn' })
     await settle()
 
     expect(delivered).toEqual([{ sessionId: 'a', from: 'PiEcho (child)', text: 'pi-pong' }])
-  })
-
-  test('a closing message wins over the deltas that streamed towards it', async () => {
-    const child = sessionMeta('child', 'Reviewer', { labels: { [PARENT_LABEL]: 'a' } })
-    const sessions = [sessionMeta('a', 'Planner'), child]
-    const { roster, delivered } = testRoster(sessions)
-    const { store, emit } = testStore(sessions)
-    new AgentHandoffBridge({ store: store as never, roster }).watch()
-
-    emit({ ...envelope('child'), type: 'agent.message_start' })
-    emit({ ...envelope('child'), type: 'agent.message_delta', text: 'half an ans' })
-    emit({
-      ...envelope('child'),
-      type: 'agent.message_end',
-      content: [{ type: 'text', text: 'the whole answer' }],
-      stopReason: 'end_turn'
-    })
-    emit({ ...envelope('child'), type: 'session.status_idle', stopReason: 'end_turn' })
-    await settle()
-
-    expect(delivered).toEqual([
-      { sessionId: 'a', from: 'Reviewer (child)', text: 'the whole answer' }
-    ])
   })
 
   test('a one-shot helper is removed once its answer has been delivered', async () => {
@@ -560,12 +730,7 @@ describe('a spawned agent finishing a turn, or being closed', () => {
     const { store, emit } = testStore(sessions)
     new AgentHandoffBridge({ store: store as never, roster }).watch()
 
-    emit({
-      ...envelope('child'),
-      type: 'agent.message_end',
-      content: [{ type: 'text', text: 'the file says hello' }],
-      stopReason: 'end_turn'
-    })
+    emit(says('child', 'the file says hello'))
     emit({ ...envelope('child'), type: 'session.status_idle', stopReason: 'end_turn' })
     await settle()
 
@@ -596,12 +761,7 @@ describe('a spawned agent finishing a turn, or being closed', () => {
     const { store, emit } = testStore(sessions)
     new AgentHandoffBridge({ store: store as never, roster }).watch()
 
-    emit({
-      ...envelope('child'),
-      type: 'agent.message_end',
-      content: [{ type: 'text', text: 'done' }],
-      stopReason: 'end_turn'
-    })
+    emit(says('child', 'done'))
     emit({ ...envelope('child'), type: 'session.status_idle', stopReason: 'end_turn' })
     await settle()
 
@@ -614,12 +774,7 @@ describe('a spawned agent finishing a turn, or being closed', () => {
     const { store, emit } = testStore(sessions)
     new AgentHandoffBridge({ store: store as never, roster }).watch()
 
-    emit({
-      ...envelope('solo'),
-      type: 'agent.message_end',
-      content: [{ type: 'text', text: 'finished' }],
-      stopReason: 'end_turn'
-    })
+    emit(says('solo', 'finished'))
     emit({ ...envelope('solo'), type: 'session.status_idle', stopReason: 'end_turn' })
     await settle()
 
@@ -667,12 +822,7 @@ describe('a spawned agent finishing a turn, or being closed', () => {
     const bridge = new AgentHandoffBridge({ store: store as never, roster })
     bridge.watch()
 
-    emit({
-      ...envelope('child'),
-      type: 'agent.message_end',
-      content: [{ type: 'text', text: 'the file says hello' }],
-      stopReason: 'end_turn'
-    })
+    emit(says('child', 'the file says hello'))
     emit({ ...envelope('child'), type: 'session.status_idle', stopReason: 'end_turn' })
     await settle()
     await bridge.reportClosed(child as never)
@@ -701,6 +851,8 @@ describe('what grove tells an agent about the worktree', () => {
       sessionId: agentId,
       agentId,
       title,
+      workspaceRoot: '/repo',
+      parentSessionId: null,
       harness: 'claude',
       model: 'opus',
       status: 'idle',
@@ -708,32 +860,41 @@ describe('what grove tells an agent about the worktree', () => {
     }
   }
 
-  test('gives the agent its id, the others theirs, and the tools for reaching them', () => {
-    const prompt = groveSystemPrompt({
+  test('gives the agent its id and lists the others by theirs', () => {
+    const prompt = agentSection({
       agentId: 'id-a',
       title: 'Planner',
-      workspaceRoot: '/repo',
       peers: [peer('id-a', 'Planner'), peer('id-b', 'Builder')],
-      harnesses: ['claude', 'pi']
+      relatives: []
     })
 
-    expect(prompt).toContain('id-a')
-    expect(prompt).toContain('id-b')
-    expect(prompt).toContain('Builder')
-    expect(prompt).toContain('send_message')
-    expect(prompt).toContain('spawn_agent')
+    expect(prompt).toStartWith('<agent>')
+    expect(prompt).toContain('You are "Planner", id id-a.')
+    expect(prompt).toContain('- id-b: "Builder"')
   })
 
-  test('says so when nobody else is here, rather than listing an empty roster', () => {
-    const prompt = groveSystemPrompt({
+  test('lists no roster when nobody else is here', () => {
+    const prompt = agentSection({
       agentId: 'id-a',
       title: 'Planner',
-      workspaceRoot: '/repo',
       peers: [peer('id-a', 'Planner')],
-      harnesses: ['claude']
+      relatives: []
     })
 
-    expect(prompt).toContain('No other agent')
+    expect(prompt).not.toContain('Other agents in this worktree')
+    expect(prompt).not.toContain('from other worktrees')
+  })
+
+  test('names the parent working in another worktree, so a child knows who to ask', () => {
+    const prompt = agentSection({
+      agentId: 'id-c',
+      title: 'Parser',
+      peers: [peer('id-c', 'Parser')],
+      relatives: [peer('id-a', 'Planner')]
+    })
+
+    expect(prompt).toContain('Agents working with you from other worktrees')
+    expect(prompt).toContain('- id-a: "Planner" in /repo')
   })
 })
 

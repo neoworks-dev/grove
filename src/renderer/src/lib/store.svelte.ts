@@ -15,9 +15,10 @@ import type {
   BranchPull,
   DiffStats,
   ReviewBatch,
-  WorktreeChatMessage
+  WorktreeChatMessage,
+  WorktreeSetupState
 } from '../../../shared/types'
-import type { FileBlock, SessionEvent } from './agents/types'
+import type { FileBlock, LineAnnotation, SessionEvent, ShellOutputUpdate } from './agents/types'
 
 export interface LogLine {
   source: 'service'
@@ -31,7 +32,8 @@ import type { ColorTheme } from './themes'
 import { layout } from './layout.svelte'
 import { settings } from './settings.svelte'
 import { agentSessions } from './agents/sessions.svelte'
-import { notifyTurnEnded } from './agents/notifications'
+import { notifyAttention } from './agents/notifications'
+import { shellOutputs } from './agents/shellOutput.svelte'
 import { inlineEdit } from './inlineEdit.svelte'
 import { review } from './review.svelte'
 import { allNvimSessions } from './nvim/registry'
@@ -42,6 +44,21 @@ import { applyPins } from './tabPins'
 export interface TabDiff {
   left: string
   right: string
+}
+
+// A line for the editor to bring into view once the file is loaded, and — when
+// an agent pointed at it — the range to mark from there, with its note.
+export interface RevealTarget {
+  path: string
+  line: number
+  mark?: LineMark
+}
+
+// Lines an agent pointed at: the range, its note, and remarks on single lines.
+export interface LineMark {
+  endLine: number
+  note?: string
+  annotations?: LineAnnotation[]
 }
 
 export interface EditorTab {
@@ -109,18 +126,17 @@ class WorkbenchStore {
   // worktreeId.
   worktreeChat = $state<Record<string, WorktreeChatMessage[]>>({})
 
-  // A request from the agents overview/sidebar to show a specific agent session
-  // in the Agent pane. The pane consumes it once its worktree matches, then
-  // clears it.
-  requestedAgent = $state<{ worktreeId: string; sessionId?: string } | null>(null)
-
   // Set by the fs watcher when a running agent edits a file → the Git Changes
   // sidebar highlights it.
   requestedDiffFile = $state<string | null>(null)
 
   // Set when opening a file at a specific line (ripgrep search) → the editor
   // scrolls the cursor there once the file is loaded.
-  revealTarget = $state<{ path: string; line: number } | null>(null)
+  revealTarget = $state<RevealTarget | null>(null)
+
+  // Bumped to wipe every range agents marked in the editor; the editor pane
+  // clears its marks whenever this changes.
+  agentMarksGeneration = $state(0)
 
   // One-shot request to expand/select a worktree-relative path in the file
   // explorer (breadcrumb clicks); the explorer consumes and clears it.
@@ -128,6 +144,10 @@ class WorkbenchStore {
 
   // Streamed logs keyed by worktreeId.
   logs = $state<Record<string, LogLine[]>>({})
+
+  // New worktrees whose setup commands are running or failed, keyed by
+  // worktreeId. A worktree whose setup finished has no entry.
+  worktreeSetup = $state<Record<string, WorktreeSetupState>>({})
 
   // Open editor tabs and the active tab are scoped per worktree, so each
   // worktree keeps its own set of open buffers (not synced across worktrees).
@@ -330,6 +350,26 @@ export function openFileAtLine(worktreeId: string, path: string, line: number): 
   store.revealTarget = { path, line }
 }
 
+/**
+ * Open a file at a location an agent pointed at, marking its lines with the
+ * agent's note above them. The mark replaces the last one, and stays until the
+ * next location is opened or `clearAgentMarks` wipes it.
+ */
+export function markLinesInEditor(
+  worktreeId: string,
+  path: string,
+  startLine: number,
+  mark: LineMark
+): void {
+  openFileInEditor(worktreeId, path)
+  store.revealTarget = { path, line: startLine, mark }
+}
+
+/** Wipe every range an agent marked in the editor. */
+export function clearAgentMarks(): void {
+  store.agentMarksGeneration += 1
+}
+
 // Queue text for insertion into the agent composer at its caret, optionally with
 // a file slice to attach to the message it becomes. The composer picks this up
 // reactively (mounted first by the caller's ensurePane) and clears it, so the
@@ -359,6 +399,7 @@ export async function openRepoResult(result: {
 }): Promise<void> {
   store.repo = result.info
   store.worktrees = result.worktrees
+  store.worktreeSetup = await window.workbench.worktrees.setupStates().catch(() => ({}))
   void refreshBranchPositions()
   void refreshBranchPulls()
   store.config = await window.workbench.config.load()
@@ -545,10 +586,10 @@ export async function selectWorktree(worktreeId: string): Promise<void> {
   syncWatched()
 }
 
-// Select a worktree and ask the Agent pane to show one of its sessions.
+/** Selects a worktree and switches the Agent pane to one of its sessions. A worktree's id is its path. */
 export async function focusAgentInPane(worktreeId: string, sessionId?: string): Promise<void> {
+  if (sessionId !== undefined) agentSessions.setActive(worktreeId, sessionId)
   await selectWorktree(worktreeId)
-  store.requestedAgent = { worktreeId, sessionId }
 }
 
 export async function refreshRuntimes(worktreeId: string): Promise<void> {
@@ -556,12 +597,34 @@ export async function refreshRuntimes(worktreeId: string): Promise<void> {
   store.services = { ...store.services, [worktreeId]: services }
 }
 
+/**
+ * Records a worktree's setup state. Finishing clears the entry; failing keeps
+ * it and says so, since the output is in the worktree's logs rather than in view.
+ */
+function noteWorktreeSetup(event: { worktreeId: string; state: WorktreeSetupState }): void {
+  const next = { ...store.worktreeSetup }
+  if (event.state === 'done') {
+    delete next[event.worktreeId]
+  } else {
+    next[event.worktreeId] = event.state
+  }
+  store.worktreeSetup = next
+  if (event.state === 'failed') {
+    store.setError('Worktree setup failed; its output is in the Logs pane.')
+  }
+}
+
 // Subscribe to streamed main-process events. Call once at app start.
 export function subscribeEvents(): void {
-  // Every session's events, so a turn that ends out of sight is flagged.
+  // Every session's events, so a turn that ends or waits on you out of sight is
+  // flagged. The flag goes first: the notification reads it.
   window.workbench.on('event:agent-event', (payload) => {
     agentSessions.noteEvent(payload as SessionEvent)
-    void notifyTurnEnded(payload as SessionEvent)
+    void notifyAttention(payload as SessionEvent)
+  })
+  // What agents' commands print as they run; off the event log.
+  window.workbench.on('event:agent-shell-output', (payload) => {
+    shellOutputs.apply(payload as ShellOutputUpdate)
   })
   window.workbench.on('event:log', (payload) => {
     const event = payload as {
@@ -575,6 +638,13 @@ export function subscribeEvents(): void {
       name: event.name,
       line: event.line
     })
+  })
+  // Worktrees made outside the sidebar, by an agent.
+  window.workbench.on('event:worktrees-changed', (payload) => {
+    store.worktrees = payload as Worktree[]
+  })
+  window.workbench.on('event:worktree-setup', (payload) => {
+    noteWorktreeSetup(payload as { worktreeId: string; state: WorktreeSetupState })
   })
   window.workbench.on('event:service-status', (payload) => {
     store.updateServiceRuntime(payload as ServiceRuntime)

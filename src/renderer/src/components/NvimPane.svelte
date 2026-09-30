@@ -4,7 +4,8 @@
   // lives in NvimCanvasSession; this component adds the editor-specific chrome
   // (buffer tabs, minimap) and effects (tab follow, reveal, theme, keymap sync).
   import { onMount, onDestroy } from 'svelte'
-  import { store } from '../lib/store.svelte'
+  import { store, type RevealTarget } from '../lib/store.svelte'
+  import { CLEAR_MARKS_LUA, MARK_LINES_LUA } from '../lib/nvim/agentMarks'
   import { layout } from '../lib/layout.svelte'
   import { keymap, type Direction } from '../lib/keymap.svelte'
   import { commands } from '../lib/commands.svelte'
@@ -112,6 +113,8 @@
   // strip folds into one `a | b | c` tab while there is more than one.
   let splitWindows = $state<SplitWindow[]>([])
   let currentWin = $state(0)
+  // The file in nvim's current window, or null for a non-file buffer.
+  let currentBufferPath = $state<string | null>(null)
   let disposeBufferWatch: (() => void) | null = null
   let disposeKeymapWatch: (() => void) | null = null
   // Git gutter for the minimap: the open file's changed-line ranges.
@@ -633,11 +636,18 @@ pcall(vim.api.nvim_buf_delete, buf, {})
     store.tabs = swapTabs(store.tabs, replacement.left, replacement.entered)
   }
 
+  /** The snapshot's active file as a path, or null when nvim is on a non-file buffer. */
+  function toBufferPath(active: unknown): string | null {
+    if (typeof active !== 'string' || active === '') return null
+    return active
+  }
+
   /** Applies one snapshot from the buffer-state autocmd to the pane's state. */
   function applyBufferSnapshot(snapshot: BufferSnapshot): void {
     if (typeof snapshot.count === 'number') nvimFileCount = snapshot.count
     dirtyPaths = toDirtyPaths(snapshot.modified)
     if (typeof snapshot.win === 'number') currentWin = snapshot.win
+    currentBufferPath = toBufferPath(snapshot.active)
     attachActiveBuffer(snapshot.active)
     const nextSplits = toSplitWindows(snapshot.splits)
     keepSplitTabInPlace(splitWindows, nextSplits)
@@ -1134,25 +1144,49 @@ return vim.api.nvim_get_current_win() ~= before
     store.revealTarget = null
     if (hasViewer(target.path)) return
     lastPushedPath = target.path
-    void revealLine(target.path, target.line)
+    void revealLine(target)
   })
 
-  async function revealLine(path: string, line: number): Promise<void> {
+  async function revealLine(target: RevealTarget): Promise<void> {
     const id = session?.id
     if (!id) return
     try {
-      await window.workbench.nvim.request(id, 'nvim_cmd', [{ cmd: 'edit', args: [path] }, {}])
-      await window.workbench.nvim.request(id, 'nvim_win_set_cursor', [0, [line, 0]])
+      await window.workbench.nvim.request(id, 'nvim_cmd', [
+        { cmd: 'edit', args: [target.path] },
+        {}
+      ])
+      await window.workbench.nvim.request(id, 'nvim_win_set_cursor', [0, [target.line, 0]])
       // Center the target line and drop to the first non-blank column.
       await window.workbench.nvim.request(id, 'nvim_cmd', [
         { cmd: 'normal', args: ['zz^'], bang: true },
         {}
       ])
+      if (target.mark) {
+        await window.workbench.nvim.request(id, 'nvim_exec_lua', [
+          MARK_LINES_LUA,
+          [
+            target.line,
+            target.mark.endLine,
+            target.mark.note ?? null,
+            (target.mark.annotations ?? []).map((entry) => ({ line: entry.line, text: entry.text }))
+          ]
+        ])
+      }
     } catch {
       // session gone or file vanished
     }
     session?.focus()
   }
+
+  // Wipe the agents' marks when asked to; the first run is the pane mounting.
+  let seenMarksGeneration = store.agentMarksGeneration
+  $effect(() => {
+    const generation = store.agentMarksGeneration
+    const id = session?.id
+    if (!id || generation === seenMarksGeneration) return
+    seenMarksGeneration = generation
+    void window.workbench.nvim.request(id, 'nvim_exec_lua', [CLEAR_MARKS_LUA, []]).catch(() => {})
+  })
 
   // Restyle nvim when grove's theme changes.
   $effect(() => {
@@ -1301,7 +1335,7 @@ return vim.api.nvim_get_current_win() ~= before
           aria-label="Neovim input"
         ></div>
         <InlineEditPrompt {leafId} />
-        <InlineReviewOverlay {leafId} tick={minimapTick} />
+        <InlineReviewOverlay {leafId} tick={minimapTick} bufferPath={currentBufferPath} />
         <ReviewOverlay {leafId} tick={minimapTick} />
         <!-- Whatever a plugin has put on the buffer: the GitHub pane's review
            comment box is the first, and it has to open over the line it is

@@ -79,6 +79,39 @@ vim.api.nvim_create_autocmd('SwapExists', {
   end
 })
 
+-- Grove shows no tab pages ('showtabline' is 0): its tab strip already is the
+-- list of open files. A tab page would take windows somewhere only gt reaches,
+-- so none are made. <C-w>T, which moves the current split to a tab page of its
+-- own, keeps it as the only window instead; the other files stay in the strip.
+vim.keymap.set('n', '<C-w>T', '<Cmd>only<CR>', { desc = 'Keep only this split' })
+
+-- Any other new tab page (:tabnew, :tabedit, :tab split, a plugin) is closed
+-- again once the command is done, and its buffer shown in the window it was
+-- opened from, where it becomes the active tab in the strip. An empty :tabnew
+-- leaves the window as it was and its empty buffer is dropped.
+local function grove_fold_tab_page()
+  if #vim.api.nvim_list_tabpages() < 2 then
+    return
+  end
+  local buffer = vim.api.nvim_get_current_buf()
+  local cursor = vim.api.nvim_win_get_cursor(0)
+  local named = vim.api.nvim_buf_get_name(buffer) ~= ''
+  vim.cmd('tabclose')
+  if not named then
+    if not vim.bo[buffer].modified then
+      pcall(vim.api.nvim_buf_delete, buffer, {})
+    end
+    return
+  end
+  vim.api.nvim_win_set_buf(0, buffer)
+  pcall(vim.api.nvim_win_set_cursor, 0, cursor)
+end
+vim.api.nvim_create_autocmd('TabNew', {
+  callback = function()
+    vim.schedule(grove_fold_tab_page)
+  end
+})
+
 -- nvim hands every column a resize adds to the current window, so splits end
 -- up 13 columns against 161 once the pane grows. Even them out on every resize,
 -- as LazyVim does; windows with winfixwidth/winfixheight keep their size.
@@ -249,374 +282,18 @@ local function closeLazyView()
   view.view:close()
 end
 
--- Accepts the Copilot ghost-text suggestion currently on screen. Returns true
--- when it consumed the key, which is blink.cmp's signal to stop walking the
--- rest of its <Tab> fallback chain. Returns false when copilot.lua has not
--- loaded yet or has nothing to offer, so <Tab> keeps its normal meaning.
-local function acceptCopilotSuggestion()
-  local ok, suggestion = pcall(require, 'copilot.suggestion')
-  if not ok then return false end
-  if not suggestion.is_visible() then return false end
-  suggestion.accept()
-  return true
-end
-
--- The parsers every editor highlights with, installed by first-run setup.
--- No 'jsonc': the main branch has no separate jsonc grammar (the json parser
--- serves the jsonc filetype), so listing it warns "skipping unsupported
--- language: jsonc".
--- Every mason package, installed by mason-tool-installer. vtsls is the
--- TypeScript server; tree-sitter-cli builds nvim-treesitter's parsers.
-local masonPackages = { 'vtsls', 'prettierd', 'eslint_d', 'stylua', 'tree-sitter-cli' }
-
-local treesitterParsers = {
-  'typescript', 'tsx', 'javascript', 'json',
-  'html', 'css', 'lua', 'vim', 'vimdoc', 'markdown', 'markdown_inline'
-}
+-- The plugin spec, mason packages and parsers, apart from the rest of the config
+-- so that editing this file does not rerun first-run setup (see installs.lua).
+local configDir = vim.fs.dirname(debug.getinfo(1, 'S').source:sub(2))
+local installs = dofile(vim.fs.joinpath(configDir, 'installs.lua'))
+local masonPackages = installs.masonPackages
+local treesitterParsers = installs.treesitterParsers
 
 if (vim.uv or vim.loop).fs_stat(lazyEntry) then
   vim.opt.rtp:prepend(lazyPath)
   local installsPlugins = acquireInstallLock()
   pcall(function()
-    require('lazy').setup({
-      -- vim-sleuth: read a file's own indentation and set tabstop/shiftwidth/
-      -- expandtab from it, so a tab-indented project keeps its tabs and a
-      -- 4-space one keeps its four. No config, no keys — it just observes.
-      { 'tpope/vim-sleuth' },
-
-      -- The code theme. Not applied here: grove_apply_theme (below) sets it up
-      -- with grove's own backgrounds and picks the flavour from the app's
-      -- light/dark scheme, and re-runs whenever the app theme changes.
-      { 'catppuccin/nvim', name = 'catppuccin', lazy = false, priority = 1000 },
-
-      -- snacks.nvim, for two of its modules only: indent guides with the
-      -- enclosing scope drawn brighter, and animated scrolling so a jump of a
-      -- page (or a wheel notch) glides instead of snapping. Every other module
-      -- stays off unless it is enabled here.
-      {
-        'folke/snacks.nvim',
-        lazy = false,
-        priority = 900,
-        opts = {
-          indent = { enabled = true },
-          scroll = { enabled = true }
-        }
-      },
-
-      -- Same-token highlighting: every other occurrence of the word under the
-      -- cursor, from the LSP where one is attached and treesitter or a plain
-      -- match otherwise. The underline is added in grove_apply_theme.
-      {
-        'RRethy/vim-illuminate',
-        event = { 'BufReadPost', 'BufNewFile' },
-        opts = {
-          delay = 200,
-          large_file_cutoff = 2000,
-          large_file_overrides = { providers = { 'lsp' } }
-        },
-        config = function(_, opts)
-          require('illuminate').configure(opts)
-        end
-      },
-
-      -- noice.nvim, for the command line only: `:` and `/` open as a popup in
-      -- the middle of the editor instead of on its last row. Messages stay in
-      -- nvim's own message grid, because that is where grove recognises a
-      -- blocking prompt (see blockingPrompt.ts); handing them to noice would
-      -- leave a prompt no pane can see. Its LSP hover, signature and progress
-      -- takeovers stay off — grove and blink already draw those.
-      {
-        'folke/noice.nvim',
-        event = 'VeryLazy',
-        dependencies = { 'MunifTanjim/nui.nvim' },
-        opts = {
-          cmdline = { enabled = true, view = 'cmdline_popup' },
-          messages = { enabled = false },
-          popupmenu = { enabled = true, backend = 'nui' },
-          notify = { enabled = false },
-          lsp = {
-            progress = { enabled = false },
-            hover = { enabled = false },
-            signature = { enabled = false },
-            message = { enabled = false }
-          },
-          presets = { command_palette = true }
-        }
-      },
-
-      -- flash.nvim: quick label-based motion. `s`/`S` jump by on-screen labels.
-      {
-        'folke/flash.nvim',
-        opts = {},
-        keys = {
-          { 's', mode = { 'n', 'x', 'o' }, function() require('flash').jump() end, desc = 'Flash' },
-          { 'S', mode = { 'n', 'x', 'o' }, function() require('flash').treesitter() end, desc = 'Flash Treesitter' }
-        }
-      },
-
-      -- Treesitter syntax highlighting. The `main` branch is the rewrite for
-      -- nvim 0.11+ (our runtime is 0.12); the legacy `master` branch crashes on
-      -- 0.12 (query-predicate handlers pass nil nodes → "call method 'range'").
-      -- The main branch dropped the configs/ensure_installed API: install parsers
-      -- explicitly and start the native highlighter per-buffer.
-      {
-        'nvim-treesitter/nvim-treesitter',
-        branch = 'main',
-        config = function()
-          local ok, ts = pcall(require, 'nvim-treesitter')
-          local parsers = treesitterParsers
-          -- The main branch compiles parsers with the `tree-sitter` CLI (installed
-          -- via mason below). Skip when it's absent so init never errors; the CLI
-          -- lands async on first launch, so also retry when mason signals done.
-          local function try_install()
-            if ok and type(ts.install) == 'function' and vim.fn.executable('tree-sitter') == 1 then
-              pcall(ts.install, parsers)
-            end
-          end
-          try_install()
-          vim.api.nvim_create_autocmd('User', {
-            pattern = 'MasonToolsUpdateCompleted',
-            callback = try_install
-          })
-          vim.api.nvim_create_autocmd('FileType', {
-            callback = function(args)
-              pcall(vim.treesitter.start, args.buf)
-            end
-          })
-        end
-      },
-
-      -- Git gutter signs (added/changed/removed) in the sign column. Rendered
-      -- in-grid; hunk staging/preview available as keymaps.
-      { 'lewis6991/gitsigns.nvim', opts = {} },
-
-      -- which-key.nvim for its group specs only: grove draws the leader overlay
-      -- itself and names each prefix from the groups registered here, by this
-      -- config or any plugin. No triggers and no presets, so which-key never
-      -- maps a key or opens its own popup.
-      {
-        'folke/which-key.nvim',
-        lazy = false,
-        opts = {
-          triggers = {},
-          plugins = {
-            marks = false,
-            registers = false,
-            spelling = { enabled = false },
-            presets = {
-              operators = false,
-              motions = false,
-              text_objects = false,
-              windows = false,
-              nav = false,
-              z = false,
-              g = false
-            }
-          },
-          spec = {
-            {
-              mode = { 'n', 'x' },
-              { '<leader>b', group = 'buffer' },
-              { '<leader>c', group = 'code' },
-              { '<leader>f', group = 'file/find' },
-              { '<leader>g', group = 'git' },
-              { '<leader>gh', group = 'hunks' },
-              { '<leader>s', group = 'search' },
-              { '<leader>t', group = 'terminal' },
-              { '<leader>u', group = 'ui' },
-              { '<leader>w', group = 'windows' },
-              { '<leader>x', group = 'diagnostics/quickfix' }
-            }
-          }
-        }
-      },
-
-      -- Completion engine. blink.cmp ships a prebuilt fuzzy-matcher binary via
-      -- its release tag and falls back to a Lua matcher when the download is
-      -- unavailable, so it stays offline-tolerant like the rest of the config.
-      {
-        'saghen/blink.cmp',
-        version = '*',
-        opts = {
-          -- 'enter' preset: <CR> accepts the selected item and is consumed, so
-          -- accepting never also inserts a newline ('default' leaves <CR> unmapped).
-          -- <Esc> with the menu open only closes the menu (staying in insert);
-          -- without a menu it falls through to the normal mode switch.
-          -- <Tab> is shared with Copilot. Owning it in one place (rather than
-          -- letting copilot.lua install its own insert-mode map) keeps either
-          -- plugin from silently swallowing the key from the other: a visible
-          -- ghost-text suggestion wins, then blink's snippet jump, then a
-          -- literal tab.
-          keymap = {
-            preset = 'enter',
-            ['<Esc>'] = { 'cancel', 'fallback' },
-            ['<Tab>'] = { acceptCopilotSuggestion, 'snippet_forward', 'fallback' }
-          },
-          sources = { default = { 'lsp', 'path', 'snippets', 'buffer' } },
-          completion = {
-            -- Suggestions stay below the edited text. A single direction also
-            -- prevents blink from preferring the roomier side above the cursor.
-            menu = { direction_priority = { 's' } },
-            documentation = {
-              auto_show = true,
-              -- A tall documentation float otherwise aligns itself with the
-              -- menu by growing upward across the line being edited.
-              window = {
-                direction_priority = {
-                  menu_north = { 's' },
-                  menu_south = { 's' }
-                }
-              }
-            }
-          }
-        }
-      },
-
-      -- GitHub Copilot as inline ghost text. Deliberately not wired as a
-      -- blink.cmp source: the suggestion renders as virtual text after the
-      -- cursor, so the completion menu stays LSP/path/snippet/buffer only and
-      -- never lists the same completion twice.
-      --
-      -- Auth lives at $XDG_CONFIG_HOME/github-copilot. Grove points
-      -- XDG_CONFIG_HOME at ~/.config/grove and links that subdirectory to the
-      -- user's real ~/.config/github-copilot (see src/main/nvimPaths.ts), so an
-      -- existing Copilot login carries over. Without one, `:Copilot auth` once
-      -- in any editor pane signs in.
-      {
-        'zbirenbaum/copilot.lua',
-        event = 'InsertEnter',
-        opts = {
-          suggestion = {
-            enabled = true,
-            auto_trigger = true,
-            -- No accept mapping here: blink.cmp owns <Tab> and calls into
-            -- copilot.suggestion from its fallback chain (see above).
-            keymap = {
-              accept = false,
-              accept_word = false,
-              accept_line = false,
-              next = '<M-]>',
-              prev = '<M-[>',
-              dismiss = '<C-]>'
-            }
-          },
-          -- The Copilot panel opens its own split; grove owns the layout.
-          panel = { enabled = false },
-          -- copilot.lua disables prose filetypes by default. Grove edits docs
-          -- and config in the same panes as code, so re-enable the useful ones.
-          filetypes = { markdown = true, yaml = true, gitcommit = true }
-        }
-      },
-
-      -- Format-on-save via conform. Prefers the fast daemonized prettier, falls
-      -- back to prettier, then to the LSP formatter.
-      {
-        'stevearc/conform.nvim',
-        opts = {
-          formatters_by_ft = {
-            lua = { 'stylua' },
-            javascript = { 'prettierd', 'prettier', stop_after_first = true },
-            javascriptreact = { 'prettierd', 'prettier', stop_after_first = true },
-            typescript = { 'prettierd', 'prettier', stop_after_first = true },
-            typescriptreact = { 'prettierd', 'prettier', stop_after_first = true },
-            json = { 'prettierd', 'prettier', stop_after_first = true },
-            css = { 'prettierd', 'prettier', stop_after_first = true },
-            scss = { 'prettierd', 'prettier', stop_after_first = true },
-            html = { 'prettierd', 'prettier', stop_after_first = true },
-            markdown = { 'prettierd', 'prettier', stop_after_first = true },
-            yaml = { 'prettierd', 'prettier', stop_after_first = true },
-            -- Svelte needs prettier-plugin-svelte, which prettier picks up from
-            -- the project being edited; without this entry .svelte buffers had
-            -- no formatter at all and format-on-save silently did nothing.
-            svelte = { 'prettierd', 'prettier', stop_after_first = true }
-          },
-          -- Grove's <leader>uf flips vim.g.grove_autoformat to false to pause it.
-          format_on_save = function()
-            if vim.g.grove_autoformat == false then
-              return nil
-            end
-            return { timeout_ms = 1000, lsp_format = 'fallback' }
-          end
-        }
-      },
-
-      -- Linting via nvim-lint. Feeds vim.diagnostic, which is what grove's
-      -- Diagnostics pane displays.
-      {
-        'mfussenegger/nvim-lint',
-        config = function()
-          require('lint').linters_by_ft = {
-            javascript = { 'eslint_d' },
-            javascriptreact = { 'eslint_d' },
-            typescript = { 'eslint_d' },
-            typescriptreact = { 'eslint_d' }
-          }
-          vim.api.nvim_create_autocmd({ 'BufWritePost', 'BufReadPost', 'InsertLeave' }, {
-            callback = function()
-              require('lint').try_lint()
-            end
-          })
-        end
-      },
-
-      -- LSP: mason installs the servers into the writable data dir,
-      -- mason-lspconfig enables them through nvim's built-in LSP registry.
-      { 'williamboman/mason.nvim', opts = {} },
-
-      -- Install every mason package: the language servers mason-lspconfig
-      -- enables and the binaries conform and nvim-lint shell out to.
-      {
-        'WhoIsSethDaniel/mason-tool-installer.nvim',
-        dependencies = { 'williamboman/mason.nvim' },
-        opts = {
-          ensure_installed = masonPackages,
-          -- First-run setup installs these itself, synchronously; a second,
-          -- start-up run beside it would race it for the same packages.
-          run_on_start = vim.env.GROVE_PROVISION ~= '1'
-        }
-      },
-      {
-        'williamboman/mason-lspconfig.nvim',
-        dependencies = { 'williamboman/mason.nvim', 'neovim/nvim-lspconfig', 'saghen/blink.cmp' },
-        opts = {
-          -- The tool installer above installs vtsls with everything else, so
-          -- first-run setup has one installer to wait for.
-          -- vtsls is the TypeScript server here. mason-lspconfig enables every
-          -- installed server, so a leftover ts_ls install would attach to the
-          -- same buffers — two tsservers indexing the project, doubled
-          -- diagnostics and completions.
-          automatic_enable = { exclude = { 'ts_ls' } }
-        },
-        config = function(_, opts)
-          require('mason').setup()
-          -- Advertise blink.cmp's completion capabilities to every server.
-          local ok, blink = pcall(require, 'blink.cmp')
-          if ok then
-            vim.lsp.config('*', { capabilities = blink.get_lsp_capabilities() })
-          end
-          -- vtsls reports inlay hints only for the categories asked for; without
-          -- these it advertises the capability and returns nothing.
-          local inlay_hints = {
-            parameterNames = { enabled = 'literals', suppressWhenArgumentMatchesName = true },
-            parameterTypes = { enabled = true },
-            variableTypes = { enabled = true, suppressWhenTypeMatchesName = true },
-            propertyDeclarationTypes = { enabled = true },
-            functionLikeReturnTypes = { enabled = true },
-            enumMemberValues = { enabled = true }
-          }
-          vim.lsp.config('vtsls', {
-            settings = {
-              typescript = { inlayHints = inlay_hints },
-              javascript = { inlayHints = inlay_hints }
-            }
-          })
-          require('mason-lspconfig').setup(opts)
-          -- Belt-and-suspenders on nvim 0.11+: enable the server explicitly in
-          -- case mason-lspconfig's automatic enable is unavailable.
-          pcall(vim.lsp.enable, 'vtsls')
-        end
-      }
-    }, {
+    require('lazy').setup(installs.plugins, {
       root = vim.fs.joinpath(dataDir, 'lazy'),
       lockfile = vim.fs.joinpath(dataDir, 'lazy-lock.json'),
       -- Grove owns the chrome; keep lazy from drawing its own UI on startup.
@@ -1899,7 +1576,85 @@ vim.api.nvim_create_user_command('GroveInspect', grove_inspect_float, { desc = '
 -- this one sticks.
 vim.cmd([[anoremenu PopUp.Inspect <Cmd>GroveInspect<CR>]])
 
+-- Fix with Agent: on a line with diagnostics, the right-click menu hands them
+-- to an agent. Grove lists the entry once per agent it could go to and reads
+-- the problem through grove_fix_context; run from nvim's own :emenu, it goes to
+-- grove as grove_fix_with_agent, for the worktree's agent.
+
+-- The cursor line's diagnostics and the code `radius` lines either side of it,
+-- or nil when the line has none.
+_G.grove_fix_context = function(radius)
+  local bufnr = vim.api.nvim_get_current_buf()
+  local line = vim.api.nvim_win_get_cursor(0)[1] - 1
+  local found = vim.diagnostic.get(bufnr, { lnum = line })
+  if #found == 0 then
+    return nil
+  end
+  local diagnostics = {}
+  for _, d in ipairs(found) do
+    diagnostics[#diagnostics + 1] = {
+      lnum = d.lnum,
+      col = d.col,
+      severity = d.severity,
+      message = d.message,
+      source = d.source
+    }
+  end
+  local first = math.max(0, line - radius)
+  local last = math.min(vim.api.nvim_buf_line_count(bufnr), line + radius + 1)
+  return {
+    path = vim.api.nvim_buf_get_name(bufnr),
+    diagnostics = diagnostics,
+    startLine = first + 1,
+    endLine = last,
+    text = table.concat(vim.api.nvim_buf_get_lines(bufnr, first, last, false), '\n')
+  }
+end
+
+_G.grove_fix_with_agent = function()
+  local context = grove_fix_context(10)
+  if context == nil then
+    return
+  end
+  vim.rpcnotify(0, 'grove_fix_with_agent', context)
+end
+
+-- First in the menu: on a line with a problem, fixing it is the likeliest ask.
+vim.cmd([[anoremenu .400 PopUp.Fix\ with\ Agent <Cmd>lua grove_fix_with_agent()<CR>]])
+vim.cmd([[anoremenu .401 PopUp.-fix- <Nop>]])
+vim.api.nvim_create_autocmd('MenuPopup', {
+  group = vim.api.nvim_create_augroup('grove.fix_with_agent', {}),
+  desc = 'Offer Fix with Agent on lines with diagnostics',
+  callback = function()
+    local line = vim.api.nvim_win_get_cursor(0)[1] - 1
+    if #vim.diagnostic.get(0, { lnum = line }) > 0 then
+      vim.cmd([[anoremenu enable PopUp.Fix\ with\ Agent]])
+      return
+    end
+    vim.cmd([[anoremenu disable PopUp.Fix\ with\ Agent]])
+  end
+})
+
+-- Each buffer's own snacks_scroll setting while a PopUp entry holds it off.
+local grove_popup_scroll_setting = {}
+
+-- Give a buffer its snacks.scroll setting back once a PopUp entry's keys are
+-- done. Scheduled, so the WinScrolled the entry caused is seen while scrolling
+-- is still off and the next scroll starts from where the entry left the view.
+_G.grove_popup_item_done = function(buffer)
+  vim.schedule(function()
+    local setting = grove_popup_scroll_setting[buffer]
+    grove_popup_scroll_setting[buffer] = nil
+    if vim.api.nvim_buf_is_valid(buffer) then
+      vim.b[buffer].snacks_scroll = setting
+    end
+  end)
+end
+
 -- Run the PopUp entry grove's menu picked, in the mode the menu was opened for.
+-- snacks.scroll is held off while its keys run: it animates a jump by putting
+-- the cursor back where it was and walking it over, so the V of Select All's
+-- ggVG landed mid-walk and anchored the selection at the right-clicked line.
 _G.grove_run_popup_item = function(name, mode)
   local entry = vim.fn.menu_info('PopUp.' .. name, mode)
   if entry.rhs == nil or entry.rhs == '' then
@@ -1910,7 +1665,12 @@ _G.grove_run_popup_item = function(name, mode)
   if entry.noremenu then
     flags = 'n'
   end
+  local buffer = vim.api.nvim_get_current_buf()
+  grove_popup_scroll_setting[buffer] = vim.b[buffer].snacks_scroll
+  vim.b[buffer].snacks_scroll = false
   vim.api.nvim_feedkeys(keys, flags, false)
+  local done = ('<Cmd>lua grove_popup_item_done(%d)<CR>'):format(buffer)
+  vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(done, true, false, true), 'n', false)
 end
 
 -- A dependency-free popup terminal for exercising (and using) Grove's native

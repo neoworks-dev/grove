@@ -23,7 +23,9 @@
   } = $props()
 
   const running = $derived(session.status === 'running')
-  const waiting = $derived(!running && session.pendingApprovals.length > 0)
+  // A call parked on an approval leaves the turn running, and waiting on you
+  // is the more useful thing to say. The flag is live; the listing is polled.
+  const waiting = $derived(attention === 'needs_you' || session.pendingApprovals.length > 0)
 
   /** The session's name, falling back to its model for one that has none. */
   const title = $derived.by(() => {
@@ -51,10 +53,19 @@
   </span>
   <span class="flex min-w-0 flex-1 flex-col gap-0.5">
     <span class="flex items-center gap-2">
-      <span class="min-w-0 flex-1 truncate text-xs" class:text-default={running || attention} class:text-muted={!running && !attention}>
+      <span
+        class="min-w-0 flex-1 truncate text-xs"
+        class:text-default={running || attention || waiting}
+        class:text-muted={!running && !attention && !waiting}
+      >
         {title}
       </span>
-      {#if running}
+      {#if waiting}
+        <span class="flex shrink-0 items-center gap-1 text-2xs font-medium text-amber">
+          <span class="size-1.5 rounded-full bg-current"></span>
+          {ATTENTION_LABELS.needs_you}
+        </span>
+      {:else if running}
         <span class="shrink-0 text-green"><WaveSpinner count={3} /></span>
       {:else if attention}
         <span
@@ -66,8 +77,6 @@
           <span class="size-1.5 rounded-full bg-current"></span>
           {ATTENTION_LABELS[attention]}
         </span>
-      {:else if waiting}
-        <span class="shrink-0 text-2xs text-amber">waiting</span>
       {:else}
         <span class="shrink-0 text-2xs text-dim" title={session.updatedAt}>
           {relativeTime(session.updatedAt)}

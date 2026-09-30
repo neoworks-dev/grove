@@ -7,7 +7,7 @@ import neoworks from '@neoworks/lint-config/eslint'
 export default [
   ...neoworks,
   {
-    ignores: ['**/node_modules', '**/dist', '**/out', '**/resources', 'sdk/**']
+    ignores: ['**/node_modules', '**/dist', '**/out', '**/resources', 'sdk/**', 'src/main/agents/tools/hashline/**']
   },
   {
     files: ['**/*.svelte'],

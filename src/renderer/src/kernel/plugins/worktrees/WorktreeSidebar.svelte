@@ -18,6 +18,7 @@
   import CreateWorktreeDialog from './CreateWorktreeDialog.svelte'
   import MergeWorktreeDialog from './MergeWorktreeDialog.svelte'
   import WorktreeSessionRow from './WorktreeSessionRow.svelte'
+  import WaveSpinner from '../../../components/WaveSpinner.svelte'
   import { onMount } from 'svelte'
   import { agentSessions } from '../../../lib/agents/sessions.svelte'
   import type { Worktree, ServiceRuntime } from '../../../../../shared/types'
@@ -61,7 +62,14 @@
     layout.ensurePane('checkpoints')
   }
 
-  /** How many of the worktree's workbench.yaml services run, and each one's state for the tooltip. */
+  /** Selects the worktree and opens the Logs pane, where its setup output streams. */
+  function openSetupLog(worktree: Worktree, event: MouseEvent): void {
+    event.stopPropagation()
+    void selectWorktree(worktree.id)
+    layout.ensurePane('logs')
+  }
+
+  /** How many of the worktree's grove.config.yaml services run, and each one's state for the tooltip. */
   function serviceSummary(worktreeId: string): { running: number; total: number; detail: string } {
     const list: ServiceRuntime[] = store.services[worktreeId] || []
     const running = list.filter((service) => service.status === 'running').length
@@ -178,13 +186,25 @@
     store.selectedWorktreeId = null
   }
 
+  /**
+   * Removes a worktree after asking, keeping its branch. Asked through the
+   * app's own dialog: a native one hands window focus to the OS and back, and
+   * on Linux it can come back without a text cursor anywhere (#216).
+   */
   async function remove(worktree: Worktree, event: MouseEvent): Promise<void> {
     event.stopPropagation()
     const force = worktree.dirty
-    let question = `Remove worktree "${worktree.name}"?`
-    if (force) question += ' It has uncommitted changes (force).'
-    const confirmed = confirm(question)
-    if (!confirmed) return
+    let body = `Removes the worktree directory. The branch ${worktree.branch} is kept.`
+    if (force) body += ' Its uncommitted changes are lost.'
+    const picked = await dialogs.confirm({
+      title: `Remove ${worktree.name}?`,
+      body,
+      actions: [
+        { id: 'remove', label: 'Remove', kind: 'danger' },
+        { id: 'cancel', label: 'Cancel' }
+      ]
+    })
+    if (picked !== 'remove') return
     try {
       await window.workbench.worktrees.remove(worktree.id, force)
       await refreshWorktrees()
@@ -227,6 +247,7 @@
       {@const flagged = sessionAttentionFor(worktree.id)}
       {@const position = branchPositionFor(worktree.id)}
       {@const pull = pullFor(worktree)}
+      {@const setup = store.worktreeSetup[worktree.id]}
       <div
         class="group/worktree flex cursor-pointer items-center gap-2 px-3 py-2 text-sm"
         class:bg-elevated={store.selectedWorktreeId === worktree.id}
@@ -253,6 +274,22 @@
                 class="rounded bg-raised px-1 text-2xs text-violet"
                 title="Its work is on the base branch; archive it to clean up">merged</span
               >
+            {/if}
+            {#if setup}
+              <button
+                class="flex shrink-0 cursor-pointer items-center gap-1 rounded bg-raised px-1 text-2xs"
+                class:text-amber={setup === 'running'}
+                class:text-red={setup === 'failed'}
+                title="Setup commands from grove.config.yaml; click for their output"
+                onclick={(event) => openSetupLog(worktree, event)}
+              >
+                {#if setup === 'running'}
+                  <WaveSpinner count={3} />
+                  setting up
+                {:else}
+                  setup failed
+                {/if}
+              </button>
             {/if}
             {#if store.unread[worktree.id]}
               <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber" title="Unread agent output"

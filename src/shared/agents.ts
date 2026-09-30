@@ -1,13 +1,20 @@
 // The agent protocol, shared by the main process and the renderer.
 //
-// grove drives several coding harnesses (Claude, Codex, pi) through one
-// vocabulary: a session is an append-only log of sequenced events, and every
-// harness adapter translates its SDK's stream into these bodies. The renderer
-// folds the log into a transcript and never learns which harness produced it.
+// grove drives its coding harnesses (Claude Code, Codex, pi) through switchboard
+// (`@neoworks/harness`), which speaks ACP for all of them. A session is an
+// append-only log of sequenced events: what the harness reported, stored as it
+// reported it, beside what the user sent and what grove itself had to say. The
+// renderer folds the log into a transcript and never learns which harness
+// produced it.
 //
 // Events are split into what a client sends (`ClientEventBody`) and what the
 // run produces (`ServerEventBody`). Both are persisted, so replaying the log
 // reconstructs the whole conversation.
+
+import type {
+  RequestPermissionRequest,
+  SessionUpdate as AcpSessionUpdate
+} from '@neoworks/harness'
 
 export type SessionStatus = 'idle' | 'running' | 'terminated'
 
@@ -106,18 +113,31 @@ export type ClientEventBody =
   | { type: 'user.branch'; fromSeq: number }
   | { type: 'user.shell'; command: string; share?: boolean }
 
-export type ServerEventBody =
+/**
+ * What a harness reported, stored exactly as switchboard (`@neoworks/harness`)
+ * hands it over.
+ *
+ * grove adds no vocabulary of its own for what an agent says or does: messages,
+ * thoughts, tool calls, plans and compactions are ACP session updates, and
+ * everything that reads a transcript folds those. Running totals and a
+ * command's streaming output are left off the log — the first is a number on
+ * the session, the second is only worth watching while it runs.
+ */
+export type HarnessEventBody =
+  | { type: 'update'; update: AcpSessionUpdate }
+  /** A tool call held for a decision; answered by a `user.tool_confirmation`. */
+  | { type: 'permission'; request: RequestPermissionRequest }
+  /** The harness moved on to another conversation of its own (`/clear`). */
+  | { type: 'session_changed'; sessionId: string }
+
+/** What grove itself says about a session: its status, its UI, its notes. */
+export type GroveEventBody =
   | { type: 'session.status_running' }
   | { type: 'session.status_idle'; stopReason: IdleReason }
   | { type: 'session.status_terminated'; reason: string }
   | { type: 'session.error'; message: string }
   | { type: 'session.notice'; message: string }
   | { type: 'session.info_changed'; changed: string[] }
-  | { type: 'session.compacted'; summary: string; droppedMessages: number }
-  /** The harness dropped the conversation and started a fresh one (`/clear`). */
-  | { type: 'session.cleared' }
-  /** What a command the harness ran itself has to say (`/usage`, `/help`, …). */
-  | { type: 'session.command_output'; text: string }
   | { type: 'session.forked'; childSessionId: string; afterSeq: number }
   | { type: 'session.branched'; fromSeq: number }
   | {
@@ -128,40 +148,119 @@ export type ServerEventBody =
       outcome: string
       share: boolean
     }
-  | { type: 'agent.message_start' }
-  | { type: 'agent.thinking_delta'; text: string }
-  | { type: 'agent.message_delta'; text: string }
-  | { type: 'agent.message_end'; content: ContentBlock[]; stopReason: string }
-  | {
-      type: 'agent.tool_use'
-      toolUseId: string
-      name: string
-      input: unknown
-      permission: ToolPermission
-    }
-  | { type: 'agent.tool_use_edited'; toolUseId: string; name: string; input: unknown }
-  | { type: 'agent.tool_progress'; toolUseId: string; name: string; message: string }
-  | {
-      type: 'agent.tool_result'
-      toolUseId: string
-      name: string
-      content: string
-      isError: boolean
-      /** Images the tool returned (a screenshot, an image file it read), as session blobs. */
-      images?: ImageBlock[]
-    }
   | { type: 'ui.surface'; surfaceId: string; slot: UiSlot; view: UiNode }
   | { type: 'ui.surface'; surfaceId: string; view: null }
-  /** Files the agent wants on screen, opened in the editor as the event arrives. */
-  | { type: 'ui.open_files'; files: OpenFileTarget[] }
+  /** Something the agent wants on screen, shown as the event arrives. */
+  | { type: 'ui.show'; target: ShowTarget }
+  /** The session's notes list, whole, after the user or the agent changed it. */
+  | { type: 'session.notes'; notes: SessionNote[] }
+
+export type ServerEventBody = HarnessEventBody | GroveEventBody
 
 /**
- * One file the agent asked grove to show. The path is absolute or relative to
- * the session's workspace root, and the line — when there is one — is 1-based.
+ * One entry on a session's notes list: a reminder of what is still to do,
+ * written by the user or by the agent through grove's note tools.
  */
-export interface OpenFileTarget {
+export interface SessionNote {
+  id: string
+  text: string
+  done: boolean
+  author: 'user' | 'agent'
+}
+
+/**
+ * Output of a command an agent is running, streamed as it prints. Not on the
+ * event log: the call's result records the output once the command is done.
+ */
+export interface ShellOutputUpdate {
+  sessionId: string
+  toolUseId: string
+  /** Printed since the last update. */
+  text: string
+  /** False once the command has exited. */
+  running: boolean
+}
+
+/** Everything a running (or just finished) command has printed so far. */
+export interface ShellOutputSnapshot {
+  toolUseId: string
+  text: string
+  running: boolean
+}
+
+/** A kind of pane the renderer can open, as it reports them to the agents. */
+export interface PaneTypeInfo {
+  id: string
+  title: string
+}
+
+/**
+ * What an agent can open in front of the user. Paths are absolute or relative
+ * to the session's workspace root.
+ */
+export type ShowTarget = (
+  | { kind: 'diff'; path?: string }
+  | { kind: 'github'; number: number }
+  | { kind: 'pane'; pane: string }
+) & {
+  /** What the user is looking at and why, in two or three sentences at most. */
+  note?: string
+}
+
+/**
+ * A place in the code an agent points at. The path is absolute or relative to
+ * the session's workspace root; lines are 1-based and inclusive, and a location
+ * without them is the whole file.
+ */
+export interface CodeLocation {
   path: string
-  line?: number
+  startLine?: number
+  endLine?: number
+  /** A few words naming the place, for a walkthrough step. */
+  title?: string
+  /** What this place is, shown on the card and above the marked lines. */
+  note?: string
+  /** Remarks on single lines, shown above each of them in the editor. */
+  annotations?: LineAnnotation[]
+  /** What the place looked like when the agent pointed at it, to find it again after edits. */
+  anchor?: LocationAnchor
+}
+
+/**
+ * A location as it was taken down. Line numbers go stale as soon as anything
+ * above them changes; the text they held and the commit the file was read at
+ * are what find the place again.
+ */
+export interface LocationAnchor {
+  /** HEAD when the agent pointed here, to follow the file through a rename. */
+  commit?: string
+  /** The range's lines, with up to two lines either side; absent for a whole file. */
+  text?: AnchorText
+}
+
+export interface AnchorText {
+  lines: string[]
+  before: string[]
+  after: string[]
+}
+
+/**
+ * Where a location is now. `current`: still at its lines. `moved`: its text
+ * was found elsewhere, or its file under another name, and `location` says
+ * where. `changed`: its lines no longer read as they did. `removed`: its file
+ * is gone.
+ */
+export type LocationState = 'current' | 'moved' | 'changed' | 'removed'
+
+export interface ResolvedLocation {
+  location: CodeLocation
+  state: LocationState
+}
+
+/** A remark an agent pinned to one line of a location, 1-based. */
+export interface LineAnnotation {
+  line: number
+  text: string
 }
 
 /**
@@ -189,6 +288,17 @@ export type UiNode =
   | (UiNodeBase & { kind: 'table'; columns: string[]; rows: string[][] })
   | (UiNodeBase & { kind: 'badge'; text: string; tone?: UiTone })
   | (UiNodeBase & { kind: 'divider' })
+  /**
+   * Places in the code, listed for the user to open one at a time. With
+   * `steps`, they are a walkthrough: read in order, stepped through from the
+   * editor.
+   */
+  | (UiNodeBase & {
+      kind: 'locations'
+      title?: string
+      locations: CodeLocation[]
+      steps?: boolean
+    })
 
 export type EventBody = ClientEventBody | ServerEventBody
 
@@ -253,6 +363,11 @@ export interface SessionMeta {
   autoApproveTools: string[]
   /** How much this session may do without asking. */
   permissionMode: AgentMode
+  /**
+   * Whether the harness runs with grove's prompt and workspace tools in place
+   * of its own. Fixed once the session has started, like the harness.
+   */
+  groveMode: boolean
   labels: Record<string, string>
   createdAt: string
   updatedAt: string
@@ -291,6 +406,7 @@ export interface CreateSessionOptions {
   thinkingLevel?: ThinkingLevel
   activeTools?: string[]
   permissionMode?: AgentMode
+  groveMode?: boolean
   /** Free-form marks on the session; `grove.parent` names the agent that spawned it. */
   labels?: Record<string, string>
 }
@@ -304,6 +420,7 @@ export interface SessionUpdate {
   activeTools?: string[] | null
   autoApproveTools?: string[]
   permissionMode?: AgentMode
+  groveMode?: boolean
   labels?: Record<string, string>
 }
 
@@ -468,6 +585,8 @@ export interface HarnessCapabilities {
   steering: boolean
   /** grove's own tools (review, chat, onboarding) can be injected. */
   groveTools: boolean
+  /** Sessions can run in grove mode: grove's prompt and workspace tools in place of the harness's. */
+  groveMode: boolean
   /** Images attached to a message reach the model. */
   attachments: boolean
 }

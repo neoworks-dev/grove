@@ -12,12 +12,14 @@ import type { SettingsService } from '../settings'
 import type { TerminalManager } from '../terminals'
 import type { NeovimManager } from '../nvim'
 import type { LspManager } from '../lsp'
+import type { DocumentRegistry } from '../editorDocs'
 import type { WorktreeWatcher } from '../watcher'
 import type { WorktreeChannel } from '../worktreeChannel'
 import type { ActionRunner } from '../actions'
 import type { AgentService } from '../agents/service'
 import type { AgentReviewBridge } from '../agents/reviewBridge'
 import type { HarnessRegistry } from '../agents/harness'
+import type { SwitchboardHost } from '../agents/switchboard/host'
 import type { PermissionBroker } from '../api/broker'
 import type { PluginRegistry } from '../plugins/loader'
 import type { AiBridge } from '../plugins/aiBridge'
@@ -34,7 +36,7 @@ export interface WorkbenchService {
   requireRepo(): { repoPath: string; config: WorkbenchConfig }
   findWorktree(worktreeId: string): Worktree
   refreshWorktrees(): Promise<Worktree[]>
-  /** Re-read workbench.yaml and adopt it as the open repo's config. */
+  /** Re-read grove.config.yaml and adopt it as the open repo's config. */
   reloadConfig(): Promise<WorkbenchConfig>
   openRepo(repoPath: string): Promise<{ info: RepoInfo; worktrees: Worktree[] }>
   readonly repoPath: string | null
@@ -86,11 +88,13 @@ declare module '@neoworks/extension-system' {
     terminals: TerminalManager
     nvim: NvimService
     lsp: LspManager
+    documents: DocumentRegistry
     watcher: WorktreeWatcher
     chat: WorktreeChannel
     actions: ActionRunner
     agents: AgentService
     harnesses: HarnessRegistry
+    switchboard: SwitchboardHost
     agentReview: AgentReviewBridge
     plugins: PluginsService
     apps: AppsService

@@ -10,6 +10,11 @@
 // duplicated, and an address that moved when a user renamed a tab would strand
 // every agent holding it. Titles still travel alongside, because "auth-refactor"
 // is what makes a roster readable.
+//
+// An id also reaches across worktrees. The channel and the roster an agent
+// reads first are its own worktree's, but an agent that created a worktree per
+// task has to be able to steer the agents it put there, and they to ask it
+// back.
 
 import type { HarnessInfo, SessionEvent, SessionMeta } from '../../shared/agents'
 import { DISPOSE_LABEL, PARENT_LABEL } from './handoffBridge'
@@ -24,6 +29,10 @@ export interface AgentPeer {
   agentId: string
   /** The session's title, for reading rather than addressing. */
   title: string
+  /** The worktree the session works in. */
+  workspaceRoot: string
+  /** The session that spawned this one, if an agent did. */
+  parentSessionId: string | null
   harness: string
   model: string
   status: SessionMeta['status']
@@ -79,11 +88,32 @@ export class AgentRoster {
    * listing it would only offer an address that goes nowhere.
    */
   async peers(workspaceRoot: string): Promise<AgentPeer[]> {
+    const everyone = await this.everyone()
+    return everyone.filter((peer) => peer.workspaceRoot === workspaceRoot)
+  }
+
+  /** Every session that can be addressed, in any worktree. */
+  async everyone(): Promise<AgentPeer[]> {
     const sessions = await this.options.agents.listSessions()
     return sessions
-      .filter((session) => session.workspaceRoot === workspaceRoot)
       .filter((session) => !isSubagentSession(session))
       .map((session) => peerOf(session))
+  }
+
+  /**
+   * The agents one session works with from other worktrees: the one that
+   * spawned it and the ones it spawned.
+   *
+   * These are listed without being asked for, because an agent sent to a
+   * worktree of its own would otherwise see nobody there to report to.
+   */
+  async relativesElsewhere(sessionId: string): Promise<AgentPeer[]> {
+    const everyone = await this.everyone()
+    const self = everyone.find((peer) => peer.sessionId === sessionId)
+    if (!self) return []
+    return everyone.filter(
+      (peer) => peer.workspaceRoot !== self.workspaceRoot && isRelated(peer, self)
+    )
   }
 
   /** How one session signs its own messages: "title (id)", or the id alone. */
@@ -108,20 +138,24 @@ export class AgentRoster {
    * An agent id is the address, so that is matched first. A title is accepted
    * too — a model that has read one off the roster will use it — but only when
    * exactly one session carries it, since a title says nothing about which.
+   *
+   * The caller's own worktree is searched first. Failing that, an id reaches
+   * an agent in any worktree; a title does not, since the same title in
+   * another worktree is more likely a different job than the one meant.
    */
   async resolve(workspaceRoot: string, reference: string): Promise<AgentPeer | null> {
     const wanted = reference.trim().toLowerCase()
     if (wanted.length === 0) return null
-    const peers = await this.peers(workspaceRoot)
+    const everyone = await this.everyone()
+    const here = everyone.filter((peer) => peer.workspaceRoot === workspaceRoot)
 
-    const byAgentId = peers.find((peer) => peer.agentId.toLowerCase() === wanted)
-    if (byAgentId) return byAgentId
-    const bySessionId = peers.find((peer) => peer.sessionId === reference)
-    if (bySessionId) return bySessionId
+    const local = matchByAddress(here, reference)
+    if (local) return local
 
-    const byTitle = peers.filter((peer) => peer.title.trim().toLowerCase() === wanted)
+    const byTitle = here.filter((peer) => peer.title.trim().toLowerCase() === wanted)
     if (byTitle.length === 1) return byTitle[0]
-    return null
+
+    return matchByAddress(everyone, reference)
   }
 
   /**
@@ -159,6 +193,7 @@ export class AgentRoster {
       // session on: pi, for one, ignores a half-named model and falls back to
       // its own default, which is not what the spawning agent asked for.
       provider: await this.providerOf(options.harness, options.model),
+      groveMode: await this.groveModeOf(options.parentSessionId),
       labels: labelsFor(options)
     })
     // The brief is the parent talking, so it arrives as the parent talking: the
@@ -169,6 +204,14 @@ export class AgentRoster {
       { type: 'app.message', label: 'Task', from, text: options.prompt, deliverAs: 'followUp' }
     ])
     return peerOf(snapshot)
+  }
+
+  /** Whether the spawning session runs in grove mode, which its agents then do too. */
+  private async groveModeOf(sessionId: string): Promise<boolean> {
+    const sessions = await this.options.agents.listSessions()
+    const parent = sessions.find((session) => session.id === sessionId)
+    if (!parent) return false
+    return parent.groveMode
   }
 
   /** Which provider serves a model on a runtime, when the caller named one. */
@@ -235,6 +278,28 @@ export class AgentRoster {
   }
 }
 
+/**
+ * The one peer whose agent id or session id is `reference`.
+ *
+ * Two sessions sharing an agent id is possible across worktrees, if unlikely;
+ * rather than guess between them, neither is returned.
+ */
+function matchByAddress(peers: AgentPeer[], reference: string): AgentPeer | null {
+  const wanted = reference.trim().toLowerCase()
+  const byAgentId = peers.filter((peer) => peer.agentId.toLowerCase() === wanted)
+  if (byAgentId.length === 1) return byAgentId[0]
+  if (byAgentId.length > 1) return null
+  const bySessionId = peers.find((peer) => peer.sessionId === reference.trim())
+  if (!bySessionId) return null
+  return bySessionId
+}
+
+/** Is one of the two the other's parent? */
+function isRelated(peer: AgentPeer, self: AgentPeer): boolean {
+  if (self.parentSessionId === peer.sessionId) return true
+  return peer.parentSessionId === self.sessionId
+}
+
 /** What a spawned session is marked with: who started it, and whether it stays. */
 function labelsFor(options: SpawnOptions): Record<string, string> {
   const labels: Record<string, string> = { [PARENT_LABEL]: options.parentSessionId }
@@ -247,6 +312,8 @@ function peerOf(session: SessionMeta): AgentPeer {
     sessionId: session.id,
     agentId: agentIdOf(session),
     title: session.title.trim() || session.harness,
+    workspaceRoot: session.workspaceRoot,
+    parentSessionId: session.labels[PARENT_LABEL] || null,
     harness: session.harness,
     model: session.model,
     status: session.status,

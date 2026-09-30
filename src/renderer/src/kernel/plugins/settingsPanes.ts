@@ -18,7 +18,6 @@ export const settingsPanes = {
           title: 'Preferences',
           component: PreferencesPane,
           orientation: 'row',
-          containerClass: 'bg-elevated',
           minWidth: 320,
           keywords: 'settings options configure preferences'
         }),

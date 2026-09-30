@@ -9,6 +9,7 @@ import type {
 } from 'vscode-languageserver-types'
 import type {
   Worktree,
+  WorktreeSetupState,
   BranchList,
   BranchStatus,
   BranchCommits,
@@ -89,12 +90,17 @@ import type {
 import type {
   BlobDescriptor,
   ClientEventBody,
+  CodeLocation,
   CreateSessionOptions,
   FileMatch,
+  ResolvedLocation,
   ShellCompletion,
   HarnessCatalog,
   HarnessInfo,
   SessionEvent,
+  SessionNote,
+  PaneTypeInfo,
+  ShellOutputSnapshot,
   SessionMeta,
   SessionSnapshot,
   SessionUpdate
@@ -114,6 +120,7 @@ interface RepoStateShape {
   pinnedTabsByWorktree: Record<string, string[]>
   selectedWorktreeId: string | null
   setupOnceDone: boolean
+  trustedSetupHash: string | null
   agentSessions: Record<string, string>
   trustedActionHashes: string[]
   viewLayouts: Record<string, unknown>
@@ -179,6 +186,8 @@ export interface WorkbenchApi {
     remove: (worktreeId: string, force: boolean) => Promise<Worktree[]>
     // Each worktree's commits ahead of and behind the base branch, by worktree id.
     positions: () => Promise<Record<string, BranchPosition>>
+    // Setup still running or failed, by worktree id; `event:worktree-setup` streams changes.
+    setupStates: () => Promise<Record<string, WorktreeSetupState>>
     archive: (worktreeId: string, options: ArchiveOptions) => Promise<Worktree[]>
   }
   git: {
@@ -360,6 +369,17 @@ export interface WorkbenchApi {
 
     listEvents: (sessionId: string, after: number) => Promise<SessionEvent[]>
     sendEvents: (sessionId: string, events: ClientEventBody[]) => Promise<{ lastSeq: number }>
+    saveNotes: (sessionId: string, notes: SessionNote[]) => Promise<void>
+    setPaneTypes: (types: PaneTypeInfo[]) => Promise<void>
+    /** What the session's running commands have printed so far. */
+    shellOutput: (sessionId: string) => Promise<ShellOutputSnapshot[]>
+    /** Ctrl+C for a command the session is running; false when there was none. */
+    interruptShell: (sessionId: string, toolUseId: string) => Promise<boolean>
+    /** Where places an agent pointed at are now, after edits, renames and deletions. */
+    resolveLocations: (
+      worktreeId: string,
+      locations: CodeLocation[]
+    ) => Promise<ResolvedLocation[]>
 
     completeShell: (sessionId: string, line: string) => Promise<ShellCompletion[]>
     shellName: () => Promise<string>
@@ -378,6 +398,8 @@ export interface WorkbenchApi {
     listDir: (worktreeId: string, relPath: string) => Promise<FileNode[]>
     listAll: (worktreeId: string) => Promise<string[]>
     listPath: (worktreeId: string, rawPath: string) => Promise<FileNode[]>
+    /** Of the worktree-relative paths given, the ones that are files in the worktree. */
+    existing: (worktreeId: string, relPaths: string[]) => Promise<string[]>
     read: (worktreeId: string, absPath: string) => Promise<string>
     write: (worktreeId: string, absPath: string, content: string) => Promise<void>
     create: (worktreeId: string, relPath: string) => Promise<string>
@@ -560,7 +582,8 @@ export interface WorkbenchApi {
   settings: {
     read: () => Promise<SettingsSnapshotShape>
     set: (key: string, value: unknown, scope: 'user' | 'project') => Promise<SettingsSnapshotShape>
-    openFile: (scope: 'user' | 'project') => Promise<string | void>
+    // The scope's settings file, created if missing; null for project scope with no repo.
+    filePath: (scope: 'user' | 'project') => Promise<string | null>
   }
   openExternal: (url: string) => Promise<void>
   // Bring grove's window to the front, e.g. from a desktop notification.

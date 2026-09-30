@@ -7,7 +7,7 @@ import { selectWorktree } from '../store.svelte'
 import { catalog } from './catalog.svelte'
 import { agentSessions } from './sessions.svelte'
 import type { ModelSelection } from './modelSelection'
-import type { ThinkingLevel } from './types'
+import type { ThinkingLevel, UserContentBlock } from './types'
 
 /** The harness a new session runs: the last one chosen, else the first that can actually run. */
 export function defaultSessionHarness(): string {
@@ -33,6 +33,15 @@ export function defaultSessionThinking(): ThinkingLevel {
     return 'off'
   }
   return remembered
+}
+
+// What grove mode is, for the controls that switch it.
+export const GROVE_MODE_DESCRIPTION =
+  "Run the harness on Grove's own prompt and tools — edits by line tags, the editor's language servers — instead of its own. Far fewer tokens a turn."
+
+/** Whether a new session starts in grove mode: as the last one was switched, else off. */
+export function defaultSessionGroveMode(): boolean {
+  return settings.get<boolean>('workbench.agentGroveMode') === true
 }
 
 // The last model picked on each harness, keyed by harness id. Remembered per
@@ -82,21 +91,31 @@ export async function startSessionWithTask(
   worktreePath: string,
   prompt: string
 ): Promise<string | null> {
+  return startSessionWithMessage(worktreePath, [{ type: 'text', text: prompt }])
+}
+
+/**
+ * Starts a session in a worktree on a message that can carry more than text,
+ * such as the code around a problem, and shows it in the Agent pane.
+ */
+export async function startSessionWithMessage(
+  worktreePath: string,
+  content: UserContentBlock[]
+): Promise<string | null> {
   const harness = defaultSessionHarness()
   const model = rememberedModel(harness)
   const sessionId = await agentSessions.create(worktreePath, {
     harness: harness || undefined,
     provider: model?.provider,
     model: model?.model,
-    thinkingLevel: defaultSessionThinking()
+    thinkingLevel: defaultSessionThinking(),
+    groveMode: defaultSessionGroveMode()
   })
   if (!sessionId) {
     return null
   }
   await agentSessions.open(sessionId)
-  await agentSessions.send(sessionId, [
-    { type: 'user.message', content: [{ type: 'text', text: prompt }], deliverAs: 'steer' }
-  ])
+  await agentSessions.send(sessionId, [{ type: 'user.message', content, deliverAs: 'steer' }])
   // create() made it the worktree's active session, which is what the Agent
   // pane shows once the worktree is selected.
   await selectWorktree(worktreePath)

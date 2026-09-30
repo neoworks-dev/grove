@@ -4,6 +4,7 @@
 
 import { simpleGit, type SimpleGit } from 'simple-git'
 import { basename } from 'path'
+import { existsSync } from 'fs'
 import { readFile } from 'fs/promises'
 import { join } from 'path'
 import type {
@@ -103,7 +104,9 @@ export async function isDirty(worktreePath: string): Promise<boolean> {
 }
 
 // List worktrees with dirty status. portSlot is filled in by the caller (ports.ts);
-// git knows nothing about ports, so it defaults to -1 here.
+// git knows nothing about ports, so it defaults to -1 here. A worktree whose
+// directory was deleted without `git worktree remove` stays in git's list until
+// pruned; it is left out, since no git command can run in it.
 export async function listWorktrees(repoPath: string): Promise<Worktree[]> {
   const out = await gitFor(repoPath).raw(['worktree', 'list', '--porcelain'])
   const parsed = parseWorktreePorcelain(out)
@@ -111,6 +114,7 @@ export async function listWorktrees(repoPath: string): Promise<Worktree[]> {
   const worktrees: Worktree[] = []
   for (const entry of parsed) {
     if (entry.isBare) continue
+    if (!existsSync(entry.path)) continue
     const dirty = await isDirty(entry.path)
     const branch = entry.branch || (entry.isDetached ? entry.head.slice(0, 8) : '(unknown)')
     worktrees.push({
@@ -564,6 +568,45 @@ export async function fileAtRef(
     return await gitFor(worktreePath).raw(['show', `${ref}:${relPath}`])
   } catch {
     return ''
+  }
+}
+
+/** The commit a worktree has checked out, or null outside a repository or before its first commit. */
+export async function headCommit(worktreePath: string): Promise<string | null> {
+  try {
+    return (await gitFor(worktreePath).raw(['rev-parse', 'HEAD'])).trim()
+  } catch {
+    return null
+  }
+}
+
+/**
+ * How the tracked files differ between `commit` and the working tree, renames
+ * detected; empty when git cannot say.
+ */
+export async function changesSince(worktreePath: string, commit: string): Promise<DiffFile[]> {
+  try {
+    const output = await gitFor(worktreePath).raw([
+      'diff',
+      '-M',
+      '--name-status',
+      '-z',
+      commit,
+      '--'
+    ])
+    return parseNameStatusZ(output, false)
+  } catch {
+    return []
+  }
+}
+
+/** Untracked files that are not ignored, relative to the worktree. */
+export async function untrackedFiles(worktreePath: string): Promise<string[]> {
+  try {
+    const output = await gitFor(worktreePath).raw(['ls-files', '--others', '--exclude-standard', '-z'])
+    return output.split('\0').filter((path) => path.length > 0)
+  } catch {
+    return []
   }
 }
 

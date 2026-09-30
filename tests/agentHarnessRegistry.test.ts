@@ -18,7 +18,8 @@ function descriptor(id: string, available = true): HarnessDescriptor {
       liveModelSwitch: true,
       thinking: true,
       steering: true,
-      groveTools: true
+      groveTools: true,
+      groveMode: true
     },
     probe: async () => ({ available, detail: available ? null : 'not installed' }),
     offering: async () => ({

@@ -15,6 +15,8 @@
   import { renderMarkdown } from '../../../../lib/markdown'
   import { floatingCodeScrollbars } from '../../../../lib/markdownScrollbars'
   import { highlightCodeFences } from '../../../../lib/markdownHighlight'
+  import { linkCodeReferences } from '../../../../lib/agents/codeReferenceLinks'
+  import type { CodeReference } from '../../../../lib/agents/codeReferences'
   import { blobUrl } from '../../../../lib/agents/api'
   import {
     tallyOf,
@@ -24,12 +26,13 @@
     type ToolTally,
     type TranscriptRow
   } from '../../../../lib/agents/toolRuns'
-  import { fileOfCall } from '../../../../lib/agents/tools'
+  import { displayOfCall, fileOfCall } from '../../../../lib/agents/tools'
   import { foldedCalls, foldedMessages, foldTurn } from '../../../../lib/agents/turns'
   import { agentIdIn, senderOf } from '../../../../lib/agents/transcript'
   import type { ToolItem, TranscriptItem } from '../../../../lib/agents/transcript'
-  import type { ToolInfo } from '../../../../lib/agents/types'
+  import type { CodeLocation, LocationState, ToolInfo } from '../../../../lib/agents/types'
   import AgentImage from './AgentImage.svelte'
+  import AgentMessageCards from './AgentMessageCards.svelte'
   import AgentToolCall from './AgentToolCall.svelte'
   import AgentSurface from './AgentSurface.svelte'
 
@@ -43,6 +46,7 @@
     running,
     toggleTool,
     onOpenFile,
+    onOpenLocation,
     onOpenAgent,
     onOpenSession,
     subagentSessions,
@@ -62,6 +66,8 @@
     running: boolean
     toggleTool: (toolUseId: string) => void
     onOpenFile: (path: string) => void
+    /** Open a place an agent pointed at, with its lines marked. */
+    onOpenLocation: (location: CodeLocation, state?: LocationState) => void
     /** Show the conversation of the agent a message came from. */
     onOpenAgent: (agentId: string) => void
     /** Show one session: the conversation a tool call ran, from the call itself. */
@@ -104,8 +110,13 @@
     expandedRuns = { ...expandedRuns, [key]: !expandedRuns[key] }
   }
 
-  function displayOf(name: string): ToolInfo['display'] {
-    return tools.find((tool) => tool.name === name)?.display
+  /** Opens a path the agent named in its text, marking the lines it gave. */
+  function openReference(reference: CodeReference): void {
+    onOpenLocation({ path: reference.path, startLine: reference.line, endLine: reference.endLine })
+  }
+
+  function displayOf(call: ToolItem): ToolInfo['display'] {
+    return displayOfCall(tools, call)
   }
 
   /**
@@ -113,7 +124,7 @@
    * to a file, with the file it changed, and a call whose images are its point.
    */
   function standsAlone(call: ToolItem): boolean {
-    if (displayOf(call.name)?.edits === true) {
+    if (displayOf(call)?.edits === true) {
       return true
     }
     return call.images.length > 0
@@ -122,7 +133,7 @@
   /** What a folded summary says a run of calls did, file names included. */
   function tallyCalls(calls: ToolItem[]): ToolTally[] {
     return tallyOf(calls, (call) =>
-      fileOfCall(displayOf(call.name), call.editedInput ?? call.input, root)
+      fileOfCall(displayOf(call), call.editedInput ?? call.input, root)
     )
   }
 
@@ -192,7 +203,7 @@
           <AgentToolCall
             {sessionId}
             item={call}
-            display={displayOf(call.name)}
+            display={displayOf(call)}
             {root}
             expanded={Boolean(expandedTools[call.toolUseId])}
             onToggle={() => toggleTool(call.toolUseId)}
@@ -340,17 +351,19 @@
           class="agent-markdown prose max-w-none text-xs text-default"
           use:floatingCodeScrollbars
           use:highlightCodeFences
+          use:linkCodeReferences={{ root, onOpen: openReference }}
         >
           <!-- eslint-disable-next-line svelte/no-at-html-tags -->
           {@html renderMarkdown(item.text)}
         </div>
+        <AgentMessageCards text={item.text} />
       {/if}
     </div>
   {:else if item.kind === 'tool'}
     <AgentToolCall
       {sessionId}
       {item}
-      display={displayOf(item.name)}
+      display={displayOf(item)}
       {root}
       expanded={Boolean(expandedTools[item.toolUseId])}
       onToggle={() => toggleTool(item.toolUseId)}
@@ -383,14 +396,8 @@
     >
       <span class="whitespace-pre-wrap">{item.text}</span>
     </div>
-  {:else if item.kind === 'commandOutput'}
-    <!-- A command the harness ran itself (/usage, /help): its output, verbatim. -->
-    <div class="mb-2 rounded-md border border-line bg-elevated px-2.5 py-2">
-      <pre
-        class="max-h-72 overflow-auto whitespace-pre-wrap font-mono text-2xs text-muted">{item.text}</pre>
-    </div>
   {:else if item.kind === 'surface'}
-    <AgentSurface node={item.view} />
+    <AgentSurface node={item.view} surfaceId={item.surfaceId} {root} {onOpenLocation} />
   {/if}
 {/snippet}
 

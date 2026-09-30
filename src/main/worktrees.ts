@@ -7,9 +7,10 @@ import { resolve, join } from 'path'
 import type { Worktree, WorkbenchConfig } from '../shared/types'
 import * as git from './git'
 import { assignSlots, portsForSlot } from './ports'
-import { buildWorktreeEnv, substitute, spawnEnv } from './env'
+import { buildWorktreeEnv, spawnEnv } from './env'
+import { askToTrustSetupNatively, ensureSetupTrusted, type AskToTrustSetup } from './setupTrust'
 import { getRepoState, updateRepoState } from './state'
-import { copyEnvFiles, installCommand } from './worktreeBootstrap'
+import { copyEnvFiles } from './worktreeBootstrap'
 
 const execAsync = promisify(exec)
 
@@ -44,15 +45,20 @@ export function portsForWorktree(config: WorkbenchConfig, slot: number): number[
   )
 }
 
-// Run a list of shell commands sequentially in a cwd, streaming output.
+/**
+ * Runs shell commands one after another in a cwd, streaming their output.
+ * A failing command is logged and the rest still run; the result says whether
+ * every one succeeded. The worktree variables reach a command only through its
+ * environment, so a branch name is never parsed as shell syntax.
+ */
 async function runCommands(
   commands: string[],
   cwd: string,
   vars: Record<string, string>,
   log: (line: string) => void
-): Promise<void> {
-  for (const raw of commands) {
-    const command = substitute(raw, vars)
+): Promise<boolean> {
+  let succeeded = true
+  for (const command of commands) {
     log(`$ ${command}`)
     try {
       const { stdout, stderr } = await execAsync(command, { cwd, env: spawnEnv(vars) })
@@ -60,20 +66,34 @@ async function runCommands(
       if (stderr) log(stderr.trimEnd())
     } catch (error) {
       log(`[setup] command failed: ${(error as Error).message}`)
+      succeeded = false
     }
   }
+  return succeeded
 }
 
-// Create a worktree, assign it a port slot, and run setup commands.
+/** Creates a worktree, runs its setup, and resolves once both are done. */
 export async function createWorktree(
   repoPath: string,
   config: WorkbenchConfig,
   options: { name: string; baseBranch?: string; newBranch?: string; checkoutBranch?: string },
   log: SetupLogger
 ): Promise<Worktree> {
-  const dir = worktreesDir(repoPath, config)
-  const worktreePath = join(dir, options.name)
+  const created = await addWorktree(repoPath, config, options)
+  await setupWorktree(repoPath, config, created, log)
+  return created
+}
 
+/**
+ * Checks out a new worktree and assigns it a port slot, without running any
+ * setup — so a caller can show and use it while `setupWorktree` runs.
+ */
+export async function addWorktree(
+  repoPath: string,
+  config: WorkbenchConfig,
+  options: { name: string; baseBranch?: string; newBranch?: string; checkoutBranch?: string }
+): Promise<Worktree> {
+  const worktreePath = join(worktreesDir(repoPath, config), options.name)
   await git.addWorktree(repoPath, worktreePath, {
     newBranch: options.newBranch,
     baseBranch: options.baseBranch,
@@ -85,31 +105,58 @@ export async function createWorktree(
   if (!created) {
     throw new Error('worktree created but not found in list')
   }
+  return created
+}
 
-  const ports = portsForWorktree(config, created.portSlot)
-  const vars = buildWorktreeEnv(created, ports)
-  const logLine = (line: string): void => log(created.id, line)
+/**
+ * Prepares a freshly added worktree: copies the main worktree's env files,
+ * then runs the configured `setup.once` (first worktree only) and
+ * `setup.per_worktree` commands. Nothing runs that grove.config.yaml does not
+ * list, and nothing runs before the user has trusted those commands — `ask`
+ * is how they are asked. Resolves to whether every command that ran succeeded.
+ */
+export async function setupWorktree(
+  repoPath: string,
+  config: WorkbenchConfig,
+  worktree: Worktree,
+  log: SetupLogger,
+  ask: AskToTrustSetup = askToTrustSetupNatively
+): Promise<boolean> {
+  const vars = buildWorktreeEnv(worktree, portsForWorktree(config, worktree.portSlot))
+  const logLine = (line: string): void => log(worktree.id, line)
 
-  await bootstrapWorktree(
-    mainWorktreePath(repoPath, worktrees),
-    worktreePath,
-    config,
-    vars,
-    logLine
-  )
-
-  const repoState = await getRepoState(repoPath)
-  if (!repoState.setupOnceDone && config.setup.once.length > 0) {
-    await runCommands(config.setup.once, worktreePath, vars, (line) => log(created.id, line))
-    await updateRepoState(repoPath, { setupOnceDone: true })
-  }
-  if (config.setup.per_worktree.length > 0) {
-    await runCommands(config.setup.per_worktree, worktreePath, vars, (line) =>
-      log(created.id, line)
+  if (config.setup.copy_env) {
+    const mainPath = mainWorktreePath(repoPath, await git.listWorktrees(repoPath))
+    await copyEnvFiles(mainPath, worktree.path, logLine).catch((error: Error) =>
+      logLine(`[setup] copying env files failed: ${error.message}`)
     )
   }
 
-  return created
+  const repoState = await getRepoState(repoPath)
+  const runsOnce = !repoState.setupOnceDone && config.setup.once.length > 0
+  if (!runsOnce && config.setup.per_worktree.length === 0) {
+    return true
+  }
+  if (!(await ensureSetupTrusted(repoPath, config, ask))) {
+    logLine('[setup] not run: the setup commands in grove.config.yaml were not trusted')
+    return true
+  }
+
+  let succeeded = true
+  if (runsOnce) {
+    succeeded = await runCommands(config.setup.once, worktree.path, vars, logLine)
+    await updateRepoState(repoPath, { setupOnceDone: true })
+  }
+  if (config.setup.per_worktree.length > 0) {
+    const perWorktreeSucceeded = await runCommands(
+      config.setup.per_worktree,
+      worktree.path,
+      vars,
+      logLine
+    )
+    succeeded = succeeded && perWorktreeSucceeded
+  }
+  return succeeded
 }
 
 /** The main worktree's path, where untracked files like `.env` live. */
@@ -117,29 +164,6 @@ function mainWorktreePath(repoPath: string, worktrees: Worktree[]): string {
   const main = worktrees.find((worktree) => worktree.isMain)
   if (!main) return repoPath
   return main.path
-}
-
-/**
- * Gives a new worktree what git does not: the main worktree's untracked env
- * files and installed dependencies, each unless workbench.yaml turns it off.
- * Runs before the setup commands, which may well need both.
- */
-async function bootstrapWorktree(
-  mainPath: string,
-  worktreePath: string,
-  config: WorkbenchConfig,
-  vars: Record<string, string>,
-  log: (line: string) => void
-): Promise<void> {
-  if (config.setup.copy_env) {
-    await copyEnvFiles(mainPath, worktreePath, log).catch((error: Error) =>
-      log(`[setup] copying env files failed: ${error.message}`)
-    )
-  }
-  if (!config.setup.install) return
-  const command = await installCommand(worktreePath, config.setup.per_worktree)
-  if (!command) return
-  await runCommands([command], worktreePath, vars, log)
 }
 
 export async function removeWorktree(

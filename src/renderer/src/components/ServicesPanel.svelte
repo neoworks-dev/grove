@@ -65,7 +65,7 @@
 
   <div class="min-h-0 flex-1 overflow-auto">
     {#if services.length === 0}
-      <p class="px-3 py-3 text-xs text-dim">No services configured. Add them to workbench.yaml.</p>
+      <p class="px-3 py-3 text-xs text-dim">No services configured. Add them to grove.config.yaml.</p>
     {/if}
     {#each services as service (service.name)}
       <div class="flex items-center gap-2 border-b border-line/50 px-3 py-2 text-xs">

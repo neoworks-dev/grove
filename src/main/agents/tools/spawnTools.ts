@@ -45,45 +45,20 @@ export function spawnTool(roster: AgentRoster, worktrees: AgentWorktrees): Grove
     summary: 'Start another agent in this worktree and give it a task.',
     promptGuidelines: ['Give a spawned agent everything it needs in its prompt; it cannot see this conversation'],
     description:
-      'Start a new agent session in this worktree and hand it a task. Use it to run work in ' +
-      'parallel, or to put a job on a runtime better suited to it than yours. Whatever it says ' +
-      'at the end of each of its turns is delivered back to you, and it shares the worktree and ' +
-      'the message channel with you. It does not see this conversation: the prompt has to carry ' +
-      'everything it needs. Set `removeWhenDone` for a one-shot helper, so its conversation is ' +
-      'cleared away once it has answered. Set `worktree` to start it in another worktree ' +
-      'instead — one per task, made with `create_worktree`. It works on that branch and posts ' +
-      "on that worktree's channel, but it still reports back to you, and the two of you can " +
-      'message each other by id.',
+      'Start an agent on a task, to work in parallel or on a better-suited runtime. What it ' +
+      'says at the end of each turn is delivered to you. In another worktree it still reports ' +
+      'to you, and you can message each other by id.',
     inputSchema: {
       type: 'object',
       properties: {
-        title: {
-          type: 'string',
-          description: 'A short title for the new agent, describing the job it is being given.'
-        },
-        prompt: { type: 'string', description: 'The task, in full.' },
-        harness: {
-          type: 'string',
-          description: `The runtime to run it on. One of: ${roster.harnessIds().join(', ')}.`
-        },
-        model: {
-          type: 'string',
-          description:
-            'Optional model id, as `list_runtimes` reports it for the chosen runtime. The ' +
-            "runtime's own default is used when this is left out."
-        },
-        worktree: {
-          type: 'string',
-          description:
-            'Start it in this worktree instead of yours: a branch or path as `list_worktrees` ' +
-            'reports it.'
-        },
+        title: { type: 'string', description: 'Short title for the job.' },
+        prompt: { type: 'string', description: 'The whole task.' },
+        harness: { type: 'string', enum: roster.harnessIds() },
+        model: { type: 'string', description: "Model id from list_runtimes; else the runtime's default." },
+        worktree: { type: 'string', description: 'Branch or path from list_worktrees, to start it there.' },
         removeWhenDone: {
           type: 'boolean',
-          description:
-            'Delete the agent once it has reported back, instead of leaving its conversation ' +
-            'open. Use it for one-shot work you will not need to follow up on; the agent is ' +
-            'gone after its first answer, so you cannot message it afterwards.'
+          description: 'Remove it after its first answer, for one-shot work.'
         }
       },
       required: ['title', 'prompt'],

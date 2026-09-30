@@ -81,9 +81,9 @@ function editTool(files: WorkspaceFiles): GroveTool {
     summary: 'Edit a file',
     promptGuidelines: ['Edit with the LINE#ID tags from read, every change to a file in one call'],
     description: [
-      'Edit a file by LINE#ID tags from read. All edits in one call refer to the file as last read and are checked before anything is written; if the file changed, the call fails and shows fresh tags.',
-      'Ops: replace (line pos, or range pos..end inclusive; lines [] deletes), append (after pos, or at end of file), prepend (before pos, or at start of file). Missing files are created by append/prepend without pos.',
-      'Put every change to a file in one call. The result shows the changed lines with fresh tags; tags elsewhere in the file stay valid only above the first change. Replace a whole construct rather than patching around its closing line. Copy indentation exactly.'
+      'Edit a file by LINE#ID tags from read. Edits refer to the file as last read; if it changed, the call fails and shows fresh tags.',
+      'replace: pos, or pos..end inclusive; lines [] deletes. append/prepend: after/before pos, or at the end/start; without pos they create a missing file.',
+      'The result shows the changed lines with fresh tags; tags below the first change are stale. Replace whole constructs; copy indentation exactly.'
     ].join('\n'),
     inputSchema: {
       type: 'object',
@@ -96,17 +96,10 @@ function editTool(files: WorkspaceFiles): GroveTool {
             type: 'object',
             properties: {
               op: { type: 'string', enum: ['replace', 'append', 'prepend'] },
-              pos: { type: 'string', description: 'Anchor "LINE#ID". Required for replace.' },
-              end: { type: 'string', description: 'Last line of a replace range, "LINE#ID".' },
-              lines: {
-                type: 'array',
-                items: { type: 'string' },
-                description: 'New lines, without trailing newlines.'
-              },
-              current: {
-                type: 'string',
-                description: "Single-line replace: the line's current text, as a check."
-              }
+              pos: { type: 'string', description: 'LINE#ID' },
+              end: { type: 'string', description: 'LINE#ID' },
+              lines: { type: 'array', items: { type: 'string' } },
+              current: { type: 'string', description: "Single-line replace: the line's current text." }
             },
             required: ['op', 'lines'],
             additionalProperties: false

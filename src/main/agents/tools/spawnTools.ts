@@ -43,6 +43,7 @@ export function spawnTool(roster: AgentRoster, worktrees: AgentWorktrees): Grove
   return {
     name: 'spawn_agent',
     summary: 'Start another agent in this worktree and give it a task.',
+    promptGuidelines: ['Give a spawned agent everything it needs in its prompt; it cannot see this conversation'],
     description:
       'Start a new agent session in this worktree and hand it a task. Use it to run work in ' +
       'parallel, or to put a job on a runtime better suited to it than yours. Whatever it says ' +

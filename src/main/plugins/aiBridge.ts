@@ -138,17 +138,17 @@ export class AiBridge {
     }
   }
 
-  // Skill blocks appended to the agent's system prompt (v1 mechanism; swaps
-  // to native SDK skills when available).
+  // Skill blocks for the `skills` section of the agent's system prompt (v1
+  // mechanism; swaps to native SDK skills when available). Empty when no
+  // plugin registered one.
   systemAppend(): string {
     const blocks: string[] = []
     for (const byName of this.skills.values()) {
       for (const skill of byName.values()) {
-        blocks.push(`## Skill: ${skill.name}\n${skill.description}\n\n${skill.instructions}`)
+        blocks.push(`## ${skill.name}\n${skill.description}\n\n${skill.instructions}`)
       }
     }
-    if (blocks.length === 0) return ''
-    return `\n\n# Plugin-provided skills\n\n${blocks.join('\n\n')}`
+    return blocks.join('\n\n')
   }
 
   // ── Tool proxy round trip (main → renderer host → plugin worker) ──

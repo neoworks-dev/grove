@@ -11,7 +11,7 @@ import { groveTools } from '../src/main/agents/tools'
 import { AgentRoster, type AgentPeer } from '../src/main/agents/roster'
 import { AgentHandoffBridge, DISPOSE_LABEL, PARENT_LABEL } from '../src/main/agents/handoffBridge'
 import { AGENT_ID_LABEL } from '../src/main/agents/identity'
-import { groveSystemPrompt } from '../src/main/agents/systemPrompt'
+import { agentSection } from '../src/main/agents/systemPrompt'
 import { senderOf, type AppItem } from '../src/renderer/src/lib/agents/transcript'
 import type { GroveTool, GroveToolContext } from '../src/main/agents/harness'
 import type { SessionEvent, SessionMeta } from '../src/shared/agents'
@@ -860,49 +860,41 @@ describe('what grove tells an agent about the worktree', () => {
     }
   }
 
-  test('gives the agent its id, the others theirs, and the tools for reaching them', () => {
-    const prompt = groveSystemPrompt({
+  test('gives the agent its id and lists the others by theirs', () => {
+    const prompt = agentSection({
       agentId: 'id-a',
       title: 'Planner',
-      workspaceRoot: '/repo',
       peers: [peer('id-a', 'Planner'), peer('id-b', 'Builder')],
-      relatives: [],
-      harnesses: ['claude', 'pi']
+      relatives: []
     })
 
-    expect(prompt).toContain('id-a')
-    expect(prompt).toContain('id-b')
-    expect(prompt).toContain('Builder')
-    expect(prompt).toContain('send_message')
-    expect(prompt).toContain('spawn_agent')
+    expect(prompt).toStartWith('<agent>')
+    expect(prompt).toContain('You are "Planner", id id-a.')
+    expect(prompt).toContain('- id-b: "Builder"')
   })
 
-  test('says so when nobody else is here, rather than listing an empty roster', () => {
-    const prompt = groveSystemPrompt({
+  test('lists no roster when nobody else is here', () => {
+    const prompt = agentSection({
       agentId: 'id-a',
       title: 'Planner',
-      workspaceRoot: '/repo',
       peers: [peer('id-a', 'Planner')],
-      relatives: [],
-      harnesses: ['claude']
+      relatives: []
     })
 
-    expect(prompt).toContain('No other agent')
+    expect(prompt).not.toContain('Other agents in this worktree')
     expect(prompt).not.toContain('from other worktrees')
   })
 
   test('names the parent working in another worktree, so a child knows who to ask', () => {
-    const prompt = groveSystemPrompt({
+    const prompt = agentSection({
       agentId: 'id-c',
       title: 'Parser',
-      workspaceRoot: '/repo/.worktrees/12-parser',
       peers: [peer('id-c', 'Parser')],
-      relatives: [peer('id-a', 'Planner')],
-      harnesses: ['claude']
+      relatives: [peer('id-a', 'Planner')]
     })
 
-    expect(prompt).toContain('Working with you from other worktrees')
-    expect(prompt).toContain('id-a — "Planner", in /repo')
+    expect(prompt).toContain('Agents working with you from other worktrees')
+    expect(prompt).toContain('- id-a: "Planner" in /repo')
   })
 })
 

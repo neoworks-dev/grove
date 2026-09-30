@@ -42,6 +42,10 @@ function readTool(files: WorkspaceFiles): GroveTool {
   return {
     name: 'read',
     summary: 'Read a file',
+    promptGuidelines: [
+      'Find code with grep, find or lsp before reading it',
+      'Read only the part you need, with offset and limit'
+    ],
     description:
       'Read a text file, or list a directory. Each line comes back as LINE#ID:text, e.g. `5#ZP:  const x = 1;`. ' +
       `Pass the LINE#ID tags to edit to change lines. Shows at most ${MAX_LINES} lines or 50KB; use offset and limit for more.`,
@@ -75,6 +79,7 @@ function editTool(files: WorkspaceFiles): GroveTool {
   return {
     name: 'edit',
     summary: 'Edit a file',
+    promptGuidelines: ['Edit with the LINE#ID tags from read, every change to a file in one call'],
     description: [
       'Edit a file by LINE#ID tags from read. All edits in one call refer to the file as last read and are checked before anything is written; if the file changed, the call fails and shows fresh tags.',
       'Ops: replace (line pos, or range pos..end inclusive; lines [] deletes), append (after pos, or at end of file), prepend (before pos, or at start of file). Missing files are created by append/prepend without pos.',
@@ -141,6 +146,7 @@ function writeTool(files: WorkspaceFiles): GroveTool {
   return {
     name: 'write',
     summary: 'Write a file',
+    promptGuidelines: ['Use write only for new files or complete rewrites'],
     description:
       'Create a file, or replace one whole. For changing part of an existing file use edit, which costs far fewer tokens.',
     inputSchema: {

@@ -59,6 +59,7 @@ function locationsTool(): GroveTool {
   return {
     name: 'show_locations',
     summary: 'Point the user at places in the code.',
+    promptGuidelines: ['Call show_locations whenever your answer names places in the code'],
     description:
       'Point the user at the code your answer is about — where something is defined, where it ' +
       'is used, what you changed. Call it whenever your answer names places in the code, ' +

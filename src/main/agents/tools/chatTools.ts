@@ -40,6 +40,7 @@ export function chatTools(options: ChatToolOptions): GroveTool[] {
   const send: GroveTool = {
     name: 'send_message',
     summary: 'Send a message to another agent, or to everyone in this worktree.',
+    promptGuidelines: ['Address agents by id, not by title', 'Report results back to whoever asked for them'],
     description:
       "Post a message on this worktree's shared channel, which the user and every other agent " +
       'working here can read. Put an agent id in "to" (the id `list_agents` reports, not its ' +

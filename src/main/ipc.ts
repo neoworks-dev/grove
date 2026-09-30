@@ -58,7 +58,7 @@ import { AgentHandoffBridge } from './agents/handoffBridge'
 import { AgentRoster } from './agents/roster'
 import type { AgentWorktrees } from './agents/tools/worktreeTools'
 import { runSetup } from './routes/worktrees'
-import { groveSystemPrompt } from './agents/systemPrompt'
+import { agentSection, section } from './agents/systemPrompt'
 import { groveTools } from './agents/tools'
 
 interface RepoContext {
@@ -218,7 +218,7 @@ async function createWorktreeForAgent(branch: string, base: string | undefined):
   return created
 }
 
-/** grove's part of a session's system prompt: who it is here, and who else is. */
+/** A session's context sections: who it is here, who else is, and plugin skills. */
 async function buildSystemPrompt(session: {
   id: string
   title: string
@@ -229,16 +229,10 @@ async function buildSystemPrompt(session: {
     agentRoster.peers(session.workspaceRoot),
     agentRoster.relativesElsewhere(session.id)
   ])
-  const prompt = groveSystemPrompt({
-    agentId,
-    title: session.title,
-    workspaceRoot: session.workspaceRoot,
-    peers,
-    relatives,
-    harnesses: agentRoster.harnessIds()
-  })
+  const agent = agentSection({ agentId, title: session.title, peers, relatives })
   // Skills plugins registered go to every agent run.
-  return prompt + aiBridge.systemAppend()
+  const skills = section('skills', aiBridge.systemAppend())
+  return [agent, skills].filter((part) => part.length > 0).join('\n\n')
 }
 
 // Hands a spawned agent's closing words back to the agent that started it.

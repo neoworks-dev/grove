@@ -14,7 +14,7 @@ import { AGENT_ID_LABEL } from '../src/main/agents/identity'
 import { agentSection } from '../src/main/agents/systemPrompt'
 import { senderOf, type AppItem } from '../src/renderer/src/lib/agents/transcript'
 import type { GroveTool, GroveToolContext } from '../src/main/agents/harness'
-import type { SessionEvent, SessionMeta } from '../src/shared/agents'
+import type { AgentMode, SessionEvent, SessionMeta } from '../src/shared/agents'
 import type { Worktree } from '../src/shared/types'
 
 interface Posted {
@@ -57,6 +57,7 @@ interface CreatedSession {
   workspace: string
   title: string
   labels: Record<string, string> | undefined
+  permissionMode: AgentMode | undefined
 }
 
 /** A roster over a fixed session list, recording what it was asked to deliver. */
@@ -79,11 +80,13 @@ function testRoster(
       workspace: string
       title?: string
       labels?: Record<string, string>
+      permissionMode?: AgentMode
     }) => {
       created.push({
         workspace: options.workspace,
         title: options.title ?? '',
-        labels: options.labels
+        labels: options.labels,
+        permissionMode: options.permissionMode
       })
       const spawned = sessionMeta('spawned', options.title ?? '', {
         labels: { [AGENT_ID_LABEL]: 'id-spawned', ...options.labels }
@@ -494,6 +497,21 @@ describe('starting another agent', () => {
     // The brief is the spawning agent talking, so the child opens on a message
     // from it rather than on an unattributed task.
     expect(delivered[0].from).toBe('Planner (id-a)')
+  })
+
+  test("starts the agent in its parent's permission mode", async () => {
+    const sessions = [sessionMeta('a', 'Planner', { permissionMode: 'bypass' })]
+    const { roster, created } = testRoster(sessions)
+    const posted: Posted[] = []
+
+    await toolNamed('spawn_agent', roster, posted).execute(
+      { title: 'Worker', prompt: 'fix #12' },
+      context('a')
+    )
+
+    // A child left in the default mode would stop on every approval the parent
+    // was running without.
+    expect(created[0].permissionMode).toBe('bypass')
   })
 
   test('starts the agent in the worktree it was given', async () => {

@@ -5,7 +5,13 @@
   // enough that anchoring it to the field costs nothing in practice.
   import GithubAvatar from './GithubAvatar.svelte'
   import { github, loadMentionables } from './store.svelte'
-  import { activeMention, applyMention, rankMentions, type MentionQuery } from './mentions'
+  import {
+    activeMention,
+    applyMention,
+    rankMentions,
+    sameMention,
+    type MentionQuery
+  } from './mentions'
   import { applyMarkdownEdit, type MarkdownEdit } from './markdownEdits'
   import { renderMarkdown } from '../../../lib/markdown'
   import TextHOneIcon from 'phosphor-svelte/lib/TextHOneIcon'
@@ -102,6 +108,8 @@
   function syncMention(): void {
     if (!field) return
     const next = activeMention(value, field.selectionStart)
+    // Arrow keys fire keyup too; resetting on those would undo every move.
+    if (sameMention(mention, next)) return
     mention = next
     highlighted = 0
   }

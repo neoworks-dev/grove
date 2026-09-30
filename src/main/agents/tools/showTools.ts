@@ -61,57 +61,32 @@ function locationsTool(): GroveTool {
     summary: 'Point the user at places in the code.',
     promptGuidelines: ['Call show_locations whenever your answer names places in the code'],
     description:
-      'Point the user at the code your answer is about — where something is defined, where it ' +
-      'is used, what you changed. Call it whenever your answer names places in the code, ' +
-      'without waiting to be asked: the user reads your answer beside the editor and expects ' +
-      'to jump to what it mentions. The locations appear as a card in the conversation, each ' +
-      'with your note; nothing opens until the user picks one, which opens that file with the ' +
-      'lines marked and your note and line annotations written above them, so listing them ' +
-      'never gets in the way. Always say in the note what the user is looking at — a bare ' +
-      'range leaves them guessing. Put every location for one answer ' +
-      'in a single call, most relevant first. This does not read the files, so keep using ' +
-      'your own read tools for that.\n\n' +
-      'Set `steps` when the answer is a path through the code rather than a set of places — ' +
-      '"how does a request get from the router to the database", "what happens when the user ' +
-      'saves". The locations then become a walkthrough the user steps through in order from ' +
-      'the editor, one place at a time, so list them in the order the code runs and give each ' +
-      'a `title`. For "where is X", leave `steps` out.',
+      'List the places in the code your answer is about, as a card the user opens them from. ' +
+      'One call per answer, most relevant first, each with a note on what is there. ' +
+      'For a path through the code ("how does X reach Y"), set steps and list them in the ' +
+      'order the code runs, each with a title.',
     inputSchema: {
       type: 'object',
       properties: {
         title: { type: 'string', description: 'What the locations are, in a few words.' },
-        steps: {
-          type: 'boolean',
-          description:
-            'The locations are steps of one flow, in order, for the user to walk through. ' +
-            'Optional; leave out for places that are not a sequence.'
-        },
+        steps: { type: 'boolean', description: 'The locations are one flow, in order.' },
         locations: {
           type: 'array',
-          description: 'The places, most relevant first; with `steps`, in the order they run.',
           items: {
             type: 'object',
             properties: {
-              path: {
-                type: 'string',
-                description: 'Absolute path, or relative to the workspace root.'
-              },
-              title: {
-                type: 'string',
-                description: 'A few words naming this step, for a walkthrough. Optional.'
-              },
-              startLine: { type: 'number', description: 'First line, 1-based. Optional.' },
-              endLine: { type: 'number', description: 'Last line, inclusive. Optional.' },
-              note: noteProperty('What is here and why it matters, shown above the lines.'),
+              path: { type: 'string' },
+              title: { type: 'string', description: 'Names the step, with steps.' },
+              startLine: { type: 'number' },
+              endLine: { type: 'number' },
+              note: noteProperty('What is here and why it matters.'),
               annotations: {
                 type: 'array',
-                description:
-                  'Optional remarks on single lines, shown above each of them in the editor: ' +
-                  'what a line does, what is wrong with it.',
+                description: 'Remarks on single lines.',
                 items: {
                   type: 'object',
                   properties: {
-                    line: { type: 'number', description: 'The line, 1-based.' },
+                    line: { type: 'number' },
                     text: noteProperty('The remark.')
                   },
                   required: ['line', 'text'],

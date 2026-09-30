@@ -311,7 +311,8 @@ const nvims = new NeovimManager({
     editorDocs.handleNotify(nvimSessionWorktrees.get(id) ?? null, method, args)
     send('event:nvim-notify', { id, method, args })
   },
-  onSetupStep: (step) => send('event:nvim-setup', { step })
+  onSetupStep: (step) => send('event:nvim-setup', { step }),
+  onSetupFailed: (failedSteps) => send('event:nvim-setup-failed', { failedSteps })
 })
 
 const pluginBroker = new PermissionBroker({

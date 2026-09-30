@@ -3,7 +3,8 @@ import {
   pickAgentMode,
   relFromRoot,
   reviewShownIn,
-  selectionRef
+  selectionRef,
+  workingTreeReviewSettled
 } from '../src/renderer/src/lib/inlineEditRef'
 
 describe('relFromRoot', () => {
@@ -65,5 +66,26 @@ describe('reviewShownIn', () => {
 
   test('hides in another pane, even one showing the same file', () => {
     expect(reviewShownIn(review, 'leaf-7', '/wt/src/util.ts')).toBe(false)
+  })
+})
+
+describe('workingTreeReviewSettled', () => {
+  const review = { origin: 'workingTree' as const, worktreeId: 'wt-1', relPath: 'README.md' }
+
+  test('a file that was committed leaves nothing to review', () => {
+    expect(workingTreeReviewSettled(review, 'wt-1', ['src/index.ts'])).toBe(true)
+  })
+
+  test('a file that is still changed, staged or not, keeps its review', () => {
+    expect(workingTreeReviewSettled(review, 'wt-1', ['README.md', 'src/index.ts'])).toBe(false)
+  })
+
+  test("another worktree's changes say nothing about it", () => {
+    expect(workingTreeReviewSettled(review, 'wt-2', [])).toBe(false)
+  })
+
+  test('an inline edit is diffed against its own snapshot, not git, so it stays', () => {
+    const inline = { ...review, origin: 'inlineEdit' as const }
+    expect(workingTreeReviewSettled(inline, 'wt-1', [])).toBe(false)
   })
 })

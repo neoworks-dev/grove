@@ -1,11 +1,9 @@
-// Agents: the cross-worktree overview in the sidebar, the transcript pane the
-// right dock hosts, and the per-worktree chat pane.
+// Agents: the transcript pane on the right edge, the terminal its commands run
+// in, and the per-worktree chat pane.
 
-import Robot from 'phosphor-svelte/lib/Robot'
 import ChatCircle from 'phosphor-svelte/lib/ChatCircle'
 import TerminalWindow from 'phosphor-svelte/lib/TerminalWindow'
 import type { Context } from '@neoworks/extension-system'
-import AgentsOverview from './AgentsOverview.svelte'
 import AgentPane from './agent/AgentPane.svelte'
 import AgentShellPane from './AgentShellPane.svelte'
 import WorktreeChatPane from './WorktreeChatPane.svelte'
@@ -17,7 +15,7 @@ import { registerCoreShowHandlers, reportPaneTypes } from './screen.svelte'
 
 export const agents = {
   name: 'core/agents',
-  inject: ['sidebar', 'panes', 'panel', 'editor', 'keymap'],
+  inject: ['panes', 'panel', 'editor', 'keymap'],
 
   apply(ctx: Context): void {
     initHarnessIcons()
@@ -25,20 +23,6 @@ export const agents = {
     // What agents can put in front of the user, and the panes they can ask for.
     ctx.effect(() => registerCoreShowHandlers(), 'agents:show-handlers')
     ctx.effect(() => reportPaneTypes(), 'agents:pane-types')
-
-    ctx.effect(
-      () =>
-        ctx.sidebar.registerView({
-          id: 'agents',
-          title: 'Agents',
-          icon: Robot,
-          order: 4,
-          key: 'a',
-          component: AgentsOverview,
-          when: repoOpen
-        }),
-      'sidebar:agents'
-    )
 
     ctx.effect(
       () =>

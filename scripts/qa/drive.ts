@@ -10,12 +10,36 @@
 // session lives in files under `.grove-test/qa`. Refs handed out by `probe` are
 // the one thing that has to survive, and they do so as selectors on disk.
 //
+// Every action also answers with the Playwright code that repeats it, under
+// `recorded`, which `qa.ts` keeps as the session's recording. The element is
+// named the way Playwright's own `normalize()` would name it — a role and a
+// name, a test id — never the ref or the CSS path behind it, and the action is
+// performed through that same locator, so a recording that ran live replays.
+//
 //   node scripts/qa/drive.ts <port> <refsPath> '<commandJson>'
 
 import { readFileSync, writeFileSync } from 'node:fs'
 import { chromium } from '@playwright/test'
 import type { Browser, CDPSession, Locator, Page } from '@playwright/test'
 import { parseTarget, describeTarget, NAME_ROLES, type Target } from './targets.ts'
+import {
+  drag as dragBetween,
+  evaluate as evaluateExpression,
+  gone,
+  grabPoint,
+  insideWindow,
+  installConsoleCapture,
+  noErrors,
+  notClipped,
+  notOverlapping,
+  pane as openPane,
+  scroll as scrollAt,
+  visible,
+  evaluates,
+  type CheckResult,
+  type Point,
+  type QaWindow
+} from './steps.ts'
 import type {
   Box,
   LayoutSummary,
@@ -98,7 +122,8 @@ async function perform(page: Page, refsPath: string, command: Command): Promise<
   if (command.action === 'key') return key(page, command)
   if (command.action === 'scroll') return scroll(page, refsPath, command)
   if (command.action === 'wait') return wait(page, refsPath, command)
-  if (command.action === 'eval') return evaluate(page, command)
+  if (command.action === 'eval') return evaluateExpression(page, String(command.expression))
+  if (command.action === 'expect') return check(page, refsPath, command)
   throw new Error(`unknown action: ${command.action}`)
 }
 
@@ -150,63 +175,6 @@ async function ready(page: Page, refsPath: string, timeout: number): Promise<unk
 async function consoleLog(page: Page): Promise<unknown> {
   await installConsoleCapture(page)
   return page.evaluate(() => (window as never as QaWindow).__qa_console ?? [])
-}
-
-/**
- * Keep the renderer's console in a ring buffer on `window`.
- *
- * Playwright's own `page.on('console')` only reports what is logged while a
- * connection is open, and this driver connects for one action at a time. A
- * buffer in the page outlives the connection, which is what makes "what did it
- * complain about while I was not looking" answerable at all.
- */
-async function installConsoleCapture(page: Page): Promise<void> {
-  await page
-    .evaluate(() => {
-      const view = window as never as QaWindow
-      if (view.__qa_console) return
-      const entries: QaConsoleEntry[] = []
-      view.__qa_console = entries
-
-      // Also the way the CDP drain gets its entries in here, which is why it
-      // lives on `window` rather than staying local.
-      const record = (level: string, text: string): void => {
-        // The same fault often arrives twice — `window.onerror` and CDP's
-        // exception report are the same throw — so a repeat of the last line
-        // within a second is dropped rather than counted again.
-        const last = entries[entries.length - 1]
-        const now = Date.now()
-        if (last && last.level === level && last.text === text && now - last.atMs < 1000) return
-        entries.push({ level, at: new Date(now).toISOString(), atMs: now, text })
-        if (entries.length > 500) entries.splice(0, entries.length - 500)
-      }
-      view.__qa_record = record
-
-      const format = (args: unknown[]): string =>
-        args
-          .map((arg) => {
-            if (typeof arg === 'string') return arg
-            try {
-              return JSON.stringify(arg)
-            } catch {
-              return String(arg)
-            }
-          })
-          .join(' ')
-
-      for (const level of ['log', 'info', 'warn', 'error'] as const) {
-        const original = console[level].bind(console)
-        console[level] = (...args: unknown[]): void => {
-          record(level, format(args))
-          original(...args)
-        }
-      }
-      window.addEventListener('error', (event) => record('error', event.message))
-      window.addEventListener('unhandledrejection', (event) =>
-        record('error', `unhandled rejection: ${format([(event as PromiseRejectionEvent).reason])}`)
-      )
-    })
-    .catch(() => undefined)
 }
 
 /**
@@ -414,52 +382,37 @@ async function paneTypes(page: Page): Promise<unknown> {
  * whoever is testing the picker and the rail.
  */
 async function pane(page: Page, refsPath: string, command: Command): Promise<unknown> {
-  const paneTypeId = String(command.paneTypeId)
+  let split: 'row' | 'column' | null = null
+  if (command.split === 'row' || command.split === 'column') split = command.split
+  let inPaneType: string | null = null
+  if (typeof command.inLeaf === 'string') inPaneType = await paneTypeOf(page, command.inLeaf)
   const request = {
-    paneTypeId,
+    paneTypeId: String(command.paneTypeId),
     close: command.close === true,
-    split: typeof command.split === 'string' ? command.split : null,
-    inLeaf: typeof command.inLeaf === 'string' ? command.inLeaf : null
+    split,
+    inPaneType
   }
 
-  const outcome = await page.evaluate((options) => {
-    const debug = (window as never as GroveWindow).__grove_debug
-    const layout = debug?.layout
-    const panes = debug?.panes
-    if (!layout || !panes) return { error: 'renderer debug hooks missing — was GROVE_DEBUG set?' }
-    if (!panes.get(options.paneTypeId)) {
-      return {
-        error: `no such pane type: ${options.paneTypeId}`,
-        available: panes.types.map((type) => type.id).sort()
-      }
-    }
+  // Waits for the pane to mount and take focus, so the tree printed below is
+  // honest about which pane ended up focused.
+  const outcome = await openPane(page, request)
+  return {
+    ...outcome,
+    ...(await snapshot(page, refsPath)),
+    recorded: [`await qa.pane(page, ${JSON.stringify(request)})`]
+  }
+}
 
-    if (options.close) {
-      const open = layout.leafSummary().filter((leaf) => leaf.paneTypeId === options.paneTypeId)
-      if (open.length === 0) return { error: `no ${options.paneTypeId} pane is open` }
-      for (const leaf of open) layout.closeLeaf(leaf.id)
-      return { closed: open.map((leaf) => leaf.id) }
-    }
-    if (options.inLeaf !== null) {
-      const target = layout.leafSummary().find((leaf) => leaf.id === options.inLeaf)
-      if (!target) return { error: `no such pane: ${options.inLeaf}` }
-      layout.setLeafType(options.inLeaf, options.paneTypeId)
-      return { swapped: options.inLeaf }
-    }
-    if (options.split !== null) {
-      layout.splitFocused(options.split as 'row' | 'column', options.paneTypeId)
-      return { split: options.split }
-    }
-    layout.ensurePane(options.paneTypeId)
-    return { opened: options.paneTypeId }
-  }, request)
-
-  if ('error' in outcome) return outcome
-  // The pane mounts, and only then does focus move to it — a frame later at the
-  // earliest, and a canvas pane takes a few. Wait long enough that the tree
-  // printed below is honest about which pane ended up focused.
-  await page.waitForTimeout(500)
-  return { ...outcome, ...(await snapshot(page, refsPath)) }
+/** The type of the pane a leaf id names, which is what a recording can find again. */
+async function paneTypeOf(page: Page, leafId: string): Promise<string> {
+  const paneTypeId = await page.evaluate((wanted) => {
+    const layout = (window as never as GroveWindow).__grove_debug?.layout
+    const leaf = layout?.leafSummary().find((candidate) => candidate.id === wanted)
+    if (leaf === undefined) return null
+    return leaf.paneTypeId
+  }, leafId)
+  if (paneTypeId === null) throw new Error(`no such pane: ${leafId} — run "qa probe" again`)
+  return paneTypeId
 }
 
 /**
@@ -671,129 +624,224 @@ function locate(page: Page, refsPath: string, target: Target): Locator {
   throw new Error(`${describeTarget(target)} is a point, not an element`)
 }
 
-/** Where in the window a target is, for the actions that need coordinates. */
-async function pointOf(
-  page: Page,
-  refsPath: string,
-  target: Target
-): Promise<{ x: number; y: number }> {
-  if (target.kind === 'point') return { x: target.x, y: target.y }
-  const box = await locate(page, refsPath, target).boundingBox({ timeout: 10_000 })
-  if (!box) throw new Error(`${describeTarget(target)} is not on screen`)
-  return grabPoint(box)
+/**
+ * A target, resolved to what the action runs against and the code that finds it
+ * again: a locator for an element, or a point for `at=x,y`.
+ */
+interface Resolved {
+  locator: Locator | null
+  point: Point | null
+  code: string
 }
 
 /**
- * Where to take hold of an element.
+ * Resolve a target the way a recording can repeat it.
  *
- * The middle, except for something long and thin — a pane divider — which is
- * where grove mounts the `+` that opens a pane in the gap. Pressing there opens
- * the picker instead of starting a drag, which is exactly right for a person
- * and useless for resizing. A person grabs a divider anywhere along it; so does
- * this.
+ * An element is renamed through `normalize()` — Playwright's own choice of a
+ * role and name or a test id — and the action then runs through that renamed
+ * locator. A ref or a CSS path means nothing on a fresh profile; and acting
+ * through the recorded locator rather than beside it means a locator that
+ * matches the wrong thing fails here, where it can be seen, and not on replay.
+ *
+ * `wait` asks for an element that may not exist yet, which there is nothing to
+ * normalize from; it is recorded as written.
  */
-function grabPoint(box: { x: number; y: number; width: number; height: number }): {
-  x: number
-  y: number
-} {
-  const LONG_AND_THIN = 4
-  if (box.height > box.width * LONG_AND_THIN) {
-    return { x: box.x + box.width / 2, y: box.y + box.height * 0.25 }
+async function resolve(
+  page: Page,
+  refsPath: string,
+  input: string,
+  options: { normalize: boolean } = { normalize: true }
+): Promise<Resolved> {
+  const target = parseTarget(input)
+  if (target.kind === 'point') {
+    return { locator: null, point: { x: target.x, y: target.y }, code: pointCode(target) }
   }
-  if (box.width > box.height * LONG_AND_THIN) {
-    return { x: box.x + box.width * 0.25, y: box.y + box.height / 2 }
-  }
-  return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+  const written = locate(page, refsPath, target)
+  if (!options.normalize) return { locator: written, point: null, code: `page.${written}` }
+
+  const normalized = await written.normalize().catch(() => written)
+  return { locator: normalized, point: null, code: `page.${normalized}` }
+}
+
+/** A resolved target as an argument to a `qa.*` helper: the locator, or the point. */
+function targetOf(resolved: Resolved): Locator | Point {
+  if (resolved.locator !== null) return resolved.locator
+  return resolved.point as Point
+}
+
+function pointCode(point: Point): string {
+  return `{ x: ${point.x}, y: ${point.y} }`
+}
+
+/** A string as a literal in the recorded code. */
+function literal(value: string): string {
+  return JSON.stringify(value)
 }
 
 // ------------------------------------------------------------------- actions
 
 async function click(page: Page, refsPath: string, command: Command): Promise<unknown> {
-  const target = parseTarget(String(command.target))
   const button = (command.button as 'left' | 'right' | 'middle') ?? 'left'
   const clickCount = Number(command.count ?? 1)
+  const resolved = await resolve(page, refsPath, String(command.target))
 
-  if (target.kind === 'point') {
-    await page.mouse.click(target.x, target.y, { button, clickCount })
-    return { clicked: describeTarget(target) }
+  if (resolved.point !== null) {
+    await page.mouse.click(resolved.point.x, resolved.point.y, { button, clickCount })
+    return {
+      clicked: pointCode(resolved.point),
+      recorded: [
+        `await page.mouse.click(${resolved.point.x}, ${resolved.point.y}${clickOptions(button, clickCount)})`
+      ]
+    }
   }
-  const locator = locate(page, refsPath, target)
+  const locator = resolved.locator as Locator
   await locator.click({ button, clickCount, timeout: 15_000 })
-  return { clicked: describeTarget(target) }
+  let method = 'click'
+  if (clickCount === 2 && button === 'left') method = 'dblclick'
+  let options = clickOptions(button, clickCount)
+  if (method === 'dblclick') options = ''
+  return {
+    clicked: resolved.code,
+    recorded: [`await ${resolved.code}.${method}(${options.replace(/^, /, '')})`]
+  }
 }
 
-/**
- * Press, move, release — the way a person resizes a pane.
- *
- * The move is stepped rather than a jump: a divider listens to pointermove and
- * accumulates deltas, and one event from start to finish is a drag it never
- * sees the middle of.
- */
-async function drag(page: Page, refsPath: string, command: Command): Promise<unknown> {
-  const from = await pointOf(page, refsPath, parseTarget(String(command.from)))
-  const to = await pointOf(page, refsPath, parseTarget(String(command.to)))
-  const steps = Number(command.steps ?? 24)
+/** The options object a recorded click needs, with a leading comma, or nothing. */
+function clickOptions(button: string, clickCount: number): string {
+  const parts: string[] = []
+  if (button !== 'left') parts.push(`button: '${button}'`)
+  if (clickCount !== 1) parts.push(`clickCount: ${clickCount}`)
+  if (parts.length === 0) return ''
+  return `, { ${parts.join(', ')} }`
+}
 
-  await page.mouse.move(from.x, from.y)
-  await page.mouse.down()
-  for (let step = 1; step <= steps; step += 1) {
-    const ratio = step / steps
-    await page.mouse.move(from.x + (to.x - from.x) * ratio, from.y + (to.y - from.y) * ratio)
-  }
-  await page.mouse.up()
+/** Press, move, release — the way a person resizes a pane. See `steps.drag`. */
+async function drag(page: Page, refsPath: string, command: Command): Promise<unknown> {
+  const from = await resolve(page, refsPath, String(command.from))
+  const to = await resolve(page, refsPath, String(command.to))
+  const moved = await dragBetween(page, targetOf(from), targetOf(to))
   return {
-    dragged: `${Math.round(from.x)},${Math.round(from.y)} → ${Math.round(to.x)},${Math.round(to.y)}`
+    dragged: `${Math.round(moved.from.x)},${Math.round(moved.from.y)} → ${Math.round(moved.to.x)},${Math.round(moved.to.y)}`,
+    recorded: [`await qa.drag(page, ${from.code}, ${to.code})`]
   }
 }
 
 /** Type into whatever has focus, a keystroke at a time. */
 async function type(page: Page, command: Command): Promise<unknown> {
   const text = String(command.text)
-  await page.keyboard.type(text, { delay: Number(command.delay ?? 20) })
-  return { typed: text.length }
+  await page.keyboard.type(text, { delay: 20 })
+  return {
+    typed: text.length,
+    recorded: [`await page.keyboard.type(${literal(text)}, { delay: 20 })`]
+  }
 }
 
 /** Press keys or chords in order: `Escape`, `Control+s`, `g g`. */
 async function key(page: Page, command: Command): Promise<unknown> {
   const keys = Array.isArray(command.keys) ? (command.keys as string[]) : [String(command.keys)]
+  const recorded: string[] = []
   for (const chord of keys) {
-    await page.keyboard.press(chord, { delay: Number(command.delay ?? 20) })
+    await page.keyboard.press(chord, { delay: 20 })
+    recorded.push(`await page.keyboard.press(${literal(chord)}, { delay: 20 })`)
   }
-  return { pressed: keys }
+  return { pressed: keys, recorded }
 }
 
 async function scroll(page: Page, refsPath: string, command: Command): Promise<unknown> {
-  if (command.target !== undefined) {
-    const point = await pointOf(page, refsPath, parseTarget(String(command.target)))
-    await page.mouse.move(point.x, point.y)
-  }
-  const deltaX = Number(command.dx ?? 0)
   const deltaY = Number(command.dy ?? 0)
-  await page.mouse.wheel(deltaX, deltaY)
-  return { scrolled: { deltaX, deltaY } }
+  let over: Resolved | null = null
+  if (command.target !== undefined) over = await resolve(page, refsPath, String(command.target))
+
+  if (over === null) {
+    await scrollAt(page, null, deltaY)
+    return { scrolled: { deltaY }, recorded: [`await qa.scroll(page, null, ${deltaY})`] }
+  }
+  await scrollAt(page, targetOf(over), deltaY)
+  return { scrolled: { deltaY }, recorded: [`await qa.scroll(page, ${over.code}, ${deltaY})`] }
 }
 
 /** Wait for a target to appear, or to go away. */
 async function wait(page: Page, refsPath: string, command: Command): Promise<unknown> {
-  const target = parseTarget(String(command.target))
   const gone = command.gone === true
   const timeout = Number(command.timeout ?? 20_000)
-  await locate(page, refsPath, target).waitFor({
-    state: gone ? 'hidden' : 'visible',
-    timeout
-  })
-  return { [gone ? 'gone' : 'visible']: describeTarget(target) }
+  const resolved = await resolve(page, refsPath, String(command.target), { normalize: false })
+  if (resolved.locator === null) throw new Error('wait needs an element, not a point')
+
+  let state: 'visible' | 'hidden' = 'visible'
+  if (gone) state = 'hidden'
+  await resolved.locator.waitFor({ state, timeout })
+  return {
+    [state]: resolved.code,
+    recorded: [`await ${resolved.code}.waitFor({ state: '${state}', timeout: ${timeout} })`]
+  }
 }
 
-async function evaluate(page: Page, command: Command): Promise<unknown> {
-  const expression = String(command.expression)
-  // Mirrors debug.renderer.eval: an expression, awaited, JSON on the way out —
-  // Svelte's $state values are Proxies and do not survive structured cloning.
-  const json = await page.evaluate<string | null>(
-    `Promise.resolve((() => (${expression}))()).then((value) => JSON.stringify(value === undefined ? null : value))`
-  )
-  if (json === null || json === undefined) return null
-  return JSON.parse(json)
+/**
+ * Check what should be true of the app, the way a repro checks it.
+ *
+ * Answers whether it held rather than failing the command: in a live session a
+ * check that fails is the finding, not an error. The recorded line is what the
+ * repro spec runs, where a failure does fail the test.
+ */
+async function check(page: Page, refsPath: string, command: Command): Promise<unknown> {
+  const kind = String(command.check)
+  const label = String(command.label)
+  const { result, call } = await runCheck(page, refsPath, kind, command)
+  return {
+    passed: result.passed,
+    detail: result.detail,
+    label,
+    recorded: [`await verify(page, ${literal(label)}, ${call})`]
+  }
+}
+
+/** One check, and the `qa.*` call that repeats it. */
+async function runCheck(
+  page: Page,
+  refsPath: string,
+  kind: string,
+  command: Command
+): Promise<{ result: CheckResult; call: string }> {
+  if (kind === 'no-errors') {
+    return { result: await noErrors(page, Number(command.sinceMs)), call: 'qa.noErrors(page)' }
+  }
+  if (kind === 'eval') {
+    const expression = String(command.expression)
+    const expected = command.expected
+    return {
+      result: await evaluates(page, expression, expected),
+      call: `qa.evaluates(page, ${literal(expression)}, ${JSON.stringify(expected)})`
+    }
+  }
+  // Every other check is about an element that has to exist to be measured —
+  // except `gone`, whose element may well not, and which is recorded as written.
+  const subject = await resolve(page, refsPath, String(command.target), {
+    normalize: kind !== 'gone'
+  })
+  if (subject.locator === null) throw new Error(`${kind} needs an element, not a point`)
+  const locator = subject.locator
+
+  if (kind === 'visible')
+    return { result: await visible(locator), call: `qa.visible(${subject.code})` }
+  if (kind === 'gone') return { result: await gone(locator), call: `qa.gone(${subject.code})` }
+  if (kind === 'inside-window') {
+    return {
+      result: await insideWindow(page, locator),
+      call: `qa.insideWindow(page, ${subject.code})`
+    }
+  }
+  if (kind === 'not-clipped') {
+    return { result: await notClipped(locator), call: `qa.notClipped(${subject.code})` }
+  }
+  if (kind === 'not-overlapping') {
+    const other = await resolve(page, refsPath, String(command.other))
+    if (other.locator === null) throw new Error('not-overlapping needs two elements')
+    return {
+      result: await notOverlapping(locator, other.locator),
+      call: `qa.notOverlapping(${subject.code}, ${other.code})`
+    }
+  }
+  throw new Error(`unknown check: ${kind}`)
 }
 
 async function shot(page: Page, refsPath: string, command: Command): Promise<unknown> {
@@ -823,17 +871,6 @@ function cropOf(command: Command): Box | undefined {
 
 // The shapes this driver reaches for on `window`. Only what is used is
 // declared; the renderer's own globals are typed for its build, not this one.
-interface QaConsoleEntry {
-  level: string
-  at: string
-  atMs: number
-  text: string
-}
-
-interface QaWindow {
-  __qa_console?: QaConsoleEntry[]
-  __qa_record?: (level: string, text: string) => void
-}
 
 interface DebugPaneType {
   id: string

@@ -868,11 +868,12 @@
       <div class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-3">
         <p class="text-xs text-dim">No agent session in this worktree.</p>
         <!-- Pick the harness before starting: switching afterwards restarts the
-             conversation, since the new runtime knows nothing of the old one. -->
-        <div class="flex items-center gap-1">
+             conversation, since the new runtime knows nothing of the old one.
+             The row wraps in a narrow pane rather than running off its sides. -->
+        <div class="flex max-w-full flex-wrap items-center justify-center gap-1">
           {#each catalog.harnesses as entry (entry.id)}
             <button
-              class="flex items-center gap-1.5 rounded border border-line px-2 py-1 text-2xs hover:bg-hover disabled:opacity-50"
+              class="flex items-center gap-1.5 whitespace-nowrap rounded border border-line px-2 py-1 text-2xs hover:bg-hover disabled:opacity-50"
               class:text-default={entry.id === newSessionHarness}
               class:text-dim={entry.id !== newSessionHarness}
               disabled={!entry.available}
@@ -884,7 +885,7 @@
             </button>
           {/each}
           <button
-            class="flex items-center gap-1.5 rounded border border-line px-2 py-1 text-2xs hover:bg-hover"
+            class="flex items-center gap-1.5 whitespace-nowrap rounded border border-line px-2 py-1 text-2xs hover:bg-hover"
             class:text-default={newSessionGroveMode}
             class:text-dim={!newSessionGroveMode}
             title={GROVE_MODE_DESCRIPTION}

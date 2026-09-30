@@ -12,9 +12,15 @@ import { AgentRoster, type AgentPeer } from '../src/main/agents/roster'
 import { AgentHandoffBridge, DISPOSE_LABEL, PARENT_LABEL } from '../src/main/agents/handoffBridge'
 import { AGENT_ID_LABEL } from '../src/main/agents/identity'
 import { agentSection } from '../src/main/agents/systemPrompt'
-import { senderOf, type AppItem } from '../src/renderer/src/lib/agents/transcript'
+import {
+  applyEvent,
+  createTranscript,
+  senderOf,
+  type AppItem,
+  type ToolItem
+} from '../src/renderer/src/lib/agents/transcript'
 import type { GroveTool, GroveToolContext } from '../src/main/agents/harness'
-import type { AgentMode, SessionEvent, SessionMeta } from '../src/shared/agents'
+import type { AgentMode, SessionEvent, SessionMeta, ThinkingLevel } from '../src/shared/agents'
 import type { Worktree } from '../src/shared/types'
 
 interface Posted {
@@ -58,6 +64,8 @@ interface CreatedSession {
   title: string
   labels: Record<string, string> | undefined
   permissionMode: AgentMode | undefined
+  harness: string | undefined
+  thinkingLevel: ThinkingLevel | undefined
 }
 
 /** A roster over a fixed session list, recording what it was asked to deliver. */
@@ -81,12 +89,16 @@ function testRoster(
       title?: string
       labels?: Record<string, string>
       permissionMode?: AgentMode
+      harness?: string
+      thinkingLevel?: ThinkingLevel
     }) => {
       created.push({
         workspace: options.workspace,
         title: options.title ?? '',
         labels: options.labels,
-        permissionMode: options.permissionMode
+        permissionMode: options.permissionMode,
+        harness: options.harness,
+        thinkingLevel: options.thinkingLevel
       })
       const spawned = sessionMeta('spawned', options.title ?? '', {
         labels: { [AGENT_ID_LABEL]: 'id-spawned', ...options.labels }
@@ -108,7 +120,13 @@ function testRoster(
           {
             key: `${harnessId}-opus`,
             label: `${harnessId}-opus`,
-            routes: [{ provider: 'anthropic', id: `${harnessId}-opus` }]
+            routes: [
+              {
+                provider: 'anthropic',
+                id: `${harnessId}-opus`,
+                description: `${harnessId}-opus, as recommended`
+              }
+            ]
           }
         ],
         default: { provider: 'anthropic', model: `${harnessId}-opus` }
@@ -958,5 +976,108 @@ describe('a spawn that names a model', () => {
     })
 
     expect(created).toEqual([{ model: 'pi-opus', provider: 'anthropic' }])
+  })
+})
+
+describe('what a spawn runs on', () => {
+  test("its approval names the parent's runtime and the model its default resolves to", async () => {
+    const sessions = [sessionMeta('a', 'Planner', { harness: 'pi' })]
+    const { roster } = testRoster(sessions)
+
+    const described = await toolNamed('spawn_agent', roster, []).describe?.(
+      { title: 'Reviewer', prompt: 'review it' },
+      context('a')
+    )
+
+    expect(described?._meta).toEqual({
+      grove: {
+        facts: [
+          { label: 'Runtime', value: 'pi' },
+          { label: 'Model', value: 'pi-opus (default) · pi-opus, as recommended' },
+          { label: 'Effort', value: 'runtime default' }
+        ]
+      }
+    })
+  })
+
+  test('its approval names the model and effort the call asked for', async () => {
+    const { roster } = testRoster([sessionMeta('a', 'Planner')])
+
+    const described = await toolNamed('spawn_agent', roster, []).describe?.(
+      { title: 'Reviewer', prompt: 'review it', harness: 'pi', model: 'pi-opus', effort: 'medium' },
+      context('a')
+    )
+
+    expect(described?._meta).toEqual({
+      grove: {
+        facts: [
+          { label: 'Runtime', value: 'pi' },
+          { label: 'Model', value: 'pi-opus' },
+          { label: 'Effort', value: 'medium' }
+        ]
+      }
+    })
+  })
+
+  test('starts on the effort it was given', async () => {
+    const { roster, created } = testRoster([sessionMeta('a', 'Planner')])
+
+    const result = await toolNamed('spawn_agent', roster, []).execute(
+      { title: 'Worker', prompt: 'fix #12', effort: 'high' },
+      context('a')
+    )
+
+    expect(result.isError).toBeUndefined()
+    expect(created[0].thinkingLevel).toBe('high')
+  })
+
+  test('starts on the runtime its approval named when the call names none', async () => {
+    const { roster, created } = testRoster([sessionMeta('a', 'Planner', { harness: 'pi' })])
+
+    await toolNamed('spawn_agent', roster, []).execute(
+      { title: 'Worker', prompt: 'fix #12' },
+      context('a')
+    )
+
+    // Left to the session service, it would open on grove's default runtime
+    // while the approval, and the model check, went by the parent's.
+    expect(created[0].harness).toBe('pi')
+  })
+
+  test('refuses an effort it does not know', async () => {
+    const { roster, created } = testRoster([sessionMeta('a', 'Planner')])
+
+    const result = await toolNamed('spawn_agent', roster, []).execute(
+      { title: 'Worker', prompt: 'fix #12', effort: 'ludicrous' },
+      context('a')
+    )
+
+    expect(result.isError).toBe(true)
+    expect(created).toEqual([])
+  })
+
+  test('the transcript keeps what the approval was told', () => {
+    const toolCall = {
+      toolCallId: 'call-1',
+      name: 'mcp__grove__spawn_agent',
+      title: 'Start another agent',
+      rawInput: { title: 'Reviewer', prompt: 'review it' },
+      _meta: { grove: { facts: [{ label: 'Runtime', value: 'pi' }] } }
+    }
+    const events = [
+      {
+        id: 'e1',
+        seq: 1,
+        at: '2026-01-01T00:00:00.000Z',
+        type: 'permission',
+        request: { sessionId: 'h', toolCall, options: [] }
+      }
+    ] as unknown as SessionEvent[]
+
+    const state = createTranscript()
+    for (const event of events) applyEvent(state, event)
+    const tool = state.items.find((item) => item.kind === 'tool') as ToolItem
+
+    expect(tool.facts).toEqual([{ label: 'Runtime', value: 'pi' }])
   })
 })

@@ -872,3 +872,21 @@
   text-decoration-color: var(--color-blue);
   outline: none;
 }
+
+/* An agent's answer in the transcript: the dominant text of the pane, at the
+   design system's body size. Cards, tool rows and metadata around it stay at
+   --text-xs and below, so the words outrank the chrome. Surfaces rendered as
+   cards keep the compact defaults above. */
+.agent-markdown.prose.agent-message {
+  font-size: var(--text-base);
+}
+.agent-markdown.prose.agent-message :where(h1, h2) {
+  font-size: var(--text-md);
+}
+.agent-markdown.prose.agent-message :where(h3, h4) {
+  font-size: var(--text-base);
+}
+.agent-markdown.prose.agent-message pre,
+.agent-markdown.prose.agent-message :not(pre) > code {
+  font-size: var(--text-xs);
+}

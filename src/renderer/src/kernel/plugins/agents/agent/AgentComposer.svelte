@@ -550,7 +550,7 @@
     <textarea
       bind:this={promptEl}
       bind:value={draft}
-      class="no-scrollbar relative z-0 block h-20 w-full resize-none border-0 bg-transparent px-2 py-1.5 text-xs leading-normal text-transparent caret-default outline-none placeholder:text-dim"
+      class="no-scrollbar relative z-0 block h-20 w-full resize-none border-0 bg-transparent px-2 py-1.5 text-base leading-normal text-transparent caret-default outline-none placeholder:text-dim"
       class:font-mono={shell !== null}
       class:font-medium={shell !== null}
       spellcheck={shell === null}
@@ -587,7 +587,7 @@
     <div
       bind:this={highlightEl}
       aria-hidden="true"
-      class="pointer-events-none absolute inset-0 z-10 overflow-hidden whitespace-pre-wrap break-words px-2 py-1.5 text-xs leading-normal text-default"
+      class="pointer-events-none absolute inset-0 z-10 overflow-hidden whitespace-pre-wrap break-words px-2 py-1.5 text-base leading-normal text-default"
       class:font-mono={shell !== null}
       class:font-medium={shell !== null}
     >

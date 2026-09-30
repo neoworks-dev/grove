@@ -7,12 +7,18 @@
   // No comment affordance: an inline review is applied straight to the file and
   // has nobody to report a comment to.
   import { inlineEdit } from '../lib/inlineEdit.svelte'
+  import { reviewShownIn } from '../lib/inlineEditRef'
   import HunkVerdictOverlay from './HunkVerdictOverlay.svelte'
 
-  let { leafId, tick }: { leafId: string; tick: number } = $props()
+  // `bufferPath` is the file nvim is showing in this pane now; the review stays
+  // with its own file when the pane switches to another tab.
+  let { leafId, tick, bufferPath }: { leafId: string; tick: number; bufferPath: string | null } =
+    $props()
 
   const review = $derived(
-    inlineEdit.review && inlineEdit.review.leafId === leafId ? inlineEdit.review : null
+    inlineEdit.review && reviewShownIn(inlineEdit.review, leafId, bufferPath)
+      ? inlineEdit.review
+      : null
   )
   const anchors = $derived(
     !review

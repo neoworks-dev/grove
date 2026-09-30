@@ -4,9 +4,9 @@
 
 import { app } from 'electron'
 import { existsSync } from 'node:fs'
-import { mkdir, symlink, lstat } from 'node:fs/promises'
+import { mkdir, symlink, lstat, realpath, unlink } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 
 function nvimRoot(): string {
   if (app.isPackaged) return join(process.resourcesPath, 'nvim')
@@ -64,20 +64,66 @@ export function nvimConfigArgs(): string[] {
 export async function ensureCopilotConfigLink(): Promise<void> {
   const globalConfig = join(homedir(), '.config', 'github-copilot')
   if (!existsSync(globalConfig)) return
+  await removeSelfLink(globalConfig)
 
   const target = join(nvimConfigHome(), 'github-copilot')
   // Anything already at the path wins — a real directory there holds a grove-only
-  // login that replacing would sign the user out of.
+  // login that replacing would sign the user out of. A link that loops is ours
+  // and broken, so it is replaced.
   const existing = await lstat(target).catch(() => null)
-  if (existing) return
+  if (existing && !(existing.isSymbolicLink() && (await isLoopingLink(target)))) return
+  if (existing) await unlink(target)
 
   await mkdir(nvimConfigHome(), { recursive: true })
+  // A link made inside the directory it points at is a loop that crawlers
+  // (language servers' file watchers) descend into until ELOOP.
+  if (await isWithin(nvimConfigHome(), globalConfig)) {
+    console.warn(`[nvim] not linking ${target}: it would sit inside ${globalConfig}`)
+    return
+  }
   const linkType = process.platform === 'win32' ? 'junction' : 'dir'
   try {
     await symlink(globalConfig, target, linkType)
   } catch (error) {
     console.warn(`[nvim] could not link ${target} at ${globalConfig}:`, error)
   }
+}
+
+/**
+ * Removes a `github-copilot` link inside the user's copilot config that points
+ * back at that config — left by an earlier link made inside its own target.
+ */
+async function removeSelfLink(globalConfig: string): Promise<void> {
+  const selfLink = join(globalConfig, 'github-copilot')
+  const stats = await lstat(selfLink).catch(() => null)
+  if (!stats || !stats.isSymbolicLink()) return
+  if (!(await resolvesTo(selfLink, globalConfig)) && !(await isLoopingLink(selfLink))) return
+  console.warn(`[nvim] removing self-referencing link ${selfLink}`)
+  await unlink(selfLink)
+}
+
+/** Whether `path` resolves to the same place as `directory`. */
+async function resolvesTo(path: string, directory: string): Promise<boolean> {
+  const resolvedPath = await realpath(path).catch(() => null)
+  return resolvedPath === (await realpath(directory))
+}
+
+/** Whether resolving the link at `path` never ends. */
+async function isLoopingLink(path: string): Promise<boolean> {
+  try {
+    await realpath(path)
+    return false
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ELOOP'
+  }
+}
+
+/** Whether `path` is `directory` or somewhere beneath it, links resolved. */
+async function isWithin(path: string, directory: string): Promise<boolean> {
+  const resolvedPath = await realpath(path)
+  const resolvedDirectory = await realpath(directory)
+  if (resolvedPath === resolvedDirectory) return true
+  return resolvedPath.startsWith(resolvedDirectory + sep)
 }
 
 export function nvimAvailable(): boolean {

@@ -37,6 +37,7 @@ function snapshot(overrides: Partial<SessionSnapshot> = {}): SessionSnapshot {
     activeTools: null,
     autoApproveTools: [],
     permissionMode: 'default',
+    groveMode: false,
     labels: {},
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
@@ -135,6 +136,7 @@ async function setup(): Promise<Fixture> {
       thinking: true,
       steering: true,
       groveTools: true,
+      groveMode: true,
       attachments: true
     },
     probe: async () => ({ available: true, detail: null }),

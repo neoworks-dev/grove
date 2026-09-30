@@ -1,9 +1,9 @@
 // A harness descriptor over switchboard.
 //
-// Every harness grove offers is one of switchboard's run a particular way:
-// Claude Code, Codex and pi as they come, or grove's own mode on top of one of
-// them. What they share — probing, listing models and commands, starting a run —
-// lives here; each passes in only what makes it different.
+// Every harness grove offers is one of switchboard's: Claude Code, Codex and pi,
+// each either as it comes or in grove mode. What they share — probing, listing
+// models and commands, starting a run, switching to grove mode — lives here;
+// each passes in only what makes it different.
 
 import type { HarnessId, HarnessInfo as SwitchboardInfo, ModelInfo } from '@neoworks/harness'
 import type { CommandInfo, HarnessCapabilities, ModelEntry } from '../../../shared/agents'
@@ -14,6 +14,7 @@ import {
   type HarnessOffering,
   type HarnessRunOptions
 } from '../harness'
+import { groveModeOptions } from './groveMode'
 import type { SwitchboardHost } from './host'
 import { SwitchboardRun, type RunProfile } from './run'
 
@@ -29,8 +30,12 @@ export interface SwitchboardHarnessSpec {
   profile(harness: HarnessId): Omit<RunProfile, 'harness'>
   /** The models a harness offers, when grove knows more than switchboard lists. */
   models?(harness: HarnessId, listed: ModelInfo[]): Promise<ModelEntry[]>
-  /** Tools a session of this kind is served beside grove's own, made fresh for each session. */
-  tools?(): GroveTool[]
+  /**
+   * The workspace tools a grove mode session is served in place of the
+   * harness's own, made fresh for each session. A harness without them has no
+   * grove mode.
+   */
+  groveModeTools?(): GroveTool[]
 }
 
 /** A descriptor that probes, lists and starts through switchboard. */
@@ -72,15 +77,27 @@ export function switchboardHarness(
 
     async start(options: HarnessRunOptions) {
       const harness = runtimeFor(spec.runsOn, options.provider)
-      const profile: RunProfile = { harness, ...spec.profile(harness) }
-      if (spec.tools) {
-        const tools = spec.tools()
-        profile.tools = () => tools
+      let profile: RunProfile = { harness, ...spec.profile(harness) }
+      if (options.groveMode && spec.groveModeTools) {
+        profile = inGroveMode(profile, spec.groveModeTools())
       }
       const run = new SwitchboardRun(host, profile, options)
       await run.start()
       return run
     }
+  }
+}
+
+/**
+ * A profile switched to grove mode: grove's prompt and workspace tools in
+ * place of the harness's, and everything else it brings turned off. The
+ * harness itself and how it reaches its model stay as they are.
+ */
+function inGroveMode(profile: RunProfile, tools: GroveTool[]): RunProfile {
+  return {
+    ...profile,
+    sessionOptions: (options) => groveModeOptions(options),
+    tools: () => tools
   }
 }
 
@@ -114,8 +131,10 @@ async function loadOffering(
     models.push(...(await modelsOn(host, spec, harness.id)))
     commands.push(...(await commandsOn(host, harness.id)))
   }
+  // Listed whether or not a session uses them, so a grove mode transcript
+  // shows its calls the way the tools describe them.
   let tools: GroveTool[] = []
-  if (spec.tools) tools = spec.tools()
+  if (spec.groveModeTools) tools = spec.groveModeTools()
   return { tools: tools.map(toolInfoOf), commands, skills: [], models, default: defaultOf(models) }
 }
 

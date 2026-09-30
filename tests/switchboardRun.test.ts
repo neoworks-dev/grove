@@ -153,6 +153,7 @@ async function started(
     thinkingLevel: 'off',
     activeTools: null,
     permissionMode: 'default',
+    groveMode: false,
     resumeKey: null,
     tools: [],
     systemPrompt: '',

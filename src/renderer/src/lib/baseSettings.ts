@@ -47,6 +47,15 @@ export function registerBaseSettings(): void {
         enumValues: harnessOptions()
       },
       {
+        key: 'workbench.agentGroveMode',
+        type: 'boolean',
+        default: false,
+        title: 'Grove Mode',
+        description:
+          "Start new sessions in grove mode: the harness runs on Grove's own prompt and workspace tools instead of its own.",
+        category: 'Agents'
+      },
+      {
         key: 'workbench.reviewMode',
         type: 'enum',
         default: 'pre',

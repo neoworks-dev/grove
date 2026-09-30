@@ -18,6 +18,8 @@
   import {
     defaultSessionHarness,
     defaultSessionThinking,
+    defaultSessionGroveMode,
+    GROVE_MODE_DESCRIPTION,
     rememberedModel,
     rememberModel
   } from '../../../../lib/agents/newSession'
@@ -179,6 +181,7 @@
 
   const newSessionHarness = $derived(defaultSessionHarness())
   const rememberedThinking = $derived(defaultSessionThinking())
+  const newSessionGroveMode = $derived(defaultSessionGroveMode())
 
   const reviewMode = $derived(settings.get<string>('workbench.reviewMode') ?? 'pre')
   const reviewPause = $derived(settings.get<boolean>('workbench.reviewPause') ?? false)
@@ -279,7 +282,8 @@
       harness: newSessionHarness || undefined,
       provider: model?.provider,
       model: model?.model,
-      thinkingLevel: rememberedThinking
+      thinkingLevel: rememberedThinking,
+      groveMode: newSessionGroveMode
     })
   }
 
@@ -444,6 +448,17 @@
       return
     }
     void agentSessions.update(activeId, { harness: next, ...model })
+  }
+
+  /**
+   * Switch grove mode for a session that has not started yet, and for the ones
+   * started from now on. Like the harness, a started session keeps what it
+   * started with.
+   */
+  function pickGroveMode(groveMode: boolean): void {
+    void settings.set('workbench.agentGroveMode', groveMode, 'user')
+    if (!activeId || snapshot?.started) return
+    void agentSessions.update(activeId, { groveMode })
   }
 
   function pickThinking(thinkingLevel: ThinkingLevel): void {
@@ -868,6 +883,17 @@
               {entry.label}
             </button>
           {/each}
+          <button
+            class="flex items-center gap-1.5 rounded border border-line px-2 py-1 text-2xs hover:bg-hover"
+            class:text-default={newSessionGroveMode}
+            class:text-dim={!newSessionGroveMode}
+            title={GROVE_MODE_DESCRIPTION}
+            aria-pressed={newSessionGroveMode}
+            onclick={() => pickGroveMode(!newSessionGroveMode)}
+          >
+            <Icon icon="grove:grove" class="size-3.5 shrink-0" />
+            Grove mode
+          </button>
         </div>
         <button
           class="rounded-md bg-action px-3 py-1 text-xs text-action-fg"
@@ -999,6 +1025,7 @@
               harness={snapshot.harness}
               harnesses={catalog.harnesses}
               started={snapshot.started}
+              groveMode={snapshot.groveMode}
               provider={snapshot.provider}
               model={snapshot.model}
               thinking={snapshot.thinkingLevel}
@@ -1011,6 +1038,7 @@
               {costLabel}
               contextTokens={snapshot.context.usedTokens}
               onPickHarness={pickHarness}
+              onPickGroveMode={pickGroveMode}
               onPickModel={pickModel}
               onRequestKey={requestCredential}
               onAddEndpoint={() => (addingEndpoint = true)}

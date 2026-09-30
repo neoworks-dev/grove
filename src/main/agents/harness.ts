@@ -155,6 +155,8 @@ export interface HarnessRunOptions {
   activeTools: string[] | null
   /** How much the session may do without asking, as stored on it. */
   permissionMode: AgentMode
+  /** Run with grove's prompt and workspace tools in place of the harness's own. */
+  groveMode: boolean
   /** The harness-native conversation id from a previous grove run, if any. */
   resumeKey: string | null
   tools: GroveTool[]

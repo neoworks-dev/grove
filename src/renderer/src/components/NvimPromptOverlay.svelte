@@ -10,6 +10,8 @@
   import { encodeKeyEvent } from '../lib/nvim/keys'
   import { keyDispatch, KeyPriority } from '../lib/keyDispatch'
   import Kbd from './Kbd.svelte'
+  import { untrack } from 'svelte'
+  import { rememberFocus } from '../lib/focusReturn'
 
   const active = $derived(nvimPrompts.active)
   // The last line is the question; anything above it is the message that led
@@ -43,10 +45,27 @@
     if (!active) return
     return keyDispatch.subscribe(KeyPriority.nvimPrompt, onKeyDown)
   })
+
+  // Clicking an answer focuses its button, which goes with the overlay; hand
+  // focus back to where it was before the prompt, or to the focused pane.
+  let surfaceEl = $state<HTMLDivElement>()
+  let returnFocus: ((surface: HTMLElement | undefined) => void) | null = null
+  $effect(() => {
+    const open = active !== null
+    if (open && returnFocus === null) {
+      returnFocus = rememberFocus()
+      return
+    }
+    if (!open && returnFocus !== null) {
+      returnFocus(untrack(() => surfaceEl))
+      returnFocus = null
+    }
+  })
 </script>
 
 {#if active}
   <div
+    bind:this={surfaceEl}
     class="fixed inset-0 z-modal flex items-center justify-center bg-black/40"
     role="presentation"
   >

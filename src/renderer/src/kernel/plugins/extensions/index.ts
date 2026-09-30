@@ -17,6 +17,7 @@ export const extensionsView = {
           title: 'Extensions',
           icon: PuzzlePiece,
           order: 6,
+          key: 'x',
           component: ExtensionsView
         }),
       'sidebar:extensions'

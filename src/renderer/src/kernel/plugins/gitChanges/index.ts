@@ -44,6 +44,7 @@ export const gitChanges = {
           title: 'Source Control',
           icon: GitDiff,
           order: 3,
+          key: 'g',
           component: GitChangesView,
           when: repoOpen
         }),

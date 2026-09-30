@@ -96,7 +96,7 @@ export function switchboardHarness(
 function inGroveMode(profile: RunProfile, tools: GroveTool[]): RunProfile {
   return {
     ...profile,
-    sessionOptions: (options) => groveModeOptions(options),
+    sessionOptions: (options) => groveModeOptions(options, tools),
     tools: () => tools
   }
 }

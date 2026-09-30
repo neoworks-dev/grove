@@ -76,6 +76,7 @@ export function lspTool(
   return {
     name: 'lsp',
     summary: 'Ask the language server',
+    promptGuidelines: ['Check lsp diagnostics on the files you changed'],
     description: [
       'Ask the language server about code.',
       'diagnostics: errors and warnings for path (after an edit, to check it), or for every file the server has reported on when path is left out.',

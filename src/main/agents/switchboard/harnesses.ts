@@ -13,6 +13,7 @@ import { claudeModels, sessionEnvironment, type CredentialSource } from './claud
 import { switchboardHarness } from './descriptor'
 import { groveModeTools } from './groveMode'
 import { effortOf, permissionPolicyOf } from './run'
+import { groveAddendum } from '../systemPrompt'
 import type { EndpointsService } from '../../endpoints'
 import type { SwitchboardHost } from './host'
 
@@ -34,10 +35,10 @@ export const CAPABILITIES: HarnessCapabilities = {
   attachments: true
 }
 
-/** The options a harness runs with as it comes, grove's prompt appended. */
+/** The options a harness runs with as it comes, grove's part of the prompt appended. */
 export function nativeOptions(options: HarnessRunOptions): SessionOptions {
   const sessionOptions: SessionOptions = {
-    systemPrompt: { append: options.systemPrompt },
+    systemPrompt: { append: groveAddendum(options.tools, options.systemPrompt) },
     permissions: permissionPolicyOf(options.permissionMode)
   }
   if (options.model) sessionOptions.model = options.model

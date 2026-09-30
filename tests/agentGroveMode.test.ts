@@ -13,7 +13,9 @@ import type { ToolBinding } from '../src/main/agents/switchboard/mcpServer'
 /** A tool standing in for the workspace tools grove mode serves. */
 const WORKSPACE_TOOL = {
   name: 'read',
-  description: 'Read a file',
+  summary: 'Read a file',
+  description: 'Read a file, in full.',
+  promptGuidelines: ['Read only what you need'],
   inputSchema: { type: 'object' },
   run: () => Promise.resolve({ content: '' })
 } as unknown as GroveTool
@@ -89,6 +91,10 @@ describe('grove mode on a harness', () => {
     expect(init.harness).toBe('codex')
     expect(init.options?.tools).toBe('none')
     expect(init.options?.systemPrompt).toHaveProperty('replace')
+    const prompt = (init.options?.systemPrompt as { replace: string }).replace
+    expect(prompt).toContain('<tools>\n- read: Read a file\n</tools>')
+    expect(prompt).toContain('- Read only what you need')
+    expect(prompt).toContain('You are Oak.')
     expect(init.options?.model).toBe('gpt-5')
     expect(tools.map((tool) => tool.name)).toEqual(['read'])
   })
@@ -97,7 +103,10 @@ describe('grove mode on a harness', () => {
     const { init, tools } = await startOn(false)
     expect(init.harness).toBe('codex')
     expect(init.options?.tools).toBeUndefined()
-    expect(init.options?.systemPrompt).toEqual({ append: 'You are Oak.' })
+    const prompt = (init.options?.systemPrompt as { append: string }).append
+    expect(prompt).toStartWith('You are running inside Grove')
+    expect(prompt).not.toContain('<tools>')
+    expect(prompt).toContain('You are Oak.')
     expect(tools).toEqual([])
   })
 })

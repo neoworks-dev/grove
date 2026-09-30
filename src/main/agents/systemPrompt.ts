@@ -1,14 +1,15 @@
-// What grove tells an agent about the place it is working in.
+// The system prompt grove gives an agent, built the way pi builds its own.
 //
-// A harness's own system prompt describes how to be a coding agent; this adds
-// the part only grove knows — that the worktree is shared, who else is in it,
-// what the agent is called there, and which of grove's tools are for talking to
-// the others. Without it the inter-agent tools are just four unexplained entries
-// in a tool list, and models leave them alone.
+// A short preamble, then tagged sections: one line per tool, the rules, who the
+// agent is and who else is working, and where it runs. The tools carry the
+// rest — their descriptions say how to use them, and each adds the few rules
+// it needs, so a tool the session does not have costs nothing here.
 //
-// Built per run rather than stored as a constant: the roster changes between
-// runs, and an agent that is told the wrong names cannot address anyone.
+// Grove mode runs on the whole prompt in place of the harness's. A harness on
+// its own prompt gets only grove's part appended: grove's tools, their rules
+// and the agent's context.
 
+import type { GroveTool } from './harness'
 import type { AgentPeer } from './roster'
 
 export interface SystemPromptContext {
@@ -16,97 +17,113 @@ export interface SystemPromptContext {
   agentId: string
   /** The session's title, which the user can change at any time. */
   title: string
-  workspaceRoot: string
   /** Everyone in the worktree, including this session. */
   peers: AgentPeer[]
   /** The agent that spawned this one and the ones it spawned, when they work in other worktrees. */
   relatives: AgentPeer[]
-  /** The runtimes a spawned agent can run on. */
-  harnesses: string[]
 }
 
-/**
- * grove's addition to the harness's own system prompt.
- *
- * Kept to what changes behaviour: the agent's name, who is already here, and the
- * two rules that make a hand-off work — address by name, and report back.
- */
-export function groveSystemPrompt(context: SystemPromptContext): string {
-  const sections: (string | null)[] = [
-    identity(context),
-    roster(context),
-    relatives(context),
-    coordination(context),
-    showing(),
-    'Everything above is grove, the editor hosting this session. The user sees the same channel you post on.'
-  ]
-  return sections.filter((section) => section !== null).join('\n\n')
+/** Where a grove mode session runs. */
+export interface PromptEnvironment {
+  workspaceRoot: string
+  platform: string
+  today: string
 }
 
-function identity(context: SystemPromptContext): string {
-  return [
-    `You are running inside grove, in the worktree ${context.workspaceRoot}.`,
-    `You are "${context.title}", and other agents address you by the id ${context.agentId}.`
-  ].join(' ')
+const GROVE =
+  'Grove, an editor where agents work in parallel git worktrees and the user reviews their changes as diffs'
+
+// Rules grove mode adds to what its tools bring.
+const WORKING_RULES = [
+  'Match the surrounding code; change only what the task needs',
+  'Do not commit, push, reset or delete work unless the user asks',
+  'If the task is ambiguous in a way that changes the outcome, ask; otherwise pick the sensible default and say which',
+  'Be concise in your responses',
+  'Show file paths as path:line'
+]
+
+/** The whole prompt for a grove mode session, around the session's context sections. */
+export function groveModePrompt(
+  tools: GroveTool[],
+  context: string,
+  environment: PromptEnvironment
+): string {
+  return joinSections([
+    `You are an expert coding assistant operating inside ${GROVE}. You help users by reading files, searching code, running commands, editing code, and writing new files.`,
+    section('tools', toolLines(tools)),
+    section('rules', rules(tools, WORKING_RULES)),
+    context,
+    section('environment', environmentLines(environment))
+  ])
 }
 
-function roster(context: SystemPromptContext): string {
+/** What a harness running on its own prompt has appended: grove's tools, their rules, the context. */
+export function groveAddendum(tools: GroveTool[], context: string): string {
+  return joinSections([
+    `You are running inside ${GROVE}.`,
+    section('grove_tools', toolLines(tools)),
+    section('grove_rules', rules(tools, [])),
+    context
+  ])
+}
+
+/** Who the agent is here and who else is working: the `agent` section. */
+export function agentSection(context: SystemPromptContext): string {
+  const lines = [`You are "${context.title}", id ${context.agentId}. Other agents address you by id.`]
   const others = context.peers.filter((peer) => peer.agentId !== context.agentId)
-  if (others.length === 0) {
-    return 'No other agent is working in this worktree right now. `list_agents` tells you when one is.'
+  if (others.length > 0) {
+    lines.push('Other agents in this worktree:')
+    for (const peer of others) {
+      lines.push(`- ${peer.agentId}: "${peer.title}" (${peer.harness}, ${peer.model || 'default model'})`)
+    }
   }
-  const lines = others.map(
-    (peer) =>
-      `- ${peer.agentId} — "${peer.title}" (${peer.harness}, ${peer.model || 'default model'})`
-  )
-  return ['Also working in this worktree, id first:', ...lines].join('\n')
+  if (context.relatives.length > 0) {
+    lines.push('Agents working with you from other worktrees:')
+    for (const peer of context.relatives) {
+      lines.push(`- ${peer.agentId}: "${peer.title}" in ${peer.workspaceRoot}`)
+    }
+  }
+  return section('agent', lines.join('\n'))
 }
 
-/**
- * The agents this one works with from other worktrees. Nothing when there are
- * none, which is most sessions.
- */
-function relatives(context: SystemPromptContext): string | null {
-  if (context.relatives.length === 0) return null
-  const lines = context.relatives.map(
-    (peer) => `- ${peer.agentId} — "${peer.title}", in ${peer.workspaceRoot}`
-  )
-  return [
-    'Working with you from other worktrees, reachable by id with `send_message`:',
-    ...lines
-  ].join('\n')
+/** Content wrapped in a tag of its name, or nothing when there is no content. */
+export function section(name: string, content: string): string {
+  if (content.trim().length === 0) return ''
+  return `<${name}>\n${content.trim()}\n</${name}>`
 }
 
-/** The tools for pointing the user at things, and the notes list they share. */
-function showing(): string {
-  return [
-    'The user reads your answers in grove, beside the editor. Point rather than describe:',
-    '- `show_locations` — the code your answer is about, as a list in the conversation the user opens places from. Call it on your own whenever an answer names places in the code — where something is, what calls it, what you changed — not only when asked to show something. One call per answer, with every location in it. Give each a note saying what the user is looking at, and annotate single lines where it helps; two or three short sentences each, at most. When the question is how something flows or what happens when — a path through the code rather than where something is — set `steps` and list the places in the order the code runs, each with a short `title`: the user then walks through them one at a time from the editor. For "where is X", plain locations.',
-    '- `show_diff` — the uncommitted changes, whole or for one file, when the user should look them over.',
-    '- `show_github_item` — an issue or pull request, opened in the GitHub pane.',
-    '- `open_pane` — any other pane grove has; call it without a pane to list them.',
-    'The last three only change the screen while the user is looking at this conversation, so still say in words what you showed; give them a short note on what to look at.',
-    '',
-    'Above the composer the user keeps a notes list of what is still to do; your own task list is shown beside it. `read_notes` reads it, `add_note` pins a reminder the user should keep in view, and `update_note` ticks one off once it is done — the user’s own included.'
-  ].join('\n')
+/** The parts of a prompt, empty ones left out, a blank line apart. */
+function joinSections(sections: string[]): string {
+  return sections.filter((part) => part.trim().length > 0).join('\n\n')
 }
 
-function coordination(context: SystemPromptContext): string {
+/** One line per tool, pi's `- name: what it does`. */
+function toolLines(tools: GroveTool[]): string {
+  return tools.map((tool) => `- ${tool.name}: ${tool.summary.replace(/\.$/, '')}`).join('\n')
+}
+
+/** The tools' own rules in the order the tools come, then the fixed ones, each said once. */
+function rules(tools: GroveTool[], fixed: string[]): string {
+  const seen = new Set<string>()
+  const lines: string[] = []
+  const candidates: string[] = []
+  for (const tool of tools) {
+    if (tool.promptGuidelines) candidates.push(...tool.promptGuidelines)
+  }
+  candidates.push(...fixed)
+  for (const rule of candidates) {
+    if (seen.has(rule)) continue
+    seen.add(rule)
+    lines.push(`- ${rule}`)
+  }
+  return lines.join('\n')
+}
+
+/** Where the session runs, one fact a line. */
+function environmentLines(environment: PromptEnvironment): string {
   return [
-    'Coordinating with them:',
-    '- `list_agents` — who is here, what they run on, and whether they are busy. Check before assuming you are alone.',
-    '- `send_message` — say something to one of them by id, or to the room with no addressee. An addressed message interrupts them, so it lands whether or not they think to look.',
-    '- `read_messages` — the channel so far. Messages addressed to you arrive on their own; this is for the rest.',
-    "- `search_transcripts` — every agent's conversation here, searched for a phrase. Use it before asking a question somebody has already answered, and before redoing work somebody has already tried.",
-    "- `read_transcript` — one agent's conversation in full, by id, including your own earlier turns. Reading it costs them nothing; interrupting them does.",
-    `- \`spawn_agent\` — start another agent here and give it a task, on any of: ${context.harnesses.join(', ')}. The user is asked before one starts.`,
-    '- `list_runtimes` — what those runtimes can run: whether each is authenticated, the models it offers and the one it defaults to. Check it before naming a model, rather than guessing an id.',
-    '- `spawn_agent` with `removeWhenDone` — a one-shot helper whose conversation is cleared away once it has answered. Use it when you want the result, not a collaborator.',
-    '- `create_worktree` and `list_worktrees` — a branch and worktree of its own for a separate task, such as an issue. Then `spawn_agent` with `worktree` starts an agent there. The user is asked before a worktree is created.',
-    '- An agent id reaches an agent in any worktree, not only this one: `send_message` and `read_transcript` take it the same way. `list_agents` with `all_worktrees` lists them.',
-    '',
-    'Agents can also be closed by the user at any time. You are told when one you are working with is, and its id stops working from that moment — plan the rest of the work without it rather than waiting on it.',
-    '',
-    `When work spans several agents: say who does what before starting, address them by the id \`list_agents\` reports — titles are the user's to change, ids are not — and report your result back to whoever asked for it. An agent you spawn cannot see this conversation, so put everything it needs in its prompt; what it says at the end of each of its turns reaches you on its own, and it can also message you at ${context.agentId}.`
+    `cwd: ${environment.workspaceRoot}`,
+    `platform: ${environment.platform}`,
+    `date: ${environment.today}`
   ].join('\n')
 }

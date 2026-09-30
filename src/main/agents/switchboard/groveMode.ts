@@ -13,7 +13,7 @@ import type { Feature, SessionOptions } from '@neoworks/harness'
 import type { GroveTool, HarnessRunOptions } from '../harness'
 import { workspaceTools } from '../tools'
 import { EditorWorkspaceFiles } from '../tools/workspaceFiles'
-import { groveModePrompt } from './groveModePrompt'
+import { groveModePrompt } from '../systemPrompt'
 import { effortOf, permissionPolicyOf } from './run'
 
 const EXTRAS_OFF: Feature[] = [
@@ -29,16 +29,20 @@ const EXTRAS_OFF: Feature[] = [
   'images'
 ]
 
-/** The options a grove mode session runs with. */
-export function groveModeOptions(options: HarnessRunOptions, today: Date = new Date()): SessionOptions {
-  const prompt = groveModePrompt(
-    {
-      workspaceRoot: options.workspaceRoot,
-      platform: process.platform,
-      today: today.toISOString().slice(0, 10)
-    },
-    options.systemPrompt
-  )
+/**
+ * The options a grove mode session runs with, given the workspace tools it is
+ * served. The prompt lists them ahead of grove's own, which the run already has.
+ */
+export function groveModeOptions(
+  options: HarnessRunOptions,
+  workspace: GroveTool[],
+  today: Date = new Date()
+): SessionOptions {
+  const prompt = groveModePrompt([...workspace, ...options.tools], options.systemPrompt, {
+    workspaceRoot: options.workspaceRoot,
+    platform: process.platform,
+    today: today.toISOString().slice(0, 10)
+  })
   const sessionOptions: SessionOptions = {
     systemPrompt: { replace: prompt },
     tools: 'none',

@@ -61,8 +61,11 @@ export interface GroveToolResult {
  */
 export interface GroveTool {
   name: string
+  /** One line saying what the tool does: the tool's entry in the system prompt. */
   summary: string
   description: string
+  /** Rules the tool adds to the system prompt of a session that has it. */
+  promptGuidelines?: string[]
   /** JSON Schema for the tool's input object. */
   inputSchema: Record<string, unknown>
   /** `ask` parks the call until grove answers it; `allow` runs straight away. */
@@ -161,10 +164,10 @@ export interface HarnessRunOptions {
   resumeKey: string | null
   tools: GroveTool[]
   /**
-   * What grove has to say about the worktree this session runs in — its name
-   * among the agents working there and the tools for talking to them. Appended
-   * to whatever system prompt the runtime brings; a harness that cannot append
-   * one ignores it and loses only the coordination.
+   * The session's context as tagged system prompt sections — its name among
+   * the agents working in the worktree, who else is there, plugin skills. The
+   * harness composes its prompt around it (see `systemPrompt.ts`); one that
+   * cannot take a prompt ignores it and loses only the coordination.
    */
   systemPrompt: string
   /** Report progress. The store stamps and persists whatever is emitted. */

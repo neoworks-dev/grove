@@ -24,6 +24,8 @@ export interface NvimEvents {
   onNotify: (id: string, method: string, args: unknown[]) => void
   // First-run setup's progress: the step it is on, then null once it is over.
   onSetupStep: (step: string | null) => void
+  // First-run setup did not finish; sent once, with the steps that failed.
+  onSetupFailed: (failedSteps: string[]) => void
 }
 
 export interface SpawnNvimOptions {
@@ -65,7 +67,7 @@ export class NeovimManager {
     const env = { ...options.env, ...nvimEnvOverlay() }
     await this.ensureStateDirs(env)
     await ensureCopilotConfigLink()
-    await ensureNvimSetup(this.events.onSetupStep)
+    await ensureNvimSetup(this.events.onSetupStep, this.events.onSetupFailed)
 
     const child = spawn(nvimBinary(), ['--embed', ...nvimConfigArgs()], {
       cwd: options.cwd,

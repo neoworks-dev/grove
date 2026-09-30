@@ -26,7 +26,7 @@ async function fakeNvim(stderr: string, exitCode: number): Promise<void> {
 
 // setUpNvimProfile rather than ensureNvimSetup: the latter runs at most once
 // per process, and each test needs its own run.
-const { setUpNvimProfile, stepFromLine } = await import('../src/main/nvimSetup')
+const { setUpNvimProfile, stepFromLine, failedStepFromLine } = await import('../src/main/nvimSetup')
 
 beforeEach(async () => {
   appRoot = await mkdtemp(join(tmpdir(), 'grove-nvim-setup-'))
@@ -50,6 +50,17 @@ describe('stepFromLine', () => {
     expect(stepFromLine('grove-setup: Installing syntax parsers')).toBe('Installing syntax parsers')
     expect(stepFromLine('[nvim-treesitter/install/lua]: Downloading')).toBeNull()
     expect(stepFromLine('grove-setup: ')).toBeNull()
+    expect(stepFromLine('grove-setup failed: Installing syntax parsers')).toBeNull()
+  })
+})
+
+describe('failedStepFromLine', () => {
+  it('reads the step a failure marker names and ignores other output', async () => {
+    expect(failedStepFromLine('grove-setup failed: Installing syntax parsers')).toBe(
+      'Installing syntax parsers'
+    )
+    expect(failedStepFromLine('grove-setup: Installing syntax parsers')).toBeNull()
+    expect(failedStepFromLine('stylua: failed to install')).toBeNull()
   })
 })
 
@@ -66,6 +77,29 @@ describe('setUpNvimProfile', () => {
     await fakeNvim('grove-setup failed: Installing syntax parsers\\n', 1)
     await setUpNvimProfile(() => {})
     expect(await readFile(stampPath(), 'utf8').catch(() => null)).toBeNull()
+  })
+
+  it('reports a failed setup once, with the steps that failed', async () => {
+    await fakeNvim(
+      'grove-setup failed: Installing language servers and tools\\ngrove-setup failed: Installing syntax parsers\\n',
+      1
+    )
+    const failures: string[][] = []
+    await setUpNvimProfile(
+      () => {},
+      (failedSteps) => failures.push(failedSteps)
+    )
+    expect(failures).toEqual([['Installing language servers and tools', 'Installing syntax parsers']])
+  })
+
+  it('reports nothing when setup succeeds', async () => {
+    await fakeNvim('grove-setup: Installing syntax parsers\\n', 0)
+    const failures: string[][] = []
+    await setUpNvimProfile(
+      () => {},
+      (failedSteps) => failures.push(failedSteps)
+    )
+    expect(failures).toEqual([])
   })
 
   it('skips setup when the stamp matches the config', async () => {

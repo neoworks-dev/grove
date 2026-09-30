@@ -19,7 +19,7 @@
     "lint:ts": "oxlint --type-aware",
     "lint:svelte": "eslint .",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
-    "svelte-check": "svelte-check --tsconfig ./tsconfig.json",
+    "svelte-check": "svelte-check --tsconfig ./tsconfig.web.json",
     "typecheck": "bun run typecheck:node && bun run svelte-check",
     "test": "bun test",
     "test:e2e": "bun scripts/e2e.ts",

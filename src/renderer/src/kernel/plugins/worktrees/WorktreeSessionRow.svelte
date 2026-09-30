@@ -12,6 +12,7 @@
     session,
     attention,
     selected,
+    cursor = false,
     onopen
   }: {
     session: SessionMeta
@@ -19,6 +20,8 @@
     attention?: SessionAttention
     /** Whether the worktree it belongs to is the selected one. */
     selected: boolean
+    /** Whether the worktrees view's keyboard cursor is on it. */
+    cursor?: boolean
     onopen: (event: MouseEvent) => void
   } = $props()
 
@@ -44,7 +47,11 @@
 
 <button
   class="flex w-full items-start gap-2 py-1.5 pl-7 pr-3 text-left hover:bg-hover"
-  class:bg-elevated={selected}
+  class:bg-elevated={selected && !cursor}
+  class:bg-hover={cursor}
+  role="option"
+  aria-selected={cursor}
+  tabindex="-1"
   title="{title} · {session.provider}/{session.model} — {session.status}"
   onclick={onopen}
 >

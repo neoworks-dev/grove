@@ -3,7 +3,9 @@
 // single source of truth for the API exposed via preload.
 
 import { app, dialog, BrowserWindow } from 'electron'
-import { join } from 'path'
+import { dirname, join } from 'path'
+import { mkdirSync } from 'fs'
+import { profileHash, profileSocketPath } from './socketPath'
 import type { Context } from '@neoworks/extension-system'
 import { mainContext } from './kernel/context'
 import { routePlugins } from './routes'
@@ -46,7 +48,6 @@ import { EventHub } from './api/events'
 import { VersionCounter } from './api/versions'
 import { AppPairing } from './api/socket/pairing'
 import { ApiSocketServer } from './api/socket/server'
-import { createHash } from 'crypto'
 import { PluginRegistry } from './plugins/loader'
 import { AiBridge } from './plugins/aiBridge'
 import { HarnessRegistry } from './agents/harness'
@@ -268,8 +269,18 @@ const terminals = new TerminalManager(
     },
     onTitle: (id, title) => send('event:terminal-title', { id, title })
   },
-  { socketPath: join(app.getPath('userData'), 'terminals.sock') }
+  { socketPath: terminalSocketPath(app.getPath('userData')) }
 )
+
+/**
+ * The terminal daemon's socket for this profile. The daemon binds it without
+ * creating its directory, so a short fallback directory is made here.
+ */
+function terminalSocketPath(userData: string): string {
+  const path = profileSocketPath(userData, join(userData, 'terminals.sock'), 'terminals.sock')
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+  return path
+}
 
 // Session → worktree tracking so the editor API can pick the canonical
 // (most recently active) nvim session for a worktree.
@@ -503,15 +514,15 @@ const appPairing = new AppPairing({
 let apiSocketServer: ApiSocketServer | null = null
 let apiSocketPath: string | null = null
 
-// Per-profile socket location: unix socket in a 0700 dir under userData;
-// a hashed named pipe on Windows (pipes have no fs permissions there — the
-// pairing token is the boundary).
+// Per-profile socket location: unix socket in a 0700 dir under userData (or a
+// short fallback when that path is too long for sun_path); a hashed named pipe
+// on Windows (pipes have no fs permissions there — the pairing token is the
+// boundary).
 function socketPathFor(userData: string): string {
   if (process.platform === 'win32') {
-    const hash = createHash('sha256').update(userData).digest('hex').slice(0, 12)
-    return `\\\\.\\pipe\\grove-${hash}`
+    return `\\\\.\\pipe\\grove-${profileHash(userData)}`
   }
-  return join(userData, 'sock', 'grove.sock')
+  return profileSocketPath(userData, join(userData, 'sock', 'grove.sock'), 'grove.sock')
 }
 
 function startApiSocket(): void {

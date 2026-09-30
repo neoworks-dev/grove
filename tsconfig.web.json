@@ -12,6 +12,9 @@
     "verbatimModuleSyntax": true,
     "useDefineForClassFields": true,
     "strict": false,
+    // A Svelte `$effect` returns its teardown only on the paths that set
+    // something up; a guard clause before that is a bare `return`.
+    "noImplicitReturns": false,
     "allowJs": true,
     "checkJs": true,
     "lib": [

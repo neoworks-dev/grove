@@ -420,6 +420,22 @@ describe('transcript fold', () => {
     expect(pendingApprovals(state).map((tool) => tool.toolUseId)).toEqual(['t1'])
   })
 
+  // Claude Code reports a slow MCP call as in progress every 30 seconds,
+  // whether or not it has been approved yet.
+  test('a pending call stays pending through progress reports until it is decided', () => {
+    const heartbeat = {
+      type: 'update',
+      update: { sessionUpdate: 'tool_call_update', toolCallId: 't1', status: 'in_progress' }
+    } as EventBody
+    const state = fold([toolCall('t1', 'rename', {}), permission('t1', 'rename', {}), heartbeat])
+
+    expect(pendingApprovals(state).map((tool) => tool.toolUseId)).toEqual(['t1'])
+
+    applyEvent(state, event({ type: 'user.tool_confirmation', toolUseId: 't1', result: 'allow' }))
+    applyEvent(state, event(heartbeat))
+    expect(state.items[0]).toMatchObject({ status: 'running' })
+  })
+
   test('marks a denied tool call and an errored result', () => {
     const state = fold([
       permission('t1', 'write', {}),

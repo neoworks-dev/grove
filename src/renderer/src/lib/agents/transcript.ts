@@ -411,7 +411,10 @@ function applyToolUpdate(
   update: ToolCallUpdate
 ): void {
   const tool = toolFor(state, event, update)
-  if (update.status === 'in_progress' && tool.status !== 'denied') tool.status = 'running'
+  // A call parked on a decision stays parked until it is decided: Claude Code
+  // reports a slow MCP call as in progress every 30 seconds, approved or not.
+  const decided = tool.status !== 'pending' && tool.status !== 'denied'
+  if (update.status === 'in_progress' && decided) tool.status = 'running'
   if (update.status === 'completed' || update.status === 'failed') {
     tool.result = resultText(update)
     tool.images = imagesOf(update.content ?? [])

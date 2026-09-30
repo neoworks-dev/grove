@@ -1,7 +1,8 @@
 // Starting other agents, and finding out what they can be run on.
 
+import type { ThinkingLevel } from '../../../shared/agents'
 import type { GroveTool } from '../harness'
-import type { AgentRoster, AgentRuntime } from '../roster'
+import type { AgentRoster, AgentRuntime, SpawnTarget } from '../roster'
 import { findWorktree, type AgentWorktrees } from './worktreeTools'
 import { stringOrNothing } from './toolInput'
 
@@ -32,6 +33,10 @@ export function runtimesTool(roster: AgentRoster): GroveTool {
   }
 }
 
+// The efforts a spawn may ask for. Leaving it out is the runtime's own default,
+// which is what the composer's `off` means, so `off` is not offered.
+const SPAWN_EFFORTS: ThinkingLevel[] = ['low', 'medium', 'high', 'xhigh', 'max']
+
 /**
  * Starting another agent.
  *
@@ -55,6 +60,11 @@ export function spawnTool(roster: AgentRoster, worktrees: AgentWorktrees): Grove
         prompt: { type: 'string', description: 'The whole task.' },
         harness: { type: 'string', enum: roster.harnessIds() },
         model: { type: 'string', description: "Model id from list_runtimes; else the runtime's default." },
+        effort: {
+          type: 'string',
+          enum: SPAWN_EFFORTS,
+          description: "Reasoning effort; else the runtime's default."
+        },
         worktree: { type: 'string', description: 'Branch or path from list_worktrees, to start it there.' },
         removeWhenDone: {
           type: 'boolean',
@@ -66,6 +76,15 @@ export function spawnTool(roster: AgentRoster, worktrees: AgentWorktrees): Grove
     },
     policy: 'ask',
     display: { label: '{title}', input: 'message', result: 'text' },
+
+    async describe(input, context) {
+      const target = await roster.spawnTarget(
+        context.sessionId,
+        stringOrNothing(input.harness),
+        stringOrNothing(input.model)
+      )
+      return { _meta: { grove: { facts: spawnFacts(target, effortOf(input.effort)) } } }
+    },
 
     async execute(input, context) {
       const title = String(input.title).trim()
@@ -80,6 +99,14 @@ export function spawnTool(roster: AgentRoster, worktrees: AgentWorktrees): Grove
         return { content: `Unknown harness "${harness}". Mounted: ${known}.`, isError: true }
       }
 
+      const effort = effortOf(input.effort)
+      if (input.effort !== undefined && !effort) {
+        return {
+          content: `Unknown effort ${JSON.stringify(input.effort)}. One of: ${SPAWN_EFFORTS.join(', ')}.`,
+          isError: true
+        }
+      }
+
       const model = stringOrNothing(input.model)
       const modelError = await checkModel(roster, context.sessionId, harness, model)
       if (modelError) return modelError
@@ -92,6 +119,7 @@ export function spawnTool(roster: AgentRoster, worktrees: AgentWorktrees): Grove
         title,
         harness,
         model,
+        thinkingLevel: effort,
         prompt,
         parentSessionId: context.sessionId,
         removeWhenDone: input.removeWhenDone === true
@@ -167,6 +195,50 @@ async function checkModel(
     content: `${target} cannot run "${model}". It offers: ${known}.`,
     isError: true
   }
+}
+
+/** A spawn's effort, when the call asked for one grove knows. */
+function effortOf(value: unknown): ThinkingLevel | undefined {
+  return SPAWN_EFFORTS.find((level) => level === value)
+}
+
+/**
+ * What the approval shows a spawn will run on. A default is named for what it
+ * resolves to, since "default" alone does not say which model will spend the
+ * tokens.
+ */
+function spawnFacts(
+  target: SpawnTarget,
+  effort: ThinkingLevel | undefined
+): { label: string; value: string }[] {
+  let harness = 'default'
+  if (target.harness) harness = target.harness
+
+  let model = 'runtime default'
+  if (target.model) model = modelText(target)
+
+  let effortText = 'runtime default'
+  if (effort) effortText = effort
+
+  return [
+    { label: 'Runtime', value: harness },
+    { label: 'Model', value: model },
+    { label: 'Effort', value: effortText }
+  ]
+}
+
+/**
+ * The model a spawn runs. One the runtime picked says so, with what the runtime
+ * says about it: Claude Code's `default` reads "default · Opus (1M context)".
+ */
+function modelText(target: SpawnTarget): string {
+  const model = String(target.model)
+  if (!target.modelIsDefault) return model
+  let text = model
+  // `default` already says it; "default (default)" would say it twice.
+  if (model !== 'default') text = `${model} (default)`
+  if (target.modelDescription) text = `${text} · ${target.modelDescription}`
+  return text
 }
 
 /** One runtime, as the model reads it. */

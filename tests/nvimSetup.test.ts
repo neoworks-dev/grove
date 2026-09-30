@@ -33,7 +33,13 @@ beforeEach(async () => {
   const configDir = join(appRoot, 'resources', 'nvim', 'config', 'nvim')
   await mkdir(configDir, { recursive: true })
   await writeFile(join(configDir, 'init.lua'), '-- config\n')
+  await writeFile(join(configDir, 'installs.lua'), '-- plugins\n')
 })
+
+/** Overwrites one file of the bundled config. */
+async function writeConfigFile(name: string, contents: string): Promise<void> {
+  await writeFile(join(appRoot, 'resources', 'nvim', 'config', 'nvim', name), contents)
+}
 
 afterEach(async () => {
   await rm(appRoot, { recursive: true, force: true })
@@ -70,5 +76,24 @@ describe('setUpNvimProfile', () => {
     const steps: (string | null)[] = []
     await setUpNvimProfile((step) => steps.push(step))
     expect(steps).toEqual([])
+  })
+
+  it('skips setup when only the rest of init.lua changed', async () => {
+    await fakeNvim('', 0)
+    await setUpNvimProfile(() => {})
+    await writeConfigFile('init.lua', '-- config\nvim.api.nvim_set_hl(0, "GroveMark", {})\n')
+    await fakeNvim('', 1)
+    const steps: (string | null)[] = []
+    await setUpNvimProfile((step) => steps.push(step))
+    expect(steps).toEqual([])
+  })
+
+  it('runs setup again when what it installs changed', async () => {
+    await fakeNvim('', 0)
+    await setUpNvimProfile(() => {})
+    await writeConfigFile('installs.lua', "-- plugins\n{ 'tpope/vim-sleuth' }\n")
+    const steps: (string | null)[] = []
+    await setUpNvimProfile((step) => steps.push(step))
+    expect(steps).toEqual(['Installing plugins', null])
   })
 })

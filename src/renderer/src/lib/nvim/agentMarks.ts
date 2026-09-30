@@ -5,9 +5,7 @@
 // wiping it is one call per buffer.
 
 // The mark's colours, from the palette the theme push is given: a violet wash,
-// a bar in the sign column, the note in violet and line remarks dimmer. Defined
-// here rather than in the bundled init.lua, whose contents key the first-run
-// setup — a colour added there reinstalls every plugin on the next launch.
+// a bar in the sign column, the note in violet and line remarks dimmer.
 // Runs inside the theme push, after grove's own theme, with \`palette\` in scope.
 export const AGENT_MARK_HIGHLIGHTS_LUA = `
 do

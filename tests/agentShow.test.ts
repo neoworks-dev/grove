@@ -116,6 +116,22 @@ describe('showing the user something', () => {
     expect(view.fallbackText.split('\n')[0]).toBe('1. The route matches: src/router.ts:12')
   })
 
+  test('a walkthrough tells the agent not to repeat its steps in the reply', async () => {
+    const { context } = recordingContext()
+    const tool = toolNamed('show_locations')
+
+    const result = await tool.execute(
+      { steps: true, locations: [{ path: 'src/router.ts', title: 'The route matches' }] },
+      context
+    )
+
+    // Said where the model reads it: the rules, the description, and the result.
+    expect(tool.promptGuidelines?.join('\n')).toMatch(/walkthrough.*one-line overview/i)
+    expect(tool.description).toMatch(/do not repeat the steps/i)
+    expect(result.content).toMatch(/do not repeat the steps/i)
+    expect(result.content).not.toMatch(/say in words how the flow goes/i)
+  })
+
   test('plain locations are not steps', async () => {
     const { context, surfaces } = recordingContext()
 

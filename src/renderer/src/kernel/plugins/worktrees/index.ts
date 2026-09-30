@@ -16,6 +16,7 @@ export const worktrees = {
           title: 'Worktrees',
           icon: GitBranch,
           order: 2,
+          key: 'w',
           component: WorktreeSidebar
         }),
       'sidebar:worktrees'

@@ -119,6 +119,10 @@ class OverlayController {
   // Results waiting for the next frame, and the frame they are waiting for.
   private incoming: OverlayItem[] = []
   private flushHandle: number | null = null
+  // The rows on screen belong to the previous query. They stay until the new
+  // query's first results replace them, so typing doesn't blank the list
+  // between keystrokes.
+  private showingPreviousQuery = false
 
   isOpen(id: string): boolean {
     return this.active?.id === id
@@ -149,14 +153,29 @@ class OverlayController {
     this.queryToken?.cancel()
     const token = new CancellableToken()
     this.queryToken = token
-    this.clearResults()
+    this.dropPending()
+    this.showingPreviousQuery = true
+    let receivedAny = false
 
     const emit: OverlayEmit = (batch, options) => {
       if (token.isCancelled || this.active !== descriptor) return
-      if (options?.replace) this.clearResults()
+      if (options?.replace) this.replaceWith(batch)
+      if (batch.length > 0) receivedAny = true
       this.receive(batch, descriptor)
     }
-    void descriptor.onQuery(query, emit, token)
+    // A query that ends without finding anything has nothing to replace the
+    // previous rows with, so they go once it has ended.
+    const clearIfNothingFound = (): void => {
+      if (token.isCancelled || this.active !== descriptor || receivedAny) return
+      this.clearResults()
+    }
+    void Promise.resolve(descriptor.onQuery(query, emit, token)).then(
+      clearIfNothingFound,
+      (error: unknown) => {
+        clearIfNothingFound()
+        throw error
+      }
+    )
   }
 
   /**
@@ -186,12 +205,19 @@ class OverlayController {
     this.incoming = []
     if (arrived.length === 0) return
 
+    let drawn = this.items.length
+    if (this.showingPreviousQuery) {
+      // The first results of a new query: they replace the previous rows.
+      this.showingPreviousQuery = false
+      this.capped = false
+      drawn = 0
+    }
     const next = [...this.buffered, ...arrived]
     if (next.length > BUFFER_CAP) this.capped = true
     this.buffered = next.slice(0, BUFFER_CAP)
     // Rows already on screen stay; a first batch fills the screen, and later
     // ones only make more available to scroll to.
-    this.draw(Math.max(this.items.length, INITIAL_ROWS))
+    this.draw(Math.max(drawn, INITIAL_ROWS))
     this.afterEmit(descriptor)
   }
 
@@ -203,7 +229,7 @@ class OverlayController {
    * mouse is the difference between a cap and a page.
    */
   revealMore(): void {
-    if (!this.hasMore) return
+    if (!this.hasMore || this.showingPreviousQuery) return
     this.draw(this.items.length + ROWS_PER_PAGE)
   }
 
@@ -213,13 +239,32 @@ class OverlayController {
   }
 
   private clearResults(): void {
+    this.dropPending()
+    this.showingPreviousQuery = false
+    this.items = []
+    this.capped = false
+    this.hasMore = false
+  }
+
+  /**
+   * Starts the list over for a source that sends its whole result each time.
+   * The rows on screen stay until the batch lands, as for a new query.
+   */
+  private replaceWith(batch: OverlayItem[]): void {
+    if (batch.length === 0) {
+      this.clearResults()
+      return
+    }
+    this.dropPending()
+    this.showingPreviousQuery = true
+  }
+
+  /** Forgets every result not yet on screen, including a batch waiting for its frame. */
+  private dropPending(): void {
     if (this.flushHandle !== null) cancelAnimationFrame(this.flushHandle)
     this.flushHandle = null
     this.incoming = []
     this.buffered = []
-    this.items = []
-    this.capped = false
-    this.hasMore = false
   }
 
   private afterEmit(descriptor: OverlayDescriptor): void {

@@ -14,7 +14,7 @@
   import { outputTail } from '../../../../lib/agents/outputTail'
   import { shellOutputs } from '../../../../lib/agents/shellOutput.svelte'
   import { fileIcon } from '../../../../lib/icons'
-  import { formatShellCommand } from '../../../../lib/shellFormat'
+  import { formatShellCommand } from '../../../../lib/shellSyntax.svelte'
   import { diffLines, fileDiffsOf, hunksOf, statsOf } from '../../../../lib/agents/diff'
   import {
     descriptionOf,
@@ -159,7 +159,7 @@
   }
 
   // A command as written is one long line — four greps and a pipeline, past the
-  // width of any pane it lands in. Broken at its own operators it can be read;
+  // width of any pane it lands in. Laid out from its syntax it can be read;
   // what runs is untouched.
   const shownInput = $derived.by(() => {
     if (inputView === 'command') return formatShellCommand(contentOf('command'))

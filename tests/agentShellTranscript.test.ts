@@ -14,7 +14,13 @@ import {
 import { outputTail } from '../src/renderer/src/lib/agents/outputTail'
 import type { ToolItem, TranscriptItem } from '../src/renderer/src/lib/agents/transcript'
 
-function call(toolUseId: string, name: string, command: string, result = ''): ToolItem {
+function call(
+  toolUseId: string,
+  name: string,
+  command: string,
+  result = '',
+  status: ToolItem['status'] = result ? 'ok' : 'running'
+): ToolItem {
   return {
     kind: 'tool',
     seq: 1,
@@ -24,7 +30,7 @@ function call(toolUseId: string, name: string, command: string, result = ''): To
     input: { command },
     editedInput: undefined,
     permission: 'allow',
-    status: result ? 'ok' : 'running',
+    status,
     progress: '',
     result,
     images: []
@@ -32,7 +38,7 @@ function call(toolUseId: string, name: string, command: string, result = ''): To
 }
 
 function command(toolUseId: string, output: string, running = false): ShellCommand {
-  return { toolUseId, command: toolUseId, output, running }
+  return { toolUseId, command: toolUseId, output, running, finished: !running }
 }
 
 describe('the commands a session ran', () => {
@@ -48,22 +54,89 @@ describe('the commands a session ran', () => {
     })
 
     expect(commands).toEqual([
-      { toolUseId: 't1', command: 'ls', output: 'a\nb\n', running: false },
-      { toolUseId: 't3', command: 'bun test', output: 'running 4 tests\n', running: true }
+      { toolUseId: 't1', command: 'ls', output: 'a\nb\n', running: false, finished: true },
+      {
+        toolUseId: 't3',
+        command: 'bun test',
+        output: 'running 4 tests\n',
+        running: true,
+        finished: false
+      }
     ])
   })
 })
 
+describe('how a command ended', () => {
+  test('a failed call carries the exit code its result names', () => {
+    const items: TranscriptItem[] = [
+      call('t1', 'shell', 'ls nope', 'ls: nope\n[Exit code 2.]', 'error'),
+      call('t2', 'Bash', 'false', 'Exit code 1', 'error'),
+      call('t3', 'shell', 'sleep 9', '[Killed by SIGINT.]', 'error'),
+      call('t4', 'shell', 'ls', 'a\n')
+    ]
+
+    const failures = shellCommandsOf(items, () => true, {}).map((each) => each.failure)
+
+    expect(failures).toEqual([{ exitCode: 2 }, { exitCode: 1 }, { exitCode: null }, undefined])
+  })
+})
+
 describe('writing them to the terminal', () => {
-  test('writes each command line, then its output', () => {
+  test('writes each command line, then its output, with a blank line before the next', () => {
     const plan = planTerminalWrite([], [command('ls', 'a\n'), command('pwd', '/repo\n')])
 
     expect(plan.chunks).toEqual([
-      '\u001b[2m$\u001b[0m \u001b[1mls\u001b[0m\n',
+      '\u001b[32m❯\u001b[0m \u001b[1mls\u001b[0m\n',
       'a\n',
-      '\u001b[2m$\u001b[0m \u001b[1mpwd\u001b[0m\n',
+      '\n',
+      '\u001b[32m❯\u001b[0m \u001b[1mpwd\u001b[0m\n',
       '/repo\n'
     ])
+  })
+
+  test('marks a failed command with its exit status once it ends', () => {
+    const running = planTerminalWrite([], [command('ls nope', 'ls: nope\n', true)])
+    const failed: ShellCommand = {
+      ...command('ls nope', 'ls: nope\n'),
+      failure: { exitCode: 2 }
+    }
+
+    const ended = planTerminalWrite(running.written, [failed])
+
+    expect(ended.reset).toBe(false)
+    expect(ended.chunks).toEqual(['\u001b[31m✗ exit 2\u001b[0m\n'])
+    expect(planTerminalWrite(ended.written, [failed]).chunks).toEqual([])
+  })
+
+  test('waits for the result, not the end of the stream, to say how it ended', () => {
+    const streamEnded: ShellCommand = { ...command('cat x', 'cat: x\n'), finished: false }
+    const first = planTerminalWrite([], [streamEnded])
+
+    const next = planTerminalWrite(first.written, [
+      { ...streamEnded, finished: true, failure: { exitCode: 1 } }
+    ])
+
+    expect(first.chunks.join('')).not.toContain('✗')
+    expect(next.chunks).toEqual(['\u001b[31m✗ exit 1\u001b[0m\n'])
+  })
+
+  test('holds a call back until its command line has arrived', () => {
+    const first = planTerminalWrite(
+      [],
+      [command('ls', 'a\n'), { ...command('t2', '', true), command: '' }]
+    )
+
+    const next = planTerminalWrite(first.written, [command('ls', 'a\n'), command('t2', '', true)])
+
+    expect(first.written).toHaveLength(1)
+    expect(next.reset).toBe(false)
+    expect(next.chunks.join('')).toContain('t2')
+  })
+
+  test('marks nothing for a command that succeeded', () => {
+    const plan = planTerminalWrite([], [command('ls', 'a\n')])
+
+    expect(plan.chunks.join('')).not.toContain('✗')
   })
 
   test('then writes only what the running command printed since', () => {
@@ -86,7 +159,7 @@ describe('writing them to the terminal', () => {
       command('ls', 'a\n')
     ])
 
-    expect(next.chunks[0]).toBe('\n')
+    expect(next.chunks[0]).toBe('\n\n')
   })
 
   test('starts over when an earlier command changed under it', () => {

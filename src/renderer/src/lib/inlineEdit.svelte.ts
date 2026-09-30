@@ -20,6 +20,7 @@ import {
   selectionRef,
   pickAgentMode,
   REVIEW_MODES,
+  workingTreeReviewSettled,
   type ReviewMode
 } from './inlineEditRef'
 import { catalog } from './agents/catalog.svelte'
@@ -66,6 +67,8 @@ interface InlineSelection {
 export interface PendingReview extends InlineSelection {
   snapshot: string
   review: ReviewMode
+  /** An agent's inline edit, or a file's uncommitted changes opened from Source Control. */
+  origin: 'inlineEdit' | 'workingTree'
 }
 
 // An active in-buffer review: the hunks, per-hunk decision, and current output
@@ -237,7 +240,7 @@ class InlineEdit {
     }
     const ref = selectionRef(selection.relPath, selection.startLine, selection.endLine)
     const text = `Make this edit in @${ref}: ${userPrompt}`
-    this.pendingReview = { ...selection, snapshot, review: this.mode }
+    this.pendingReview = { ...selection, snapshot, review: this.mode, origin: 'inlineEdit' }
 
     // Inline edits use a dedicated task session. Sharing the Agent pane's active
     // session would make this model selection mutate that conversation's model,
@@ -323,8 +326,20 @@ class InlineEdit {
       text: '',
       leafId: session.leafId,
       snapshot,
-      review: 'inline'
+      review: 'inline',
+      origin: 'workingTree'
     })
+  }
+
+  /**
+   * Ends a working-tree review whose file has left the worktree's changes —
+   * committed or discarded — so its chip and hunks do not outlive them.
+   */
+  settleWorkingTreeReview(worktreeId: string, changedPaths: string[]): void {
+    const review = this.review
+    if (!review) return
+    if (!workingTreeReviewSettled(review, worktreeId, changedPaths)) return
+    this.finishReview()
   }
 
   // ── Phase C: in-buffer accept/reject review ───────────────────────

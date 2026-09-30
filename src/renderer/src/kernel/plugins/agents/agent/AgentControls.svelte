@@ -13,6 +13,7 @@
   import { MODE_DESCRIPTIONS, MODE_LABELS, type AgentMode } from '../../../../lib/agents/modes'
   import { findRoute } from '../../../../lib/agents/modelSelection'
   import ModelMenu from './ModelMenu.svelte'
+  import { keepInside } from '../../../../lib/popoverFit'
   import { THINKING_LABELS, THINKING_LEVELS } from '../../../../lib/agents/thinking'
   import { GROVE_MODE_DESCRIPTION } from '../../../../lib/agents/newSession'
   import type { HarnessInfo, ModelEntry, ThinkingLevel } from '../../../../lib/agents/types'
@@ -85,6 +86,10 @@
   type Menu = 'harness' | 'model' | 'thinking' | 'mode' | 'review'
   let openMenu = $state<Menu | null>(null)
 
+  // The row the menus open from; each is kept inside it, so a control that
+  // wrapped towards the pane's right edge does not open a menu off the window.
+  let controlsRow = $state<HTMLDivElement>()
+
   const current = $derived(harnesses.find((entry) => entry.id === harness))
   const capabilities = $derived(current?.capabilities)
 
@@ -140,7 +145,7 @@
   }
 </script>
 
-<div class="relative flex flex-wrap items-center gap-2 text-2xs">
+<div class="relative flex flex-wrap items-center gap-2 text-2xs" bind:this={controlsRow}>
   <!-- Backdrop closes any open menu on outside click. -->
   {#if openMenu}
     <button
@@ -175,6 +180,7 @@
     {#if openMenu === 'harness'}
       <div
         class="absolute bottom-full left-0 z-30 mb-1 w-64 rounded-md border border-line bg-elevated py-1 shadow-lg"
+        use:keepInside={controlsRow}
       >
         {#each harnesses as entry (entry.id)}
           <button
@@ -240,6 +246,7 @@
         {provider}
         {model}
         {switchCostWarning}
+        boundary={controlsRow}
         onPick={(pickedProvider, pickedModel) => {
           onPickModel(pickedProvider, pickedModel)
           close()
@@ -270,6 +277,7 @@
     {#if openMenu === 'mode'}
       <div
         class="absolute bottom-full left-0 z-30 mb-1 w-64 rounded-md border border-line bg-elevated py-1 shadow-lg"
+        use:keepInside={controlsRow}
       >
         {#each MODES as candidate (candidate)}
           <button
@@ -307,6 +315,7 @@
     {#if openMenu === 'review'}
       <div
         class="absolute bottom-full left-0 z-30 mb-1 w-56 rounded-md border border-line bg-elevated py-1 shadow-lg"
+        use:keepInside={controlsRow}
       >
         <div class="px-2 py-1 text-2xs text-dim">Review changes</div>
         {#each REVIEW_MODES as option (option.value)}

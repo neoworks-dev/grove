@@ -5,18 +5,33 @@
 // description on every turn, and these share their arguments. A position is a
 // line and the symbol on it, since a model counts columns badly and names the
 // thing it means well.
+//
+// Rename is a tool of its own: it writes files, so it asks before it runs and
+// shows the diffs it would make, which the read-only questions do not.
 
 import { pathToFileURL, fileURLToPath } from 'url'
-import type { DocumentSymbol, Location, SymbolInformation, WorkspaceSymbol } from 'vscode-languageserver-protocol'
+import type { ToolCallUpdate } from '@neoworks/harness'
+import type {
+  DocumentSymbol,
+  Location,
+  SnippetTextEdit,
+  SymbolInformation,
+  TextEdit,
+  WorkspaceEdit,
+  WorkspaceSymbol
+} from 'vscode-languageserver-protocol'
 import type { LspDiagnostic, LspPosition } from '../../../shared/types'
 import { detectLanguage } from '../../git'
 import type { LspManager } from '../../lsp'
 import type { GroveTool, GroveToolContext, GroveToolResult } from '../harness'
+import { ripgrep } from './searchTools'
 import {
   displayPath,
   joinText,
   locate,
   resolvePath,
+  splitText,
+  type FileText,
   type WorkspaceFiles,
   type WorktreeLocation
 } from './workspaceFiles'
@@ -32,12 +47,17 @@ export type AgentLanguages = Pick<
   | 'references'
   | 'documentSymbols'
   | 'workspaceSymbols'
+  | 'rename'
 >
 
 /** How long to wait for a server to publish diagnostics after a sync. */
 const DIAGNOSTICS_WAIT_MS = 3000
 const MAX_LOCATIONS = 50
 const MAX_DIAGNOSTICS = 100
+/** Files mentioning a name that are opened on the server before it renames. */
+const MAX_MENTIONING_FILES = 500
+/** Uses of the old name listed after a rename, before the list is cut. */
+const MAX_LEFTOVERS = 20
 
 const SEVERITIES: Record<number, string> = { 1: 'error', 2: 'warning', 3: 'info', 4: 'hint' }
 
@@ -57,6 +77,14 @@ const SYMBOL_KINDS: Record<number, string> = {
   22: 'enum member',
   23: 'struct',
   26: 'type parameter'
+}
+
+/** One file a rename changes: what it was read as, and its lines afterwards. */
+interface RenamedFile {
+  path: string
+  file: FileText
+  lines: string[]
+  changes: number
 }
 
 /** A file synced to its language server, ready to be asked about. */
@@ -109,6 +137,57 @@ export function lspTool(
       } catch (cause) {
         return { content: (cause as Error).message, isError: true }
       }
+    }
+  }
+}
+
+export function renameTool(
+  languages: AgentLanguages,
+  files: WorkspaceFiles,
+  worktrees: () => WorktreeLocation[]
+): GroveTool {
+  return {
+    name: 'rename',
+    summary: 'Rename a symbol everywhere it is used',
+    promptGuidelines: ['Rename symbols with rename, not by editing each use'],
+    description: [
+      'Rename a symbol through the language server: its definition and every reference, import and re-export, and nothing that only shares the name.',
+      'The position is path, line (a number or a LINE#ID tag) and symbol, the current name on that line.',
+      'Fails, writing nothing, when the server cannot rename there or a file changed since it was read.'
+    ].join('\n'),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'File path, absolute or relative to the working directory.' },
+        line: { type: ['integer', 'string'], description: 'Line number or LINE#ID tag.' },
+        symbol: { type: 'string', description: 'The current name on that line.' },
+        newName: { type: 'string', description: 'The name to give it.' }
+      },
+      required: ['path', 'line', 'symbol', 'newName'],
+      additionalProperties: false
+    },
+    policy: 'ask',
+    display: { label: '{symbol} → {newName}', edits: true },
+
+    async describe(input, context) {
+      const query = new LanguageQuery(languages, files, worktrees, context)
+      return renameUpdate(context, await query.planRename(input))
+    },
+
+    async execute(input, context) {
+      const query = new LanguageQuery(languages, files, worktrees, context)
+      let planned: RenamedFile[]
+      try {
+        planned = await query.planRename(input)
+      } catch (cause) {
+        return { content: (cause as Error).message, isError: true }
+      }
+      for (const renamed of planned) {
+        await files.write(renamed.path, renamed.file, renamed.lines)
+      }
+      context.report?.(renameUpdate(context, planned))
+      const leftovers = await query.mentionsOf(String(input.symbol))
+      return { content: renameReport(context, input, planned, leftovers) }
     }
   }
 }
@@ -200,6 +279,79 @@ class LanguageQuery {
     return { content: lines.join('\n') }
   }
 
+  /**
+   * Every file a rename would change, with its lines afterwards. Nothing is
+   * written here, so a rename that cannot be made whole is not made at all.
+   */
+  async planRename(input: Record<string, unknown>): Promise<RenamedFile[]> {
+    if (typeof input.newName !== 'string' || input.newName.length === 0) {
+      throw new Error('rename needs a newName.')
+    }
+    const target = await this.target(input.path)
+    const position = positionOf(target, input)
+    await this.openMentioningFiles(target, String(input.symbol))
+    const edit = await this.languages.rename(
+      target.worktree.id,
+      target.language,
+      target.uri,
+      position,
+      input.newName
+    )
+    if (!edit) throw new Error(`The language server cannot rename "${String(input.symbol)}" there.`)
+    const byFile = textEditsOf(edit)
+    if (byFile.size === 0) throw new Error('The language server found nothing to rename.')
+    const planned: RenamedFile[] = []
+    for (const [uri, edits] of byFile) {
+      planned.push(await this.renamedFile(uri, edits))
+    }
+    return planned
+  }
+
+  /**
+   * Open every file of the target's language that mentions the name on its
+   * server. A server without a project file only knows the files it has been
+   * shown, and renames in those alone.
+   */
+  private async openMentioningFiles(target: Target, name: string): Promise<void> {
+    const worktree = target.worktree
+    const output = await ripgrep(worktree.path, worktree.path, [
+      '--files-with-matches',
+      '--fixed-strings',
+      '--word-regexp',
+      name
+    ])
+    const paths = output.lines.filter((path) => path.length > 0).slice(0, MAX_MENTIONING_FILES)
+    for (const absolutePath of paths) {
+      if (detectLanguage(absolutePath) !== target.language) continue
+      const file = await this.files.read(absolutePath)
+      const uri = pathToFileURL(absolutePath).toString()
+      await this.languages.sync(worktree.id, worktree.path, target.language, uri, joinText(file.lines, file))
+    }
+  }
+
+  /** Whole-word uses of a name left in the workspace, as path:line lines. */
+  async mentionsOf(name: string): Promise<string[]> {
+    const root = this.context.workspaceRoot
+    const output = await ripgrep(root, root, ['--line-number', '--no-heading', '--fixed-strings', '--word-regexp', name])
+    return output.lines
+      .filter((line) => line.length > 0)
+      .map((line) => {
+        const [path, lineNumber] = line.split(':', 2)
+        return `${displayPath(root, path)}:${lineNumber}`
+      })
+  }
+
+  /** One file's text with a rename's edits made to it. */
+  private async renamedFile(uri: string, edits: TextEdit[]): Promise<RenamedFile> {
+    const absolutePath = fileURLToPath(uri)
+    this.worktreeOf(absolutePath)
+    const file = await this.files.read(absolutePath)
+    const shown = displayPath(this.context.workspaceRoot, absolutePath)
+    if (!file.exists) throw new Error(`The rename changes ${shown}, which does not exist.`)
+    const text = applyTextEdits(joinText(file.lines, file), file, edits, shown)
+    return { path: absolutePath, file, lines: splitText(text).lines, changes: edits.length }
+  }
+
   // ── Targets and positions ───────────────────────────────────────
 
   /** The file at `path`, synced to its language server from what the agent would read. */
@@ -258,6 +410,116 @@ class LanguageQuery {
     if ('range' in symbol.location) where = `${path}:${symbol.location.range.start.line + 1}`
     return `${symbol.name}  ${kindOf(symbol.kind)}  ${where}`
   }
+}
+
+/**
+ * A workspace edit's text edits by file. File creations, moves and deletions
+ * are refused: the tool changes text, and a half-made move is worse than none.
+ */
+export function textEditsOf(edit: WorkspaceEdit): Map<string, TextEdit[]> {
+  const byFile = new Map<string, TextEdit[]>()
+  const add = (uri: string, edits: TextEdit[]): void => {
+    const known = byFile.get(uri)
+    if (known) known.push(...edits)
+    else byFile.set(uri, [...edits])
+  }
+  if (edit.changes) {
+    for (const [uri, edits] of Object.entries(edit.changes)) add(uri, edits)
+  }
+  if (edit.documentChanges) {
+    for (const change of edit.documentChanges) {
+      if (!('textDocument' in change)) {
+        throw new Error('This rename would also create, move or delete files, which rename does not do.')
+      }
+      add(change.textDocument.uri, change.edits.map(plainTextEdit))
+    }
+  }
+  return byFile
+}
+
+/** An edit as plain text; a snippet edit's placeholders mean nothing to a rename. */
+function plainTextEdit(edit: TextEdit | SnippetTextEdit): TextEdit {
+  if ('newText' in edit) return edit
+  return { range: edit.range, newText: edit.snippet.value }
+}
+
+/**
+ * Text with LSP edits made to it. Positions count UTF-16 code units, as
+ * JavaScript strings do; edits are made from the end so earlier offsets hold.
+ */
+export function applyTextEdits(
+  text: string,
+  layout: Pick<FileText, 'eol' | 'lines'>,
+  edits: TextEdit[],
+  path: string
+): string {
+  const lineStarts: number[] = []
+  let offset = 0
+  for (const line of layout.lines) {
+    lineStarts.push(offset)
+    offset += line.length + layout.eol.length
+  }
+  const offsetOf = (position: LspPosition): number => {
+    const start = lineStarts[position.line]
+    const line = layout.lines[position.line]
+    if (start === undefined || line === undefined || position.character > line.length) {
+      throw new Error(`The language server's view of ${path} is out of date; read it and try again.`)
+    }
+    return start + position.character
+  }
+  const ranged = edits
+    .map((edit) => ({ start: offsetOf(edit.range.start), end: offsetOf(edit.range.end), newText: edit.newText }))
+    .sort((first, second) => second.start - first.start)
+  let result = text
+  for (const edit of ranged) {
+    result = result.slice(0, edit.start) + edit.newText + result.slice(edit.end)
+  }
+  return result
+}
+
+/** A rename as the transcript and the approval show it: one diff per file. */
+function renameUpdate(
+  context: GroveToolContext,
+  planned: RenamedFile[]
+): Omit<ToolCallUpdate, 'toolCallId'> {
+  let title = 'rename'
+  if (planned.length > 0) title = displayPath(context.workspaceRoot, planned[0].path)
+  return {
+    kind: 'edit',
+    title,
+    content: planned.map((renamed) => ({
+      type: 'diff' as const,
+      path: renamed.path,
+      oldText: joinText(renamed.file.lines, renamed.file),
+      newText: joinText(renamed.lines, renamed.file)
+    })),
+    locations: planned.map((renamed) => ({ path: renamed.path }))
+  }
+}
+
+/**
+ * What the model is told a rename did, and where the old name still appears:
+ * a different symbol of the same name, or a use the server did not know of.
+ */
+function renameReport(
+  context: GroveToolContext,
+  input: Record<string, unknown>,
+  planned: RenamedFile[],
+  leftovers: string[]
+): string {
+  let total = 0
+  const lines: string[] = []
+  for (const renamed of planned) {
+    total += renamed.changes
+    lines.push(`${displayPath(context.workspaceRoot, renamed.path)} (${renamed.changes})`)
+  }
+  const head = `Renamed ${String(input.symbol)} to ${String(input.newName)}: ${total} changes in ${planned.length} files.`
+  const report = [head, ...lines]
+  if (leftovers.length === 0) return report.join('\n')
+  report.push(`"${String(input.symbol)}" still appears here; check whether each is another symbol or a missed use:`)
+  report.push(...leftovers.slice(0, MAX_LEFTOVERS))
+  if (leftovers.length > MAX_LEFTOVERS) report.push(`[${leftovers.length - MAX_LEFTOVERS} more.]`)
+  return report.join('\n')
 }
 
 /**

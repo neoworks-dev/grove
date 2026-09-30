@@ -10,7 +10,7 @@ import type { GroveTool } from '../harness'
 import type { AgentRoster } from '../roster'
 import { chatTools } from './chatTools'
 import { fileTools } from './fileTools'
-import { lspTool, type AgentLanguages } from './lspTools'
+import { lspTool, renameTool, type AgentLanguages } from './lspTools'
 import { searchTools } from './searchTools'
 import { shellTool } from './shellTool'
 import type { WorkspaceFiles, WorktreeLocation } from './workspaceFiles'
@@ -64,6 +64,7 @@ export function workspaceTools(options: WorkspaceToolOptions): GroveTool[] {
     ...fileTools(options.files),
     ...searchTools(),
     lspTool(options.languages, options.files, options.worktrees),
+    renameTool(options.languages, options.files, options.worktrees),
     shellTool()
   ]
 }

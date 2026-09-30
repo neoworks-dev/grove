@@ -138,7 +138,7 @@ function searchRoot(workspaceRoot: string, path: unknown): string {
   return resolvePath(workspaceRoot, path)
 }
 
-interface RipgrepOutput {
+export interface RipgrepOutput {
   lines: string[]
   /** ripgrep exits 1 for "nothing found" and 2 for errors, even beside matches. */
   failed: boolean
@@ -149,7 +149,7 @@ interface RipgrepOutput {
  * Run ripgrep over a file or directory and collect what it prints. The target
  * is passed absolute, so every path it prints is too.
  */
-function ripgrep(cwd: string, target: string, args: string[]): Promise<RipgrepOutput> {
+export function ripgrep(cwd: string, target: string, args: string[]): Promise<RipgrepOutput> {
   return new Promise((resolve) => {
     const child = spawn(rgPath, [...args, '--', target], {
       cwd,

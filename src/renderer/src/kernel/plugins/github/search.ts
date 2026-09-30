@@ -24,7 +24,7 @@ export type QualifierKey =
   | 'base'
   | 'no'
 
-const KEYS: QualifierKey[] = [
+export const KEYS: QualifierKey[] = [
   'is',
   'state',
   'author',
@@ -46,8 +46,8 @@ const KEYS: QualifierKey[] = [
 const ALL_OF_KEYS: QualifierKey[] = ['is', 'state', 'label', 'no']
 
 /** The states `is:` and `state:` can name, which are also what a fetch covers. */
-const OPEN_WORDS = ['open']
-const CLOSED_WORDS = ['closed', 'merged']
+export const OPEN_WORDS = ['open']
+export const CLOSED_WORDS = ['closed', 'merged']
 
 export interface Qualifier {
   key: QualifierKey
@@ -116,7 +116,7 @@ export function parseSearch(query: string): SearchQuery {
 }
 
 /** A value as it has to be written to survive another parse. */
-function quoted(value: string): string {
+export function quoted(value: string): string {
   if (!/\s/.test(value)) return value
   return `"${value}"`
 }

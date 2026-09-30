@@ -18,6 +18,7 @@
   import PushPinIcon from 'phosphor-svelte/lib/PushPinIcon'
   import GithubSelectionBar from './GithubSelectionBar.svelte'
   import GithubFilterBar from './GithubFilterBar.svelte'
+  import GithubSearchBox from './GithubSearchBox.svelte'
   import { ageLabel, partitionPinned } from './filter'
   import { DEFAULT_QUERY, setStateQualifier } from './search'
   import type { GithubItem, GithubItemKind, GithubStateFilter } from '../../../../../shared/types'
@@ -175,12 +176,10 @@
             <span class="font-mono text-2xs text-dim">{counts.issue}</span>
           </button>
 
-          <input
-            class="min-w-0 flex-1 rounded-md border border-line bg-input px-2 py-0.5 font-mono text-2xs text-default outline-none placeholder:font-sans placeholder:text-xs placeholder:text-dim focus:border-line-strong"
+          <GithubSearchBox
+            bind:value={github.query}
             placeholder="is:open label:bug"
             title={SEARCH_HELP}
-            spellcheck="false"
-            bind:value={github.query}
           />
 
           <button

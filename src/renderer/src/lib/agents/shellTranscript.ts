@@ -58,7 +58,7 @@ export function shellCommandsOf(
     const command: ShellCommand = {
       toolUseId: item.toolUseId,
       command: commandOf(item),
-      output: streamed ? streamed.text : item.result,
+      output: streamed ? streamed.text : resultOutputOf(item),
       running: streamed ? streamed.running : item.status === 'running',
       finished: FINISHED_STATUSES.has(item.status)
     }
@@ -68,6 +68,24 @@ export function shellCommandsOf(
     commands.push(command)
   }
   return commands
+}
+
+// The status line grove's shell ends a failed result with, for the model.
+const EXIT_CODE_LINE = /\n?\[Exit code \d+\.\]\n?$/
+
+/**
+ * What a finished call printed, from its result: once a session is reloaded
+ * its streamed output is gone. The raw result, since Claude Code fences a
+ * failed call's text for display, without grove's `[Exit code N.]` line —
+ * the view writes the exit status itself.
+ */
+function resultOutputOf(item: ToolItem): string {
+  let output = item.result
+  if (item.rawResult !== '') {
+    output = item.rawResult
+  }
+  if (item.status !== 'error') return output
+  return output.replace(EXIT_CODE_LINE, '')
 }
 
 /**

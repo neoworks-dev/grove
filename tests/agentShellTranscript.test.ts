@@ -12,7 +12,14 @@ import {
   type ShellCommand
 } from '../src/renderer/src/lib/agents/shellTranscript'
 import { outputTail } from '../src/renderer/src/lib/agents/outputTail'
-import type { ToolItem, TranscriptItem } from '../src/renderer/src/lib/agents/transcript'
+import {
+  applyEvent,
+  createTranscript,
+  visibleItems,
+  type ToolItem,
+  type TranscriptItem
+} from '../src/renderer/src/lib/agents/transcript'
+import type { EventBody } from '../src/renderer/src/lib/agents/types'
 
 function call(
   toolUseId: string,
@@ -33,6 +40,7 @@ function call(
     status,
     progress: '',
     result,
+    rawResult: '',
     images: []
   }
 }
@@ -78,6 +86,78 @@ describe('how a command ended', () => {
     const failures = shellCommandsOf(items, () => true, {}).map((each) => each.failure)
 
     expect(failures).toEqual([{ exitCode: 2 }, { exitCode: 1 }, { exitCode: null }, undefined])
+  })
+})
+
+/**
+ * A grove shell call that failed, folded the way Claude Code's ACP adapter
+ * reports it: the text content fenced for display, the plain text as rawOutput.
+ */
+function reloadedFailedShellCall(rawOutput: unknown): TranscriptItem[] {
+  const bodies: EventBody[] = [
+    {
+      type: 'update',
+      update: {
+        sessionUpdate: 'tool_call',
+        toolCallId: 't1',
+        title: 'mcp__grove__shell',
+        status: 'in_progress',
+        rawInput: { command: 'ls nope' },
+        _meta: { claudeCode: { toolName: 'mcp__grove__shell' } }
+      }
+    } as EventBody,
+    {
+      type: 'update',
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 't1',
+        status: 'failed',
+        content: [
+          { type: 'content', content: { type: 'text', text: '```\nls: nope\n[Exit code 2.]\n```' } }
+        ],
+        rawOutput
+      }
+    } as EventBody
+  ]
+  const state = createTranscript()
+  for (const [index, body] of bodies.entries()) {
+    applyEvent(state, {
+      ...body,
+      id: `evt_${index + 1}`,
+      seq: index + 1,
+      sessionId: 's1',
+      createdAt: '2026-01-01T00:00:00.000Z'
+    })
+  }
+  return visibleItems(state)
+}
+
+describe('a reloaded session, without its streamed output', () => {
+  test('shows a failed call as it printed, not as the model was shown it', () => {
+    for (const rawOutput of [
+      'ls: nope\n[Exit code 2.]',
+      [{ type: 'text', text: 'ls: nope\n[Exit code 2.]' }]
+    ]) {
+      const commands = shellCommandsOf(
+        reloadedFailedShellCall(rawOutput),
+        (item) => item.name === 'shell',
+        {}
+      )
+
+      expect(commands).toEqual([
+        {
+          toolUseId: 't1',
+          command: 'ls nope',
+          output: 'ls: nope',
+          running: false,
+          finished: true,
+          failure: { exitCode: 2 }
+        }
+      ])
+      expect(planTerminalWrite([], commands).chunks.join('')).toBe(
+        '\u001b[32m❯\u001b[0m \u001b[1mls nope\u001b[0m\nls: nope\n\u001b[31m✗ exit 2\u001b[0m\n'
+      )
+    }
   })
 })
 

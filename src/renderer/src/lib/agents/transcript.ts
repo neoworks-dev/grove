@@ -88,6 +88,12 @@ export interface ToolItem {
   status: ToolStatus
   progress: string
   result: string
+  /**
+   * The result's text as the tool returned it, before the harness dressed it
+   * for display — Claude Code fences a failed call's text — or '' when the
+   * harness reported none.
+   */
+  rawResult: string
   /** Images the tool returned, shown under its row. */
   images: ImageBlock[]
   /** Diffs and terminals the call carries, as the harness reported them. */
@@ -417,6 +423,7 @@ function applyToolUpdate(
   if (update.status === 'in_progress' && decided) tool.status = 'running'
   if (update.status === 'completed' || update.status === 'failed') {
     tool.result = resultText(update)
+    tool.rawResult = rawOutputText(update.rawOutput)
     tool.images = imagesOf(update.content ?? [])
     tool.progress = ''
     tool.status = update.status === 'failed' ? 'error' : 'ok'
@@ -446,6 +453,7 @@ function toolFor(state: TranscriptState, event: SessionEvent, update: ToolCallUp
       status: 'running',
       progress: '',
       result: '',
+      rawResult: '',
       images: [],
       content: [],
       locations: []
@@ -496,6 +504,22 @@ function resultText(update: ToolCallUpdate): string {
   if (text.length > 0) return text
   if (typeof update.rawOutput === 'string') return update.rawOutput
   return ''
+}
+
+/**
+ * The text of what a call reported raw: a string as it is, text blocks joined,
+ * '' for anything else — a harness's structured output is not text to show.
+ */
+function rawOutputText(rawOutput: unknown): string {
+  if (typeof rawOutput === 'string') return rawOutput
+  if (!Array.isArray(rawOutput)) return ''
+  return rawOutput
+    .map((block: { type?: unknown; text?: unknown }) => {
+      if (block?.type !== 'text' || typeof block.text !== 'string') return ''
+      return block.text
+    })
+    .filter((part) => part.length > 0)
+    .join('\n')
 }
 
 // The scheme main stores a tool's images under, in place of their bytes.

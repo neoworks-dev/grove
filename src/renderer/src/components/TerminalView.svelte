@@ -2,15 +2,11 @@
   // A single xterm view bound to one shell in the terminal daemon. Owned by
   // TerminalPane, which mounts one per open terminal and keeps inactive ones
   // hidden (so their pty keeps streaming and scrollback survives tab switches).
-  import { onMount, onDestroy } from 'svelte'
-  import { Terminal, type IMarker } from '@xterm/xterm'
-  import { FitAddon } from '@xterm/addon-fit'
-  import { WebglAddon } from '@xterm/addon-webgl'
-  import '@xterm/xterm/css/xterm.css'
-  import { layout } from '../lib/layout.svelte'
+  import { onDestroy } from 'svelte'
+  import type { IMarker, Terminal } from '@xterm/xterm'
   import { keymap } from '../lib/keymap.svelte'
   import { createTerminalEscapeHandler } from '../lib/terminalKeys'
-  import { cssVar, terminalTheme } from '../lib/terminalTheme'
+  import XtermSurface from './XtermSurface.svelte'
   import {
     commandFromMarker,
     commandOutput,
@@ -43,21 +39,15 @@
     onCommandFailed?: (failure: FailedCommand) => void
   } = $props()
 
-  // xterm renders to its own canvas, so it scales its font from the pane's zoom
-  // rather than the container CSS zoom used by DOM panes.
-  const BASE_FONT_SIZE = 13
   // What a shell reports for a command stopped by SIGINT: 128 + 2.
   const INTERRUPTED_EXIT_CODE = 130
 
-  let hostEl = $state<HTMLDivElement>()
-  let term: Terminal | null = null
-  let fit: FitAddon | null = null
+  let surface = $state<XtermSurface>()
+  let term = $state.raw<Terminal | null>(null)
   let ptyId: string | null = null
-  let webgl: WebglAddon | null = null
   let stopData: (() => void) | null = null
   let stopExit: (() => void) | null = null
   let stopTitle: (() => void) | null = null
-  let observer: ResizeObserver | null = null
   // Where the shell's prompt ended (OSC 133 B), which is where the typed command
   // starts, and the command running since its C marker. Markers move with the
   // scrollback, so they still point at the right lines when the command ends.
@@ -78,91 +68,24 @@
     keymap.focusPane(leafId)
   }
 
-  // Fit only when the host's pixel size actually changes, coalesced to one
-  // animation frame. Fitting on every ResizeObserver tick lets xterm's own
-  // relayout feed back into the observer and spin the main thread (a known
-  // xterm + FitAddon hang).
-  let fitScheduled = false
-  let lastWidth = 0
-  let lastHeight = 0
-
-  function scheduleFit(): void {
-    if (fitScheduled) return
-    fitScheduled = true
-    requestAnimationFrame(() => {
-      fitScheduled = false
-      if (!hostEl || !fit) return
-      const width = hostEl.clientWidth
-      const height = hostEl.clientHeight
-      if (width < 2 || height < 2) return
-      if (width === lastWidth && height === lastHeight) return
-      lastWidth = width
-      lastHeight = height
-      try {
-        fit.fit()
-      } catch {
-        // not laid out yet
-      }
-    })
-  }
-
-  /**
-   * Draw the grid on the GPU instead of rebuilding a DOM row per line.
-   *
-   * xterm's default DOM renderer repaints every visible row as elements, which a
-   * full-screen TUI redrawing at 60Hz turns into thousands of node mutations a
-   * second. The WebGL renderer uploads a glyph atlas once and blits from it.
-   *
-   * The context can be lost (driver reset, GPU process restart); disposing the
-   * addon is what puts the DOM renderer back, so the terminal keeps working
-   * rather than going blank.
-   */
-  function enableGpuRenderer(terminal: Terminal): void {
-    try {
-      const addon = new WebglAddon()
-      addon.onContextLoss(() => {
-        addon.dispose()
-        if (webgl === addon) webgl = null
-      })
-      terminal.loadAddon(addon)
-      webgl = addon
-    } catch (cause) {
-      console.warn('[terminal] WebGL renderer unavailable, falling back to DOM:', cause)
-    }
-  }
-
-  onMount(() => {
-    if (!hostEl) return
-    term = new Terminal({
-      fontFamily: cssVar('--font-mono', 'monospace'),
-      fontSize: BASE_FONT_SIZE * layout.fontScale(leafId),
-      cursorBlink: true,
-      theme: terminalTheme(),
-      allowProposedApi: true
-    })
-    fit = new FitAddon()
-    term.loadAddon(fit)
-    term.open(hostEl)
-    // Must follow open(): the addon needs the terminal's element to exist.
-    enableGpuRenderer(term)
-    term.attachCustomKeyEventHandler(createTerminalEscapeHandler(enterNormalMode))
+  /** Wires the shell's keys and markers into the terminal, then starts the pty once it has a size. */
+  function onReady(terminal: Terminal): void {
+    term = terminal
+    terminal.attachCustomKeyEventHandler(createTerminalEscapeHandler(enterNormalMode))
     // Semantic-prompt markers (OSC 133, emitted by fish and configured shells):
     // "C" fires when a command starts executing, "D;<status>" when it finishes.
     // They drive the tab status dot; unhandled (return false) so other
     // consumers still see them.
-    term.parser.registerOscHandler(133, (data) => {
+    terminal.parser.registerOscHandler(133, (data) => {
       onSemanticPrompt(data)
       return false
     })
     // Clicking back into the terminal resumes terminal mode.
-    term.textarea?.addEventListener('focus', () => keymap.setPaneMode(leafId, 'terminal'))
+    terminal.textarea?.addEventListener('focus', () => keymap.setPaneMode(leafId, 'terminal'))
 
     // Start the pty once the view has a size, then wire the streams.
     requestAnimationFrame(() => void start())
-
-    observer = new ResizeObserver(scheduleFit)
-    observer.observe(hostEl)
-  })
+  }
 
   /** One OSC 133 marker: the prompt ending, a command starting, or one finishing. */
   function onSemanticPrompt(data: string): void {
@@ -240,14 +163,8 @@
   }
 
   async function start(): Promise<void> {
-    if (!term || !fit || !hostEl) return
-    lastWidth = hostEl.clientWidth
-    lastHeight = hostEl.clientHeight
-    try {
-      fit.fit()
-    } catch {
-      // ignore
-    }
+    if (!term) return
+    surface?.fitImmediately()
     ptyId = await openSession(term.cols, term.rows)
     onSession?.(ptyId)
 
@@ -275,23 +192,11 @@
     if (active) term.focus()
   }
 
-  // Per-pane font zoom: resize xterm's font and refit the grid to the new cell.
-  $effect(() => {
-    const next = BASE_FONT_SIZE * layout.fontScale(leafId)
-    if (!term || term.options.fontSize === next) return
-    term.options.fontSize = next
-    lastWidth = 0
-    lastHeight = 0
-    scheduleFit()
-  })
-
   // Becoming the active tab: the host was display:none (zero size), so force a
   // refit against the now-visible box and take focus.
   $effect(() => {
     if (!active || !term) return
-    lastWidth = 0
-    lastHeight = 0
-    scheduleFit()
+    surface?.refit()
     term.focus()
   })
 
@@ -302,10 +207,7 @@
     stopData?.()
     stopExit?.()
     stopTitle?.()
-    observer?.disconnect()
-    webgl?.dispose()
-    term?.dispose()
   })
 </script>
 
-<div bind:this={hostEl} class="h-full w-full overflow-hidden bg-surface px-2 py-1"></div>
+<XtermSurface bind:this={surface} {leafId} options={{ cursorBlink: true }} {onReady} />

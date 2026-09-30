@@ -12,11 +12,12 @@
   import PencilSimple from 'phosphor-svelte/lib/PencilSimple'
   import CodeBlock from '../../../../components/CodeBlock.svelte'
   import { fileIcon } from '../../../../lib/icons'
-  import { formatShellCommand } from '../../../../lib/shellFormat'
+  import { formatShellCommand } from '../../../../lib/shellSyntax.svelte'
   import { diffLines, statsOf } from '../../../../lib/agents/diff'
   import {
     asRecord,
     descriptionOf,
+    displayOfCall,
     inputViewOf,
     labelFor,
     messageOf,
@@ -48,7 +49,13 @@
   let rootEl = $state<HTMLDivElement>()
   let reasonEl = $state<HTMLTextAreaElement>()
 
-  const label = $derived(labelFor(tool?.display, item.input))
+  // How the call is drawn, as its row in the transcript draws it: a harness's
+  // own shell tool describes no display, and is a command by its kind.
+  const display = $derived.by(() => {
+    if (!tool) return displayOfCall([], item)
+    return displayOfCall([tool], item)
+  })
+  const label = $derived(labelFor(display, item.input))
 
   // A call that says what it is doing says it here; the arguments stay below it,
   // because "run the formatter" is what the decision is actually about.
@@ -63,10 +70,10 @@
     }
     return stringOf(fields.command)
   })
-  // A command about to run, as shell and broken at every operator, so each step
+  // A command about to run, laid out as shell whatever its length, so each step
   // being agreed to is on a line of its own.
   const command = $derived.by(() => {
-    if (inputViewOf(tool?.display) !== 'command') {
+    if (inputViewOf(display) !== 'command') {
       return ''
     }
     const fields = asRecord(item.input)
@@ -81,7 +88,7 @@
   // Only a tool that asked to be rendered as a message gets the message card;
   // everything else keeps the argument dump it had.
   const message = $derived.by(() => {
-    if (tool?.display?.input !== 'message') return null
+    if (display?.input !== 'message') return null
     const parsed = messageOf(item.input)
     if (parsed.text.length === 0) return null
     return parsed

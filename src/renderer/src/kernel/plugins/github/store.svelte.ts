@@ -9,12 +9,14 @@ import { dialogs } from '../../../lib/dialogs.svelte'
 import type { DialogOptions } from '../../../lib/dialogs.svelte'
 import {
   store,
+  openFileAtLine,
   openFileInEditor,
   refreshWorktrees,
   selectWorktree,
   type TabDiff
 } from '../../../lib/store.svelte'
 import { layout } from '../../../lib/layout.svelte'
+import type { CodeReference } from '../../../lib/agents/codeReferences'
 import { branchNameFor, freeBranchName, isBranchForIssue } from './branches'
 import { issuePrompt } from './issuePrompt'
 import { startSessionWithTask } from '../../../lib/agents/newSession'
@@ -1116,6 +1118,29 @@ export async function openPrFile(detail: GithubItemDetail, file: GithubPrFile): 
     await installPrReviewKeys(detail, file.path)
     await paintOpenPrComments(detail.number)
   })
+}
+
+/** The selected worktree's path, which the paths in a thread are read against; '' with none. */
+export function referenceRoot(): string {
+  const worktree = store.worktrees.find((entry) => entry.id === store.selectedWorktreeId)
+  if (!worktree) return ''
+  return worktree.path
+}
+
+/**
+ * Opens a file an issue or comment names, in the selected worktree, on the line
+ * it gave when it gave one. The editor may not be open at all in the GitHub view.
+ */
+export function openReferencedFile(reference: CodeReference): void {
+  const root = referenceRoot()
+  if (!root || !store.selectedWorktreeId) return
+  layout.ensurePane('nvim')
+  const path = `${root}/${reference.path}`
+  if (reference.line === undefined) {
+    openFileInEditor(store.selectedWorktreeId, path)
+    return
+  }
+  openFileAtLine(store.selectedWorktreeId, path, reference.line)
 }
 
 /** What a pull request's file tab says its diff is between: base branch and head branch. */

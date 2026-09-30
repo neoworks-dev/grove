@@ -41,6 +41,16 @@ export function activeMention(text: string, caret: number): MentionQuery | null 
   return null
 }
 
+/**
+ * Whether two readings of the caret are the same mention with the same query.
+ * The textarea re-reads the caret on every keyup, arrow keys included, and only
+ * a mention that actually changed should send the highlight back to the top.
+ */
+export function sameMention(previous: MentionQuery | null, next: MentionQuery | null): boolean {
+  if (previous === null || next === null) return previous === next
+  return previous.start === next.start && previous.query === next.query
+}
+
 /** The text and caret after accepting a suggestion for this mention. */
 export function applyMention(
   text: string,

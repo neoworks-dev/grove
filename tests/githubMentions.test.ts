@@ -6,7 +6,8 @@ import { describe, it, expect } from 'bun:test'
 import {
   activeMention,
   applyMention,
-  rankMentions
+  rankMentions,
+  sameMention
 } from '../src/renderer/src/kernel/plugins/github/mentions'
 
 describe('activeMention', () => {
@@ -84,5 +85,25 @@ describe('rankMentions', () => {
 
   it('respects the limit', () => {
     expect(rankMentions(logins, 'o', 2)).toHaveLength(2)
+  })
+})
+
+describe('sameMention', () => {
+  // The box re-reads the caret on every keyup, arrow keys included; only a
+  // changed mention may send the highlight back to the first suggestion (#58).
+  it('holds for the caret re-read after an arrow key', () => {
+    const before = activeMention('ping @', 6)
+    const after = activeMention('ping @', 6)
+    expect(sameMention(before, after)).toBe(true)
+  })
+
+  it('does not hold once the query changes', () => {
+    expect(sameMention(activeMention('@l', 2), activeMention('@le', 3))).toBe(false)
+  })
+
+  it('does not hold when a mention opens or closes', () => {
+    expect(sameMention(null, activeMention('@', 1))).toBe(false)
+    expect(sameMention(activeMention('@', 1), null)).toBe(false)
+    expect(sameMention(null, null)).toBe(true)
   })
 })

@@ -266,6 +266,17 @@
     </div>
   {/if}
 
+  <!-- What the tool resolved the call to before asking: the runtime, model and
+       effort a spawned agent will spend its tokens on. -->
+  {#if item.facts.length > 0}
+    <dl class="mt-1.5 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-2xs">
+      {#each item.facts as fact (fact.label)}
+        <dt class="text-dim">{fact.label}</dt>
+        <dd class="min-w-0 truncate font-mono text-default">{fact.value}</dd>
+      {/each}
+    </dl>
+  {/if}
+
   <!-- The arguments themselves, once the description has said what they are for. -->
   {#if !message && command}
     <CodeBlock

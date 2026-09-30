@@ -16,7 +16,14 @@
 // task has to be able to steer the agents it put there, and they to ask it
 // back.
 
-import type { AgentMode, HarnessInfo, SessionEvent, SessionMeta } from '../../shared/agents'
+import type {
+  AgentMode,
+  HarnessCatalog,
+  HarnessInfo,
+  SessionEvent,
+  SessionMeta,
+  ThinkingLevel
+} from '../../shared/agents'
 import { DISPOSE_LABEL, PARENT_LABEL } from './handoffBridge'
 import type { HarnessRegistry } from './harness'
 import { agentIdOf } from './identity'
@@ -61,15 +68,32 @@ export interface RuntimeModel {
 export interface SpawnOptions {
   workspaceRoot: string
   title: string
-  /** The harness to run it on; the session default when left out. */
+  /** The harness to run it on; the parent's when left out. */
   harness?: string
   model?: string
+  /** Reasoning effort; the runtime's own default when left out. */
+  thinkingLevel?: ThinkingLevel
   /** The first thing the new agent is told. */
   prompt: string
   /** The session that asked for it; its closing words are reported back there. */
   parentSessionId: string
   /** Remove the session once it has reported back, rather than leaving it open. */
   removeWhenDone?: boolean
+}
+
+/** What a spawned agent will run on, as its approval shows it. */
+export interface SpawnTarget {
+  /** Null when neither the call nor its parent names one, leaving grove's default. */
+  harness: string | null
+  /** Null when no model was named and the runtime cannot say what it would pick. */
+  model: string | null
+  /** The model is the one the runtime picks for itself, not one the call named. */
+  modelIsDefault: boolean
+  /**
+   * What the runtime says about that model, when it says anything: for an
+   * alias such as Claude Code's `default`, which model it currently is.
+   */
+  modelDescription: string | null
 }
 
 export interface AgentRosterOptions {
@@ -185,15 +209,17 @@ export class AgentRoster {
   /** Start a new session in the same worktree and give it its first instruction. */
   async spawn(options: SpawnOptions): Promise<AgentPeer> {
     const inherited = inheritedFrom(await this.sessionNamed(options.parentSessionId))
+    const harness = await this.spawnHarness(options.parentSessionId, options.harness)
     const snapshot = await this.options.agents.createSession({
       workspace: options.workspaceRoot,
       title: options.title,
-      harness: options.harness,
+      harness,
       model: options.model,
       // A model without the provider that serves it is not enough to start a
       // session on: pi, for one, ignores a half-named model and falls back to
       // its own default, which is not what the spawning agent asked for.
-      provider: await this.providerOf(options.harness, options.model),
+      provider: await this.providerOf(harness, options.model),
+      thinkingLevel: options.thinkingLevel,
       groveMode: inherited.groveMode,
       permissionMode: inherited.permissionMode,
       labels: labelsFor(options)
@@ -206,6 +232,44 @@ export class AgentRoster {
       { type: 'app.message', label: 'Task', from, text: options.prompt, deliverAs: 'followUp' }
     ])
     return peerOf(snapshot)
+  }
+
+  /**
+   * The runtime and model a spawn would start on, resolved the way `spawn`
+   * resolves them, so what the user approves is what runs.
+   */
+  async spawnTarget(
+    parentSessionId: string,
+    harness: string | undefined,
+    model: string | undefined
+  ): Promise<SpawnTarget> {
+    const resolvedHarness = await this.spawnHarness(parentSessionId, harness)
+    if (!resolvedHarness) {
+      return { harness: null, model: model || null, modelIsDefault: !model, modelDescription: null }
+    }
+    const catalog = await this.options.agents.catalog(resolvedHarness).catch(() => null)
+    let chosen = model
+    if (!chosen && catalog?.default) chosen = catalog.default.model
+    if (!chosen) {
+      return { harness: resolvedHarness, model: null, modelIsDefault: true, modelDescription: null }
+    }
+    return {
+      harness: resolvedHarness,
+      model: chosen,
+      modelIsDefault: !model,
+      modelDescription: routeDescription(catalog, chosen)
+    }
+  }
+
+  /** The harness a spawn runs on: the one it names, else its parent's. */
+  private async spawnHarness(
+    parentSessionId: string,
+    requested: string | undefined
+  ): Promise<string | undefined> {
+    if (requested) return requested
+    const inherited = await this.agentHarnessOf(parentSessionId)
+    if (inherited) return inherited
+    return undefined
   }
 
   /** The session with this id, or undefined when it is gone. */
@@ -301,6 +365,16 @@ function isRelated(peer: AgentPeer, self: AgentPeer): boolean {
 }
 
 /** What a spawned session is marked with: who started it, and whether it stays. */
+/** What a runtime's catalog says about one of its model routes, or null when it says nothing. */
+function routeDescription(catalog: HarnessCatalog | null, modelId: string): string | null {
+  if (!catalog) return null
+  for (const entry of catalog.models) {
+    const route = entry.routes.find((candidate) => candidate.id === modelId)
+    if (route?.description) return route.description
+  }
+  return null
+}
+
 function labelsFor(options: SpawnOptions): Record<string, string> {
   const labels: Record<string, string> = { [PARENT_LABEL]: options.parentSessionId }
   if (options.removeWhenDone) labels[DISPOSE_LABEL] = 'whenDone'

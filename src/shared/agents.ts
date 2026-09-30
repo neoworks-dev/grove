@@ -468,6 +468,11 @@ export interface ModelRoute {
    * CLI currently recommends rather than naming a model.
    */
   label?: string
+  /**
+   * What the harness says about the route. For an alias it names the model the
+   * alias currently resolves to: Claude Code's `default` says which model it is.
+   */
+  description?: string
   /** Where the route sends the session, when it is not the harness's default. */
   endpoint?: string
   credential?: ProviderCredential

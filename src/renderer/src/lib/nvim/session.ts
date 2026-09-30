@@ -849,6 +849,9 @@ export class NvimCanvasSession {
       rows,
       this.resolveInitialFile() ?? undefined
     )
+    // Killed while attaching: disposed, or rebound to another worktree, whose
+    // own connect owns the session from here.
+    if (this.destroyed || this.nvimId !== spawnedId) return
     void this.pushTheme()
     await this.callbacks.onAttached?.(this.nvimId)
     if (document.activeElement === focusedAtStart) this.elements.input.focus()

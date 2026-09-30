@@ -21,6 +21,7 @@ import {
   findParentSplit,
   findSplit,
   insertAtEdge,
+  isAgainstEdge,
   paneTypesInSlot,
   pathToLeaf,
   splitLeaf,
@@ -632,7 +633,8 @@ class LayoutStore {
   }
 
   // Swap this type into the open window of its own family (one sidebar view
-  // replacing another). Returns false when there is no such window, or when it
+  // replacing another) while that window still sits at the family's edge.
+  // Returns false when there is no such window, or when it
   // holds the editor — losing the editor to a pane with no way back stranded
   // the user, so the editor is split beside instead.
   private takeOverSlotMate(paneTypeId: string): boolean {
@@ -640,6 +642,10 @@ class LayoutStore {
     if (!slot) return false
     const slotMate = this.slotLeaf(slot)
     if (!slotMate) return false
+    // A family member dragged away from its edge was put there on purpose;
+    // the newcomer opens at the edge instead of replacing it.
+    const edge = edgeFor(paneTypeId)
+    if (edge && !isAgainstEdge(this.tree, slotMate.id, edge)) return false
     if (slotMate.paneTypeId === EDITOR_TYPE) {
       this.splitFocused('row', paneTypeId)
       return true

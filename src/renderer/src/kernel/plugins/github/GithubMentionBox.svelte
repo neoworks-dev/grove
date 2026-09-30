@@ -30,7 +30,10 @@
     placeholder = '',
     rows = 4,
     disabled = false,
-    onsubmit
+    onsubmit,
+    onfocus,
+    onblur,
+    chrome = true
   }: {
     value?: string
     placeholder?: string

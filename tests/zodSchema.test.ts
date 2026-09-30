@@ -41,4 +41,32 @@ describe('zodShapeFromJsonSchema', () => {
     expect(() => z.object(shape).parse({ name: 1, kind: 'a' })).toThrow()
     expect(() => z.object(shape).parse({ name: 'x', kind: 'a', tags: [1] })).toThrow()
   })
+
+  it('keeps the fields of objects nested in arrays, so the model is shown them', () => {
+    const nested = zodShapeFromJsonSchema({
+      type: 'object',
+      properties: {
+        locations: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              path: { type: 'string', description: 'the file' },
+              startLine: { type: 'number' }
+            },
+            required: ['path'],
+            additionalProperties: false
+          }
+        }
+      },
+      required: ['locations']
+    })
+    const schema = z.object(nested)
+
+    expect(schema.parse({ locations: [{ path: 'a.ts', startLine: 3 }] })).toEqual({
+      locations: [{ path: 'a.ts', startLine: 3 }]
+    })
+    expect(() => schema.parse({ locations: [{ file: 'a.ts' }] })).toThrow()
+    expect(() => schema.parse({ locations: [{ path: 'a.ts', line: 3 }] })).toThrow()
+  })
 })

@@ -6,7 +6,7 @@ import { join } from 'path'
 import type { WorkbenchConfig } from '../shared/types'
 import { renderConfig } from './configRender'
 
-export const CONFIG_FILENAME = 'workbench.yaml'
+export const CONFIG_FILENAME = 'grove.config.yaml'
 
 const DEFAULT_CONFIG: WorkbenchConfig = {
   workbench: {
@@ -20,8 +20,7 @@ const DEFAULT_CONFIG: WorkbenchConfig = {
   setup: {
     once: [],
     per_worktree: [],
-    copy_env: true,
-    install: true
+    copy_env: true
   },
   services: {},
   agents: {}
@@ -47,8 +46,7 @@ export function applyDefaults(raw: unknown): WorkbenchConfig {
     setup: {
       once: input.setup?.once ?? [],
       per_worktree: input.setup?.per_worktree ?? [],
-      copy_env: input.setup?.copy_env ?? DEFAULT_CONFIG.setup.copy_env,
-      install: input.setup?.install ?? DEFAULT_CONFIG.setup.install
+      copy_env: input.setup?.copy_env ?? DEFAULT_CONFIG.setup.copy_env
     },
     services: input.services ?? {},
     agents: input.agents ?? {}
@@ -90,7 +88,6 @@ setup:
   per_worktree:
     - echo "setup per worktree"
   copy_env: true
-  install: true
 
 services:
   web:
@@ -110,7 +107,7 @@ export async function writeSampleConfig(repoPath: string): Promise<boolean> {
   return true
 }
 
-// Writes through the annotated renderer rather than js-yaml's dump: workbench.yaml
+// Writes through the annotated renderer rather than js-yaml's dump: grove.config.yaml
 // is meant to stay hand-editable, and dump would strip every explanatory comment
 // and reorder the sections.
 export async function saveConfig(repoPath: string, config: WorkbenchConfig): Promise<void> {

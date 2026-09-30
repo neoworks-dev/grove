@@ -33,6 +33,15 @@ export interface ResolvedBinding extends KeyBinding {
   sequence: ParsedSequence
 }
 
+// A spatial navigation direction, in vim's hjkl.
+export type Direction = 'h' | 'j' | 'k' | 'l'
+
+// A pane that navigates between windows of its own (see registerPaneNavigator).
+export interface PaneNavigator {
+  move: (dir: Direction) => Promise<boolean>
+  enter: (dir: Direction) => void
+}
+
 // A static which-key hint entry (see keymap.showHints).
 export interface HintEntry {
   keys: string
@@ -148,21 +157,11 @@ class Keymap {
     }
   }
 
-  // Full keybinding cheatsheet (leader ?) — a glanceable list of everything.
-  cheatsheetOpen = $state(false)
-
-  toggleCheatsheet(): void {
-    this.cheatsheetOpen = !this.cheatsheetOpen
-  }
-
-  closeCheatsheet(): void {
-    this.cheatsheetOpen = false
-  }
-
   // Pane elements are plain (geometry is read on demand, not reactive).
   private panes = new Map<PaneId, HTMLElement>()
   private paneTypes = new Map<PaneId, string>()
   private focusDelegates = new Map<PaneId, () => boolean>()
+  private paneNavigators = new Map<PaneId, PaneNavigator>()
   private leaderTimer: ReturnType<typeof setTimeout> | null = null
 
   // Effective bindings: registered defaults with user/project overrides from
@@ -315,6 +314,46 @@ class Keymap {
   private static readonly TYPING_FOCUS_GRACE_MS = 300
   private lastKeydownAt = 0
 
+  // ── Window focus ───────────────────────────────────────────────
+  // Leaving the window and coming back must land on the element that had focus.
+  // Chromium sends a mousemove from wherever the cursor is once the window is
+  // back in front, which focus-follows-mouse would otherwise take as a choice.
+  private focusBeforeBlur: HTMLElement | null = null
+  private pointerSettling = false
+
+  /** Keeps keyboard focus on the same element across the window losing and regaining it. Returns the stop. */
+  watchWindowFocus(): () => void {
+    const onBlur = (): void => this.rememberWindowFocus()
+    const onFocus = (): void => this.restoreWindowFocus()
+    window.addEventListener('blur', onBlur)
+    window.addEventListener('focus', onFocus)
+    return () => {
+      window.removeEventListener('blur', onBlur)
+      window.removeEventListener('focus', onFocus)
+    }
+  }
+
+  /** Notes what held focus as the window lost it; focus moving into a frame inside the window is not leaving. */
+  private rememberWindowFocus(): void {
+    const active = document.activeElement
+    this.focusBeforeBlur = null
+    if (!(active instanceof HTMLElement)) return
+    if (active === document.body || active.tagName === 'IFRAME' || active.tagName === 'WEBVIEW') {
+      return
+    }
+    this.focusBeforeBlur = active
+  }
+
+  /** Puts focus back where it was before the window lost it, and ignores the pointer's first report after. */
+  private restoreWindowFocus(): void {
+    this.pointerSettling = true
+    const previous = this.focusBeforeBlur
+    this.focusBeforeBlur = null
+    if (previous === null || !previous.isConnected) return
+    if (document.activeElement === previous) return
+    previous.focus({ preventScroll: true })
+  }
+
   // Called by the global key dispatcher on every keydown.
   noteKeyActivity(): void {
     this.lastKeydownAt = performance.now()
@@ -327,6 +366,13 @@ class Keymap {
     if (clientX === this.lastPointerX && clientY === this.lastPointerY) return
     this.lastPointerX = clientX
     this.lastPointerY = clientY
+    // The pointer crossing the window while another one is in front is not the
+    // user choosing a pane here.
+    if (!document.hasFocus()) return
+    if (this.pointerSettling) {
+      this.pointerSettling = false
+      return
+    }
     if (performance.now() - this.lastKeydownAt < Keymap.TYPING_FOCUS_GRACE_MS) return
     if (this.activePane === id) return
     this.focusPane(id)
@@ -344,7 +390,7 @@ class Keymap {
 
   // Nearest pane whose center lies in the given direction from `fromId`,
   // optionally restricted to a candidate set (layout leaf swaps).
-  neighborPane(fromId: PaneId, dir: 'h' | 'j' | 'k' | 'l', candidates?: Set<PaneId>): PaneId | null {
+  neighborPane(fromId: PaneId, dir: Direction, candidates?: Set<PaneId>): PaneId | null {
     const from = this.panes.get(fromId)
     if (!from) return null
     const others: { id: string; rect: DOMRect }[] = []
@@ -359,11 +405,33 @@ class Keymap {
     return pickNeighbor(from.getBoundingClientRect(), others, dir)
   }
 
-  // Move focus to the nearest pane whose center lies in the given direction.
-  movePane(dir: 'h' | 'j' | 'k' | 'l'): void {
-    if (!this.activePane) return
-    const best = this.neighborPane(this.activePane, dir)
-    if (best) this.focusPane(best)
+  /**
+   * Let a pane with windows of its own take part in spatial navigation, the
+   * way vim-tmux-navigator joins nvim and tmux: `move` tries the direction
+   * inside the pane and reports whether it went anywhere, and `enter` is told
+   * which way focus arrived so it can start at that edge.
+   */
+  registerPaneNavigator(id: PaneId, navigator: PaneNavigator): () => void {
+    this.paneNavigators.set(id, navigator)
+    return () => {
+      if (this.paneNavigators.get(id) === navigator) this.paneNavigators.delete(id)
+    }
+  }
+
+  // Move focus one step in the given direction: inside the active pane when it
+  // has somewhere to go, else to the nearest pane whose center lies that way.
+  async movePane(dir: Direction): Promise<void> {
+    const from = this.activePane
+    if (!from) return
+    const inside = this.paneNavigators.get(from)
+    if (inside && (await inside.move(dir))) return
+    if (this.activePane !== from) return
+    const best = this.neighborPane(from, dir)
+    if (!best) return
+    this.focusPane(best)
+    const target = this.activePane
+    if (target === null) return
+    this.paneNavigators.get(target)?.enter(dir)
   }
 
   // ── Binding registry ──────────────────────────────────────────
@@ -386,16 +454,43 @@ class Keymap {
     }
   }
 
+  // ── Prefix names ──────────────────────────────────────────────
+  // Names for prefixes that open a group ("<Leader> c" → "code"), from whoever
+  // knows them — the editor reads its nvim's which-key specs. Which-key shows a
+  // named prefix as `+name` and otherwise falls back to its bindings' group.
+  private prefixLabelSets = $state<{ context: string; labels: Map<string, string> }[]>([])
+
+  /** Name key prefixes (canonical sequences) within a context; returns the inverse. */
+  registerPrefixLabels(context: string, labels: Map<string, string>): () => void {
+    const entry = { context, labels }
+    this.prefixLabelSets = [...this.prefixLabelSets, entry]
+    return () => {
+      this.prefixLabelSets = this.prefixLabelSets.filter((candidate) => candidate.labels !== labels)
+    }
+  }
+
+  /** The name registered for a prefix in the current context, or null. */
+  prefixLabel(sequence: string): string | null {
+    for (const entry of this.prefixLabelSets) {
+      if (!this.inContext(entry.context)) continue
+      const label = entry.labels.get(sequence)
+      if (label !== undefined) return label
+    }
+    return null
+  }
+
+  /** Whether a binding context applies: 'global', the active pane id, or its pane type. */
+  private inContext(context: string): boolean {
+    return context === 'global' || context === this.activePane || context === this.activePaneType
+  }
+
   // Bindings reachable in the current context matching the typed step prefix.
   // A binding context matches 'global', the active pane id, or its pane type;
   // a binding mode must match the active pane's current mode.
   matching(prefix: KeyStep[], leader: boolean): ResolvedBinding[] {
     return this.effective.filter((binding) => {
       if (binding.sequence.leader !== leader) return false
-      const context = binding.context || 'global'
-      const inContext =
-        context === 'global' || context === this.activePane || context === this.activePaneType
-      if (!inContext) return false
+      if (!this.inContext(binding.context || 'global')) return false
       if (binding.mode && binding.mode !== this.mode) return false
       if (binding.when && !binding.when()) return false
       return sequenceStartsWith(binding.sequence.steps, prefix)

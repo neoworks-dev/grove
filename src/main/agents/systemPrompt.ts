@@ -19,6 +19,8 @@ export interface SystemPromptContext {
   workspaceRoot: string
   /** Everyone in the worktree, including this session. */
   peers: AgentPeer[]
+  /** The agent that spawned this one and the ones it spawned, when they work in other worktrees. */
+  relatives: AgentPeer[]
   /** The runtimes a spawned agent can run on. */
   harnesses: string[]
 }
@@ -30,13 +32,15 @@ export interface SystemPromptContext {
  * two rules that make a hand-off work — address by name, and report back.
  */
 export function groveSystemPrompt(context: SystemPromptContext): string {
-  const sections = [
+  const sections: (string | null)[] = [
     identity(context),
     roster(context),
+    relatives(context),
     coordination(context),
+    showing(),
     'Everything above is grove, the editor hosting this session. The user sees the same channel you post on.'
   ]
-  return sections.join('\n\n')
+  return sections.filter((section) => section !== null).join('\n\n')
 }
 
 function identity(context: SystemPromptContext): string {
@@ -58,6 +62,35 @@ function roster(context: SystemPromptContext): string {
   return ['Also working in this worktree, id first:', ...lines].join('\n')
 }
 
+/**
+ * The agents this one works with from other worktrees. Nothing when there are
+ * none, which is most sessions.
+ */
+function relatives(context: SystemPromptContext): string | null {
+  if (context.relatives.length === 0) return null
+  const lines = context.relatives.map(
+    (peer) => `- ${peer.agentId} — "${peer.title}", in ${peer.workspaceRoot}`
+  )
+  return [
+    'Working with you from other worktrees, reachable by id with `send_message`:',
+    ...lines
+  ].join('\n')
+}
+
+/** The tools for pointing the user at things, and the notes list they share. */
+function showing(): string {
+  return [
+    'The user reads your answers in grove, beside the editor. Point rather than describe:',
+    '- `show_locations` — the code your answer is about, as a list in the conversation the user opens places from. Call it on your own whenever an answer names places in the code — where something is, what calls it, what you changed — not only when asked to show something. One call per answer, with every location in it. Give each a note saying what the user is looking at, and annotate single lines where it helps; two or three short sentences each, at most. When the question is how something flows or what happens when — a path through the code rather than where something is — set `steps` and list the places in the order the code runs, each with a short `title`: the user then walks through them one at a time from the editor. For "where is X", plain locations.',
+    '- `show_diff` — the uncommitted changes, whole or for one file, when the user should look them over.',
+    '- `show_github_item` — an issue or pull request, opened in the GitHub pane.',
+    '- `open_pane` — any other pane grove has; call it without a pane to list them.',
+    'The last three only change the screen while the user is looking at this conversation, so still say in words what you showed; give them a short note on what to look at.',
+    '',
+    'Above the composer the user keeps a notes list of what is still to do; your own task list is shown beside it. `read_notes` reads it, `add_note` pins a reminder the user should keep in view, and `update_note` ticks one off once it is done — the user’s own included.'
+  ].join('\n')
+}
+
 function coordination(context: SystemPromptContext): string {
   return [
     'Coordinating with them:',
@@ -69,6 +102,8 @@ function coordination(context: SystemPromptContext): string {
     `- \`spawn_agent\` — start another agent here and give it a task, on any of: ${context.harnesses.join(', ')}. The user is asked before one starts.`,
     '- `list_runtimes` — what those runtimes can run: whether each is authenticated, the models it offers and the one it defaults to. Check it before naming a model, rather than guessing an id.',
     '- `spawn_agent` with `removeWhenDone` — a one-shot helper whose conversation is cleared away once it has answered. Use it when you want the result, not a collaborator.',
+    '- `create_worktree` and `list_worktrees` — a branch and worktree of its own for a separate task, such as an issue. Then `spawn_agent` with `worktree` starts an agent there. The user is asked before a worktree is created.',
+    '- An agent id reaches an agent in any worktree, not only this one: `send_message` and `read_transcript` take it the same way. `list_agents` with `all_worktrees` lists them.',
     '',
     'Agents can also be closed by the user at any time. You are told when one you are working with is, and its id stops working from that moment — plan the rest of the work without it rather than waiting on it.',
     '',

@@ -152,16 +152,130 @@ export type ServerEventBody =
     }
   | { type: 'ui.surface'; surfaceId: string; slot: UiSlot; view: UiNode }
   | { type: 'ui.surface'; surfaceId: string; view: null }
-  /** Files the agent wants on screen, opened in the editor as the event arrives. */
-  | { type: 'ui.open_files'; files: OpenFileTarget[] }
+  /** Something the agent wants on screen, shown as the event arrives. */
+  | { type: 'ui.show'; target: ShowTarget }
+  /** The session's notes list, whole, after the user or the agent changed it. */
+  | { type: 'session.notes'; notes: SessionNote[] }
+  /** The plan the harness keeps for itself, whole, after it changed. */
+  | { type: 'agent.tasks'; tasks: AgentTask[] }
 
 /**
- * One file the agent asked grove to show. The path is absolute or relative to
- * the session's workspace root, and the line — when there is one — is 1-based.
+ * One entry on a session's notes list: a reminder of what is still to do,
+ * written by the user or by the agent through grove's note tools.
  */
-export interface OpenFileTarget {
+export interface SessionNote {
+  id: string
+  text: string
+  done: boolean
+  author: 'user' | 'agent'
+}
+
+export type AgentTaskStatus = 'pending' | 'in_progress' | 'completed'
+
+/**
+ * One step of the plan a harness keeps on its own — Claude's tasks, Codex's
+ * to-do list. The harness owns it, so it is shown beside the notes but only the
+ * harness changes it.
+ */
+export interface AgentTask {
+  id: string
+  text: string
+  status: AgentTaskStatus
+}
+
+/**
+ * Output of a command an agent is running, streamed as it prints. Not on the
+ * event log: the call's result records the output once the command is done.
+ */
+export interface ShellOutputUpdate {
+  sessionId: string
+  toolUseId: string
+  /** Printed since the last update. */
+  text: string
+  /** False once the command has exited. */
+  running: boolean
+}
+
+/** Everything a running (or just finished) command has printed so far. */
+export interface ShellOutputSnapshot {
+  toolUseId: string
+  text: string
+  running: boolean
+}
+
+/** A kind of pane the renderer can open, as it reports them to the agents. */
+export interface PaneTypeInfo {
+  id: string
+  title: string
+}
+
+/**
+ * What an agent can open in front of the user. Paths are absolute or relative
+ * to the session's workspace root.
+ */
+export type ShowTarget = (
+  | { kind: 'diff'; path?: string }
+  | { kind: 'github'; number: number }
+  | { kind: 'pane'; pane: string }
+) & {
+  /** What the user is looking at and why, in two or three sentences at most. */
+  note?: string
+}
+
+/**
+ * A place in the code an agent points at. The path is absolute or relative to
+ * the session's workspace root; lines are 1-based and inclusive, and a location
+ * without them is the whole file.
+ */
+export interface CodeLocation {
   path: string
-  line?: number
+  startLine?: number
+  endLine?: number
+  /** A few words naming the place, for a walkthrough step. */
+  title?: string
+  /** What this place is, shown on the card and above the marked lines. */
+  note?: string
+  /** Remarks on single lines, shown above each of them in the editor. */
+  annotations?: LineAnnotation[]
+  /** What the place looked like when the agent pointed at it, to find it again after edits. */
+  anchor?: LocationAnchor
+}
+
+/**
+ * A location as it was taken down. Line numbers go stale as soon as anything
+ * above them changes; the text they held and the commit the file was read at
+ * are what find the place again.
+ */
+export interface LocationAnchor {
+  /** HEAD when the agent pointed here, to follow the file through a rename. */
+  commit?: string
+  /** The range's lines, with up to two lines either side; absent for a whole file. */
+  text?: AnchorText
+}
+
+export interface AnchorText {
+  lines: string[]
+  before: string[]
+  after: string[]
+}
+
+/**
+ * Where a location is now. `current`: still at its lines. `moved`: its text
+ * was found elsewhere, or its file under another name, and `location` says
+ * where. `changed`: its lines no longer read as they did. `removed`: its file
+ * is gone.
+ */
+export type LocationState = 'current' | 'moved' | 'changed' | 'removed'
+
+export interface ResolvedLocation {
+  location: CodeLocation
+  state: LocationState
+}
+
+/** A remark an agent pinned to one line of a location, 1-based. */
+export interface LineAnnotation {
+  line: number
+  text: string
 }
 
 /**
@@ -189,6 +303,17 @@ export type UiNode =
   | (UiNodeBase & { kind: 'table'; columns: string[]; rows: string[][] })
   | (UiNodeBase & { kind: 'badge'; text: string; tone?: UiTone })
   | (UiNodeBase & { kind: 'divider' })
+  /**
+   * Places in the code, listed for the user to open one at a time. With
+   * `steps`, they are a walkthrough: read in order, stepped through from the
+   * editor.
+   */
+  | (UiNodeBase & {
+      kind: 'locations'
+      title?: string
+      locations: CodeLocation[]
+      steps?: boolean
+    })
 
 export type EventBody = ClientEventBody | ServerEventBody
 

@@ -114,6 +114,11 @@ describe('stepFromEvent', () => {
     expect(stepFromEvent(keyEvent('F', { shiftKey: true }))).toEqual(step('F'))
   })
 
+  it('drops shift for shifted symbols, so <Leader> ? matches a typed ?', () => {
+    expect(stepFromEvent(keyEvent('?', { shiftKey: true }))).toEqual(step('?'))
+    expect(stepFromEvent(keyEvent('_', { shiftKey: true }))).toEqual(parseSequence('_')!.steps[0])
+  })
+
   it('keeps shift and lowercases the character inside chords', () => {
     expect(stepFromEvent(keyEvent('P', { ctrlKey: true, shiftKey: true }))).toEqual(
       step('p', { ctrl: true, shift: true })

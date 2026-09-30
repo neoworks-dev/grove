@@ -17,6 +17,13 @@ export interface PanelView {
 
 class PanelRegistry {
   views = $state<PanelView[]>([])
+  // A tab something asked to be shown; the panel switches to it and clears this.
+  requested = $state<string | null>(null)
+
+  /** Ask the bottom panel to show one of its tabs. The caller opens the panel. */
+  reveal(viewId: string): void {
+    this.requested = viewId
+  }
 
   // Register (or replace by id) a panel view. Returns an unregister function.
   register(view: PanelView): () => void {

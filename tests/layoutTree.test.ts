@@ -11,11 +11,9 @@ import {
   splitChildFlex,
   splitLeaf,
   removeLeaf,
-  removeLeafInto,
   resizeGutter,
   clampGutterShift,
   swapLeaves,
-  syncNvimWindowLeaves,
   replaceLeafType,
   setLeafSizePx,
   updateLeafState,
@@ -504,142 +502,5 @@ describe('paneTypesInSlot', () => {
     expect(leaves(evicted).some((leaf) => centre.includes(leaf.paneTypeId))).toBe(false)
     const split = createSplit('row', [createLeaf('github'), createLeaf('nvim')])
     expect(leaves(split).some((leaf) => centre.includes(leaf.paneTypeId))).toBe(true)
-  })
-})
-
-describe('removeLeafInto', () => {
-  it('gives the vacated space back to the named pane, not to everything', () => {
-    const tree = createSplit('row', [createLeaf('files'), createLeaf('nvim'), createLeaf('github')])
-    const editor = leaves(tree)[1]
-    const withDiff = splitLeaf(tree, editor.id, 'row', createLeaf('nvim-grid'), 'before')
-    const diff = leaves(withDiff).find((leaf) => leaf.paneTypeId === 'nvim-grid')!
-
-    const after = removeLeafInto(withDiff, diff.id, editor.id) as SplitNode
-    const index = after.children.findIndex((child) => findLeaf(child, editor.id) !== null)
-    expect(after.sizes[index]).toBeCloseTo(1 / 3, 5)
-    expect(sum(after.sizes)).toBeCloseTo(1, 5)
-  })
-
-  it('survives repeated split/remove without shrinking the pane that lends', () => {
-    let tree: LayoutNode = createSplit('row', [
-      createLeaf('files'),
-      createLeaf('nvim'),
-      createLeaf('github')
-    ])
-    const editor = leaves(tree)[1]
-
-    // What opening ten diffs in a row does: each one splits the editor and each
-    // close hands the space back.
-    for (let round = 0; round < 10; round += 1) {
-      tree = splitLeaf(tree, editor.id, 'row', createLeaf('nvim-grid'), 'before')
-      const diff = leaves(tree).find((leaf) => leaf.paneTypeId === 'nvim-grid')!
-      tree = removeLeafInto(tree, diff.id, editor.id) as LayoutNode
-    }
-
-    const split = tree as SplitNode
-    const index = split.children.findIndex((child) => findLeaf(child, editor.id) !== null)
-    expect(split.sizes[index]).toBeCloseTo(1 / 3, 5)
-  })
-})
-
-// Every view keeps its own tree and only the active one is on screen, but a
-// hidden view's editor is still running and still reporting its windows.
-describe('syncNvimWindowLeaves', () => {
-  function window(
-    win: number,
-    position: { row: number; col: number },
-    overrides: { kind?: string; hidden?: boolean } = {}
-  ): { grid: number; win: number; kind: string; row: number; col: number; hidden: boolean } {
-    return {
-      grid: win,
-      win,
-      kind: overrides.kind ?? 'normal',
-      row: position.row,
-      col: position.col,
-      hidden: overrides.hidden ?? false
-    }
-  }
-
-  function mirrors(tree: LayoutNode): LeafNode[] {
-    return leaves(tree).filter((leaf) => leaf.paneTypeId === 'nvim-grid')
-  }
-
-  it('gives every window past the first a leaf beside the editor', () => {
-    const editor = createLeaf('nvim')
-    const tree = syncNvimWindowLeaves(
-      editor,
-      editor.id,
-      'nvim-1',
-      [window(1000, { row: 0, col: 0 }), window(1001, { row: 0, col: 100 })]
-    )
-
-    expect(mirrors(tree).map((leaf) => leaf.paneState?.win)).toEqual([1001])
-    expect(mirrors(tree)[0].paneState).toMatchObject({
-      transient: true,
-      ownerLeafId: editor.id,
-      nvimId: 'nvim-1'
-    })
-  })
-
-  it('splits sideways or downwards to match where the window sits', () => {
-    const editor = createLeaf('nvim')
-    const beside = syncNvimWindowLeaves(editor, editor.id, 'nvim-1', [
-      window(1000, { row: 0, col: 0 }),
-      window(1001, { row: 0, col: 100 })
-    ])
-    const below = syncNvimWindowLeaves(editor, editor.id, 'nvim-1', [
-      window(1000, { row: 0, col: 0 }),
-      window(1001, { row: 40, col: 0 })
-    ])
-
-    expect((beside as SplitNode).direction).toBe('row')
-    expect((below as SplitNode).direction).toBe('column')
-  })
-
-  it('takes a leaf away once its window has closed', () => {
-    const editor = createLeaf('nvim')
-    const split = syncNvimWindowLeaves(editor, editor.id, 'nvim-1', [
-      window(1000, { row: 0, col: 0 }),
-      window(1001, { row: 0, col: 100 })
-    ])
-    const closed = syncNvimWindowLeaves(split, editor.id, 'nvim-1', [
-      window(1000, { row: 0, col: 0 })
-    ])
-
-    expect(mirrors(closed)).toEqual([])
-    expect(leaves(closed).map((leaf) => leaf.id)).toEqual([editor.id])
-  })
-
-  it('keeps a leaf whose window is merely redrawn', () => {
-    const editor = createLeaf('nvim')
-    const windows = [window(1000, { row: 0, col: 0 }), window(1001, { row: 0, col: 100 })]
-    const split = syncNvimWindowLeaves(editor, editor.id, 'nvim-1', windows)
-    const again = syncNvimWindowLeaves(split, editor.id, 'nvim-1', windows)
-
-    expect(again).toBe(split)
-  })
-
-  // The bug: the hidden Code view's editor mirrored its windows into whichever
-  // tree was on screen, so panes it owned appeared in the GitHub view — and the
-  // ones it really owned were never cleaned up when their windows closed.
-  it('leaves a tree that does not hold the editor alone', () => {
-    const elsewhere = createSplit('row', [createLeaf('github'), createLeaf('agent')])
-    const next = syncNvimWindowLeaves(elsewhere, 'leaf-not-here', 'nvim-1', [
-      window(1000, { row: 0, col: 0 }),
-      window(1001, { row: 0, col: 100 })
-    ])
-
-    expect(next).toBe(elsewhere)
-  })
-
-  it('ignores floats and windows neovim has hidden', () => {
-    const editor = createLeaf('nvim')
-    const tree = syncNvimWindowLeaves(editor, editor.id, 'nvim-1', [
-      window(1000, { row: 0, col: 0 }),
-      window(1001, { row: 0, col: 100 }, { kind: 'float' }),
-      window(1002, { row: 0, col: 100 }, { hidden: true })
-    ])
-
-    expect(tree).toBe(editor)
   })
 })

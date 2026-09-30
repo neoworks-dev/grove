@@ -48,7 +48,9 @@
   }
 </script>
 
-<div class="no-scrollbar flex h-8 shrink-0 items-center gap-1.5 overflow-x-auto px-1.5">
+<!-- min-w-0: shrink to the room the header leaves and scroll, rather than
+     growing to fit every tab and running under the controls beside it. -->
+<div class="no-scrollbar flex h-8 min-w-0 flex-1 items-center gap-1.5 overflow-x-auto px-1.5">
   {#each families as family (family[0].session.id)}
     <!-- One box per family: a lone session keeps the bare tab it always had. -->
     <div

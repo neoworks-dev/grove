@@ -278,7 +278,13 @@ class GithubStore {
    */
   get capabilities(): GithubCapabilities {
     if (!this.dashboard) {
-      return { projects: false, issueTypes: false, subIssues: false, linkedBranches: false }
+      return {
+        projects: false,
+        issueTypes: false,
+        subIssues: false,
+        linkedBranches: false,
+        notifications: false
+      }
     }
     return this.dashboard.capabilities
   }

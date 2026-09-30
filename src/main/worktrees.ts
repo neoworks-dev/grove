@@ -7,7 +7,8 @@ import { resolve, join } from 'path'
 import type { Worktree, WorkbenchConfig } from '../shared/types'
 import * as git from './git'
 import { assignSlots, portsForSlot } from './ports'
-import { buildWorktreeEnv, substitute, spawnEnv } from './env'
+import { buildWorktreeEnv, spawnEnv } from './env'
+import { askToTrustSetupNatively, ensureSetupTrusted, type AskToTrustSetup } from './setupTrust'
 import { getRepoState, updateRepoState } from './state'
 import { copyEnvFiles } from './worktreeBootstrap'
 
@@ -47,7 +48,8 @@ export function portsForWorktree(config: WorkbenchConfig, slot: number): number[
 /**
  * Runs shell commands one after another in a cwd, streaming their output.
  * A failing command is logged and the rest still run; the result says whether
- * every one succeeded.
+ * every one succeeded. The worktree variables reach a command only through its
+ * environment, so a branch name is never parsed as shell syntax.
  */
 async function runCommands(
   commands: string[],
@@ -56,8 +58,7 @@ async function runCommands(
   log: (line: string) => void
 ): Promise<boolean> {
   let succeeded = true
-  for (const raw of commands) {
-    const command = substitute(raw, vars)
+  for (const command of commands) {
     log(`$ ${command}`)
     try {
       const { stdout, stderr } = await execAsync(command, { cwd, env: spawnEnv(vars) })
@@ -111,13 +112,15 @@ export async function addWorktree(
  * Prepares a freshly added worktree: copies the main worktree's env files,
  * then runs the configured `setup.once` (first worktree only) and
  * `setup.per_worktree` commands. Nothing runs that grove.config.yaml does not
- * list. Resolves to whether every command succeeded.
+ * list, and nothing runs before the user has trusted those commands — `ask`
+ * is how they are asked. Resolves to whether every command that ran succeeded.
  */
 export async function setupWorktree(
   repoPath: string,
   config: WorkbenchConfig,
   worktree: Worktree,
-  log: SetupLogger
+  log: SetupLogger,
+  ask: AskToTrustSetup = askToTrustSetupNatively
 ): Promise<boolean> {
   const vars = buildWorktreeEnv(worktree, portsForWorktree(config, worktree.portSlot))
   const logLine = (line: string): void => log(worktree.id, line)
@@ -129,9 +132,18 @@ export async function setupWorktree(
     )
   }
 
-  let succeeded = true
   const repoState = await getRepoState(repoPath)
-  if (!repoState.setupOnceDone && config.setup.once.length > 0) {
+  const runsOnce = !repoState.setupOnceDone && config.setup.once.length > 0
+  if (!runsOnce && config.setup.per_worktree.length === 0) {
+    return true
+  }
+  if (!(await ensureSetupTrusted(repoPath, config, ask))) {
+    logLine('[setup] not run: the setup commands in grove.config.yaml were not trusted')
+    return true
+  }
+
+  let succeeded = true
+  if (runsOnce) {
     succeeded = await runCommands(config.setup.once, worktree.path, vars, logLine)
     await updateRepoState(repoPath, { setupOnceDone: true })
   }

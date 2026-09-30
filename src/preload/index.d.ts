@@ -120,6 +120,7 @@ interface RepoStateShape {
   pinnedTabsByWorktree: Record<string, string[]>
   selectedWorktreeId: string | null
   setupOnceDone: boolean
+  trustedSetupHash: string | null
   agentSessions: Record<string, string>
   trustedActionHashes: string[]
   viewLayouts: Record<string, unknown>

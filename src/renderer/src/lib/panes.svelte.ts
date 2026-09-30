@@ -23,6 +23,11 @@ export interface PaneTypeContext {
   updateState: (patch: Record<string, unknown>) => void
 }
 
+// What a pane body may export to its host through `bind:this`.
+export interface PaneBodyExports {
+  focus?: () => void
+}
+
 export interface PaneType {
   id: string
   title: string
@@ -34,8 +39,9 @@ export interface PaneType {
   keywords?: string
   // Rail icon (phosphor component); required when `rail` is set.
   icon?: Component
-  // Rendered inside a PaneLeaf; receives PaneTypeContext as props.
-  component: Component
+  // Rendered inside a PaneLeaf; receives PaneTypeContext as props. Props stay
+  // untyped here: bodies take different subsets of them.
+  component: Component<{}, PaneBodyExports>
   // Enforced by split gutters while dragging (px).
   minWidth?: number
   minHeight?: number

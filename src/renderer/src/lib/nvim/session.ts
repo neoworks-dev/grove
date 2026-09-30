@@ -755,7 +755,7 @@ export class NvimCanvasSession {
   }
 
   private unwireElements(): void {
-    const { host, input, canvas } = this.elements
+    const { input, canvas } = this.elements
     this.observer?.disconnect()
     this.observer = null
     this.leafEl?.removeEventListener('focusin', this.onLeafFocus)

@@ -54,3 +54,29 @@ function lastIndexWhere(spans: readonly TabSpan[], test: (span: TabSpan) => bool
   }
   return -1
 }
+
+/** How far the edge counters reach into the view on each side, in pixels. */
+export interface EdgeInsets {
+  left: number
+  right: number
+}
+
+/**
+ * The scroll position that brings `span` fully into view clear of the edge
+ * counters, or `viewStart` when it already is. A tab brought in flush with the
+ * edge would sit under the counter and its fade.
+ */
+export function revealScrollLeft(
+  span: TabSpan,
+  viewStart: number,
+  viewEnd: number,
+  insets: EdgeInsets
+): number {
+  if (span.start < viewStart + insets.left - EDGE_TOLERANCE) {
+    return span.start - insets.left
+  }
+  if (span.end > viewEnd - insets.right + EDGE_TOLERANCE) {
+    return span.end - (viewEnd - viewStart) + insets.right
+  }
+  return viewStart
+}

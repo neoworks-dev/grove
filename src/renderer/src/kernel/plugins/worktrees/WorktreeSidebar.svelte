@@ -6,6 +6,7 @@
     focusAgentInPane
   } from '../../../lib/store.svelte'
   import { layout } from '../../../lib/layout.svelte'
+  import { keymap, pane } from '../../../lib/keymap.svelte'
   import {
     branchPositionFor,
     checksOutcome,
@@ -19,9 +20,10 @@
   import MergeWorktreeDialog from './MergeWorktreeDialog.svelte'
   import WorktreeSessionRow from './WorktreeSessionRow.svelte'
   import WaveSpinner from '../../../components/WaveSpinner.svelte'
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import { agentSessions } from '../../../lib/agents/sessions.svelte'
   import type { Worktree, ServiceRuntime } from '../../../../../shared/types'
+  import type { SessionMeta } from '../../../lib/agents/types'
   import { sessionAttentionFor, sessionsFor } from '../../../lib/worktreeStatus'
   import { ATTENTION_LABELS } from '../../../lib/agents/attention'
   import BellRingingIcon from 'phosphor-svelte/lib/BellRingingIcon'
@@ -37,6 +39,37 @@
   // Worktrees whose work has landed, which the header offers to clean up at once.
   const mergedWorktrees = $derived(store.worktrees.filter((worktree) => isMerged(worktree)))
   let mergeSource = $state<Worktree | null>(null)
+
+  /** One line of the list: a worktree, or one of its agent sessions under it. */
+  type ListRow =
+    | { kind: 'worktree'; key: string; worktree: Worktree }
+    | { kind: 'session'; key: string; worktree: Worktree; session: SessionMeta }
+
+  // Every row in the order it is drawn, which is the order j and k walk.
+  const rows = $derived.by<ListRow[]>(() => {
+    const list: ListRow[] = []
+    for (const worktree of store.worktrees) {
+      list.push({ kind: 'worktree', key: worktree.id, worktree })
+      for (const session of sessionsFor(worktree.id)) {
+        list.push({ kind: 'session', key: session.id, worktree, session })
+      }
+    }
+    return list
+  })
+
+  // The keyboard cursor, by row key rather than index: the list is polled and
+  // rows come and go under it. Moving it does not switch worktrees; Enter does.
+  let cursorKey = $state<string | null>(null)
+  const cursorIndex = $derived.by(() => {
+    const index = rows.findIndex((row) => row.key === cursorKey)
+    if (index >= 0) return index
+    const selected = rows.findIndex((row) => row.key === store.selectedWorktreeId)
+    return Math.max(selected, 0)
+  })
+  const cursorRow = $derived<ListRow | undefined>(rows[cursorIndex])
+  const keyboardActive = $derived(keymap.activePane === 'worktrees')
+  let listEl = $state<HTMLDivElement>()
+  let pendingG = false
 
   // The session rows need the listing polled, and no agent pane may be open to
   // do it; the poll is shared and reference counted, so this adds no second one.
@@ -101,8 +134,8 @@
    * would be lost with it: uncommitted changes, and commits the base does not
    * have unless the branch counts as merged.
    */
-  async function archive(worktree: Worktree, event: MouseEvent): Promise<void> {
-    event.stopPropagation()
+  async function archive(worktree: Worktree, event?: MouseEvent): Promise<void> {
+    event?.stopPropagation()
     let body = `Removes the worktree and deletes the branch ${worktree.branch}.`
     if (worktree.dirty) body += ' Its uncommitted changes are lost.'
     const unmerged = unmergedCommits(worktree)
@@ -191,8 +224,8 @@
    * app's own dialog: a native one hands window focus to the OS and back, and
    * on Linux it can come back without a text cursor anywhere (#216).
    */
-  async function remove(worktree: Worktree, event: MouseEvent): Promise<void> {
-    event.stopPropagation()
+  async function remove(worktree: Worktree, event?: MouseEvent): Promise<void> {
+    event?.stopPropagation()
     const force = worktree.dirty
     let body = `Removes the worktree directory. The branch ${worktree.branch} is kept.`
     if (force) body += ' Its uncommitted changes are lost.'
@@ -217,9 +250,113 @@
       store.setError((err as Error).message)
     }
   }
+
+  /** Whether the keyboard cursor is on this row while the view has focus. */
+  function hasCursor(key: string): boolean {
+    return keyboardActive && cursorRow?.key === key
+  }
+
+  /** Moves the cursor to a row, clamped to the list, and scrolls it into view. */
+  async function moveCursor(index: number): Promise<void> {
+    const row = rows[Math.max(0, Math.min(index, rows.length - 1))]
+    if (!row) return
+    cursorKey = row.key
+    await tick()
+    listEl?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' })
+  }
+
+  /** Opens the row under the cursor: switches to a worktree, or to a session in the Agent pane. */
+  function openCursorRow(): void {
+    const row = cursorRow
+    if (!row) return
+    if (row.kind === 'worktree') {
+      void selectWorktree(row.worktree.id)
+      return
+    }
+    agentSessions.acknowledge(row.session.id)
+    void focusAgentInPane(row.worktree.id, row.session.id)
+    layout.ensurePane('agent')
+  }
+
+  // ── Keyboard ───────────────────────────────────────────────────
+  function onKey(event: KeyboardEvent): void {
+    if (event.ctrlKey || event.altKey || event.metaKey) return
+    if (!handleKey(event.key)) return
+    pendingG = event.key === 'g' && pendingG
+    event.preventDefault()
+  }
+
+  /**
+   * Returns true when the key was consumed. j/k and the arrows move, gg/G go to
+   * the ends, Enter or l opens; the rest are the row's actions, on the worktree
+   * the cursor is in.
+   */
+  function handleKey(key: string): boolean {
+    if (key === 'j' || key === 'ArrowDown') {
+      void moveCursor(cursorIndex + 1)
+      return true
+    }
+    if (key === 'k' || key === 'ArrowUp') {
+      void moveCursor(cursorIndex - 1)
+      return true
+    }
+    if (key === 'G') {
+      void moveCursor(rows.length - 1)
+      return true
+    }
+    if (key === 'g') {
+      if (pendingG) void moveCursor(0)
+      pendingG = !pendingG
+      return true
+    }
+    if (key === 'Enter' || key === 'l' || key === 'ArrowRight') {
+      openCursorRow()
+      return true
+    }
+    if (key === 'a') {
+      if (store.repo) showDialog = true
+      return true
+    }
+    return runRowAction(key)
+  }
+
+  /** Runs the row action bound to a key on the cursor's worktree; false when none is. */
+  function runRowAction(key: string): boolean {
+    const worktree = cursorRow?.worktree
+    if (!worktree) return false
+    if (key === 'c') {
+      openChat(worktree)
+      return true
+    }
+    if (key === 't') {
+      openCheckpoints(worktree)
+      return true
+    }
+    if (key === 'm') {
+      mergeSource = worktree
+      return true
+    }
+    if (key === 'D' && !worktree.isMain) {
+      void archive(worktree)
+      return true
+    }
+    if (key === 'd' && !worktree.isMain) {
+      void remove(worktree)
+      return true
+    }
+    return false
+  }
 </script>
 
-<div class="flex h-full flex-col">
+<div
+  class="flex h-full flex-col outline-none"
+  class:pane-active={keyboardActive}
+  use:pane={{ id: 'worktrees', modes: ['normal'] }}
+  onkeydown={onKey}
+  role="listbox"
+  aria-label="Worktrees"
+  tabindex="-1"
+>
   <div class="flex items-center gap-1.5 px-3 py-2">
     <span class="text-2xs font-semibold uppercase tracking-caps text-dim">Worktrees</span>
     <span class="flex-1"></span>
@@ -232,14 +369,14 @@
     {/if}
     <RowAction
       icon={PlusIcon}
-      title="New worktree"
+      title="New worktree (a)"
       disabled={!store.repo}
       onclick={() => (showDialog = true)}
     />
     <PaneControls />
   </div>
 
-  <div class="flex-1 overflow-y-auto">
+  <div class="flex-1 overflow-y-auto" bind:this={listEl}>
     {#each store.worktrees as worktree (worktree.id)}
       {@const summary = serviceSummary(worktree.id)}
       {@const diff = diffStatLabel(worktree.id)}
@@ -248,14 +385,19 @@
       {@const position = branchPositionFor(worktree.id)}
       {@const pull = pullFor(worktree)}
       {@const setup = store.worktreeSetup[worktree.id]}
+      {@const cursor = hasCursor(worktree.id)}
       <div
         class="group/worktree flex cursor-pointer items-center gap-2 px-3 py-2 text-sm"
-        class:bg-elevated={store.selectedWorktreeId === worktree.id}
+        class:bg-elevated={store.selectedWorktreeId === worktree.id && !cursor}
+        class:bg-hover={cursor}
         class:hover:bg-hover={store.selectedWorktreeId !== worktree.id}
-        role="button"
-        tabindex="0"
-        onclick={() => selectWorktree(worktree.id)}
-        onkeydown={(event) => event.key === 'Enter' && selectWorktree(worktree.id)}
+        role="option"
+        aria-selected={cursor}
+        tabindex="-1"
+        onclick={() => {
+          cursorKey = worktree.id
+          void selectWorktree(worktree.id)
+        }}
       >
         <span
           class="h-2 w-2 shrink-0 rounded-full"
@@ -361,8 +503,9 @@
             <span class="h-2 w-2 rounded-full bg-violet" title="agent running"></span>
           {/if}
           <button
-            class="hidden text-dim hover:text-default group-hover/worktree:block"
-            title="Worktree chat"
+            class="text-dim hover:text-default group-hover/worktree:block"
+            class:hidden={!cursor}
+            title="Worktree chat (c)"
             onclick={(event) => {
               event.stopPropagation()
               openChat(worktree)
@@ -371,8 +514,9 @@
             ✉
           </button>
           <button
-            class="hidden text-dim hover:text-default group-hover/worktree:block"
-            title="Checkpoints"
+            class="text-dim hover:text-default group-hover/worktree:block"
+            class:hidden={!cursor}
+            title="Checkpoints (t)"
             onclick={(event) => {
               event.stopPropagation()
               openCheckpoints(worktree)
@@ -381,8 +525,9 @@
             ⟲
           </button>
           <button
-            class="hidden text-dim hover:text-violet group-hover/worktree:block"
-            title="Merge this worktree into another"
+            class="text-dim hover:text-violet group-hover/worktree:block"
+            class:hidden={!cursor}
+            title="Merge this worktree into another (m)"
             onclick={(event) => {
               event.stopPropagation()
               mergeSource = worktree
@@ -392,15 +537,17 @@
           </button>
           {#if !worktree.isMain}
             <button
-              class="hidden text-dim hover:text-default group-hover/worktree:block"
-              title="Archive: remove the worktree and delete its branch"
+              class="text-dim hover:text-default group-hover/worktree:block"
+              class:hidden={!cursor}
+              title="Archive: remove the worktree and delete its branch (D)"
               onclick={(event) => archive(worktree, event)}
             >
               <ArchiveIcon size={12} />
             </button>
             <button
-              class="hidden text-dim hover:text-red group-hover/worktree:block"
-              title="Remove worktree"
+              class="text-dim hover:text-red group-hover/worktree:block"
+              class:hidden={!cursor}
+              title="Remove worktree (d)"
               onclick={(event) => remove(worktree, event)}
             >
               ✕
@@ -415,7 +562,11 @@
           {session}
           attention={agentSessions.attention[session.id]}
           selected={store.selectedWorktreeId === worktree.id}
-          onopen={(event) => openSession(worktree.id, session.id, event)}
+          cursor={hasCursor(session.id)}
+          onopen={(event) => {
+            cursorKey = session.id
+            openSession(worktree.id, session.id, event)
+          }}
         />
       {/each}
     {/each}

@@ -325,9 +325,12 @@ return {
       dependencies = { 'williamboman/mason.nvim' },
       opts = {
         ensure_installed = masonPackages,
-        -- First-run setup installs these itself, synchronously; a second,
-        -- start-up run beside it would race it for the same packages.
-        run_on_start = vim.env.GROVE_PROVISION ~= '1'
+        -- First-run setup is the only installer: it installs these itself,
+        -- synchronously, and runs again next launch when one fails. A start-up
+        -- run in every editor would retry a failed package there too, and its
+        -- "installing" / "failed to install" messages land in the editor as a
+        -- hit-enter prompt on every launch.
+        run_on_start = false
       }
     },
     {

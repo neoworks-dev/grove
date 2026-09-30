@@ -18,6 +18,7 @@
     runsForRows,
     rowForLine,
     lineForRow,
+    MINIMAP_RESTORE_VIEW_LUA,
     MINIMAP_VIEW_LUA,
     type LineRun,
     type ColorSpan,
@@ -58,6 +59,8 @@
   let topline = 1
   let botline = 1
   let savedView: Record<string, number> = {}
+  // The nvim window the map stands for; 0 until the first refresh names it.
+  let viewWindow = 0
   let lastTick = -1
   let lastBuf = -1
 
@@ -70,6 +73,7 @@
 
   interface ViewResult {
     view: Record<string, number>
+    win: number
     tick: number
     bufnr: number
     total: number
@@ -102,6 +106,7 @@
       topline = result.topline
       botline = result.botline
       savedView = result.view
+      viewWindow = result.win
       if (result.lines) {
         baseRuns = buildLineRuns(result.lines, theme.palette.textFaint)
         colorRuns = result.spans ? buildColoredRuns(result.spans) : []
@@ -263,9 +268,9 @@
     botline = Math.min(total, target + visibleRows - 1)
     topline = target
     scheduleDraw()
-    void window.workbench.nvim.request(nvimId, 'nvim_call_function', [
-      'winrestview',
-      [viewForTopRow(target, visibleRows)]
+    void window.workbench.nvim.request(nvimId, 'nvim_exec_lua', [
+      MINIMAP_RESTORE_VIEW_LUA,
+      [viewWindow, viewForTopRow(target, visibleRows)]
     ])
   }
 

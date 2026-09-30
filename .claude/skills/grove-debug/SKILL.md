@@ -227,6 +227,56 @@ jq -r '[.seq, .type] | @tsv' .grove-test/config/grove/agents/<sessionId>/events.
 If the app stops responding, `qa probe` says whether it is still running at all;
 `qa stop` and `qa start` is always safe — the profile survives it.
 
+## Pinning a bug down: expect, record, replay
+
+Every action is recorded as the Playwright code that repeats it, and prints that
+line as `recorded: …`. The element is named the way Playwright would name it — a
+role and a name, a test id — never by the ref you typed, and the action ran
+through that locator, so what was recorded is what happened.
+
+When you have found something, say what should be true instead:
+
+```bash
+bun run qa expect inside-window testid=agent-mode-menu     # nothing runs off an edge
+bun run qa expect not-clipped e14                          # its text fits it
+bun run qa expect not-overlapping e14 e15
+bun run qa expect visible "Commit"                         # also: gone
+bun run qa expect eval 'window.__grove_debug.store.activeTabPath' '"README.md"'
+bun run qa expect no-errors                                # nothing logged since the recording began
+```
+
+Write the check the way the app **should** be — it answers `FAIL` while the bug
+is there, with the numbers (`runs off the 1439x899 window: right by 212px`) and
+a screenshot. The geometry decides; the screenshot is for a person.
+
+`qa recording` shows what has been recorded. `qa start` begins a new recording,
+and so does `qa recording clear` — but what was cleared still happened to the
+app, and a replay starts from a fresh profile. A bug worth pinning down is worth
+a `qa start --fresh` and the few actions that reach it, rather than a clear
+after an hour of wandering.
+
+`qa finding` turns the recording into `tests/e2e/repro/<issue>-….e2e.ts` and
+puts a copy on the issue. For a bug somebody else filed, reproduce it the same
+way and `qa repro <issue>` attaches the spec as a comment (`--no-post` to only
+write the file). Then:
+
+```bash
+bun run qa replay 271              # build, fresh profile, run the steps and checks
+bun run qa replay 271 --no-build   # against the last build
+bun run qa replay 271 --debug      # paused at the start: playwright cli attach, and look
+```
+
+Fails while the bug is there, passes once it is fixed — the same command is
+the reproduction and the verification, and the screenshots it prints go straight
+into `qa evidence`. Replay it right after filing: a repro that passes on the
+broken build is missing its setup, and is worth fixing before anyone relies on
+it. The spec is committed with the fix, where it stays as the regression test.
+
+Not recorded: `probe`, `screenshot`, `logs`, `nvim` and plain `eval` — they
+look without changing anything. An `eval` that does change the app (calling
+`window.workbench.*`) is not replayed either; do it through the UI if the repro
+needs it.
+
 ## What to report
 
 Everything that made the app worse to use, not just what crashed:

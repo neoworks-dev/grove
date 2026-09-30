@@ -49,6 +49,8 @@ export class PluginRegistry {
   private records = new Map<string, PluginRecord>()
   private broker: PermissionBroker
   private repoPath: string | null = null
+  // The load in flight, which the next one waits behind.
+  private loading: Promise<unknown> = Promise.resolve()
 
   constructor(broker: PermissionBroker) {
     this.broker = broker
@@ -62,22 +64,41 @@ export class PluginRegistry {
     return this.records.get(id) ?? null
   }
 
-  async loadAll(repoPath: string | null): Promise<PluginRecord[]> {
+  /**
+   * Rediscovers every plugin, for no repository or for the one just opened.
+   * Loads run one after another, so the last one asked for is what stays; and
+   * the old records keep being served until the new set is complete, since a
+   * worker may be importing its bundle through grove-plugin:// meanwhile.
+   */
+  loadAll(repoPath: string | null): Promise<PluginRecord[]> {
+    const load = this.loading.then(() => this.loadInto(repoPath))
+    this.loading = load.catch(() => undefined)
+    return load
+  }
+
+  /** Discovers every root into a fresh map, then swaps it in whole. */
+  private async loadInto(repoPath: string | null): Promise<PluginRecord[]> {
     this.repoPath = repoPath
-    this.records.clear()
-    await this.loadRoot(builtinRoot(), 'builtin')
-    await this.loadRoot(userRoot(), 'user')
-    if (repoPath) await this.loadRoot(projectRoot(repoPath), 'project')
+    const records = new Map<string, PluginRecord>()
+    await this.loadRoot(records, builtinRoot(), 'builtin')
+    await this.loadRoot(records, userRoot(), 'user')
+    if (repoPath) await this.loadRoot(records, projectRoot(repoPath), 'project')
+    this.records = records
     return this.list()
   }
 
-  private async loadRoot(root: string, source: PluginSource): Promise<void> {
+  /** Adds one root's plugins to `records`. */
+  private async loadRoot(
+    records: Map<string, PluginRecord>,
+    root: string,
+    source: PluginSource
+  ): Promise<void> {
     for (const dir of await pluginDirs(root)) {
       const record = await this.loadOne(dir, source)
       if (!record) continue
       // Later roots never silently shadow earlier ones (builtin wins).
-      if (this.records.has(record.id)) continue
-      this.records.set(record.id, record)
+      if (records.has(record.id)) continue
+      records.set(record.id, record)
     }
   }
 

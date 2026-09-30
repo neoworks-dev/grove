@@ -143,6 +143,33 @@ export function pathToLeaf(root: LayoutNode, leafId: string): string[] | null {
   return null
 }
 
+/**
+ * Whether a leaf touches one outer edge of the tree: every split on its way
+ * down that runs across that edge has it (or its ancestor) as the child nearest
+ * the edge. False when the leaf isn't in the tree.
+ */
+export function isAgainstEdge(root: LayoutNode, leafId: string, edge: EdgeSide): boolean {
+  if (root.kind === 'leaf') {
+    return root.id === leafId
+  }
+  const index = root.children.findIndex((child) => pathToLeaf(child, leafId) !== null)
+  if (index === -1) {
+    return false
+  }
+  const direction: SplitDirection = edge === 'left' || edge === 'right' ? 'row' : 'column'
+  if (root.direction === direction) {
+    const atStart = edge === 'left' || edge === 'top'
+    let edgeIndex = root.children.length - 1
+    if (atStart) {
+      edgeIndex = 0
+    }
+    if (index !== edgeIndex) {
+      return false
+    }
+  }
+  return isAgainstEdge(root.children[index], leafId, edge)
+}
+
 export function findSplit(root: LayoutNode, splitId: string): SplitNode | null {
   if (root.kind === 'leaf') return null
   if (root.id === splitId) return root

@@ -3,8 +3,8 @@
 // done inside an editor, every progress message became a hit-enter prompt and
 // every pane installed at once. So grove runs the config once, headless, before
 // the first editor starts (see "First-run setup" in init.lua), and every spawn
-// waits for that one run. A stamp keyed on the config's contents skips it on
-// later launches and brings it back when the config changes.
+// waits for that one run. A stamp keyed on what the config installs skips it on
+// later launches and brings it back when that changes.
 
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -67,10 +67,14 @@ export async function setUpNvimProfile(onStep: SetupStepListener): Promise<void>
   }
 }
 
-/** A hash of the bundled config, so a changed config is set up again. */
+/**
+ * A hash of what setup installs — installs.lua, the plugin spec with its mason
+ * packages and parsers — so a change there is set up again and an edit to the
+ * rest of the config is not.
+ */
 async function hashConfig(): Promise<string> {
-  const config = await readFile(join(bundledNvimConfigDir(), 'init.lua'), 'utf8')
-  return createHash('sha256').update(config).digest('hex')
+  const installs = await readFile(join(bundledNvimConfigDir(), 'installs.lua'), 'utf8')
+  return createHash('sha256').update(installs).digest('hex')
 }
 
 /** Runs the config headless in setup mode. Resolves with whether it all landed. */

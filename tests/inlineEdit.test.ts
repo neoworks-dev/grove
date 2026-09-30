@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test'
-import { pickAgentMode, relFromRoot, selectionRef } from '../src/renderer/src/lib/inlineEditRef'
+import {
+  pickAgentMode,
+  relFromRoot,
+  reviewShownIn,
+  selectionRef
+} from '../src/renderer/src/lib/inlineEditRef'
 
 describe('relFromRoot', () => {
   test('strips the worktree root prefix', () => {
@@ -40,5 +45,25 @@ describe('pickAgentMode', () => {
 
   test('auto applies the write with no review at all', () => {
     expect(pickAgentMode('auto')).toBe('acceptEdits')
+  })
+})
+
+describe('reviewShownIn', () => {
+  const review = { leafId: 'leaf-2', absPath: '/wt/src/util.ts' }
+
+  test('shows in its own pane while that pane shows the reviewed file', () => {
+    expect(reviewShownIn(review, 'leaf-2', '/wt/src/util.ts')).toBe(true)
+  })
+
+  test('hides when its pane has switched to another file', () => {
+    expect(reviewShownIn(review, 'leaf-2', '/wt/README.md')).toBe(false)
+  })
+
+  test('hides when its pane is on a non-file buffer', () => {
+    expect(reviewShownIn(review, 'leaf-2', null)).toBe(false)
+  })
+
+  test('hides in another pane, even one showing the same file', () => {
+    expect(reviewShownIn(review, 'leaf-7', '/wt/src/util.ts')).toBe(false)
   })
 })

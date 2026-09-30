@@ -97,6 +97,8 @@
   // strip folds into one `a | b | c` tab while there is more than one.
   let splitWindows = $state<SplitWindow[]>([])
   let currentWin = $state(0)
+  // The file in nvim's current window, or null for a non-file buffer.
+  let currentBufferPath = $state<string | null>(null)
   let disposeBufferWatch: (() => void) | null = null
   let disposeKeymapWatch: (() => void) | null = null
   // Git gutter for the minimap: the open file's changed-line ranges.
@@ -618,11 +620,18 @@ pcall(vim.api.nvim_buf_delete, buf, {})
     store.tabs = swapTabs(store.tabs, replacement.left, replacement.entered)
   }
 
+  /** The snapshot's active file as a path, or null when nvim is on a non-file buffer. */
+  function toBufferPath(active: unknown): string | null {
+    if (typeof active !== 'string' || active === '') return null
+    return active
+  }
+
   /** Applies one snapshot from the buffer-state autocmd to the pane's state. */
   function applyBufferSnapshot(snapshot: BufferSnapshot): void {
     if (typeof snapshot.count === 'number') nvimFileCount = snapshot.count
     dirtyPaths = toDirtyPaths(snapshot.modified)
     if (typeof snapshot.win === 'number') currentWin = snapshot.win
+    currentBufferPath = toBufferPath(snapshot.active)
     attachActiveBuffer(snapshot.active)
     const nextSplits = toSplitWindows(snapshot.splits)
     keepSplitTabInPlace(splitWindows, nextSplits)
@@ -1226,7 +1235,7 @@ return vim.api.nvim_get_current_win() ~= before
           aria-label="Neovim input"
         ></div>
         <InlineEditPrompt {leafId} />
-        <InlineReviewOverlay {leafId} tick={minimapTick} />
+        <InlineReviewOverlay {leafId} tick={minimapTick} bufferPath={currentBufferPath} />
         <ReviewOverlay {leafId} tick={minimapTick} />
         <!-- Whatever a plugin has put on the buffer: the GitHub pane's review
            comment box is the first, and it has to open over the line it is

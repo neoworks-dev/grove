@@ -26,7 +26,7 @@
   import GithubMenu from './GithubMenu.svelte'
   import GithubStateIcon from './GithubStateIcon.svelte'
   import { branchNameFor } from './branches'
-  import { issueTypeColour } from './filter'
+  import { assigneeLogins, issueTypeColour } from './filter'
   import {
     github,
     applyAssignees,
@@ -85,11 +85,12 @@
 
   /** Assign or unassign one person, applied as soon as it is clicked. */
   async function toggleAssignee(login: string): Promise<void> {
-    if (detail.assignees.includes(login)) {
-      await applyAssignees(detail.assignees.filter((entry) => entry !== login))
+    const current = assigneeLogins(detail)
+    if (current.includes(login)) {
+      await applyAssignees(current.filter((entry) => entry !== login))
       return
     }
-    await applyAssignees([...detail.assignees, login])
+    await applyAssignees([...current, login])
   }
 
   /** A milestone's due date as a short line, or null when it has none. */
@@ -209,7 +210,7 @@
                 class="flex items-center gap-2 rounded px-1.5 py-1 text-left text-2xs text-default hover:bg-hover"
                 onclick={() => toggleAssignee(actor.login)}
               >
-                <Checkbox size="sm" checked={detail.assignees.includes(actor.login)} />
+                <Checkbox size="sm" checked={assigneeLogins(detail).includes(actor.login)} />
                 <GithubAvatar {actor} size={14} />
                 <span class="truncate">{actor.login}</span>
               </button>
@@ -222,7 +223,14 @@
       </GithubMenu>
     </div>
     {#if detail.assignees.length > 0}
-      <p class="text-dim">{detail.assignees.join(', ')}</p>
+      <ul class="flex flex-col gap-1">
+        {#each detail.assignees as assignee (assignee.login)}
+          <li class="flex min-w-0 items-center gap-1.5 text-default">
+            <GithubAvatar actor={assignee} size={16} />
+            <span class="truncate">{assignee.login}</span>
+          </li>
+        {/each}
+      </ul>
     {:else}
       <p class="text-dim">No one</p>
     {/if}

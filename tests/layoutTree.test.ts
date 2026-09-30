@@ -238,6 +238,23 @@ describe('sanitize', () => {
     expect(leaves(tree).map((leaf) => leaf.paneTypeId)).toContain('plugin:not-installed.panel')
   })
 
+  it('reopens a retired Agents sidebar view as Worktrees, keeping its width', () => {
+    const tree = sanitize({
+      kind: 'split',
+      id: 's',
+      direction: 'row',
+      children: [
+        { kind: 'leaf', id: 'a', paneTypeId: 'agents', sizePx: 256, paneState: { scroll: 3 } },
+        { kind: 'leaf', id: 'b', paneTypeId: 'nvim' }
+      ],
+      sizes: [0.2, 0.8]
+    }) as SplitNode
+    const [sidebar] = leaves(tree)
+    expect(sidebar.paneTypeId).toBe('worktrees')
+    expect(sidebar.sizePx).toBe(256)
+    expect(sidebar.paneState).toBeUndefined()
+  })
+
   it('drops malformed nodes and renormalizes sizes', () => {
     const tree = sanitize({
       kind: 'split',

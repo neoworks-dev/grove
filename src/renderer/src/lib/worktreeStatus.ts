@@ -26,15 +26,6 @@ export const agentStatusColor: Record<string, string> = {
   error: 'bg-red'
 }
 
-export interface WorktreeAttention {
-  waitingPermission: boolean
-  agentDone: boolean
-  serviceUnhealthy: boolean
-  unread: boolean
-  dirty: boolean
-  needsAttention: boolean
-}
-
 /** The sessions in a worktree whose turn ended out of sight, with how it ended. */
 export function sessionAttentionFor(
   worktreeId: string
@@ -50,29 +41,6 @@ export function sessionAttentionFor(
 /** Agent sessions rooted in a worktree. A worktree's id is its path. */
 export function sessionsFor(worktreeId: string): SessionMeta[] {
   return agentSessions.forWorktree(worktreeId)
-}
-
-// Derive the attention flags for one worktree from live state. Reading the
-// stores inside a Svelte reactive context keeps callers reactive.
-export function attentionFor(worktreeId: string): WorktreeAttention {
-  const sessions = sessionsFor(worktreeId)
-  const services = store.services[worktreeId] || []
-  const worktree = store.worktrees.find((entry) => entry.id === worktreeId)
-
-  const waitingPermission = sessions.some((session) => session.pendingApprovals.length > 0)
-  const agentDone = sessions.some((session) => session.stopReason === 'error')
-  const serviceUnhealthy = services.some((service) => service.status === 'unhealthy')
-  const unread = store.unread[worktreeId] === true
-  const dirty = worktree?.dirty === true
-
-  return {
-    waitingPermission,
-    agentDone,
-    serviceUnhealthy,
-    unread,
-    dirty,
-    needsAttention: waitingPermission || serviceUnhealthy || unread
-  }
 }
 
 // Compact "+A −R" diff-stat label for a worktree, or null when there are no

@@ -399,7 +399,12 @@ local function runSetupStep(step, run)
   if ok and succeeded then
     return true
   end
-  io.stderr:write('\ngrove-setup failed: ' .. (step or 'Installing plugins') .. ' ' .. tostring(succeeded) .. '\n')
+  -- The marker line names the step alone, for grove to report; an error the
+  -- step raised follows on its own line for the log.
+  io.stderr:write('\ngrove-setup failed: ' .. (step or 'Installing plugins') .. '\n')
+  if not ok then
+    io.stderr:write(tostring(succeeded) .. '\n')
+  end
   return false
 end
 

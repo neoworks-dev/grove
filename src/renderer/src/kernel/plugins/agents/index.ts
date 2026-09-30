@@ -33,6 +33,7 @@ export const agents = {
           title: 'Agents',
           icon: Robot,
           order: 4,
+          key: 'a',
           component: AgentsOverview,
           when: repoOpen
         }),

@@ -1,5 +1,6 @@
 // Per-worktree environment variables and ${VAR} substitution.
-// Reused for service commands, agent commands, preview URLs, and health URLs.
+// Shell commands get the variables through their environment; substitution is
+// only for preview and health URLs, which no shell parses.
 
 import type { Worktree } from '../shared/types'
 
@@ -18,7 +19,8 @@ export function buildWorktreeEnv(worktree: Worktree, ports: number[]): Record<st
 }
 
 // Replace ${VAR} and $VAR occurrences using the provided variable map.
-// Unknown variables are left untouched so real shell vars still resolve at runtime.
+// Unknown variables are left untouched. Never use it on a shell command: the
+// values are pasted in unquoted.
 export function substitute(input: string, vars: Record<string, string>): string {
   return input.replace(/\$\{([A-Z0-9_]+)\}|\$([A-Z0-9_]+)/g, (match, braced, bare) => {
     const name = braced || bare

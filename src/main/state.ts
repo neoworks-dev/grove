@@ -26,6 +26,8 @@ export interface RepoState {
   pinnedTabsByWorktree: Record<string, string[]>
   selectedWorktreeId: string | null
   setupOnceDone: boolean
+  // Fingerprint of the grove.config.yaml setup commands the user last trusted.
+  trustedSetupHash: string | null
   agentSessions: Record<string, string> // legacy: "worktreeId::agent" -> token
   agentChats: Record<string, AgentChats> // "worktreeId::agent" -> named chats
   // Last-known provider-discovered slash commands, so the menu is populated
@@ -104,6 +106,7 @@ export function emptyRepoState(): RepoState {
     pinnedTabsByWorktree: {},
     selectedWorktreeId: null,
     setupOnceDone: false,
+    trustedSetupHash: null,
     agentSessions: {},
     agentChats: {},
     agentCommands: {},

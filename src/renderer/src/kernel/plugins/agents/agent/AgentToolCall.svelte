@@ -15,7 +15,7 @@
   import { shellOutputs } from '../../../../lib/agents/shellOutput.svelte'
   import { fileIcon } from '../../../../lib/icons'
   import { formatShellCommand } from '../../../../lib/shellFormat'
-  import { diffLines, statsOf } from '../../../../lib/agents/diff'
+  import { diffLines, fileDiffsOf, hunksOf, statsOf } from '../../../../lib/agents/diff'
   import {
     descriptionOf,
     editsOf,
@@ -33,6 +33,7 @@
   import type { ToolDisplay } from '../../../../lib/agents/types'
   import { blobUrl } from '../../../../lib/agents/api'
   import AgentImage from './AgentImage.svelte'
+  import AgentDiffPreview, { type FileChange } from './AgentDiffPreview.svelte'
 
   let {
     item,
@@ -100,7 +101,26 @@
   const message = $derived(messageOf(input))
 
   const edits = $derived(inputView === 'diff' ? editsOf(input) : [])
+
+  // Lines of unchanged text kept around each change in the preview.
+  const PREVIEW_CONTEXT_LINES = 2
+
+  // The files the call changed, as its harness reported them. A call that was
+  // refused or failed changed nothing, so it shows no preview.
+  const fileChanges = $derived.by<FileChange[]>(() => {
+    if (item.status === 'denied' || item.status === 'error') {
+      return []
+    }
+    return fileDiffsOf(item.content).map((diff) => ({
+      path: diff.path,
+      hunks: hunksOf(diff.oldText, diff.newText, PREVIEW_CONTEXT_LINES)
+    }))
+  })
+
   const diffStats = $derived.by(() => {
+    if (fileChanges.length > 0) {
+      return statsOf(fileChanges.flatMap((change) => change.hunks.flat()))
+    }
     let added = 0
     let removed = 0
     for (const edit of edits) {
@@ -110,6 +130,10 @@
     }
     return { added, removed }
   })
+
+  // The diff is what a file-changing call's arguments mean; the raw arguments
+  // under it would only say the same thing less readably.
+  const showsInput = $derived(fileChanges.length === 0 || inputView !== 'json')
 
   const resultLines = $derived(item.result.length === 0 ? [] : item.result.split('\n'))
 
@@ -262,6 +286,8 @@
     <div class="pl-4 font-mono text-2xs text-dim">{item.progress}</div>
   {/if}
 
+  <AgentDiffPreview changes={fileChanges} {root} />
+
   {#if expanded}
     <!-- Input, rendered the way the tool asked for. -->
     {#if inputView === 'diff'}
@@ -296,7 +322,7 @@
         language={inputLanguage}
         class="mt-1 max-h-72 overflow-auto whitespace-pre-wrap rounded border border-line px-2 py-1 font-mono text-2xs text-muted"
       />
-    {:else if inputView === 'json'}
+    {:else if inputView === 'json' && showsInput}
       <pre
         class="mt-1 max-h-72 overflow-auto whitespace-pre-wrap py-1 pl-4 font-mono text-2xs text-muted">{JSON.stringify(
           input,

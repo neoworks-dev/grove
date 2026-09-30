@@ -15,11 +15,12 @@
   import GithubCompose from './GithubCompose.svelte'
   import ArrowClockwiseIcon from 'phosphor-svelte/lib/ArrowClockwiseIcon'
   import PlusIcon from 'phosphor-svelte/lib/PlusIcon'
+  import PushPinIcon from 'phosphor-svelte/lib/PushPinIcon'
   import GithubSelectionBar from './GithubSelectionBar.svelte'
   import GithubFilterBar from './GithubFilterBar.svelte'
-  import { ageLabel } from './filter'
+  import { ageLabel, partitionPinned } from './filter'
   import { DEFAULT_QUERY, setStateQualifier } from './search'
-  import type { GithubItemKind, GithubStateFilter } from '../../../../../shared/types'
+  import type { GithubItem, GithubItemKind, GithubStateFilter } from '../../../../../shared/types'
   import PaneControls from '../../../components/PaneControls.svelte'
   import PaneChromeBoundary from '../../../components/PaneChromeBoundary.svelte'
 
@@ -41,6 +42,8 @@
   let width = $state(0)
   const narrow = $derived(width > 0 && width < NARROW_PX)
   const items = $derived(github.items)
+  // Pinned issues head the list under their own heading, as they do on GitHub.
+  const sections = $derived(partitionPinned(items))
   // An empty list under the query it started with is "nothing here", not "your
   // search found nothing" — `is:open` is not something the user typed.
   const narrowed = $derived(github.query.trim() !== DEFAULT_QUERY && github.query.trim().length > 0)
@@ -115,6 +118,17 @@
     return selection.number === number && selection.kind === kind
   }
 </script>
+
+{#snippet itemRow(item: GithubItem)}
+  <GithubItemRow
+    {item}
+    selected={isSelected(item.number, item.kind)}
+    checked={github.checked.includes(item.number)}
+    isViewer={item.author === viewer}
+    onselect={() => openItem(item.kind, item.number)}
+    ontoggle={() => toggleChecked(item.number)}
+  />
+{/snippet}
 
 {#snippet detailColumn()}
   {#if github.composing}
@@ -196,15 +210,20 @@
 
         <FloatingScrollbar class="min-h-0 flex-1">
           <div>
-            {#each items as item (item.kind + item.number)}
-              <GithubItemRow
-                {item}
-                selected={isSelected(item.number, item.kind)}
-                checked={github.checked.includes(item.number)}
-                isViewer={item.author === viewer}
-                onselect={() => openItem(item.kind, item.number)}
-                ontoggle={() => toggleChecked(item.number)}
-              />
+            {#if sections.pinned.length > 0}
+              <h3
+                class="flex items-center gap-1 border-b border-line px-3 pb-1 pt-2 text-2xs font-semibold uppercase tracking-caps text-dim"
+              >
+                <PushPinIcon size={10} />
+                Pinned
+              </h3>
+              {#each sections.pinned as item (item.kind + item.number)}
+                {@render itemRow(item)}
+              {/each}
+              <div class="h-2 border-b border-line"></div>
+            {/if}
+            {#each sections.rest as item (item.kind + item.number)}
+              {@render itemRow(item)}
             {/each}
 
             {#if items.length === 0}

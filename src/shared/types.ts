@@ -512,7 +512,9 @@ interface GithubItemShared {
   createdAt: string
   updatedAt: string
   labels: GithubLabel[]
-  assignees: string[]
+  assignees: GithubActor[]
+  /** Issues only: pinned to the top of the repository's issue list. */
+  isPinned?: boolean
   /** Null when the item has none. Absent when the query could not ask. */
   milestone?: GithubMilestone | null
   issueType?: GithubIssueType | null
@@ -633,8 +635,6 @@ export interface GithubItemDetail extends GithubItemShared {
   viewerSubscription?: string | null
   /** Whether the conversation is locked to people without write access. */
   locked: boolean
-  /** Issues only: pinned to the top of the repository's issue list. */
-  isPinned?: boolean
   /** The issue this one hangs off, or null when it hangs off nothing. */
   parent?: GithubItemRef | null
   subIssues?: GithubItemRef[]

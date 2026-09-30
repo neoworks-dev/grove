@@ -248,7 +248,7 @@
     <!-- Dimmed until the agent has taken it up: written mid-turn, it is still
          waiting for the agent's next message. -->
     <div
-      class="agent-sticky-user -mx-3 mb-3 whitespace-pre-wrap px-3 py-2 text-default transition-opacity duration-200"
+      class="agent-sticky-user -mx-3 mb-3 whitespace-pre-wrap px-3 py-2 text-base text-default transition-opacity duration-200"
       class:opacity-50={item.pending}
       title={item.pending ? 'Waiting for the agent to take it up' : undefined}
     >
@@ -292,7 +292,7 @@
             <span class="truncate">{sender}</span>
             <span class="shrink-0 rounded-sm bg-elevated px-1">closed</span>
           </div>
-          <div class="whitespace-pre-wrap text-xs text-muted">{item.text}</div>
+          <div class="whitespace-pre-wrap text-base text-muted">{item.text}</div>
         </div>
       </div>
     {:else}
@@ -324,7 +324,7 @@
           >
             {sender}
           </div>
-          <div class="whitespace-pre-wrap text-xs text-default">{item.text}</div>
+          <div class="whitespace-pre-wrap text-base text-default">{item.text}</div>
         </div>
       </button>
     {/if}
@@ -348,7 +348,7 @@
       {/if}
       {#if item.text}
         <div
-          class="agent-markdown prose max-w-none text-xs text-default"
+          class="agent-markdown agent-message prose max-w-none text-default"
           use:floatingCodeScrollbars
           use:highlightCodeFences
           use:linkCodeReferences={{ root, onOpen: openReference }}

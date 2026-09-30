@@ -1,11 +1,11 @@
 // One-shot shell commands triggered by keybind actions. Unlike the service
 // supervisor (which manages long-lived, health-checked processes), these are
-// fire-and-forget: spawn in the worktree with the same env substitutions as
+// fire-and-forget: spawn in the worktree with the same environment as
 // services, stream output to the logs pane, and forget on exit.
 
 import { spawn, type ChildProcess } from 'child_process'
 import type { Worktree } from '../shared/types'
-import { buildWorktreeEnv, substitute, spawnEnv } from './env'
+import { buildWorktreeEnv, spawnEnv } from './env'
 
 interface RunnerEvents {
   onLog: (worktreeId: string, line: string) => void
@@ -21,15 +21,16 @@ export class ActionRunner {
 
   run(worktree: Worktree, commandLine: string, ports: number[]): void {
     const vars = buildWorktreeEnv(worktree, ports)
-    const command = substitute(commandLine, vars)
-    const child = spawn(command, {
+    // The variables reach the command through its environment only; splicing
+    // them in would let a branch name run as shell syntax.
+    const child = spawn(commandLine, {
       cwd: worktree.path,
       env: spawnEnv(vars),
       shell: true,
       detached: false
     })
     this.children.add(child)
-    this.events.onLog(worktree.id, `$ ${command}`)
+    this.events.onLog(worktree.id, `$ ${commandLine}`)
     this.pipe(worktree.id, child)
     child.on('exit', (code) => {
       this.children.delete(child)

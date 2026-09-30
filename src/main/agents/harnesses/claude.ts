@@ -6,9 +6,6 @@
 // approvals arrive through `canUseTool`, so grove's review flow can hold a write
 // at the prompt and answer it once the user has decided.
 
-import { accessSync, constants, readFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
-import { delimiter, dirname, join } from 'node:path'
 import type { Context } from '@neoworks/extension-system'
 import type {
   ModelInfo as SdkModelInfo,
@@ -19,6 +16,12 @@ import type {
   SDKUserMessage,
   SlashCommand
 } from '@anthropic-ai/claude-agent-sdk'
+import {
+  SDK_PACKAGE,
+  bundledExecutable,
+  executableOnPath,
+  resolveClaudeExecutable
+} from '../claudeExecutable'
 import { commandLine } from '../../../shared/agents'
 import type {
   AgentMode,
@@ -39,6 +42,14 @@ import type {
 import type { EndpointsService } from '../../endpoints'
 import { loadModelCatalog, type CatalogModel, type CatalogProvider } from '../../modelCatalog'
 import { zodShapeFromJsonSchema, type JsonSchemaObject } from '../../plugins/zodSchema'
+import {
+  forgetShellTeeSession,
+  matchBashCall,
+  shellTeeEnvironment,
+  type ShellTeeSession
+} from './claudeShellTee'
+import { ClaudeTaskList } from './claudeTasks'
+import { ClaudeUsageLedger, contextWindowOf } from './claudeUsage'
 import type {
   GroveTool,
   HarnessDescriptor,
@@ -121,89 +132,6 @@ const THINKING_BUDGETS: Record<ThinkingLevel, number> = {
   max: 128_000
 }
 
-const SDK_PACKAGE = '@anthropic-ai/claude-agent-sdk'
-
-/**
- * Which Claude Code executable the SDK should spawn, or `undefined` to let it
- * pick its own.
- *
- * The SDK ships the CLI as per-platform optional dependencies and refuses to
- * start when none of them is installed — which is what any install that skipped
- * optional packages leaves behind, and it surfaces as the whole harness being
- * unavailable. Grove looks those packages up itself and, when none is there,
- * falls back to a `claude` on PATH so a system install serves just as well.
- */
-function resolveClaudeExecutable(): string | undefined {
-  if (bundledExecutable() !== null) return undefined
-  return executableOnPath('claude') ?? undefined
-}
-
-/**
- * The CLI shipped inside one of the SDK's per-platform packages.
- *
- * The names are read off the SDK's own `optionalDependencies` rather than
- * rebuilt from `process.platform`, so grove does not have to track how the SDK
- * names its targets: only the package for this platform is ever installed, so
- * the first one that resolves is the right one.
- */
-function bundledExecutable(): string | null {
-  const require = createRequire(__filename)
-  for (const name of platformPackages(require)) {
-    for (const entry of ['claude', 'claude.exe']) {
-      try {
-        return require.resolve(`${name}/${entry}`)
-      } catch {
-        continue
-      }
-    }
-  }
-  return null
-}
-
-interface SdkManifest {
-  optionalDependencies?: Record<string, string>
-}
-
-function platformPackages(require: NodeJS.Require): string[] {
-  try {
-    // The SDK's `exports` map does not expose package.json, so it is read off
-    // disk next to the entry point the resolver does hand back.
-    const packageRoot = dirname(require.resolve(SDK_PACKAGE))
-    const manifest = readJson<SdkManifest>(join(packageRoot, 'package.json'))
-    if (!manifest.optionalDependencies) return []
-    return Object.keys(manifest.optionalDependencies)
-  } catch {
-    return []
-  }
-}
-
-function readJson<T>(path: string): T {
-  return JSON.parse(readFileSync(path, 'utf8'))
-}
-
-/** The first executable of that name on PATH, or null when there is none. */
-export function executableOnPath(name: string): string | null {
-  const directories = (process.env.PATH ?? '').split(delimiter).filter(Boolean)
-  for (const directory of directories) {
-    for (const candidate of candidateNames(name)) {
-      const full = join(directory, candidate)
-      try {
-        accessSync(full, constants.X_OK)
-        return full
-      } catch {
-        continue
-      }
-    }
-  }
-  return null
-}
-
-/** Windows spells its executables with an extension; nothing else does. */
-function candidateNames(name: string): string[] {
-  if (process.platform !== 'win32') return [name]
-  return [`${name}.cmd`, `${name}.exe`]
-}
-
 /**
  * A queue that presents itself as the async iterable the SDK consumes.
  *
@@ -256,9 +184,18 @@ class ClaudeRun implements HarnessRun {
   // What grove has already told the session about: a turn grove did not start
   // still has to raise the status, or the pane offers no way to stop it.
   private running = false
+  // The user stopped the turn in flight. The CLI ends such a turn with an
+  // `error_during_execution` result, which is the stop, not a failure.
+  private interrupted = false
   // What each tool call that is running an agent was asked to do, so the session
   // grove opens for it is named after the work rather than after a call id.
   private lanes = new Map<string, SubagentIdentity>()
+  private usage: ClaudeUsageLedger
+  private tasks: ClaudeTaskList
+  // Bash calls that have started and not reported back, by id, with their
+  // command: what a command copied to grove as it runs is matched against.
+  private openBashCalls = new Map<string, string>()
+  private shellTee: ShellTeeSession
 
   constructor(
     private options: HarnessRunOptions,
@@ -266,6 +203,12 @@ class ClaudeRun implements HarnessRun {
     private endpoints: EndpointsService
   ) {
     this.resumeKey = options.resumeKey
+    this.usage = new ClaudeUsageLedger(options.startingStats)
+    this.tasks = new ClaudeTaskList(options.startingTasks)
+    this.shellTee = {
+      callFor: (command) => matchBashCall(this.openBashCalls, command),
+      sink: options.shellOutput
+    }
   }
 
   /** Open the query and start folding its messages onto the session log. */
@@ -302,6 +245,7 @@ class ClaudeRun implements HarnessRun {
   }
 
   async interrupt(): Promise<void> {
+    if (this.running) this.interrupted = true
     await this.query?.interrupt()
   }
 
@@ -320,6 +264,7 @@ class ClaudeRun implements HarnessRun {
 
   async dispose(): Promise<void> {
     this.disposed = true
+    forgetShellTeeSession(this.options.sessionId, this.shellTee)
     this.queue.close()
     await this.query?.return(undefined).catch(() => {})
     this.query = null
@@ -332,7 +277,7 @@ class ClaudeRun implements HarnessRun {
     return {
       cwd: this.options.workspaceRoot,
       pathToClaudeCodeExecutable: resolveClaudeExecutable(),
-      env: await sessionEnvironment(this.options.provider, this.credentials, this.endpoints),
+      env: await this.environment(),
       model: this.options.model ?? undefined,
       resume: this.options.resumeKey ?? undefined,
       includePartialMessages: true,
@@ -412,10 +357,11 @@ class ClaudeRun implements HarnessRun {
           workspaceRoot: this.options.workspaceRoot,
           surface: (surfaceId, slot, view) =>
             this.options.emit({ type: 'ui.surface', surfaceId, slot, view } as ServerEventBody),
-          openFiles: (files) => this.options.emit({ type: 'ui.open_files', files })
+          show: (target) => this.options.emit({ type: 'ui.show', target })
         })
         return { content: [{ type: 'text' as const, text: result.content }] }
-      }
+      },
+      { alwaysLoad: definition.alwaysLoad === true }
     )
   }
 
@@ -439,10 +385,15 @@ class ClaudeRun implements HarnessRun {
     if (this.handleSessionChange(message)) return
     if (signalsWork(message)) this.markRunning()
     if (message.type === 'stream_event') {
+      const stats = this.usage.noteStreamEvent(message.parent_tool_use_id ?? '', message.event)
+      if (stats) this.options.stats(stats)
       this.report(message.parent_tool_use_id, streamEvents(message.event))
       return
     }
     if (message.type === 'assistant') {
+      // Counted before the events go out: the renderer re-reads the totals
+      // when the message ends.
+      this.options.stats(this.usage.noteResponse(message.message.id, message.message.usage))
       this.rememberLanes(message.message.content)
       this.nameLane(message.parent_tool_use_id, message.subagent_type, message.task_description)
       this.report(message.parent_tool_use_id, assistantEvents(message.message.content))
@@ -467,11 +418,61 @@ class ClaudeRun implements HarnessRun {
    */
   private report(parentToolUseId: string | null, events: ServerEventBody[]): void {
     if (!parentToolUseId) {
-      for (const event of events) this.options.emit(event)
+      for (const event of events) {
+        this.options.emit(event)
+        this.followTasks(event)
+        this.followBashCalls(event)
+      }
       return
     }
     const agent = this.laneOf(parentToolUseId)
     for (const event of events) this.options.emitFrom(agent, event)
+  }
+
+  /**
+   * Keep Claude's plan on the log. Its task tools change the list one call at a
+   * time; the list is put out whole after each change, so the renderer and the
+   * next run both read it from the last `agent.tasks` alone.
+   */
+  private followTasks(event: ServerEventBody): void {
+    let changed = false
+    if (event.type === 'agent.tool_use') {
+      changed = this.tasks.noteToolUse(event.toolUseId, event.name, event.input)
+    }
+    if (event.type === 'agent.tool_result') {
+      changed = this.tasks.noteToolResult(event.toolUseId, event.content, event.isError)
+    }
+    if (changed) this.emitTasks()
+  }
+
+  /** Keep track of the Bash calls in flight, for matching the commands the tee reports. */
+  private followBashCalls(event: ServerEventBody): void {
+    if (event.type === 'agent.tool_use' && event.name === 'Bash') {
+      const command = (event.input as { command?: unknown } | null)?.command
+      if (typeof command === 'string') this.openBashCalls.set(event.toolUseId, command)
+      return
+    }
+    if (event.type === 'agent.tool_result') this.openBashCalls.delete(event.toolUseId)
+  }
+
+  /** The session's environment, plus what lets grove watch its Bash commands run. */
+  private async environment(): Promise<Record<string, string | undefined> | undefined> {
+    const session = await sessionEnvironment(
+      this.options.provider,
+      this.credentials,
+      this.endpoints
+    )
+    const tee = await shellTeeEnvironment(this.options.sessionId, this.shellTee)
+    if (Object.keys(tee).length === 0) return session
+    // The SDK replaces the child's environment rather than adding to it.
+    let base: Record<string, string | undefined> = process.env
+    if (session) base = session
+    return { ...base, ...tee }
+  }
+
+  /** Put the whole plan on the log as it now stands. */
+  private emitTasks(): void {
+    this.options.emit({ type: 'agent.tasks', tasks: this.tasks.current() })
   }
 
   /**
@@ -539,6 +540,7 @@ class ClaudeRun implements HarnessRun {
     if (message.type === 'conversation_reset') {
       this.resumeKey = message.new_conversation_id
       this.options.emit({ type: 'session.cleared' })
+      if (this.tasks.clear()) this.emitTasks()
       return true
     }
     if (message.type !== 'system') return false
@@ -554,28 +556,38 @@ class ClaudeRun implements HarnessRun {
   }
 
   private handleResult(message: Extract<SDKMessage, { type: 'result' }>): void {
+    // The result carries the process's totals, not the turn's; the ledger
+    // turns them into the session's.
     if ('usage' in message && message.usage) {
-      this.options.stats({
-        usage: {
-          inputTokens: message.usage.input_tokens ?? 0,
-          outputTokens: message.usage.output_tokens ?? 0,
-          cacheReadTokens: message.usage.cache_read_input_tokens ?? 0,
-          cacheWriteTokens: message.usage.cache_creation_input_tokens ?? 0
-        },
-        cost: message.total_cost_usd ?? 0,
-        contextWindow: 0
-      })
+      const contextWindow = contextWindowOf(message.modelUsage)
+      this.options.stats(
+        this.usage.noteResult(message.usage, message.total_cost_usd ?? 0, contextWindow)
+      )
     }
     this.running = false
-    const failed = message.subtype !== 'success'
-    if (failed) {
-      this.options.emit({ type: 'session.error', message: `run ended: ${message.subtype}` })
-    }
-    this.options.emit({
-      type: 'session.status_idle',
-      stopReason: failed ? 'error' : 'end_turn'
-    })
+    const ending = turnEnding(message.subtype, this.interrupted)
+    this.interrupted = false
+    if (ending.error) this.options.emit({ type: 'session.error', message: ending.error })
+    this.options.emit({ type: 'session.status_idle', stopReason: ending.stopReason })
   }
+}
+
+/**
+ * How a turn ended, from its result's subtype and whether the user stopped it.
+ *
+ * Claude Code reports a turn it was interrupted in as `error_during_execution`;
+ * when grove asked for that interrupt — Stop, or a plain Deny — it is the stop
+ * the user wanted, not a failure to show them.
+ */
+export function turnEnding(
+  subtype: string,
+  interrupted: boolean
+): { stopReason: 'end_turn' | 'aborted' | 'error'; error: string | null } {
+  if (subtype === 'success') return { stopReason: 'end_turn', error: null }
+  if (interrupted && subtype === 'error_during_execution') {
+    return { stopReason: 'aborted', error: null }
+  }
+  return { stopReason: 'error', error: `run ended: ${subtype}` }
 }
 
 /** Reads a provider's credential, wherever the user put it. */
@@ -1378,6 +1390,7 @@ function createClaudeHarness(
     intentOf(name, input) {
       const bare = bareName(name)
       if (bare === 'request_review') return { kind: 'review', summary: summaryOf(input) }
+      if (bare === 'AskUserQuestion') return { kind: 'question' }
       const pathField = WRITE_TOOLS[name]
       if (!pathField) return null
       const path = input[pathField]

@@ -26,10 +26,9 @@ export interface PaneTypeContext {
 export interface PaneType {
   id: string
   title: string
-  // False for panes nobody asks for by name — containers, placeholders, and the
-  // mirrors of another pane's windows. Everything else is mirrored into the
-  // command palette as "open this pane", so a plugin's pane is reachable the
-  // moment it registers.
+  // False for panes nobody asks for by name — containers and placeholders.
+  // Everything else is mirrored into the command palette as "open this pane",
+  // so a plugin's pane is reachable the moment it registers.
   openable?: boolean
   // Extra words the palette matches this pane on, beyond its title.
   keywords?: string

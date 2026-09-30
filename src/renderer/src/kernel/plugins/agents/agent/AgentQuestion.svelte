@@ -28,8 +28,26 @@
   let chosen = $state<Record<string, string[]>>({})
   let typed = $state<Record<string, string>>({})
   let activeIndex = $state(0)
+  // The row the keyboard is on: an option, or — one past the last — the
+  // "something else" box.
+  let cursor = $state(0)
+  let rootEl = $state<HTMLDivElement>()
+  let otherEl = $state<HTMLInputElement>()
 
   const active = $derived(questions[Math.min(activeIndex, questions.length - 1)])
+  const otherRow = $derived(active ? active.options.length : 0)
+
+  // Take the keyboard as soon as the question is up: the agent is waiting on
+  // it, and nothing else in the pane can be done until it is answered.
+  $effect(() => {
+    queueMicrotask(() => rootEl?.focus())
+  })
+
+  // A new question starts with the keyboard on its first option.
+  $effect(() => {
+    void activeIndex
+    cursor = 0
+  })
   const answeredCount = $derived(questions.filter((entry) => answersFor(entry).length > 0).length)
   const complete = $derived(answeredCount === questions.length)
 
@@ -86,16 +104,128 @@
     onAnswer(answeredInput(input, answers))
   }
 
-  // Enter sends once every question has an answer, and otherwise moves to the
-  // one still missing — so the key does the obvious thing at every point.
-  function onKey(event: KeyboardEvent): void {
-    if (event.key !== 'Enter' || event.shiftKey) return
-    event.preventDefault()
+  /** Moves the keyboard between the options and the "something else" row, wrapping round. */
+  function moveCursor(step: number): void {
+    const rows = otherRow + 1
+    cursor = (cursor + step + rows) % rows
+    if (cursor === otherRow) queueMicrotask(() => otherEl?.focus())
+  }
+
+  /** Switches to the previous or next question, stopping at either end. */
+  function moveQuestion(step: number): void {
+    const next = activeIndex + step
+    if (next < 0 || next >= questions.length) return
+    activeIndex = next
+  }
+
+  /** A key that types a character, rather than moving, confirming or chording. */
+  function isTyping(event: KeyboardEvent): boolean {
+    return event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey
+  }
+
+  /**
+   * Enter on an option picks it, as a click would; with every question
+   * answered it sends. Anywhere else it sends, or moves to the question still
+   * missing, so the key does the obvious thing at every point.
+   */
+  function enter(): void {
+    const option = active?.options[cursor]
+    if (option && !active.multiSelect) {
+      const wasLast = activeIndex === questions.length - 1
+      pick(active, option.label)
+      if (wasLast || complete) confirm()
+      return
+    }
     confirm()
+  }
+
+  function onKey(event: KeyboardEvent): void {
+    if (!active) return
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      onDecline()
+      return
+    }
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault()
+      enter()
+      return
+    }
+    if (event.key === 'ArrowDown' || event.key === 'Tab') {
+      event.preventDefault()
+      moveCursor(event.shiftKey ? -1 : 1)
+      return
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      moveCursor(-1)
+      return
+    }
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      event.preventDefault()
+      moveQuestion(event.key === 'ArrowLeft' ? -1 : 1)
+      return
+    }
+    if (event.key === ' ') {
+      event.preventDefault()
+      const option = active.options[cursor]
+      if (option) pick(active, option.label)
+      return
+    }
+    const digit = Number(event.key)
+    if (Number.isInteger(digit) && digit >= 1 && digit <= active.options.length) {
+      event.preventDefault()
+      cursor = digit - 1
+      pick(active, active.options[cursor].label)
+      return
+    }
+    // Typing anything else is an answer of the user's own.
+    if (isTyping(event)) {
+      event.preventDefault()
+      typed = { ...typed, [active.question]: (typed[active.question] ?? '') + event.key }
+      cursor = otherRow
+      queueMicrotask(() => otherEl?.focus())
+    }
+  }
+
+  /**
+   * Keys inside the "something else" box: Enter sends, and Up or Escape go
+   * back to the options, leaving whatever was typed.
+   */
+  function onOtherKey(event: KeyboardEvent): void {
+    event.stopPropagation()
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault()
+      confirm()
+      return
+    }
+    if (event.key === 'ArrowUp' || event.key === 'Escape') {
+      event.preventDefault()
+      cursor = Math.max(otherRow - 1, 0)
+      rootEl?.focus()
+      return
+    }
+    if (event.key === 'Tab') {
+      event.preventDefault()
+      cursor = 0
+      rootEl?.focus()
+    }
+  }
+
+  /** Gives the card the keyboard again. */
+  export function focus(): void {
+    rootEl?.focus()
   }
 </script>
 
-<div class="rounded-md border border-line bg-elevated p-3" onkeydown={onKey} role="group">
+<div
+  bind:this={rootEl}
+  class="rounded-md border border-line bg-elevated p-3 outline-none"
+  tabindex="-1"
+  onkeydown={onKey}
+  role="group"
+>
   {#if questions.length > 1}
     <div class="no-scrollbar mb-2 flex items-center gap-1 overflow-x-auto">
       {#each questions as entry, index (entry.question)}
@@ -128,32 +258,45 @@
 
     <div class="mt-1.5 text-xs text-default">{active.question}</div>
 
-    <!-- Only picked options are marked, so a pointer resting over the card by
-         accident doesn't make another one look picked. -->
+    <!-- The keyboard's row is shaded and picked options carry a check; a
+         pointer resting over the card by accident marks neither. -->
     <div class="mt-2 flex flex-col">
       {#each active.options as option, optionIndex (option.label)}
         <button
-          class="flex items-baseline gap-3 rounded-md px-2 py-1.5 text-left text-xs"
-          class:bg-hover={isPicked(active, option.label)}
-          onclick={() => pick(active, option.label)}
+          class="flex items-baseline gap-3 rounded-md px-2 py-1.5 text-left text-xs outline-none"
+          class:bg-hover={cursor === optionIndex}
+          tabindex="-1"
+          onclick={() => {
+            cursor = optionIndex
+            pick(active, option.label)
+          }}
         >
           <span class="w-3 shrink-0 text-2xs text-dim">{optionIndex + 1}.</span>
           <span
             class="shrink-0 font-medium"
-            class:text-default={isPicked(active, option.label)}
-            class:text-muted={!isPicked(active, option.label)}
+            class:text-default={isPicked(active, option.label) || cursor === optionIndex}
+            class:text-muted={!isPicked(active, option.label) && cursor !== optionIndex}
           >
             {option.label}
           </span>
-          <span class="min-w-0 truncate text-dim">{option.description}</span>
+          <span class="min-w-0 flex-1 truncate text-dim">{option.description}</span>
+          {#if isPicked(active, option.label)}
+            <span class="shrink-0 self-center text-green">
+              <Check width="11" height="11" weight="bold" />
+            </span>
+          {/if}
         </button>
       {/each}
     </div>
 
     <!-- The tool promises the user an "other" that is never in the options. -->
     <input
+      bind:this={otherEl}
       class="mt-1.5 w-full rounded-md border border-line bg-input px-2 py-1 text-xs"
+      class:border-line-strong={cursor === otherRow}
       placeholder="Something else…"
+      onfocus={() => (cursor = otherRow)}
+      onkeydown={onOtherKey}
       bind:value={
         () => typed[active.question] ?? '',
         (value) => (typed = { ...typed, [active.question]: value })
@@ -171,9 +314,9 @@
   <div class="mt-2 flex items-center gap-2 border-t border-line pt-2 text-2xs text-dim">
     <span class="min-w-0 flex-1 truncate">
       {#if questions.length > 1}
-        {answeredCount}/{questions.length} answered · Enter to send
+        {answeredCount}/{questions.length} answered · ↑↓ choose · ←→ question · Enter to pick
       {:else}
-        Pick an answer, or type your own. Enter to send.
+        ↑↓ to choose, Enter to pick, or type your own · Esc to skip
       {/if}
     </span>
     <button

@@ -5,10 +5,16 @@
 // a translating proxy is a base URL that speaks the Anthropic Messages API, and
 // that is the whole of what Claude Code needs.
 
-import { describe, expect, test } from 'bun:test'
-import { modelIdsOf } from '../src/main/endpoints'
-import { endpointVariables, modelsOf } from '../src/main/agents/harnesses/claude'
+import { describe, expect, mock, test } from 'bun:test'
+import { electronStub } from './electronStub'
 import type { CustomEndpoint } from '../src/shared/agents'
+
+// The harness imports electron. Without the shared stub the real module is
+// cached, and every later file that stubs it fails (#159).
+mock.module('electron', () => electronStub)
+
+const { modelIdsOf } = await import('../src/main/endpoints')
+const { endpointVariables, modelsOf } = await import('../src/main/agents/harnesses/claude')
 
 const openrouter: CustomEndpoint = {
   id: 'openrouter',

@@ -1,7 +1,6 @@
--- Grove-managed Neovim config for the embedded editor pane. Lives at
--- ~/.config/grove/nvim (XDG_CONFIG_HOME=~/.config/grove) — for now a symlink
--- to the bundled resources/nvim/config/nvim, so the user's own ~/.config/nvim
--- is never touched. Grove owns tabs and the statusline, so nvim's chrome is
+-- Grove-managed Neovim config for the embedded editor pane. Grove starts nvim
+-- with `-u` on this file and XDG_CONFIG_HOME=~/.config/grove, so the user's own
+-- ~/.config/nvim is never touched. Grove owns tabs and the statusline, so nvim's chrome is
 -- disabled; the in-grid cmdline row stays (search/:s preview, wildmenu,
 -- hit-enter prompts).
 
@@ -40,6 +39,11 @@ vim.opt.mousescroll = 'ver:1,hor:1'
 vim.opt.clipboard = 'unnamedplus'
 -- Keep 4 context lines visible above/below the cursor when scrolling.
 vim.opt.scrolloff = 4
+-- How long nvim holds a key that starts a longer mapping before acting on it
+-- alone. nvim's own <C-W>d makes <C-w> such a key, and grove only hears a key
+-- once nvim acts on it, so this is also how long the <C-w> hint waits before
+-- its own which-key delay starts. LazyVim's value.
+vim.opt.timeoutlen = 300
 -- nvim's stock 8-column tab makes anything indented with tabs look twice as
 -- deep as the project meant it to. Two is the house style; .editorconfig and
 -- vim-sleuth both override this per project, so it only decides files that
@@ -105,6 +109,17 @@ end
 vim.api.nvim_create_autocmd('TabNew', {
   callback = function()
     vim.schedule(grove_fold_tab_page)
+  end
+})
+
+-- nvim hands every column a resize adds to the current window, so splits end
+-- up 13 columns against 161 once the pane grows. Even them out on every resize,
+-- as LazyVim does; windows with winfixwidth/winfixheight keep their size.
+vim.api.nvim_create_autocmd('VimResized', {
+  callback = function()
+    local current = vim.fn.tabpagenr()
+    vim.cmd('tabdo wincmd =')
+    vim.cmd('tabnext ' .. current)
   end
 })
 
@@ -246,6 +261,19 @@ local function acceptCopilotSuggestion()
   return true
 end
 
+-- The parsers every editor highlights with, installed by first-run setup.
+-- No 'jsonc': the main branch has no separate jsonc grammar (the json parser
+-- serves the jsonc filetype), so listing it warns "skipping unsupported
+-- language: jsonc".
+-- Every mason package, installed by mason-tool-installer. vtsls is the
+-- TypeScript server; tree-sitter-cli builds nvim-treesitter's parsers.
+local masonPackages = { 'vtsls', 'prettierd', 'eslint_d', 'stylua', 'tree-sitter-cli' }
+
+local treesitterParsers = {
+  'typescript', 'tsx', 'javascript', 'json',
+  'html', 'css', 'lua', 'vim', 'vimdoc', 'markdown', 'markdown_inline'
+}
+
 if (vim.uv or vim.loop).fs_stat(lazyEntry) then
   vim.opt.rtp:prepend(lazyPath)
   local installsPlugins = acquireInstallLock()
@@ -336,13 +364,7 @@ if (vim.uv or vim.loop).fs_stat(lazyEntry) then
         branch = 'main',
         config = function()
           local ok, ts = pcall(require, 'nvim-treesitter')
-          -- No 'jsonc': the main branch has no separate jsonc grammar (the json
-          -- parser serves the jsonc filetype), so listing it warns "skipping
-          -- unsupported language: jsonc".
-          local parsers = {
-            'typescript', 'tsx', 'javascript', 'json',
-            'html', 'css', 'lua', 'vim', 'vimdoc', 'markdown', 'markdown_inline'
-          }
+          local parsers = treesitterParsers
           -- The main branch compiles parsers with the `tree-sitter` CLI (installed
           -- via mason below). Skip when it's absent so init never errors; the CLI
           -- lands async on first launch, so also retry when mason signals done.
@@ -367,6 +389,47 @@ if (vim.uv or vim.loop).fs_stat(lazyEntry) then
       -- Git gutter signs (added/changed/removed) in the sign column. Rendered
       -- in-grid; hunk staging/preview available as keymaps.
       { 'lewis6991/gitsigns.nvim', opts = {} },
+
+      -- which-key.nvim for its group specs only: grove draws the leader overlay
+      -- itself and names each prefix from the groups registered here, by this
+      -- config or any plugin. No triggers and no presets, so which-key never
+      -- maps a key or opens its own popup.
+      {
+        'folke/which-key.nvim',
+        lazy = false,
+        opts = {
+          triggers = {},
+          plugins = {
+            marks = false,
+            registers = false,
+            spelling = { enabled = false },
+            presets = {
+              operators = false,
+              motions = false,
+              text_objects = false,
+              windows = false,
+              nav = false,
+              z = false,
+              g = false
+            }
+          },
+          spec = {
+            {
+              mode = { 'n', 'x' },
+              { '<leader>b', group = 'buffer' },
+              { '<leader>c', group = 'code' },
+              { '<leader>f', group = 'file/find' },
+              { '<leader>g', group = 'git' },
+              { '<leader>gh', group = 'hunks' },
+              { '<leader>s', group = 'search' },
+              { '<leader>t', group = 'terminal' },
+              { '<leader>u', group = 'ui' },
+              { '<leader>w', group = 'windows' },
+              { '<leader>x', group = 'diagnostics/quickfix' }
+            }
+          }
+        }
+      },
 
       -- Completion engine. blink.cmp ships a prebuilt fuzzy-matcher binary via
       -- its release tag and falls back to a Lua matcher when the download is
@@ -467,7 +530,13 @@ if (vim.uv or vim.loop).fs_stat(lazyEntry) then
             -- no formatter at all and format-on-save silently did nothing.
             svelte = { 'prettierd', 'prettier', stop_after_first = true }
           },
-          format_on_save = { timeout_ms = 1000, lsp_format = 'fallback' }
+          -- Grove's <leader>uf flips vim.g.grove_autoformat to false to pause it.
+          format_on_save = function()
+            if vim.g.grove_autoformat == false then
+              return nil
+            end
+            return { timeout_ms = 1000, lsp_format = 'fallback' }
+          end
         }
       },
 
@@ -494,22 +563,24 @@ if (vim.uv or vim.loop).fs_stat(lazyEntry) then
       -- mason-lspconfig enables them through nvim's built-in LSP registry.
       { 'williamboman/mason.nvim', opts = {} },
 
-      -- Install the external formatter/linter binaries conform and nvim-lint
-      -- shell out to (mason-lspconfig only handles LSP servers).
+      -- Install every mason package: the language servers mason-lspconfig
+      -- enables and the binaries conform and nvim-lint shell out to.
       {
         'WhoIsSethDaniel/mason-tool-installer.nvim',
         dependencies = { 'williamboman/mason.nvim' },
         opts = {
-          -- tree-sitter-cli: required by nvim-treesitter (main) to build parsers.
-          ensure_installed = { 'prettierd', 'eslint_d', 'stylua', 'tree-sitter-cli' }
+          ensure_installed = masonPackages,
+          -- First-run setup installs these itself, synchronously; a second,
+          -- start-up run beside it would race it for the same packages.
+          run_on_start = vim.env.GROVE_PROVISION ~= '1'
         }
       },
       {
         'williamboman/mason-lspconfig.nvim',
         dependencies = { 'williamboman/mason.nvim', 'neovim/nvim-lspconfig', 'saghen/blink.cmp' },
         opts = {
-          ensure_installed = { 'vtsls' },
-          automatic_installation = true,
+          -- The tool installer above installs vtsls with everything else, so
+          -- first-run setup has one installer to wait for.
           -- vtsls is the TypeScript server here. mason-lspconfig enables every
           -- installed server, so a leftover ts_ls install would attach to the
           -- same buffers — two tsservers indexing the project, doubled
@@ -560,13 +631,156 @@ if (vim.uv or vim.loop).fs_stat(lazyEntry) then
   closeLazyView()
 end
 
+-- First-run setup. Grove runs this config once in a headless nvim with
+-- GROVE_PROVISION=1 before any editor starts, and waits for it: plugins, the
+-- completion binary, mason's tools and servers and the treesitter parsers are
+-- all installed here. Editors started while those installers ran would each
+-- raise a hit-enter prompt per progress message; headless has no UI to prompt
+-- in, and the editors that follow find nothing left to install. Each step is
+-- announced on stderr as "grove-setup: <step>" for grove to show; the exit code
+-- says whether everything landed, so a failure is retried next launch.
+local provisionTimeoutMs = 600000
+
+--- Tells grove which setup step is running.
+local function announceSetupStep(step)
+  -- Headless nvim ends its own messages without a newline; start a fresh line.
+  io.stderr:write('\ngrove-setup: ' .. step .. '\n')
+end
+
+--- Whether lazy installed every declared plugin.
+local function pluginsInstalled()
+  local ok, lazy = pcall(require, 'lazy')
+  if not ok then
+    return false
+  end
+  for _, plugin in ipairs(lazy.plugins()) do
+    if not plugin._.installed then
+      return false
+    end
+  end
+  return true
+end
+
+--- Downloads blink.cmp's prebuilt fuzzy matcher. Returns whether it is there.
+local function downloadCompletionBinary()
+  local ok, download = pcall(require, 'blink.cmp.fuzzy.download')
+  if not ok then
+    return false
+  end
+  local finished = false
+  local failure = nil
+  download.ensure_downloaded(function(err)
+    failure = err
+    finished = true
+  end)
+  vim.wait(provisionTimeoutMs, function()
+    return finished
+  end, 100)
+  return finished and failure == nil
+end
+
+--- Installs every mason package. Returns whether all landed.
+local function installMasonPackages()
+  local ok, toolInstaller = pcall(require, 'mason-tool-installer')
+  if not ok then
+    return false
+  end
+  toolInstaller.check_install(false, true)
+  local registry = require('mason-registry')
+  for _, name in ipairs(masonPackages) do
+    if not registry.is_installed(name) then
+      return false
+    end
+  end
+  return true
+end
+
+--- Installs the treesitter parsers. Returns whether every one is installed.
+local function installParsers()
+  local ok, treesitter = pcall(require, 'nvim-treesitter')
+  if not ok or vim.fn.executable('tree-sitter') ~= 1 then
+    return false
+  end
+  pcall(function()
+    treesitter.install(treesitterParsers):wait(provisionTimeoutMs)
+  end)
+  local installed = treesitter.get_installed()
+  for _, parser in ipairs(treesitterParsers) do
+    if not vim.tbl_contains(installed, parser) then
+      return false
+    end
+  end
+  return true
+end
+
+--- Runs one setup step. Returns whether it succeeded, saying so on stderr if not.
+local function runSetupStep(step, run)
+  if step ~= nil then
+    announceSetupStep(step)
+  end
+  local ok, succeeded = pcall(run)
+  if ok and succeeded then
+    return true
+  end
+  io.stderr:write('\ngrove-setup failed: ' .. (step or 'Installing plugins') .. ' ' .. tostring(succeeded) .. '\n')
+  return false
+end
+
+--- Runs every setup step, then quits with an exit code saying if all landed.
+local function provision()
+  local complete = runSetupStep(nil, pluginsInstalled)
+  complete = runSetupStep('Downloading the completion engine', downloadCompletionBinary) and complete
+  complete = runSetupStep('Installing language servers and tools', installMasonPackages) and complete
+  complete = runSetupStep('Installing syntax parsers', installParsers) and complete
+  if complete then
+    vim.cmd('qall!')
+  else
+    vim.cmd('cquit! 1')
+  end
+end
+
+if vim.env.GROVE_PROVISION == '1' then
+  vim.api.nvim_create_autocmd('VimEnter', {
+    once = true,
+    callback = function()
+      -- Scheduled so mason-lspconfig and the tool installer have queued the
+      -- installs they start on entering. An error must still quit: a headless
+      -- nvim left running would hold every editor back until grove's timeout.
+      vim.schedule(function()
+        local ok, err = pcall(provision)
+        if not ok then
+          io.stderr:write(tostring(err) .. '\n')
+          vim.cmd('cquit! 1')
+        end
+      end)
+    end
+  })
+end
+
 -- Each diagnostic's message at the end of its line, in the severity's colour
 -- behind a dot, on top of the underline. Worst first where several share a line.
+-- Highlight group per vim.diagnostic.severity, for the float's dots.
+local grove_severity_highlight = {
+  [vim.diagnostic.severity.ERROR] = 'DiagnosticError',
+  [vim.diagnostic.severity.WARN] = 'DiagnosticWarn',
+  [vim.diagnostic.severity.INFO] = 'DiagnosticInfo',
+  [vim.diagnostic.severity.HINT] = 'DiagnosticHint',
+}
+
+-- The float's prefix for one diagnostic: a dot in its severity's colour.
+local function grove_diagnostic_prefix(diagnostic)
+  return '● ', grove_severity_highlight[diagnostic.severity] or 'DiagnosticInfo'
+end
+
 vim.diagnostic.config({
   underline = true,
   update_in_insert = false,
   severity_sort = true,
-  virtual_text = { spacing = 4, source = 'if_many', prefix = '●' }
+  virtual_text = { spacing = 4, source = 'if_many', prefix = '●' },
+  -- The line's diagnostics float (right-click Show Diagnostics, <C-W>d) reads
+  -- like the inline text: no "Diagnostics:" header or "1." numbering, just a
+  -- dot in each one's severity colour. Grove draws the frame around it.
+  float = { header = '', source = 'if_many', prefix = grove_diagnostic_prefix }
 })
 
 -- Push LSP/lint diagnostics to grove's native Diagnostics pane. rpcnotify(0,…)
@@ -597,6 +811,22 @@ vim.api.nvim_create_autocmd('DiagnosticChanged', {
   end
 })
 
+-- Diagnostic lists open in grove's Diagnostics pane, not a quickfix or location
+-- split: the right-click menu's "Show All Diagnostics" and any plugin or map
+-- that calls setqflist/setloclist all land there. A caller that asks for the
+-- list without opening it (open = false) still gets nvim's own.
+local function grove_diagnostics_list(original)
+  return function(opts)
+    if opts ~= nil and opts.open == false then
+      return original(opts)
+    end
+    grove_push_diagnostics()
+    vim.rpcnotify(0, 'grove_show_diagnostics')
+  end
+end
+vim.diagnostic.setqflist = grove_diagnostics_list(vim.diagnostic.setqflist)
+vim.diagnostic.setloclist = grove_diagnostics_list(vim.diagnostic.setloclist)
+
 -- Nvim's built-in LSP defaults deliberately leave `gd` as Vim's same-file
 -- declaration search and put references on `grr`. Grove's goto layer uses the
 -- conventional `gd`/`gD`/`gr` keys instead: imports follow their server target
@@ -605,6 +835,74 @@ vim.api.nvim_create_autocmd('DiagnosticChanged', {
 -- preview overlay used by ripgrep. Remove the longer global mapping so it cannot
 -- compete with the buffer-local `gr`.
 pcall(vim.keymap.del, 'n', 'grr')
+
+-- Jumps to the one location a goto request found, as nvim does itself: the
+-- origin goes on the jumplist and the tag stack, so <C-o> and <C-t> return.
+local function grove_jump_to_location(item, origin)
+  local target = item.bufnr or vim.fn.bufadd(item.filename)
+  vim.cmd("normal! m'")
+  vim.fn.settagstack(vim.fn.win_getid(origin.win), {
+    items = { { tagname = origin.tagname, from = origin.from } }
+  }, 't')
+  vim.bo[target].buflisted = true
+  vim.api.nvim_win_set_buf(origin.win, target)
+  vim.api.nvim_win_set_cursor(origin.win, { item.lnum, item.col - 1 })
+  vim._with({ win = origin.win }, function()
+    vim.cmd('normal! zv')
+  end)
+end
+
+-- A quickfix item as grove's location picker takes it. Quickfix columns are
+-- bytes, which is what the utf-8 offset encoding means, so the picker's jump
+-- lands exactly where nvim's own would.
+local function grove_location_from_item(item)
+  return {
+    path = item.filename,
+    uri = vim.uri_from_fname(item.filename),
+    line = item.lnum - 1,
+    col = item.col - 1,
+    endLine = (item.end_lnum or item.lnum) - 1,
+    endCol = (item.end_col or item.col) - 1,
+    encoding = 'utf-8'
+  }
+end
+
+-- Goto requests with several answers (merged interfaces, overloads, a symbol
+-- two servers both know) open grove's location picker, the one references use,
+-- rather than a quickfix split. One answer still jumps straight there. Wraps
+-- the functions themselves so nvim's right-click menu and plugins get it too;
+-- a caller with its own on_list or a loclist keeps nvim's behaviour.
+local function grove_goto(original, label)
+  return function(opts)
+    opts = opts or {}
+    if opts.on_list ~= nil or opts.loclist then
+      return original(opts)
+    end
+    local origin = {
+      win = vim.api.nvim_get_current_win(),
+      tagname = vim.fn.expand('<cword>'),
+      from = vim.fn.getpos('.')
+    }
+    origin.from[1] = vim.api.nvim_get_current_buf()
+    return original(vim.tbl_extend('force', opts, {
+      on_list = function(list)
+        if #list.items == 1 then
+          grove_jump_to_location(list.items[1], origin)
+          return
+        end
+        vim.rpcnotify(0, 'grove_locations', {
+          label = label,
+          symbol = origin.tagname,
+          locations = vim.tbl_map(grove_location_from_item, list.items)
+        })
+      end
+    }))
+  end
+end
+vim.lsp.buf.definition = grove_goto(vim.lsp.buf.definition, 'Definitions')
+vim.lsp.buf.declaration = grove_goto(vim.lsp.buf.declaration, 'Declarations')
+vim.lsp.buf.type_definition = grove_goto(vim.lsp.buf.type_definition, 'Type definitions')
+vim.lsp.buf.implementation = grove_goto(vim.lsp.buf.implementation, 'Implementations')
 vim.api.nvim_create_autocmd('LspAttach', {
   callback = function(args)
     vim.keymap.set('n', 'gd', vim.lsp.buf.definition, {
@@ -630,6 +928,146 @@ vim.api.nvim_create_autocmd('LspAttach', {
       pcall(vim.lsp.inlay_hint.enable, true, { bufnr = args.buf })
     end
   end
+})
+
+-- LazyVim's habit: q closes a split that shows something other than a file —
+-- git blame, help, quickfix, checkhealth, any plugin's nofile view — unless
+-- its plugin already uses q. Decided by buftype, not a filetype list, so a
+-- plugin grove doesn't know about gets it too. acwrite is left out: grove's
+-- scratch and review buffers are written like files and edited as such.
+local grove_view_buftypes = { nofile = true, nowrite = true, help = true, quickfix = true }
+
+local function grove_map_close_with_q()
+  if not grove_view_buftypes[vim.bo.buftype] then
+    return
+  end
+  if vim.fn.maparg('q', 'n', false, true).buffer == 1 then
+    return
+  end
+  -- pcall: the last window can't be closed (E444), and q then does nothing.
+  vim.keymap.set('n', 'q', function()
+    pcall(vim.cmd.close)
+  end, { buffer = true, silent = true, desc = 'Close window' })
+end
+
+vim.api.nvim_create_autocmd({ 'BufWinEnter', 'FileType' }, {
+  callback = grove_map_close_with_q
+})
+
+-- LazyVim's leader actions, as plain maps. Grove reads every <leader> map in
+-- normal and visual mode and lists it in its own overlay under the which-key
+-- group of its prefix, so these are rebindable in Keyboard Shortcuts like any
+-- plugin's maps — nothing here is specific to grove.
+
+--- Maps `<leader>` + keys in normal and visual mode.
+local function leader(keys, action, desc)
+  vim.keymap.set({ 'n', 'x' }, '<leader>' .. keys, action, { desc = desc })
+end
+
+--- Maps a UI toggle that reports which way it went.
+local function toggle(keys, label, flip)
+  vim.keymap.set('n', '<leader>' .. keys, function()
+    local state = 'off'
+    if flip() then
+      state = 'on'
+    end
+    vim.notify(label .. ' ' .. state)
+  end, { desc = 'Toggle ' .. label:lower() })
+end
+
+--- Flips a window option and returns its new value.
+local function flipWindowOption(name)
+  return function()
+    vim.wo[name] = not vim.wo[name]
+    return vim.wo[name]
+  end
+end
+
+leader('ca', vim.lsp.buf.code_action, 'Code action')
+leader('cA', function()
+  vim.lsp.buf.code_action({ context = { only = { 'source' }, diagnostics = {} } })
+end, 'Source action')
+leader('co', function()
+  vim.lsp.buf.code_action({ apply = true, context = { only = { 'source.organizeImports' }, diagnostics = {} } })
+end, 'Organize imports')
+leader('cr', vim.lsp.buf.rename, 'Rename')
+leader('cf', function()
+  require('conform').format({ lsp_format = 'fallback' })
+end, 'Format')
+leader('cc', vim.lsp.codelens.run, 'Run codelens')
+leader('cC', function()
+  vim.lsp.codelens.refresh({ bufnr = 0 })
+end, 'Refresh and show codelens')
+leader('cd', vim.diagnostic.open_float, 'Line diagnostics')
+leader('cl', '<cmd>checkhealth vim.lsp<cr>', 'LSP info')
+leader('cm', '<cmd>Mason<cr>', 'Mason')
+
+leader('gb', function()
+  require('gitsigns').blame_line({ full = true })
+end, 'Blame line')
+leader('ghs', function()
+  require('gitsigns').stage_hunk()
+end, 'Stage hunk')
+leader('ghr', function()
+  require('gitsigns').reset_hunk()
+end, 'Reset hunk')
+leader('ghS', function()
+  require('gitsigns').stage_buffer()
+end, 'Stage buffer')
+leader('ghR', function()
+  require('gitsigns').reset_buffer()
+end, 'Reset buffer')
+leader('ghp', function()
+  require('gitsigns').preview_hunk_inline()
+end, 'Preview hunk inline')
+leader('ghB', function()
+  require('gitsigns').blame()
+end, 'Blame buffer')
+
+-- LazyVim's other key for it: <leader>b is Grove's buffer group, run on its tabs.
+vim.keymap.set('n', '<leader>`', '<cmd>buffer #<cr>', { desc = 'Switch to other buffer' })
+
+toggle('uf', 'Format on save', function()
+  vim.g.grove_autoformat = vim.g.grove_autoformat == false
+  return vim.g.grove_autoformat
+end)
+toggle('us', 'Spelling', flipWindowOption('spell'))
+toggle('uw', 'Wrap', flipWindowOption('wrap'))
+toggle('ul', 'Line numbers', flipWindowOption('number'))
+toggle('uL', 'Relative numbers', flipWindowOption('relativenumber'))
+toggle('ud', 'Diagnostics', function()
+  vim.diagnostic.enable(not vim.diagnostic.is_enabled())
+  return vim.diagnostic.is_enabled()
+end)
+toggle('uh', 'Inlay hints', function()
+  local enabled = not vim.lsp.inlay_hint.is_enabled({ bufnr = 0 })
+  vim.lsp.inlay_hint.enable(enabled, { bufnr = 0 })
+  return enabled
+end)
+
+-- Grove reads the keymap on attach and on opening a file. Language servers,
+-- filetype plugins and lazy-loaded plugins map keys after that, so tell grove
+-- to read it again. Coalesced: one read however many fire in a tick.
+local grove_keymap_change_queued = false
+
+--- Asks grove to re-read the keymap, once per tick.
+local function grove_notify_keymap_changed()
+  if grove_keymap_change_queued then
+    return
+  end
+  grove_keymap_change_queued = true
+  vim.schedule(function()
+    grove_keymap_change_queued = false
+    vim.rpcnotify(0, 'grove_keymap_changed', {})
+  end)
+end
+
+vim.api.nvim_create_autocmd({ 'LspAttach', 'FileType' }, {
+  callback = grove_notify_keymap_changed
+})
+vim.api.nvim_create_autocmd('User', {
+  pattern = 'LazyLoad',
+  callback = grove_notify_keymap_changed
 })
 
 -- Mix two "#rrggbb" colors; ratio 0 = base, 1 = tint. Used to derive subtle
@@ -921,6 +1359,155 @@ end
 vim.keymap.set({ 'n', 'x', 'i' }, '<RightMouse>', grove_right_click, { desc = 'Right-click menu' })
 -- The release would otherwise extend a selection to wherever the pointer is.
 vim.keymap.set({ 'n', 'x', 'i' }, '<RightRelease>', '<Nop>')
+
+-- vim.ui.select (code actions, and any plugin asking for a choice) opens
+-- grove's picker instead of nvim's numbered inputlist, which grove can only
+-- show as a blocking prompt. Grove answers through grove_ui_select_done.
+local grove_ui_select_pending = {}
+local grove_ui_select_next_id = 0
+
+--- One select item as grove lists it. A code action the server offers but
+--- can't apply here comes with the reason, so grove can list it apart instead
+--- of burying the usable ones under "(disabled)" titles.
+local function grove_ui_select_entry(item, opts)
+  local action = type(item) == 'table' and item.action or nil
+  if opts.kind == 'codeaction' and type(action) == 'table' and action.title then
+    local entry = { label = action.title }
+    if action.disabled then
+      entry.disabled = action.disabled.reason or 'disabled'
+    end
+    return entry
+  end
+  local format_item = opts.format_item or tostring
+  return { label = format_item(item) }
+end
+
+vim.ui.select = function(items, opts, on_choice)
+  opts = opts or {}
+  local entries = {}
+  for index, item in ipairs(items) do
+    entries[index] = grove_ui_select_entry(item, opts)
+  end
+  grove_ui_select_next_id = grove_ui_select_next_id + 1
+  grove_ui_select_pending[grove_ui_select_next_id] = { items = items, on_choice = on_choice }
+  vim.rpcnotify(0, 'grove_ui_select', {
+    id = grove_ui_select_next_id,
+    prompt = opts.prompt,
+    kind = opts.kind,
+    items = entries
+  })
+end
+
+-- Hand grove's pick (a 1-based index, or nil when cancelled) to the caller.
+_G.grove_ui_select_done = function(id, index)
+  local pending = grove_ui_select_pending[id]
+  if pending == nil then
+    return
+  end
+  grove_ui_select_pending[id] = nil
+  -- Scheduled so the callback runs outside the RPC request, free to prompt again.
+  vim.schedule(function()
+    if index == nil then
+      pending.on_choice(nil, nil)
+      return
+    end
+    pending.on_choice(pending.items[index], index)
+  end)
+end
+
+-- Previews nvim opens beside the cursor without entering (hover, line
+-- diagnostics, Inspect) only close when the cursor moves. Escape in normal
+-- mode closes them too, and clears the search highlight as LazyVim's does.
+local function grove_close_previews()
+  local current = vim.api.nvim_get_current_win()
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    local config = vim.api.nvim_win_get_config(win)
+    local preview = config.relative ~= '' and win ~= current and (config.zindex or 50) < 100
+    if preview and vim.bo[vim.api.nvim_win_get_buf(win)].buftype == 'nofile' then
+      pcall(vim.api.nvim_win_close, win, false)
+    end
+  end
+end
+vim.keymap.set('n', '<Esc>', function()
+  grove_close_previews()
+  vim.cmd.nohlsearch()
+end, { desc = 'Close previews and clear search highlight' })
+
+-- :Inspect echoes its report, several lines long, so nvim stops on its
+-- hit-enter prompt to show it. The menu's Inspect opens the same report as a
+-- float at the cursor instead, gone when the cursor moves.
+local function grove_inspect_float()
+  local report = vim.api.nvim_exec2('Inspect', { output = true }).output
+  local lines = vim.split(report, '\n', { trimempty = true })
+  if #lines == 0 then
+    return
+  end
+  vim.lsp.util.open_floating_preview(lines, '', { focus_id = 'grove_inspect' })
+end
+vim.api.nvim_create_user_command('GroveInspect', grove_inspect_float, { desc = 'Inspect in a float' })
+
+-- nvim's MenuPopup autocmd only enables and disables entries, so redefining
+-- this one sticks.
+vim.cmd([[anoremenu PopUp.Inspect <Cmd>GroveInspect<CR>]])
+
+-- Fix with Agent: on a line with diagnostics, the right-click menu hands them
+-- to an agent. Grove lists the entry once per agent it could go to and reads
+-- the problem through grove_fix_context; run from nvim's own :emenu, it goes to
+-- grove as grove_fix_with_agent, for the worktree's agent.
+
+-- The cursor line's diagnostics and the code `radius` lines either side of it,
+-- or nil when the line has none.
+_G.grove_fix_context = function(radius)
+  local bufnr = vim.api.nvim_get_current_buf()
+  local line = vim.api.nvim_win_get_cursor(0)[1] - 1
+  local found = vim.diagnostic.get(bufnr, { lnum = line })
+  if #found == 0 then
+    return nil
+  end
+  local diagnostics = {}
+  for _, d in ipairs(found) do
+    diagnostics[#diagnostics + 1] = {
+      lnum = d.lnum,
+      col = d.col,
+      severity = d.severity,
+      message = d.message,
+      source = d.source
+    }
+  end
+  local first = math.max(0, line - radius)
+  local last = math.min(vim.api.nvim_buf_line_count(bufnr), line + radius + 1)
+  return {
+    path = vim.api.nvim_buf_get_name(bufnr),
+    diagnostics = diagnostics,
+    startLine = first + 1,
+    endLine = last,
+    text = table.concat(vim.api.nvim_buf_get_lines(bufnr, first, last, false), '\n')
+  }
+end
+
+_G.grove_fix_with_agent = function()
+  local context = grove_fix_context(10)
+  if context == nil then
+    return
+  end
+  vim.rpcnotify(0, 'grove_fix_with_agent', context)
+end
+
+-- First in the menu: on a line with a problem, fixing it is the likeliest ask.
+vim.cmd([[anoremenu .400 PopUp.Fix\ with\ Agent <Cmd>lua grove_fix_with_agent()<CR>]])
+vim.cmd([[anoremenu .401 PopUp.-fix- <Nop>]])
+vim.api.nvim_create_autocmd('MenuPopup', {
+  group = vim.api.nvim_create_augroup('grove.fix_with_agent', {}),
+  desc = 'Offer Fix with Agent on lines with diagnostics',
+  callback = function()
+    local line = vim.api.nvim_win_get_cursor(0)[1] - 1
+    if #vim.diagnostic.get(0, { lnum = line }) > 0 then
+      vim.cmd([[anoremenu enable PopUp.Fix\ with\ Agent]])
+      return
+    end
+    vim.cmd([[anoremenu disable PopUp.Fix\ with\ Agent]])
+  end
+})
 
 -- Run the PopUp entry grove's menu picked, in the mode the menu was opened for.
 _G.grove_run_popup_item = function(name, mode)

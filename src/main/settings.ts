@@ -101,8 +101,17 @@ export class SettingsService {
     return this.snapshot()
   }
 
-  openPath(scope: SettingScope): string | null {
-    return this.pathFor(scope)
+  /**
+   * The settings file for a scope, created empty if it does not exist yet so an
+   * editor can open and save it. Null for project scope with no repo open.
+   */
+  async ensureFile(scope: SettingScope): Promise<string | null> {
+    const path = this.pathFor(scope)
+    if (!path) return null
+    await mkdir(dirname(path), { recursive: true })
+    // 'wx' fails on an existing file, which is left exactly as it is.
+    await writeFile(path, '{}\n', { flag: 'wx' }).catch(() => {})
+    return path
   }
 
   close(): void {

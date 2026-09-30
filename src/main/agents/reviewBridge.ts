@@ -129,6 +129,7 @@ export class AgentReviewBridge {
       await this.handleReviewRequest(event, worktreePath, agent, intent.summary)
       return
     }
+    if (intent.kind !== 'write') return
     await this.raiseGated(event, worktreePath, agent, intent)
   }
 

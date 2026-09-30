@@ -23,18 +23,23 @@ import type {
   HarnessInfo,
   ImageBlock,
   ModelEntry,
+  PaneTypeInfo,
   QueuedMessage,
   ServerEventBody,
   SessionEvent,
   SessionMeta,
+  SessionNote,
   SessionSnapshot,
   SessionUpdate,
   ShellCompletion,
+  ShellOutputSnapshot,
+  ShellOutputUpdate,
   ThinkingLevel,
   ToolInfo,
   UserContentBlock
 } from '../../shared/agents'
 import { ATTACHABLE_IMAGE_TYPES } from '../../shared/agents'
+import { ShellOutputHub } from './shellOutput'
 import * as files from '../files'
 import { PARENT_LABEL } from './handoffBridge'
 import type {
@@ -44,7 +49,8 @@ import type {
   HarnessRegistry,
   HarnessRun,
   PromptAttachment,
-  SubagentIdentity
+  SubagentIdentity,
+  ToolIntent
 } from './harness'
 import { runShellCommand, type ShellResult } from './shell'
 import { completeShellLine } from './shellCompletion'
@@ -58,6 +64,8 @@ import {
   type StoredSession
 } from './store'
 import { isSubagentSession, SUBAGENT_LABEL, SubagentSessions } from './subagents'
+import { interruptedTurn } from './interruptedTurn'
+import { notesOf, tasksOf } from './notes'
 
 const BLOBS_DIR = 'blobs'
 
@@ -96,6 +104,8 @@ export interface AgentServiceOptions {
   sessionRemoved?: (session: StoredSession) => Promise<void>
   /** Push an event to the renderer. */
   publish(event: SessionEvent): void
+  /** Push what a running command printed to the renderer; off the log. */
+  publishShellOutput?: (update: ShellOutputUpdate) => void
   /** The harness to use when a session does not name one. */
   defaultHarness: () => string | undefined
   /** Where man-page completions generated for fish are kept. */
@@ -104,6 +114,7 @@ export interface AgentServiceOptions {
 
 export class AgentService {
   private runtimes = new Map<string, Runtime>()
+  private knownPaneTypes: PaneTypeInfo[] = []
 
   /**
    * The sessions standing for the agents harnesses run inside their tool calls.
@@ -114,6 +125,9 @@ export class AgentService {
     open: (parentSessionId, agent) => this.openSubagentSession(parentSessionId, agent),
     absorb: (sessionId, body) => this.absorb(sessionId, body)
   })
+
+  // What the commands agents are running have printed so far.
+  private shellOutputs = new ShellOutputHub((update) => this.options.publishShellOutput?.(update))
 
   constructor(private options: AgentServiceOptions) {}
 
@@ -239,6 +253,7 @@ export class AgentService {
     const session = await this.store.get(sessionId)
     await this.stopRun(sessionId)
     this.runtimes.delete(sessionId)
+    this.shellOutputs.forgetSession(sessionId)
     await this.store.remove(sessionId)
     if (session) await this.announceRemoval(session)
   }
@@ -253,6 +268,43 @@ export class AgentService {
     return this.store.eventsSince(sessionId, after)
   }
 
+  // ── Notes ───────────────────────────────────────────────────────
+
+  /** The session's notes list, as last saved by the user or its agent. */
+  async notes(sessionId: string): Promise<SessionNote[]> {
+    await this.store.require(sessionId)
+    return notesOf(this.store.peekEvents(sessionId))
+  }
+
+  /** Replace the session's notes list; the log keeps every version. */
+  async saveNotes(sessionId: string, notes: SessionNote[]): Promise<void> {
+    await this.store.append(sessionId, { type: 'session.notes', notes })
+  }
+
+  // ── What agents can show ────────────────────────────────────────
+
+  /** Record the panes the renderer can open, which it reports as plugins register them. */
+  setPaneTypes(types: PaneTypeInfo[]): void {
+    this.knownPaneTypes = types
+  }
+
+  /** The panes an agent may ask to open. */
+  paneTypes(): PaneTypeInfo[] {
+    return this.knownPaneTypes
+  }
+
+  // ── Running commands ────────────────────────────────────────────
+
+  /** What the session's commands have printed that the log does not have yet. */
+  shellOutput(sessionId: string): ShellOutputSnapshot[] {
+    return this.shellOutputs.snapshot(sessionId)
+  }
+
+  /** Stops a command the session is running, as Ctrl+C would. */
+  interruptShell(sessionId: string, toolUseId: string): boolean {
+    return this.shellOutputs.interrupt(sessionId, toolUseId)
+  }
+
   // ── Client events ───────────────────────────────────────────────
 
   /** Accept a batch of client events, in order. */
@@ -265,7 +317,7 @@ export class AgentService {
   private async accept(sessionId: string, event: ClientEventBody): Promise<void> {
     if (event.type === 'user.tool_confirmation') {
       await this.store.append(sessionId, event)
-      await this.answerApproval(sessionId, event.toolUseId, event.result, event.input)
+      await this.answerApproval(sessionId, event.toolUseId, event.result, event.input, event.reason)
       return
     }
     if (event.type === 'user.interrupt') {
@@ -425,12 +477,21 @@ export class AgentService {
   private async interruptRun(sessionId: string): Promise<void> {
     const run = this.runtimeOrCreate(sessionId).run
     if (!run) {
+      // A turn left open by a restart still reads as running; stopping it is
+      // closing it.
+      if (interruptedTurn(this.store.peekEvents(sessionId))) {
+        await this.settleInterruptedTurn(sessionId)
+        return
+      }
       await this.store.append(sessionId, {
         type: 'session.notice',
         message: 'Nothing to stop: this session has no run.'
       })
       return
     }
+    // A call parked on an approval would keep its card up, and the harness
+    // waiting on it, after the turn it belonged to was stopped.
+    await this.denyParkedCalls(sessionId)
     try {
       await run.interrupt()
     } catch (cause) {
@@ -589,6 +650,9 @@ export class AgentService {
   private autoDecisionFor(sessionId: string, request: ApprovalRequest): ConfirmationResult | null {
     const session = this.store.peek(sessionId)
     if (!session) return null
+    // Allowing a question unanswered runs it with no answers, which the agent
+    // reads as the user declining to answer.
+    if (this.asksTheUser(session.harness, request)) return null
     if (session.permissionMode === 'bypass') return 'allow'
     // "Don't ask again" for this tool, answered earlier in the session.
     if (session.autoApproveTools.includes(request.name)) return 'allow'
@@ -604,29 +668,47 @@ export class AgentService {
    * that names its tools differently needs no change here.
    */
   private writesAFile(harnessId: string, request: ApprovalRequest): boolean {
+    return this.intentOf(harnessId, request)?.kind === 'write'
+  }
+
+  /** Whether a call is a question for the user, as the harness itself reports it. */
+  private asksTheUser(harnessId: string, request: ApprovalRequest): boolean {
+    return this.intentOf(harnessId, request)?.kind === 'question'
+  }
+
+  /** What the session's harness makes of a call, or null when it has no opinion. */
+  private intentOf(harnessId: string, request: ApprovalRequest): ToolIntent | null {
     const descriptor = this.options.harnesses.get(harnessId)
-    if (!descriptor) return false
+    if (!descriptor) return null
     const input = (request.input as Record<string, unknown>) ?? {}
-    return descriptor.intentOf(request.name, input)?.kind === 'write'
+    return descriptor.intentOf(request.name, input)
   }
 
   /**
    * `input` is what the call should run with when the user changed it — an
    * edited command, or the answers to a call that asked them something. It
    * goes on the log as well, so the transcript shows what actually ran.
+   *
+   * A plain deny stops the turn, as it does in Claude Code: the user said no
+   * and gave nothing to try instead. A deny with a reason hands the reason to
+   * the agent and lets it carry on.
    */
   private async answerApproval(
     sessionId: string,
     toolUseId: string,
     result: ConfirmationResult,
-    input?: unknown
+    input?: unknown,
+    reason?: string
   ): Promise<void> {
     const runtime = this.runtimeOrCreate(sessionId)
     const pending = runtime.approvals.get(toolUseId)
-    if (!pending) return
+    if (!pending) {
+      // Nothing parked means nothing will ever answer — a turn the app was
+      // restarted in the middle of. Close it rather than leave it spinning.
+      if (!runtime.run) await this.settleInterruptedTurn(sessionId)
+      return
+    }
 
-    runtime.approvals.delete(toolUseId)
-    runtime.pendingApprovals = runtime.pendingApprovals.filter((id) => id !== toolUseId)
     if (result === 'always_session' || result === 'always_project') {
       await this.rememberAutoApproval(sessionId, pending.name)
     }
@@ -638,7 +720,69 @@ export class AgentService {
         input
       })
     }
-    pending.resolve({ result, input })
+    this.resolveApproval(sessionId, toolUseId, { result, input, reason })
+    if (result === 'deny' && !reason?.trim()) await this.interruptRun(sessionId)
+  }
+
+  /** Hands a parked call its decision and forgets it. */
+  private resolveApproval(sessionId: string, toolUseId: string, decision: ApprovalDecision): void {
+    const runtime = this.runtimeOrCreate(sessionId)
+    const pending = runtime.approvals.get(toolUseId)
+    if (!pending) return
+    runtime.approvals.delete(toolUseId)
+    runtime.pendingApprovals = runtime.pendingApprovals.filter((id) => id !== toolUseId)
+    pending.resolve(decision)
+  }
+
+  /**
+   * Denies every call still parked on an approval, on the log as well so the
+   * cards close. Stopping a turn is the user's answer to all of them.
+   */
+  private async denyParkedCalls(sessionId: string): Promise<void> {
+    const runtime = this.runtimeOrCreate(sessionId)
+    for (const toolUseId of [...runtime.approvals.keys()]) {
+      await this.store.append(sessionId, {
+        type: 'user.tool_confirmation',
+        toolUseId,
+        result: 'deny'
+      })
+      this.resolveApproval(sessionId, toolUseId, { result: 'deny' })
+    }
+  }
+
+  /**
+   * Closes every turn a previous run of the app left open. Called once at
+   * startup, before any run exists.
+   */
+  async settleInterruptedTurns(): Promise<void> {
+    for (const session of await this.store.list()) {
+      if (this.runtimes.get(session.id)?.run) continue
+      await this.settleInterruptedTurn(session.id)
+    }
+  }
+
+  /**
+   * Ends a turn no run is left to finish: each call it left open gets an error
+   * result saying it never ran, and the session goes idle. Does nothing when
+   * the log's last turn ended.
+   */
+  private async settleInterruptedTurn(sessionId: string): Promise<void> {
+    const openCalls = interruptedTurn(this.store.peekEvents(sessionId))
+    if (!openCalls) return
+    for (const call of openCalls) {
+      await this.store.append(sessionId, {
+        type: 'agent.tool_result',
+        toolUseId: call.toolUseId,
+        name: call.name,
+        content: 'Not run: Grove restarted before this call finished.',
+        isError: true
+      })
+    }
+    await this.store.append(sessionId, {
+      type: 'session.notice',
+      message: 'Grove restarted while this turn was running, so it was stopped.'
+    })
+    await this.absorb(sessionId, { type: 'session.status_idle', stopReason: 'aborted' })
   }
 
   private async rememberAutoApproval(sessionId: string, toolName: string): Promise<void> {
@@ -695,8 +839,16 @@ export class AgentService {
       emit: (body) => void this.absorb(sessionId, body),
       emitFrom: (agent, body) => void this.subagents.absorb(sessionId, agent, body),
       stats: (update) => void this.store.patch(sessionId, update),
+      startingStats: {
+        usage: session.usage,
+        cost: session.cost,
+        contextWindow: session.contextWindow,
+        processTotals: session.processTotals ?? null
+      },
+      startingTasks: tasksOf(this.store.peekEvents(sessionId)),
       confirm: (request) => this.requestApproval(sessionId, request),
-      storeImage: (image) => this.storeImageSync(sessionId, image)
+      storeImage: (image) => this.storeImageSync(sessionId, image),
+      shellOutput: this.shellOutputs.sinkFor(sessionId)
     })
 
     runtime.run = run
@@ -767,6 +919,7 @@ export class AgentService {
     // the tabs claiming to work forever.
     if (body.type === 'agent.tool_result') {
       await this.subagents.close(sessionId, body.toolUseId)
+      this.shellOutputs.settle(sessionId, body.toolUseId)
     }
     if (body.type === 'session.status_running') {
       runtime.status = 'running'

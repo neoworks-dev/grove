@@ -34,6 +34,14 @@ export const filesRoutes = {
       return files.listPath(worktree.path, rawPath)
     })
 
+    // Which of the paths an agent's message names are files here, so only those
+    // become links.
+    route(ctx, 'files:existing', (_e, worktreeId: string, relPaths: string[]) => {
+      const worktree = ctx.workbench.findWorktree(worktreeId)
+      if (!Array.isArray(relPaths)) return []
+      return files.existingFiles(worktree.path, relPaths)
+    })
+
     route(ctx, 'files:read', (_e, worktreeId: string, absPath: string) => {
       const worktree = ctx.workbench.findWorktree(worktreeId)
       return files.readFileContent(worktree.path, absPath)

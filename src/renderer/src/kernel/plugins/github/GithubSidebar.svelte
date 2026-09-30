@@ -19,6 +19,7 @@
   import PushPinSlashIcon from 'phosphor-svelte/lib/PushPinSlashIcon'
   import TrashIcon from 'phosphor-svelte/lib/TrashIcon'
   import ArrowsLeftRightIcon from 'phosphor-svelte/lib/ArrowsLeftRightIcon'
+  import WaveSpinner from '../../../components/WaveSpinner.svelte'
   import GithubAvatar from './GithubAvatar.svelte'
   import GithubLabelPill from './GithubLabelPill.svelte'
   import GithubLabelPicker from './GithubLabelPicker.svelte'
@@ -351,8 +352,18 @@
         )}, optionally with an agent briefed on the issue"
         onclick={startWorkOnIssue}
       >
-        <GitBranchIcon size={11} />
-        Work on this
+        {#if github.workProgress}
+          <WaveSpinner count={3} />
+        {:else}
+          <GitBranchIcon size={11} />
+        {/if}
+        {#if github.workProgress === 'worktree'}
+          Creating worktree…
+        {:else if github.workProgress === 'agent'}
+          Starting agent…
+        {:else}
+          Work on this
+        {/if}
       </button>
     </section>
   {/if}

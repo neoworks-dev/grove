@@ -214,13 +214,15 @@ export function isPendingSequence(pending: string, mappings: NvimMapping[]): boo
   if (!pending) return false
   const { count, rest } = splitCount(pending)
   if (!rest) return count.length > 0
-  // An exact <nowait> map executes before any longer map under the same prefix.
-  // Mirroring that rule prevents a stale `+gr` panel after Grove's references
-  // mapping has already opened the picker.
-  const resolvesNow = mappings.some(
-    (mapping) => mapping.lhs === rest && (mapping.nowait === true || mapping.nowait === 1)
-  )
-  if (resolvesNow) return false
+  // An exact map executes at once when it is <nowait> or nothing longer shares
+  // its prefix — even over a builtin layer it shadows. Mirroring that prevents
+  // a stale `+gr` panel after Grove's references mapping opened the picker, and
+  // a stale `+record macro` after a view's `q` map closed it.
+  const exact = mappings.find((mapping) => mapping.lhs === rest)
+  if (exact !== undefined) {
+    const nowait = exact.nowait === true || exact.nowait === 1
+    if (nowait || mapsUnder(rest, mappings).length === 0) return false
+  }
   if (PREFIX_ENTRIES[rest]) return true
   return mapsUnder(rest, mappings).length > 0
 }

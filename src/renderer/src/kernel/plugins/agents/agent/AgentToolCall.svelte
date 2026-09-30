@@ -8,6 +8,11 @@
   import CaretRight from 'phosphor-svelte/lib/CaretRight'
   import Icon from '@iconify/svelte'
   import CodeBlock from '../../../../components/CodeBlock.svelte'
+  import ShimmerText from '../../../../components/ShimmerText.svelte'
+  import { layout } from '../../../../lib/layout.svelte'
+  import { panels } from '../../../../lib/panels.svelte'
+  import { outputTail } from '../../../../lib/agents/outputTail'
+  import { shellOutputs } from '../../../../lib/agents/shellOutput.svelte'
   import { fileIcon } from '../../../../lib/icons'
   import { formatShellCommand } from '../../../../lib/shellFormat'
   import { diffLines, statsOf } from '../../../../lib/agents/diff'
@@ -108,6 +113,19 @@
 
   const resultLines = $derived(item.result.length === 0 ? [] : item.result.split('\n'))
 
+  // What the command has printed so far, when its harness streams it.
+  const LIVE_TAIL_LINES = 6
+  const liveOutput = $derived(
+    inputView === 'command' ? shellOutputs.of(sessionId, item.toolUseId) : undefined
+  )
+  const liveTail = $derived(liveOutput ? outputTail(liveOutput.text, LIVE_TAIL_LINES) : [])
+
+  /** Shows the session's commands in the bottom panel's agent terminal tab. */
+  function openAgentTerminal(): void {
+    panels.reveal('agent-shell')
+    layout.ensurePane('panel')
+  }
+
   /** The one field a `code` or `command` view is about. */
   function contentOf(view: 'code' | 'command'): string {
     const record = asRecord(input)
@@ -154,7 +172,12 @@
       >
         <CaretRight width="10" height="10" weight="bold" />
       </span>
-      <span class="shrink-0 font-semibold {STATUS_COLOR[item.status]}">{item.name}</span>
+      {#if item.status === 'running'}
+        <!-- The working bar steps aside while a call runs; the call says it is busy. -->
+        <ShimmerText text={item.name} class="shrink-0 font-semibold" />
+      {:else}
+        <span class="shrink-0 font-semibold {STATUS_COLOR[item.status]}">{item.name}</span>
+      {/if}
       {#if inputView === 'message' && message.to}
         <!-- Who the message is for reads better than the tool's arguments do. -->
         <span class="shrink-0 rounded bg-blue-soft px-1 text-blue">→ {message.to}</span>
@@ -204,7 +227,38 @@
       >{/if}
   </div>
 
-  {#if item.progress && item.status === 'running'}
+  {#if liveOutput && (item.status === 'running' || liveOutput.running)}
+    <!-- A command's last lines as it prints them; the whole of it is in the
+         session's terminal. A command sent to the background keeps this after
+         its call has returned, for as long as it runs. -->
+    <div
+      class="ml-4 mt-1 rounded border border-line bg-surface px-2 py-1 font-mono text-2xs text-dim"
+    >
+      {#each liveTail as line, index (index)}
+        <div class="truncate whitespace-pre">{line || ' '}</div>
+      {:else}
+        <div class="italic">No output yet</div>
+      {/each}
+      <div class="mt-1 flex gap-1.5 font-sans">
+        <button
+          class="rounded border border-line px-1.5 hover:bg-hover hover:text-default"
+          title="Everything this session's commands printed"
+          onclick={openAgentTerminal}
+        >
+          Open in terminal
+        </button>
+        {#if liveOutput.running}
+          <button
+            class="rounded border border-line px-1.5 hover:bg-hover hover:text-red"
+            title="Stop the command, as Ctrl+C would"
+            onclick={() => shellOutputs.interrupt(sessionId, item.toolUseId)}
+          >
+            Stop
+          </button>
+        {/if}
+      </div>
+    </div>
+  {:else if item.progress && item.status === 'running'}
     <div class="pl-4 font-mono text-2xs text-dim">{item.progress}</div>
   {/if}
 

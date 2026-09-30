@@ -9,6 +9,7 @@
 // instead of vanishing. Repeated failures within a short window are treated as
 // fatal and handed to onFatal.
 
+import { AGENT_MARK_HIGHLIGHTS_LUA } from './agentMarks'
 import { keymap } from '../keymap.svelte'
 import { keyDispatch } from '../keyDispatch'
 import { store } from '../store.svelte'
@@ -29,6 +30,7 @@ import { nvimBlockingPrompt } from './blockingPrompt'
 import { nvimPrompts } from './prompts.svelte'
 import { nvimPopupMenu } from './popupMenu.svelte'
 import { WheelAccumulator } from './wheel'
+import type { EditAction } from '../editActions'
 
 export interface NvimSessionElements {
   host: HTMLDivElement
@@ -57,6 +59,8 @@ export interface NvimSessionCallbacks {
   // Window topology changed. The owner projects floats into overlays and
   // ordinary nvim windows into Grove split leaves.
   onWindowsChanged?: (windows: NvimWindowPlacement[]) => void
+  // nvim's cursor moved to another grid: the window with focus changed.
+  onCursorGridChanged?: (grid: number) => void
 }
 
 export interface NvimSessionConfig {
@@ -80,6 +84,7 @@ vim.g.grove_theme = { palette = palette, scheme = scheme }
 if type(_G.grove_apply_theme) == 'function' then
   _G.grove_apply_theme(palette, scheme)
 end
+${AGENT_MARK_HIGHLIGHTS_LUA}
 `
 
 /** Whether nvim's cursor is in the message grid shown on the cmdline row. */
@@ -216,6 +221,31 @@ if line < 1 then line = 1 end
 vim.api.nvim_win_set_cursor(0, { line, 0 })
 vim.cmd('normal! zz^')
 return line
+`
+
+// Run an Edit-menu action the way the current mode would. Copy and cut only
+// act on a live visual selection; the rest leave whatever mode they were in.
+// Yanks go to '+' explicitly so they reach the desktop clipboard even if a user
+// config drops 'unnamedplus'.
+const EDIT_ACTION_LUA = `
+local action = ...
+local mode = vim.api.nvim_get_mode().mode
+local visual = mode == 'v' or mode == 'V' or mode == vim.keycode('<C-v>')
+if action == 'undo' then
+  vim.cmd('silent! undo')
+elseif action == 'redo' then
+  vim.cmd('silent! redo')
+elseif action == 'copy' then
+  if visual then vim.api.nvim_input('"+y') end
+elseif action == 'cut' then
+  if visual then vim.api.nvim_input('"+d') end
+elseif action == 'paste' then
+  vim.api.nvim_paste(vim.fn.getreg('+'), true, -1)
+elseif action == 'selectAll' then
+  vim.api.nvim_input('<Esc>ggVG')
+elseif action == 'find' then
+  vim.api.nvim_input('<Esc>/')
+end
 `
 
 // Resolve the buffer path and the selected line range. While in a visual mode
@@ -616,6 +646,23 @@ export class NvimCanvasSession {
     this.elements.input.focus()
   }
 
+  /** Whether keyboard focus is on this editor's input, rather than a widget beside it. */
+  ownsKeyboard(): boolean {
+    return document.activeElement === this.elements.input
+  }
+
+  /** Runs an Edit-menu action (undo, copy, …) in this editor, then gives it focus. */
+  async runEditAction(action: EditAction): Promise<void> {
+    const id = this.nvimId
+    if (!id) return
+    this.focus()
+    try {
+      await window.workbench.nvim.request(id, 'nvim_exec_lua', [EDIT_ACTION_LUA, [action]])
+    } catch {
+      // session gone
+    }
+  }
+
   // The current editor selection: buffer path, 1-based inclusive line range and
   // the selected text as the buffer has it — unsaved edits included, which is
   // what the user is looking at. Returns null when no session is live or the
@@ -893,18 +940,8 @@ export class NvimCanvasSession {
   private gridSize(): { cols: number; rows: number } {
     const { host } = this.elements
     if (!this.metrics) return { cols: 80, rows: 24 }
-    // Once ordinary nvim windows live in separate Grove leaves, the UI's outer
-    // size is their union—not the now-smaller owner leaf. Measuring every
-    // surface prevents a layout reconciliation from recursively shrinking nvim.
-    const id = this.nvimId
-    const surfaces = id ? [...document.querySelectorAll<HTMLElement>(`[data-nvim-ui="${id}"]`)] : []
-    const rects = surfaces.map((surface) => surface.getBoundingClientRect())
-    const width = rects.length
-      ? Math.max(...rects.map((rect) => rect.right)) - Math.min(...rects.map((rect) => rect.left))
-      : host.clientWidth
-    const height = rects.length
-      ? Math.max(...rects.map((rect) => rect.bottom)) - Math.min(...rects.map((rect) => rect.top))
-      : host.clientHeight
+    const width = host.clientWidth
+    const height = host.clientHeight
     // Floor so the grid fits inside the pane; the renderer then spreads the
     // sub-cell remainder across the cells (distributed edges) to reach every
     // edge, so there's no gap and no row is clipped.
@@ -924,11 +961,9 @@ export class NvimCanvasSession {
   }
 
   /**
-   * Windows drawn inside the owner pane instead of being mirrored into a Grove
-   * pane of their own — the base side of a diff, which is half of one view
-   * rather than a second editor. The pane decides which those are; the session
-   * only needs to know whether there are any, because their presence is what
-   * makes the primary window a fraction of the pane rather than all of it.
+   * nvim's windows besides the primary one, which the pane draws beside it.
+   * Their presence is what makes the primary window a fraction of the pane
+   * rather than all of it.
    */
   setEmbeddedWindows(wins: number[]): void {
     const changed =
@@ -1236,6 +1271,7 @@ export class NvimCanvasSession {
       dirty.set(gridId, { all: false, rows: new Set([grid.cursor.row]), flushed: true })
     }
     this.lastCursorGrid = cursorGrid
+    this.callbacks.onCursorGridChanged?.(cursorGrid)
   }
 
   focusWindow(win: number, focusInput = true): void {
@@ -1341,15 +1377,7 @@ export class NvimCanvasSession {
     this.pendingGridSize = null
     if (!size || !this.nvimId || this.destroyed) return
     this.lastNvimResizeAt = performance.now()
-    const id = this.nvimId
-    const resized = window.workbench.nvim.resize(id, size.cols, size.rows)
-    if (this.embeddedWindows.size === 0) return
-    // Neovim hands every column a UI resize adds to the current window, so the
-    // two halves of a diff end up 13 columns against 161 the moment the pane
-    // grows. They are one view of one file; they stay even.
-    void Promise.resolve(resized)
-      .then(() => window.workbench.nvim.request(id, 'nvim_command', ['wincmd =']))
-      .catch(() => {})
+    void window.workbench.nvim.resize(this.nvimId, size.cols, size.rows)
   }
 
   // Grove → nvim mode names, clamped to what a pane registers.

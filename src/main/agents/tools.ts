@@ -3,16 +3,18 @@
 // These used to be extensions loaded into the agent server, which meant they
 // could not call back into grove and had to reach it through files. Now they run
 // in grove's own process, so `send_message` posts on the worktree channel
-// directly and `set_phase` publishes a surface on the session's event log.
+// directly.
 //
 // Each harness adapter translates these into whatever its SDK calls a tool:
 // an in-process MCP server for Claude, `defineTool` for pi. A harness that
 // cannot host tools is given none and loses only the features they add.
 
-import type { OpenFileTarget } from '../../shared/agents'
 import type { WorktreeChatMessage } from '../../shared/types'
 import type { WorktreeChannel } from '../worktreeChannel'
 import type { GroveTool } from './harness'
+import { noteTools, type AgentNotes } from './noteTools'
+import { showTools, type AgentScreen } from './showTools'
+import { findWorktree, worktreeTools, type AgentWorktrees } from './worktreeTools'
 import { signatureOf, type AgentPeer, type AgentRoster, type AgentRuntime } from './roster'
 import {
   renderHit,
@@ -22,13 +24,6 @@ import {
   type TranscriptLine
 } from './transcript'
 
-// The surface id the intro pane watches. Changing it means changing
-// src/renderer/src/lib/intro.svelte.ts.
-const INTRO_SURFACE_ID = 'grove.intro'
-
-// Kept in step with INTRO_PHASES in src/renderer/src/lib/intro/prompt.ts.
-const INTRO_PHASES = ['explore', 'interview', 'example', 'feedback', 'config', 'done']
-
 // Agent-to-agent chatter can loop; a ceiling per minute keeps a runaway cheap.
 const MAX_SENDS_PER_MINUTE = 30
 const MINUTE_MS = 60_000
@@ -37,6 +32,12 @@ export interface GroveToolOptions {
   chat: WorktreeChannel
   /** Who else is working in this worktree, and how to reach or start one. */
   roster: AgentRoster
+  /** Each session's notes list. */
+  notes: AgentNotes
+  /** What the renderer can put on screen. */
+  screen: AgentScreen
+  /** The repository's worktrees, to list, create and spawn agents into. */
+  worktrees: AgentWorktrees
   now?: () => number
 }
 
@@ -78,129 +79,6 @@ function requestReviewTool(): GroveTool {
 }
 
 /**
- * The onboarding stepper.
- *
- * The intro pane follows a fixed set of phases. Reporting one publishes a
- * surface on the session's own event log, which is the stream the pane is
- * already watching.
- */
-function setPhaseTool(): GroveTool {
-  return {
-    name: 'set_phase',
-    summary: 'Report which onboarding phase you are entering.',
-    description:
-      'Report the onboarding phase you are entering, so the introduction page can show ' +
-      'progress. Call this as you begin each phase, not after finishing it.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        phase: {
-          type: 'string',
-          enum: INTRO_PHASES,
-          description: 'The onboarding phase you are entering.'
-        }
-      },
-      required: ['phase'],
-      additionalProperties: false
-    },
-    policy: 'allow',
-    display: { label: '{phase}', input: 'hidden', result: 'hidden' },
-
-    execute(input, context) {
-      const phase = String(input.phase)
-      context.surface(INTRO_SURFACE_ID, 'panel', {
-        kind: 'text',
-        text: phase,
-        fallbackText: phase
-      })
-      return { content: `Phase set to ${phase}.` }
-    }
-  }
-}
-
-/**
- * The editor handoff.
- *
- * An answer that names files is worth more with those files on screen, so the
- * agent can put them there itself instead of leaving the user to open each one.
- * The renderer opens them in the order given, so the first entry is the one it
- * leaves focused.
- */
-function openFilesTool(): GroveTool {
-  return {
-    name: 'open_files',
-    summary: 'Open files in the user’s editor.',
-    description:
-      'Open files in the editor the user is looking at, optionally at a line. Call this ' +
-      'whenever your answer points at code — where something is defined, where it is used, ' +
-      'what you changed — so the user lands on it instead of having to search for it. Put the ' +
-      'most relevant file first; that is the one left in view. This does not read the files, ' +
-      'so keep using your own read tools for that.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        files: {
-          type: 'array',
-          description: 'The files to open, most relevant first.',
-          items: {
-            type: 'object',
-            properties: {
-              path: {
-                type: 'string',
-                description: 'Absolute path, or relative to the workspace root.'
-              },
-              line: { type: 'number', description: 'Optional 1-based line to reveal.' }
-            },
-            required: ['path'],
-            additionalProperties: false
-          }
-        }
-      },
-      required: ['files'],
-      additionalProperties: false
-    },
-    policy: 'allow',
-    display: { label: '{files}', input: 'hidden', result: 'hidden' },
-
-    execute(input, context) {
-      const targets = openFileTargets(input.files)
-      if (targets.length === 0) return { content: 'No files to open.', isError: true }
-      context.openFiles(targets)
-      return { content: `Opened ${targets.map((target) => target.path).join(', ')}.` }
-    }
-  }
-}
-
-/** Tool inputs arrive unvalidated; entries without a usable path are dropped. */
-function openFileTargets(value: unknown): OpenFileTarget[] {
-  if (!Array.isArray(value)) return []
-  const targets: OpenFileTarget[] = []
-  for (const entry of value) {
-    const path = pathOf(entry)
-    if (path === null) continue
-    const line = lineOf(entry)
-    if (line === null) targets.push({ path })
-    else targets.push({ path, line })
-  }
-  return targets
-}
-
-function pathOf(entry: unknown): string | null {
-  if (typeof entry === 'string' && entry.length > 0) return entry
-  if (typeof entry !== 'object' || entry === null) return null
-  const path = (entry as Record<string, unknown>).path
-  if (typeof path !== 'string' || path.length === 0) return null
-  return path
-}
-
-function lineOf(entry: unknown): number | null {
-  if (typeof entry !== 'object' || entry === null) return null
-  const line = (entry as Record<string, unknown>).line
-  if (typeof line !== 'number' || !Number.isFinite(line) || line < 1) return null
-  return Math.floor(line)
-}
-
-/**
  * Talking to the other agents.
  *
  * Everything goes through the worktree's shared channel, so the user reads the
@@ -227,8 +105,9 @@ function chatTools(options: GroveToolOptions): GroveTool[] {
       "Post a message on this worktree's shared channel, which the user and every other agent " +
       'working here can read. Put an agent id in "to" (the id `list_agents` reports, not its ' +
       "title) and the message is delivered into that agent's conversation as well, interrupting " +
-      'what it is doing; leave "to" out to address the room. Use this to hand work over, ask for ' +
-      'a result, or report one back — not for routine progress.',
+      'what it is doing; leave "to" out to address the room. An id reaches an agent in another ' +
+      "worktree too, and the message is then posted on that worktree's channel as well. Use this " +
+      'to hand work over, ask for a result, or report one back — not for routine progress.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -255,12 +134,7 @@ function chatTools(options: GroveToolOptions): GroveTool[] {
       const target = await resolveAddressee(options.roster, context.workspaceRoot, addressee)
       if (target.kind === 'unknown') return target.error
 
-      await options.chat.post(
-        context.workspaceRoot,
-        { kind: 'agent', name: from, instanceId: context.sessionId },
-        text,
-        addresseeOf(target)
-      )
+      await postOnChannels(options.chat, context, from, text, target)
       if (target.kind !== 'agent') return { content: 'Posted on the channel.' }
       if (target.peer.sessionId === context.sessionId) {
         return { content: 'That is you; the message was posted on the channel only.' }
@@ -302,16 +176,36 @@ function chatTools(options: GroveToolOptions): GroveTool[] {
     description:
       'List every agent session in this worktree: the id to address it by, its title, the ' +
       'runtime it runs on, its model, and whether it is working, idle or held on a permission ' +
-      'request. Address agents by id — a title can change, an id cannot. Call this before ' +
-      'handing work over, and again when an answer is overdue.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      'request. The agent that spawned you and the ones you spawned are listed too when they ' +
+      'work in another worktree; set "all_worktrees" to list everyone in every worktree. ' +
+      'Address agents by id — a title can change, an id cannot. Call this before handing work ' +
+      'over, and again when an answer is overdue.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        all_worktrees: {
+          type: 'boolean',
+          description: 'List the agents in every worktree, not only yours. Default false.'
+        }
+      },
+      additionalProperties: false
+    },
     policy: 'allow',
     display: { label: 'agents', input: 'hidden', result: 'list' },
 
-    async execute(_input, context) {
-      const peers = await options.roster.peers(context.workspaceRoot)
-      if (peers.length === 0) return { content: 'No agents are running in this worktree.' }
-      return { content: peers.map((peer) => describePeer(peer, context.sessionId)).join('\n') }
+    async execute(input, context) {
+      const here = await options.roster.peers(context.workspaceRoot)
+      const elsewhere = await agentsElsewhere(options.roster, context, input.all_worktrees === true)
+      if (here.length === 0 && elsewhere.length === 0) {
+        return { content: 'No agents are running in this worktree.' }
+      }
+
+      const lines = here.map((peer) => describePeer(peer, context.sessionId))
+      if (elsewhere.length > 0) {
+        lines.push('In other worktrees:')
+        lines.push(...elsewhere.map((peer) => describePeerElsewhere(peer, context.sessionId)))
+      }
+      return { content: lines.join('\n') }
     }
   }
 
@@ -504,7 +398,10 @@ function spawnTool(options: GroveToolOptions): GroveTool {
       'at the end of each of its turns is delivered back to you, and it shares the worktree and ' +
       'the message channel with you. It does not see this conversation: the prompt has to carry ' +
       'everything it needs. Set `removeWhenDone` for a one-shot helper, so its conversation is ' +
-      'cleared away once it has answered.',
+      'cleared away once it has answered. Set `worktree` to start it in another worktree ' +
+      'instead — one per task, made with `create_worktree`. It works on that branch and posts ' +
+      "on that worktree's channel, but it still reports back to you, and the two of you can " +
+      'message each other by id.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -522,6 +419,12 @@ function spawnTool(options: GroveToolOptions): GroveTool {
           description:
             'Optional model id, as `list_runtimes` reports it for the chosen runtime. The ' +
             "runtime's own default is used when this is left out."
+        },
+        worktree: {
+          type: 'string',
+          description:
+            'Start it in this worktree instead of yours: a branch or path as `list_worktrees` ' +
+            'reports it.'
         },
         removeWhenDone: {
           type: 'boolean',
@@ -554,8 +457,15 @@ function spawnTool(options: GroveToolOptions): GroveTool {
       const modelError = await checkModel(options.roster, context.sessionId, harness, model)
       if (modelError) return modelError
 
+      const workspace = await spawnWorkspace(
+        options.worktrees,
+        context.workspaceRoot,
+        input.worktree
+      )
+      if ('error' in workspace) return workspace.error
+
       const peer = await options.roster.spawn({
-        workspaceRoot: context.workspaceRoot,
+        workspaceRoot: workspace.root,
         title,
         harness,
         model,
@@ -563,18 +473,47 @@ function spawnTool(options: GroveToolOptions): GroveTool {
         parentSessionId: context.sessionId,
         removeWhenDone: input.removeWhenDone === true
       })
+      let where = ''
+      if (workspace.root !== context.workspaceRoot) where = ` in ${workspace.root}`
       if (input.removeWhenDone === true) {
         return {
           content:
-            `Started "${peer.title}" on ${peer.harness}. Its answer is delivered to you and ` +
+            `Started "${peer.title}" on ${peer.harness}${where}. Its answer is delivered to you and ` +
             'the agent is removed afterwards, so do not plan on messaging it.'
         }
       }
       return {
         content:
-          `Started "${peer.title}" on ${peer.harness}. Address it as ${peer.agentId}; ` +
+          `Started "${peer.title}" on ${peer.harness}${where}. Address it as ${peer.agentId}; ` +
           'what it says at the end of each of its turns is delivered to you.'
       }
+    }
+  }
+}
+
+/**
+ * Where a spawned agent runs: the caller's worktree, or the one it named.
+ *
+ * A named worktree that does not exist is refused rather than created, so a
+ * typo cannot start a branch nobody asked for.
+ */
+async function spawnWorkspace(
+  worktrees: AgentWorktrees,
+  callerRoot: string,
+  named: unknown
+): Promise<{ root: string } | { error: { content: string; isError: true } }> {
+  const reference = stringOrNothing(named)
+  if (!reference) return { root: callerRoot }
+
+  const all = await worktrees.list()
+  const worktree = findWorktree(all, reference)
+  if (worktree) return { root: worktree.path }
+
+  const known = all.map((entry) => entry.branch).join(', ')
+  return {
+    error: {
+      content: `No worktree "${reference}". Existing: ${known}. Make one with \`create_worktree\` first.`,
+      isError: true
     }
   }
 }
@@ -643,6 +582,38 @@ function describeRuntime(runtime: AgentRuntime): string {
   return `- ${parts.join(' · ')}`
 }
 
+/**
+ * The agents outside the caller's worktree that `list_agents` shows: its
+ * relatives by default, everyone when asked.
+ */
+async function agentsElsewhere(
+  roster: AgentRoster,
+  context: { sessionId: string; workspaceRoot: string },
+  everyWorktree: boolean
+): Promise<AgentPeer[]> {
+  if (!everyWorktree) return roster.relativesElsewhere(context.sessionId)
+  const everyone = await roster.everyone()
+  return everyone.filter((peer) => peer.workspaceRoot !== context.workspaceRoot)
+}
+
+/**
+ * Posts a message on the sender's channel, and on the addressee's as well when
+ * it works in another worktree, so the user reading either sees it.
+ */
+async function postOnChannels(
+  chat: WorktreeChannel,
+  context: { sessionId: string; workspaceRoot: string },
+  from: string,
+  text: string,
+  target: Addressee
+): Promise<void> {
+  const sender = { kind: 'agent' as const, name: from, instanceId: context.sessionId }
+  await chat.post(context.workspaceRoot, sender, text, addresseeOf(target))
+  if (target.kind !== 'agent') return
+  if (target.peer.workspaceRoot === context.workspaceRoot) return
+  await chat.post(target.peer.workspaceRoot, sender, text, addresseeOf(target))
+}
+
 /** The name a message is filed under on the channel. */
 function addresseeOf(target: Addressee): string | undefined {
   if (target.kind !== 'agent') return undefined
@@ -668,6 +639,13 @@ function describePeer(peer: AgentPeer, selfSessionId: string): string {
   return `- ${parts.join(' · ')}`
 }
 
+/** A roster line for an agent in another worktree: where it is, and how it is related. */
+function describePeerElsewhere(peer: AgentPeer, selfSessionId: string): string {
+  const parts = [describePeer(peer, selfSessionId), `in ${peer.workspaceRoot}`]
+  if (peer.parentSessionId === selfSessionId) parts.push('spawned by you')
+  return parts.join(' · ')
+}
+
 function stateOf(peer: AgentPeer): string {
   if (peer.waiting) return 'held on a permission request'
   if (peer.status === 'running') return 'working'
@@ -682,5 +660,11 @@ function stringOrNothing(value: unknown): string | undefined {
 
 /** Every tool grove contributes, in the order they are offered to a harness. */
 export function groveTools(options: GroveToolOptions): GroveTool[] {
-  return [requestReviewTool(), setPhaseTool(), openFilesTool(), ...chatTools(options)]
+  return [
+    requestReviewTool(),
+    ...showTools(options.screen),
+    ...noteTools(options.notes),
+    ...chatTools(options),
+    ...worktreeTools(options.worktrees)
+  ]
 }

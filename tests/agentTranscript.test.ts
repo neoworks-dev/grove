@@ -8,6 +8,7 @@ import {
   applyEvent,
   createTranscript,
   pendingApprovals,
+  toolCallOut,
   visibleItems,
   visiblePanels,
   type TranscriptItem
@@ -76,7 +77,10 @@ describe('transcript fold', () => {
   })
 
   test('a message written mid-turn waits until the agent starts its next message', () => {
-    const steered = { type: 'user.message', content: [{ type: 'text', text: 'also this' }] } as const
+    const steered = {
+      type: 'user.message',
+      content: [{ type: 'text', text: 'also this' }]
+    } as const
     const waiting = fold([
       { type: 'user.message', content: [{ type: 'text', text: 'go' }] },
       { type: 'session.status_running' },
@@ -363,6 +367,37 @@ describe('transcript fold', () => {
     expect(pendingApprovals(state)).toEqual([])
   })
 
+  // The working bar is for the model writing; while a call is out, the call's
+  // own row says the agent is busy.
+  test('knows when the turn is out on a tool call rather than with the model', () => {
+    const state = fold([
+      { type: 'session.status_running' },
+      { type: 'agent.message_delta', text: 'Let me look.' }
+    ])
+    expect(toolCallOut(state)).toBe(false)
+
+    applyEvent(
+      state,
+      event({ type: 'agent.tool_use', toolUseId: 't1', name: 'bash', input: {}, permission: 'ask' })
+    )
+    expect(toolCallOut(state)).toBe(true)
+
+    applyEvent(state, event({ type: 'user.tool_confirmation', toolUseId: 't1', result: 'allow' }))
+    expect(toolCallOut(state)).toBe(true)
+
+    applyEvent(
+      state,
+      event({
+        type: 'agent.tool_result',
+        toolUseId: 't1',
+        name: 'bash',
+        content: '',
+        isError: false
+      })
+    )
+    expect(toolCallOut(state)).toBe(false)
+  })
+
   // The Claude adapter reports a call as the model makes it and only then learns
   // the harness wants it approved, so the same call arrives twice.
   test('a re-announced tool call becomes pending in place', () => {
@@ -512,5 +547,40 @@ describe('surfaces', () => {
     // Still in the fold, which is what lets branching back put it on screen again.
     expect(state.items.some((item) => item.kind === 'surface')).toBe(true)
     expect(visiblePanels(state)).toEqual([])
+  })
+})
+
+describe('notes and the harness plan', () => {
+  test('keep the last version of each, outside the conversation', () => {
+    const state = fold([
+      { type: 'user.message', content: [{ type: 'text', text: 'hi' }] },
+      {
+        type: 'session.notes',
+        notes: [{ id: 'n1', text: 'Ask about the API', done: false, author: 'user' }]
+      },
+      { type: 'agent.tasks', tasks: [{ id: '1', text: 'Read', status: 'in_progress' }] },
+      { type: 'agent.tasks', tasks: [{ id: '1', text: 'Read', status: 'completed' }] }
+    ])
+
+    expect(state.notes).toEqual([
+      { id: 'n1', text: 'Ask about the API', done: false, author: 'user' }
+    ])
+    expect(state.tasks).toEqual([{ id: '1', text: 'Read', status: 'completed' }])
+    // Neither is a step in the conversation, so the head is still the message.
+    expect(state.head).toBe(1)
+    expect(textsOf(visibleItems(state))).toEqual(['hi'])
+  })
+
+  test('survive clearing the conversation', () => {
+    const state = fold([
+      { type: 'user.message', content: [{ type: 'text', text: 'hi' }] },
+      {
+        type: 'session.notes',
+        notes: [{ id: 'n1', text: 'Ask about the API', done: false, author: 'user' }]
+      },
+      { type: 'session.cleared' }
+    ])
+
+    expect(state.notes).toHaveLength(1)
   })
 })

@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto'
 import { appendFile, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { AGENT_ID_LABEL, newAgentId } from './identity'
+import type { ProcessTotals } from './harness'
 import { firstPromptText, isDefaultTitle, lastMessagePreview, titleFromPrompt } from './sessionSummary'
 import type {
   EventBody,
@@ -44,6 +45,10 @@ export interface StoredSession {
   usage: Usage
   cost: number
   contextWindow: number
+  /** How much of the context window the conversation fills, when the harness reports it. */
+  contextTokens?: number
+  /** The harness process's own totals as last reported; absent until one has. */
+  processTotals?: ProcessTotals | null
   lastSeq: number
 }
 
@@ -58,6 +63,17 @@ export interface CreateRecordOptions {
   permissionMode?: AgentMode
   /** Marks the session is created with, such as the agent that spawned it. */
   labels?: Record<string, string>
+}
+
+/**
+ * How full the session's context is: what the harness reported, or, for one
+ * that reports nothing, the tokens it has sent and received.
+ */
+function contextTokensOf(session: StoredSession): number {
+  if (session.contextTokens !== undefined && session.contextTokens > 0) {
+    return session.contextTokens
+  }
+  return session.usage.inputTokens + session.usage.outputTokens
 }
 
 const META_FILE = 'meta.json'
@@ -273,7 +289,7 @@ export class SessionStore {
     messageCount: number,
     preview: SessionPreview | null
   ): SessionSnapshot {
-    const used = session.usage.inputTokens + session.usage.outputTokens
+    const used = contextTokensOf(session)
     const window = session.contextWindow
     return {
       ...SessionStore.metaOf(session, live, runtime, preview),

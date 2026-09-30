@@ -15,9 +15,10 @@ import type {
   BranchPull,
   DiffStats,
   ReviewBatch,
-  WorktreeChatMessage
+  WorktreeChatMessage,
+  WorktreeSetupState
 } from '../../../shared/types'
-import type { FileBlock, SessionEvent } from './agents/types'
+import type { FileBlock, LineAnnotation, SessionEvent, ShellOutputUpdate } from './agents/types'
 
 export interface LogLine {
   source: 'service'
@@ -31,18 +32,33 @@ import type { ColorTheme } from './themes'
 import { layout } from './layout.svelte'
 import { settings } from './settings.svelte'
 import { agentSessions } from './agents/sessions.svelte'
-import { notifyTurnEnded } from './agents/notifications'
+import { notifyAttention } from './agents/notifications'
+import { shellOutputs } from './agents/shellOutput.svelte'
 import { inlineEdit } from './inlineEdit.svelte'
 import { review } from './review.svelte'
-import { intro } from './intro.svelte'
 import { allNvimSessions } from './nvim/registry'
-import { setup } from './setup.svelte'
+import { applyPins } from './tabPins'
 
 // The two sides a tab's diff is between, as the tab names them: refs, short
 // SHAs, "working tree".
 export interface TabDiff {
   left: string
   right: string
+}
+
+// A line for the editor to bring into view once the file is loaded, and — when
+// an agent pointed at it — the range to mark from there, with its note.
+export interface RevealTarget {
+  path: string
+  line: number
+  mark?: LineMark
+}
+
+// Lines an agent pointed at: the range, its note, and remarks on single lines.
+export interface LineMark {
+  endLine: number
+  note?: string
+  annotations?: LineAnnotation[]
 }
 
 export interface EditorTab {
@@ -110,18 +126,17 @@ class WorkbenchStore {
   // worktreeId.
   worktreeChat = $state<Record<string, WorktreeChatMessage[]>>({})
 
-  // A request from the agents overview/sidebar to show a specific agent session
-  // in the Agent pane. The pane consumes it once its worktree matches, then
-  // clears it.
-  requestedAgent = $state<{ worktreeId: string; sessionId?: string } | null>(null)
-
   // Set by the fs watcher when a running agent edits a file → the Git Changes
   // sidebar highlights it.
   requestedDiffFile = $state<string | null>(null)
 
   // Set when opening a file at a specific line (ripgrep search) → the editor
   // scrolls the cursor there once the file is loaded.
-  revealTarget = $state<{ path: string; line: number } | null>(null)
+  revealTarget = $state<RevealTarget | null>(null)
+
+  // Bumped to wipe every range agents marked in the editor; the editor pane
+  // clears its marks whenever this changes.
+  agentMarksGeneration = $state(0)
 
   // One-shot request to expand/select a worktree-relative path in the file
   // explorer (breadcrumb clicks); the explorer consumes and clears it.
@@ -129,6 +144,10 @@ class WorkbenchStore {
 
   // Streamed logs keyed by worktreeId.
   logs = $state<Record<string, LogLine[]>>({})
+
+  // New worktrees whose setup commands are running or failed, keyed by
+  // worktreeId. A worktree whose setup finished has no entry.
+  worktreeSetup = $state<Record<string, WorktreeSetupState>>({})
 
   // Open editor tabs and the active tab are scoped per worktree, so each
   // worktree keeps its own set of open buffers (not synced across worktrees).
@@ -243,7 +262,7 @@ class WorkbenchStore {
     }
   }
 
-  // ── Buffer operations (leader b menu) ──────────────────────────
+  // ── Buffer operations (leader b group) ───────────────────────────
   // "Buffer" is just an open editor tab. Bulk closes act within the buffer's
   // own worktree and never touch pinned buffers.
   togglePin(path: string): void {
@@ -331,6 +350,26 @@ export function openFileAtLine(worktreeId: string, path: string, line: number): 
   store.revealTarget = { path, line }
 }
 
+/**
+ * Open a file at a location an agent pointed at, marking its lines with the
+ * agent's note above them. The mark replaces the last one, and stays until the
+ * next location is opened or `clearAgentMarks` wipes it.
+ */
+export function markLinesInEditor(
+  worktreeId: string,
+  path: string,
+  startLine: number,
+  mark: LineMark
+): void {
+  openFileInEditor(worktreeId, path)
+  store.revealTarget = { path, line: startLine, mark }
+}
+
+/** Wipe every range an agent marked in the editor. */
+export function clearAgentMarks(): void {
+  store.agentMarksGeneration += 1
+}
+
 // Queue text for insertion into the agent composer at its caret, optionally with
 // a file slice to attach to the message it becomes. The composer picks this up
 // reactively (mounted first by the caller's ensurePane) and clears it, so the
@@ -360,6 +399,7 @@ export async function openRepoResult(result: {
 }): Promise<void> {
   store.repo = result.info
   store.worktrees = result.worktrees
+  store.worktreeSetup = await window.workbench.worktrees.setupStates().catch(() => ({}))
   void refreshBranchPositions()
   void refreshBranchPulls()
   store.config = await window.workbench.config.load()
@@ -384,15 +424,6 @@ export async function openRepoResult(result: {
     await refreshWorktreeStatus(store.selectedWorktreeId)
   }
   syncWatched()
-  // Unconfigured workspace and never dismissed: offer the setup wizard in the
-  // left sidebar. introDismissed is honoured too, so a repo that finished the
-  // AGENTS.md flow before the wizard existed is not nagged about it again.
-  const needsSetup = !result.info.hasConfig || !result.info.hasAgentsFile
-  const dismissed = repoState.setupDismissed || repoState.introDismissed
-  if (needsSetup && !dismissed) {
-    await setup.begin()
-    layout.ensurePane('setup')
-  }
 }
 
 // Rebuild the per-worktree open-tab maps from persisted state, preferring the
@@ -401,6 +432,7 @@ export async function openRepoResult(result: {
 function restoreTabs(repoState: {
   openTabsByWorktree?: Record<string, string[]>
   activeTabByWorktree?: Record<string, string | null>
+  pinnedTabsByWorktree?: Record<string, string[]>
   openTabs?: string[]
   activeTabPath?: string | null
   selectedWorktreeId?: string | null
@@ -414,7 +446,8 @@ function restoreTabs(repoState: {
   if (repoState.openTabsByWorktree) {
     const tabs: Record<string, EditorTab[]> = {}
     for (const [worktreeId, paths] of Object.entries(repoState.openTabsByWorktree)) {
-      tabs[worktreeId] = paths.map((path) => toTab(worktreeId, path))
+      const restored = paths.map((path) => toTab(worktreeId, path))
+      tabs[worktreeId] = applyPins(restored, repoState.pinnedTabsByWorktree?.[worktreeId])
     }
     store.tabsByWorktree = tabs
     store.activeTabByWorktree = { ...repoState.activeTabByWorktree }
@@ -553,10 +586,10 @@ export async function selectWorktree(worktreeId: string): Promise<void> {
   syncWatched()
 }
 
-// Select a worktree and ask the Agent pane to show one of its sessions.
+/** Selects a worktree and switches the Agent pane to one of its sessions. A worktree's id is its path. */
 export async function focusAgentInPane(worktreeId: string, sessionId?: string): Promise<void> {
+  if (sessionId !== undefined) agentSessions.setActive(worktreeId, sessionId)
   await selectWorktree(worktreeId)
-  store.requestedAgent = { worktreeId, sessionId }
 }
 
 export async function refreshRuntimes(worktreeId: string): Promise<void> {
@@ -564,12 +597,34 @@ export async function refreshRuntimes(worktreeId: string): Promise<void> {
   store.services = { ...store.services, [worktreeId]: services }
 }
 
+/**
+ * Records a worktree's setup state. Finishing clears the entry; failing keeps
+ * it and says so, since the output is in the worktree's logs rather than in view.
+ */
+function noteWorktreeSetup(event: { worktreeId: string; state: WorktreeSetupState }): void {
+  const next = { ...store.worktreeSetup }
+  if (event.state === 'done') {
+    delete next[event.worktreeId]
+  } else {
+    next[event.worktreeId] = event.state
+  }
+  store.worktreeSetup = next
+  if (event.state === 'failed') {
+    store.setError('Worktree setup failed; its output is in the Logs pane.')
+  }
+}
+
 // Subscribe to streamed main-process events. Call once at app start.
 export function subscribeEvents(): void {
-  // Every session's events, so a turn that ends out of sight is flagged.
+  // Every session's events, so a turn that ends or waits on you out of sight is
+  // flagged. The flag goes first: the notification reads it.
   window.workbench.on('event:agent-event', (payload) => {
     agentSessions.noteEvent(payload as SessionEvent)
-    void notifyTurnEnded(payload as SessionEvent)
+    void notifyAttention(payload as SessionEvent)
+  })
+  // What agents' commands print as they run; off the event log.
+  window.workbench.on('event:agent-shell-output', (payload) => {
+    shellOutputs.apply(payload as ShellOutputUpdate)
   })
   window.workbench.on('event:log', (payload) => {
     const event = payload as {
@@ -583,6 +638,13 @@ export function subscribeEvents(): void {
       name: event.name,
       line: event.line
     })
+  })
+  // Worktrees made outside the sidebar, by an agent.
+  window.workbench.on('event:worktrees-changed', (payload) => {
+    store.worktrees = payload as Worktree[]
+  })
+  window.workbench.on('event:worktree-setup', (payload) => {
+    noteWorktreeSetup(payload as { worktreeId: string; state: WorktreeSetupState })
   })
   window.workbench.on('event:service-status', (payload) => {
     store.updateServiceRuntime(payload as ServiceRuntime)
@@ -633,9 +695,6 @@ export function subscribeEvents(): void {
     // An inline edit under review keeps the change in the editor overlay, so it
     // claims its own writes instead of the changes view taking over.
     if (isFile && inlineEdit.claimFsChange(event.worktreeId, event.relPath)) return
-    // An onboarding session shows AGENTS.md / example changes in the intro
-    // pane, so the git-changes sidebar must not hijack focus for them.
-    if (isFile && intro.claimFsChange(event.worktreeId, event.relPath)) return
     // Otherwise just mark the file in the Git Changes sidebar. Agent writes are
     // staged into a review batch and surfaced as one request when that batch
     // closes, so stealing focus on every individual write would fight it.

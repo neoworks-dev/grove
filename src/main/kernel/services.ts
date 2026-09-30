@@ -34,7 +34,7 @@ export interface WorkbenchService {
   requireRepo(): { repoPath: string; config: WorkbenchConfig }
   findWorktree(worktreeId: string): Worktree
   refreshWorktrees(): Promise<Worktree[]>
-  /** Re-read workbench.yaml and adopt it as the open repo's config. */
+  /** Re-read grove.config.yaml and adopt it as the open repo's config. */
   reloadConfig(): Promise<WorkbenchConfig>
   openRepo(repoPath: string): Promise<{ info: RepoInfo; worktrees: Worktree[] }>
   readonly repoPath: string | null

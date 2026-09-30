@@ -3,7 +3,15 @@
 import type { Context } from '@neoworks/extension-system'
 import { route } from '../kernel/route'
 import { registerAgentProtocol } from '../agents/protocol'
-import type { ClientEventBody, CreateSessionOptions, SessionUpdate } from '../../shared/agents'
+import { cleanNotes } from '../agents/notes'
+import { resolveLocations } from '../agents/locationAnchor'
+import type {
+  ClientEventBody,
+  CodeLocation,
+  CreateSessionOptions,
+  PaneTypeInfo,
+  SessionUpdate
+} from '../../shared/agents'
 
 export const agentRoutes = {
   name: 'main/routes/agents',
@@ -42,6 +50,23 @@ export const agentRoutes = {
     )
     route(ctx, 'agents:sendEvents', (_e, sessionId: string, events: ClientEventBody[]) =>
       ctx.agents.send(sessionId, events)
+    )
+    route(ctx, 'agents:saveNotes', (_e, sessionId: string, notes: unknown) =>
+      ctx.agents.saveNotes(sessionId, cleanNotes(notes))
+    )
+    // Output of the commands a session is running, for a view that opens mid-run.
+    route(ctx, 'agents:shellOutput', (_e, sessionId: string) => ctx.agents.shellOutput(sessionId))
+    route(ctx, 'agents:interruptShell', (_e, sessionId: string, toolUseId: string) =>
+      ctx.agents.interruptShell(sessionId, toolUseId)
+    )
+    // Where the places an agent pointed at are now, after the code moved under them.
+    route(ctx, 'agents:resolveLocations', (_e, worktreeId: string, locations: CodeLocation[]) => {
+      const worktree = ctx.workbench.findWorktree(worktreeId)
+      if (!Array.isArray(locations)) return []
+      return resolveLocations(worktree.path, locations)
+    })
+    route(ctx, 'agents:setPaneTypes', (_e, types: PaneTypeInfo[]) =>
+      ctx.agents.setPaneTypes(types)
     )
 
     // ── Composer helpers ──────────────────────────────────────────

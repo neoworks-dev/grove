@@ -3,13 +3,20 @@
   // TerminalPane, which mounts one per open terminal and keeps inactive ones
   // hidden (so their pty keeps streaming and scrollback survives tab switches).
   import { onMount, onDestroy } from 'svelte'
-  import { Terminal } from '@xterm/xterm'
+  import { Terminal, type IMarker } from '@xterm/xterm'
   import { FitAddon } from '@xterm/addon-fit'
   import { WebglAddon } from '@xterm/addon-webgl'
   import '@xterm/xterm/css/xterm.css'
   import { layout } from '../lib/layout.svelte'
   import { keymap } from '../lib/keymap.svelte'
   import { createTerminalEscapeHandler } from '../lib/terminalKeys'
+  import { cssVar, terminalTheme } from '../lib/terminalTheme'
+  import {
+    commandFromMarker,
+    commandOutput,
+    typedCommand,
+    type FailedCommand
+  } from '../lib/terminalCommands'
 
   let {
     leafId,
@@ -19,7 +26,8 @@
     onSession,
     onExit,
     onTitle,
-    onStatus
+    onStatus,
+    onCommandFailed
   }: {
     leafId: string
     worktreeId: string
@@ -31,11 +39,15 @@
     onExit: () => void
     onTitle: (title: string) => void
     onStatus?: (status: { running: boolean; exitCode?: number }) => void
+    /** A command exited non-zero; carries what it was and what it printed. */
+    onCommandFailed?: (failure: FailedCommand) => void
   } = $props()
 
   // xterm renders to its own canvas, so it scales its font from the pane's zoom
   // rather than the container CSS zoom used by DOM panes.
   const BASE_FONT_SIZE = 13
+  // What a shell reports for a command stopped by SIGINT: 128 + 2.
+  const INTERRUPTED_EXIT_CODE = 130
 
   let hostEl = $state<HTMLDivElement>()
   let term: Terminal | null = null
@@ -46,6 +58,11 @@
   let stopExit: (() => void) | null = null
   let stopTitle: (() => void) | null = null
   let observer: ResizeObserver | null = null
+  // Where the shell's prompt ended (OSC 133 B), which is where the typed command
+  // starts, and the command running since its C marker. Markers move with the
+  // scrollback, so they still point at the right lines when the command ends.
+  let promptEnd: { marker: IMarker; column: number } | null = null
+  let runningCommand: { command: string; outputStart: IMarker } | null = null
 
   // Called by the parent when this terminal becomes the active tab.
   export function focus(): void {
@@ -89,42 +106,6 @@
     })
   }
 
-  function cssVar(name: string, fallback: string): string {
-    const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
-    return value || fallback
-  }
-
-  // Derive the xterm palette from the app's theme tokens so it tracks the theme.
-  function themeColors(): Record<string, string> {
-    const fg = cssVar('--text', '#fafafa')
-    const dim = cssVar('--text-dim', '#71717a')
-    return {
-      background: cssVar('--surface', '#1c1c1e'),
-      foreground: fg,
-      cursor: fg,
-      cursorAccent: cssVar('--surface', '#1c1c1e'),
-      // The band nvim paints a Visual selection with, so selected text reads the
-      // same in a terminal as it does in the editor.
-      selectionBackground: cssVar('--border-strong', '#3f3f46'),
-      black: cssVar('--surface', '#1c1c1e'),
-      red: cssVar('--ctx-red', '#f87171'),
-      green: cssVar('--ctx-green', '#a3e635'),
-      yellow: cssVar('--ctx-amber', '#fbbf24'),
-      blue: cssVar('--ctx-blue', '#60a5fa'),
-      magenta: cssVar('--ctx-violet', '#a78bfa'),
-      cyan: '#22d3ee',
-      white: cssVar('--text-muted', '#a1a1aa'),
-      brightBlack: dim,
-      brightRed: cssVar('--ctx-red', '#f87171'),
-      brightGreen: cssVar('--ctx-green', '#a3e635'),
-      brightYellow: cssVar('--ctx-amber', '#fbbf24'),
-      brightBlue: cssVar('--ctx-blue', '#60a5fa'),
-      brightMagenta: cssVar('--ctx-violet', '#a78bfa'),
-      brightCyan: '#67e8f9',
-      brightWhite: fg
-    }
-  }
-
   /**
    * Draw the grid on the GPU instead of rebuilding a DOM row per line.
    *
@@ -156,7 +137,7 @@
       fontFamily: cssVar('--font-mono', 'monospace'),
       fontSize: BASE_FONT_SIZE * layout.fontScale(leafId),
       cursorBlink: true,
-      theme: themeColors(),
+      theme: terminalTheme(),
       allowProposedApi: true
     })
     fit = new FitAddon()
@@ -170,11 +151,7 @@
     // They drive the tab status dot; unhandled (return false) so other
     // consumers still see them.
     term.parser.registerOscHandler(133, (data) => {
-      if (data.startsWith('C')) onStatus?.({ running: true })
-      if (data.startsWith('D')) {
-        const code = Number.parseInt(data.split(';')[1] ?? '', 10)
-        onStatus?.({ running: false, exitCode: Number.isNaN(code) ? undefined : code })
-      }
+      onSemanticPrompt(data)
       return false
     })
     // Clicking back into the terminal resumes terminal mode.
@@ -186,6 +163,67 @@
     observer = new ResizeObserver(scheduleFit)
     observer.observe(hostEl)
   })
+
+  /** One OSC 133 marker: the prompt ending, a command starting, or one finishing. */
+  function onSemanticPrompt(data: string): void {
+    if (data.startsWith('B')) markPromptEnd()
+    if (data.startsWith('C')) {
+      markCommandStart(data)
+      onStatus?.({ running: true })
+    }
+    if (data.startsWith('D')) {
+      const code = Number.parseInt(data.split(';')[1] ?? '', 10)
+      const exitCode = Number.isNaN(code) ? undefined : code
+      finishCommand(exitCode)
+      onStatus?.({ running: false, exitCode })
+    }
+  }
+
+  function markPromptEnd(): void {
+    if (!term) return
+    promptEnd?.marker.dispose()
+    const marker = term.registerMarker(0)
+    if (!marker) return
+    promptEnd = { marker, column: term.buffer.active.cursorX }
+  }
+
+  /** Notes the command that starts running and the line its output starts on. */
+  function markCommandStart(data: string): void {
+    if (!term) return
+    runningCommand?.outputStart.dispose()
+    runningCommand = null
+    const outputStart = term.registerMarker(0)
+    if (!outputStart) return
+    let command = commandFromMarker(data)
+    if (command === null && promptEnd && !promptEnd.marker.isDisposed) {
+      command = typedCommand(
+        term.buffer.active,
+        { line: promptEnd.marker.line, column: promptEnd.column },
+        outputStart.line
+      )
+    }
+    runningCommand = { command: command || '', outputStart }
+  }
+
+  /** Reports a command that failed, with its output, and forgets it either way. */
+  function finishCommand(exitCode: number | undefined): void {
+    const finished = runningCommand
+    runningCommand = null
+    if (!term || !finished) return
+    const outputStart = finished.outputStart
+    if (isFailure(exitCode) && finished.command && !outputStart.isDisposed) {
+      const buffer = term.buffer.active
+      const output = commandOutput(buffer, outputStart.line, buffer.baseY + buffer.cursorY)
+      onCommandFailed?.({ command: finished.command, exitCode, output })
+    }
+    outputStart.dispose()
+  }
+
+  /** A non-zero exit, other than the 130 of a command the user stopped with Ctrl+C. */
+  function isFailure(exitCode: number | undefined): exitCode is number {
+    if (exitCode === undefined || exitCode === 0) return false
+    return exitCode !== INTERRUPTED_EXIT_CODE
+  }
 
   /**
    * The shell this view talks to: the one it was handed, or a new one.

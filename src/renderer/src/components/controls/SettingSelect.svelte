@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Select from '@neoworks-dev/ui/Select'
   import type { SettingEnumValue } from '../../../../shared/settings'
 
   let {
@@ -12,15 +13,20 @@
     onchange: (next: string) => void
     disabled?: boolean
   } = $props()
+
+  // The Select shows no selection for an empty value, so an option standing for
+  // "empty" (e.g. Automatic) is shown as the placeholder instead.
+  const emptyLabel = $derived(options.find((option) => option.value === '')?.label)
+
+  /** Forwards a pick; single-select mode always hands back one value. */
+  function pick(next: string | string[]): void {
+    if (Array.isArray(next)) {
+      return
+    }
+    onchange(next)
+  }
 </script>
 
-<select
-  class="rounded-md border border-line bg-input px-2 py-1 text-xs text-default disabled:opacity-50"
-  {value}
-  {disabled}
-  onchange={(event) => onchange(event.currentTarget.value)}
->
-  {#each options as option (option.value)}
-    <option value={option.value}>{option.label}</option>
-  {/each}
-</select>
+<div class="w-48">
+  <Select {value} {options} {disabled} placeholder={emptyLabel} onChange={pick} />
+</div>

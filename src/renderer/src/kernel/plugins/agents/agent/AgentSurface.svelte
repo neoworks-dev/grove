@@ -7,10 +7,23 @@
 
   import { renderMarkdown } from '../../../../lib/markdown'
   import { floatingCodeScrollbars } from '../../../../lib/markdownScrollbars'
-  import type { UiNode, UiTone } from '../../../../lib/agents/types'
+  import type { CodeLocation, LocationState, UiNode, UiTone } from '../../../../lib/agents/types'
+  import AgentLocations from './AgentLocations.svelte'
   import AgentSurface from './AgentSurface.svelte'
 
-  let { node }: { node: UiNode } = $props()
+  let {
+    node,
+    surfaceId = '',
+    root = '',
+    onOpenLocation
+  }: {
+    node: UiNode
+    /** The surface the node belongs to, which names a location card across renders. */
+    surfaceId?: string
+    /** The worktree the session runs in, for paths shown relative to it. */
+    root?: string
+    onOpenLocation?: (location: CodeLocation, state?: LocationState) => void
+  } = $props()
 
   const TONE_CLASS: Record<UiTone, string> = {
     normal: 'text-default',
@@ -33,16 +46,13 @@
 {#if node.kind === 'stack'}
   <div class="mb-2 flex flex-col gap-1">
     {#each node.children as child, index (index)}
-      <AgentSurface node={child} />
+      <AgentSurface node={child} surfaceId="{surfaceId}:{index}" {root} {onOpenLocation} />
     {/each}
   </div>
 {:else if node.kind === 'text'}
   <p class="mb-1 whitespace-pre-wrap text-2xs {toneClass(node.tone)}">{node.text}</p>
 {:else if node.kind === 'markdown'}
-  <div
-    class="agent-markdown prose mb-2 max-w-none text-xs text-default"
-    use:floatingCodeScrollbars
-  >
+  <div class="agent-markdown prose mb-2 max-w-none text-xs text-default" use:floatingCodeScrollbars>
     <!-- eslint-disable-next-line svelte/no-at-html-tags -->
     {@html renderMarkdown(node.text)}
   </div>
@@ -92,6 +102,15 @@
   >
 {:else if node.kind === 'divider'}
   <hr class="my-2 border-line" />
+{:else if node.kind === 'locations'}
+  <AgentLocations
+    title={node.title}
+    locations={node.locations}
+    steps={node.steps === true}
+    cardId={surfaceId}
+    {root}
+    onOpen={onOpenLocation}
+  />
 {:else if fallback}
   <p class="mb-1 whitespace-pre-wrap text-2xs text-dim">{fallback}</p>
 {/if}

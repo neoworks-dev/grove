@@ -1,5 +1,5 @@
 // What a new worktree gets beyond git's checkout: the main worktree's untracked
-// env files, and the install command its lockfile names.
+// env files.
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
 import { execSync } from 'child_process'
@@ -8,11 +8,9 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import {
   copyEnvFiles,
-  installCommand,
   isEnvFile,
   untrackedEnvFiles
 } from '../src/main/worktreeBootstrap'
-import { managerForLockfiles } from '../src/main/detect/packageManagers'
 
 let root: string
 
@@ -74,34 +72,5 @@ describe('copyEnvFiles', () => {
     expect(readFileSync(join(worktree, '.env.local'), 'utf8')).toBe('MINE=1\n')
     expect(existsSync(join(worktree, 'node_modules'))).toBe(false)
     expect(lines).toHaveLength(2)
-  })
-})
-
-describe('installCommand', () => {
-  it('uses the manager the lockfile names', async () => {
-    writeFileSync(join(root, 'package.json'), '{}')
-    writeFileSync(join(root, 'pnpm-lock.yaml'), '')
-    expect(await installCommand(root, [])).toBe('pnpm install')
-  })
-
-  it('installs nothing without a package.json or a lockfile', async () => {
-    expect(await installCommand(root, [])).toBeNull()
-    writeFileSync(join(root, 'package.json'), '{}')
-    expect(await installCommand(root, [])).toBeNull()
-  })
-
-  it('leaves it to per_worktree when that already installs', async () => {
-    writeFileSync(join(root, 'package.json'), '{}')
-    writeFileSync(join(root, 'bun.lock'), '')
-    expect(await installCommand(root, ['bun install --frozen-lockfile'])).toBeNull()
-    expect(await installCommand(root, ['echo hi'])).toBe('bun install')
-  })
-})
-
-describe('managerForLockfiles', () => {
-  it('prefers bun when several lockfiles are present', () => {
-    expect(managerForLockfiles(['package-lock.json', 'bun.lockb'])).toBe('bun')
-    expect(managerForLockfiles(['yarn.lock'])).toBe('yarn')
-    expect(managerForLockfiles(['README.md'])).toBeNull()
   })
 })

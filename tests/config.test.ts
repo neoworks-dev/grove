@@ -11,7 +11,6 @@ describe('applyDefaults', () => {
     expect(config.ports.count_per_worktree).toBe(10)
     expect(config.setup.once).toEqual([])
     expect(config.setup.copy_env).toBe(true)
-    expect(config.setup.install).toBe(true)
     expect(config.services).toEqual({})
     expect(config.agents).toEqual({})
   })

@@ -46,6 +46,7 @@
   let denyReason = $state('')
   let index = $state(0)
   let rootEl = $state<HTMLDivElement>()
+  let reasonEl = $state<HTMLTextAreaElement>()
 
   const label = $derived(labelFor(tool?.display, item.input))
 
@@ -100,6 +101,8 @@
     label: string
     detail: string
     run: () => void
+    /** Typing while this choice is selected starts the reason, as in Claude Code. */
+    takesText?: boolean
   }
 
   const choices = $derived.by<Choice[]>(() => {
@@ -122,15 +125,59 @@
     list.push({
       label: 'Deny with reason',
       detail: 'Say why, so the agent can try something else',
-      run: () => (denyReasonMode = true)
+      run: () => (denyReasonMode = true),
+      takesText: true
     })
     return list
   })
 
-  // Focus the card so the keys below reach it.
+  // Focus the card so the keys below reach it, and the reason box once it is
+  // open, so the reason can be typed without reaching for the mouse.
   $effect(() => {
-    if (!denyReasonMode) queueMicrotask(() => rootEl?.focus())
+    if (denyReasonMode) {
+      queueMicrotask(() => reasonEl?.focus())
+      return
+    }
+    queueMicrotask(() => rootEl?.focus())
   })
+
+  /** Gives the card the keyboard again, on the reason box when that is open. */
+  export function focus(): void {
+    if (denyReasonMode) {
+      reasonEl?.focus()
+      return
+    }
+    rootEl?.focus()
+  }
+
+  /** A key that types a character, rather than moving, confirming or chording. */
+  function isTyping(event: KeyboardEvent): boolean {
+    return event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey
+  }
+
+  /**
+   * Enter sends the reason and Escape goes back to the choices; Tab moves on
+   * through them, keeping what was typed. Shift+Enter is a new line.
+   */
+  function onReasonKey(event: KeyboardEvent): void {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      denyReasonMode = false
+      return
+    }
+    if (event.key === 'Tab') {
+      event.preventDefault()
+      event.stopPropagation()
+      denyReasonMode = false
+      move(event.shiftKey ? -1 : 1)
+      return
+    }
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault()
+      onDecide('deny', denyReason)
+    }
+  }
 
   function move(step: number): void {
     const count = choices.length
@@ -140,9 +187,16 @@
 
   function onKey(event: KeyboardEvent): void {
     if (denyReasonMode) return
-    if (event.key === 'ArrowDown' || event.key === 'Tab') {
+    // Tabbing onto the reason opens its box, so it can be typed straight away.
+    if (event.key === 'Tab') {
       event.preventDefault()
       move(event.shiftKey ? -1 : 1)
+      if (choices[index]?.takesText) denyReasonMode = true
+      return
+    }
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      move(1)
       return
     }
     if (event.key === 'ArrowUp') {
@@ -160,6 +214,13 @@
       event.preventDefault()
       index = digit - 1
       choices[index].run()
+      return
+    }
+    // The first character of the reason opens the box and lands in it.
+    if (choices[index]?.takesText && isTyping(event)) {
+      event.preventDefault()
+      denyReason += event.key
+      denyReasonMode = true
     }
   }
 </script>
@@ -219,9 +280,11 @@
 
   {#if denyReasonMode}
     <textarea
+      bind:this={reasonEl}
       class="mb-2 mt-2 h-16 w-full resize-none rounded-md border border-line bg-input px-2 py-1.5 text-xs"
-      placeholder="Reason for denying…"
+      placeholder="Reason for denying… Enter to send, Esc to go back"
       bind:value={denyReason}
+      onkeydown={onReasonKey}
     ></textarea>
     <div class="flex gap-2">
       <button

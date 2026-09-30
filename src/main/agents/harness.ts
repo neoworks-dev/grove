@@ -10,15 +10,16 @@
 
 import type {
   AgentMode,
+  AgentTask,
   CommandInfo,
   ConfirmationResult,
   DeliverAs,
   HarnessCapabilities,
   HarnessInfo,
   ImageBlock,
-  OpenFileTarget,
   ModelEntry,
   ServerEventBody,
+  ShowTarget,
   SkillInfo,
   ThinkingLevel,
   ToolDisplay,
@@ -26,6 +27,7 @@ import type {
   ToolPolicy,
   Usage
 } from '../../shared/agents'
+import type { ShellOutputSink } from './shellOutput'
 
 /** What a grove-owned tool needs from the session that called it. */
 export interface GroveToolContext {
@@ -33,8 +35,8 @@ export interface GroveToolContext {
   workspaceRoot: string
   /** Publish a declarative view under a surface id the renderer watches. */
   surface(surfaceId: string, slot: 'transcript' | 'panel', view: unknown): void
-  /** Ask the renderer to open files in the editor. */
-  openFiles(files: OpenFileTarget[]): void
+  /** Ask the renderer to put something else in front of the user. */
+  show(target: ShowTarget): void
 }
 
 export interface GroveToolResult {
@@ -56,6 +58,12 @@ export interface GroveTool {
   /** `ask` parks the call until grove answers it; `allow` runs straight away. */
   policy: ToolPolicy
   display?: ToolDisplay
+  /**
+   * Offer the tool up front on a runtime that otherwise hides tools behind a
+   * search. For a tool the model should reach for unprompted: one it has to go
+   * looking for first only gets used when the user names it.
+   */
+  alwaysLoad?: boolean
   execute(
     input: Record<string, unknown>,
     context: GroveToolContext
@@ -67,6 +75,35 @@ export interface SessionStats {
   usage: Usage
   cost: number
   contextWindow: number
+  /**
+   * How much of the context window the conversation fills now: the last
+   * response's whole prompt, system prompt and cached turns included, plus its
+   * output. Absent when the runtime does not say.
+   */
+  contextTokens?: number
+  /** The runtime's own process totals, for a runtime whose count restarts with its process. */
+  processTotals?: ProcessTotals
+}
+
+/**
+ * What a runtime's process has counted since it started — including anything
+ * it picked back up from an earlier process. Stored with the session so the
+ * next run can tell whether its process resumed the count or began again.
+ */
+export interface ProcessTotals {
+  /** Every token of every kind, across all models. */
+  tokens: number
+  cost: number
+}
+
+/** The session's totals as a run starts, for a runtime that counts per process. */
+export interface StartingStats {
+  usage: Usage
+  cost: number
+  /** The model's context window as last reported, or 0 when none has been. */
+  contextWindow: number
+  /** What the last process reported, or null when none has. */
+  processTotals: ProcessTotals | null
 }
 
 export interface ApprovalRequest {
@@ -139,6 +176,16 @@ export interface HarnessRunOptions {
    */
   stats(update: SessionStats): void
   /**
+   * The totals the session already had when this run started. A runtime that
+   * counts only its own process adds onto these rather than replacing them.
+   */
+  startingStats: StartingStats
+  /**
+   * The plan the session's last `agent.tasks` left, for a runtime that keeps
+   * one across runs and only reports changes to it.
+   */
+  startingTasks: AgentTask[]
+  /**
    * Park a tool call until grove decides. Adapters only call this when their
    * capabilities declare `approvals`; grove answers from the review flow, the
    * session's permission mode, or the user.
@@ -150,6 +197,13 @@ export interface HarnessRunOptions {
    * the result event it belongs to is emitted in order.
    */
   storeImage(image: PromptAttachment): ImageBlock
+  /**
+   * Report what a command the agent runs prints, as it prints it, so the user
+   * can watch it. Kept off the event log; the call's result records the output
+   * once the command is done. A harness that only learns the output at the end
+   * reports nothing here.
+   */
+  shellOutput: ShellOutputSink
 }
 
 /**
@@ -220,6 +274,8 @@ export interface HarnessOffering {
  */
 export type ToolIntent =
   | { kind: 'review'; summary: string }
+  /** The call asks the user something; only they can answer it, whatever the mode. */
+  | { kind: 'question' }
   | {
       kind: 'write'
       /** Absolute, or relative to the workspace root. */

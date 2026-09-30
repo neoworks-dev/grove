@@ -7,7 +7,7 @@ import { selectWorktree } from '../store.svelte'
 import { catalog } from './catalog.svelte'
 import { agentSessions } from './sessions.svelte'
 import type { ModelSelection } from './modelSelection'
-import type { ThinkingLevel } from './types'
+import type { ThinkingLevel, UserContentBlock } from './types'
 
 /** The harness a new session runs: the last one chosen, else the first that can actually run. */
 export function defaultSessionHarness(): string {
@@ -82,6 +82,17 @@ export async function startSessionWithTask(
   worktreePath: string,
   prompt: string
 ): Promise<string | null> {
+  return startSessionWithMessage(worktreePath, [{ type: 'text', text: prompt }])
+}
+
+/**
+ * Starts a session in a worktree on a message that can carry more than text,
+ * such as the code around a problem, and shows it in the Agent pane.
+ */
+export async function startSessionWithMessage(
+  worktreePath: string,
+  content: UserContentBlock[]
+): Promise<string | null> {
   const harness = defaultSessionHarness()
   const model = rememberedModel(harness)
   const sessionId = await agentSessions.create(worktreePath, {
@@ -94,9 +105,7 @@ export async function startSessionWithTask(
     return null
   }
   await agentSessions.open(sessionId)
-  await agentSessions.send(sessionId, [
-    { type: 'user.message', content: [{ type: 'text', text: prompt }], deliverAs: 'steer' }
-  ])
+  await agentSessions.send(sessionId, [{ type: 'user.message', content, deliverAs: 'steer' }])
   // create() made it the worktree's active session, which is what the Agent
   // pane shows once the worktree is selected.
   await selectWorktree(worktreePath)

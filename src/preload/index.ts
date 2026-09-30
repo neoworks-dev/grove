@@ -17,6 +17,7 @@ const workbench = {
     remove: (worktreeId: string, force: boolean) =>
       ipcRenderer.invoke('worktrees:remove', worktreeId, force),
     positions: () => ipcRenderer.invoke('worktrees:positions'),
+    setupStates: () => ipcRenderer.invoke('worktrees:setupStates'),
     archive: (worktreeId: string, options: unknown) =>
       ipcRenderer.invoke('worktrees:archive', worktreeId, options)
   },
@@ -186,10 +187,7 @@ const workbench = {
   config: {
     load: () => ipcRenderer.invoke('config:load'),
     exists: () => ipcRenderer.invoke('config:exists'),
-    writeSample: () => ipcRenderer.invoke('config:writeSample'),
-    detect: () => ipcRenderer.invoke('config:detect'),
-    writeServices: (services: Record<string, unknown>) =>
-      ipcRenderer.invoke('config:writeServices', services)
+    writeSample: () => ipcRenderer.invoke('config:writeSample')
   },
   services: {
     list: (worktreeId: string) => ipcRenderer.invoke('services:list', worktreeId),
@@ -223,6 +221,14 @@ const workbench = {
       ipcRenderer.invoke('agents:listEvents', sessionId, after),
     sendEvents: (sessionId: string, events: unknown) =>
       ipcRenderer.invoke('agents:sendEvents', sessionId, events),
+    saveNotes: (sessionId: string, notes: unknown) =>
+      ipcRenderer.invoke('agents:saveNotes', sessionId, notes),
+    setPaneTypes: (types: unknown) => ipcRenderer.invoke('agents:setPaneTypes', types),
+    shellOutput: (sessionId: string) => ipcRenderer.invoke('agents:shellOutput', sessionId),
+    interruptShell: (sessionId: string, toolUseId: string) =>
+      ipcRenderer.invoke('agents:interruptShell', sessionId, toolUseId),
+    resolveLocations: (worktreeId: string, locations: unknown[]) =>
+      ipcRenderer.invoke('agents:resolveLocations', worktreeId, locations),
 
     completeShell: (sessionId: string, line: string) =>
       ipcRenderer.invoke('agents:completeShell', sessionId, line),
@@ -241,6 +247,8 @@ const workbench = {
     listAll: (worktreeId: string) => ipcRenderer.invoke('files:listAll', worktreeId),
     listPath: (worktreeId: string, rawPath: string) =>
       ipcRenderer.invoke('files:listPath', worktreeId, rawPath),
+    existing: (worktreeId: string, relPaths: string[]) =>
+      ipcRenderer.invoke('files:existing', worktreeId, relPaths),
     read: (worktreeId: string, absPath: string) =>
       ipcRenderer.invoke('files:read', worktreeId, absPath),
     write: (worktreeId: string, absPath: string, content: string) =>
@@ -339,7 +347,8 @@ const workbench = {
     command: (id: string, command: string) => ipcRenderer.invoke('nvim:command', id, command),
     request: (id: string, method: string, args: unknown[]) =>
       ipcRenderer.invoke('nvim:request', id, method, args),
-    kill: (id: string) => ipcRenderer.invoke('nvim:kill', id)
+    kill: (id: string) => ipcRenderer.invoke('nvim:kill', id),
+    setupStep: (): Promise<string | null> => ipcRenderer.invoke('nvim:setupStep')
   },
   state: {
     getRepo: () => ipcRenderer.invoke('state:getRepo'),
@@ -397,7 +406,7 @@ const workbench = {
     read: () => ipcRenderer.invoke('settings:read'),
     set: (key: string, value: unknown, scope: 'user' | 'project') =>
       ipcRenderer.invoke('settings:set', key, value, scope),
-    openFile: (scope: 'user' | 'project') => ipcRenderer.invoke('settings:openFile', scope)
+    filePath: (scope: 'user' | 'project') => ipcRenderer.invoke('settings:filePath', scope)
   },
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   raiseWindow: () => ipcRenderer.invoke('window:raise'),

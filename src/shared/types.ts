@@ -12,6 +12,10 @@ export interface Worktree {
   portSlot: number // deterministic port-allocation slot
 }
 
+// Where a new worktree's setup commands stand. `done` is only ever sent as an
+// event; a worktree without a state has nothing running.
+export type WorktreeSetupState = 'running' | 'done' | 'failed'
+
 // How far a worktree's branch has moved from the base branch it is compared to.
 export interface BranchPosition {
   /** The base branch it is measured against. */
@@ -830,8 +834,6 @@ export interface WorkbenchConfig {
     per_worktree: string[]
     /** Copy untracked `.env*` files from the main worktree into a new one. */
     copy_env: boolean
-    /** Install dependencies in a new worktree with the package manager its lockfile names. */
-    install: boolean
   }
   services: Record<string, ServiceConfig>
   agents: Record<string, AgentConfig>
@@ -865,10 +867,6 @@ export interface AgentLaunchOptions {
   mode?: string
   model?: string
   effort?: string
-  // Extra text appended to the adapter's system prompt (claude only today).
-  appendSystemPrompt?: string
-  // Marks an AGENTS.md onboarding run; claude mounts the grove-intro tools.
-  intro?: boolean
 }
 
 // ── Mid-run message queue ────────────────────────────────────────
@@ -1100,19 +1098,5 @@ export interface RepoInfo {
   path: string
   name: string
   currentBranch: string
-  // No AGENTS.md/CLAUDE.md at the repo root -> offer the AGENTS.md setup stage.
-  hasAgentsFile: boolean
-  // No workbench.yaml at the repo root -> offer the config setup stage.
-  hasConfig: boolean
 }
 
-// A service entry a detector proposes for workbench.yaml. Crosses IPC so the
-// setup wizard can render proposals for the user to review and edit.
-export interface ServiceProposal extends ServiceConfig {
-  name: string
-  // Detector id, so the wizard can show where a proposal came from.
-  source: string
-  // False when the command keeps a port Grove does not control, meaning two
-  // worktrees running this service will collide.
-  usesPort: boolean
-}

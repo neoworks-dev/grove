@@ -3,8 +3,9 @@
 // single source of truth for the API exposed via preload.
 
 import { app, dialog, BrowserWindow } from 'electron'
-import { access } from 'fs/promises'
-import { join } from 'path'
+import { dirname, join } from 'path'
+import { mkdirSync } from 'fs'
+import { profileHash, profileSocketPath } from './socketPath'
 import type { Context } from '@neoworks/extension-system'
 import { mainContext } from './kernel/context'
 import { routePlugins } from './routes'
@@ -47,7 +48,6 @@ import { EventHub } from './api/events'
 import { VersionCounter } from './api/versions'
 import { AppPairing } from './api/socket/pairing'
 import { ApiSocketServer } from './api/socket/server'
-import { createHash } from 'crypto'
 import { PluginRegistry } from './plugins/loader'
 import { AiBridge } from './plugins/aiBridge'
 import { HarnessRegistry } from './agents/harness'
@@ -56,6 +56,8 @@ import { AgentService } from './agents/service'
 import { AgentReviewBridge } from './agents/reviewBridge'
 import { AgentHandoffBridge } from './agents/handoffBridge'
 import { AgentRoster } from './agents/roster'
+import type { AgentWorktrees } from './agents/worktreeTools'
+import { runSetup } from './routes/worktrees'
 import { groveSystemPrompt } from './agents/systemPrompt'
 import { groveTools } from './agents/tools'
 
@@ -152,19 +154,60 @@ const sessionStore = new SessionStore(join(app.getPath('userData'), 'agents'), (
 const agents = new AgentService({
   store: sessionStore,
   harnesses,
-  tools: () => groveTools({ chat: channel, roster: agentRoster }),
+  // The service keeps the notes and knows the renderer's panes, so the tools it
+  // runs reach back into it.
+  tools: () =>
+    groveTools({
+      chat: channel,
+      roster: agentRoster,
+      notes: agents,
+      screen: agents,
+      worktrees: agentWorktrees
+    }),
   systemPrompt: (session) => buildSystemPrompt(session),
   sessionRemoved: (session) => agentHandoffBridge.reportClosed(session),
   publish: (event) => send('event:agent-event', event),
+  publishShellOutput: (update) => send('event:agent-shell-output', update),
   defaultHarness: () => settings.get<string>('workbench.agentHarness'),
   // fish consults its bundled completions before a directory with exactly this
   // name, so a man-page git.fish cannot shadow the real one.
   shellCompletionsDir: join(app.getPath('userData'), 'fish', 'generated_completions')
 })
 
+// No run outlives the app, so a turn the last one quit in the middle of is over.
+void agents.settleInterruptedTurns()
+
 // Addresses the sessions in a worktree, delivers between them, and starts new
 // ones: what grove's inter-agent tools are built on.
 const agentRoster = new AgentRoster({ agents, harnesses })
+
+// The worktrees agents can list, create and spawn into.
+const agentWorktrees: AgentWorktrees = {
+  list: () => refreshWorktrees(),
+  create: (options) => createWorktreeForAgent(options.branch, options.base)
+}
+
+/**
+ * Checks out a new branch in a new worktree for an agent, and runs its setup.
+ *
+ * The sidebar is told as soon as the worktree exists, since nothing the user
+ * did will make it look. Unlike the dialog, the agent waits for setup: whatever
+ * it starts there next expects the dependencies to be installed.
+ */
+async function createWorktreeForAgent(branch: string, base: string | undefined): Promise<Worktree> {
+  const { repoPath, config: cfg } = requireRepo()
+  let baseBranch = base
+  if (baseBranch === undefined) baseBranch = cfg.workbench.default_base_branch
+
+  const created = await worktrees.addWorktree(repoPath, cfg, {
+    name: branch,
+    baseBranch,
+    newBranch: branch
+  })
+  send('event:worktrees-changed', await refreshWorktrees())
+  await runSetup(send, repoPath, cfg, created)
+  return created
+}
 
 /** grove's part of a session's system prompt: who it is here, and who else is. */
 async function buildSystemPrompt(session: {
@@ -172,15 +215,17 @@ async function buildSystemPrompt(session: {
   title: string
   workspaceRoot: string
 }): Promise<string> {
-  const [agentId, peers] = await Promise.all([
+  const [agentId, peers, relatives] = await Promise.all([
     agentRoster.agentIdOf(session.id),
-    agentRoster.peers(session.workspaceRoot)
+    agentRoster.peers(session.workspaceRoot),
+    agentRoster.relativesElsewhere(session.id)
   ])
   return groveSystemPrompt({
     agentId,
     title: session.title,
     workspaceRoot: session.workspaceRoot,
     peers,
+    relatives,
     harnesses: agentRoster.harnessIds()
   })
 }
@@ -219,8 +264,18 @@ const terminals = new TerminalManager(
     },
     onTitle: (id, title) => send('event:terminal-title', { id, title })
   },
-  { socketPath: join(app.getPath('userData'), 'terminals.sock') }
+  { socketPath: terminalSocketPath(app.getPath('userData')) }
 )
+
+/**
+ * The terminal daemon's socket for this profile. The daemon binds it without
+ * creating its directory, so a short fallback directory is made here.
+ */
+function terminalSocketPath(userData: string): string {
+  const path = profileSocketPath(userData, join(userData, 'terminals.sock'), 'terminals.sock')
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+  return path
+}
 
 // Session → worktree tracking so the editor API can pick the canonical
 // (most recently active) nvim session for a worktree.
@@ -250,7 +305,8 @@ const nvims = new NeovimManager({
   onNotify: (id, method, args) => {
     editorDocs.handleNotify(nvimSessionWorktrees.get(id) ?? null, method, args)
     send('event:nvim-notify', { id, method, args })
-  }
+  },
+  onSetupStep: (step) => send('event:nvim-setup', { step })
 })
 
 const pluginBroker = new PermissionBroker({
@@ -452,15 +508,15 @@ const appPairing = new AppPairing({
 let apiSocketServer: ApiSocketServer | null = null
 let apiSocketPath: string | null = null
 
-// Per-profile socket location: unix socket in a 0700 dir under userData;
-// a hashed named pipe on Windows (pipes have no fs permissions there — the
-// pairing token is the boundary).
+// Per-profile socket location: unix socket in a 0700 dir under userData (or a
+// short fallback when that path is too long for sun_path); a hashed named pipe
+// on Windows (pipes have no fs permissions there — the pairing token is the
+// boundary).
 function socketPathFor(userData: string): string {
   if (process.platform === 'win32') {
-    const hash = createHash('sha256').update(userData).digest('hex').slice(0, 12)
-    return `\\\\.\\pipe\\grove-${hash}`
+    return `\\\\.\\pipe\\grove-${profileHash(userData)}`
   }
-  return join(userData, 'sock', 'grove.sock')
+  return profileSocketPath(userData, join(userData, 'sock', 'grove.sock'), 'grove.sock')
 }
 
 function startApiSocket(): void {
@@ -517,21 +573,6 @@ async function refreshWorktrees(): Promise<Worktree[]> {
   return context.worktrees
 }
 
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await access(path)
-    return true
-  } catch {
-    return false
-  }
-}
-
-// Any agent-instruction file at the repo root suppresses the intro page.
-async function hasAgentsFile(root: string): Promise<boolean> {
-  if (await pathExists(join(root, 'AGENTS.md'))) return true
-  return pathExists(join(root, 'CLAUDE.md'))
-}
-
 // Open a repo: validate, load config, remember it, list worktrees.
 async function openRepo(repoPath: string): Promise<{
   info: RepoInfo
@@ -554,9 +595,7 @@ async function openRepo(repoPath: string): Promise<{
     info: {
       path: root,
       name: root.split('/').pop() || root,
-      currentBranch: await git.currentBranch(root),
-      hasAgentsFile: await hasAgentsFile(root),
-      hasConfig: await config.configExists(root)
+      currentBranch: await git.currentBranch(root)
     },
     worktrees: list
   }

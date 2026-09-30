@@ -4,6 +4,7 @@ import type { Context } from '@neoworks/extension-system'
 import { route } from '../kernel/route'
 import * as worktrees from '../worktrees'
 import { buildWorktreeEnv, spawnEnv } from '../env'
+import { nvimSetupStep } from '../nvimSetup'
 
 export const nvimRoutes = {
   name: 'main/routes/nvim',
@@ -60,5 +61,7 @@ export const nvimRoutes = {
       ctx.nvim.manager.request(id, method, args)
     )
     route(ctx, 'nvim:kill', (_e, id: string) => ctx.nvim.manager.kill(id))
+    // Lets a pane that mounts mid-setup show it; event:nvim-setup follows it.
+    route(ctx, 'nvim:setupStep', () => nvimSetupStep())
   }
 }

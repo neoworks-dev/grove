@@ -26,7 +26,6 @@
   import PlusIcon from 'phosphor-svelte/lib/PlusIcon'
   import XIcon from 'phosphor-svelte/lib/XIcon'
 
-  let { leafId }: { leafId: string } = $props()
 
   let filter = $state('')
 

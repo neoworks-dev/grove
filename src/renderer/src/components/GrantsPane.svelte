@@ -14,7 +14,6 @@
     fsScopes: string[]
   }
 
-  let { leafId }: { leafId: string } = $props()
 
   let grants = $state<GrantSummary[]>([])
   let query = $state('')

@@ -155,14 +155,15 @@ export async function fetchStatus(repoPath: string): Promise<GithubStatus> {
 
 // Which optional selections a token allows changes only when the token does, so
 // the probes run once per repository per session.
-const capabilityCache = new Map<string, GithubCapabilities>()
+const capabilityCache = new Map<string, Omit<GithubCapabilities, 'notifications'>>()
 
 /** Nothing extra: what a probe run that never got an answer has to report. */
 const NO_CAPABILITIES: GithubCapabilities = {
   projects: false,
   issueTypes: false,
   subIssues: false,
-  linkedBranches: false
+  linkedBranches: false,
+  notifications: false
 }
 
 /**
@@ -225,12 +226,20 @@ query($owner: String!, $name: String!) {
  * traffic GitHub's secondary limiter exists to refuse.
  */
 export async function fetchCapabilities(repoPath: string): Promise<GithubCapabilities> {
+  const probed = await probeCapabilities(repoPath)
+  return { ...probed, notifications: await canChangeSubscriptions(repoPath) }
+}
+
+/** The selections the queries may make, probed once per repository per session. */
+async function probeCapabilities(
+  repoPath: string
+): Promise<Omit<GithubCapabilities, 'notifications'>> {
   const cached = capabilityCache.get(repoPath)
   if (cached) return cached
   const repo = await repoRef(repoPath)
   const [owner, name] = repo.nameWithOwner.split('/')
   try {
-    const capabilities: GithubCapabilities = {
+    const capabilities: Omit<GithubCapabilities, 'notifications'> = {
       projects: await probeSelection(repoPath, owner, name, 'projectsV2(first: 1) { totalCount }'),
       issueTypes: await probeSelection(
         repoPath,
@@ -258,6 +267,52 @@ export async function fetchCapabilities(repoPath: string): Promise<GithubCapabil
     // it just loads without the metadata nobody could confirm was there.
     return NO_CAPABILITIES
   }
+}
+
+/**
+ * The scopes a classic token was granted, read off the `X-OAuth-Scopes` header
+ * of an `gh api --include` response. Null when there is no such header, which
+ * is how fine-grained and app tokens answer: they have permissions, not scopes,
+ * and the header cannot say what they allow.
+ */
+export function grantedScopes(response: string): string[] | null {
+  const headerEnd = response.search(/\r?\n\r?\n/)
+  let head = response
+  if (headerEnd >= 0) head = response.slice(0, headerEnd)
+  for (const line of head.split(/\r?\n/)) {
+    const match = /^x-oauth-scopes:(.*)$/i.exec(line)
+    if (!match) continue
+    return match[1]
+      .split(',')
+      .map((scope) => scope.trim())
+      .filter((scope) => scope.length > 0)
+  }
+  return null
+}
+
+// Once the scope is there it stays for the session. While it is missing it is
+// asked again on every refresh, so a `gh auth refresh -s notifications` run in a
+// terminal shows up when the user comes back to the window.
+let notificationsScopeGranted = false
+
+/**
+ * Whether this token may change subscriptions. gh's default token lacks the
+ * `notifications` scope, and the mutation fails only after being pressed, so
+ * the pane asks first. A token that reports no scopes at all, or a check that
+ * could not be made, is not a no: the attempt then says what went wrong.
+ */
+async function canChangeSubscriptions(repoPath: string): Promise<boolean> {
+  if (notificationsScopeGranted) return true
+  let scopes: string[] | null
+  try {
+    // rate_limit is the one call that does not count against the rate limit.
+    scopes = grantedScopes(await runGh(repoPath, ['api', '--include', 'rate_limit']))
+  } catch {
+    return true
+  }
+  if (scopes === null) return true
+  notificationsScopeGranted = scopes.includes('notifications')
+  return notificationsScopeGranted
 }
 
 // Sub-issues cap at 100 like every other connection, and a tracking issue with
@@ -1057,7 +1112,11 @@ mutation($id: ID!, $state: SubscriptionState!) {
  * a real failure should still read as itself.
  */
 export function scopeHint(error: Error, scope: string, action: string): Error {
-  if (!error.message.includes('INSUFFICIENT_SCOPES')) return error
+  // The API's error type, or gh's own rewording of it.
+  const missingScope =
+    error.message.includes('INSUFFICIENT_SCOPES') ||
+    error.message.includes('not been granted the required scopes')
+  if (!missingScope) return error
   return new Error(`Your GitHub token cannot ${action}. Run: gh auth refresh -s ${scope}`)
 }
 

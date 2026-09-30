@@ -19,14 +19,27 @@ import {
   relationshipFields,
   scopeHint,
   graphqlFailure,
+  grantedScopes,
   toReviewThread,
   type ThreadNode
 } from '../src/main/githubDashboard'
 
 // What a token with nothing extra granted can ask for, which is the case the
 // optional selections exist to protect.
-const PLAIN = { projects: false, issueTypes: false, subIssues: false, linkedBranches: false }
-const FULL = { projects: true, issueTypes: true, subIssues: true, linkedBranches: true }
+const PLAIN = {
+  projects: false,
+  issueTypes: false,
+  subIssues: false,
+  linkedBranches: false,
+  notifications: false
+}
+const FULL = {
+  projects: true,
+  issueTypes: true,
+  subIssues: true,
+  linkedBranches: true,
+  notifications: true
+}
 
 describe('dashboardQuery', () => {
   it('asks for open items only under the open filter', () => {
@@ -225,6 +238,17 @@ describe('scopeHint', () => {
     )
   })
 
+  it("recognises gh's own wording of a missing scope", () => {
+    // What gh 2.x prints for updateSubscription with its default token (#57).
+    const raw = new Error(
+      "gh api graphql -f query=mutation failed: gh: Your token has not been granted the required scopes to execute this query. The 'updateSubscription' field requires one of the following scopes: ['notifications'], but your token has only been granted the: ['admin:org', 'gist', 'repo', 'workflow'] scopes. Please modify your token's scopes at: https://github.com/settings/tokens."
+    )
+    const hinted = scopeHint(raw, 'notifications', 'change what it watches')
+    expect(hinted.message).toBe(
+      'Your GitHub token cannot change what it watches. Run: gh auth refresh -s notifications'
+    )
+  })
+
   it('leaves a real failure alone', () => {
     const raw = new Error('gh issue close failed: could not resolve to an Issue')
     expect(scopeHint(raw, 'notifications', 'x')).toBe(raw)
@@ -383,5 +407,42 @@ describe('graphqlFailure', () => {
   it('leaves a message that is not gh echoing a command alone', () => {
     const rewritten = new Error('GitHub rate limit: this token is out of requests.')
     expect(graphqlFailure(rewritten)).toBe(rewritten)
+  })
+})
+
+describe('grantedScopes', () => {
+  const response = (scopesLine: string): string =>
+    [
+      'HTTP/2.0 200 OK',
+      'Content-Type: application/json',
+      scopesLine,
+      'X-Ratelimit-Limit: 5000',
+      '',
+      '{"resources":{}}'
+    ].join('\r\n')
+
+  it("reads a classic token's scopes off the response header", () => {
+    expect(grantedScopes(response('X-Oauth-Scopes: admin:org, gist, repo, workflow'))).toEqual([
+      'admin:org',
+      'gist',
+      'repo',
+      'workflow'
+    ])
+  })
+
+  it("tells gh's default token apart from one with notifications (#57)", () => {
+    expect(grantedScopes(response('X-Oauth-Scopes: repo, workflow'))).not.toContain('notifications')
+    expect(grantedScopes(response('X-OAuth-Scopes: repo, notifications'))).toContain(
+      'notifications'
+    )
+  })
+
+  it('says nothing for a token that reports no scopes', () => {
+    expect(grantedScopes(response('X-Accepted-Oauth-Scopes: repo'))).toBeNull()
+  })
+
+  it('does not read a header name out of the body', () => {
+    const body = ['HTTP/2.0 200 OK', '', 'X-Oauth-Scopes: notifications'].join('\n')
+    expect(grantedScopes(body)).toBeNull()
   })
 })

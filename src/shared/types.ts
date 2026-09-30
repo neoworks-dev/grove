@@ -474,6 +474,8 @@ export interface GithubCapabilities {
   subIssues: boolean
   /** The branches GitHub has linked to an issue. */
   linkedBranches: boolean
+  /** Subscribing and unsubscribing, which needs the `notifications` token scope. */
+  notifications: boolean
 }
 
 /** A pointer to another issue, as a relationship carries one. */

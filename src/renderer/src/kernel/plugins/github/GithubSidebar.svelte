@@ -83,6 +83,12 @@
     if (next) await applyLabels(next)
   }
 
+  // Says why the toggle is off rather than leaving a dead button to guess at.
+  const subscriptionTitle = $derived.by<string | undefined>(() => {
+    if (github.capabilities.notifications) return undefined
+    return 'Your GitHub token lacks the notifications scope'
+  })
+
   /** Assign or unassign one person, applied as soon as it is clicked. */
   async function toggleAssignee(login: string): Promise<void> {
     if (detail.assignees.includes(login)) {
@@ -391,7 +397,8 @@
     <h3 class="font-medium text-default">Notifications</h3>
     <button
       class="flex items-center gap-1.5 self-start rounded-md border border-line px-1.5 py-0.5 text-2xs text-dim transition-colors hover:border-line-strong hover:text-default disabled:opacity-50"
-      disabled={github.busy}
+      disabled={github.busy || !github.capabilities.notifications}
+      title={subscriptionTitle}
       onclick={toggleSubscription}
     >
       {#if isSubscribed(detail)}
@@ -409,6 +416,11 @@
         You are not notified about this thread.
       {/if}
     </p>
+    {#if !github.capabilities.notifications}
+      <!-- The state reads fine without the scope; only changing it needs one. -->
+      <p class="text-dim">Changing it needs the notifications scope your token lacks:</p>
+      <p class="select-text font-mono text-default">gh auth refresh -s notifications</p>
+    {/if}
   </section>
 
   <section class="flex flex-col gap-1.5">

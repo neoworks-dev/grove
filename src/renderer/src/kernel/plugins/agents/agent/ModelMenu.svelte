@@ -23,12 +23,14 @@
     sortedRoutes
   } from '../../../../lib/agents/modelSelection'
   import type { ModelEntry, ModelRoute } from '../../../../lib/agents/types'
+  import { keepInside } from '../../../../lib/popoverFit'
 
   let {
     models,
     provider,
     model,
     switchCostWarning,
+    boundary,
     onPick,
     onRequestKey,
     onAddEndpoint
@@ -39,6 +41,8 @@
     model: string
     /** What a switch costs, when there is a conversation to re-read. */
     switchCostWarning: string
+    /** The element the menu stays inside, when it would open past its right edge. */
+    boundary?: HTMLElement
     onPick: (provider: string, model: string) => void
     /** Ask for the key a route needs before it can be taken. */
     onRequestKey: (request: { provider: string; variables: string[] }) => void
@@ -229,6 +233,7 @@
 <div
   class="absolute bottom-full left-0 z-30 mb-1 flex w-80 flex-col rounded-md border border-line bg-elevated shadow-lg"
   bind:this={root}
+  use:keepInside={boundary}
   onmouseleave={() => (flyout = null)}
 >
   {#if switchCostWarning}

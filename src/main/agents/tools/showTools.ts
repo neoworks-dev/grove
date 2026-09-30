@@ -59,12 +59,16 @@ function locationsTool(): GroveTool {
   return {
     name: 'show_locations',
     summary: 'Point the user at places in the code.',
-    promptGuidelines: ['Call show_locations whenever your answer names places in the code'],
+    promptGuidelines: [
+      'Call show_locations whenever your answer names places in the code',
+      'After a walkthrough (show_locations with steps), reply with a one-line overview or the direct answer; the steps already carry their titles and notes'
+    ],
     description:
       'List the places in the code your answer is about, as a card the user opens them from. ' +
       'One call per answer, most relevant first, each with a note on what is there. ' +
       'For a path through the code ("how does X reach Y"), set steps and list them in the ' +
-      'order the code runs, each with a title.',
+      'order the code runs, each with a title. The steps carry the detail: do not repeat the steps ' +
+      'in your reply, which should only give a one-line overview or the direct answer.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -124,8 +128,9 @@ function locationsTool(): GroveTool {
       if (steps) {
         return {
           content:
-            `Laid out ${locations.length} step(s) for the user to walk through. They are not ` +
-            'on screen until the user starts, so say in words how the flow goes.'
+            `Laid out ${locations.length} step(s) for the user to walk through, each with its ` +
+            'title and note. Do not repeat the steps in your reply: give a one-line overview or ' +
+            'the direct answer, and leave the per-step detail to the walkthrough.'
         }
       }
       return {

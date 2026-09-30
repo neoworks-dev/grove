@@ -17,6 +17,7 @@ export const checkpoints = {
           title: 'Checkpoints',
           icon: ClockCounterClockwise,
           order: 5,
+          key: 'c',
           component: CheckpointsView,
           when: repoOpen
         }),

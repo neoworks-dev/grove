@@ -16,6 +16,7 @@ export const explorer = {
           title: 'Explorer',
           icon: Folder,
           order: 1,
+          key: 'e',
           component: FilesView
         }),
       'sidebar:files'

@@ -6,6 +6,7 @@ import {
   findLeaf,
   findParentSplit,
   insertAtEdge,
+  isAgainstEdge,
   paneTypesInSlot,
   pathToLeaf,
   splitChildFlex,
@@ -329,6 +330,29 @@ describe('insertAtEdge', () => {
   it('never lets an edge pane take more than half the tree', () => {
     const root = insertAtEdge(createLeaf('editor'), createLeaf('files'), 'left', 0.9) as SplitNode
     expect(root.sizes[0]).toBeCloseTo(0.5)
+  })
+})
+
+describe('isAgainstEdge', () => {
+  it('holds for the first pane of a row on the left, and not after it is moved', () => {
+    const files = createLeaf('files')
+    const editor = createLeaf('editor')
+    const agent = createLeaf('agent')
+    expect(isAgainstEdge(createSplit('row', [files, editor, agent]), files.id, 'left')).toBe(true)
+    expect(isAgainstEdge(createSplit('row', [editor, agent, files]), files.id, 'left')).toBe(false)
+    expect(isAgainstEdge(createSplit('row', [editor, agent, files]), files.id, 'right')).toBe(true)
+  })
+
+  it('looks through splits that run along the edge', () => {
+    const files = createLeaf('files')
+    const column = createSplit('column', [createLeaf('worktrees'), files])
+    const root = createSplit('row', [column, createLeaf('editor')])
+    expect(isAgainstEdge(root, files.id, 'left')).toBe(true)
+    expect(isAgainstEdge(root, files.id, 'top')).toBe(false)
+  })
+
+  it('is false for a leaf that is not in the tree', () => {
+    expect(isAgainstEdge(createLeaf('editor'), 'missing', 'left')).toBe(false)
   })
 })
 

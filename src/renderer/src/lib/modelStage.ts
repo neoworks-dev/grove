@@ -55,7 +55,37 @@ interface LoadedModel {
 }
 
 // How much room the framed model leaves around itself.
-const FRAME_PADDING = 1.4
+const FRAME_PADDING = 1.15
+
+/**
+ * How far from its centre a camera has to stand for a sphere of `radius` to fit
+ * its view, in whichever of the vertical and horizontal fields of view is
+ * narrower. A sphere's silhouette touches the view cone at `radius / sin`, not
+ * `radius / tan`: the nearer side of the model is wider on screen than its middle.
+ */
+export function framingDistance(radius: number, verticalFovDegrees: number, aspect: number): number {
+  const halfVertical = (verticalFovDegrees * Math.PI) / 360
+  const halfHorizontal = Math.atan(Math.tan(halfVertical) * aspect)
+  const halfAngle = Math.min(halfVertical, halfHorizontal)
+  return radius / Math.sin(halfAngle)
+}
+
+/**
+ * Places `camera` on a three-quarter view of `box`, far enough back for the
+ * box's bounding sphere to fit, and returns where it is looking from.
+ */
+export function frameCamera(camera: PerspectiveCamera, box: Box3): { center: Vector3; distance: number } {
+  const center = box.getCenter(new Vector3())
+  const radius = box.getSize(new Vector3()).length() / 2
+  const distance = framingDistance(radius, camera.fov, camera.aspect) * FRAME_PADDING
+  const direction = new Vector3(1, 0.7, 1.2).normalize()
+  camera.position.copy(center).addScaledVector(direction, distance)
+  camera.lookAt(center)
+  camera.near = distance / 1000
+  camera.far = distance * 100
+  camera.updateProjectionMatrix()
+  return { center, distance }
+}
 
 export class ModelStage {
   private readonly renderer: WebGLRenderer
@@ -163,19 +193,9 @@ export class ModelStage {
     if (!this.model) return
     const box = new Box3().setFromObject(this.model)
     if (box.isEmpty()) return
-    const size = box.getSize(new Vector3())
-    const center = box.getCenter(new Vector3())
-    const radius = Math.max(size.x, size.y, size.z) / 2
-    const halfFov = (this.camera.fov * Math.PI) / 360
-    const distance = (radius / Math.tan(halfFov)) * FRAME_PADDING
-
-    this.framedCenter = center
-    this.framedDistance = distance
-    const direction = new Vector3(1, 0.7, 1.2).normalize()
-    this.camera.position.copy(center).addScaledVector(direction, distance)
-    this.camera.near = distance / 1000
-    this.camera.far = distance * 100
-    this.camera.updateProjectionMatrix()
+    const framed = frameCamera(this.camera, box)
+    this.framedCenter = framed.center
+    this.framedDistance = framed.distance
     this.controls.target.copy(this.framedCenter)
     this.controls.maxDistance = this.framedDistance * 20
     this.controls.update()

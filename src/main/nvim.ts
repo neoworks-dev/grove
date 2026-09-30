@@ -104,15 +104,25 @@ export class NeovimManager {
 
   // Attach the grid UI and open the initial file. Called after the renderer
   // has subscribed to redraw events.
+  //
+  // The renderer kills a session it no longer wants (worktree switch, pane
+  // closed) without waiting for its attach, so a session gone before or during
+  // the attach is the same teardown race as in request(), not an error.
   async attach(id: string, cols: number, rows: number, file?: string): Promise<void> {
-    const session = this.requireSession(id)
-    await session.rpc.request('nvim_ui_attach', [
-      cols,
-      rows,
-      { rgb: true, ext_linegrid: true, ext_multigrid: true }
-    ])
-    if (file) {
-      await session.rpc.request('nvim_cmd', [{ cmd: 'edit', args: [file] }, {}])
+    const session = this.sessions.get(id)
+    if (!session) return
+    try {
+      await session.rpc.request('nvim_ui_attach', [
+        cols,
+        rows,
+        { rgb: true, ext_linegrid: true, ext_multigrid: true }
+      ])
+      if (file) {
+        await session.rpc.request('nvim_cmd', [{ cmd: 'edit', args: [file] }, {}])
+      }
+    } catch (error) {
+      if (this.isSessionGone(id)) return
+      throw error
     }
   }
 
@@ -193,12 +203,6 @@ export class NeovimManager {
 
   killAll(): void {
     for (const id of [...this.sessions.keys()]) this.kill(id)
-  }
-
-  private requireSession(id: string): NvimSession {
-    const session = this.sessions.get(id)
-    if (!session) throw new Error(`unknown nvim session: ${id}`)
-    return session
   }
 
   // The exit/error handlers delete a session from the map when its nvim dies.

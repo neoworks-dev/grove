@@ -9,10 +9,13 @@
   import { catalog } from '../../../lib/agents/catalog.svelte'
   import { shellOutputs } from '../../../lib/agents/shellOutput.svelte'
   import {
+    ansiOfTokens,
     planTerminalWrite,
     shellCommandsOf,
+    type CommandPainter,
     type WrittenCommand
   } from '../../../lib/agents/shellTranscript'
+  import { highlightCodeSync, warmLanguage } from '../../../lib/highlight'
   import { inputViewOf } from '../../../lib/agents/tools'
   import { visibleItems, type ToolItem } from '../../../lib/agents/transcript'
   import { store } from '../../../lib/store.svelte'
@@ -51,9 +54,26 @@
   })
   const running = $derived(commands.findLast((command) => command.running))
 
+  // Prompts are coloured as shell, the way a tool call's command is. The grammar
+  // loads once; nothing is written until it has settled, so a prompt is never
+  // left plain above coloured ones. One that fails to load leaves them all plain.
+  const COMMAND_LANGUAGE = 'shell'
+  let grammarSettled = $state(false)
+  void warmLanguage(COMMAND_LANGUAGE).finally(() => {
+    grammarSettled = true
+  })
+
+  /** The command in bold, coloured as shell when the grammar has loaded. */
+  function paintCommand(command: string, scheme: 'dark' | 'light'): string {
+    const lines = highlightCodeSync(command, COMMAND_LANGUAGE, scheme)
+    if (!lines) return `\u001b[1m${command}\u001b[0m`
+    return `\u001b[1m${ansiOfTokens(lines)}\u001b[0m`
+  }
+
   let term = $state.raw<Terminal | null>(null)
   let written: WrittenCommand[] = []
   let writtenSession: string | null = null
+  let writtenScheme: string | null = null
 
   /** Ctrl+C copies a selection, else stops the running command; every other key is the app's. */
   function onKey(event: KeyboardEvent): boolean {
@@ -76,20 +96,25 @@
     term = terminal
   }
 
-  // Write what is new; start over for another session or rewritten history.
+  // Write what is new; start over for another session, rewritten history, or
+  // a scheme change that recolours the prompts.
   $effect(() => {
     const current = commands
     const session = sessionId
-    if (!term) return
-    if (session !== writtenSession) written = []
-    const plan = planTerminalWrite(written, current)
-    if (plan.reset || session !== writtenSession) {
+    const scheme = store.activeTheme.scheme
+    if (!term || !grammarSettled) return
+    const startOver = session !== writtenSession || scheme !== writtenScheme
+    if (startOver) written = []
+    const paint: CommandPainter = (command) => paintCommand(command, scheme)
+    const plan = planTerminalWrite(written, current, paint)
+    if (plan.reset || startOver) {
       term.reset()
       term.write('\u001b[?25l')
     }
     for (const chunk of plan.chunks) term.write(chunk)
     written = plan.written
     writtenSession = session
+    writtenScheme = scheme
   })
 </script>
 

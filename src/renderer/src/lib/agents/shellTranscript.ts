@@ -8,6 +8,7 @@
 
 import type { ToolItem, TranscriptItem } from './transcript'
 import type { LiveCommandOutput } from './shellOutput.svelte'
+import type { HighlightedToken } from '../highlight'
 
 export interface ShellCommand {
   toolUseId: string
@@ -107,10 +108,46 @@ function commandOf(item: ToolItem): string {
   return ''
 }
 
+/** Turns a command line into what its prompt shows: the text, with any escapes that colour it. */
+export type CommandPainter = (command: string) => string
+
+/** The command line in bold, uncoloured — what a prompt shows before a grammar is ready. */
+function plainCommand(command: string): string {
+  return `\u001b[1m${command}\u001b[0m`
+}
+
+/**
+ * Highlighted lines as one string of 24-bit colour escapes, for a terminal.
+ *
+ * A token without a colour keeps the terminal's own foreground.
+ */
+export function ansiOfTokens(lines: HighlightedToken[][]): string {
+  return lines.map((line) => line.map(ansiOfToken).join('')).join('\n')
+}
+
+/** One coloured run, reset after so the next starts clean. */
+function ansiOfToken(token: HighlightedToken): string {
+  const rgb = rgbOfHex(token.color)
+  if (!rgb) return token.text
+  return `\u001b[38;2;${rgb.join(';')}m${token.text}\u001b[39m`
+}
+
+/** `#rrggbb` (alpha ignored) as its three channels, or null for anything else. */
+function rgbOfHex(color: string): [number, number, number] | null {
+  const match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})(?:[0-9a-f]{2})?$/i.exec(color)
+  if (!match) return null
+  return [
+    Number.parseInt(match[1], 16),
+    Number.parseInt(match[2], 16),
+    Number.parseInt(match[3], 16)
+  ]
+}
+
 /** What to write to bring the view from what it has to what the commands now say. */
 export function planTerminalWrite(
   written: WrittenCommand[],
-  commands: ShellCommand[]
+  commands: ShellCommand[],
+  paint: CommandPainter = plainCommand
 ): TerminalWrite {
   const reset = !continues(written, commands)
   let kept: WrittenCommand[] = []
@@ -126,14 +163,18 @@ export function planTerminalWrite(
     // and so does everything after it, to keep the order.
     if (awaitsCommandLine(command)) break
     if (index > 0) chunks.push(separatorAfter(commands[index - 1]))
-    kept.push(startCommand(command, chunks))
+    kept.push(startCommand(command, chunks, paint))
   }
   return { reset, chunks, written: kept }
 }
 
 /** Writes a command's prompt line and what it has printed so far. */
-function startCommand(command: ShellCommand, chunks: string[]): WrittenCommand {
-  chunks.push(commandLine(command.command))
+function startCommand(
+  command: ShellCommand,
+  chunks: string[],
+  paint: CommandPainter
+): WrittenCommand {
+  chunks.push(commandLine(command.command, paint))
   if (command.output) chunks.push(command.output)
   const entry: WrittenCommand = {
     toolUseId: command.toolUseId,
@@ -188,9 +229,9 @@ function continues(written: WrittenCommand[], commands: ShellCommand[]): boolean
   })
 }
 
-/** The command as a prompt line: a green `❯`, then the command in bold. */
-function commandLine(command: string): string {
-  return `\u001b[32m❯\u001b[0m \u001b[1m${command}\u001b[0m\n`
+/** The command as a prompt line: a green `❯`, then the command as `paint` shows it. */
+function commandLine(command: string, paint: CommandPainter): string {
+  return `\u001b[32m❯\u001b[0m ${paint(command)}\n`
 }
 
 /** A failed command's exit status, in red, as a shell prompt would flag it. */

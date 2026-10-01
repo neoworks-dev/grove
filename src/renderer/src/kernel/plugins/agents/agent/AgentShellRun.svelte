@@ -5,6 +5,8 @@
   import { outputTail } from '../../../../lib/agents/outputTail'
   import { shellOutputs } from '../../../../lib/agents/shellOutput.svelte'
   import type { ShellItem } from '../../../../lib/agents/transcript'
+  import { highlightCode, type HighlightedToken } from '../../../../lib/highlight'
+  import { store } from '../../../../lib/store.svelte'
 
   let { item, sessionId }: { item: ShellItem; sessionId: string } = $props()
 
@@ -16,12 +18,39 @@
   })
   const liveTail = $derived(liveOutput ? outputTail(liveOutput.text, LIVE_TAIL_LINES) : [])
   const stoppable = $derived(liveOutput?.running === true)
+
+  /** Joins highlighted lines with a space, as the one-line header collapses a multi-line command. */
+  function onOneLine(lines: HighlightedToken[][]): HighlightedToken[] {
+    return lines.flatMap((line, index) => {
+      if (index === 0) return line
+      return [{ text: ' ', color: '' }, ...line]
+    })
+  }
+
+  // The command coloured as shell once the grammar has it; plain until then.
+  let commandTokens = $state<HighlightedToken[]>([])
+  $effect(() => {
+    const command = item.command
+    const scheme = store.activeTheme.scheme
+    let current = true
+    commandTokens = []
+    void highlightCode(command, 'shell', scheme).then((lines) => {
+      if (current && lines) commandTokens = onOneLine(lines)
+    })
+    return () => {
+      current = false
+    }
+  })
 </script>
 
 <div class="mb-2">
   <div class="flex items-center gap-2 font-mono text-2xs">
     <span class="shrink-0 text-blue">$</span>
-    <span class="min-w-0 truncate text-muted">{item.command}</span>
+    <span class="min-w-0 truncate text-muted"
+      >{#if commandTokens.length > 0}{#each commandTokens as token, index (index)}<span
+            style:color={token.color}>{token.text}</span
+          >{/each}{:else}{item.command}{/if}</span
+    >
     {#if item.running}<span class="shrink-0 text-dim">· running</span>{/if}
     {#if !item.shared}<span class="shrink-0 text-dim">· private</span
       >{:else if !item.running && !item.delivered}<span class="shrink-0 text-amber"

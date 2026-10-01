@@ -101,7 +101,8 @@ class WorkbenchStore {
   // code rather than a name the harness may or may not resolve. The composer
   // clears it once inserted — an approval card unmounts the composer, and an
   // unconsumed request would insert itself again the moment it comes back.
-  composerInsert = $state<{ text: string; reference?: FileBlock } | null>(null)
+  // `plain` text goes in as written rather than as an @-mention.
+  composerInsert = $state<{ text: string; reference?: FileBlock; plain?: boolean } | null>(null)
 
   // Bumped per worktree on any file change, so trees/diffs re-read reactively.
   fsVersion = $state<Record<string, number>>({})
@@ -376,6 +377,11 @@ export function clearAgentMarks(): void {
 // request is delivered exactly once.
 export function insertIntoComposer(text: string, reference?: FileBlock): void {
   store.composerInsert = { text, reference }
+}
+
+/** Writes text into the agent composer as it is, the way insertIntoComposer writes a mention. */
+export function insertTextIntoComposer(text: string): void {
+  store.composerInsert = { text, plain: true }
 }
 
 // Move between open editor tabs (Shift+hjkl in the editor).

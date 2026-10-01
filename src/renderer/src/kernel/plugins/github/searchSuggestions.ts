@@ -3,15 +3,30 @@
 // colon are there. Pure, like search.ts, so the rules are pinned by test.
 
 import { CLOSED_WORDS, KEYS, OPEN_WORDS, quoted, type QualifierKey } from './search'
+import type {
+  GithubActor,
+  GithubIssueType,
+  GithubLabelDefinition,
+  GithubMilestoneDefinition
+} from '../../../../../shared/types'
 
-/** Where the words a suggestion can come from are gathered, one list per kind. */
+/** A branch the loaded pull requests name, and the pull it is the head of. */
+export interface SuggestionBranch {
+  name: string
+  /** The pull request this branch is the head of, or null for a base only. */
+  pull: { number: number; title: string } | null
+}
+
+/** Where the values a suggestion can come from are gathered, one list per kind. */
 export interface SuggestionSources {
-  labels: string[]
-  people: string[]
-  milestones: string[]
-  types: string[]
+  labels: GithubLabelDefinition[]
+  people: GithubActor[]
+  /** Whoever `@me` is, so its row can show their avatar; null until it is known. */
+  viewer: GithubActor | null
+  milestones: GithubMilestoneDefinition[]
+  types: GithubIssueType[]
   projects: string[]
-  branches: string[]
+  branches: SuggestionBranch[]
 }
 
 /** The run of the query under the caret, quote-aware, by character offsets. */
@@ -21,6 +36,17 @@ export interface SearchToken {
   text: string
 }
 
+/** What a row draws beside its name: the thing the value stands for on GitHub. */
+export type SuggestionDetail =
+  | { kind: 'key'; description: string }
+  | { kind: 'word'; description: string }
+  | { kind: 'person'; actor: GithubActor; isViewer: boolean }
+  | { kind: 'label'; label: GithubLabelDefinition }
+  | { kind: 'milestone'; milestone: GithubMilestoneDefinition }
+  | { kind: 'type'; issueType: GithubIssueType }
+  | { kind: 'project' }
+  | { kind: 'branch'; branch: SuggestionBranch }
+
 export interface SearchSuggestion {
   /** A qualifier name (`label:`) or one of its values (`bug`). */
   kind: 'key' | 'value'
@@ -28,6 +54,43 @@ export interface SearchSuggestion {
   label: string
   /** What replaces the token when it is accepted. */
   insert: string
+  detail: SuggestionDetail
+}
+
+/** A value a key can take, before it is matched against what was typed. */
+interface Candidate {
+  value: string
+  detail: SuggestionDetail
+}
+
+// What each qualifier narrows to, in the words github.com's own help uses.
+const KEY_DESCRIPTIONS: Record<QualifierKey, string> = {
+  is: 'State or kind',
+  state: 'Open or closed',
+  author: 'Opened by',
+  assignee: 'Assigned to',
+  label: 'Has the label',
+  milestone: 'In the milestone',
+  type: 'Issue type',
+  project: 'On the project board',
+  head: 'From the branch',
+  base: 'Into the branch',
+  no: 'Missing a field'
+}
+
+// The words `is:`, `state:` and `no:` understand, and what each one means.
+const WORD_DESCRIPTIONS: Record<string, string> = {
+  open: 'Still open',
+  closed: 'Closed',
+  merged: 'Merged pull requests',
+  draft: 'Draft pull requests',
+  pr: 'Pull requests only',
+  issue: 'Issues only',
+  label: 'No labels',
+  assignee: 'Nobody assigned',
+  milestone: 'No milestone',
+  type: 'No issue type',
+  project: 'On no project board'
 }
 
 // The words `is:` and `no:` understand, in the order search.ts answers them.
@@ -61,31 +124,72 @@ export function tokenAt(query: string, caret: number): SearchToken {
   return { start: caret, end: caret, text: '' }
 }
 
+/** Plain words, each with what it means to the search. */
+function words(values: string[]): Candidate[] {
+  return values.map((value) => ({
+    value,
+    detail: { kind: 'word', description: WORD_DESCRIPTIONS[value] }
+  }))
+}
+
+/** `@me` first, standing for the viewer, then everyone else once each. */
+function people(sources: SuggestionSources): Candidate[] {
+  let viewer: GithubActor = { login: '@me', avatarUrl: null }
+  if (sources.viewer) viewer = sources.viewer
+  const candidates: Candidate[] = [
+    { value: '@me', detail: { kind: 'person', actor: viewer, isViewer: true } }
+  ]
+  for (const actor of sources.people) {
+    const isViewer = sources.viewer !== null && sources.viewer.login === actor.login
+    candidates.push({ value: actor.login, detail: { kind: 'person', actor, isViewer } })
+  }
+  return candidates
+}
+
 /** The values one key can take, as the repository names them. */
-function valuesFor(key: QualifierKey, sources: SuggestionSources): string[] {
-  if (key === 'is') return IS_WORDS
-  if (key === 'state') return [...OPEN_WORDS, ...CLOSED_WORDS]
-  if (key === 'no') return NO_WORDS
-  if (key === 'author' || key === 'assignee') return ['@me', ...sources.people]
-  if (key === 'label') return sources.labels
-  if (key === 'milestone') return sources.milestones
-  if (key === 'type') return sources.types
-  if (key === 'project') return sources.projects
-  return sources.branches
+function valuesFor(key: QualifierKey, sources: SuggestionSources): Candidate[] {
+  if (key === 'is') return words(IS_WORDS)
+  if (key === 'state') return words([...OPEN_WORDS, ...CLOSED_WORDS])
+  if (key === 'no') return words(NO_WORDS)
+  if (key === 'author' || key === 'assignee') return people(sources)
+  if (key === 'label') {
+    return sources.labels.map((label) => ({ value: label.name, detail: { kind: 'label', label } }))
+  }
+  if (key === 'milestone') {
+    return sources.milestones.map((milestone) => ({
+      value: milestone.title,
+      detail: { kind: 'milestone', milestone }
+    }))
+  }
+  if (key === 'type') {
+    return sources.types.map((issueType) => ({
+      value: issueType.name,
+      detail: { kind: 'type', issueType }
+    }))
+  }
+  if (key === 'project') {
+    return sources.projects.map((project) => ({ value: project, detail: { kind: 'project' } }))
+  }
+  return sources.branches.map((branch) => ({
+    value: branch.name,
+    detail: { kind: 'branch', branch }
+  }))
 }
 
 /**
- * The candidates that contain `partial`, those starting with it first, each
- * group in its given order. A candidate that already is the partial is left
- * out: the value is written, there is nothing left to offer.
+ * The candidates whose value contains `partial`, those starting with it first,
+ * each group in its given order, each value once. A candidate that already is
+ * the partial is left out: the value is written, there is nothing left to offer.
  */
-function rank(candidates: string[], partial: string, limit: number): string[] {
+function rank(candidates: Candidate[], partial: string, limit: number): Candidate[] {
   const needle = partial.toLowerCase()
-  const starting: string[] = []
-  const containing: string[] = []
-  for (const candidate of new Set(candidates)) {
-    const folded = candidate.toLowerCase()
-    if (folded === needle) continue
+  const seen = new Set<string>()
+  const starting: Candidate[] = []
+  const containing: Candidate[] = []
+  for (const candidate of candidates) {
+    const folded = candidate.value.toLowerCase()
+    if (seen.has(folded) || folded === needle) continue
+    seen.add(folded)
     if (folded.startsWith(needle)) {
       starting.push(candidate)
       continue
@@ -101,7 +205,12 @@ function suggestKeys(negation: string, word: string, limit: number): SearchSugge
   const needle = word.toLowerCase()
   return KEYS.filter((key) => key.startsWith(needle))
     .slice(0, limit)
-    .map((key) => ({ kind: 'key', label: `${negation}${key}:`, insert: `${negation}${key}:` }))
+    .map((key) => ({
+      kind: 'key',
+      label: `${negation}${key}:`,
+      insert: `${negation}${key}:`,
+      detail: { kind: 'key', description: KEY_DESCRIPTIONS[key] }
+    }))
 }
 
 /** What to offer for the token under the caret, or nothing when it is plain text. */
@@ -118,10 +227,11 @@ export function suggestSearch(
   const key = name.toLowerCase() as QualifierKey
   if (!KEYS.includes(key)) return []
   const partial = rest.replaceAll('"', '')
-  return rank(valuesFor(key, sources), partial, limit).map((value) => ({
+  return rank(valuesFor(key, sources), partial, limit).map((candidate) => ({
     kind: 'value',
-    label: value,
-    insert: `${negation}${key}:${quoted(value)}`
+    label: candidate.value,
+    insert: `${negation}${key}:${quoted(candidate.value)}`,
+    detail: candidate.detail
   }))
 }
 
@@ -143,4 +253,26 @@ export function applySuggestion(
     after = after.replace(/^\s+/, '')
   }
   return { text: before + insert + after, caret: before.length + insert.length }
+}
+
+/**
+ * A milestone's standing as its row shows it: closed, past due, due on a date,
+ * or null when it is open with no date. Dates are compared by day, so a
+ * milestone due today is not yet past due.
+ */
+export function milestoneStanding(milestone: GithubMilestoneDefinition, now: Date): string | null {
+  if (milestone.state.toUpperCase() === 'CLOSED') return 'Closed'
+  if (milestone.dueOn === null) return null
+  const due = new Date(milestone.dueOn)
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  if (due.getTime() < today.getTime()) return 'Past due'
+  const date = due.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  return `Due ${date}`
+}
+
+/** How far through its issues a milestone is, as a whole percentage. */
+export function milestoneProgress(milestone: GithubMilestoneDefinition): number {
+  const total = milestone.openIssues + milestone.closedIssues
+  if (total === 0) return 0
+  return Math.round((milestone.closedIssues / total) * 100)
 }

@@ -50,7 +50,7 @@ import type {
   GithubItemAction,
   GithubItemCommand,
   GithubLabelDefinition,
-  GithubMilestone,
+  GithubMilestoneDefinition,
   GithubIssueDraft,
   GithubCreatedIssue,
   GithubLabelChange,
@@ -94,6 +94,7 @@ import type {
   CreateSessionOptions,
   FileMatch,
   ResolvedLocation,
+  EditedFile,
   ShellCompletion,
   HarnessCatalog,
   HarnessInfo,
@@ -276,7 +277,7 @@ export interface WorkbenchApi {
     branchPulls: () => Promise<Record<string, BranchPull>>
     item: (kind: GithubItemKind, number: number) => Promise<GithubItemDetail>
     labels: () => Promise<GithubLabelDefinition[]>
-    milestones: () => Promise<GithubMilestone[]>
+    milestones: () => Promise<GithubMilestoneDefinition[]>
     changeMilestone: (kind: GithubItemKind, number: number, title: string | null) => Promise<void>
     mentionables: () => Promise<GithubActor[]>
     setSubscription: (nodeId: string, subscribed: boolean) => Promise<void>
@@ -380,6 +381,10 @@ export interface WorkbenchApi {
       worktreeId: string,
       locations: CodeLocation[]
     ) => Promise<ResolvedLocation[]>
+    /** Every file the session has edited, with the lines its edits added and removed. */
+    editedFiles: (sessionId: string) => Promise<EditedFile[]>
+    /** A file the session edited, as it would be without those edits. */
+    editedFileBase: (sessionId: string, path: string) => Promise<string>
 
     completeShell: (sessionId: string, line: string) => Promise<ShellCompletion[]>
     shellName: () => Promise<string>

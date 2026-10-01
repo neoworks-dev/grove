@@ -13,6 +13,7 @@
   import { MODE_DESCRIPTIONS, MODE_LABELS, type AgentMode } from '../../../../lib/agents/modes'
   import { findRoute } from '../../../../lib/agents/modelSelection'
   import ModelMenu from './ModelMenu.svelte'
+  import HarnessMenu from './HarnessMenu.svelte'
   import { keepInside } from '../../../../lib/popoverFit'
   import { THINKING_LABELS, THINKING_LEVELS } from '../../../../lib/agents/thinking'
   import { GROVE_MODE_DESCRIPTION } from '../../../../lib/agents/newSession'
@@ -178,35 +179,15 @@
       {/if}
     </button>
     {#if openMenu === 'harness'}
-      <div
-        class="absolute bottom-full left-0 z-30 mb-1 w-64 rounded-md border border-line bg-elevated py-1 shadow-lg"
-        use:keepInside={controlsRow}
+      <HarnessMenu
+        {harnesses}
+        {harness}
+        boundary={controlsRow}
+        onPick={(picked) => {
+          onPickHarness(picked)
+          close()
+        }}
       >
-        {#each harnesses as entry (entry.id)}
-          <button
-            class="flex w-full items-start gap-2 px-2 py-1 text-left hover:bg-hover disabled:opacity-50 {entry.id ===
-            harness
-              ? 'text-default'
-              : 'text-dim'}"
-            disabled={!entry.available}
-            title={entry.detail ?? entry.description}
-            onclick={() => {
-              onPickHarness(entry.id)
-              close()
-            }}
-          >
-            <Icon icon={entry.icon} class="mt-0.5 size-3.5 shrink-0" />
-            <span class="flex min-w-0 flex-col items-start">
-              <span>{entry.label}</span>
-              {#if !entry.available}
-                <span class="truncate text-2xs text-red">{entry.detail ?? 'unavailable'}</span>
-              {/if}
-            </span>
-          </button>
-        {/each}
-        {#if harnesses.length === 0}
-          <div class="px-2 py-1 text-2xs text-dim">No harness is mounted</div>
-        {/if}
         {#if capabilities?.groveMode}
           <div class="mt-1 border-t border-line pt-1">
             <button
@@ -226,7 +207,7 @@
             </button>
           </div>
         {/if}
-      </div>
+      </HarnessMenu>
     {/if}
   </div>
 

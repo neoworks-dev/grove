@@ -82,6 +82,26 @@ export class Catalog {
     await this.fetchCatalog(harnessId)
   }
 
+  /**
+   * Fetch a harness's offering without pointing the catalog at it, for a picker
+   * that runs on a harness of its own rather than the one the pane shows.
+   */
+  async prefetch(harnessId: string): Promise<void> {
+    if (!harnessId) return
+    await this.load()
+    await this.fetchCatalog(harnessId)
+  }
+
+  /** The models one harness offers, whichever harness the catalog is pointed at. */
+  modelsOf(harnessId: string): ModelEntry[] {
+    return this.offeringOf(harnessId).models
+  }
+
+  /** What one harness would pick for itself, whichever harness the catalog is pointed at. */
+  defaultsOf(harnessId: string): { provider: string; model: string } | null {
+    return this.offeringOf(harnessId).default
+  }
+
   /** Force a re-read, for when a harness has been reloaded or logged in to. */
   async reload(): Promise<void> {
     this.harnessLoad = null
@@ -109,8 +129,13 @@ export class Catalog {
   }
 
   private current(): Omit<HarnessCatalog, 'harness'> {
-    if (!this.active) return EMPTY
-    return this.byHarness[this.active] ?? EMPTY
+    return this.offeringOf(this.active)
+  }
+
+  /** One harness's fetched offering, or an empty one until it has been fetched. */
+  private offeringOf(harnessId: string | null): Omit<HarnessCatalog, 'harness'> {
+    if (!harnessId) return EMPTY
+    return this.byHarness[harnessId] ?? EMPTY
   }
 
   private async fetchHarnesses(): Promise<void> {

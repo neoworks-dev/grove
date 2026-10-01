@@ -41,7 +41,7 @@ import type {
   GithubActor,
   GithubCapabilities,
   GithubDashboard,
-  GithubMilestone,
+  GithubMilestoneDefinition,
   GithubIssueDraft,
   GithubItem,
   GithubCloseReason,
@@ -133,7 +133,7 @@ class GithubStore {
   /** The repository's own labels, for the pickers. Loaded on demand. */
   labels = $state<GithubLabelDefinition[]>([])
   /** The repository's own milestones, for the sidebar picker. On demand too. */
-  milestones = $state<GithubMilestone[]>([])
+  milestones = $state<GithubMilestoneDefinition[]>([])
 
   /**
    * Threads already fetched this session, keyed `kind:number`. Reselecting an

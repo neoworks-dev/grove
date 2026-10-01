@@ -20,6 +20,7 @@ import { showTools, type AgentScreen } from './showTools'
 import { runtimesTool, spawnTool } from './spawnTools'
 import { callTool, toolSearchTool } from './toolSearchTools'
 import { transcriptTools } from './transcriptTools'
+import { webTools } from './webTools'
 import { worktreeTools, type AgentWorktrees } from './worktreeTools'
 
 export interface GroveToolOptions {
@@ -63,7 +64,8 @@ export interface WorkspaceToolOptions {
 /**
  * The tools grove mode works with in place of a harness's own: reading and
  * editing files, finding them, asking the language server, running commands,
- * and calling whatever tool is listed by name only. Made per session, since
+ * searching and reading the web, and calling whatever tool is listed by name
+ * only. Made per session, since
  * the edit tool remembers what it was last asked.
  */
 export function workspaceTools(options: WorkspaceToolOptions): GroveTool[] {
@@ -73,6 +75,7 @@ export function workspaceTools(options: WorkspaceToolOptions): GroveTool[] {
     lspTool(options.languages, options.files, options.worktrees),
     renameTool(options.languages, options.files, options.worktrees),
     shellTool(),
+    ...webTools(),
     callTool()
   ]
 }

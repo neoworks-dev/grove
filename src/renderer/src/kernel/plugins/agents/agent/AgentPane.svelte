@@ -483,6 +483,17 @@
     pickMode(nextMode(mode))
   }
 
+  // A command the agent is running, which Ctrl+B can send to the background.
+  const commandRunning = $derived.by(() => {
+    if (!activeId || !running) return false
+    return Object.values(shellOutputs.forSession(activeId)).some((command) => command.running)
+  })
+
+  /** Hands the agent its turn back while the commands it is waiting on keep running. */
+  function backgroundShell(): void {
+    if (activeId) shellOutputs.background(activeId)
+  }
+
   function cycleThinking(): void {
     const current = snapshot?.thinkingLevel ?? rememberedThinking
     pickThinking(nextThinkingLevel(current))
@@ -771,6 +782,15 @@
         // A card up for an answer uses Shift+Tab to step back through its choices.
         when: () => shownApproval === undefined,
         run: cycleMode
+      },
+      {
+        id: `agent.backgroundShell:${leafId}`,
+        keys: 'ctrl+b',
+        context: leafId,
+        group: 'Agent',
+        description: 'Send running command to background',
+        when: () => commandRunning,
+        run: backgroundShell
       },
       {
         id: `agent.cycleThinking:${leafId}`,

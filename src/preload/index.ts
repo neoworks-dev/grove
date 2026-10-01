@@ -251,6 +251,7 @@ const workbench = {
     shellOutput: (sessionId: string) => ipcRenderer.invoke('agents:shellOutput', sessionId),
     interruptShell: (sessionId: string, toolUseId: string) =>
       ipcRenderer.invoke('agents:interruptShell', sessionId, toolUseId),
+    backgroundShell: (sessionId: string) => ipcRenderer.invoke('agents:backgroundShell', sessionId),
     resolveLocations: (worktreeId: string, locations: unknown[]) =>
       ipcRenderer.invoke('agents:resolveLocations', worktreeId, locations),
     editedFiles: (sessionId: string) => ipcRenderer.invoke('agents:editedFiles', sessionId),

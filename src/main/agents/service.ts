@@ -324,6 +324,27 @@ export class AgentService {
     return this.shellOutputs.interrupt(sessionId, toolUseId)
   }
 
+  /**
+   * Sends the commands the session's agent is waiting on to the background:
+   * the agent carries on and is told when they exit. False when nothing could go.
+   */
+  backgroundShell(sessionId: string): boolean {
+    return this.shellOutputs.background(sessionId)
+  }
+
+  /**
+   * Tells the agent something nobody typed — a background command exiting.
+   * Delivered like any message: a turn of its own when the session is idle,
+   * after the turn in flight when it is not. A session gone by then is skipped.
+   */
+  private async notify(sessionId: string, label: string, text: string): Promise<void> {
+    const session = await this.store.get(sessionId)
+    if (!session) return
+    await this.deliver(sessionId, { type: 'app.message', label, text }).catch((cause: Error) =>
+      this.reportError(sessionId, cause)
+    )
+  }
+
   // ── Client events ───────────────────────────────────────────────
 
   /** Accept a batch of client events, in order. */
@@ -818,7 +839,8 @@ export class AgentService {
       startingStats: { usage: session.usage, cost: session.cost },
       confirm: (request) => this.requestApproval(sessionId, request),
       storeImage: (image) => this.storeImageSync(sessionId, image),
-      shellOutput: this.shellOutputs.sinkFor(sessionId)
+      shellOutput: this.shellOutputs.sinkFor(sessionId),
+      notify: (label, text) => void this.notify(sessionId, label, text)
     })
 
     runtime.run = run
@@ -972,6 +994,7 @@ export class AgentService {
 
   /** Stop every run. Called on shutdown. */
   async stopAll(): Promise<void> {
+    this.shellOutputs.stopAll()
     await Promise.all([...this.runtimes.keys()].map((sessionId) => this.stopRun(sessionId)))
   }
 

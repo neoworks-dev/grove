@@ -167,3 +167,82 @@ describe("grove mode's shell", () => {
     expect(result.content.length).toBeLessThan(lines.length)
   })
 })
+
+describe('commands in the background', () => {
+  /** A tool context that records what the agent is told after its call returned. */
+  function notifyingContext(hub: ShellOutputHub): {
+    context: GroveToolContext
+    told: () => Promise<{ label: string; text: string }>
+  } {
+    let resolveTold: (message: { label: string; text: string }) => void = () => {}
+    const told = new Promise<{ label: string; text: string }>((resolve) => {
+      resolveTold = resolve
+    })
+    const context: GroveToolContext = {
+      sessionId: 's1',
+      workspaceRoot: tmpdir(),
+      surface: () => {},
+      show: () => {},
+      toolCallId: 't1',
+      shellOutput: hub.sinkFor('s1'),
+      notify: (label, text) => resolveTold({ label, text })
+    }
+    return { context, told: () => told }
+  }
+
+  test('run_in_background returns at once and tells the agent when the command exits', async () => {
+    const { hub } = recordingHub()
+    const { context, told } = notifyingContext(hub)
+
+    const result = await shellTool().execute(
+      { command: 'sleep 0.3; echo built; exit 2', run_in_background: true },
+      context
+    )
+    expect(result.content).toContain('Started in the background')
+    expect(hub.snapshot('s1')[0].running).toBe(true)
+
+    const message = await told()
+    expect(message.label).toBe('Background command finished')
+    expect(message.text).toBe('$ sleep 0.3; echo built; exit 2\nbuilt\n[Exit code 2.]')
+  })
+
+  test('Ctrl+B returns the call of a running command, which goes on to finish', async () => {
+    const { hub } = recordingHub()
+    const { context, told } = notifyingContext(hub)
+
+    const call = shellTool().execute({ command: 'sleep 0.3; echo done' }, context)
+    await Bun.sleep(50)
+    expect(hub.background('s1')).toBe(true)
+
+    const result = await call
+    expect(result.content).toContain('The user sent the command to the background')
+    expect((await told()).text).toBe('$ sleep 0.3; echo done\ndone')
+  })
+
+  test('a backgrounded command is not stopped by the timeout it started with', async () => {
+    const { hub } = recordingHub()
+    const { context, told } = notifyingContext(hub)
+
+    const call = shellTool().execute({ command: 'sleep 1.5; echo survived', timeout: 1 }, context)
+    await Bun.sleep(50)
+    hub.background('s1')
+    await call
+
+    expect((await told()).text).toBe('$ sleep 1.5; echo survived\nsurvived')
+  })
+
+  test('Ctrl+B with nothing running moves nothing', () => {
+    const { hub } = recordingHub()
+    expect(hub.background('s1')).toBe(false)
+  })
+
+  test('a session going away stops what it left running', async () => {
+    const { hub } = recordingHub()
+    const { context, told } = notifyingContext(hub)
+
+    await shellTool().execute({ command: 'sleep 30', run_in_background: true }, context)
+    hub.forgetSession('s1')
+
+    expect((await told()).text).toContain('[Killed by SIGINT.]')
+  })
+})

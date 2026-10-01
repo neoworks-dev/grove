@@ -44,6 +44,12 @@ export interface GroveToolContext {
   /** Where a tool that runs a command reports what it prints, as it prints it. */
   shellOutput?: ShellOutputSink
   /**
+   * Tell the agent something after its call has returned — a command left
+   * running in the background has exited. Starts a turn when the session is
+   * idle, and waits for the end of the one in flight when it is not.
+   */
+  notify?(label: string, text: string): void
+  /**
    * Add to what the transcript shows of this call — the diff an edit made —
    * the way a harness reports its own tools. Kept when the call's result comes.
    */
@@ -233,6 +239,8 @@ export interface HarnessRunOptions {
    * reports nothing here.
    */
   shellOutput: ShellOutputSink
+  /** Tell the agent something outside any call; see `GroveToolContext.notify`. */
+  notify(label: string, text: string): void
 }
 
 /**

@@ -427,6 +427,8 @@ export interface WorkbenchApi {
     shellOutput: (sessionId: string) => Promise<ShellOutputSnapshot[]>
     /** Ctrl+C for a command the session is running; false when there was none. */
     interruptShell: (sessionId: string, toolUseId: string) => Promise<boolean>
+    /** Sends the commands the session's agent is waiting on to the background (Ctrl+B). */
+    backgroundShell: (sessionId: string) => Promise<boolean>
     /** Where places an agent pointed at are now, after edits, renames and deletions. */
     resolveLocations: (
       worktreeId: string,

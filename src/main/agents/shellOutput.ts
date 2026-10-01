@@ -10,8 +10,12 @@ import type { ShellOutputSnapshot, ShellOutputUpdate } from '../../shared/agents
 
 /** What a harness calls as a command it runs prints. */
 export interface ShellOutputSink {
-  /** A command started; `interrupt` stops it the way Ctrl+C would, when it can be. */
-  begin(toolUseId: string, interrupt?: () => void): void
+  /**
+   * A command started; `interrupt` stops it the way Ctrl+C would, and
+   * `background` hands its call back to the agent while it keeps running, when
+   * the harness can do either.
+   */
+  begin(toolUseId: string, interrupt?: () => void, background?: () => void): void
   append(toolUseId: string, text: string): void
   end(toolUseId: string): void
 }
@@ -33,6 +37,7 @@ interface LiveCommand {
   /** The call's result is on the log. */
   settled: boolean
   interrupt?: () => void
+  background?: () => void
   flushTimer?: ReturnType<typeof setTimeout>
 }
 
@@ -44,7 +49,8 @@ export class ShellOutputHub {
   /** A sink that reports into this hub on behalf of one session. */
   sinkFor(sessionId: string): ShellOutputSink {
     return {
-      begin: (toolUseId, interrupt) => this.begin(sessionId, toolUseId, interrupt),
+      begin: (toolUseId, interrupt, background) =>
+        this.begin(sessionId, toolUseId, interrupt, background),
       append: (toolUseId, text) => this.append(sessionId, toolUseId, text),
       end: (toolUseId) => this.end(sessionId, toolUseId)
     }
@@ -69,6 +75,29 @@ export class ShellOutputHub {
   }
 
   /**
+   * Sends every command the session is waiting on to the background, as Ctrl+B
+   * does in a terminal: each call returns to the agent and the command keeps
+   * running. False when none could be.
+   */
+  background(sessionId: string): boolean {
+    let moved = false
+    for (const command of this.commands.values()) {
+      if (command.sessionId !== sessionId || command.settled) continue
+      if (!command.running || !command.background) continue
+      const background = command.background
+      command.background = undefined
+      background()
+      moved = true
+    }
+    return moved
+  }
+
+  /** Stops every command still running, when grove shuts down. */
+  stopAll(): void {
+    for (const command of [...this.commands.values()]) this.forget(command)
+  }
+
+  /**
    * The call's result is on the log now, which says the rest — unless the
    * command is still going, as one sent to the background is: that one is kept
    * until it exits.
@@ -80,24 +109,32 @@ export class ShellOutputHub {
     if (!command.running) this.forget(command)
   }
 
-  /** Every command a session had going, when the session goes away. */
+  /** Every command a session had going, stopped, when the session goes away. */
   forgetSession(sessionId: string): void {
     for (const command of [...this.commands.values()]) {
       if (command.sessionId === sessionId) this.forget(command)
     }
   }
 
+  /** Drops a command, stopping it first if it is still running in the background. */
   private forget(command: LiveCommand): void {
+    if (command.running && command.interrupt) command.interrupt()
     clearTimeout(command.flushTimer)
     this.commands.delete(keyOf(command.sessionId, command.toolUseId))
   }
 
-  private begin(sessionId: string, toolUseId: string, interrupt?: () => void): void {
+  private begin(
+    sessionId: string,
+    toolUseId: string,
+    interrupt?: () => void,
+    background?: () => void
+  ): void {
     const key = keyOf(sessionId, toolUseId)
     const existing = this.commands.get(key)
     if (existing) {
       existing.running = true
       existing.interrupt = interrupt
+      existing.background = background
       return
     }
     this.commands.set(key, {
@@ -107,7 +144,8 @@ export class ShellOutputHub {
       unsent: '',
       running: true,
       settled: false,
-      interrupt
+      interrupt,
+      background
     })
     this.publish({ sessionId, toolUseId, text: '', running: true })
   }
@@ -132,6 +170,7 @@ export class ShellOutputHub {
     if (!command || !command.running) return
     command.running = false
     command.interrupt = undefined
+    command.background = undefined
     this.flush(command)
     if (command.settled) this.forget(command)
   }

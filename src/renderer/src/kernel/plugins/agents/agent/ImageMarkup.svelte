@@ -17,7 +17,7 @@
   import ArrowUUpRight from 'phosphor-svelte/lib/ArrowUUpRight'
   import ImageSquare from 'phosphor-svelte/lib/ImageSquare'
   import type { Component } from 'svelte'
-  import { onDestroy, onMount } from 'svelte'
+  import { onDestroy, onMount, tick } from 'svelte'
   import {
     MARK_COLORS,
     addMark,
@@ -83,7 +83,11 @@
   let blurred: HTMLCanvasElement | null = null
   let dragStart: Point | null = null
 
+  let dialog = $state<HTMLDivElement>()
+
   onMount(() => {
+    // Out of the composer's textarea, so keys meant as tools are not typed into the draft.
+    dialog?.focus()
     void load()
   })
 
@@ -196,7 +200,7 @@
     const frame = canvas?.parentElement?.getBoundingClientRect()
     if (!frame) return
     label = { at, left: event.clientX - frame.left, top: event.clientY - frame.top, text: '' }
-    queueMicrotask(() => labelInput?.focus())
+    void tick().then(() => labelInput?.focus())
   }
 
   /** Keeps the label being typed, when it has any text. */
@@ -281,7 +285,12 @@
       onCancel()
       return
     }
-    if (handleShortcut(event)) event.preventDefault()
+    if (handleShortcut(event)) {
+      event.preventDefault()
+      return
+    }
+    // Whatever else is pressed is not for anything behind the editor.
+    if (!dialog?.contains(event.target as Node)) event.preventDefault()
   }
 
   /** Runs the shortcut a key press means; says whether it meant one. */
@@ -316,7 +325,9 @@
 
 <div
   use:portal
-  class="fixed inset-0 z-modal flex flex-col bg-black/80"
+  bind:this={dialog}
+  tabindex="-1"
+  class="fixed inset-0 z-modal flex flex-col bg-black/80 outline-none"
   role="dialog"
   aria-modal="true"
   aria-label="Mark up image"

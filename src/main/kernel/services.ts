@@ -27,6 +27,8 @@ import type { ApiDispatcher } from '../api/dispatcher'
 import type { RouteRegistry } from '../api/registry'
 import type { ClientRecord } from '../api/clients'
 import type { AppPairing } from '../api/socket/pairing'
+import type { DebugService } from '../debug/service'
+import type { DebugAdapterRegistry } from '../debug/registry'
 
 /** Repository context plus the lookups every route needs to resolve a worktree. */
 export interface WorkbenchService {
@@ -98,5 +100,7 @@ declare module '@neoworks/extension-system' {
     agentReview: AgentReviewBridge
     plugins: PluginsService
     apps: AppsService
+    debug: DebugService
+    debugAdapters: DebugAdapterRegistry
   }
 }

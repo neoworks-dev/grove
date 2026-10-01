@@ -406,6 +406,62 @@ if vim.env.GROVE_PROVISION == '1' then
   })
 end
 
+-- Installs one Mason package and quits, for Grove's debugger (installing a
+-- debug adapter on demand, src/main/debug/mason.ts). Headless like first-run
+-- setup, so the package lands in the editor's own Mason directory. The exit
+-- code says whether it is installed.
+local masonInstallTimeoutMs = 600000
+
+--- Installs a Mason package by name. Returns whether it is installed.
+local function installMasonPackage(name)
+  local registry = require('mason-registry')
+  local finished = false
+  local installed = false
+  registry.refresh(function()
+    local found, masonPackage = pcall(registry.get_package, name)
+    if not found then
+      io.stderr:write('mason has no package named ' .. name .. '\n')
+      finished = true
+      return
+    end
+    if masonPackage:is_installed() then
+      installed = true
+      finished = true
+      return
+    end
+    masonPackage:install({}, function(success, result)
+      installed = success
+      if not success then
+        io.stderr:write(tostring(result) .. '\n')
+      end
+      finished = true
+    end)
+  end)
+  vim.wait(masonInstallTimeoutMs, function()
+    return finished
+  end, 200)
+  return installed
+end
+
+if vim.env.GROVE_MASON_INSTALL ~= nil and vim.env.GROVE_MASON_INSTALL ~= '' then
+  vim.api.nvim_create_autocmd('VimEnter', {
+    once = true,
+    callback = function()
+      vim.schedule(function()
+        local ok, installed = pcall(installMasonPackage, vim.env.GROVE_MASON_INSTALL)
+        if not ok then
+          io.stderr:write(tostring(installed) .. '\n')
+        end
+        if ok and installed then
+          vim.cmd('qall!')
+        else
+          vim.cmd('cquit! 1')
+        end
+      end)
+    end
+  })
+end
+
 -- Each diagnostic's message at the end of its line, in the severity's colour
 -- behind a dot, on top of the underline. Worst first where several share a line.
 -- Highlight group per vim.diagnostic.severity, for the float's dots.
@@ -848,6 +904,13 @@ local function apply_chrome(palette)
   set(0, 'DiffAdd', { bg = blend(palette.surface, palette.ctxGreen, 0.22) })
   set(0, 'DiffDelete', { bg = blend(palette.surface, palette.ctxRed, 0.22) })
   set(0, 'DiffChange', { bg = blend(palette.surface, palette.ctxAmber, 0.22) })
+  -- The debugger's gutter signs and the line execution stopped on (debug.lua).
+  set(0, 'GroveBreakpoint', { fg = palette.ctxRed })
+  set(0, 'GroveLogpoint', { fg = palette.ctxBlue })
+  set(0, 'GroveBreakpointUnverified', { fg = palette.textDim })
+  set(0, 'GroveBreakpointDisabled', { fg = palette.textDim })
+  set(0, 'GroveDebugStopped', { fg = palette.ctxAmber })
+  set(0, 'GroveDebugStoppedLine', { bg = blend(palette.surface, palette.ctxAmber, 0.18) })
 
   -- Terminal ANSI palette (0-15) dynamically bound to Grove's theme tokens
   vim.g.terminal_color_0 = palette.surface
@@ -1303,6 +1366,11 @@ vim.api.nvim_create_user_command('GroveTerminal', grove_popup_terminal, {
 vim.keymap.set('n', '<leader>tt', grove_popup_terminal, {
   desc = 'Toggle popup terminal',
 })
+
+-- The debugger's breakpoints and stopped line, drawn from Grove's state, and
+-- gutter clicks that toggle a breakpoint (see debug.lua).
+_G.grove_debug = dofile(vim.fs.joinpath(configDir, 'debug.lua'))
+_G.grove_debug.setup()
 
 -- Sanctioned user-extension hook (Phase C): a writable init in nvim's data
 -- dir (grove userData) is sourced last when present.

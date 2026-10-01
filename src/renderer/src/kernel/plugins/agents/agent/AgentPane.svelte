@@ -9,7 +9,7 @@
   import Icon from '@iconify/svelte'
   import Eye from 'phosphor-svelte/lib/Eye'
   import PencilSimple from 'phosphor-svelte/lib/PencilSimple'
-  import { onDestroy, onMount } from 'svelte'
+  import { onDestroy, onMount, untrack } from 'svelte'
   import { openFileInEditor, selectWorktree, store } from '../../../../lib/store.svelte'
   import { openLocationInEditor } from '../../../../lib/agents/locations'
   import { keymap } from '../../../../lib/keymap.svelte'
@@ -48,6 +48,7 @@
   import { questionsOf } from '../../../../lib/agents/questions'
   import { modeOf, nextMode, type AgentMode } from '../../../../lib/agents/modes'
   import { nextThinkingLevel } from '../../../../lib/agents/thinking'
+  import { followsAfterScroll } from '../../../../lib/agents/scrollFollow'
   import type {
     ClientEventBody,
     CodeLocation,
@@ -177,6 +178,8 @@
   let promptCard = $state<{ focus: () => void }>()
   let rootEl = $state<HTMLDivElement>()
   let stickToBottom = $state(true)
+  // The transcript's offset at its last scroll event, to tell a scroll up from content growing.
+  let lastScrollTop = 0
   let disposeBindings: (() => void) | undefined
 
   // ── Settings ────────────────────────────────────────────────────
@@ -239,34 +242,43 @@
   // follow a streaming answer: a turn's text arrives as deltas into the row that
   // is already there, so the list stops changing long before the content does.
   // The same observer covers markdown and images that lay out a frame late.
+  // The viewport is watched too: a queue, an error or a taller composer taking
+  // room below shrinks it without the content changing, and the newest lines
+  // would sit hidden under whatever took their place.
   $effect(() => {
-    const content = transcriptViewport?.firstElementChild
-    if (!content) return
+    const viewport = transcriptViewport
+    const content = viewport?.firstElementChild
+    if (!viewport || !content) return
 
     const observer = new ResizeObserver(scrollToBottom)
     observer.observe(content)
+    observer.observe(viewport)
     return () => observer.disconnect()
   })
 
   // A session switched in brings a whole transcript with it, which is a jump to
-  // the bottom rather than a growth the observer would see.
+  // the bottom rather than a growth the observer would see. Having scrolled up
+  // in the last session says nothing about this one.
   $effect(() => {
     void activeId
-    scrollToBottom()
+    untrack(() => {
+      stickToBottom = true
+      lastScrollTop = 0
+      scrollToBottom()
+    })
   })
 
+  /** Scrolls the transcript to its newest output, unless the user scrolled away from it. */
   function scrollToBottom(): void {
     if (!stickToBottom || !transcriptViewport) return
     transcriptViewport.scrollTop = transcriptViewport.scrollHeight
   }
 
+  /** Stops following when the user scrolls up away from the bottom, and resumes at it. */
   function onTranscriptScroll(): void {
     if (!transcriptViewport) return
-    const distance =
-      transcriptViewport.scrollHeight -
-      transcriptViewport.scrollTop -
-      transcriptViewport.clientHeight
-    stickToBottom = distance < 40
+    stickToBottom = followsAfterScroll(stickToBottom, lastScrollTop, transcriptViewport)
+    lastScrollTop = transcriptViewport.scrollTop
   }
 
   // ── Sessions ────────────────────────────────────────────────────
@@ -944,7 +956,13 @@
         liveAgentIds={liveAgents}
         bind:viewport={transcriptViewport}
         onscroll={onTranscriptScroll}
-      />
+      >
+        {#snippet footer()}
+          {#if writing}
+            <AgentWorkingBar tokensLabel={contextLabel} />
+          {/if}
+        {/snippet}
+      </AgentTranscript>
     {:else}
       <div class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-3">
         <p class="text-xs text-dim">No agent session in this worktree.</p>
@@ -984,10 +1002,6 @@
           New session
         </button>
       </div>
-    {/if}
-
-    {#if writing && !overviewOpen}
-      <AgentWorkingBar tokensLabel={contextLabel} />
     {/if}
 
     {#if queued.length > 0 && !overviewOpen}

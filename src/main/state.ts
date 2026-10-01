@@ -12,6 +12,7 @@ import type {
   CheckpointMeta,
   DockLayoutState
 } from '../shared/types'
+import type { DebugBreakpoint } from '../shared/debug'
 
 export type { InstalledExtension }
 
@@ -56,6 +57,10 @@ export interface RepoState {
   // Distraction-free focus mode: the rail hides and the focused pane fills the
   // window.
   focusMode: boolean
+  // The debugger's breakpoints (absolute paths, any worktree) and watch
+  // expressions. Optional: state written before the debugger has neither.
+  debugBreakpoints?: DebugBreakpoint[]
+  debugWatches?: string[]
 }
 
 export interface AppState {

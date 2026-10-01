@@ -53,6 +53,7 @@ describe('sidebar plugin split', () => {
   it('gives every sidebar view its own plugin directory', () => {
     expect(viewContributors().sort()).toEqual([
       'checkpoints',
+      'debug',
       'explorer',
       'extensions',
       'gitChanges',

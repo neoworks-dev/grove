@@ -11,6 +11,7 @@ import { extensionsView } from './extensions'
 import { markdownPreview } from './markdownPreview'
 import { mediaViewers } from './mediaViewers'
 import { diagnostics } from './diagnostics'
+import { debugging } from './debug'
 import { terminal } from './terminal'
 import { githubDashboard } from './github'
 import { logs } from './logs'
@@ -34,6 +35,7 @@ export const corePlugins = [
   markdownPreview,
   mediaViewers,
   diagnostics,
+  debugging,
   terminal,
   githubDashboard,
   logs,

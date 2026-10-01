@@ -7,6 +7,7 @@ import { gitChanges } from './gitChanges'
 import { gitGraph } from './gitGraph'
 import { agents } from './agents'
 import { checkpoints } from './checkpoints'
+import { replay } from './replay'
 import { extensionsView } from './extensions'
 import { markdownPreview } from './markdownPreview'
 import { mediaViewers } from './mediaViewers'
@@ -29,6 +30,7 @@ export const corePlugins = [
   gitGraph,
   agents,
   checkpoints,
+  replay,
   extensionsView,
   markdownPreview,
   mediaViewers,

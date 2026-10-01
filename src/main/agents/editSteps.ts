@@ -197,7 +197,7 @@ export class EditStepRecorder {
     const text = await readFile(this.fileOf(sessionId), 'utf8').catch(() => '')
     if (text.length === 0) return []
     try {
-      const parsed = JSON.parse(text) as unknown
+      const parsed: unknown = JSON.parse(text)
       if (!Array.isArray(parsed)) return []
       return parsed as AgentEditStep[]
     } catch {

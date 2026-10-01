@@ -3,7 +3,7 @@
 
 import type { Context } from '@neoworks/extension-system'
 import { route } from '../kernel/route'
-import { resolutionPrompt, writeResolutions } from '../conflictResolution'
+import { previewResolutions, resolutionPrompt, writeResolutions } from '../conflictResolution'
 import type { ConflictResolutionLines } from '../../shared/types'
 
 export const conflictsRoutes = {
@@ -23,8 +23,17 @@ export const conflictsRoutes = {
 
     route(ctx, 'conflicts:clearProposals', (_e, worktreeId: string) => {
       const worktree = ctx.workbench.findWorktree(worktreeId)
-      ctx.conflictProposals.clear(worktree.path)
+      return ctx.conflictProposals.clear(worktree.path)
     })
+
+    route(
+      ctx,
+      'conflicts:preview',
+      (_e, worktreeId: string, path: string, resolutions: ConflictResolutionLines[]) => {
+        const worktree = ctx.workbench.findWorktree(worktreeId)
+        return previewResolutions(worktree.path, path, resolutions)
+      }
+    )
 
     route(
       ctx,
@@ -32,7 +41,7 @@ export const conflictsRoutes = {
       async (_e, worktreeId: string, resolutions: ConflictResolutionLines[]) => {
         const worktree = ctx.workbench.findWorktree(worktreeId)
         const staged = await writeResolutions(worktree.path, resolutions)
-        ctx.conflictProposals.clear(worktree.path)
+        await ctx.conflictProposals.clear(worktree.path)
         return staged
       }
     )

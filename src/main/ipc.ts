@@ -98,7 +98,8 @@ const checkpoints = new CheckpointManager({
 
 // Merge-conflict resolutions an agent proposed, waiting on the user.
 const conflictProposals = new ConflictProposals({
-  publish: (worktreePath) => send('event:conflict-proposals', { worktreeId: worktreePath })
+  publish: (worktreePath) => send('event:conflict-proposals', { worktreeId: worktreePath }),
+  file: join(app.getPath('userData'), 'conflict-proposals.json')
 })
 
 const watcher = new WorktreeWatcher((change) => {

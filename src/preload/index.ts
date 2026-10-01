@@ -186,7 +186,9 @@ const workbench = {
     clearProposals: (worktreeId: string) =>
       ipcRenderer.invoke('conflicts:clearProposals', worktreeId),
     write: (worktreeId: string, resolutions: unknown) =>
-      ipcRenderer.invoke('conflicts:write', worktreeId, resolutions)
+      ipcRenderer.invoke('conflicts:write', worktreeId, resolutions),
+    preview: (worktreeId: string, path: string, resolutions: unknown) =>
+      ipcRenderer.invoke('conflicts:preview', worktreeId, path, resolutions)
   },
   chat: {
     send: (worktreeId: string, text: string) => ipcRenderer.invoke('chat:send', worktreeId, text),

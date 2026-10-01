@@ -28,6 +28,8 @@ import type {
   MergePreview,
   MergeResult,
   ConflictHunk,
+  ConflictProposal,
+  ConflictResolutionLines,
   ConflictChoice,
   MergeState,
   PrCheckoutState,
@@ -333,6 +335,12 @@ export interface WorkbenchApi {
       worktreeId: string,
       commit: string
     ) => Promise<{ restoredTree: string; preRestore: CheckpointMeta | null }>
+  }
+  conflicts: {
+    agentPrompt: (worktreeId: string, paths: string[] | null) => Promise<string>
+    proposals: (worktreeId: string) => Promise<ConflictProposal[]>
+    clearProposals: (worktreeId: string) => Promise<void>
+    write: (worktreeId: string, resolutions: ConflictResolutionLines[]) => Promise<string[]>
   }
   chat: {
     send: (worktreeId: string, text: string) => Promise<WorktreeChatMessage>

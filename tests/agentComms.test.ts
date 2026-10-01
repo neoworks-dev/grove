@@ -164,7 +164,8 @@ const NO_SCREEN = {
   worktrees: {
     list: () => Promise.resolve(WORKTREES),
     create: () => Promise.reject(new Error('not in these tests'))
-  }
+  },
+  conflicts: {} as never
 }
 
 function worktree(branch: string, path: string, overrides: Partial<Worktree> = {}): Worktree {

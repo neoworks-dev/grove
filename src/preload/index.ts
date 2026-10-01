@@ -179,6 +179,15 @@ const workbench = {
     restore: (worktreeId: string, commit: string) =>
       ipcRenderer.invoke('checkpoints:restore', worktreeId, commit)
   },
+  conflicts: {
+    agentPrompt: (worktreeId: string, paths: string[] | null) =>
+      ipcRenderer.invoke('conflicts:agentPrompt', worktreeId, paths),
+    proposals: (worktreeId: string) => ipcRenderer.invoke('conflicts:proposals', worktreeId),
+    clearProposals: (worktreeId: string) =>
+      ipcRenderer.invoke('conflicts:clearProposals', worktreeId),
+    write: (worktreeId: string, resolutions: unknown) =>
+      ipcRenderer.invoke('conflicts:write', worktreeId, resolutions)
+  },
   chat: {
     send: (worktreeId: string, text: string) => ipcRenderer.invoke('chat:send', worktreeId, text),
     history: (worktreeId: string, since?: number) =>

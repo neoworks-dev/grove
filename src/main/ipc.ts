@@ -13,6 +13,7 @@ import type { WorkbenchService, NvimService, PluginsService, AppsService } from 
 import type { WorkbenchConfig, Worktree, RepoInfo } from '../shared/types'
 import * as git from './git'
 import { CheckpointManager } from './checkpoints'
+import { ConflictProposals } from './conflictResolution'
 import * as config from './config'
 import { LspManager } from './lsp'
 import * as worktrees from './worktrees'
@@ -95,6 +96,11 @@ const checkpoints = new CheckpointManager({
   }
 })
 
+// Merge-conflict resolutions an agent proposed, waiting on the user.
+const conflictProposals = new ConflictProposals({
+  publish: (worktreePath) => send('event:conflict-proposals', { worktreeId: worktreePath })
+})
+
 const watcher = new WorktreeWatcher((change) => {
   send('event:fs-change', change)
   eventHub.publish({ topic: 'files.didChange', payload: change })
@@ -170,7 +176,8 @@ const agents = new AgentService({
       roster: agentRoster,
       notes: agents,
       screen: agents,
-      worktrees: agentWorktrees
+      worktrees: agentWorktrees,
+      conflicts: conflictProposals
     }),
     ...aiBridge.pluginTools()
   ],
@@ -678,6 +685,7 @@ const mainServices = {
     ctx.provide('switchboard', switchboard)
     ctx.provide('agents', agents)
     ctx.provide('agentReview', agentReviewBridge)
+    ctx.provide('conflictProposals', conflictProposals)
 
     // The review bridge follows the log for the life of the process: a gated
     // write blocks the agent whether or not any pane is watching.

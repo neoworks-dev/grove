@@ -33,7 +33,8 @@ function toolNamed(name: string, notes: AgentNotes): GroveTool {
     roster: { harnessIds: () => ['claude'] } as never,
     notes,
     screen: { paneTypes: () => [] },
-    worktrees: {} as never
+    worktrees: {} as never,
+    conflicts: {} as never
   })
   const tool = tools.find((entry) => entry.name === name)
   if (!tool) throw new Error(`${name} is not offered`)

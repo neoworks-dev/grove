@@ -85,34 +85,37 @@
   {#snippet actions()}
     <RowAction icon={PlusIcon} title="Add a watch expression" onclick={startAdding} />
   {/snippet}
-  {#each watches as expression (expression)}
-    {@const result = results[expression]}
-    <div class="group/watch relative">
-      {#if result && 'evaluation' in result && session}
-        <VariableNode
-          sessionId={session.id}
-          name={expression}
-          value={result.evaluation.result}
-          type={result.evaluation.type}
-          variablesReference={result.evaluation.variablesReference}
-        />
-      {:else}
-        <div class="flex h-5 items-center gap-1 pl-6 pr-7 font-mono text-xs">
-          <span class="shrink-0 text-violet">{expression}</span>
-          {#if result && 'error' in result}
-            <span class="min-w-0 truncate text-dim" title={result.error}>= {result.error}</span>
-          {/if}
+  <!-- Re-keyed on each evaluation, so an expanded result never shows a stop's old children. -->
+  {#key results}
+    {#each watches as expression (expression)}
+      {@const result = results[expression]}
+      <div class="group/watch relative">
+        {#if result && 'evaluation' in result && session}
+          <VariableNode
+            sessionId={session.id}
+            name={expression}
+            value={result.evaluation.result}
+            type={result.evaluation.type}
+            variablesReference={result.evaluation.variablesReference}
+          />
+        {:else}
+          <div class="flex h-5 items-center gap-1 pl-6 pr-7 font-mono text-xs">
+            <span class="shrink-0 text-violet">{expression}</span>
+            {#if result && 'error' in result}
+              <span class="min-w-0 truncate text-dim" title={result.error}>= {result.error}</span>
+            {/if}
+          </div>
+        {/if}
+        <div class="absolute right-1 top-0.5 hidden group-hover/watch:block">
+          <RowAction
+            icon={XIcon}
+            title="Remove watch"
+            onclick={() => void window.workbench.debugger.removeWatch(expression)}
+          />
         </div>
-      {/if}
-      <div class="absolute right-1 top-0.5 hidden group-hover/watch:block">
-        <RowAction
-          icon={XIcon}
-          title="Remove watch"
-          onclick={() => void window.workbench.debugger.removeWatch(expression)}
-        />
       </div>
-    </div>
-  {/each}
+    {/each}
+  {/key}
   {#if adding}
     <input
       class="mx-2 my-0.5 w-[calc(100%-1rem)] rounded border border-line bg-input px-2 py-0.5 font-mono text-xs text-default outline-none focus:border-line-strong"

@@ -27,7 +27,7 @@
 </script>
 
 <section class="flex min-h-0 flex-col border-t border-line">
-  <div class="group/row flex h-7 shrink-0 items-center gap-1 px-2">
+  <div class="flex h-7 shrink-0 items-center gap-1 px-2">
     <button
       class="flex min-w-0 flex-1 items-center gap-1 text-left text-2xs font-semibold uppercase tracking-caps text-dim hover:text-default"
       aria-expanded={open}
@@ -44,7 +44,7 @@
       {/if}
     </button>
     {#if actions}
-      <div class="hidden items-center gap-0.5 group-hover/row:flex">
+      <div class="flex items-center gap-0.5">
         {@render actions()}
       </div>
     {/if}

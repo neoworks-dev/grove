@@ -8,6 +8,7 @@ import {
   findConflicts,
   stepMatchesSequence,
   stepLabel,
+  firesWhileTyping,
   type KeyStep
 } from '../src/renderer/src/lib/keySequence'
 
@@ -100,7 +101,14 @@ describe('formatSequence / normalizeSequence', () => {
 
 describe('stepFromEvent', () => {
   function keyEvent(key: string, mods: Partial<KeyboardEvent> = {}): KeyboardEvent {
-    return { key, ctrlKey: false, altKey: false, shiftKey: false, metaKey: false, ...mods } as KeyboardEvent
+    return {
+      key,
+      ctrlKey: false,
+      altKey: false,
+      shiftKey: false,
+      metaKey: false,
+      ...mods
+    } as KeyboardEvent
   }
 
   it('maps named keys', () => {
@@ -153,7 +161,9 @@ describe('findConflicts', () => {
   })
 
   it('ignores different contexts and leader/non-leader differences', () => {
-    expect(findConflicts([entry('a', 'leader x', 'tree'), entry('b', 'leader x', 'global')])).toHaveLength(0)
+    expect(
+      findConflicts([entry('a', 'leader x', 'tree'), entry('b', 'leader x', 'global')])
+    ).toHaveLength(0)
     expect(findConflicts([entry('a', 'leader x'), entry('b', 'x')])).toHaveLength(0)
   })
 })
@@ -211,5 +221,16 @@ describe('stepLabel', () => {
 
   it('leaves a printable character literal', () => {
     expect(stepLabel(step('p'))).toBe('p')
+  })
+})
+
+describe('firesWhileTyping', () => {
+  it('lets chords and function keys through a text field, never plain keys', () => {
+    expect(firesWhileTyping(step('k', { ctrl: true }))).toBe(true)
+    expect(firesWhileTyping(step('f10'))).toBe(true)
+    expect(firesWhileTyping(step('f11', { shift: true }))).toBe(true)
+    expect(firesWhileTyping(step('f'))).toBe(false)
+    expect(firesWhileTyping(step('F'))).toBe(false)
+    expect(firesWhileTyping(step('enter'))).toBe(false)
   })
 })

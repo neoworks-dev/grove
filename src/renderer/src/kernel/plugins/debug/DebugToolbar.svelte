@@ -16,14 +16,15 @@
   import RowAction from '../gitChanges/RowAction.svelte'
   import { debug } from './store.svelte'
 
+  // Short: the label shares a row with the stepping controls.
   const STOP_REASONS: Record<string, string> = {
-    breakpoint: 'Paused on breakpoint',
-    'function breakpoint': 'Paused on function breakpoint',
-    'data breakpoint': 'Paused on data breakpoint',
+    breakpoint: 'On breakpoint',
+    'function breakpoint': 'On breakpoint',
+    'data breakpoint': 'On breakpoint',
     step: 'Paused',
-    exception: 'Paused on exception',
+    exception: 'On exception',
     pause: 'Paused',
-    entry: 'Paused on entry',
+    entry: 'On entry',
     goto: 'Paused'
   }
 
@@ -41,7 +42,7 @@
       return null
     }
     const reason = session.stopReason || 'pause'
-    return STOP_REASONS[reason] || `Paused on ${reason}`
+    return STOP_REASONS[reason] || 'Paused'
   })
 
   /** What a configuration's option says under its name. */
@@ -129,11 +130,9 @@
     {/if}
   </div>
 {:else if session}
-  <div class="flex flex-col gap-1 px-3 pb-2">
+  <div class="flex flex-col gap-1.5 px-3 pb-2">
+    <div class="truncate text-xs text-default" title={session.name}>{session.name}</div>
     <div class="flex items-center gap-1">
-      <span class="min-w-0 flex-1 truncate text-xs text-default" title={session.name}>
-        {session.name}
-      </span>
       {#if session.state === 'stopped'}
         <RowAction icon={PlayIcon} title="Continue (F5)" onclick={() => void debug.continue()} />
       {:else}
@@ -164,18 +163,19 @@
       />
       <RowAction icon={ArrowClockwiseIcon} title="Restart" onclick={() => void debug.restart()} />
       <RowAction icon={StopIcon} title="Stop (Shift+F5)" onclick={() => void debug.stop()} />
-    </div>
-    {#if stopLabel}
-      <div class="text-2xs text-amber">{stopLabel}</div>
-      {#if session.stopDescription && session.stopReason === 'exception'}
-        <div class="rounded-md bg-red-soft px-2 py-1 font-mono text-2xs text-red">
-          {session.stopDescription}
-        </div>
+      <span class="flex-1"></span>
+      {#if stopLabel}
+        <span class="truncate text-2xs text-amber">{stopLabel}</span>
+      {:else if session.state === 'initializing'}
+        <span class="text-2xs text-dim">Starting…</span>
+      {:else}
+        <span class="text-2xs text-dim">Running</span>
       {/if}
-    {:else if session.state === 'initializing'}
-      <div class="text-2xs text-dim">Starting…</div>
-    {:else}
-      <div class="text-2xs text-dim">Running</div>
+    </div>
+    {#if stopLabel && session.stopDescription && session.stopReason === 'exception'}
+      <div class="rounded-md bg-red-soft px-2 py-1 font-mono text-2xs text-red">
+        {session.stopDescription}
+      </div>
     {/if}
   </div>
 {/if}

@@ -147,14 +147,19 @@ export class DebugAdapterRegistry {
 
   /** The first file called `name` in the search directories that can be run. */
   findExecutable(name: string): string | null {
-    for (const directory of this.executableDirectories()) {
-      const candidate = join(directory, name)
-      if (isExecutableFile(candidate)) {
-        return candidate
-      }
-    }
-    return null
+    return findExecutableIn(this.executableDirectories(), name)
   }
+}
+
+/** The first file called `name` in `directories` that can be run, or null. */
+export function findExecutableIn(directories: string[], name: string): string | null {
+  for (const directory of directories) {
+    const candidate = join(directory, name)
+    if (isExecutableFile(candidate)) {
+      return candidate
+    }
+  }
+  return null
 }
 
 /** PATH's directories, for a registry made without Mason (tests, a missing profile). */

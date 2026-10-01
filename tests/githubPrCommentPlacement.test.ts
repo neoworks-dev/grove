@@ -4,7 +4,7 @@ import {
   BOX_WIDTH,
   placeCommentBox,
   type CommentAnchor
-} from '../src/renderer/src/kernel/plugins/github/prCommentPlacement'
+} from '../src/renderer/src/lib/nvim/overlayPlacement'
 
 // A cursor a third of the way down a roomy pane, which is the ordinary case.
 function anchor(overrides: Partial<CommentAnchor> = {}): CommentAnchor {

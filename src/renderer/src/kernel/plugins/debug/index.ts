@@ -11,11 +11,12 @@ import { layout } from '../../../lib/layout.svelte'
 import { repoOpen } from '../guards'
 import RunAndDebugView from './RunAndDebugView.svelte'
 import DebugConsolePane from './DebugConsolePane.svelte'
+import BreakpointEditBox from './BreakpointEditBox.svelte'
 import { debug } from './store.svelte'
 
 export const debugging = {
   name: 'core/debug',
-  inject: ['sidebar', 'panes', 'panel', 'keymap', 'commands'],
+  inject: ['sidebar', 'panes', 'panel', 'keymap', 'commands', 'editor'],
 
   apply(ctx: Context): void {
     ctx.effect(() => debug.start(), 'debug:store')
@@ -60,6 +61,17 @@ export const debugging = {
           order: 25
         }),
       'panel:debugConsole'
+    )
+
+    // A breakpoint's condition, hit count and log message are edited in a box
+    // over the line itself, opened from the gutter or the edit key.
+    ctx.effect(
+      () =>
+        ctx.editor.registerOverlay({
+          id: 'debug.breakpoint-editor',
+          component: BreakpointEditBox
+        }),
+      'overlay:debug-breakpoint-editor'
     )
 
     ctx.effect(() => ctx.keymap.registerBindings(debugBindings()), 'keymap:debug')
@@ -110,6 +122,13 @@ function debugBindings(): KeyBinding[] {
       leader: 'b',
       description: 'Toggle breakpoint',
       run: () => void debug.toggleBreakpointAtCursor()
+    },
+    {
+      id: 'debug.editBreakpoint',
+      keys: '<Shift-F9>',
+      leader: 'B',
+      description: 'Edit breakpoint (condition, hit count, log message)',
+      run: () => void debug.editBreakpointAtCursor()
     },
     {
       id: 'debug.stepOver',

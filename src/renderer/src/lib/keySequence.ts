@@ -307,11 +307,7 @@ export function stepMatchesSequence(text: string, step: KeyStep): boolean {
 
 export function stepsEqual(a: KeyStep, b: KeyStep): boolean {
   return (
-    a.key === b.key &&
-    a.ctrl === b.ctrl &&
-    a.alt === b.alt &&
-    a.shift === b.shift &&
-    a.meta === b.meta
+    a.key === b.key && a.ctrl === b.ctrl && a.alt === b.alt && a.shift === b.shift && a.meta === b.meta
   )
 }
 

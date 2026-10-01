@@ -22,6 +22,7 @@
     tallyOf,
     toItemRows,
     toTranscriptRows,
+    type CallGroupRow,
     type ToolRunRow,
     type ToolTally,
     type TranscriptRow
@@ -34,6 +35,9 @@
   import AgentImage from './AgentImage.svelte'
   import AgentMessageCards from './AgentMessageCards.svelte'
   import AgentToolCall from './AgentToolCall.svelte'
+  import AgentBrowserCall from './AgentBrowserCall.svelte'
+  import AgentBrowserGroup from './AgentBrowserGroup.svelte'
+  import { BROWSER_TOOL, isBrowserCall } from '../../../../lib/agents/browserCalls'
   import AgentSurface from './AgentSurface.svelte'
   import { clearReveal, transcriptReveal } from '../../../../lib/agents/transcriptReveal.svelte'
   import { sectionHolding } from '../../../../lib/agents/sectionHolding'
@@ -153,6 +157,14 @@
     return call.images.length > 0
   }
 
+  /** The block a call joins with its neighbours: browser calls drive one page, so they stay together. */
+  function groupOf(call: ToolItem): string | null {
+    if (isBrowserCall(call)) {
+      return BROWSER_TOOL
+    }
+    return null
+  }
+
   /** What a folded summary says a run of calls did, file names included. */
   function tallyCalls(calls: ToolItem[]): ToolTally[] {
     return tallyOf(
@@ -206,6 +218,41 @@
   {/each}
 {/snippet}
 
+{#snippet toolCall(call: ToolItem)}
+  {#if isBrowserCall(call)}
+    <!-- The browser tool reads as what it did in the page, not as its protocol call. -->
+    <AgentBrowserCall
+      {sessionId}
+      item={call}
+      expanded={Boolean(expandedTools[call.toolUseId])}
+      onToggle={() => toggleTool(call.toolUseId)}
+    />
+  {:else}
+    <AgentToolCall
+      {sessionId}
+      item={call}
+      display={displayOf(call)}
+      {root}
+      expanded={Boolean(expandedTools[call.toolUseId])}
+      onToggle={() => toggleTool(call.toolUseId)}
+      {onOpenFile}
+      agentSessionId={subagentSessions.get(call.toolUseId) ?? null}
+      {onOpenSession}
+    />
+  {/if}
+{/snippet}
+
+{#snippet callGroup(group: CallGroupRow)}
+  <AgentBrowserGroup
+    {sessionId}
+    items={group.items}
+    open={Boolean(expandedRuns[group.key])}
+    onToggle={() => toggleRun(group.key)}
+    {expandedTools}
+    {toggleTool}
+  />
+{/snippet}
+
 {#snippet toolRun(run: ToolRunRow)}
   {@const open = Boolean(expandedRuns[run.key])}
   <div class="mb-1">
@@ -225,17 +272,7 @@
     {#if open}
       <div class="pl-4">
         {#each run.items as call (call.eventId)}
-          <AgentToolCall
-            {sessionId}
-            item={call}
-            display={displayOf(call)}
-            {root}
-            expanded={Boolean(expandedTools[call.toolUseId])}
-            onToggle={() => toggleTool(call.toolUseId)}
-            {onOpenFile}
-            agentSessionId={subagentSessions.get(call.toolUseId) ?? null}
-            {onOpenSession}
-          />
+          {@render toolCall(call)}
         {/each}
       </div>
     {/if}
@@ -385,17 +422,7 @@
       {/if}
     </div>
   {:else if item.kind === 'tool'}
-    <AgentToolCall
-      {sessionId}
-      {item}
-      display={displayOf(item)}
-      {root}
-      expanded={Boolean(expandedTools[item.toolUseId])}
-      onToggle={() => toggleTool(item.toolUseId)}
-      {onOpenFile}
-      agentSessionId={subagentSessions.get(item.toolUseId) ?? null}
-      {onOpenSession}
-    />
+    {@render toolCall(item)}
   {:else if item.kind === 'shell'}
     <!-- A `!` command the user ran. `shared` decides whether the model saw it. -->
     <div class="mb-2">
@@ -431,7 +458,7 @@
     {#each sections as section, index (section.key)}
       <!-- The section box is the sticky header's containing block, so the pinned
            user bubble scrolls away with its own turn instead of stacking. -->
-      {@const rows = toTranscriptRows(section.body, standsAlone)}
+      {@const rows = toTranscriptRows(section.body, standsAlone, groupOf)}
       {@const fold = isSettled(index) ? foldTurn(rows, standsAlone) : { hidden: [], kept: rows }}
       {@const open = Boolean(expandedTurns[section.key])}
       <div data-section={section.key}>
@@ -446,6 +473,8 @@
         {#each open ? toItemRows(section.body) : fold.kept as bodyRow (bodyRow.key)}
           {#if bodyRow.kind === 'toolRun'}
             {@render toolRun(bodyRow)}
+          {:else if bodyRow.kind === 'callGroup'}
+            {@render callGroup(bodyRow)}
           {:else}
             {@render row(bodyRow.item)}
           {/if}

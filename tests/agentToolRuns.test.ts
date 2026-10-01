@@ -121,3 +121,32 @@ describe('a folded run of calls', () => {
     expect(tallies.map((tally) => tally.name)).toEqual(['Start agent', 'Bash'])
   })
 })
+
+describe('a group of calls to one tool', () => {
+  const browserGroup = (call: ToolItem): string | null => (call.name === 'browser' ? 'browser' : null)
+
+  test('consecutive calls of a group become one row, whatever their status', () => {
+    const rows = toTranscriptRows(
+      [tool('Read'), tool('Read'), tool('browser'), tool('browser', 'error'), tool('browser', 'running')],
+      () => false,
+      browserGroup
+    )
+    expect(rows.map((row) => row.kind)).toEqual(['toolRun', 'callGroup'])
+    const group = rows[1]
+    expect(group.kind === 'callGroup' && group.items.length).toBe(3)
+  })
+
+  test('a lone call of a group folds like any other call', () => {
+    const rows = toTranscriptRows([tool('Read'), tool('browser'), tool('Read')], () => false, browserGroup)
+    expect(rows.map((row) => row.kind)).toEqual(['toolRun'])
+  })
+
+  test('a call waiting for approval breaks the group', () => {
+    const rows = toTranscriptRows(
+      [tool('browser'), tool('browser'), tool('browser', 'pending'), tool('browser'), tool('browser')],
+      () => false,
+      browserGroup
+    )
+    expect(rows.map((row) => row.kind)).toEqual(['callGroup', 'item', 'callGroup'])
+  })
+})

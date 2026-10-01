@@ -214,7 +214,7 @@ function endpointCredential(
  * the catalog names.
  */
 function routeFromCli(model: ModelInfo): KeyedRoute {
-  return {
+  const keyed: KeyedRoute = {
     key: normalizeModelId(model.id),
     // An alias mostly names the model well enough to stand in until the catalog
     // offers Anthropic's own name — except `default`, which names only the fact
@@ -229,6 +229,8 @@ function routeFromCli(model: ModelInfo): KeyedRoute {
       native: true
     }
   }
+  if (model.description) keyed.route.description = model.description
+  return keyed
 }
 
 function routeFromCatalog(

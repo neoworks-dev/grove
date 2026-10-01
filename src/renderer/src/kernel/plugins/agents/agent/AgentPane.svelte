@@ -8,6 +8,7 @@
 
   import Icon from '@iconify/svelte'
   import Eye from 'phosphor-svelte/lib/Eye'
+  import PencilSimple from 'phosphor-svelte/lib/PencilSimple'
   import { onDestroy, onMount } from 'svelte'
   import { openFileInEditor, selectWorktree, store } from '../../../../lib/store.svelte'
   import { openLocationInEditor } from '../../../../lib/agents/locations'
@@ -63,6 +64,7 @@
   import AgentNotes from './AgentNotes.svelte'
   import AgentQuestion from './AgentQuestion.svelte'
   import AgentControls from './AgentControls.svelte'
+  import AgentEditedFiles from './AgentEditedFiles.svelte'
   import AgentOverview from './AgentOverview.svelte'
   import AgentQueue from './AgentQueue.svelte'
   import AgentSessionTabs from './AgentSessionTabs.svelte'
@@ -529,6 +531,21 @@
     void settings.set('workbench.agentFollow', !following, 'user')
   }
 
+  // ── Edited files ────────────────────────────────────────────────
+
+  let editedFilesOpen = $state(false)
+
+  // The session's last event; the edited files are read again when it moves.
+  const transcriptSeq = $derived.by(() => {
+    if (!live) return 0
+    return live.transcript.lastSeq
+  })
+
+  function toggleEditedFiles(): void {
+    if (!activeId) return
+    editedFilesOpen = !editedFilesOpen
+  }
+
   // Calls already followed, and the session they belong to. A call that was on
   // screen before follow mode came on is history, not something to replay into
   // the editor.
@@ -738,6 +755,15 @@
         run: toggleFollow
       },
       {
+        id: `agent.editedFiles:${leafId}`,
+        keys: 'e',
+        context: leafId,
+        mode: 'normal',
+        group: 'Agent',
+        description: 'Files this session edited',
+        run: toggleEditedFiles
+      },
+      {
         id: `agent.cycleMode:${leafId}`,
         keys: 'shift+tab',
         context: leafId,
@@ -808,7 +834,7 @@
   const errorText = $derived(live?.error || agentSessions.serverError || catalog.error)
 </script>
 
-<div bind:this={rootEl} class="flex h-full flex-col">
+<div bind:this={rootEl} class="relative flex h-full flex-col">
   {#if !worktree}
     <p class="px-3 py-3 text-xs text-dim">Select a worktree.</p>
   {:else}
@@ -839,8 +865,34 @@
         <Eye width="13" height="13" weight={following ? 'fill' : 'regular'} />
         Follow
       </button>
+      <button
+        class="mr-1.5 flex h-6 shrink-0 items-center gap-1 rounded-md px-2 text-2xs disabled:opacity-50"
+        class:bg-elevated={editedFilesOpen}
+        class:text-blue={editedFilesOpen}
+        class:text-dim={!editedFilesOpen}
+        class:enabled:hover:bg-hover={!editedFilesOpen}
+        class:enabled:hover:text-default={!editedFilesOpen}
+        title="Files this session edited (e)"
+        aria-expanded={editedFilesOpen}
+        disabled={!activeId}
+        onpointerdown={(event) => event.stopPropagation()}
+        onclick={toggleEditedFiles}
+      >
+        <PencilSimple width="13" height="13" />
+        Edits
+      </button>
       <PaneControls class="mr-1.5" />
     </div>
+
+    {#if editedFilesOpen && activeId && store.selectedWorktreeId}
+      <AgentEditedFiles
+        sessionId={activeId}
+        worktreeId={store.selectedWorktreeId}
+        {worktreePath}
+        revision={transcriptSeq}
+        onClose={() => (editedFilesOpen = false)}
+      />
+    {/if}
 
     {#if errorText}
       <div class="shrink-0 border-b border-red/30 bg-red-soft px-3 py-1.5 text-2xs text-red">

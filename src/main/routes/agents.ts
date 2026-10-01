@@ -65,6 +65,11 @@ export const agentRoutes = {
       if (!Array.isArray(locations)) return []
       return resolveLocations(worktree.path, locations)
     })
+    // The files a session edited, and each one without its edits, to diff against.
+    route(ctx, 'agents:editedFiles', (_e, sessionId: string) => ctx.agents.editedFiles(sessionId))
+    route(ctx, 'agents:editedFileBase', (_e, sessionId: string, path: string) =>
+      ctx.agents.editedFileBase(sessionId, path)
+    )
     route(ctx, 'agents:setPaneTypes', (_e, types: PaneTypeInfo[]) =>
       ctx.agents.setPaneTypes(types)
     )

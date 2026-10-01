@@ -72,8 +72,8 @@ import { agentSection, section } from './agents/systemPrompt'
 import { groveTools } from './agents/tools'
 import { browserTools } from './agents/tools/browserTools'
 import { BrowserService } from './browser'
-import { KitBrowserService } from './kitBrowser'
-import { kitOrPane } from './agents/tools/browserBackends'
+import { BrowserProviderService } from './browserProviders'
+import { providerOrPane } from './agents/tools/browserBackends'
 
 interface RepoContext {
   repoPath: string | null
@@ -180,8 +180,9 @@ const sessionStore = new SessionStore(join(app.getPath('userData'), 'agent-sessi
 const browser = new BrowserService({
   onActivity: (activity) => send('event:browser-activity', activity)
 })
-// Tabs Kit hands over through the API socket; the tool prefers them to the pane.
-const kitBrowser = new KitBrowserService()
+// Tabs browser providers (Kit, the Chrome extension) hand over through the API
+// socket; the tool prefers them to the pane.
+const browserProviders = new BrowserProviderService()
 
 const agents = new AgentService({
   store: sessionStore,
@@ -199,7 +200,7 @@ const agents = new AgentService({
       conflicts: conflictProposals,
       skills: () => aiBridge.skillList()
     }),
-    ...browserTools(kitOrPane(kitBrowser, browser), { helpersPath: join(app.getPath('userData'), 'browser-helpers.js') }),
+    ...browserTools(providerOrPane(browserProviders, browser), { helpersPath: join(app.getPath('userData'), 'browser-helpers.js') }),
     ...aiBridge.pluginTools()
   ],
   systemPrompt: (session) => buildSystemPrompt(session),
@@ -447,7 +448,7 @@ eventHub.registerTopicScope('services.', 'services.read')
 
 const apiRegistry = new RouteRegistry()
 registerWorkspaceRoutes(apiRegistry)
-registerBrowserRoutes(apiRegistry, { kit: kitBrowser, worktrees: () => context.worktrees })
+registerBrowserRoutes(apiRegistry, { providers: browserProviders, worktrees: () => context.worktrees })
 registerAiRoutes(apiRegistry, { aiBridge })
 registerStorageRoutes(apiRegistry, {
   storagePath: () => join(app.getPath('userData'), 'plugin-storage.json')
@@ -646,7 +647,7 @@ function startApiSocket(): void {
     socketPath: apiSocketPath,
     discoveryPath: join(userData, 'grove-api.json'),
     log: (line) => console.warn(line),
-    onHello: (connection) => kitBrowser.connected(connection)
+    onHello: (connection) => browserProviders.connected(connection)
   })
   void apiSocketServer.listen().catch((error: Error) => {
     apiSocketServer = null

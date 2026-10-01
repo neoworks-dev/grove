@@ -18,6 +18,7 @@ import type {
   GithubCreatedIssue,
   GithubIssueType,
   GithubMilestone,
+  GithubMilestoneDefinition,
   GithubProjectRef,
   GithubDashboard,
   GithubEventKind,
@@ -1055,19 +1056,31 @@ export async function fetchMentionables(repoPath: string): Promise<GithubActor[]
  * repository rather than from the loaded items, so a milestone nothing is filed
  * against yet can still be picked.
  */
-export async function fetchMilestones(repoPath: string): Promise<GithubMilestone[]> {
+export async function fetchMilestones(repoPath: string): Promise<GithubMilestoneDefinition[]> {
   const repo = await repoRef(repoPath)
   const raw = await runGh(repoPath, [
     'api',
     `repos/${repo.nameWithOwner}/milestones?state=all&per_page=${MAX_ITEMS}`
   ])
-  const parsed =
-    parseJson<{ number: number; title: string; state: string; due_on: string | null }[]>(raw)
+  const parsed = parseJson<
+    {
+      number: number
+      title: string
+      state: string
+      due_on: string | null
+      description: string | null
+      open_issues: number
+      closed_issues: number
+    }[]
+  >(raw)
   return parsed.map((entry) => ({
     number: entry.number,
     title: entry.title,
     state: entry.state,
-    dueOn: entry.due_on
+    dueOn: entry.due_on,
+    description: entry.description || '',
+    openIssues: entry.open_issues,
+    closedIssues: entry.closed_issues
   }))
 }
 

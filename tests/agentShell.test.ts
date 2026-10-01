@@ -5,7 +5,7 @@ import { describe, expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { runShellCommand } from '../src/main/agents/shell'
+import { runShellCommand, startShellCommand } from '../src/main/agents/shell'
 
 async function inTempDir<T>(use: (cwd: string) => Promise<T>): Promise<T> {
   const cwd = await mkdtemp(join(tmpdir(), 'grove-shell-'))
@@ -62,6 +62,37 @@ describe('runShellCommand', () => {
       const result = await runShellCommand('sleep 30', { cwd, timeoutMs: 200 })
       expect(result.outcome).toBe('timed out after 200ms')
       expect(result.exitCode).not.toBe(0)
+    })
+  })
+})
+
+describe('startShellCommand', () => {
+  test('streams what the command prints as it prints it', async () => {
+    await inTempDir(async (cwd) => {
+      const seen: string[] = []
+      const running = startShellCommand('echo one; echo two', { cwd, onOutput: (text) => seen.push(text) })
+      await running.result
+      expect(seen.join('')).toBe('one\ntwo\n')
+    })
+  })
+
+  test('sent to the background, a command outlives its time limit', async () => {
+    await inTempDir(async (cwd) => {
+      const running = startShellCommand('sleep 0.4; echo survived', { cwd, timeoutMs: 200 })
+      running.background()
+      const result = await running.result
+      expect(result.output.trim()).toBe('survived')
+      expect(result.outcome).toBe('exit 0')
+    })
+  })
+
+  test('interrupting stops what the command started too', async () => {
+    await inTempDir(async (cwd) => {
+      const running = startShellCommand('sleep 30; echo after', { cwd })
+      await Bun.sleep(100)
+      running.interrupt()
+      const result = await running.result
+      expect(result.output).not.toContain('after')
     })
   })
 })

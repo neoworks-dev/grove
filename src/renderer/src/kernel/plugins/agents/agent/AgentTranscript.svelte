@@ -35,6 +35,7 @@
   import AgentImage from './AgentImage.svelte'
   import AgentMessageCards from './AgentMessageCards.svelte'
   import AgentToolCall from './AgentToolCall.svelte'
+  import AgentShellRun from './AgentShellRun.svelte'
   import AgentBrowserCall from './AgentBrowserCall.svelte'
   import AgentBrowserGroup from './AgentBrowserGroup.svelte'
   import { BROWSER_TOOL, isBrowserCall } from '../../../../lib/agents/browserCalls'
@@ -424,22 +425,7 @@
   {:else if item.kind === 'tool'}
     {@render toolCall(item)}
   {:else if item.kind === 'shell'}
-    <!-- A `!` command the user ran. `shared` decides whether the model saw it. -->
-    <div class="mb-2">
-      <div class="flex items-center gap-2 font-mono text-2xs">
-        <span class="shrink-0 text-blue">$</span>
-        <span class="min-w-0 truncate text-muted">{item.command}</span>
-        {#if !item.shared}<span class="shrink-0 text-dim">· private</span
-          >{:else if !item.delivered}<span class="shrink-0 text-amber"
-            >· goes with your next message</span
-          >{/if}
-        {#if item.exitCode !== 0}<span class="shrink-0 text-red">· exit {item.exitCode}</span>{/if}
-      </div>
-      {#if item.output}
-        <pre
-          class="mt-1 max-h-60 overflow-auto whitespace-pre-wrap pl-4 font-mono text-2xs text-dim">{item.output}</pre>
-      {/if}
-    </div>
+    <AgentShellRun {item} {sessionId} />
   {:else if item.kind === 'notice'}
     <div
       class="-mx-3 mb-3 border-y px-3 py-2 text-2xs {item.tone === 'error'

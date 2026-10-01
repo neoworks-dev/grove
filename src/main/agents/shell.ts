@@ -22,6 +22,17 @@ export interface ShellOptions {
   timeoutMs?: number
   /** Keep at most this many characters of output, counted from the end. */
   maxOutputChars?: number
+  /** Called with what the command prints, as it prints it. */
+  onOutput?(text: string): void
+}
+
+/** A `!` command on its way, and what the user can do to it meanwhile. */
+export interface RunningShellCommand {
+  result: Promise<ShellResult>
+  /** Stops it and everything it started, as Ctrl+C would. */
+  interrupt(): void
+  /** Lifts the timeout, so it runs until it exits or is stopped (Ctrl+B). */
+  background(): void
 }
 
 /** The shell to spawn: the one asked for, or Node's platform default. */
@@ -46,30 +57,41 @@ const NOT_RUN_EXIT_CODE = 127
  * should hit EOF straight away instead of hanging until the timeout.
  */
 export function runShellCommand(command: string, options: ShellOptions): Promise<ShellResult> {
+  return startShellCommand(command, options).result
+}
+
+/**
+ * Start one shell command, in its own process group so that stopping it stops
+ * whatever it started too, and hand back its result with the controls the
+ * user has over it while it runs.
+ */
+export function startShellCommand(command: string, options: ShellOptions): RunningShellCommand {
   const timeoutMs = timeoutOf(options)
   const limit = outputLimitOf(options)
+  const child = spawn(command, {
+    cwd: options.cwd,
+    env: process.env,
+    shell: shellOf(options),
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: true
+  })
 
-  return new Promise((resolve) => {
-    const child = spawn(command, {
-      cwd: options.cwd,
-      env: process.env,
-      shell: shellOf(options),
-      stdio: ['ignore', 'pipe', 'pipe']
-    })
+  const chunks: string[] = []
+  const collect = (chunk: Buffer): void => {
+    const text = chunk.toString('utf8')
+    chunks.push(text)
+    options.onOutput?.(text)
+  }
+  child.stdout.on('data', collect)
+  child.stderr.on('data', collect)
 
-    const chunks: string[] = []
-    const collect = (chunk: Buffer): void => {
-      chunks.push(chunk.toString('utf8'))
-    }
-    child.stdout.on('data', collect)
-    child.stderr.on('data', collect)
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    signalGroup(child.pid, 'SIGKILL')
+  }, timeoutMs)
 
-    let timedOut = false
-    const timer = setTimeout(() => {
-      timedOut = true
-      child.kill('SIGKILL')
-    }, timeoutMs)
-
+  const result = new Promise<ShellResult>((resolve) => {
     child.on('error', (cause: Error) => {
       clearTimeout(timer)
       resolve({
@@ -89,6 +111,22 @@ export function runShellCommand(command: string, options: ShellOptions): Promise
       resolve({ output, exitCode: exitCodeOf(code, signal), outcome: outcomeOf(code, signal) })
     })
   })
+
+  return {
+    result,
+    interrupt: () => signalGroup(child.pid, 'SIGINT'),
+    background: () => clearTimeout(timer)
+  }
+}
+
+/** Signal a command's whole process group. */
+function signalGroup(pid: number | undefined, signal: NodeJS.Signals): void {
+  if (pid === undefined) return
+  try {
+    process.kill(-pid, signal)
+  } catch {
+    // Already gone.
+  }
 }
 
 function timeoutOf(options: ShellOptions): number {

@@ -315,6 +315,77 @@ describe('transcript fold', () => {
     expect(sent.items[0]).toMatchObject({ kind: 'shell', shared: true, delivered: true })
   })
 
+  test('a ! command shows running from the start, and its result fills the same row', () => {
+    const running = fold([{ type: 'user.shell', command: 'bun run build', share: true }])
+    expect(running.items).toHaveLength(1)
+    expect(running.items[0]).toMatchObject({ kind: 'shell', shellId: 'evt_1', running: true })
+
+    const done = fold([
+      { type: 'user.shell', command: 'bun run build', share: true },
+      {
+        type: 'session.shell_result',
+        command: 'bun run build',
+        output: 'built',
+        exitCode: 0,
+        outcome: 'exit 0',
+        share: true,
+        shellId: 'evt_1'
+      }
+    ])
+    expect(done.items).toHaveLength(1)
+    expect(done.items[0]).toMatchObject({ running: false, output: 'built', delivered: false })
+  })
+
+  test('a message sent while a shared command runs leaves it waiting for the next one', () => {
+    const state = fold([
+      { type: 'user.shell', command: 'bun test', share: true },
+      { type: 'user.message', content: [{ type: 'text', text: 'meanwhile' }] },
+      {
+        type: 'session.shell_result',
+        command: 'bun test',
+        output: 'ok',
+        exitCode: 0,
+        outcome: 'exit 0',
+        share: true,
+        shellId: 'evt_1'
+      }
+    ])
+    expect(state.items[0]).toMatchObject({ kind: 'shell', delivered: false })
+  })
+
+  test('a shared command sent to the background counts as handed over when it exits', () => {
+    const state = fold([
+      { type: 'user.shell', command: 'bun run dev', share: true },
+      {
+        type: 'session.shell_result',
+        command: 'bun run dev',
+        output: 'stopped',
+        exitCode: 130,
+        outcome: 'exit 130',
+        share: true,
+        shellId: 'evt_1',
+        background: true
+      }
+    ])
+    expect(state.items[0]).toMatchObject({ background: true, delivered: true })
+  })
+
+  test('a result from an older log finds its row by command line', () => {
+    const state = fold([
+      { type: 'user.shell', command: 'git status' },
+      {
+        type: 'session.shell_result',
+        command: 'git status',
+        output: 'clean',
+        exitCode: 0,
+        outcome: 'exit 0',
+        share: false
+      }
+    ])
+    expect(state.items).toHaveLength(1)
+    expect(state.items[0]).toMatchObject({ running: false, output: 'clean' })
+  })
+
   test('a retracted message leaves the view', () => {
     const state = createTranscript()
     const message = event({ type: 'user.message', content: [{ type: 'text', text: 'never mind' }] })

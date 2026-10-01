@@ -251,12 +251,16 @@
    * takes it back and the reference lands in a composer nobody is typing in.
    */
   function insertMentionAtCaret(reference: string): void {
+    insertAtCaret(`@${reference} `)
+  }
+
+  /** Writes text into the draft at the caret and leaves the caret after it. */
+  function insertAtCaret(text: string): void {
     const at = promptEl ? promptEl.selectionStart : draft.length
-    const mention = `@${reference} `
-    draft = draft.slice(0, at) + mention + draft.slice(at)
+    draft = draft.slice(0, at) + text + draft.slice(at)
     requestAnimationFrame(() => {
       if (!promptEl) return
-      const position = at + mention.length
+      const position = at + text.length
       promptEl.focus()
       promptEl.setSelectionRange(position, position)
       syncCaret()
@@ -293,6 +297,10 @@
     const request = store.composerInsert
     if (!request) return
     store.composerInsert = null
+    if (request.plain) {
+      insertAtCaret(request.text)
+      return
+    }
     insertMentionAtCaret(request.text)
     if (request.reference) attachReference(request.reference)
   })

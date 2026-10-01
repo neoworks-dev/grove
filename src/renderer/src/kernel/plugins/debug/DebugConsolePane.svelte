@@ -7,6 +7,7 @@
   import CaretRightIcon from 'phosphor-svelte/lib/CaretRightIcon'
   import type { DebugOutputLine } from '../../../../../shared/debug'
   import RowAction from '../gitChanges/RowAction.svelte'
+  import PaneControls from '../../../components/PaneControls.svelte'
   import VariableNode from './VariableNode.svelte'
   import { debug } from './store.svelte'
 
@@ -101,6 +102,7 @@
       title="Clear console"
       onclick={() => void window.workbench.debugger.clearOutput()}
     />
+    <PaneControls />
   </div>
   <FloatingScrollbar class="min-h-0 flex-1" bind:viewport onscroll={onScroll}>
     <div class="px-3 py-1 font-mono text-xs">
@@ -116,10 +118,8 @@
           </div>
         {:else}
           <div class="whitespace-pre-wrap break-words {colourOf(line)}">
-            {#if line.category === 'input'}<span class="text-dim">› </span>{/if}{line.text.replace(
-              /\n$/,
-              ''
-            )}
+            {#if line.category === 'input'}<span class="mr-1 text-dim">›</span
+              >{/if}{line.text.replace(/\n$/, '')}
           </div>
         {/if}
       {/each}

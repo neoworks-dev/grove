@@ -23,6 +23,7 @@ export function runFakeAdapter(input: Readable, output: Writable, lineCount = 10
   let program = ''
   let currentLine = 0
   let breakpointLines: number[] = []
+  let ended = false
 
   const send = (message: Record<string, unknown>): void => {
     sequence += 1
@@ -46,6 +47,7 @@ export function runFakeAdapter(input: Readable, output: Writable, lineCount = 10
     event('stopped', { reason, threadId: THREAD_ID, allThreadsStopped: true })
   }
   const finish = (): void => {
+    ended = true
     event('exited', { exitCode: 0 })
     event('terminated')
   }
@@ -65,7 +67,7 @@ export function runFakeAdapter(input: Readable, output: Writable, lineCount = 10
       case 'initialize':
         respond(request, {
           supportsConfigurationDoneRequest: true,
-          supportsTerminateRequest: false,
+          supportsTerminateRequest: true,
           exceptionBreakpointFilters: [
             { filter: 'raised', label: 'Raised Exceptions', default: false },
             { filter: 'uncaught', label: 'Uncaught Exceptions', default: true }
@@ -160,6 +162,14 @@ export function runFakeAdapter(input: Readable, output: Writable, lineCount = 10
       case 'continue':
         respond(request, { allThreadsContinued: true })
         runFrom(currentLine)
+        return
+      case 'terminate':
+        // A program that already ended has nothing left to terminate; like
+        // debugpy, say so by answering and sending nothing more.
+        respond(request)
+        if (!ended) {
+          finish()
+        }
         return
       case 'disconnect':
         respond(request)

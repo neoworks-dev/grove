@@ -263,8 +263,8 @@ export class DebugSession {
         () => false
       )
       if (accepted) {
-        // The adapter answers with a `terminated` event, which comes back here
-        // to disconnect. One that never sends it is let go of after the grace.
+        // The adapter answers with a `terminated` event, which disconnects.
+        // One that never sends it is let go of after the grace.
         setTimeout(() => this.finish(), TERMINATE_GRACE_MS).unref()
         return
       }
@@ -272,6 +272,15 @@ export class DebugSession {
     await this.request('disconnect', { terminateDebuggee: true }, TERMINATE_GRACE_MS).catch(
       () => undefined
     )
+    this.finish()
+  }
+
+  /** The adapter says the program is over: disconnect without asking it to end it again. */
+  private async disconnect(): Promise<void> {
+    if (this.state === 'terminated') {
+      return
+    }
+    await this.request('disconnect', {}, TERMINATE_GRACE_MS).catch(() => undefined)
     this.finish()
   }
 
@@ -392,7 +401,7 @@ export class DebugSession {
         this.handleExited(event as DebugProtocol.ExitedEvent)
         return
       case 'terminated':
-        void this.stop()
+        void this.disconnect()
         return
     }
   }

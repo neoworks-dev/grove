@@ -79,9 +79,10 @@ function createService(): {
 /** Resolves once the service's snapshot satisfies the check. */
 async function waitFor(
   service: DebugService,
-  check: (snapshot: DebugSnapshot) => boolean
+  check: (snapshot: DebugSnapshot) => boolean,
+  timeoutMs = WAIT_TIMEOUT_MS
 ): Promise<DebugSnapshot> {
-  const deadline = Date.now() + WAIT_TIMEOUT_MS
+  const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     const snapshot = service.snapshot()
     if (check(snapshot)) return snapshot
@@ -156,7 +157,8 @@ describe('a debug session', () => {
     expect(snapshot.focusedLocation).toEqual({ path: programPath, line: 6 })
 
     await service.continue()
-    snapshot = await waitFor(service, (current) => current.sessions.length === 0)
+    // The program's end lets the session go at once, not after a terminate's grace.
+    snapshot = await waitFor(service, (current) => current.sessions.length === 0, 1000)
     expect(snapshot.focusedLocation).toBeNull()
     expect(snapshot.focusedSessionId).toBeNull()
     expect(output.some((line) => line.text === 'Process exited with code 0\n')).toBe(true)

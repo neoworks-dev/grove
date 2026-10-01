@@ -7,7 +7,8 @@
   import DebugSection from './DebugSection.svelte'
   import VariableNode from './VariableNode.svelte'
   import RowAction from '../gitChanges/RowAction.svelte'
-  import { debug, messageOf } from './store.svelte'
+  import { debug } from './store.svelte'
+  import { messageOf } from './messages'
 
   type WatchResult = { evaluation: DebugEvaluation } | { error: string }
 

@@ -137,6 +137,7 @@ describe('a group of calls in a finished turn', () => {
     )
     const fold = foldTurn(rows, hasImages)
     expect(fold.kept.map((row) => row.kind)).toEqual(['item'])
+    expect(fold.hidden.map((row) => row.kind)).toEqual(['callGroup'])
     expect(foldedCalls(fold.hidden)).toHaveLength(2)
   })
 

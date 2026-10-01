@@ -7,8 +7,8 @@
 // files under review is settled are they written back and staged together.
 
 import { createHash } from 'node:crypto'
-import { readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { simpleGit } from 'simple-git'
 import type {
   ConflictHunk,
@@ -45,12 +45,48 @@ export interface ProposalInput {
 export interface ConflictProposalsOptions {
   /** Tells the renderer a worktree's proposals changed. */
   publish(worktreePath: string): void
+  /** Where proposals are kept across restarts; in memory only when left out. */
+  file?: string
 }
 
 export class ConflictProposals {
   private byWorktree = new Map<string, Map<string, ConflictProposal>>()
+  private loaded: Promise<void> | null = null
 
   constructor(private options: ConflictProposalsOptions) {}
+
+  /** Reads the proposals a previous run left, once. */
+  private load(): Promise<void> {
+    if (!this.loaded) this.loaded = this.readFile()
+    return this.loaded
+  }
+
+  private async readFile(): Promise<void> {
+    if (!this.options.file) return
+    const text = await readFile(this.options.file, 'utf8').catch(() => '')
+    if (text.length === 0) return
+    try {
+      const stored: Record<string, ConflictProposal[]> = JSON.parse(text)
+      for (const [worktreePath, proposals] of Object.entries(stored)) {
+        const map = this.mapOf(worktreePath)
+        for (const proposal of proposals)
+          map.set(proposalKey(proposal.path, proposal.hunkIndex), proposal)
+      }
+    } catch {
+      return
+    }
+  }
+
+  /** Writes every worktree's proposals out, so a restart does not lose a review. */
+  private async save(): Promise<void> {
+    if (!this.options.file) return
+    const stored: Record<string, ConflictProposal[]> = {}
+    for (const [worktreePath, proposals] of this.byWorktree) {
+      if (proposals.size > 0) stored[worktreePath] = [...proposals.values()]
+    }
+    await mkdir(dirname(this.options.file), { recursive: true })
+    await writeFile(this.options.file, JSON.stringify(stored))
+  }
 
   /**
    * Records a proposal for a conflict that exists right now. Returns what the
@@ -60,6 +96,7 @@ export class ConflictProposals {
     worktreePath: string,
     input: ProposalInput
   ): Promise<{ ok: boolean; message: string }> {
+    await this.load()
     const hunks = await conflictsInFile(worktreePath, input.path).catch(() => [])
     const hunk = hunks[input.conflict - 1]
     if (!hunk) {
@@ -80,12 +117,14 @@ export class ConflictProposals {
       sessionId: input.sessionId
     }
     this.mapOf(worktreePath).set(proposalKey(proposal.path, proposal.hunkIndex), proposal)
+    await this.save()
     this.options.publish(worktreePath)
     return { ok: true, message: await this.progress(worktreePath) }
   }
 
   /** The proposals that still match their conflicts; stale ones are dropped. */
   async current(worktreePath: string): Promise<ConflictProposal[]> {
+    await this.load()
     const proposals = this.mapOf(worktreePath)
     if (proposals.size === 0) return []
     const files = await listConflicts(worktreePath)
@@ -96,8 +135,10 @@ export class ConflictProposals {
   }
 
   /** Forgets a worktree's proposals: the user dismissed them, or wrote them back. */
-  clear(worktreePath: string): void {
+  async clear(worktreePath: string): Promise<void> {
+    await this.load()
     this.byWorktree.delete(worktreePath)
+    await this.save()
     this.options.publish(worktreePath)
   }
 
@@ -161,6 +202,19 @@ export function applyResolutions(
     lines.splice(hunk.startLine - 1, hunk.endLine - hunk.startLine + 1, ...resolution.lines)
   }
   return lines.join('\n')
+}
+
+/**
+ * One file as it is now, markers and all, beside the file the given
+ * resolutions would leave — for the user to read before anything is written.
+ */
+export async function previewResolutions(
+  worktreePath: string,
+  path: string,
+  resolutions: { hunkIndex: number; lines: string[] }[]
+): Promise<{ current: string; resolved: string }> {
+  const current = await readFile(join(worktreePath, path), 'utf8')
+  return { current, resolved: applyResolutions(current, resolutions) }
 }
 
 /**
@@ -231,11 +285,7 @@ async function refExists(worktreePath: string, ref: string): Promise<boolean> {
 }
 
 /** One side's recent commits touching the files, as `git log --oneline` would put them. */
-async function sideHistory(
-  worktreePath: string,
-  range: string,
-  paths: string[]
-): Promise<string> {
+async function sideHistory(worktreePath: string, range: string, paths: string[]): Promise<string> {
   try {
     const out = await simpleGit({ baseDir: worktreePath }).raw([
       'log',

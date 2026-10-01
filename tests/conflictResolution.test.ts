@@ -15,6 +15,14 @@ import {
 } from '../src/main/conflictResolution'
 import { conflictTool } from '../src/main/agents/tools/conflictTools'
 import { parseConflictHunks } from '../src/main/conflicts'
+import {
+  hunkKey,
+  previewResolutions,
+  reviewedFiles,
+  resolutionsToWrite,
+  settledCount,
+  sideLines
+} from '../src/renderer/src/lib/conflictDecisions'
 
 const cleanups: string[] = []
 
@@ -194,5 +202,73 @@ describe('writing back', () => {
   test('a CRLF file keeps its line endings', () => {
     const hunk = parseConflictHunks('<<<<<<< a\r\nx\r\n=======\r\ny\r\n>>>>>>> b\r\n')[0]
     expect(resolutionLines('x\ny\n', hunk)).toEqual(['x\r', 'y\r'])
+  })
+})
+
+describe('settling proposals in the renderer', () => {
+  const hunk = (ours: string, theirs: string) => ({
+    startLine: 1,
+    endLine: 5,
+    oursLabel: 'HEAD',
+    theirsLabel: 'feature',
+    ours: [ours],
+    theirs: [theirs]
+  })
+  const files = [
+    { path: 'a.ts', hunks: [hunk('a1', 'b1'), hunk('a2', 'b2')] },
+    { path: 'untouched.ts', hunks: [hunk('x', 'y')] }
+  ]
+  const proposals = [
+    {
+      path: 'a.ts',
+      hunkIndex: 0,
+      fingerprint: 'f',
+      lines: ['merged'],
+      reason: 'r',
+      confident: true,
+      sessionId: 's'
+    }
+  ]
+
+  test('only files with a proposal are under review, every conflict in them counted', () => {
+    expect(reviewedFiles(files, proposals).map((file) => file.path)).toEqual(['a.ts'])
+    expect(settledCount(files, proposals, {})).toEqual({ settled: 0, total: 2 })
+  })
+
+  test('decisions are keyed to the conflict as it is, and write back as their lines', () => {
+    const decisions = {
+      [hunkKey('a.ts', 0, files[0].hunks[0])]: { kind: 'proposal' as const, lines: ['merged'] },
+      [hunkKey('a.ts', 1, files[0].hunks[1])]: {
+        kind: 'theirs' as const,
+        lines: sideLines(files[0].hunks[1], 'theirs')
+      }
+    }
+    expect(settledCount(files, proposals, decisions)).toEqual({ settled: 2, total: 2 })
+    expect(resolutionsToWrite(files, proposals, decisions)).toEqual([
+      { path: 'a.ts', hunkIndex: 0, lines: ['merged'] },
+      { path: 'a.ts', hunkIndex: 1, lines: ['b2'] }
+    ])
+    expect(hunkKey('a.ts', 0, hunk('a1', 'changed'))).not.toBe(hunkKey('a.ts', 0, files[0].hunks[0]))
+  })
+
+  test('the preview fills undecided conflicts with the proposal, and leaves the rest', () => {
+    expect(previewResolutions(files[0], proposals, {})).toEqual([
+      { path: 'a.ts', hunkIndex: 0, lines: ['merged'] }
+    ])
+  })
+})
+
+describe('across a restart', () => {
+  test('proposals are read back from their file', async () => {
+    const repo = await conflictedRepo()
+    const file = join(repo, '..', `proposals-${Date.now()}.json`)
+    cleanups.push(file)
+    const first = new ConflictProposals({ publish: () => {}, file })
+    await conflictTool(first).execute(
+      { path: 'greet.ts', conflict: 1, resolution: 'x', reason: 'r', confident: true },
+      context(repo)
+    )
+    const second = new ConflictProposals({ publish: () => {}, file })
+    expect((await second.current(repo)).map((proposal) => proposal.path)).toEqual(['greet.ts'])
   })
 })

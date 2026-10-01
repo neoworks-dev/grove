@@ -341,6 +341,11 @@ export interface WorkbenchApi {
     proposals: (worktreeId: string) => Promise<ConflictProposal[]>
     clearProposals: (worktreeId: string) => Promise<void>
     write: (worktreeId: string, resolutions: ConflictResolutionLines[]) => Promise<string[]>
+    preview: (
+      worktreeId: string,
+      path: string,
+      resolutions: ConflictResolutionLines[]
+    ) => Promise<{ current: string; resolved: string }>
   }
   chat: {
     send: (worktreeId: string, text: string) => Promise<WorktreeChatMessage>

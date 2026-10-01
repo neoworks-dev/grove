@@ -19,6 +19,7 @@ export type {
   CreateSessionOptions,
   CustomEndpoint,
   DeliverAs,
+  EditedFile,
   EventBody,
   EventEnvelope,
   FileBlock,

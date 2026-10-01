@@ -396,7 +396,10 @@ export interface WorkbenchApi {
     /** Ctrl+C for a command the session is running; false when there was none. */
     interruptShell: (sessionId: string, toolUseId: string) => Promise<boolean>
     /** Where places an agent pointed at are now, after edits, renames and deletions. */
-    resolveLocations: (worktreeId: string, locations: CodeLocation[]) => Promise<ResolvedLocation[]>
+    resolveLocations: (
+      worktreeId: string,
+      locations: CodeLocation[]
+    ) => Promise<ResolvedLocation[]>
 
     completeShell: (sessionId: string, line: string) => Promise<ShellCompletion[]>
     shellName: () => Promise<string>

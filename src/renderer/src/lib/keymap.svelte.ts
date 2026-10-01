@@ -61,7 +61,11 @@ import {
 } from './keySequence'
 
 import { settings } from './settings.svelte'
-import { resolveDefaultBindings, readCustomBindings, readOverrideMap } from './bindingResolution'
+import {
+  resolveDefaultBindings,
+  readCustomBindings,
+  readOverrideMap
+} from './bindingResolution'
 import { executeAction } from './actions.svelte'
 
 function sameModes(a: string[], b: string[]): boolean {

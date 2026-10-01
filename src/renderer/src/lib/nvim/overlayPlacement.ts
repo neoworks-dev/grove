@@ -1,4 +1,5 @@
-// Where the review comment box goes, given where Neovim says the cursor is.
+// Where a box drawn over the editor goes (the review comment box, the
+// breakpoint editor), given where Neovim says its line is.
 //
 // The anchor is a screen row and column, not a buffer line: a diff is mostly
 // filler lines, and folds and wrapping move a line as well, so counting buffer

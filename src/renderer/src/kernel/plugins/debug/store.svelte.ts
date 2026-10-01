@@ -4,6 +4,8 @@
 // configurations for the open worktree, and turns the UI's intents into calls.
 
 import type {
+  DebugBreakpoint,
+  DebugBreakpointOptions,
   DebugConfigurationEntry,
   DebugOutputLine,
   DebugSessionSummary,
@@ -11,12 +13,26 @@ import type {
   DebugThread
 } from '../../../../../shared/debug'
 import { store, openFileAtLine } from '../../../lib/store.svelte'
-import { activeNvimSession } from '../../../lib/nvim/registry'
+import { activeNvimSession, sessionByNvimId } from '../../../lib/nvim/registry'
 import { dialogs } from '../../../lib/dialogs.svelte'
 import { layout } from '../../../lib/layout.svelte'
 import { messageOf } from './messages'
 
 const OUTPUT_LIMIT = 5000
+
+/** Asks debug.lua to report the cursor's line as one to edit the breakpoint of. */
+const EDIT_AT_CURSOR_LUA = 'if _G.grove_debug then _G.grove_debug.edit_at_cursor() end'
+
+/** A line whose breakpoint is being edited in the box over an editor. */
+export interface BreakpointEditTarget {
+  /** The editor pane the box opens in. */
+  leafId: string
+  path: string
+  line: number
+  /** Where nvim drew the line, 1-based, for placing the box. */
+  screenRow: number
+  screenCol: number
+}
 
 function emptySnapshot(): DebugSnapshot {
   return {
@@ -37,6 +53,8 @@ class DebugStore {
   selectedConfigurationKey = $state<string | null>(null)
   starting = $state(false)
   installing = $state<string | null>(null)
+  /** The line whose breakpoint the editor's box is open for. */
+  editing = $state<BreakpointEditTarget | null>(null)
   private revealedStop = 0
   private started = false
 
@@ -55,11 +73,15 @@ class DebugStore {
     const unsubscribeCleared = window.workbench.on('event:debug-output-cleared', () => {
       this.output = []
     })
+    const unsubscribeEdit = window.workbench.on('event:nvim-notify', (payload) => {
+      this.onNvimNotify(payload as { id: string; method: string; args: unknown[] })
+    })
     void this.load()
     return () => {
       unsubscribeState()
       unsubscribeOutput()
       unsubscribeCleared()
+      unsubscribeEdit()
       this.started = false
     }
   }
@@ -276,6 +298,48 @@ class DebugStore {
     await window.workbench.debugger.toggleBreakpoint(active.path, active.line)
   }
 
+  /** The breakpoint on a line, if there is one. */
+  breakpointAt(path: string, line: number): DebugBreakpoint | null {
+    const found = this.snapshot.breakpoints.find(
+      (breakpoint) => breakpoint.path === path && breakpoint.line === line
+    )
+    return found || null
+  }
+
+  /** Opens the breakpoint editor over the cursor's line in the focused editor. */
+  async editBreakpointAtCursor(): Promise<void> {
+    const session = activeNvimSession()
+    if (!session || !session.id) {
+      return
+    }
+    await window.workbench.nvim
+      .request(session.id, 'nvim_exec_lua', [EDIT_AT_CURSOR_LUA, []])
+      .catch(() => undefined)
+  }
+
+  /** Adds the breakpoint on a line with these options, or changes the one there. */
+  async saveBreakpoint(path: string, line: number, options: DebugBreakpointOptions): Promise<void> {
+    await this.run(() =>
+      window.workbench.debugger.setBreakpoint(path, line, options).then(() => {})
+    )
+  }
+
+  /** Closes the editor's breakpoint box and gives the editor its keyboard back. */
+  closeBreakpointEditor(): void {
+    this.editing = null
+  }
+
+  /** A right-click in the gutter (or the edit key) arrives from debug.lua as a notification. */
+  private onNvimNotify(event: { id: string; method: string; args: unknown[] }): void {
+    if (event.method !== 'grove_debug_edit_breakpoint') {
+      return
+    }
+    const target = editTargetOf(event.id, event.args[0])
+    if (target) {
+      this.editing = target
+    }
+  }
+
   // ── Evaluation ─────────────────────────────────────────────────
 
   /** Evaluates console input; the result arrives as Debug Console output. */
@@ -318,6 +382,33 @@ class DebugStore {
     }
     openFileAtLine(worktreeId, path, line)
   }
+}
+
+/** Reads debug.lua's edit request into a target, or null when it names no editor or line. */
+function editTargetOf(nvimId: string, payload: unknown): BreakpointEditTarget | null {
+  const session = sessionByNvimId(nvimId)
+  if (!session || !payload || typeof payload !== 'object') {
+    return null
+  }
+  const request = payload as Record<string, unknown>
+  if (typeof request.path !== 'string' || typeof request.line !== 'number') {
+    return null
+  }
+  return {
+    leafId: session.leafId,
+    path: request.path,
+    line: request.line,
+    screenRow: positiveOr(request.screenRow, 1),
+    screenCol: positiveOr(request.screenCol, 1)
+  }
+}
+
+/** A positive number as given, else the fallback. */
+function positiveOr(value: unknown, fallback: number): number {
+  if (typeof value === 'number' && value > 0) {
+    return value
+  }
+  return fallback
 }
 
 export const debug = new DebugStore()

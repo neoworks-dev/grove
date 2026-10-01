@@ -7,7 +7,13 @@
 import type { Worktree } from '../../shared/types'
 import type { ClientRecord } from './clients'
 import type { PermissionBroker } from './broker'
-import { ApiError, RouteRegistry, type ApiTransport, type RouteContext } from './registry'
+import {
+  ApiError,
+  RouteRegistry,
+  type ApiConnection,
+  type ApiTransport,
+  type RouteContext
+} from './registry'
 
 interface DispatcherDeps {
   registry: RouteRegistry
@@ -23,6 +29,7 @@ interface ActiveCall {
 export interface InvokeOptions {
   transport: ApiTransport
   emit?: (chunk: unknown) => void
+  connection?: ApiConnection
 }
 
 export class ApiDispatcher {
@@ -54,7 +61,8 @@ export class ApiDispatcher {
       broker: this.deps.broker,
       emit: options.emit ?? (() => {}),
       signal: controller.signal,
-      worktreeFor: (args) => this.deps.findWorktree(String(args.worktreeId ?? ''))
+      worktreeFor: (args) => this.deps.findWorktree(String(args.worktreeId ?? '')),
+      connection: options.connection ?? null
     }
     try {
       const args = (params ?? {}) as Record<string, unknown>

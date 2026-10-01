@@ -99,18 +99,21 @@ export function toItemRows(items: TranscriptItem[]): TranscriptRow[] {
  * counts whatever names came back rather than mapping them to phrases grove made up. A call
  * about a file keeps its file name through the fold, since "Read" alone does not say what
  * was read; `fileOf` is how the caller, which knows the tools, says which file that is.
+ * `nameOf` is what a call is called there, for a tool that names itself in words.
  */
 export function tallyOf(
   items: ToolItem[],
-  fileOf: (item: ToolItem) => string | null = () => null
+  fileOf: (item: ToolItem) => string | null = () => null,
+  nameOf: (item: ToolItem) => string = (item) => item.name
 ): ToolTally[] {
   const tallies: ToolTally[] = []
   for (const item of items) {
-    let tally = tallies.find((existing) => existing.name === item.name)
+    const name = nameOf(item)
+    let tally = tallies.find((existing) => existing.name === name)
     if (tally) {
       tally.count += 1
     } else {
-      tally = { name: item.name, count: 1, files: [] }
+      tally = { name, count: 1, files: [] }
       tallies.push(tally)
     }
     addFileName(tally, fileOf(item))

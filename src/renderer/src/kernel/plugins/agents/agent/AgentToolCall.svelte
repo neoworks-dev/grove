@@ -208,7 +208,7 @@
       {/if}
       {#if inputView === 'message' && message.to}
         <!-- Who the message is for reads better than the tool's arguments do. -->
-        <span class="shrink-0 rounded bg-blue-soft px-1 text-blue">→ {message.to}</span>
+        <span class="shrink-0 text-default">{message.to}</span>
       {/if}
       {#if pathLabel === null}
         <!-- The description is what the call is for: one line, never cut. The

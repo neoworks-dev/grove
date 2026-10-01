@@ -1,57 +1,176 @@
 // Driving the worktree's browser preview.
 //
-// Every session gets these: the preview belongs to the worktree, not to one
+// Every session gets this: the preview belongs to the worktree, not to one
 // agent, so whichever agent is working on the frontend can look at what it
 // built and use it. The calls land in the Browser pane the user is looking at
 // — they watch the clicks and the typing happen.
+//
+// The preview is Chromium, and the tool is its DevTools protocol, unwrapped.
+// Models know CDP far better than any set of wrappers grove could write, and a
+// wrapper only gets in the way where it did not anticipate something: iframes,
+// shadow DOM, scrolling, uploads. What CDP cannot give a request/response tool
+// — what the page logged in between — rides along on each reply. And like any
+// codebase, what the model finds itself repeating it keeps: a script runs with
+// the helpers file in scope, and the model adds to that file with its own
+// edit tool.
 
+import { mkdir, readFile, writeFile } from 'fs/promises'
+import { dirname } from 'path'
+import { createContext, runInContext } from 'vm'
 import type { BrowserConsoleEntry, BrowserNetworkEntry } from '../../../shared/types'
 import type { GroveTool, GroveToolContext, GroveToolResult } from '../harness'
-import { numberOf, textOf } from './toolInput'
+import { stringOrNothing } from './toolInput'
 
-/** What the tools need of the browser service, keyed by worktree. */
+/** What the tool needs of the browser service, keyed by worktree. */
 export interface AgentBrowser {
   isAttached(worktreeId: string): boolean
   waitForAttach(worktreeId: string, timeoutMs: number): Promise<boolean>
   location(worktreeId: string): { url: string; title: string }
-  navigate(worktreeId: string, url: string): Promise<void>
-  snapshot(worktreeId: string): Promise<unknown>
-  screenshot(worktreeId: string): Promise<string>
-  html(worktreeId: string, selector: string | null): Promise<unknown>
-  evaluate(worktreeId: string, expression: string): Promise<unknown>
-  click(worktreeId: string, target: { selector: string } | { x: number; y: number }): Promise<string>
-  type(worktreeId: string, text: string, selector: string | null): Promise<void>
-  press(worktreeId: string, key: string): Promise<void>
+  /** Sends one DevTools protocol command to the page and returns its result. */
+  cdp(worktreeId: string, method: string, params: Record<string, unknown>): Promise<unknown>
   consoleLog(worktreeId: string): BrowserConsoleEntry[]
   networkLog(worktreeId: string): BrowserNetworkEntry[]
-  clearConsole(worktreeId: string): void
-  clearNetwork(worktreeId: string): void
 }
 
 // How long to wait for the pane to open and hand its page over.
 const ATTACH_TIMEOUT_MS = 8000
-// The most log entries one call returns; the newest are kept.
-const LOG_ENTRIES = 80
+// Characters of a command's result returned before it is cut.
+const MAX_RESULT_LENGTH = 20000
+// The most entries of each log one reply carries; the newest are kept.
+const EVENT_ENTRIES = 10
+// Characters of one log line before it is cut.
+const EVENT_LINE_LENGTH = 200
+// How long a script may run before it is given up on.
+const SCRIPT_TIMEOUT_MS = 30000
+
+// What the helpers file holds before the model has added anything.
+const STARTER_HELPERS = `// Helpers for the browser tool's scripts. Every function declared here is in
+// scope in a script, beside cdp(method, params) and sleep(ms). Add what you
+// find yourself repeating; keep each one small and say what it does.
+
+/** Evaluates an expression in the page and returns its value. */
+async function evaluate(expression) {
+  const { result, exceptionDetails } = await cdp('Runtime.evaluate', {
+    expression,
+    returnByValue: true,
+    awaitPromise: true
+  })
+  if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text)
+  return result.value
+}
+
+/** Waits until the page has finished loading, or the timeout passes. */
+async function waitForLoad(timeoutMs = 10000) {
+  const until = Date.now() + timeoutMs
+  while (Date.now() < until) {
+    if ((await evaluate('document.readyState')) === 'complete') return true
+    await sleep(100)
+  }
+  return false
+}
+
+/** Clicks a point in the viewport the way a pointer would. */
+async function clickAt(x, y) {
+  for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) {
+    await cdp('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 1 })
+  }
+}
+
+/** Clicks the centre of the first element a selector matches, scrolled into view. */
+async function click(selector) {
+  const point = await evaluate(\`(() => {
+    const element = document.querySelector(\${JSON.stringify(selector)})
+    if (!element) return null
+    element.scrollIntoView({ block: 'center' })
+    const box = element.getBoundingClientRect()
+    return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+  })()\`)
+  if (!point) throw new Error(\`Nothing matches \${selector}\`)
+  await clickAt(point.x, point.y)
+}
+`
+
+export interface BrowserToolOptions {
+  /** The file of helpers a script runs with, which the model edits itself. */
+  helpersPath: string
+}
 
 const NOT_OPEN =
   'The Browser pane is not open for this worktree, and could not be opened: the user is not ' +
   'looking at this conversation, or has another worktree selected. Ask them to open the ' +
   'Browser pane (it loads the worktree’s dev server), then try again.'
 
-/** Every tool that drives the browser preview. */
-export function browserTools(browser: AgentBrowser): GroveTool[] {
-  return [
-    navigateTool(browser),
-    snapshotTool(browser),
-    screenshotTool(browser),
-    clickTool(browser),
-    typeTool(browser),
-    pressTool(browser),
-    htmlTool(browser),
-    consoleTool(browser),
-    networkTool(browser),
-    evaluateTool(browser)
-  ]
+/** The last log entries a session has been told about, so each reply carries only what is new. */
+interface SeenEvents {
+  console: BrowserConsoleEntry | null
+  network: BrowserNetworkEntry | null
+}
+
+/** The DevTools protocol tool over the worktree's preview. */
+export function browserTools(browser: AgentBrowser, options: BrowserToolOptions): GroveTool[] {
+  return [browserTool(browser, options)]
+}
+
+function browserTool(browser: AgentBrowser, options: BrowserToolOptions): GroveTool {
+  const seen = new Map<string, SeenEvents>()
+  return {
+    name: 'browser',
+    summary: 'Drive the worktree’s browser preview (Chromium) with DevTools protocol commands',
+    promptGuidelines: [
+      'For frontend work, check what you built in the Browser preview rather than assuming it renders'
+    ],
+    description:
+      'Send one Chrome DevTools Protocol command to the page in the Browser pane, the worktree’s ' +
+      'preview of its dev server, opening the pane when it is not open. The user watches it happen. ' +
+      'Any domain works: Page.navigate, Runtime.evaluate (returnByValue: true for a plain value), ' +
+      'Input.dispatchMouseEvent, Input.insertText, Input.dispatchKeyEvent, DOM.*, ' +
+      'Accessibility.getFullAXTree, Page.captureScreenshot (returned as an image). Navigation does ' +
+      'not wait for the load. For several steps in one call, pass a script instead: the body of an ' +
+      'async JavaScript function with cdp(method, params), sleep(ms) and your helpers in scope, ' +
+      `whose return value is the reply. Your helpers are the functions in ${options.helpersPath}; ` +
+      'read it to see them, and add to it with your file tools whatever you find yourself repeating. ' +
+      'Each reply ends with the console messages and failed requests the page logged since your last call.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        method: { type: 'string', description: 'The protocol method, e.g. "Runtime.evaluate".' },
+        params: { type: 'object', description: 'The method’s parameters, as the protocol defines them.' },
+        script: {
+          type: 'string',
+          description: 'Instead of a method: an async function body run with cdp, sleep and your helpers.'
+        }
+      },
+      additionalProperties: false
+    },
+    policy: 'allow',
+    display: { label: '{method}', input: 'hidden', result: 'text' },
+
+    async execute(input, context) {
+      const method = stringOrNothing(input.method)
+      const script = stringOrNothing(input.script)
+      if (!method && !script) {
+        return { content: 'Give a protocol method, e.g. "Page.navigate", or a script.', isError: true }
+      }
+      let params: Record<string, unknown> = {}
+      if (input.params && typeof input.params === 'object') params = input.params as Record<string, unknown>
+
+      const worktreeId = await ensureBrowser(browser, context)
+      if (worktreeId === null) return { content: NOT_OPEN, isError: true }
+      let result: GroveToolResult
+      try {
+        if (method) {
+          result = replyFor(method, params, await browser.cdp(worktreeId, method, params))
+        } else {
+          result = replyFor('', {}, await runScript(browser, worktreeId, String(script), options.helpersPath))
+        }
+      } catch (error) {
+        result = { content: (error as Error).message, isError: true }
+      }
+      const events = newEvents(browser, worktreeId, seenBy(seen, context.sessionId))
+      const parts = [result.content, events, whereNow(browser, worktreeId)].filter((part) => part.length > 0)
+      return { ...result, content: parts.join('\n\n') }
+    }
+  }
 }
 
 /**
@@ -67,349 +186,156 @@ async function ensureBrowser(browser: AgentBrowser, context: GroveToolContext): 
   return worktreeId
 }
 
-/** Runs a call against the worktree's preview, or says why it can't. */
-async function withBrowser(
+/**
+ * Runs a script against the page with the helpers file in scope, and returns
+ * what it returns. The helpers file is written with the starter helpers the
+ * first time it is needed. The script runs in a context of its own with only
+ * cdp and sleep, so a slip cannot reach the rest of grove by accident.
+ */
+export async function runScript(
   browser: AgentBrowser,
-  context: GroveToolContext,
-  run: (worktreeId: string) => Promise<GroveToolResult> | GroveToolResult
-): Promise<GroveToolResult> {
-  const worktreeId = await ensureBrowser(browser, context)
-  if (worktreeId === null) return { content: NOT_OPEN, isError: true }
+  worktreeId: string,
+  script: string,
+  helpersPath: string
+): Promise<unknown> {
+  const helpers = await helpersSource(helpersPath)
+  const context = createContext({
+    cdp: (method: string, params: Record<string, unknown> = {}) => browser.cdp(worktreeId, method, params),
+    sleep: (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds))
+  })
   try {
-    return await run(worktreeId)
+    runInContext(helpers, context, { filename: helpersPath })
   } catch (error) {
-    return { content: (error as Error).message, isError: true }
+    throw new Error(`The helpers file does not run: ${(error as Error).message}. Fix ${helpersPath}.`)
+  }
+  const running = runInContext(`(async () => {\n${script}\n})()`, context, { filename: 'script' }) as Promise<unknown>
+  return withTimeout(running, SCRIPT_TIMEOUT_MS)
+}
+
+/** The helpers file's text, written with the starter helpers when it does not exist yet. */
+async function helpersSource(helpersPath: string): Promise<string> {
+  try {
+    return await readFile(helpersPath, 'utf8')
+  } catch {
+    await mkdir(dirname(helpersPath), { recursive: true })
+    await writeFile(helpersPath, STARTER_HELPERS)
+    return STARTER_HELPERS
   }
 }
 
-/** Where the page is now, as a line a result ends with. */
+/** A promise that fails once a timeout passes without it settling. */
+function withTimeout<Value>(promise: Promise<Value>, milliseconds: number): Promise<Value> {
+  let timer: ReturnType<typeof setTimeout> | null = null
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`The script did not finish within ${milliseconds / 1000}s.`)), milliseconds)
+  })
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer)
+  })
+}
+
+/** A command's result as the model reads it: a screenshot as a picture, anything else as JSON. */
+export function replyFor(method: string, params: Record<string, unknown>, result: unknown): GroveToolResult {
+  const data = (result as { data?: unknown } | null)?.data
+  if (method === 'Page.captureScreenshot' && typeof data === 'string') {
+    let mimeType = 'image/png'
+    if (params.format === 'jpeg') mimeType = 'image/jpeg'
+    if (params.format === 'webp') mimeType = 'image/webp'
+    return { content: 'Screenshot of the preview.', images: [{ data, mimeType }] }
+  }
+  if (result === undefined || (typeof result === 'object' && result !== null && Object.keys(result).length === 0)) {
+    return { content: 'Done.' }
+  }
+  const text = JSON.stringify(result)
+  if (text.length <= MAX_RESULT_LENGTH) return { content: text }
+  return {
+    content: `${text.slice(0, MAX_RESULT_LENGTH)}\n[Cut at ${MAX_RESULT_LENGTH} of ${text.length} characters; ask for less.]`
+  }
+}
+
+/** What a session has been told about so far, starting from nothing. */
+function seenBy(seen: Map<string, SeenEvents>, sessionId: string): SeenEvents {
+  let entry = seen.get(sessionId)
+  if (!entry) {
+    entry = { console: null, network: null }
+    seen.set(sessionId, entry)
+  }
+  return entry
+}
+
+/**
+ * The console messages and failed requests logged since the session last
+ * heard, capped so a chatty page cannot flood the conversation. Empty when
+ * nothing new happened.
+ */
+export function newEvents(browser: AgentBrowser, worktreeId: string, seen: SeenEvents): string {
+  const consoleLog = browser.consoleLog(worktreeId)
+  const networkLog = browser.networkLog(worktreeId)
+  const consoleEntries = after(consoleLog, seen.console)
+  const networkEntries = after(networkLog, seen.network).filter(failed)
+  seen.console = lastOf(consoleLog)
+  seen.network = lastOf(networkLog)
+
+  const sections: string[] = []
+  if (consoleEntries.length > 0) {
+    sections.push(capped('Console since your last call:', consoleEntries.map(consoleLine)))
+  }
+  if (networkEntries.length > 0) {
+    sections.push(capped('Failed requests since your last call:', networkEntries.map(networkLine)))
+  }
+  return sections.join('\n')
+}
+
+/** The entries after the last one already seen; all of them when it is gone or there was none. */
+function after<Entry>(entries: Entry[], last: Entry | null): Entry[] {
+  if (last === null) return entries
+  const index = entries.lastIndexOf(last)
+  if (index < 0) return entries
+  return entries.slice(index + 1)
+}
+
+function lastOf<Entry>(entries: Entry[]): Entry | null {
+  if (entries.length === 0) return null
+  return entries[entries.length - 1]
+}
+
+/** A request that failed: no response, or an error status. */
+function failed(entry: BrowserNetworkEntry): boolean {
+  if (entry.error) return true
+  return entry.status !== null && entry.status >= 400
+}
+
+/** The newest lines under a heading, saying how many older ones were left out. */
+function capped(heading: string, lines: string[]): string {
+  const shown = lines.slice(-EVENT_ENTRIES)
+  const output = [heading]
+  if (lines.length > shown.length) output.push(`[${lines.length - shown.length} earlier left out]`)
+  output.push(...shown)
+  return output.join('\n')
+}
+
+function consoleLine(entry: BrowserConsoleEntry): string {
+  let line = `- ${entry.level}: ${entry.message}`
+  if (entry.source) line += ` (${entry.source})`
+  return shorten(line)
+}
+
+function networkLine(entry: BrowserNetworkEntry): string {
+  let outcome = String(entry.status)
+  if (entry.error) outcome = entry.error
+  return shorten(`- ${entry.method} ${entry.url} → ${outcome}`)
+}
+
+/** A log line cut to length, on one line. */
+function shorten(line: string): string {
+  const single = line.replace(/\s*\n\s*/g, ' ')
+  if (single.length <= EVENT_LINE_LENGTH) return single
+  return `${single.slice(0, EVENT_LINE_LENGTH - 1)}…`
+}
+
+/** Where the page is now, as a line a reply ends with. */
 function whereNow(browser: AgentBrowser, worktreeId: string): string {
   const { url, title } = browser.location(worktreeId)
   if (!title) return `Now at ${url}.`
   return `Now at ${url} (“${title}”).`
-}
-
-const NO_INPUT = { type: 'object', properties: {}, additionalProperties: false }
-
-/** Opens an address in the preview. */
-function navigateTool(browser: AgentBrowser): GroveTool {
-  return {
-    name: 'browser_navigate',
-    summary: 'Open an address in the worktree’s browser preview.',
-    promptGuidelines: [
-      'For frontend work, check what you built in the Browser preview (browser_* tools) rather than assuming it renders: navigate, browser_snapshot to see the page, browser_screenshot to look at it, and browser_console for errors'
-    ],
-    description:
-      'Open a URL in the Browser pane, the worktree’s preview of its dev server, opening the pane ' +
-      'when it is not open. The user sees the page change. Waits for the page to load.',
-    inputSchema: {
-      type: 'object',
-      properties: { url: { type: 'string', description: 'The address, e.g. http://localhost:3100/settings.' } },
-      required: ['url'],
-      additionalProperties: false
-    },
-    policy: 'allow',
-    display: { label: '{url}', input: 'hidden', result: 'text' },
-    async execute(input, context) {
-      const url = textOf(input.url)
-      if (!url) return { content: 'Give a url to open.', isError: true }
-      return withBrowser(browser, context, async (worktreeId) => {
-        await browser.navigate(worktreeId, url)
-        return { content: whereNow(browser, worktreeId) }
-      })
-    }
-  }
-}
-
-/** The page in outline. */
-function snapshotTool(browser: AgentBrowser): GroveTool {
-  return {
-    name: 'browser_snapshot',
-    summary: 'Read the preview’s page: its text and what can be clicked or typed into.',
-    description:
-      'The page in the Browser pane in outline: address, title, visible text, and the elements ' +
-      'that can be acted on, each with a CSS selector to pass to browser_click or browser_type.',
-    inputSchema: NO_INPUT,
-    policy: 'allow',
-    display: { label: 'page outline', input: 'hidden', result: 'hidden' },
-    async execute(_input, context) {
-      return withBrowser(browser, context, async (worktreeId) => {
-        const snapshot = await browser.snapshot(worktreeId)
-        return { content: JSON.stringify(snapshot, null, 1) }
-      })
-    }
-  }
-}
-
-/** A picture of the page. */
-function screenshotTool(browser: AgentBrowser): GroveTool {
-  return {
-    name: 'browser_screenshot',
-    summary: 'Look at the preview: a screenshot of what the Browser pane shows.',
-    description: 'A screenshot of the page in the Browser pane, as the user sees it.',
-    inputSchema: NO_INPUT,
-    policy: 'allow',
-    display: { label: 'screenshot', input: 'hidden', result: 'hidden' },
-    async execute(_input, context) {
-      return withBrowser(browser, context, async (worktreeId) => {
-        const data = await browser.screenshot(worktreeId)
-        return {
-          content: `Screenshot of the preview. ${whereNow(browser, worktreeId)}`,
-          images: [{ data, mimeType: 'image/png' }]
-        }
-      })
-    }
-  }
-}
-
-/** A click on an element or a point. */
-function clickTool(browser: AgentBrowser): GroveTool {
-  return {
-    name: 'browser_click',
-    summary: 'Click an element in the preview.',
-    description:
-      'Click an element in the Browser pane by CSS selector (from browser_snapshot), or a point ' +
-      'in the viewport by x and y. The element is scrolled into view and marked for the user first.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        selector: { type: 'string' },
-        x: { type: 'number' },
-        y: { type: 'number' }
-      },
-      additionalProperties: false
-    },
-    policy: 'allow',
-    display: { label: '{selector}', input: 'hidden', result: 'text' },
-    async execute(input, context) {
-      const target = clickTarget(input)
-      if (!target) return { content: 'Give a selector, or both x and y.', isError: true }
-      return withBrowser(browser, context, async (worktreeId) => {
-        const point = await browser.click(worktreeId, target)
-        return { content: `Clicked at ${point}. ${whereNow(browser, worktreeId)}` }
-      })
-    }
-  }
-}
-
-/** What a click call aims at, or null when it names nothing. */
-export function clickTarget(input: Record<string, unknown>): { selector: string } | { x: number; y: number } | null {
-  const selector = textOf(input.selector)
-  if (selector) return { selector }
-  const x = numberOf(input.x)
-  const y = numberOf(input.y)
-  if (x === null || y === null) return null
-  return { x, y }
-}
-
-/** Typing into the page. */
-function typeTool(browser: AgentBrowser): GroveTool {
-  return {
-    name: 'browser_type',
-    summary: 'Type into the preview.',
-    description:
-      'Type text into the Browser pane: into the element a selector names (clicked first to focus ' +
-      'it), or into whatever has focus. Set submit to press Enter afterwards.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        text: { type: 'string' },
-        selector: { type: 'string' },
-        submit: { type: 'boolean' }
-      },
-      required: ['text'],
-      additionalProperties: false
-    },
-    policy: 'allow',
-    display: { label: '{text}', input: 'hidden', result: 'text' },
-    async execute(input, context) {
-      let text = ''
-      if (typeof input.text === 'string') text = input.text
-      return withBrowser(browser, context, async (worktreeId) => {
-        await browser.type(worktreeId, text, textOf(input.selector))
-        if (input.submit === true) await browser.press(worktreeId, 'Enter')
-        return { content: `Typed. ${whereNow(browser, worktreeId)}` }
-      })
-    }
-  }
-}
-
-/** One key. */
-function pressTool(browser: AgentBrowser): GroveTool {
-  return {
-    name: 'browser_press',
-    summary: 'Press a key in the preview.',
-    description:
-      'Press one key in the Browser pane: a single character, or Enter, Tab, Escape, Backspace, ' +
-      'Delete, Space, Home, End, PageUp, PageDown or an arrow key (ArrowDown, …).',
-    inputSchema: {
-      type: 'object',
-      properties: { key: { type: 'string' } },
-      required: ['key'],
-      additionalProperties: false
-    },
-    policy: 'allow',
-    display: { label: '{key}', input: 'hidden', result: 'text' },
-    async execute(input, context) {
-      const key = textOf(input.key)
-      if (!key) return { content: 'Give a key to press.', isError: true }
-      return withBrowser(browser, context, async (worktreeId) => {
-        await browser.press(worktreeId, key)
-        return { content: `Pressed ${key}. ${whereNow(browser, worktreeId)}` }
-      })
-    }
-  }
-}
-
-/** Markup. */
-function htmlTool(browser: AgentBrowser): GroveTool {
-  return {
-    name: 'browser_html',
-    summary: 'Read the HTML of the preview’s page, or of elements in it.',
-    description:
-      'The HTML of the elements a CSS selector matches in the Browser pane (the first five), or ' +
-      'of the whole page without one. Long markup is cut.',
-    inputSchema: {
-      type: 'object',
-      properties: { selector: { type: 'string' } },
-      additionalProperties: false
-    },
-    policy: 'allow',
-    display: { label: '{selector}', input: 'hidden', result: 'hidden' },
-    async execute(input, context) {
-      return withBrowser(browser, context, async (worktreeId) => {
-        const html = await browser.html(worktreeId, textOf(input.selector))
-        return { content: String(html) }
-      })
-    }
-  }
-}
-
-/** The console log. */
-function consoleTool(browser: AgentBrowser): GroveTool {
-  return {
-    name: 'browser_console',
-    summary: 'Read what the preview’s page logged to its console.',
-    description:
-      'Console messages from the page in the Browser pane since it opened, newest last; failed ' +
-      'page loads are included as errors. Set errorsOnly for warnings and errors only, and clear ' +
-      'to start the log afresh after reading it.',
-    inputSchema: {
-      type: 'object',
-      properties: { errorsOnly: { type: 'boolean' }, clear: { type: 'boolean' } },
-      additionalProperties: false
-    },
-    policy: 'allow',
-    display: { label: 'console', input: 'hidden', result: 'text' },
-    async execute(input, context) {
-      return withBrowser(browser, context, (worktreeId) => {
-        let entries = browser.consoleLog(worktreeId)
-        if (input.errorsOnly === true) entries = entries.filter(isProblem)
-        if (input.clear === true) browser.clearConsole(worktreeId)
-        return { content: describeConsole(entries) }
-      })
-    }
-  }
-}
-
-/** The network log. */
-function networkTool(browser: AgentBrowser): GroveTool {
-  return {
-    name: 'browser_network',
-    summary: 'Read the requests the preview’s page made.',
-    description:
-      'Requests from the page in the Browser pane since it opened, newest last, with method, ' +
-      'status and type. Set failedOnly for failed requests and error statuses only, and clear to ' +
-      'start the log afresh after reading it.',
-    inputSchema: {
-      type: 'object',
-      properties: { failedOnly: { type: 'boolean' }, clear: { type: 'boolean' } },
-      additionalProperties: false
-    },
-    policy: 'allow',
-    display: { label: 'network', input: 'hidden', result: 'text' },
-    async execute(input, context) {
-      return withBrowser(browser, context, (worktreeId) => {
-        let entries = browser.networkLog(worktreeId)
-        if (input.failedOnly === true) entries = entries.filter(isFailedRequest)
-        if (input.clear === true) browser.clearNetwork(worktreeId)
-        return { content: describeNetwork(entries) }
-      })
-    }
-  }
-}
-
-/** A script in the page. */
-function evaluateTool(browser: AgentBrowser): GroveTool {
-  return {
-    name: 'browser_evaluate',
-    summary: 'Evaluate JavaScript in the preview’s page.',
-    description:
-      'Evaluate a JavaScript expression in the page in the Browser pane and return its value as ' +
-      'JSON. A promise is awaited. For reading state the outline and HTML do not show.',
-    inputSchema: {
-      type: 'object',
-      properties: { expression: { type: 'string' } },
-      required: ['expression'],
-      additionalProperties: false
-    },
-    policy: 'allow',
-    display: { label: '{expression}', input: 'hidden', result: 'text' },
-    async execute(input, context) {
-      const expression = textOf(input.expression)
-      if (!expression) return { content: 'Give an expression to evaluate.', isError: true }
-      return withBrowser(browser, context, async (worktreeId) => {
-        const value = await browser.evaluate(worktreeId, expression)
-        return { content: describeValue(value) }
-      })
-    }
-  }
-}
-
-/** Whether a console entry is a warning or an error. */
-function isProblem(entry: BrowserConsoleEntry): boolean {
-  return entry.level === 'error' || entry.level === 'warning'
-}
-
-/** Whether a request failed or came back with an error status. */
-function isFailedRequest(entry: BrowserNetworkEntry): boolean {
-  if (entry.error !== null) return true
-  return entry.status !== null && entry.status >= 400
-}
-
-/** Console entries as lines, the newest kept when there are many. */
-export function describeConsole(entries: readonly BrowserConsoleEntry[]): string {
-  if (entries.length === 0) return 'Nothing logged.'
-  const shown = entries.slice(-LOG_ENTRIES)
-  const lines = shown.map((entry) => {
-    let line = `[${entry.level}] ${entry.message}`
-    if (entry.source) line += `  (${entry.source})`
-    return line
-  })
-  return withEarlier(entries.length - shown.length, lines)
-}
-
-/** Requests as lines, the newest kept when there are many. */
-export function describeNetwork(entries: readonly BrowserNetworkEntry[]): string {
-  if (entries.length === 0) return 'No requests.'
-  const shown = entries.slice(-LOG_ENTRIES)
-  const lines = shown.map((entry) => {
-    let outcome = String(entry.status)
-    if (entry.error !== null) outcome = entry.error
-    return `${entry.method} ${outcome} ${entry.type} ${entry.url}`
-  })
-  return withEarlier(entries.length - shown.length, lines)
-}
-
-/** Lines, after a note of how many earlier ones were left out. */
-function withEarlier(earlier: number, lines: string[]): string {
-  if (earlier <= 0) return lines.join('\n')
-  return [`(${earlier} earlier entries not shown)`, ...lines].join('\n')
-}
-
-/** A value from the page as text. */
-function describeValue(value: unknown): string {
-  if (value === undefined) return 'undefined'
-  if (typeof value === 'string') return value
-  return JSON.stringify(value, null, 1)
 }

@@ -132,6 +132,31 @@ describe("grove mode's shell", () => {
     expect(result.isError).toBe(true)
   })
 
+  // Stands in for a tool that colours only when told to, as one writing to a
+  // pipe does.
+  const COLOURS_WHEN_FORCED =
+    'if [ -n "$FORCE_COLOR" ]; then printf "\\033[31mfailed\\033[0m\\n"; else echo failed; fi'
+
+  test('asks the command for colour, and streams the colour to the terminal', async () => {
+    const { hub } = recordingHub()
+    await shellTool().execute({ command: COLOURS_WHEN_FORCED }, contextFor(hub))
+
+    expect(hub.snapshot('s1')[0].text).toBe('\u001b[31mfailed\u001b[0m\n')
+  })
+
+  test('hands the model the output without its escapes', async () => {
+    const { hub } = recordingHub()
+    const result = await shellTool().execute({ command: COLOURS_WHEN_FORCED }, contextFor(hub))
+
+    expect(result.content).toBe('failed')
+  })
+
+  test('strips cursor and title sequences as well as colour', () => {
+    const output = '\u001b]0;title\u0007\u001b[2K\u001b[1;32mok\u001b(B\u001b[m done'
+
+    expect(commandResult(output, 0, null, false, 120).content).toBe('ok done')
+  })
+
   test('hands the model the start and end of a long run, not all of it', () => {
     const lines = Array.from({ length: 5000 }, (_, index) => `line ${index}`).join('\n')
     const result = commandResult(lines, 0, null, false, 120)

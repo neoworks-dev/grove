@@ -472,6 +472,15 @@ const workbench = {
       ipcRenderer.invoke('settings:set', key, value, scope),
     filePath: (scope: 'user' | 'project') => ipcRenderer.invoke('settings:filePath', scope)
   },
+  // The Browser pane's page, handed to the main process for agents to drive.
+  browser: {
+    attach: (worktreeId: string, contentsId: number) =>
+      ipcRenderer.invoke('browser:attach', worktreeId, contentsId),
+    detach: (worktreeId: string, contentsId: number) =>
+      ipcRenderer.invoke('browser:detach', worktreeId, contentsId),
+    pick: (worktreeId: string) => ipcRenderer.invoke('browser:pick', worktreeId),
+    cancelPick: (worktreeId: string) => ipcRenderer.invoke('browser:cancelPick', worktreeId)
+  },
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   raiseWindow: () => ipcRenderer.invoke('window:raise'),
 

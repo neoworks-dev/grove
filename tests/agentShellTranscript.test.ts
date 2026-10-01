@@ -7,6 +7,7 @@
 
 import { describe, expect, test } from 'bun:test'
 import {
+  ansiOfTokens,
   planTerminalWrite,
   shellCommandsOf,
   type ShellCommand
@@ -162,6 +163,26 @@ describe('a reloaded session, without its streamed output', () => {
 })
 
 describe('writing them to the terminal', () => {
+  test('shows each command line as the painter colours it', () => {
+    const plan = planTerminalWrite([], [command('ls', 'a\n')], (line) => `<${line}>`)
+
+    expect(plan.chunks[0]).toBe('\u001b[32m❯\u001b[0m <ls>\n')
+  })
+
+  test('turns highlighted tokens into 24-bit colour escapes', () => {
+    const lines = [
+      [
+        { text: 'echo', color: '#89b4fa' },
+        { text: ' hi', color: '' }
+      ],
+      [{ text: 'ls', color: '#A6E3A1FF' }]
+    ]
+
+    expect(ansiOfTokens(lines)).toBe(
+      '\u001b[38;2;137;180;250mecho\u001b[39m hi\n\u001b[38;2;166;227;161mls\u001b[39m'
+    )
+  })
+
   test('writes each command line, then its output, with a blank line before the next', () => {
     const plan = planTerminalWrite([], [command('ls', 'a\n'), command('pwd', '/repo\n')])
 

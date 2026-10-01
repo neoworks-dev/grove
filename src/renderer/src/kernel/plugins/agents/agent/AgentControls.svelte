@@ -31,7 +31,6 @@
     running,
     models,
     reviewMode,
-    reviewPause,
     tokensLabel,
     costLabel,
     contextTokens,
@@ -58,7 +57,6 @@
     running: boolean
     models: ModelEntry[]
     reviewMode: string
-    reviewPause: boolean
     tokensLabel: string
     /** What the session has cost so far, empty when the harness reports none. */
     costLabel: string
@@ -310,19 +308,6 @@
             {option.label}
           </button>
         {/each}
-
-        <div class="mt-1 border-t border-line pt-1">
-          <button
-            class="flex w-full items-center gap-2 px-2 py-1 text-left hover:bg-hover {reviewPause
-              ? 'text-default'
-              : 'text-dim'}"
-            title="Hold the agent when it submits a batch, instead of letting it carry on"
-            onclick={() => onSetReview('workbench.reviewPause', !reviewPause)}
-          >
-            <span class="w-3">{reviewPause ? '✓' : ''}</span>
-            Pause agent for review
-          </button>
-        </div>
       </div>
     {/if}
   </div>

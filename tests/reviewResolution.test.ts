@@ -8,7 +8,7 @@ function batchWith(relPath: string, hunkCount: number): ReviewBatch {
     worktreeId: '/wt',
     agent: 'claude',
     chatId: 'chat1',
-    origin: 'agent',
+    origin: 'turn-end',
     files: [
       {
         relPath,

@@ -53,7 +53,7 @@ describe('ReviewStaging', () => {
       await write(root, 'a.ts', 'end\n')
       staging.noteWrite(root, 'a.ts')
 
-      const batch = await staging.close(root, 'agent', 'did a thing')
+      const batch = await staging.close(root, 'turn-end', 'did a thing')
       expect(batch!.files).toHaveLength(1)
       // The baseline is the batch's, so intermediate states never surface.
       expect(batch!.files[0].baseline).toBe('start\n')

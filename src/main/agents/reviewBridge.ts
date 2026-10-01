@@ -5,8 +5,7 @@
 //
 //   session.status_running   a turn started      → open a staging batch
 //   permission (a diff)      a write is pending  → raise it as a gated review
-//   permission               request_review      → close the batch and raise it
-//   session.status_idle      the turn ended      → close whatever is still staged
+//   session.status_idle      the turn ended      → close the batch and raise it
 //
 // It runs beside the store rather than in the renderer on purpose: a review
 // writes files and blocks the agent, and both have to keep working whether or
@@ -25,7 +24,6 @@ import { describeResolution } from '../review'
 import * as inlineDiff from '../inlineDiff'
 import * as files from '../files'
 import { diffsOf, toolNameOf } from './acpLog'
-import { groveToolName } from './switchboard/mcpServer'
 import type { AgentService } from './service'
 import type { SessionStore } from './store'
 
@@ -119,44 +117,24 @@ export class AgentReviewBridge {
       return
     }
     if (event.type === 'session.status_idle') {
-      await this.options.review.closeTurn(worktreePath, agent, event.sessionId)
+      const summary = this.closingSummary(event.sessionId)
+      await this.options.review.closeTurn(worktreePath, agent, event.sessionId, summary)
       return
     }
     if (event.type !== 'permission') return
 
     const toolCall = event.request.toolCall
     const name = toolNameOf(toolCall)
-    if (name && groveToolName(name) === 'request_review') {
-      await this.handleReviewRequest(event, worktreePath, agent, summaryOf(toolCall.rawInput))
-      return
-    }
     const write = writeOf(event.request)
     if (!write) return
     await this.raiseGated(event, worktreePath, agent, toolLabelOf(name, toolCall.title), write)
   }
 
-  /**
-   * The agent called its review tool. The harness is holding its loop on the
-   * confirmation, so answering it is what releases the agent — which is exactly
-   * the blocking request_review the review service already expects.
-   */
-  private async handleReviewRequest(
-    event: Extract<SessionEvent, { type: 'permission' }>,
-    worktreePath: string,
-    agent: string,
-    summary: string
-  ): Promise<void> {
-    const outcome = await this.options.review.requestReview(
-      worktreePath,
-      agent,
-      event.sessionId,
-      summary
-    )
-    // requestReview only returns once the user has decided (or immediately, when
-    // the run is not configured to pause). Either way the call itself is
-    // allowed; what the user said travels as a message.
-    await this.confirm(event.sessionId, event.request.toolCall.toolCallId, 'allow', null)
-    if (outcome) await this.sendMessage(event.sessionId, outcome)
+  /** What the agent ended its turn on, to head the review with; nothing when it said nothing. */
+  private closingSummary(sessionId: string): string | undefined {
+    const preview = this.options.store.previewOf(sessionId)
+    if (!preview || preview.from !== 'agent') return undefined
+    return preview.text
   }
 
   /**
@@ -248,10 +226,3 @@ function toolLabelOf(name: string | null, title: string | null | undefined): str
   return 'edit'
 }
 
-/** The summary a review request was made with. */
-function summaryOf(input: unknown): string {
-  if (typeof input !== 'object' || input === null) return ''
-  const summary = (input as { summary?: unknown }).summary
-  if (typeof summary !== 'string') return ''
-  return summary
-}

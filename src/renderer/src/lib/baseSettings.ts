@@ -69,15 +69,6 @@ export function registerBaseSettings(): void {
         ]
       },
       {
-        key: 'workbench.reviewPause',
-        type: 'boolean',
-        default: false,
-        title: 'Pause For Review',
-        description:
-          'Hold the agent when it submits a batch for review, instead of letting it carry on while reviews queue up. Only applies after writing.',
-        category: 'Agents'
-      },
-      {
         key: 'workbench.agentFollow',
         type: 'boolean',
         default: false,

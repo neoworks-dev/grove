@@ -16,7 +16,6 @@ import { searchTools } from './searchTools'
 import { shellTool } from './shellTool'
 import type { WorkspaceFiles, WorktreeLocation } from './workspaceFiles'
 import { noteTools, type AgentNotes } from './noteTools'
-import { requestReviewTool } from './reviewTools'
 import { showTools, type AgentScreen } from './showTools'
 import { runtimesTool, spawnTool } from './spawnTools'
 import { callTool, toolSearchTool } from './toolSearchTools'
@@ -44,7 +43,6 @@ export interface GroveToolOptions {
 export function groveTools(options: GroveToolOptions): GroveTool[] {
   return [
     toolSearchTool(options.skills),
-    requestReviewTool(),
     ...showTools(options.screen),
     ...noteTools(options.notes),
     ...chatTools(options),

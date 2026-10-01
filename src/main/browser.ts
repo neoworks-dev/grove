@@ -258,11 +258,14 @@ export class BrowserService {
     return [...this.require(worktreeId).logs.network]
   }
 
-  /** Forgets the console and network logs, so the next read shows only what follows. */
-  clearLogs(worktreeId: string): void {
-    const logs = this.require(worktreeId).logs
-    logs.console.length = 0
-    logs.network.length = 0
+  /** Forgets the console log, so the next read shows only what follows. */
+  clearConsole(worktreeId: string): void {
+    this.require(worktreeId).logs.console.length = 0
+  }
+
+  /** Forgets the network log, so the next read shows only what follows. */
+  clearNetwork(worktreeId: string): void {
+    this.require(worktreeId).logs.network.length = 0
   }
 
   /**

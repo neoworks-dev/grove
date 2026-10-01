@@ -24,7 +24,8 @@ export interface AgentBrowser {
   press(worktreeId: string, key: string): Promise<void>
   consoleLog(worktreeId: string): BrowserConsoleEntry[]
   networkLog(worktreeId: string): BrowserNetworkEntry[]
-  clearLogs(worktreeId: string): void
+  clearConsole(worktreeId: string): void
+  clearNetwork(worktreeId: string): void
 }
 
 // How long to wait for the pane to open and hand its page over.
@@ -304,7 +305,7 @@ function consoleTool(browser: AgentBrowser): GroveTool {
       return withBrowser(browser, context, (worktreeId) => {
         let entries = browser.consoleLog(worktreeId)
         if (input.errorsOnly === true) entries = entries.filter(isProblem)
-        if (input.clear === true) browser.clearLogs(worktreeId)
+        if (input.clear === true) browser.clearConsole(worktreeId)
         return { content: describeConsole(entries) }
       })
     }
@@ -331,7 +332,7 @@ function networkTool(browser: AgentBrowser): GroveTool {
       return withBrowser(browser, context, (worktreeId) => {
         let entries = browser.networkLog(worktreeId)
         if (input.failedOnly === true) entries = entries.filter(isFailedRequest)
-        if (input.clear === true) browser.clearLogs(worktreeId)
+        if (input.clear === true) browser.clearNetwork(worktreeId)
         return { content: describeNetwork(entries) }
       })
     }

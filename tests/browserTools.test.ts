@@ -44,7 +44,8 @@ function fakeBrowser(options: { attached: boolean; opens: boolean }): AgentBrows
       { method: 'GET', url: 'http://localhost:3100/', status: 200, type: 'mainFrame', error: null, at: 0 },
       { method: 'GET', url: 'http://localhost:3100/missing.json', status: 404, type: 'xhr', error: null, at: 1 }
     ],
-    clearLogs: () => {}
+    clearConsole: () => {},
+    clearNetwork: () => {}
   }
 }
 

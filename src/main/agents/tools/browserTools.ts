@@ -134,7 +134,8 @@ function browserTool(browser: AgentBrowser, options: BrowserToolOptions): GroveT
       'The user watches it happen. ' +
       'Any domain works: Page.navigate, Runtime.evaluate (returnByValue: true for a plain value), ' +
       'Input.dispatchMouseEvent, Input.insertText, Input.dispatchKeyEvent, DOM.*, ' +
-      'Accessibility.getFullAXTree, Page.captureScreenshot (returned as an image). Navigation does ' +
+      'Accessibility.getFullAXTree, Page.captureScreenshot (returned as an image, one pixel per CSS ' +
+      'pixel, so a point in it is the point Input.* takes). Navigation does ' +
       'not wait for the load. For several steps in one call, pass a script instead: the body of an ' +
       'async JavaScript function with cdp(method, params), sleep(ms) and your helpers in scope, ' +
       `whose return value is the reply. Your helpers are the functions in ${options.helpersPath}; ` +

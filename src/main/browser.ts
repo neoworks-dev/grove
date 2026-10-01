@@ -25,8 +25,6 @@ export const BROWSER_PARTITION = 'persist:grove-browser'
 
 // How much of each log is kept; older entries fall off the front.
 const LOG_LIMIT = 300
-// Screenshots wider than this are scaled down: plenty to read, far fewer tokens.
-const SCREENSHOT_MAX_WIDTH = 1280
 
 export interface BrowserEvents {
   /** What an agent is doing in a preview, for the pane to show while it does. */
@@ -235,14 +233,26 @@ export class BrowserService {
 
   /**
    * Sends one DevTools protocol command to the page, telling the pane what it
-   * does when it acts on the page. A wide screenshot comes back scaled down.
+   * does when it acts on the page. A screenshot comes back at one pixel per
+   * CSS pixel, so a point in it is the point Input.* takes.
    */
   async cdp(worktreeId: string, method: string, params: Record<string, unknown>): Promise<unknown> {
     const activity = activityOf(method, params)
     if (activity) this.announce(worktreeId, activity)
     const result = await this.command(worktreeId, method, params)
-    if (method === 'Page.captureScreenshot') return scaledScreenshot(result, params)
-    return result
+    if (method !== 'Page.captureScreenshot') return result
+    return scaledScreenshot(result, params, await this.cssWidthOf(worktreeId, params))
+  }
+
+  /** How many CSS pixels wide a screenshot with these parameters covers. */
+  private async cssWidthOf(worktreeId: string, params: Record<string, unknown>): Promise<number> {
+    const clip = params.clip as { width?: unknown; scale?: unknown } | undefined
+    if (clip && typeof clip.width === 'number') {
+      let scale = 1
+      if (typeof clip.scale === 'number') scale = clip.scale
+      return clip.width * scale
+    }
+    return Number(await this.run(worktreeId, 'innerWidth'))
   }
 
   // ── Plumbing ────────────────────────────────────────────────────
@@ -307,13 +317,17 @@ function activityOf(method: string, params: Record<string, unknown>): string | n
   return null
 }
 
-/** A screenshot's result with its picture scaled down when it is wider than an agent needs. */
-function scaledScreenshot(result: unknown, params: Record<string, unknown>): unknown {
+/**
+ * A screenshot's result scaled down to `cssWidth`: Chromium takes it in device
+ * pixels, twice as wide as the page on a HiDPI screen.
+ */
+function scaledScreenshot(result: unknown, params: Record<string, unknown>, cssWidth: number): unknown {
   const data = (result as { data?: unknown } | null)?.data
   if (typeof data !== 'string' || params.format === 'webp') return result
+  if (!Number.isFinite(cssWidth) || cssWidth <= 0) return result
   const image = nativeImage.createFromBuffer(Buffer.from(data, 'base64'))
-  if (image.getSize().width <= SCREENSHOT_MAX_WIDTH) return result
-  const scaled = image.resize({ width: SCREENSHOT_MAX_WIDTH })
+  if (image.getSize().width <= cssWidth) return result
+  const scaled = image.resize({ width: Math.round(cssWidth) })
   if (params.format === 'jpeg') {
     let quality = 80
     if (typeof params.quality === 'number') quality = params.quality

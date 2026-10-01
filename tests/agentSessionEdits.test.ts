@@ -5,14 +5,20 @@
 
 import { describe, expect, test } from 'bun:test'
 import type { SessionEvent } from '../src/shared/agents'
+import { tmpdir } from 'node:os'
+import { hunksBetween } from '../src/main/inlineDiff'
 import {
-  gitMergeText,
   relativeInside,
   sessionEdits,
   textWithoutEdits
 } from '../src/main/agents/sessionEdits'
 
 let seq = 0
+
+/** Line hunks, diffed by git as the service does. */
+function diffLines(before: string, after: string): ReturnType<typeof hunksBetween> {
+  return hunksBetween(tmpdir(), before, after)
+}
 
 /** A tool call update on the log, carrying the given diffs and status. */
 function toolUpdate(
@@ -82,22 +88,49 @@ describe('a file without the session’s edits', () => {
       { path: '/w/a', oldText: 'two', newText: 'TWO' },
       { path: '/w/a', oldText: 'three', newText: 'three!' }
     ]
-    expect(await textWithoutEdits(current, edits, gitMergeText)).toBe('one\ntwo\nthree\n')
+    expect(await textWithoutEdits(current, edits, diffLines)).toBe('one\ntwo\nthree\n')
   })
 
   test('what the user typed beside the agent stays in', async () => {
     // The agent renamed `two`; the user then added a line of their own.
     const current = 'one\nTWO\nthree\nmine\n'
     const edits = [{ path: '/w/a', oldText: 'two', newText: 'TWO' }]
-    expect(await textWithoutEdits(current, edits, gitMergeText)).toBe('one\ntwo\nthree\nmine\n')
+    expect(await textWithoutEdits(current, edits, diffLines)).toBe('one\ntwo\nthree\nmine\n')
   })
 
-  test('a whole-file write the user edited afterwards is undone by a merge', async () => {
+  test('a whole-file write the user edited afterwards is undone hunk by hunk', async () => {
     const before = 'a\nb\nc\nd\ne\nf\n'
     const written = 'a\nB\nc\nd\ne\nf\n'
     const current = 'a\nB\nc\nd\ne\nf\nmine\n'
     const edits = [{ path: '/w/a', oldText: before, newText: written }]
-    expect(await textWithoutEdits(current, edits, gitMergeText)).toBe('a\nb\nc\nd\ne\nf\nmine\n')
+    expect(await textWithoutEdits(current, edits, diffLines)).toBe('a\nb\nc\nd\ne\nf\nmine\n')
+  })
+
+  test('a user line right beside the agent’s change survives, final newline or not', async () => {
+    // As Claude reports a Write: the file whole, less its final newline.
+    const edits = [
+      {
+        path: '/w/a',
+        oldText: '# Demo\n\nA fixture project.',
+        newText: '# Demo\n\nA sample project.\nAgent was here.'
+      }
+    ]
+    const current = '# Demo\n\nA line the user added.\n\nA sample project.\nAgent was here.\n'
+    expect(await textWithoutEdits(current, edits, diffLines)).toBe(
+      '# Demo\n\nA line the user added.\n\nA fixture project.\n'
+    )
+  })
+
+  test('lines the agent deleted go back after the line they followed', async () => {
+    const edits = [{ path: '/w/a', oldText: 'a\nb\nc\nd\n', newText: 'a\nd\n' }]
+    const current = 'top\na\nd\n'
+    expect(await textWithoutEdits(current, edits, diffLines)).toBe('top\na\nb\nc\nd\n')
+  })
+
+  test('a line the user rewrote after the agent keeps the user’s version', async () => {
+    const edits = [{ path: '/w/a', oldText: 'a\nb\nc\nd\n', newText: 'A\nb\nc\nD\n' }]
+    const current = 'A\nb\nc\nD!\n'
+    expect(await textWithoutEdits(current, edits, diffLines)).toBe('a\nb\nc\nD!\n')
   })
 
   test('a file the session created was empty before it', async () => {
@@ -105,12 +138,12 @@ describe('a file without the session’s edits', () => {
       { path: '/w/a', oldText: null, newText: 'x\n' },
       { path: '/w/a', oldText: 'x', newText: 'y' }
     ]
-    expect(await textWithoutEdits('y\n', edits, gitMergeText)).toBe('')
+    expect(await textWithoutEdits('y\n', edits, diffLines)).toBe('')
   })
 
   test('an edit that can no longer be placed is left in', async () => {
     const edits = [{ path: '/w/a', oldText: 'two', newText: 'TWO' }]
-    expect(await textWithoutEdits('one\nthree\n', edits, gitMergeText)).toBe('one\nthree\n')
+    expect(await textWithoutEdits('one\nthree\n', edits, diffLines)).toBe('one\nthree\n')
   })
 })
 

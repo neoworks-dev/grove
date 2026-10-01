@@ -6,10 +6,10 @@
 // session's own edits newest first. Whatever else changed the file — the user
 // typing beside the agent, a formatter — is on both sides then, so the diff
 // shows only what this session did.
+//
+// An edit is undone where it can be placed whole; failing that, line by line,
+// each block it wrote that is still in the file going back to what it replaced.
 
-import { execFile } from 'node:child_process'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { isAbsolute, join, relative } from 'node:path'
 import type { SessionEvent } from '../../shared/agents'
 import { diffsOf, updateOf } from './acpLog'
@@ -23,8 +23,16 @@ export interface SessionEdit {
   newText: string
 }
 
-/** Merges `ours` and `theirs` over their common `base`, or null when they conflict. */
-export type MergeText = (ours: string, base: string, theirs: string) => Promise<string | null>
+/** A zero-context line hunk: lines `removed` from `before` at `beforeStart`, `added` in their place. */
+export interface LineHunk {
+  /** 1-based; for a pure insertion, the line it follows (0 for the top). */
+  beforeStart: number
+  removed: string[]
+  added: string[]
+}
+
+/** The zero-context hunks turning `before` into `after`. */
+export type DiffLines = (before: string, after: string) => Promise<LineHunk[]>
 
 interface CallEdits {
   status: string
@@ -94,14 +102,14 @@ export function revertEdit(text: string, edit: SessionEdit): string | null {
 
 /**
  * The file as it would be without the session's edits, from what it is now.
- * An edit that can't be placed exactly, because the text it wrote has been
- * changed since, is undone by a three-way merge when that applies cleanly, and
- * left in otherwise.
+ * An edit that can't be placed whole, because the text it wrote has been
+ * changed since, is undone hunk by hunk: each block of lines it wrote that is
+ * still there goes back to what it replaced, and the rest is left in.
  */
 export async function textWithoutEdits(
   current: string,
   edits: readonly SessionEdit[],
-  merge: MergeText
+  diffLines: DiffLines
 ): Promise<string> {
   let text = current
   for (let index = edits.length - 1; index >= 0; index -= 1) {
@@ -113,44 +121,84 @@ export async function textWithoutEdits(
       continue
     }
     if (edit.newText.length === 0) continue
-    const merged = await merge(text, edit.newText, edit.oldText)
-    if (merged !== null) text = merged
+    const hunks = await diffLines(withFinalNewline(edit.newText), withFinalNewline(edit.oldText))
+    text = revertHunks(text, splitLines(edit.newText), hunks)
   }
   return text
 }
 
-/** A three-way merge through `git merge-file`, or null when it conflicts or fails. */
-export async function gitMergeText(ours: string, base: string, theirs: string): Promise<string | null> {
-  const directory = await mkdtemp(join(tmpdir(), 'grove-session-edits-'))
-  try {
-    const oursPath = join(directory, 'ours')
-    const basePath = join(directory, 'base')
-    const theirsPath = join(directory, 'theirs')
-    await writeFile(oursPath, ours)
-    await writeFile(basePath, base)
-    await writeFile(theirsPath, theirs)
-    return await runMergeFile(oursPath, basePath, theirsPath)
-  } finally {
-    await rm(directory, { recursive: true, force: true })
+/**
+ * Undoes the hunks of one edit in `text`, last first so the line numbers of the
+ * ones before stay meaningful. `written` is what the edit wrote, as lines.
+ */
+export function revertHunks(text: string, written: readonly string[], hunks: readonly LineHunk[]): string {
+  const lines = splitLines(text)
+  // How far the file has drifted from what was written, to find each hunk near
+  // where it was rather than at the first lookalike.
+  const drift = lines.length - written.length
+  for (let index = hunks.length - 1; index >= 0; index -= 1) {
+    revertHunk(lines, written, hunks[index], drift)
   }
+  return joinLines(lines, text.endsWith('\n'))
 }
 
-/** Runs `git merge-file -p`; its exit code is the number of conflicts. */
-function runMergeFile(oursPath: string, basePath: string, theirsPath: string): Promise<string | null> {
-  return new Promise((resolve) => {
-    execFile(
-      'git',
-      ['merge-file', '-p', '--quiet', oursPath, basePath, theirsPath],
-      { maxBuffer: 20 * 1024 * 1024 },
-      (error, stdout) => {
-        if (error) {
-          resolve(null)
-          return
-        }
-        resolve(stdout)
-      }
-    )
-  })
+/** Undoes one hunk in place, when the lines around or of it can still be found. */
+function revertHunk(lines: string[], written: readonly string[], hunk: LineHunk, drift: number): void {
+  if (hunk.removed.length > 0) {
+    const at = nearestRun(lines, hunk.removed, hunk.beforeStart - 1 + drift)
+    if (at < 0) return
+    lines.splice(at, hunk.removed.length, ...hunk.added)
+    return
+  }
+  // The edit took these lines out; they go back after the line they followed.
+  if (hunk.beforeStart === 0) {
+    lines.splice(0, 0, ...hunk.added)
+    return
+  }
+  const anchor = written[hunk.beforeStart - 1]
+  const at = nearestRun(lines, [anchor], hunk.beforeStart - 1 + drift)
+  if (at < 0) return
+  lines.splice(at + 1, 0, ...hunk.added)
+}
+
+/** Where `run` appears in `lines` closest to `expected`, or -1 when nowhere. */
+function nearestRun(lines: readonly string[], run: readonly string[], expected: number): number {
+  let best = -1
+  for (let start = 0; start + run.length <= lines.length; start += 1) {
+    if (!runAt(lines, run, start)) continue
+    if (best < 0 || Math.abs(start - expected) < Math.abs(best - expected)) best = start
+  }
+  return best
+}
+
+/** Whether `run` is in `lines` starting at `start`. */
+function runAt(lines: readonly string[], run: readonly string[], start: number): boolean {
+  for (let offset = 0; offset < run.length; offset += 1) {
+    if (lines[start + offset] !== run[offset]) return false
+  }
+  return true
+}
+
+/** Text as lines, without the empty one a final newline would add. */
+function splitLines(text: string): string[] {
+  if (text.length === 0) return []
+  const lines = text.split('\n')
+  if (text.endsWith('\n')) lines.pop()
+  return lines
+}
+
+/** Lines back to text. */
+function joinLines(lines: readonly string[], finalNewline: boolean): string {
+  if (lines.length === 0) return ''
+  const text = lines.join('\n')
+  if (finalNewline) return `${text}\n`
+  return text
+}
+
+/** Text ending in a newline, so a diff of two sides does not hinge on the last one. */
+function withFinalNewline(text: string): string {
+  if (text.length === 0 || text.endsWith('\n')) return text
+  return `${text}\n`
 }
 
 /** A file path relative to the workspace, or null when it lies outside it. */

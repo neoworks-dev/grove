@@ -7,6 +7,8 @@
   import { ageLabel, reviewTone } from './filter'
   import { associationLabel } from './timeline'
   import { renderMarkdown } from '../../../lib/markdown'
+  import { linkCodeReferences } from '../../../lib/agents/codeReferenceLinks'
+  import { openReferencedFile, referenceRoot } from './store.svelte'
   import type { GithubActor } from '../../../../../shared/types'
 
   let {
@@ -51,7 +53,16 @@
     {#if empty}
       <p class="text-xs italic text-dim">No description.</p>
     {:else}
-      <div class="agent-markdown prose max-w-none text-xs text-default">
+      <!-- Paths the text names open in the editor, when the selected worktree
+           has the file; the rest stay text. -->
+      <div
+        class="agent-markdown prose max-w-none text-xs text-default"
+        use:linkCodeReferences={{
+          root: referenceRoot(),
+          onOpen: openReferencedFile,
+          fences: true
+        }}
+      >
         <!-- eslint-disable-next-line svelte/no-at-html-tags -->
         {@html renderMarkdown(body)}
       </div>

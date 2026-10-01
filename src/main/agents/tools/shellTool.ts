@@ -4,6 +4,14 @@
 // harness's own shell does. What goes back to the model is cut to its start and
 // its end: a build's middle is rarely what the next step turns on, and every
 // line of it would be paid for again on every later turn.
+//
+// A command runs on pipes, not a terminal, so tools would drop their colours.
+// It is told to keep them, for the transcript's terminal; the model is given
+// the same output with the escapes taken out, since to it they are only noise.
+// The environment asks for colour rather than a pty giving a terminal: a pty
+// would also change what the model reads — tools lay out for its width, draw
+// progress bars, wait on a prompt instead of seeing no input — where the
+// environment changes the colour and nothing else.
 
 import { spawn } from 'child_process'
 import type { GroveTool, GroveToolContext, GroveToolResult } from '../harness'
@@ -13,6 +21,12 @@ const MAX_TIMEOUT_SECONDS = 600
 /** Characters of output the model is given from the start and from the end. */
 const HEAD_CHARACTERS = 2000
 const TAIL_CHARACTERS = 14000
+
+// Colour and cursor sequences: CSI (`ESC [ … final`), OSC (`ESC ] … BEL|ST`)
+// and character-set selection (`ESC ( B`, which `tput sgr0` emits).
+const ANSI_ESCAPE =
+  // eslint-disable-next-line no-control-regex
+  /\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b\][^\u0007]*(?:\u0007|\u001b\\)|\u001b[()][0-9A-Za-z]/g
 
 export function shellTool(): GroveTool {
   return {
@@ -53,7 +67,13 @@ function runCommand(command: string, timeoutSeconds: number, context: GroveToolC
   return new Promise((resolve) => {
     const child = spawn('bash', ['-c', command], {
       cwd: context.workspaceRoot,
-      env: { ...process.env, PAGER: 'cat', GIT_PAGER: 'cat', GIT_TERMINAL_PROMPT: '0' },
+      env: {
+        ...colourEnvironment(),
+        ...process.env,
+        PAGER: 'cat',
+        GIT_PAGER: 'cat',
+        GIT_TERMINAL_PROMPT: '0'
+      },
       stdio: ['ignore', 'pipe', 'pipe'],
       // Its own process group, so stopping it stops what it started too.
       detached: true
@@ -86,6 +106,18 @@ function runCommand(command: string, timeoutSeconds: number, context: GroveToolC
       resolve(commandResult(output, code, signal, timedOut, timeoutSeconds))
     })
   })
+}
+
+/**
+ * What asks a tool to colour its output though it is writing to a pipe:
+ * `FORCE_COLOR` for Node's ecosystem and most test runners, `CLICOLOR_FORCE`
+ * for the tools that follow the CLICOLOR convention. Spread before the
+ * process's own environment, so a user who set either keeps their value; and
+ * left out entirely when they asked for no colour at all.
+ */
+function colourEnvironment(): Record<string, string> {
+  if (process.env.NO_COLOR) return {}
+  return { FORCE_COLOR: '1', CLICOLOR_FORCE: '1' }
 }
 
 /** The session's live output for this call, or a sink that drops it. */
@@ -121,13 +153,18 @@ export function commandResult(
   timeoutSeconds: number
 ): GroveToolResult {
   const parts: string[] = []
-  const trimmed = shortened(output.trimEnd())
+  const trimmed = shortened(withoutEscapes(output).trimEnd())
   if (trimmed.length > 0) parts.push(trimmed)
   if (timedOut) parts.push(`[Stopped after ${timeoutSeconds}s.]`)
   else if (signal) parts.push(`[Killed by ${signal}.]`)
   else if (code !== 0) parts.push(`[Exit code ${code}.]`)
   if (parts.length === 0) parts.push('(no output)')
   return { content: parts.join('\n'), isError: timedOut || code !== 0 }
+}
+
+/** Output as plain text: the colour and cursor sequences a terminal would act on, removed. */
+function withoutEscapes(output: string): string {
+  return output.replace(ANSI_ESCAPE, '')
 }
 
 /** Output cut to its start and its end when it is too long to hand over whole. */

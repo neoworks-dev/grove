@@ -26,6 +26,7 @@ import type {
   ModelEntry,
   PaneTypeInfo,
   QueuedMessage,
+  RecordedPrompt,
   ServerEventBody,
   SessionEvent,
   SessionMeta,
@@ -810,6 +811,7 @@ export class AgentService {
       resumeKey: session.resumeKey,
       tools: this.toolsFor(descriptor),
       systemPrompt: await this.systemPromptFor(session),
+      recordedPrompt: await this.recordedPromptOf(sessionId),
       emit: (body) => void this.absorb(sessionId, body),
       emitFrom: (agent, body) => void this.subagents.absorb(sessionId, agent, body),
       stats: (update) => void this.store.patch(sessionId, update),
@@ -836,6 +838,16 @@ export class AgentService {
     const build = this.options.systemPrompt
     if (!build) return ''
     return build(session).catch(() => '')
+  }
+
+  /** The system prompt the session's conversation started with, as its transcript recorded it. */
+  private async recordedPromptOf(sessionId: string): Promise<RecordedPrompt | undefined> {
+    const events = await this.store.eventsSince(sessionId)
+    for (let index = events.length - 1; index >= 0; index--) {
+      const event = events[index]
+      if (event.type === 'session.system_prompt') return event.systemPrompt
+    }
+    return undefined
   }
 
   /** grove's own tools, for a harness that can host them. */

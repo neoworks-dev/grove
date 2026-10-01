@@ -1,11 +1,13 @@
-// Kit tabs, as agents drive them.
+// Browser tabs handed to worktrees, as agents drive them.
 //
-// Kit, Neoworks' own browser, pairs with Grove over the API socket and hands
-// it a tab per worktree (`browser.provide`). From then on the agent's browser
-// tool sends its DevTools protocol commands down Kit's connection
-// (`browser.cdp`), and Kit sends the tab's console and network events back up
-// (`browser.cdpEvent`), which are kept here per worktree the way the Electron
-// pane's are. The protocol is neoworks-dev/grove#353; its types are in the SDK.
+// A browser provider — Kit, Neoworks' own browser, or Chrome through Grove's
+// extension and its native-messaging host — pairs with Grove over the API
+// socket and hands it a tab per worktree (`browser.provide`). From then on the
+// agent's browser tool sends its DevTools protocol commands down that
+// provider's connection (`browser.cdp`), and the provider sends the tab's
+// console and network events back up (`browser.cdpEvent`), which are kept here
+// per worktree the way the Electron pane's are. Every provider is treated the
+// same. The protocol is neoworks-dev/grove#353; its types are in the SDK.
 
 import type {
   BrowserCdpEvent,
@@ -20,12 +22,12 @@ import type { AgentBrowser } from './agents/tools/browserTools'
 
 // How much of each log is kept; older entries fall off the front.
 const LOG_LIMIT = 300
-// How long one command may take before it is given up on: Kit is another
-// process, and a tab it lost track of would otherwise hang the agent's turn.
+// How long one command may take before it is given up on: the provider is
+// another process, and a tab it lost track of would otherwise hang the turn.
 const CDP_TIMEOUT_MS = 30000
 
-/** A tab Kit has handed over for a worktree, with what it logged since. */
-interface KitTab {
+/** A tab a provider has handed over for a worktree, with what it logged since. */
+interface ProvidedTab {
   connection: ApiConnection
   url: string
   title: string
@@ -41,19 +43,19 @@ interface RequestStart {
   url: string
 }
 
-export interface KitBrowserOptions {
+export interface BrowserProviderOptions {
   cdpTimeoutMs?: number
 }
 
-/** The worktrees' Kit tabs, behind the browser tool's `AgentBrowser` interface. */
-export class KitBrowserService implements AgentBrowser {
-  private tabs = new Map<string, KitTab>()
-  // Connected Kits, oldest first; the newest is asked to open a tab.
+/** The worktrees' provided tabs, behind the browser tool's `AgentBrowser` interface. */
+export class BrowserProviderService implements AgentBrowser {
+  private tabs = new Map<string, ProvidedTab>()
+  // Connected providers, oldest first; the newest is asked to open a tab first.
   private connections: ApiConnection[] = []
   private waiters = new Map<string, Array<() => void>>()
   private cdpTimeoutMs: number
 
-  constructor(options: KitBrowserOptions = {}) {
+  constructor(options: BrowserProviderOptions = {}) {
     this.cdpTimeoutMs = CDP_TIMEOUT_MS
     if (options.cdpTimeoutMs !== undefined) this.cdpTimeoutMs = options.cdpTimeoutMs
   }
@@ -73,7 +75,7 @@ export class KitBrowserService implements AgentBrowser {
     connection.onClose(() => this.disconnected(connection))
   }
 
-  /** Whether any Kit is connected, whether or not it serves a worktree. */
+  /** Whether any provider is connected, whether or not it serves a worktree. */
   hasProvider(): boolean {
     return this.connections.length > 0
   }
@@ -114,14 +116,14 @@ export class KitBrowserService implements AgentBrowser {
 
   // ── AgentBrowser ────────────────────────────────────────────────
 
-  /** Whether a Kit tab serves the worktree. */
+  /** Whether a provided tab serves the worktree. */
   isAttached(worktreeId: string): boolean {
     return this.tabs.has(worktreeId)
   }
 
   /**
-   * Resolves once a Kit tab serves the worktree, or false after `timeoutMs`;
-   * false straight away when no Kit is connected to provide one.
+   * Resolves once a provided tab serves the worktree, or false after
+   * `timeoutMs`; false straight away when no provider is connected.
    */
   waitForAttach(worktreeId: string, timeoutMs: number): Promise<boolean> {
     if (this.tabs.has(worktreeId)) return Promise.resolve(true)
@@ -145,14 +147,26 @@ export class KitBrowserService implements AgentBrowser {
   }
 
   /**
-   * Asks the newest connected Kit to open a tab for the worktree, and resolves
-   * once one serves it. False when no Kit is connected, Kit refused, or
+   * Asks the connected providers, newest first, to open a tab for the
+   * worktree, and resolves once one serves it. A provider that refuses passes
+   * the request on to the next. False when none is connected, all refused, or
    * nothing arrived within `timeoutMs`.
    */
   async openTab(worktreeId: string, timeoutMs: number): Promise<boolean> {
     if (this.tabs.has(worktreeId)) return true
-    const connection = this.connections[this.connections.length - 1]
-    if (!connection) return false
+    const deadline = Date.now() + timeoutMs
+    const newestFirst = [...this.connections].reverse()
+    for (const connection of newestFirst) {
+      const remaining = deadline - Date.now()
+      if (remaining <= 0) break
+      if (await this.askToOpen(connection, worktreeId, remaining)) return true
+    }
+    return this.tabs.has(worktreeId)
+  }
+
+  /** Asks one provider to open a tab for the worktree; true once one serves it. */
+  private async askToOpen(connection: ApiConnection, worktreeId: string, timeoutMs: number): Promise<boolean> {
+    if (!this.connections.includes(connection)) return false
     const provided = this.waitForAttach(worktreeId, timeoutMs)
     const params: BrowserOpenParams = { worktreeId }
     try {
@@ -163,27 +177,27 @@ export class KitBrowserService implements AgentBrowser {
     return provided
   }
 
-  /** Where the tab is: what Kit last provided, moved along by navigation since. */
+  /** Where the tab is: what the provider last said, moved along by navigation since. */
   location(worktreeId: string): { url: string; title: string } {
     const tab = this.require(worktreeId)
     return { url: tab.url, title: tab.title }
   }
 
-  /** Sends one DevTools protocol command down Kit's connection; Kit's error becomes ours. */
+  /** Sends one DevTools protocol command down the provider's connection; its error becomes ours. */
   async cdp(worktreeId: string, method: string, params: Record<string, unknown>): Promise<unknown> {
     const tab = this.require(worktreeId)
     const request = tab.connection.endpoint.request('browser.cdp', { worktreeId, method, params })
-    const result = await withTimeout(request, this.cdpTimeoutMs, `Kit did not answer ${method}`)
+    const result = await withTimeout(request, this.cdpTimeoutMs, `The browser did not answer ${method}`)
     if (method === 'Page.navigate' && typeof params.url === 'string') moveTo(tab, params.url)
     return result
   }
 
-  /** What the tab logged since Kit provided it, oldest first. */
+  /** What the tab logged since it was provided, oldest first. */
   consoleLog(worktreeId: string): BrowserConsoleEntry[] {
     return [...this.require(worktreeId).console]
   }
 
-  /** What the tab requested since Kit provided it, oldest first. */
+  /** What the tab requested since it was provided, oldest first. */
   networkLog(worktreeId: string): BrowserNetworkEntry[] {
     return [...this.require(worktreeId).network]
   }
@@ -204,10 +218,10 @@ export class KitBrowserService implements AgentBrowser {
 
   // ── Plumbing ────────────────────────────────────────────────────
 
-  /** A worktree's Kit tab, or an error saying there is none. */
-  private require(worktreeId: string): KitTab {
+  /** A worktree's provided tab, or an error saying there is none. */
+  private require(worktreeId: string): ProvidedTab {
     const tab = this.tabs.get(worktreeId)
-    if (!tab) throw new Error('No Kit tab serves this worktree.')
+    if (!tab) throw new Error('No browser tab serves this worktree.')
     return tab
   }
 
@@ -233,7 +247,7 @@ export class KitBrowserService implements AgentBrowser {
 }
 
 /** A freshly provided tab, with empty logs. */
-function newTab(connection: ApiConnection, tab: BrowserTab): KitTab {
+function newTab(connection: ApiConnection, tab: BrowserTab): ProvidedTab {
   return {
     connection,
     url: tab.url,
@@ -245,13 +259,13 @@ function newTab(connection: ApiConnection, tab: BrowserTab): KitTab {
 }
 
 /** The tab is somewhere new, whose title is not known yet. */
-function moveTo(tab: KitTab, url: string): void {
+function moveTo(tab: ProvidedTab, url: string): void {
   tab.url = url
   tab.title = ''
 }
 
 /** Folds one CDP event into the tab's logs and location; unknown events are ignored. */
-function recordEvent(tab: KitTab, method: string, params: Record<string, unknown>): void {
+function recordEvent(tab: ProvidedTab, method: string, params: Record<string, unknown>): void {
   if (method === 'Runtime.consoleAPICalled') {
     pushCapped(tab.console, consoleEntryOf(params))
     return
@@ -308,7 +322,7 @@ function exceptionEntryOf(params: Record<string, unknown>): BrowserConsoleEntry 
 }
 
 /** A request the tab started, kept so a later response or failure can name it. */
-function rememberRequest(tab: KitTab, params: Record<string, unknown>): void {
+function rememberRequest(tab: ProvidedTab, params: Record<string, unknown>): void {
   if (typeof params.requestId !== 'string') return
   const request = recordOf(params.request)
   tab.requests.set(params.requestId, { method: stringOr(request.method, 'GET'), url: stringOr(request.url, '') })
@@ -320,7 +334,7 @@ function rememberRequest(tab: KitTab, params: Record<string, unknown>): void {
 }
 
 /** A `Network.responseReceived` as a log entry. */
-function responseEntryOf(tab: KitTab, params: Record<string, unknown>): BrowserNetworkEntry {
+function responseEntryOf(tab: ProvidedTab, params: Record<string, unknown>): BrowserNetworkEntry {
   const response = recordOf(params.response)
   const started = startedRequest(tab, params)
   let url = started.url
@@ -332,9 +346,9 @@ function responseEntryOf(tab: KitTab, params: Record<string, unknown>): BrowserN
 
 /**
  * A `Network.loadingFailed` as a log entry. CDP leaves its URL out, so it
- * comes from the request's `Network.requestWillBeSent`, or a `url` Kit adds.
+ * comes from the request's `Network.requestWillBeSent`, or a `url` the provider adds.
  */
-function failureEntryOf(tab: KitTab, params: Record<string, unknown>): BrowserNetworkEntry {
+function failureEntryOf(tab: ProvidedTab, params: Record<string, unknown>): BrowserNetworkEntry {
   const started = startedRequest(tab, params)
   let url = started.url
   if (typeof params.url === 'string') url = params.url
@@ -350,7 +364,7 @@ function failureEntryOf(tab: KitTab, params: Record<string, unknown>): BrowserNe
 }
 
 /** The start of the request an event is about, taken off the list; a bare GET when unknown. */
-function startedRequest(tab: KitTab, params: Record<string, unknown>): RequestStart {
+function startedRequest(tab: ProvidedTab, params: Record<string, unknown>): RequestStart {
   const requestId = String(params.requestId)
   const started = tab.requests.get(requestId)
   if (!started) return { method: 'GET', url: '' }
@@ -359,7 +373,7 @@ function startedRequest(tab: KitTab, params: Record<string, unknown>): RequestSt
 }
 
 /** Moves the tab along when its top frame navigated. */
-function followFrame(tab: KitTab, params: Record<string, unknown>): void {
+function followFrame(tab: ProvidedTab, params: Record<string, unknown>): void {
   const frame = recordOf(params.frame)
   if (frame.parentId) return
   if (typeof frame.url !== 'string') return

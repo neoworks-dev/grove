@@ -1,10 +1,11 @@
-// Settings family: preferences, keyboard shortcuts, and the permission grants
-// review. They open beside the editor rather than replacing it.
+// Settings family: preferences, keyboard shortcuts, the permission grants
+// review, and connecting Chrome. They open beside the editor rather than replacing it.
 
 import type { Context } from '@neoworks/extension-system'
 import PreferencesPane from '../../components/PreferencesPane.svelte'
 import KeyboardPane from '../../components/KeyboardPane.svelte'
 import GrantsPane from '../../components/GrantsPane.svelte'
+import ConnectChromePane from '../../components/ConnectChromePane.svelte'
 
 export const settingsPanes = {
   name: 'core/settings-panes',
@@ -49,6 +50,19 @@ export const settingsPanes = {
           keywords: 'permissions grants plugins apps access revoke security'
         }),
       'pane:permissions'
+    )
+
+    ctx.effect(
+      () =>
+        ctx.editor.registerAuxPane({
+          id: 'connect-chrome',
+          title: 'Connect Chrome',
+          component: ConnectChromePane,
+          orientation: 'row',
+          minWidth: 320,
+          keywords: 'chrome chromium edge brave browser extension connect native host tab agents'
+        }),
+      'pane:connect-chrome'
     )
   }
 }

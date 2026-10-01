@@ -492,6 +492,13 @@ const workbench = {
     pick: (worktreeId: string) => ipcRenderer.invoke('browser:pick', worktreeId),
     cancelPick: (worktreeId: string) => ipcRenderer.invoke('browser:cancelPick', worktreeId)
   },
+  // "Connect Chrome": the browser extension's native-messaging host, per browser.
+  browserHost: {
+    status: () => ipcRenderer.invoke('browserHost:status'),
+    install: (browser: string) => ipcRenderer.invoke('browserHost:install', browser),
+    remove: (browser: string) => ipcRenderer.invoke('browserHost:remove', browser),
+    revealExtension: () => ipcRenderer.invoke('browserHost:revealExtension')
+  },
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   raiseWindow: () => ipcRenderer.invoke('window:raise'),
 

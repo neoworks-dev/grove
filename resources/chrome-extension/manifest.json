@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Grove",
+  "description": "Hand a tab to a Grove worktree's agents, which drive it while you watch.",
+  "version": "1.0.0",
+  "minimum_chrome_version": "116",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvGmwO5mB588xS0YVI+bv0kdupcaSKrW8PLT7bhprMkOrJ2SZd6axwbSvLT16OiVUTiCc0LIgxmGTwM/o9dmwtatis2sYzb39VtICr+tW/Cmfi7Ntjgtrk6/kPoMx6GfHO7Xwy/RxbykQhTrqETZxFG9SJl6F7eBHhnM6QXEvPwjlxFrldHgfoRzd1P7tv/J8YEKW7xMW1Xlk4oujF42UjwvSekOJaYLapTUjgOHVgU9gLn85Hyw+Bq094u9Upf2Ha3No1dY4SlcPNUitd8LLx9BEf0GuD0S6cZ7v6W1G49ApyCljf1hajI7qMirHMmTOWqPXorqF4gvsA3Gj2YAbTwIDAQAB",
+  "permissions": ["debugger", "nativeMessaging", "contextMenus", "tabs", "tabGroups", "storage"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": {
+    "default_title": "Grove",
+    "default_popup": "popup.html",
+    "default_icon": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png" }
+  },
+  "icons": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" }
+}

@@ -31,6 +31,7 @@ const SERVICE_STUBS: Record<string, unknown> = {
   actions: {},
   agents: { watch: () => () => {} },
   browser: { watchNewPages: () => () => {}, dispose: () => {} },
+  browserHost: {},
   agentReview: {},
   editSteps: {},
   promptBlame: {},

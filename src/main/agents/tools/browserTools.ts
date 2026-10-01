@@ -2,8 +2,8 @@
 //
 // Every session gets this: the browser belongs to the worktree, not to one
 // agent, so whichever agent is working on the frontend can look at what it
-// built and use it. The calls land in a page the user is looking at — a Kit
-// tab connected to the worktree, or else the Browser pane — and they watch the
+// built and use it. The calls land in a page the user is looking at — a tab
+// handed to the worktree from Kit or Chrome, or else the Browser pane — and they watch the
 // clicks and the typing happen.
 //
 // The tool is the DevTools protocol, unwrapped. Models know CDP far better
@@ -26,8 +26,8 @@ export interface AgentBrowser {
   isAttached(worktreeId: string): boolean
   waitForAttach(worktreeId: string, timeoutMs: number): Promise<boolean>
   /**
-   * Asks a connected Kit to open a tab for the worktree; true once one serves
-   * it, false when there is no Kit or it did not.
+   * Asks a connected browser provider to open a tab for the worktree; true
+   * once one serves it, false when there is none or none did.
    */
   openTab(worktreeId: string, timeoutMs: number): Promise<boolean>
   location(worktreeId: string): { url: string; title: string }
@@ -39,8 +39,8 @@ export interface AgentBrowser {
 
 // How long to wait for the pane to open and hand its page over.
 const ATTACH_TIMEOUT_MS = 8000
-// How long to wait for a connected Kit to open a tab and provide it.
-const KIT_OPEN_TIMEOUT_MS = 5000
+// How long to wait for a connected provider to open a tab and provide it.
+const PROVIDER_OPEN_TIMEOUT_MS = 5000
 // Characters of a command's result returned before it is cut.
 const MAX_RESULT_LENGTH = 20000
 // The most entries of each log one reply carries; the newest are kept.
@@ -103,10 +103,10 @@ export interface BrowserToolOptions {
 }
 
 const NOT_OPEN =
-  'No browser serves this worktree: no Kit tab is connected to it, and the Browser pane is not ' +
+  'No browser serves this worktree: no browser tab is handed to it, and the Browser pane is not ' +
   'open and could not be opened (the user is not looking at this conversation, or has another ' +
-  'worktree selected). Ask the user to connect a Kit tab to this worktree, or to open the ' +
-  'Browser pane, then try again.'
+  'worktree selected). Ask the user to hand a tab to this worktree from Kit or from Grove’s ' +
+  'Chrome extension, or to open the Browser pane, then try again.'
 
 /** The last log entries a session has been told about, so each reply carries only what is new. */
 interface SeenEvents {
@@ -128,9 +128,10 @@ function browserTool(browser: AgentBrowser, options: BrowserToolOptions): GroveT
       'For frontend work, check what you built in the Browser preview rather than assuming it renders'
     ],
     description:
-      'Send one Chrome DevTools Protocol command to the worktree’s browser: a Kit tab connected to ' +
-      'the worktree when there is one, else the Browser pane, the worktree’s preview of its dev ' +
-      'server. When neither is open, a connected Kit is asked for a tab, else the pane is opened. ' +
+      'Send one Chrome DevTools Protocol command to the worktree’s browser: a tab the user handed ' +
+      'to the worktree from Kit or Chrome when there is one, else the Browser pane, the worktree’s ' +
+      'preview of its dev server. When neither is open, a connected browser is asked for a tab, ' +
+      'else the pane is opened. ' +
       'The user watches it happen. ' +
       'Any domain works: Page.navigate, Runtime.evaluate (returnByValue: true for a plain value), ' +
       'Input.dispatchMouseEvent, Input.insertText, Input.dispatchKeyEvent, DOM.*, ' +
@@ -186,12 +187,12 @@ function browserTool(browser: AgentBrowser, options: BrowserToolOptions): GroveT
 
 /**
  * The worktree's browser: the page already serving it, else a tab a connected
- * Kit opens, else the Browser pane opened for it. Null when none arrived in time.
+ * browser opens, else the Browser pane opened for it. Null when none arrived in time.
  */
 async function ensureBrowser(browser: AgentBrowser, context: GroveToolContext): Promise<string | null> {
   const worktreeId = context.workspaceRoot
   if (browser.isAttached(worktreeId)) return worktreeId
-  if (await browser.openTab(worktreeId, KIT_OPEN_TIMEOUT_MS)) return worktreeId
+  if (await browser.openTab(worktreeId, PROVIDER_OPEN_TIMEOUT_MS)) return worktreeId
   context.show({ kind: 'pane', pane: 'browser' })
   const attached = await browser.waitForAttach(worktreeId, ATTACH_TIMEOUT_MS)
   if (!attached) return null

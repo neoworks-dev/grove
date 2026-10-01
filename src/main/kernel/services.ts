@@ -18,6 +18,7 @@ import type { WorktreeChannel } from '../worktreeChannel'
 import type { ActionRunner } from '../actions'
 import type { AgentService } from '../agents/service'
 import type { BrowserService } from '../browser'
+import type { BrowserHostInstaller } from '../browserHostInstaller'
 import type { AgentReviewBridge } from '../agents/reviewBridge'
 import type { EditStepRecorder } from '../agents/editSteps'
 import type { PromptBlame } from '../promptBlame'
@@ -100,6 +101,7 @@ declare module '@neoworks/extension-system' {
     actions: ActionRunner
     agents: AgentService
     browser: BrowserService
+    browserHost: BrowserHostInstaller
     harnesses: HarnessRegistry
     switchboard: SwitchboardHost
     agentReview: AgentReviewBridge

@@ -46,6 +46,7 @@ function fakeBrowser(
       attached = options.opens
       return attached
     },
+    openTab: async () => false,
     location: () => ({ url: 'http://localhost:3100/', title: 'Demo' }),
     cdp: async (_worktreeId, method, params) => {
       browser.sent.push({ method, params })

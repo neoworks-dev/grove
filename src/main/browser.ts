@@ -11,30 +11,20 @@
 // an agent asking what went wrong sees what happened before it asked —
 // loading included.
 
-import { app, webContents as allWebContents, type WebContents } from 'electron'
+import { app, nativeImage, webContents as allWebContents, type WebContents } from 'electron'
 import type {
   BrowserActivity,
   BrowserConsoleEntry,
   BrowserNetworkEntry,
   BrowserPickedElement
 } from '../shared/types'
-import {
-  CANCEL_PICK_SCRIPT,
-  CLICK_POINT_SCRIPT,
-  HIGHLIGHT_SCRIPT,
-  HTML_SCRIPT,
-  PICK_SCRIPT,
-  SNAPSHOT_SCRIPT,
-  scriptCall
-} from './browserScripts'
+import { CANCEL_PICK_SCRIPT, PICK_SCRIPT, scriptCall } from './browserScripts'
 
 /** The partition every preview shares, so logins survive a reload of the pane. */
 export const BROWSER_PARTITION = 'persist:grove-browser'
 
 // How much of each log is kept; older entries fall off the front.
 const LOG_LIMIT = 300
-// How long a navigation may take before the agent is told it is still loading.
-const LOAD_TIMEOUT_MS = 15000
 // Screenshots wider than this are scaled down: plenty to read, far fewer tokens.
 const SCREENSHOT_MAX_WIDTH = 1280
 
@@ -52,12 +42,6 @@ interface AttachedBrowser {
 interface PageLogs {
   console: BrowserConsoleEntry[]
   network: BrowserNetworkEntry[]
-}
-
-/** A point in the page's viewport, in CSS pixels. */
-export interface PagePoint {
-  x: number
-  y: number
 }
 
 export class BrowserService {
@@ -224,30 +208,6 @@ export class BrowserService {
     return { url: contents.getURL(), title: contents.getTitle() }
   }
 
-  /** A PNG of what the preview shows, scaled down when it is wide. */
-  async screenshot(worktreeId: string): Promise<string> {
-    const contents = this.require(worktreeId).contents
-    let image = await contents.capturePage()
-    const size = image.getSize()
-    if (size.width > SCREENSHOT_MAX_WIDTH) image = image.resize({ width: SCREENSHOT_MAX_WIDTH })
-    return image.toPNG().toString('base64')
-  }
-
-  /** An outline of the page: its text and the elements that can be acted on. */
-  snapshot(worktreeId: string): Promise<unknown> {
-    return this.run(worktreeId, scriptCall(SNAPSHOT_SCRIPT, {}))
-  }
-
-  /** The HTML of the elements a selector matches, or of the whole page. */
-  html(worktreeId: string, selector: string | null): Promise<unknown> {
-    return this.run(worktreeId, scriptCall(HTML_SCRIPT, { selector }))
-  }
-
-  /** The value of an expression evaluated in the page. */
-  evaluate(worktreeId: string, expression: string): Promise<unknown> {
-    return this.run(worktreeId, expression)
-  }
-
   /** What the page has logged since the pane attached, oldest first. */
   consoleLog(worktreeId: string): BrowserConsoleEntry[] {
     return [...this.require(worktreeId).logs.console]
@@ -256,16 +216,6 @@ export class BrowserService {
   /** What the page has requested since the pane attached, oldest first. */
   networkLog(worktreeId: string): BrowserNetworkEntry[] {
     return [...this.require(worktreeId).logs.network]
-  }
-
-  /** Forgets the console log, so the next read shows only what follows. */
-  clearConsole(worktreeId: string): void {
-    this.require(worktreeId).logs.console.length = 0
-  }
-
-  /** Forgets the network log, so the next read shows only what follows. */
-  clearNetwork(worktreeId: string): void {
-    this.require(worktreeId).logs.network.length = 0
   }
 
   /**
@@ -283,58 +233,16 @@ export class BrowserService {
 
   // ── Acting ──────────────────────────────────────────────────────
 
-  /** Loads an address and waits for it to finish, or for the timeout. */
-  async navigate(worktreeId: string, url: string): Promise<void> {
-    const contents = this.require(worktreeId).contents
-    this.announce(worktreeId, `Opening ${url}`)
-    await Promise.race([
-      contents.loadURL(url).catch((error: Error) => {
-        // An aborted load (ERR_ABORTED) is a redirect or a second navigation, not a failure.
-        if (!error.message.includes('ERR_ABORTED')) throw error
-      }),
-      delay(LOAD_TIMEOUT_MS)
-    ])
-  }
-
   /**
-   * Clicks an element, or a point in the viewport: scrolled into view, marked
-   * for the user to see, then pressed as a real pointer would.
+   * Sends one DevTools protocol command to the page, telling the pane what it
+   * does when it acts on the page. A wide screenshot comes back scaled down.
    */
-  async click(worktreeId: string, target: { selector: string } | PagePoint): Promise<string> {
-    const point = await this.pointOf(worktreeId, target)
-    this.announce(worktreeId, `Clicking ${describeTarget(target)}`)
-    await this.highlight(worktreeId, target)
-    await this.mouse(worktreeId, 'mouseMoved', point)
-    await this.mouse(worktreeId, 'mousePressed', point)
-    await this.mouse(worktreeId, 'mouseReleased', point)
-    return `${Math.round(point.x)},${Math.round(point.y)}`
-  }
-
-  /** Types text into an element (clicked first) or into whatever has focus. */
-  async type(worktreeId: string, text: string, selector: string | null): Promise<void> {
-    if (selector) await this.click(worktreeId, { selector })
-    this.announce(worktreeId, `Typing “${shorten(text, 40)}”`)
-    await this.command(worktreeId, 'Input.insertText', { text })
-  }
-
-  /** Presses one key, such as Enter, Tab, Escape or ArrowDown. */
-  async press(worktreeId: string, key: string): Promise<void> {
-    this.announce(worktreeId, `Pressing ${key}`)
-    const definition = keyDefinition(key)
-    await this.command(worktreeId, 'Input.dispatchKeyEvent', { type: 'keyDown', ...definition })
-    await this.command(worktreeId, 'Input.dispatchKeyEvent', { type: 'keyUp', ...definition })
-  }
-
-  /** Scrolls the page, or an element into view. */
-  async scroll(worktreeId: string, deltaY: number): Promise<void> {
-    const viewport = (await this.run(worktreeId, '({ x: innerWidth / 2, y: innerHeight / 2 })')) as PagePoint
-    await this.command(worktreeId, 'Input.dispatchMouseEvent', {
-      type: 'mouseWheel',
-      x: viewport.x,
-      y: viewport.y,
-      deltaX: 0,
-      deltaY
-    })
+  async cdp(worktreeId: string, method: string, params: Record<string, unknown>): Promise<unknown> {
+    const activity = activityOf(method, params)
+    if (activity) this.announce(worktreeId, activity)
+    const result = await this.command(worktreeId, method, params)
+    if (method === 'Page.captureScreenshot') return scaledScreenshot(result, params)
+    return result
   }
 
   // ── Plumbing ────────────────────────────────────────────────────
@@ -342,33 +250,6 @@ export class BrowserService {
   /** Says what an agent is doing in the preview, for the pane to show. */
   private announce(worktreeId: string, text: string): void {
     this.events.onActivity({ worktreeId, text, at: Date.now() })
-  }
-
-  /** Where in the viewport a target is, scrolling an element into view first. */
-  private async pointOf(worktreeId: string, target: { selector: string } | PagePoint): Promise<PagePoint> {
-    if (!('selector' in target)) return target
-    const found = (await this.run(worktreeId, scriptCall(CLICK_POINT_SCRIPT, { selector: target.selector }))) as
-      | PagePoint
-      | { error: string }
-    if ('error' in found) throw new Error(found.error)
-    return found
-  }
-
-  /** Outlines what is about to be acted on, briefly, in the page itself. */
-  private async highlight(worktreeId: string, target: { selector: string } | PagePoint): Promise<void> {
-    await this.run(worktreeId, scriptCall(HIGHLIGHT_SCRIPT, target)).catch(() => {})
-  }
-
-  /** One pointer event at a point. */
-  private mouse(worktreeId: string, type: string, point: PagePoint): Promise<unknown> {
-    return this.command(worktreeId, 'Input.dispatchMouseEvent', {
-      type,
-      x: point.x,
-      y: point.y,
-      button: 'left',
-      buttons: type === 'mousePressed' ? 1 : 0,
-      clickCount: 1
-    })
   }
 
   /** Sends a DevTools protocol command, attaching the debugger on first use. */
@@ -406,55 +287,37 @@ function sourceOf(sourceId: string, lineNumber: number): string {
   return `${sourceId}:${lineNumber}`
 }
 
-/** A target as the pane's activity line names it. */
-function describeTarget(target: { selector: string } | PagePoint): string {
-  if ('selector' in target) return target.selector
-  return `${Math.round(target.x)},${Math.round(target.y)}`
-}
-
 /** Text cut to a length, with an ellipsis when it was cut. */
 function shorten(text: string, length: number): string {
   if (text.length <= length) return text
   return `${text.slice(0, length - 1)}…`
 }
 
-/** Resolves after a while. */
-function delay(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds))
-}
-
-// The keys an agent presses by name, as the protocol wants them described.
-const NAMED_KEYS: Record<string, { code: string; keyCode: number; text?: string }> = {
-  Enter: { code: 'Enter', keyCode: 13, text: '\r' },
-  Tab: { code: 'Tab', keyCode: 9 },
-  Escape: { code: 'Escape', keyCode: 27 },
-  Backspace: { code: 'Backspace', keyCode: 8 },
-  Delete: { code: 'Delete', keyCode: 46 },
-  ArrowUp: { code: 'ArrowUp', keyCode: 38 },
-  ArrowDown: { code: 'ArrowDown', keyCode: 40 },
-  ArrowLeft: { code: 'ArrowLeft', keyCode: 37 },
-  ArrowRight: { code: 'ArrowRight', keyCode: 39 },
-  Home: { code: 'Home', keyCode: 36 },
-  End: { code: 'End', keyCode: 35 },
-  PageUp: { code: 'PageUp', keyCode: 33 },
-  PageDown: { code: 'PageDown', keyCode: 34 },
-  Space: { code: 'Space', keyCode: 32, text: ' ' }
-}
-
-/** The protocol's description of a key pressed by name, or of a single character. */
-export function keyDefinition(key: string): Record<string, unknown> {
-  const named = NAMED_KEYS[key]
-  if (named) {
-    let keyName = key
-    if (key === 'Space') keyName = ' '
-    const definition: Record<string, unknown> = {
-      key: keyName,
-      code: named.code,
-      windowsVirtualKeyCode: named.keyCode
-    }
-    if (named.text) definition.text = named.text
-    return definition
+/** What a command does to the page, in words for the pane; null for one that only reads. */
+function activityOf(method: string, params: Record<string, unknown>): string | null {
+  if (method === 'Page.navigate') return `Opening ${String(params.url)}`
+  if (method === 'Input.insertText') return `Typing “${shorten(String(params.text), 40)}”`
+  if (method === 'Input.dispatchMouseEvent' && params.type === 'mousePressed') {
+    return `Clicking at ${Math.round(Number(params.x))},${Math.round(Number(params.y))}`
   }
-  if (key.length !== 1) throw new Error(`Unknown key: ${key}. Use a single character or one of ${Object.keys(NAMED_KEYS).join(', ')}.`)
-  return { key, text: key, windowsVirtualKeyCode: key.toUpperCase().charCodeAt(0) }
+  if (method === 'Input.dispatchKeyEvent' && (params.type === 'keyDown' || params.type === 'rawKeyDown')) {
+    if (typeof params.key === 'string') return `Pressing ${params.key}`
+    return `Pressing ${String(params.code)}`
+  }
+  return null
+}
+
+/** A screenshot's result with its picture scaled down when it is wider than an agent needs. */
+function scaledScreenshot(result: unknown, params: Record<string, unknown>): unknown {
+  const data = (result as { data?: unknown } | null)?.data
+  if (typeof data !== 'string' || params.format === 'webp') return result
+  const image = nativeImage.createFromBuffer(Buffer.from(data, 'base64'))
+  if (image.getSize().width <= SCREENSHOT_MAX_WIDTH) return result
+  const scaled = image.resize({ width: SCREENSHOT_MAX_WIDTH })
+  if (params.format === 'jpeg') {
+    let quality = 80
+    if (typeof params.quality === 'number') quality = params.quality
+    return { ...(result as object), data: scaled.toJPEG(quality).toString('base64') }
+  }
+  return { ...(result as object), data: scaled.toPNG().toString('base64') }
 }

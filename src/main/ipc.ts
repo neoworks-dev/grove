@@ -195,7 +195,7 @@ const agents = new AgentService({
       conflicts: conflictProposals,
       skills: () => aiBridge.skillList()
     }),
-    ...browserTools(browser),
+    ...browserTools(browser, { helpersPath: join(app.getPath('userData'), 'browser-helpers.js') }),
     ...aiBridge.pluginTools()
   ],
   systemPrompt: (session) => buildSystemPrompt(session),

@@ -19,6 +19,9 @@ export const STATUS_COLOUR: Record<DiffChangeType, string> = {
 /** The setting that picks between the two layouts. */
 export const LAYOUT_SETTING = 'git.changesLayout'
 
+// Read by prompt blame in the main process, which decides on it at push and fetch.
+export const SHARE_PROMPT_BLAME_SETTING = 'git.sharePromptBlame'
+
 export interface FolderRow {
   kind: 'folder'
   /** Repository-relative path of the (last joined) folder. */

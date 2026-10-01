@@ -10,7 +10,9 @@
 // person — and a prompt only counts if it came before that commit.
 //
 // One file per repository (by its common git dir, so every worktree shares
-// it), append-only, read once.
+// it), append-only, read once. When sharing is on, the records behind a commit
+// also travel with it as a git note (see promptNotes.ts), and blame reads the
+// note on the commit it lands on beside the local file.
 
 import { createHash } from 'node:crypto'
 import { appendFile, mkdir, readFile } from 'node:fs/promises'
@@ -23,6 +25,7 @@ import type {
   LineCommit,
   PromptAttribution
 } from '../shared/agents'
+import { fetchNotes, pushNotes, readNote, unpublishedCommits, writeNote } from './promptNotes'
 
 // A commit's author time has second resolution and the clocks agree only
 // roughly, so a prompt a little after the commit still counts as before it.
@@ -32,7 +35,7 @@ const CLOCK_SLACK_MS = 60_000
 const MIN_MEANINGFUL_LENGTH = 4
 
 /** One edit step's added lines and the prompt behind them, as stored. */
-interface StoredAttribution {
+export interface StoredAttribution {
   sessionId: string
   sessionTitle: string
   harness: string
@@ -52,11 +55,20 @@ export interface BlameSession {
   harness: string
 }
 
+/** One added line of a commit and the record that wrote it. */
+export interface AttributedLine {
+  record: StoredAttribution
+  path: string
+  key: string
+}
+
 export interface PromptBlameOptions {
   /** Where the per-repository files are kept. */
   directory: string
   /** Whether a session still exists, so blame knows if it can be opened. */
   sessionExists(sessionId: string): boolean
+  /** Whether prompt notes are written on commits and shared through the remote. */
+  sharingNotes(): boolean
 }
 
 export class PromptBlame {
@@ -119,9 +131,12 @@ export class PromptBlame {
     const key = lineKey(text)
     if (!key) return { commit, prompt: null }
 
-    const records = await this.load(await this.commonDirOf(worktreePath))
+    let records = await this.load(await this.commonDirOf(worktreePath))
     let committedAt: number | null = null
-    if (commit) committedAt = commit.time
+    if (commit) {
+      committedAt = commit.time
+      records = records.concat(await noteRecords(worktreePath, commit.sha))
+    }
     const found = latestWriter(records, relPath, key, committedAt)
     if (!found) return { commit, prompt: null }
     return { commit, prompt: this.attributionOf(found) }
@@ -129,6 +144,64 @@ export class PromptBlame {
 
   /** The prompts behind a commit's added lines, most lines first. */
   async commitPrompts(worktreePath: string, sha: string): Promise<CommitPrompt[]> {
+    const tallies = new Map<string, CommitPrompt>()
+    for (const attributed of await this.attributeCommit(worktreePath, sha)) {
+      this.tally(tallies, attributed.record)
+    }
+    return [...tallies.values()].sort((left, right) => right.lines - left.lines)
+  }
+
+  /**
+   * Before a push: notes every commit it is about to publish with the records
+   * behind its agent-written lines. Returns what went wrong, or '' when
+   * nothing did; a failure here must not stop the push itself.
+   */
+  async prepareToPublish(worktreePath: string): Promise<string> {
+    if (!this.options.sharingNotes()) return ''
+    try {
+      for (const sha of await unpublishedCommits(worktreePath)) {
+        await this.annotateCommit(worktreePath, sha)
+      }
+      return ''
+    } catch (error) {
+      return notesProblem('not written', error)
+    }
+  }
+
+  /** Writes a commit's prompt note, unless it has one or no agent wrote any of it. */
+  async annotateCommit(worktreePath: string, sha: string): Promise<void> {
+    const existing = await readNote(worktreePath, sha)
+    if (existing.length > 0) return
+    const attributed = await this.attributeCommit(worktreePath, sha)
+    if (attributed.length === 0) return
+    const lines = narrowedRecords(attributed).map((record) => JSON.stringify(record))
+    await writeNote(worktreePath, sha, lines)
+  }
+
+  /** After a push: shares the prompt notes with the remote. Returns what went wrong, or ''. */
+  async publishNotes(worktreePath: string, remote: string): Promise<string> {
+    if (!this.options.sharingNotes()) return ''
+    try {
+      await pushNotes(worktreePath, remote)
+      return ''
+    } catch (error) {
+      return notesProblem('not shared', error)
+    }
+  }
+
+  /** After a fetch: takes in the remote's prompt notes. Returns what went wrong, or ''. */
+  async receiveNotes(worktreePath: string, remote: string): Promise<string> {
+    if (!this.options.sharingNotes()) return ''
+    try {
+      await fetchNotes(worktreePath, remote)
+      return ''
+    } catch (error) {
+      return notesProblem('not fetched', error)
+    }
+  }
+
+  /** Each line a commit adds that an agent wrote, with the record that wrote it. */
+  private async attributeCommit(worktreePath: string, sha: string): Promise<AttributedLine[]> {
     const output = await simpleGit({ baseDir: worktreePath }).raw([
       'show',
       '--format=%at',
@@ -141,18 +214,19 @@ export class PromptBlame {
     const newline = output.indexOf('\n')
     const committedAt = Number.parseInt(output.slice(0, newline), 10) * 1000
     const added = addedLinesByFile(output.slice(newline + 1))
-    const records = await this.load(await this.commonDirOf(worktreePath))
+    const local = await this.load(await this.commonDirOf(worktreePath))
+    const records = local.concat(await noteRecords(worktreePath, sha))
 
-    const tallies = new Map<string, CommitPrompt>()
+    const attributed: AttributedLine[] = []
     for (const [path, lines] of added) {
       for (const text of lines) {
         const key = lineKey(text)
         if (!key) continue
-        const found = latestWriter(records, path, key, committedAt)
-        if (found) this.tally(tallies, found)
+        const record = latestWriter(records, path, key, committedAt)
+        if (record) attributed.push({ record, path, key })
       }
     }
-    return [...tallies.values()].sort((left, right) => right.lines - left.lines)
+    return attributed
   }
 
   /** Counts one more line towards the prompt that wrote it. */
@@ -206,6 +280,13 @@ export class PromptBlame {
   }
 }
 
+/** A notes failure as a line for the push or fetch summary, logged as well. */
+function notesProblem(what: string, error: unknown): string {
+  const message = `Prompt notes ${what}: ${(error as Error).message.trim()}`
+  console.error(`[blame] ${message}`)
+  return message
+}
+
 /** Absolute path of a worktree's common git dir. */
 async function resolveCommonDir(worktreePath: string): Promise<string> {
   const output = await simpleGit({ baseDir: worktreePath }).raw(['rev-parse', '--git-common-dir'])
@@ -217,8 +298,18 @@ async function resolveCommonDir(worktreePath: string): Promise<string> {
 /** Every record in a file; a line that does not parse is skipped. */
 async function readRecords(file: string): Promise<StoredAttribution[]> {
   const text = await readFile(file, 'utf8').catch(() => '')
+  return parseRecords(text.split('\n'))
+}
+
+/** The records in a commit's prompt note. */
+async function noteRecords(worktreePath: string, sha: string): Promise<StoredAttribution[]> {
+  return parseRecords(await readNote(worktreePath, sha))
+}
+
+/** Records from JSON lines; a line that does not parse is skipped. */
+function parseRecords(lines: string[]): StoredAttribution[] {
   const records: StoredAttribution[] = []
-  for (const line of text.split('\n')) {
+  for (const line of lines) {
     if (line.trim().length === 0) continue
     try {
       const record: StoredAttribution = JSON.parse(line)
@@ -228,6 +319,31 @@ async function readRecords(file: string): Promise<StoredAttribution[]> {
     }
   }
   return records
+}
+
+/**
+ * The records behind a commit's attributed lines, each cut down to the lines
+ * it wrote there, so a note carries what explains its commit and no more.
+ */
+export function narrowedRecords(attributed: readonly AttributedLine[]): StoredAttribution[] {
+  const keysByRecord = new Map<StoredAttribution, Record<string, Set<string>>>()
+  for (const { record, path, key } of attributed) {
+    let files = keysByRecord.get(record)
+    if (!files) {
+      files = {}
+      keysByRecord.set(record, files)
+    }
+    if (!files[path]) files[path] = new Set()
+    files[path].add(key)
+  }
+
+  const narrowed: StoredAttribution[] = []
+  for (const [record, files] of keysByRecord) {
+    const keys: Record<string, string[]> = {}
+    for (const [path, set] of Object.entries(files)) keys[path] = [...set].sort()
+    narrowed.push({ ...record, files: keys })
+  }
+  return narrowed
 }
 
 /**

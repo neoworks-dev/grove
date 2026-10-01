@@ -8,6 +8,7 @@ import type { Context } from '@neoworks/extension-system'
 import { route } from '../kernel/route'
 import * as github from '../github'
 import * as git from '../git'
+import { withProblems } from '../promptNotes'
 import * as worktrees from '../worktrees'
 import * as dashboard from '../githubDashboard'
 import type {
@@ -120,7 +121,7 @@ async function prCheckoutState(ctx: Context, number: number): Promise<PrCheckout
 
 export const githubRoutes = {
   name: 'main/routes/github',
-  inject: ['workbench', 'checkpoints'],
+  inject: ['workbench', 'checkpoints', 'promptBlame'],
 
   apply(ctx: Context): void {
     // ── Dashboard (issues + pull requests) ────────────────────────
@@ -404,12 +405,14 @@ export const githubRoutes = {
         throw new Error('finish the merge before pushing it')
       }
 
+      const annotating = await ctx.promptBlame.prepareToPublish(worktree.path)
       const summary = await git.pushHeadTo(worktree.path, target.url, target.branch)
+      const sharing = await ctx.promptBlame.publishNotes(worktree.path, target.url)
       // The pull request's head is now what was just pushed. Without moving the
       // local mirror of it, the checkout reads as ahead of the pull request for
       // ever and the push keeps being offered.
       await git.updateRef(worktree.path, `refs/grove/pr/${number}/head`, 'HEAD')
-      return summary
+      return withProblems(summary, [annotating, sharing])
     })
 
     // ── Ship-it (the PR of the selected worktree) ─────────────────

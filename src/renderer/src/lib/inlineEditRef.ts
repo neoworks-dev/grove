@@ -67,3 +67,41 @@ export function workingTreeReviewSettled(
   if (review.worktreeId !== worktreeId) return false
   return !changedPaths.includes(review.relPath)
 }
+
+// The fields of a stored session that decide whether inline edits can run in it.
+export interface InlineSessionCandidate {
+  id: string
+  title: string
+  workspaceRoot: string
+  harness: string
+  started: boolean
+}
+
+/**
+ * Which of a worktree's inline-edit sessions an edit on `harness` runs in, and
+ * whether that session's harness has to be switched first. Null means a new one
+ * is needed: every existing one has started on another harness, which then
+ * cannot be changed. An empty `harness` takes whichever session there is.
+ */
+export function chooseInlineSession<Session extends InlineSessionCandidate>(
+  sessions: Session[],
+  worktreePath: string,
+  harness: string,
+  rememberedId: string | undefined,
+  inlineTitle: string
+): { session: Session; switchHarness: boolean } | null {
+  const inline = sessions.filter(
+    (session) =>
+      session.workspaceRoot === worktreePath &&
+      (session.id === rememberedId || session.title === inlineTitle)
+  )
+  // The remembered session goes first, so a worktree keeps using the one it had.
+  inline.sort((left, right) => Number(right.id === rememberedId) - Number(left.id === rememberedId))
+
+  const sameHarness = inline.find((session) => harness === '' || session.harness === harness)
+  if (sameHarness) return { session: sameHarness, switchHarness: false }
+
+  const unstarted = inline.find((session) => !session.started)
+  if (unstarted) return { session: unstarted, switchHarness: true }
+  return null
+}

@@ -25,6 +25,7 @@ import { foldAttention, settledApproval, type SessionAttention } from './attenti
 import type { AgentMode } from './modes'
 import { clearAgentMarks, store } from '../store.svelte'
 import { showTarget } from './show'
+import { chooseInlineSession } from '../inlineEditRef'
 import {
   applyEvent,
   createTranscript,
@@ -203,16 +204,18 @@ class AgentSessions {
    * Reuse the worktree's dedicated inline-edit session, creating it in the
    * background when needed. It is deliberately not made active: the Agent pane
    * keeps its own conversation and model while inline edits retain context with
-   * one another. The selected model is reasserted before each dispatch, so a
-   * user inspecting and changing this session cannot make the two tasks drift.
+   * one another. The selected harness and model are reasserted before each
+   * dispatch, so a user inspecting and changing this session cannot make the two
+   * tasks drift.
    */
   async ensureInlineFor(
     worktreePath: string,
+    harness: string,
     selected?: { provider: string; model: string }
   ): Promise<string | null> {
     const pending = this.inlineEnsures.get(worktreePath)
     if (pending) return pending
-    const ensure = this.ensureInlineSession(worktreePath, selected).finally(() => {
+    const ensure = this.ensureInlineSession(worktreePath, harness, selected).finally(() => {
       this.inlineEnsures.delete(worktreePath)
     })
     this.inlineEnsures.set(worktreePath, ensure)
@@ -242,21 +245,24 @@ class AgentSessions {
 
   private async ensureInlineSession(
     worktreePath: string,
+    harness: string,
     selected?: { provider: string; model: string }
   ): Promise<string | null> {
     await this.refreshList()
-    const remembered = this.inlineByWorktree.get(worktreePath)
-    let session = this.list.find(
-      (candidate) =>
-        candidate.workspaceRoot === worktreePath &&
-        (candidate.id === remembered || candidate.title === INLINE_SESSION_TITLE)
+    const chosen = chooseInlineSession(
+      this.list,
+      worktreePath,
+      harness,
+      this.inlineByWorktree.get(worktreePath),
+      INLINE_SESSION_TITLE
     )
 
     try {
-      if (!session) {
+      if (!chosen) {
         const created = await createSession({
           workspace: worktreePath,
           title: INLINE_SESSION_TITLE,
+          harness: harness || undefined,
           provider: selected?.provider,
           model: selected?.model
         })
@@ -266,15 +272,13 @@ class AgentSessions {
         return created.id
       }
 
+      const session = chosen.session
       this.inlineByWorktree.set(worktreePath, session.id)
-      if (
-        selected &&
-        (session.provider !== selected.provider || session.model !== selected.model)
-      ) {
-        const result = await updateSession(session.id, selected)
+      const changes = inlineSessionChanges(session, chosen.switchHarness, harness, selected)
+      if (changes) {
+        const result = await updateSession(session.id, changes)
         const live = this.live[session.id]
         if (live) live.snapshot = result.session
-        session = { ...session, provider: selected.provider, model: selected.model }
         await this.refreshList()
       }
       this.serverError = ''
@@ -520,3 +524,26 @@ function messageOf(cause: unknown): string {
 }
 
 export const agentSessions = new AgentSessions()
+
+/**
+ * What an inline-edit session has to be told before the next edit: the harness,
+ * when it is switching runtimes, and the model, when it differs. Null when it is
+ * already on both.
+ */
+function inlineSessionChanges(
+  session: SessionMeta,
+  switchHarness: boolean,
+  harness: string,
+  selected: { provider: string; model: string } | undefined
+): SessionUpdate | null {
+  const changes: SessionUpdate = {}
+  if (switchHarness) {
+    changes.harness = harness
+  }
+  if (selected && (session.provider !== selected.provider || session.model !== selected.model)) {
+    changes.provider = selected.provider
+    changes.model = selected.model
+  }
+  if (Object.keys(changes).length === 0) return null
+  return changes
+}

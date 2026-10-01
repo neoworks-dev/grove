@@ -18,6 +18,7 @@ import type {
   DebugOutputLine,
   DebugScope,
   DebugSnapshot,
+  DebugSource,
   DebugStackFrame,
   DebugVariable,
   MasonDebugPackage
@@ -533,6 +534,21 @@ export class DebugService implements DebugSessionHost {
     return record.session.scopes(frame)
   }
 
+  /**
+   * Fetches source a session's adapter holds by reference, for a frame with no
+   * file on disk. The name is the read-only buffer it opens in.
+   */
+  async source(sessionId: string, sourceReference: number): Promise<DebugSource> {
+    const session = this.requireSession(sessionId)
+    const frame = frameWithSource(session, sourceReference)
+    let title = `source ${sourceReference}`
+    if (frame && frame.sourceName) {
+      title = frame.sourceName
+    }
+    const { content, mimeType } = await session.source(sourceReference, frame?.sourceName)
+    return { name: sourceBufferName(sessionId, sourceReference, title), title, content, mimeType }
+  }
+
   async variables(sessionId: string, variablesReference: number): Promise<DebugVariable[]> {
     return this.requireSession(sessionId).variables(variablesReference)
   }
@@ -776,8 +792,8 @@ export class DebugService implements DebugSessionHost {
     }
     for (const thread of record.session.threads.values()) {
       const frame = thread.frames.find((candidate) => candidate.id === this.focusedFrameId)
-      if (frame && frame.path) {
-        return { path: frame.path, line: frame.line }
+      if (frame) {
+        return locationOf(record.session.id, frame)
       }
     }
     return null
@@ -851,6 +867,44 @@ function applyBreakpointOptions(
   if (options.origin !== undefined) {
     breakpoint.origin = options.origin
   }
+}
+
+/** Where a frame is: its file, or the buffer its fetched source opens in. Null when neither. */
+function locationOf(sessionId: string, frame: DebugStackFrame): DebugLocation | null {
+  if (frame.path) {
+    return { path: frame.path, line: frame.line }
+  }
+  if (frame.sourceReference === undefined) {
+    return null
+  }
+  let title = `source ${frame.sourceReference}`
+  if (frame.sourceName) {
+    title = frame.sourceName
+  }
+  return {
+    path: sourceBufferName(sessionId, frame.sourceReference, title),
+    line: frame.line,
+    sourceReference: frame.sourceReference
+  }
+}
+
+/** A frame of a session's loaded stacks whose source is this reference. */
+function frameWithSource(session: DebugSession, sourceReference: number): DebugStackFrame | null {
+  for (const thread of session.threads.values()) {
+    const frame = thread.frames.find((candidate) => candidate.sourceReference === sourceReference)
+    if (frame) {
+      return frame
+    }
+  }
+  return null
+}
+
+/**
+ * The read-only buffer a referenced source opens in. Unique per session and
+ * reference, since a reference means nothing outside the session that gave it.
+ */
+export function sourceBufferName(sessionId: string, sourceReference: number, title: string): string {
+  return `debug-source://${sessionId.slice(0, 8)}/${sourceReference}/${title}`
 }
 
 /** `launch` unless the configuration asks to attach. */

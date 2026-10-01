@@ -15,6 +15,9 @@ interface Message {
 const THREAD_ID = 1
 const LOCALS_REFERENCE = 1
 const ITEMS_REFERENCE = 2
+/** The runner frame's source has no file: the adapter hands it out by this reference. */
+export const RUNNER_SOURCE_REFERENCE = 7
+export const RUNNER_SOURCE = 'function run(program) {\n  return main(program)\n}\n'
 
 /** Serves one debug session over the streams until the client disconnects. */
 export function runFakeAdapter(input: Readable, output: Writable, lineCount = 10): void {
@@ -118,7 +121,17 @@ export function runFakeAdapter(input: Readable, output: Writable, lineCount = 10
               column: 1,
               source: { path: program, name: 'program' }
             },
-            { id: 1, name: '<module>', line: 1, column: 1, source: { name: 'runner' } }
+            {
+              id: 1,
+              name: '<module>',
+              line: 2,
+              column: 1,
+              source: {
+                name: 'runner.js',
+                path: '<internals>/runner.js',
+                sourceReference: RUNNER_SOURCE_REFERENCE
+              }
+            }
           ],
           totalFrames: 2
         })
@@ -144,6 +157,19 @@ export function runFakeAdapter(input: Readable, output: Writable, lineCount = 10
             { name: 'items', value: 'list[2]', type: 'list', variablesReference: ITEMS_REFERENCE }
           ]
         })
+        return
+      case 'source':
+        if (args.sourceReference !== RUNNER_SOURCE_REFERENCE) {
+          send({
+            type: 'response',
+            request_seq: request.seq,
+            command: request.command,
+            success: false,
+            message: 'no such source'
+          })
+          return
+        }
+        respond(request, { content: RUNNER_SOURCE, mimeType: 'text/javascript' })
         return
       case 'evaluate':
         respond(request, {

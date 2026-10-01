@@ -9,6 +9,10 @@
 --   grove_debug_toggle_breakpoint    a click in the gutter.
 --   grove_debug_breakpoints_moved    after a write, where each breakpoint's
 --                                    mark ended up once lines above it changed.
+--   grove_debug.show_source(buf, n)  marks a read-only buffer holding source
+--                                    the adapter sent (no file on disk) as
+--                                    the one named n, so the stopped line is
+--                                    drawn in it too.
 --
 -- Breakpoints are extmarks, so they ride along with edits the way the text
 -- does; Grove only learns the new lines on write, which is when an adapter
@@ -106,8 +110,25 @@ local function place_stopped(buffer, line_count)
   })
 end
 
+--- Redraws the stopped line in a buffer of source the adapter sent. It has no
+--- file, so it carries no breakpoints.
+local function draw_source(buffer, name)
+  vim.api.nvim_buf_clear_namespace(buffer, namespace, 0, -1)
+  if state.stopped ~= vim.NIL and state.stopped ~= nil and state.stopped.path == name then
+    place_stopped(buffer, vim.api.nvim_buf_line_count(buffer))
+  end
+end
+
 --- Redraws one buffer's breakpoints and stopped line from the state.
 local function draw(buffer)
+  if not vim.api.nvim_buf_is_loaded(buffer) then
+    return
+  end
+  local source_name = vim.b[buffer].grove_debug_source
+  if source_name ~= nil then
+    draw_source(buffer, source_name)
+    return
+  end
   local path = buffer_path(buffer)
   if path == nil then
     return
@@ -131,6 +152,12 @@ function M.sync(next_state)
   for _, buffer in ipairs(vim.api.nvim_list_bufs()) do
     draw(buffer)
   end
+end
+
+--- Marks a buffer as holding the adapter's source named `name`, and draws it.
+function M.show_source(buffer, name)
+  vim.b[buffer].grove_debug_source = name
+  draw(buffer)
 end
 
 --- Asks Grove to add or remove the breakpoint on a line of a buffer.

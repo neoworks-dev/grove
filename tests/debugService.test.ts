@@ -12,6 +12,7 @@ import { join, resolve } from 'node:path'
 import type { DebugOutputLine, DebugSnapshot } from '../src/shared/debug'
 import { DebugAdapterRegistry } from '../src/main/debug/registry'
 import { DebugService, focusFrameOf } from '../src/main/debug/service'
+import { RUNNER_SOURCE, RUNNER_SOURCE_REFERENCE } from './debugFakeAdapter'
 
 const WAIT_TIMEOUT_MS = 10_000
 
@@ -187,6 +188,40 @@ describe('a debug session', () => {
         configuration: { type: 'nope', request: 'launch', name: 'X' }
       })
     ).rejects.toThrow('No debug adapter for type "nope"')
+  })
+})
+
+describe('a frame with no file on disk', () => {
+  test('carries its source reference, and its text is fetched from the adapter', async () => {
+    const { service } = createService()
+    await service.openRepo(directory)
+    await service.setBreakpoint(programPath, 2)
+    const sessionId = await service.start({
+      worktreePath: directory,
+      configuration: { type: 'fake', request: 'launch', name: 'Fake', program: programPath }
+    })
+    const snapshot = await waitFor(service, (current) => current.stopSequence === 1)
+
+    const runner = snapshot.sessions[0].threads[0].frames[1]
+    // The adapter's `<internals>/runner.js` is not a file, so the frame is opened by reference.
+    expect(runner.path).toBeUndefined()
+    expect(runner.sourceReference).toBe(RUNNER_SOURCE_REFERENCE)
+
+    const source = await service.source(sessionId, RUNNER_SOURCE_REFERENCE)
+    expect(source.content).toBe(RUNNER_SOURCE)
+    expect(source.title).toBe('runner.js')
+    expect(source.mimeType).toBe('text/javascript')
+
+    // Focusing it points the stopped-line marker at the buffer the source opens in.
+    service.focus(sessionId, snapshot.sessions[0].threads[0].id, runner.id)
+    const focused = service.snapshot().focusedLocation
+    expect(focused).toEqual({
+      path: source.name,
+      line: 2,
+      sourceReference: RUNNER_SOURCE_REFERENCE
+    })
+
+    await service.stop(sessionId)
   })
 })
 

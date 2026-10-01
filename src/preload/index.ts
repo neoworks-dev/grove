@@ -335,6 +335,8 @@ const workbench = {
       ipcRenderer.invoke('debug:stackTrace', sessionId, threadId, startFrame, levels),
     scopes: (sessionId?: string, frameId?: number) =>
       ipcRenderer.invoke('debug:scopes', sessionId, frameId),
+    source: (sessionId: string, sourceReference: number) =>
+      ipcRenderer.invoke('debug:source', sessionId, sourceReference),
     variables: (sessionId: string, variablesReference: number) =>
       ipcRenderer.invoke('debug:variables', sessionId, variablesReference),
     evaluate: (expression: string, context: string, sessionId?: string, frameId?: number) =>

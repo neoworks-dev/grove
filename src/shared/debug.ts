@@ -49,6 +49,11 @@ export interface DebugStackFrame {
   path?: string
   /** Display name of the source (file name, or the adapter's name for it). */
   sourceName?: string
+  /**
+   * The adapter's handle for source with no file on disk (node internals,
+   * generated or remote code), fetched with the DAP `source` request.
+   */
+  sourceReference?: number
   line: number
   column: number
   /** 'subtle' frames are library or internal code the UI may fold away. */
@@ -67,8 +72,21 @@ export interface DebugThread {
 
 /** Where execution stopped, for the editor to reveal and mark. */
 export interface DebugLocation {
+  /** The file, or for source with no file the name of the read-only buffer it opens in. */
   path: string
   line: number
+  /** Set when the code has no file: the adapter's handle to fetch it with `debugger.source`. */
+  sourceReference?: number
+}
+
+/** Source an adapter sent for code that has no file on disk. */
+export interface DebugSource {
+  /** The read-only buffer's name: unique per session and reference, and what the stopped-line marker matches. */
+  name: string
+  /** What the tab says: the adapter's name for the source. */
+  title: string
+  content: string
+  mimeType?: string
 }
 
 export interface DebugSessionSummary {

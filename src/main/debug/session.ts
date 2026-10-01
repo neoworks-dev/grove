@@ -7,6 +7,8 @@
 // Many adapters (debugpy among them) only answer `launch` after that.
 
 import { spawn, type ChildProcess } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { isAbsolute } from 'node:path'
 import type { DebugProtocol } from '@vscode/debugprotocol'
 import type {
   DebugBreakpoint,
@@ -343,6 +345,18 @@ export class DebugSession {
     }
   }
 
+  /** The text of source the adapter holds by reference rather than as a file. */
+  async source(
+    sourceReference: number,
+    name: string | undefined
+  ): Promise<{ content: string; mimeType?: string }> {
+    const body = await this.request<DebugProtocol.SourceResponse['body']>('source', {
+      source: { sourceReference, name },
+      sourceReference
+    })
+    return { content: body?.content || '', mimeType: body?.mimeType }
+  }
+
   summary(): DebugSessionSummary {
     return {
       id: this.id,
@@ -652,7 +666,11 @@ export function stackFrameOf(frame: DebugProtocol.StackFrame): DebugStackFrame {
     line: frame.line,
     column: frame.column
   }
-  if (frame.source?.path) {
+  const sourceReference = frame.source?.sourceReference
+  if (typeof sourceReference === 'number' && sourceReference > 0) {
+    converted.sourceReference = sourceReference
+  }
+  if (frame.source?.path && isFileOnDisk(frame.source.path, converted.sourceReference)) {
     converted.path = frame.source.path
   }
   if (frame.source?.name) {
@@ -666,6 +684,18 @@ export function stackFrameOf(frame: DebugProtocol.StackFrame): DebugStackFrame {
     converted.presentationHint = 'subtle'
   }
   return converted
+}
+
+/**
+ * Whether a frame's path is a file Grove can open. With a source reference the
+ * adapter may name something that is not one (js-debug's
+ * `<node_internals>/timers`), and the reference is what reaches the text.
+ */
+function isFileOnDisk(path: string, sourceReference: number | undefined): boolean {
+  if (sourceReference === undefined) {
+    return true
+  }
+  return isAbsolute(path) && existsSync(path)
 }
 
 const OUTPUT_CATEGORIES = new Set<DebugOutputCategory>([

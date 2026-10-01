@@ -78,6 +78,9 @@ export const debugRoutes = {
     route(ctx, 'debug:scopes', (_e, sessionId?: string, frameId?: number) =>
       ctx.debug.scopes(sessionId, frameId)
     )
+    route(ctx, 'debug:source', (_e, sessionId: string, sourceReference: number) =>
+      ctx.debug.source(sessionId, sourceReference)
+    )
     route(ctx, 'debug:variables', (_e, sessionId: string, variablesReference: number) =>
       ctx.debug.variables(sessionId, variablesReference)
     )

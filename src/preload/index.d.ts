@@ -16,6 +16,7 @@ import type {
   DebugOutputLine,
   DebugScope,
   DebugSnapshot,
+  DebugSource,
   DebugStackFrame,
   DebugVariable,
   MasonDebugPackage
@@ -602,6 +603,8 @@ export interface WorkbenchApi {
       levels: number
     ) => Promise<{ frames: DebugStackFrame[]; total: number | null }>
     scopes: (sessionId?: string, frameId?: number) => Promise<DebugScope[]>
+    /** Source the adapter holds by reference, for a frame with no file on disk. */
+    source: (sessionId: string, sourceReference: number) => Promise<DebugSource>
     variables: (sessionId: string, variablesReference: number) => Promise<DebugVariable[]>
     evaluate: (
       expression: string,

@@ -5,6 +5,7 @@
 
 import type {
   DebugConfigurationEntry,
+  DebugLocation,
   DebugOutputLine,
   DebugSessionSummary,
   DebugSnapshot,
@@ -15,8 +16,31 @@ import { activeNvimSession } from '../../../lib/nvim/registry'
 import { dialogs } from '../../../lib/dialogs.svelte'
 import { layout } from '../../../lib/layout.svelte'
 import { messageOf } from './messages'
+import { closeScratch, openScratch, scratchFor } from '../../../lib/nvim/scratch.svelte'
 
 const OUTPUT_LIMIT = 5000
+
+/**
+ * Finishes a buffer of source the adapter sent: its filetype from the source's
+ * name (or MIME type), the cursor on the line, and debug.lua told which source
+ * it is so the stopped line is drawn. Args: buffer, name, title, mimeType, line.
+ */
+const SHOW_SOURCE_LUA = `
+local buffer, name, title, mime_type, line = ...
+if not vim.api.nvim_buf_is_valid(buffer) then return end
+local filetype = vim.filetype.match({ filename = title, buf = buffer })
+if filetype == nil and mime_type ~= '' then
+  filetype = vim.filetype.match({ filename = 'source.' .. (mime_type:match('/([%w%-]+)$') or '') })
+end
+if filetype ~= nil then vim.bo[buffer].filetype = filetype end
+local window = vim.fn.bufwinid(buffer)
+if window ~= -1 then
+  local last = vim.api.nvim_buf_line_count(buffer)
+  pcall(vim.api.nvim_win_set_cursor, window, { math.min(math.max(line, 1), last), 0 })
+  vim.api.nvim_win_call(window, function() vim.cmd('normal! zz') end)
+end
+if _G.grove_debug then _G.grove_debug.show_source(buffer, name) end
+`
 
 function emptySnapshot(): DebugSnapshot {
   return {
@@ -37,6 +61,8 @@ class DebugStore {
   selectedConfigurationKey = $state<string | null>(null)
   starting = $state(false)
   installing = $state<string | null>(null)
+  /** The scratch tab each fetched source is open in, by its buffer name. */
+  private sourceTabs = new Map<string, string>()
   private revealedStop = 0
   private started = false
 
@@ -260,9 +286,52 @@ class DebugStore {
     const session = this.sessions.find((candidate) => candidate.id === sessionId)
     const thread = session?.threads.find((candidate) => candidate.id === threadId)
     const frame = thread?.frames.find((candidate) => candidate.id === frameId)
-    if (session && frame?.path) {
-      this.reveal(session.worktreePath, frame.path, frame.line)
+    if (!session || !frame) {
+      return
     }
+    if (frame.path) {
+      this.reveal(session.worktreePath, frame.path, frame.line)
+      return
+    }
+    if (frame.sourceReference !== undefined) {
+      await this.openSource(session.id, frame.sourceReference, frame.line)
+    }
+  }
+
+  /**
+   * Shows source with no file on disk in a read-only buffer: fetched from the
+   * adapter, replacing the buffer it was last shown in.
+   */
+  async openSource(sessionId: string, sourceReference: number, line: number): Promise<void> {
+    let source
+    try {
+      source = await window.workbench.debugger.source(sessionId, sourceReference)
+    } catch (error) {
+      dialogs.notify({ level: 'error', message: `Could not load the source: ${messageOf(error)}` })
+      return
+    }
+    const previous = this.sourceTabs.get(source.name)
+    if (previous && scratchFor(previous)) {
+      closeScratch(previous)
+    }
+    const key = await openScratch({
+      title: source.name,
+      tabName: source.title,
+      lines: linesOf(source.content),
+      readonly: true,
+      onWrite: () => {}
+    })
+    const entry = scratchFor(key)
+    if (!key || !entry) {
+      return
+    }
+    this.sourceTabs.set(source.name, key)
+    await window.workbench.nvim
+      .request(entry.nvimId, 'nvim_exec_lua', [
+        SHOW_SOURCE_LUA,
+        [entry.bufnr, source.name, source.title, source.mimeType || '', line]
+      ])
+      .catch(() => undefined)
   }
 
   // ── Breakpoints ────────────────────────────────────────────────
@@ -303,6 +372,10 @@ class DebugStore {
     if (!location || !session) {
       return
     }
+    if (isFetchedSource(location)) {
+      void this.openSource(session.id, location.sourceReference, location.line)
+      return
+    }
     this.reveal(session.worktreePath, location.path, location.line)
   }
 
@@ -318,6 +391,22 @@ class DebugStore {
     }
     openFileAtLine(worktreeId, path, line)
   }
+}
+
+/** A text's lines, without the empty one a final newline would leave. */
+function linesOf(content: string): string[] {
+  const lines = content.split('\n')
+  if (lines.length > 1 && lines[lines.length - 1] === '') {
+    lines.pop()
+  }
+  return lines
+}
+
+/** Whether a location is source the adapter sends rather than a file on disk. */
+function isFetchedSource(
+  location: DebugLocation
+): location is DebugLocation & { sourceReference: number } {
+  return location.sourceReference !== undefined
 }
 
 export const debug = new DebugStore()

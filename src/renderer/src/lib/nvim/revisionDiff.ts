@@ -206,6 +206,36 @@ export async function openRevisionDiff(request: RevisionDiffRequest): Promise<vo
   })
 }
 
+/**
+ * Two texts of one file side by side, neither of them a revision: what is on
+ * disk beside what grove would write, say.
+ */
+export async function openTextDiff(request: {
+  path: string
+  left: string
+  right: string
+  leftLabel: string
+  rightLabel: string
+}): Promise<void> {
+  const tabPath = await openScratch({
+    title: `${baseName(request.path)} @ ${request.rightLabel}`,
+    tabName: baseName(request.path),
+    diff: { left: request.leftLabel, right: request.rightLabel },
+    lines: linesOf(request.right),
+    readonly: true,
+    onWrite: () => {}
+  })
+  if (!tabPath) return
+
+  const session = await waitForNvimSession()
+  if (!session || !session.id) return
+  await showRestorableDiff(session.id, tabPath, {
+    name: `${request.path} @ ${request.leftLabel}`,
+    path: request.path,
+    lines: linesOf(request.left)
+  })
+}
+
 /** How long to wait for the editor to finish opening the working-tree file. */
 const OPEN_TIMEOUT_MS = 4000
 

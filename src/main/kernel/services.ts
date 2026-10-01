@@ -17,9 +17,11 @@ import type { WorktreeWatcher } from '../watcher'
 import type { WorktreeChannel } from '../worktreeChannel'
 import type { ActionRunner } from '../actions'
 import type { AgentService } from '../agents/service'
+import type { BrowserService } from '../browser'
 import type { AgentReviewBridge } from '../agents/reviewBridge'
 import type { EditStepRecorder } from '../agents/editSteps'
 import type { PromptBlame } from '../promptBlame'
+import type { ConflictProposals } from '../conflictResolution'
 import type { HarnessRegistry } from '../agents/harness'
 import type { SwitchboardHost } from '../agents/switchboard/host'
 import type { PermissionBroker } from '../api/broker'
@@ -29,6 +31,8 @@ import type { ApiDispatcher } from '../api/dispatcher'
 import type { RouteRegistry } from '../api/registry'
 import type { ClientRecord } from '../api/clients'
 import type { AppPairing } from '../api/socket/pairing'
+import type { DebugService } from '../debug/service'
+import type { DebugAdapterRegistry } from '../debug/registry'
 
 /** Repository context plus the lookups every route needs to resolve a worktree. */
 export interface WorkbenchService {
@@ -95,12 +99,16 @@ declare module '@neoworks/extension-system' {
     chat: WorktreeChannel
     actions: ActionRunner
     agents: AgentService
+    browser: BrowserService
     harnesses: HarnessRegistry
     switchboard: SwitchboardHost
     agentReview: AgentReviewBridge
     editSteps: EditStepRecorder
     promptBlame: PromptBlame
+    conflictProposals: ConflictProposals
     plugins: PluginsService
     apps: AppsService
+    debug: DebugService
+    debugAdapters: DebugAdapterRegistry
   }
 }

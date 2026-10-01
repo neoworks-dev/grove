@@ -16,7 +16,15 @@
 // task has to be able to steer the agents it put there, and they to ask it
 // back.
 
-import type { AgentMode, HarnessInfo, SessionEvent, SessionMeta } from '../../shared/agents'
+import type {
+  AgentMode,
+  HarnessCatalog,
+  HarnessInfo,
+  SessionEvent,
+  SessionMeta,
+  SpawnTarget,
+  ThinkingLevel
+} from '../../shared/agents'
 import { DISPOSE_LABEL, PARENT_LABEL } from './handoffBridge'
 import type { HarnessRegistry } from './harness'
 import { agentIdOf } from './identity'
@@ -61,9 +69,13 @@ export interface RuntimeModel {
 export interface SpawnOptions {
   workspaceRoot: string
   title: string
-  /** The harness to run it on; the session default when left out. */
+  /** The harness to run it on; the parent's when left out. */
   harness?: string
   model?: string
+  /** The provider serving the model; looked up from the runtime's models when left out. */
+  provider?: string
+  /** Reasoning effort; the runtime's own default when left out. */
+  thinkingLevel?: ThinkingLevel
   /** The first thing the new agent is told. */
   prompt: string
   /** The session that asked for it; its closing words are reported back there. */
@@ -185,15 +197,17 @@ export class AgentRoster {
   /** Start a new session in the same worktree and give it its first instruction. */
   async spawn(options: SpawnOptions): Promise<AgentPeer> {
     const inherited = inheritedFrom(await this.sessionNamed(options.parentSessionId))
+    const harness = await this.spawnHarness(options.parentSessionId, options.harness)
     const snapshot = await this.options.agents.createSession({
       workspace: options.workspaceRoot,
       title: options.title,
-      harness: options.harness,
+      harness,
       model: options.model,
       // A model without the provider that serves it is not enough to start a
       // session on: pi, for one, ignores a half-named model and falls back to
       // its own default, which is not what the spawning agent asked for.
-      provider: await this.providerOf(options.harness, options.model),
+      provider: await this.spawnProvider(harness, options),
+      thinkingLevel: options.thinkingLevel,
       groveMode: inherited.groveMode,
       permissionMode: inherited.permissionMode,
       labels: labelsFor(options)
@@ -206,6 +220,57 @@ export class AgentRoster {
       { type: 'app.message', label: 'Task', from, text: options.prompt, deliverAs: 'followUp' }
     ])
     return peerOf(snapshot)
+  }
+
+  /**
+   * The runtime and model a spawn would start on, resolved the way `spawn`
+   * resolves them, so what the user approves is what runs.
+   */
+  async spawnTarget(
+    parentSessionId: string,
+    requested: { harness?: string; provider?: string; model?: string; effort?: ThinkingLevel }
+  ): Promise<SpawnTarget> {
+    const target: SpawnTarget = {
+      harness: null,
+      provider: requested.provider || null,
+      model: requested.model || null,
+      modelIsDefault: !requested.model,
+      modelDescription: null,
+      effort: requested.effort || null
+    }
+    const harness = await this.spawnHarness(parentSessionId, requested.harness)
+    if (!harness) return target
+    target.harness = harness
+
+    const catalog = await this.options.agents.catalog(harness).catch(() => null)
+    if (!target.model && catalog?.default) {
+      target.model = catalog.default.model
+      target.provider = catalog.default.provider
+    }
+    if (!target.model) return target
+    if (!target.provider) target.provider = (await this.providerOf(harness, target.model)) || null
+    target.modelDescription = routeDescription(catalog, target.model)
+    return target
+  }
+
+  /** The provider a spawn's model is served by: the one it names, else the runtime's first. */
+  private async spawnProvider(
+    harness: string | undefined,
+    options: SpawnOptions
+  ): Promise<string | undefined> {
+    if (options.provider && options.model) return options.provider
+    return this.providerOf(harness, options.model)
+  }
+
+  /** The harness a spawn runs on: the one it names, else its parent's. */
+  private async spawnHarness(
+    parentSessionId: string,
+    requested: string | undefined
+  ): Promise<string | undefined> {
+    if (requested) return requested
+    const inherited = await this.agentHarnessOf(parentSessionId)
+    if (inherited) return inherited
+    return undefined
   }
 
   /** The session with this id, or undefined when it is gone. */
@@ -298,6 +363,16 @@ function matchByAddress(peers: AgentPeer[], reference: string): AgentPeer | null
 function isRelated(peer: AgentPeer, self: AgentPeer): boolean {
   if (self.parentSessionId === peer.sessionId) return true
   return peer.parentSessionId === self.sessionId
+}
+
+/** What a runtime's catalog says about one of its model routes, or null when it says nothing. */
+function routeDescription(catalog: HarnessCatalog | null, modelId: string): string | null {
+  if (!catalog) return null
+  for (const entry of catalog.models) {
+    const route = entry.routes.find((candidate) => candidate.id === modelId)
+    if (route?.description) return route.description
+  }
+  return null
 }
 
 /** What a spawned session is marked with: who started it, and whether it stays. */

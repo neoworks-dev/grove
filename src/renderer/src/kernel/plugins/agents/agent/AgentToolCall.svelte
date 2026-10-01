@@ -64,6 +64,8 @@
   // matters.
   const input = $derived(item.editedInput ?? item.input)
   const label = $derived(labelFor(display, input))
+  // What the call does, in words, when its tool says: "Start agent" over `spawn_agent`.
+  const name = $derived(display?.title || item.name)
   const inputView = $derived(inputViewOf(display))
   const resultView = $derived(resultViewOf(display))
   const language = $derived(languageOfInput(display, input))
@@ -198,20 +200,22 @@
       </span>
       {#if item.status === 'running'}
         <!-- The working bar steps aside while a call runs; the call says it is busy. -->
-        <ShimmerText text={item.name} class="shrink-0 font-semibold" />
+        <ShimmerText text={name} class="shrink-0 font-semibold" />
       {:else}
-        <span class="shrink-0 font-semibold {STATUS_COLOR[item.status]}">{item.name}</span>
+        <span class="shrink-0 font-semibold {STATUS_COLOR[item.status]}" title={item.name}
+          >{name}</span
+        >
       {/if}
       {#if inputView === 'message' && message.to}
         <!-- Who the message is for reads better than the tool's arguments do. -->
-        <span class="shrink-0 rounded bg-blue-soft px-1 text-blue">→ {message.to}</span>
+        <span class="shrink-0 text-default">{message.to}</span>
       {/if}
       {#if pathLabel === null}
         <!-- The description is what the call is for: one line, never cut. The
              arguments take whatever room is left and truncate. -->
         {#if description}<span class="shrink-0 whitespace-nowrap text-muted">{description}</span
           >{/if}
-        {#if detail}
+        {#if detail && !(inputView === 'message' && detail === message.to)}
           <span
             class="min-w-0 truncate"
             class:text-dim={description.length > 0}
@@ -308,13 +312,9 @@
         {/each}
       </div>
     {:else if inputView === 'message'}
-      <!-- A message, laid out as one: the addressee above the body, on a card
-           tinted like the channel it travels on. -->
-      <div class="mt-1 rounded-md border border-blue/25 bg-blue-soft px-2 py-1.5">
-        {#if message.to}
-          <div class="mb-1 font-mono text-2xs text-blue">to {message.to}</div>
-        {/if}
-        <div class="whitespace-pre-wrap text-2xs text-muted">{message.text}</div>
+      <!-- A message, laid out as one: quoted under the row that names who it is for. -->
+      <div class="ml-4 mt-1 whitespace-pre-wrap border-l-2 border-line pl-2 text-2xs text-muted">
+        {message.text}
       </div>
     {:else if inputView === 'code' || inputView === 'command'}
       <CodeBlock

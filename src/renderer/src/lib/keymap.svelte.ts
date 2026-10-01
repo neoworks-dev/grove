@@ -55,6 +55,7 @@ import {
   sequenceStartsWith,
   stepLabel,
   isModifierKey,
+  firesWhileTyping,
   type KeyStep,
   type ParsedSequence
 } from './keySequence'
@@ -562,10 +563,9 @@ class Keymap {
       return true
     }
 
-    // Non-leader bindings: modifier chords fire anywhere (they must beat
-    // Neovim); bare keys only when not typing.
-    const hasModifier = step.ctrl || step.alt || step.meta
-    if (!hasModifier && !this.eligible()) return false
+    // Non-leader bindings: modifier chords and function keys fire anywhere
+    // (they must beat Neovim, and never type text); bare keys only when not typing.
+    if (!firesWhileTyping(step) && !this.eligible()) return false
     const matches = this.matching([step], false)
     if (matches.length === 0) return false
     const exact = matches.find((binding) => binding.sequence.steps.length === 1)

@@ -49,7 +49,7 @@
   // Clicking an answer focuses its button, which goes with the overlay; hand
   // focus back to where it was before the prompt, or to the focused pane.
   let surfaceEl = $state<HTMLDivElement>()
-  let returnFocus: ((surface: HTMLElement | undefined) => void) | null = null
+  let returnFocus: ((surface: HTMLElement | null | undefined) => void) | null = null
   $effect(() => {
     const open = active !== null
     if (open && returnFocus === null) {

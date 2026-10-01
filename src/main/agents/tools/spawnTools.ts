@@ -1,8 +1,8 @@
 // Starting other agents, and finding out what they can be run on.
 
-import type { ThinkingLevel } from '../../../shared/agents'
+import type { SpawnTarget, ThinkingLevel } from '../../../shared/agents'
 import type { GroveTool } from '../harness'
-import type { AgentRoster, AgentRuntime, SpawnTarget } from '../roster'
+import type { AgentRoster, AgentRuntime } from '../roster'
 import { findWorktree, type AgentWorktrees } from './worktreeTools'
 import { stringOrNothing } from './toolInput'
 
@@ -60,6 +60,10 @@ export function spawnTool(roster: AgentRoster, worktrees: AgentWorktrees): Grove
         prompt: { type: 'string', description: 'The whole task.' },
         harness: { type: 'string', enum: roster.harnessIds() },
         model: { type: 'string', description: "Model id from list_runtimes; else the runtime's default." },
+        provider: {
+          type: 'string',
+          description: 'Provider from list_runtimes, when several serve the model.'
+        },
         effort: {
           type: 'string',
           enum: SPAWN_EFFORTS,
@@ -75,15 +79,17 @@ export function spawnTool(roster: AgentRoster, worktrees: AgentWorktrees): Grove
       additionalProperties: false
     },
     policy: 'ask',
-    display: { label: '{title}', input: 'message', result: 'text' },
+    display: { title: 'Start agent', label: '{title}', input: 'message', result: 'text' },
 
+    // The approval shows, and lets the user change, what the agent will run on.
     async describe(input, context) {
-      const target = await roster.spawnTarget(
-        context.sessionId,
-        stringOrNothing(input.harness),
-        stringOrNothing(input.model)
-      )
-      return { _meta: { grove: { facts: spawnFacts(target, effortOf(input.effort)) } } }
+      const spawn: SpawnTarget = await roster.spawnTarget(context.sessionId, {
+        harness: stringOrNothing(input.harness),
+        provider: stringOrNothing(input.provider),
+        model: stringOrNothing(input.model),
+        effort: effortOf(input.effort)
+      })
+      return { _meta: { grove: { spawn } } }
     },
 
     async execute(input, context) {
@@ -119,6 +125,7 @@ export function spawnTool(roster: AgentRoster, worktrees: AgentWorktrees): Grove
         title,
         harness,
         model,
+        provider: stringOrNothing(input.provider),
         thinkingLevel: effort,
         prompt,
         parentSessionId: context.sessionId,
@@ -200,45 +207,6 @@ async function checkModel(
 /** A spawn's effort, when the call asked for one grove knows. */
 function effortOf(value: unknown): ThinkingLevel | undefined {
   return SPAWN_EFFORTS.find((level) => level === value)
-}
-
-/**
- * What the approval shows a spawn will run on. A default is named for what it
- * resolves to, since "default" alone does not say which model will spend the
- * tokens.
- */
-function spawnFacts(
-  target: SpawnTarget,
-  effort: ThinkingLevel | undefined
-): { label: string; value: string }[] {
-  let harness = 'default'
-  if (target.harness) harness = target.harness
-
-  let model = 'runtime default'
-  if (target.model) model = modelText(target)
-
-  let effortText = 'runtime default'
-  if (effort) effortText = effort
-
-  return [
-    { label: 'Runtime', value: harness },
-    { label: 'Model', value: model },
-    { label: 'Effort', value: effortText }
-  ]
-}
-
-/**
- * The model a spawn runs. One the runtime picked says so, with what the runtime
- * says about it: Claude Code's `default` reads "default · Opus (1M context)".
- */
-function modelText(target: SpawnTarget): string {
-  const model = String(target.model)
-  if (!target.modelIsDefault) return model
-  let text = model
-  // `default` already says it; "default (default)" would say it twice.
-  if (model !== 'default') text = `${model} (default)`
-  if (target.modelDescription) text = `${text} · ${target.modelDescription}`
-  return text
 }
 
 /** One runtime, as the model reads it. */

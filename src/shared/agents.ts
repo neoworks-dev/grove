@@ -526,12 +526,36 @@ export type ToolResultView = 'hidden' | 'text' | 'list' | 'file' | 'markdown' | 
 
 /** How a tool wants its call rendered. Intent only — the mapping to widgets is the renderer's. */
 export interface ToolDisplay {
+  /** What the call does, in words, shown in place of the tool's id: "Start agent". */
+  title?: string
   label?: string
   input?: ToolInputView
   result?: ToolResultView
   languageFrom?: string
   /** The call changes a file, so it keeps a row of its own rather than folding into a summary. */
   edits?: boolean
+}
+
+/**
+ * What a spawned agent will run on, as its approval shows it before it starts.
+ * Travels on the approval's tool call under `_meta.grove.spawn`.
+ */
+export interface SpawnTarget {
+  /** Null when neither the call nor its parent names one, leaving grove's default. */
+  harness: string | null
+  /** The provider serving the model, when the call or the runtime's default names one. */
+  provider: string | null
+  /** Null when no model was named and the runtime cannot say what it would pick. */
+  model: string | null
+  /** The model is the one the runtime picks for itself, not one the call named. */
+  modelIsDefault: boolean
+  /**
+   * What the runtime says about that model, when it says anything: for an
+   * alias such as Claude Code's `default`, which model it currently is.
+   */
+  modelDescription: string | null
+  /** The effort the call asked for; null leaves it to the runtime. */
+  effort: ThinkingLevel | null
 }
 
 export interface ToolInfo {

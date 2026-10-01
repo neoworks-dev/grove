@@ -46,6 +46,7 @@ export type {
   SessionStatus,
   SessionUpdate,
   SkillInfo,
+  SpawnTarget,
   TextBlock,
   ThinkingLevel,
   ToolDisplay,

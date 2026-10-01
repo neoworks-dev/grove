@@ -14,6 +14,7 @@
   import { fileIcon } from '../../../../lib/icons'
   import { formatShellCommand } from '../../../../lib/shellSyntax.svelte'
   import { diffLines, statsOf } from '../../../../lib/agents/diff'
+  import SpawnTargetPicker from './SpawnTargetPicker.svelte'
   import {
     asRecord,
     descriptionOf,
@@ -23,6 +24,7 @@
     messageOf,
     stringOf
   } from '../../../../lib/agents/tools'
+  import { choiceOf, spawnInputFor, type SpawnChoice } from '../../../../lib/agents/spawnChoice'
   import type { ToolItem } from '../../../../lib/agents/transcript'
   import type { ConfirmationResult, ToolInfo } from '../../../../lib/agents/types'
   import type { ReviewBatch } from '../../../../../../shared/types'
@@ -32,16 +34,33 @@
     tool,
     batch,
     onDecide,
-    onShowChange
+    onShowChange,
+    onRequestKey,
+    onAddEndpoint
   }: {
     item: ToolItem
     tool: ToolInfo | undefined
     // The gated review staged for this call, when the write is being held as a
     // diff in the editor. Its files are what the call is about to change.
     batch: ReviewBatch | null
-    onDecide: (result: ConfirmationResult, reason?: string) => void
+    /** `input` replaces the call's own when the user changed what it runs with. */
+    onDecide: (result: ConfirmationResult, reason?: string, input?: unknown) => void
     onShowChange: () => void
+    /** Ask for the key a model route needs, from a spawn's model picker. */
+    onRequestKey: (request: { provider: string; variables: string[] }) => void
+    onAddEndpoint: () => void
   } = $props()
+
+  // What a spawn will run on, as the user leaves it; the card is keyed per
+  // request, so this starts from the call each time.
+  // svelte-ignore state_referenced_locally
+  let spawnChoice = $state<SpawnChoice | null>(item.spawn ? choiceOf(item.spawn) : null)
+
+  /** The input to allow the call with: the user's runtime, model and effort, when changed. */
+  function allowedInput(): unknown {
+    if (!item.spawn || !spawnChoice) return undefined
+    return spawnInputFor(item.input, item.spawn, spawnChoice)
+  }
 
   let denyReasonMode = $state(false)
   let denyReason = $state('')
@@ -56,6 +75,8 @@
     return displayOfCall([tool], item)
   })
   const label = $derived(labelFor(display, item.input))
+  // What the call does, in words, when its tool says: "Start agent" over `spawn_agent`.
+  const title = $derived(display?.title || item.name)
 
   // A call that says what it is doing says it here; the arguments stay below it,
   // because "run the formatter" is what the decision is actually about.
@@ -114,11 +135,15 @@
 
   const choices = $derived.by<Choice[]>(() => {
     const list: Choice[] = [
-      { label: 'Allow', detail: 'Allow only this time', run: () => onDecide('allow') },
+      {
+        label: 'Allow',
+        detail: 'Allow only this time',
+        run: () => onDecide('allow', undefined, allowedInput())
+      },
       {
         label: 'Always allow in this session',
-        detail: `Do not ask again for ${item.name}`,
-        run: () => onDecide('always_session')
+        detail: `Do not ask again for ${title}`,
+        run: () => onDecide('always_session', undefined, allowedInput())
       }
     ]
     if (batch) {
@@ -252,9 +277,16 @@
       {#if change.added > 0}<span class="shrink-0 text-green">+{change.added}</span>{/if}
       {#if change.removed > 0}<span class="shrink-0 text-red">−{change.removed}</span>{/if}
     {:else}
-      <span class="shrink-0 font-mono text-default">{item.name}</span>
+      {#if display?.title}
+        <span class="shrink-0 font-medium text-default" title={item.name}>{display.title}</span>
+      {:else}
+        <span class="shrink-0 font-mono text-default">{item.name}</span>
+      {/if}
+      {#if message?.to}
+        <span class="min-w-0 truncate text-default">{message.to}</span>
+      {/if}
       {#if description}<span class="min-w-0 truncate text-default">{description}</span>{/if}
-      {#if detail && !description && !command}
+      {#if detail && !description && !command && detail !== message?.to}
         <span class="min-w-0 truncate font-mono text-muted">{detail}</span>
       {/if}
     {/if}
@@ -264,12 +296,22 @@
        asks — is decided on what it says, so the body is shown in full. -->
   {#if message}
     <div
-      class="mt-1.5 max-h-40 overflow-auto rounded-md border border-blue/25 bg-blue-soft px-2 py-1.5"
+      class="mt-1.5 max-h-40 overflow-auto whitespace-pre-wrap border-l-2 border-line pl-2 text-xs text-muted"
     >
-      {#if message.to}
-        <div class="mb-1 font-mono text-2xs text-blue">{message.to}</div>
-      {/if}
-      <div class="whitespace-pre-wrap text-2xs text-muted">{message.text}</div>
+      {message.text}
+    </div>
+  {/if}
+
+  <!-- What a spawned agent will spend its tokens on, changeable before it starts. -->
+  {#if item.spawn && spawnChoice}
+    <div class="mt-2">
+      <SpawnTargetPicker
+        target={item.spawn}
+        bind:choice={spawnChoice}
+        {onRequestKey}
+        {onAddEndpoint}
+        onDone={focus}
+      />
     </div>
   {/if}
 

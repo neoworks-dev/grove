@@ -978,6 +978,148 @@ describe('a spawn that names a model', () => {
 
     expect(created).toEqual([{ model: 'pi-opus', provider: 'anthropic' }])
   })
+
+  test('keeps the provider its approval picked over the first one serving the model', async () => {
+    const { roster } = testRoster([sessionMeta('a', 'Planner')])
+    const created: { model?: string; provider?: string }[] = []
+    const spy = roster as unknown as {
+      options: { agents: { createSession: (options: Record<string, unknown>) => unknown } }
+    }
+    const original = spy.options.agents.createSession
+    spy.options.agents.createSession = (options): unknown => {
+      created.push({ model: options.model as string, provider: options.provider as string })
+      return original(options)
+    }
+
+    await roster.spawn({
+      workspaceRoot: '/repo',
+      title: 'Reader',
+      harness: 'pi',
+      model: 'pi-opus',
+      provider: 'bedrock',
+      prompt: 'read it',
+      parentSessionId: 'a'
+    })
+
+    expect(created).toEqual([{ model: 'pi-opus', provider: 'bedrock' }])
+  })
+})
+
+describe('what a spawn runs on', () => {
+  test("its approval names the parent's runtime and the model its default resolves to", async () => {
+    const sessions = [sessionMeta('a', 'Planner', { harness: 'pi' })]
+    const { roster } = testRoster(sessions)
+
+    const described = await toolNamed('spawn_agent', roster, []).describe?.(
+      { title: 'Reviewer', prompt: 'review it' },
+      context('a')
+    )
+
+    expect(described?._meta).toEqual({
+      grove: {
+        spawn: {
+          harness: 'pi',
+          provider: 'anthropic',
+          model: 'pi-opus',
+          modelIsDefault: true,
+          modelDescription: 'pi-opus, as recommended',
+          effort: null
+        }
+      }
+    })
+  })
+
+  test('its approval names the model and effort the call asked for', async () => {
+    const { roster } = testRoster([sessionMeta('a', 'Planner')])
+
+    const described = await toolNamed('spawn_agent', roster, []).describe?.(
+      { title: 'Reviewer', prompt: 'review it', harness: 'pi', model: 'pi-opus', effort: 'medium' },
+      context('a')
+    )
+
+    expect(described?._meta).toEqual({
+      grove: {
+        spawn: {
+          harness: 'pi',
+          provider: 'anthropic',
+          model: 'pi-opus',
+          modelIsDefault: false,
+          modelDescription: 'pi-opus, as recommended',
+          effort: 'medium'
+        }
+      }
+    })
+  })
+
+  test('starts on the effort it was given', async () => {
+    const { roster, created } = testRoster([sessionMeta('a', 'Planner')])
+
+    const result = await toolNamed('spawn_agent', roster, []).execute(
+      { title: 'Worker', prompt: 'fix #12', effort: 'high' },
+      context('a')
+    )
+
+    expect(result.isError).toBeUndefined()
+    expect(created[0].thinkingLevel).toBe('high')
+  })
+
+  test('starts on the runtime its approval named when the call names none', async () => {
+    const { roster, created } = testRoster([sessionMeta('a', 'Planner', { harness: 'pi' })])
+
+    await toolNamed('spawn_agent', roster, []).execute(
+      { title: 'Worker', prompt: 'fix #12' },
+      context('a')
+    )
+
+    // Left to the session service, it would open on grove's default runtime
+    // while the approval, and the model check, went by the parent's.
+    expect(created[0].harness).toBe('pi')
+  })
+
+  test('refuses an effort it does not know', async () => {
+    const { roster, created } = testRoster([sessionMeta('a', 'Planner')])
+
+    const result = await toolNamed('spawn_agent', roster, []).execute(
+      { title: 'Worker', prompt: 'fix #12', effort: 'ludicrous' },
+      context('a')
+    )
+
+    expect(result.isError).toBe(true)
+    expect(created).toEqual([])
+  })
+
+  test('the transcript keeps what the approval was told', () => {
+    const target = {
+      harness: 'pi',
+      provider: 'anthropic',
+      model: 'pi-opus',
+      modelIsDefault: true,
+      modelDescription: null,
+      effort: null
+    }
+    const toolCall = {
+      toolCallId: 'call-1',
+      name: 'mcp__grove__spawn_agent',
+      title: 'Start another agent',
+      rawInput: { title: 'Reviewer', prompt: 'review it' },
+      _meta: { grove: { spawn: target } }
+    }
+    const events = [
+      {
+        id: 'e1',
+        seq: 1,
+        at: '2026-01-01T00:00:00.000Z',
+        type: 'permission',
+        request: { sessionId: 'h', toolCall, options: [] }
+      }
+    ] as unknown as SessionEvent[]
+
+    const state = createTranscript()
+    for (const event of events) applyEvent(state, event)
+    const tool = state.items.find((item) => item.kind === 'tool') as ToolItem
+
+    expect(tool.spawn).toEqual(target)
+  })
 })
 
 describe('what a spawn runs on', () => {

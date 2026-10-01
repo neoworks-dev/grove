@@ -43,10 +43,10 @@ import { ShellOutputHub } from './shellOutput'
 import * as files from '../files'
 import * as inlineDiff from '../inlineDiff'
 import {
-  gitMergeText,
   relativeInside,
   sessionEdits,
   textWithoutEdits,
+  type DiffLines,
   type SessionEdit
 } from './sessionEdits'
 import { PARENT_LABEL } from './handoffBridge'
@@ -1014,7 +1014,7 @@ export class AgentService {
       const relativePath = relativeInside(root, path)
       if (relativePath === null) continue
       const current = await readOrEmpty(root, join(root, relativePath))
-      const before = await textWithoutEdits(current, edits, gitMergeText)
+      const before = await textWithoutEdits(current, edits, linesDifferIn(root))
       const hunks = await inlineDiff.hunksBetween(root, before, current)
       let added = 0
       let removed = 0
@@ -1039,7 +1039,7 @@ export class AgentService {
     const edits = editsOfFile(sessionEdits(await this.store.eventsSince(sessionId)), root, relativePath)
     const current = await readOrEmpty(root, absolute)
     if (!edits) return current
-    return textWithoutEdits(current, edits, gitMergeText)
+    return textWithoutEdits(current, edits, linesDifferIn(root))
   }
 
   /** Fuzzy path search over the session's workspace, for `@` mentions. */
@@ -1253,6 +1253,11 @@ function blockText(block: UserContentBlock): string {
  * Subsequence match with a bonus for contiguity and for hits in the file name,
  * which is what makes `agpane` find `AgentPane.svelte` above `agents/pane.ts`.
  */
+/** Line hunks between two texts, diffed by git from inside the workspace. */
+function linesDifferIn(root: string): DiffLines {
+  return (before, after) => inlineDiff.hunksBetween(root, before, after)
+}
+
 /** A file's text, or empty when it does not exist (any more). */
 async function readOrEmpty(root: string, absolutePath: string): Promise<string> {
   try {

@@ -30,9 +30,8 @@ Renderer:
   `kernel/plugins/` is where a feature lives, `kernel/services/` is what hosts it.
 - `src/renderer/src/kernel/plugins/sidebar/` — the sidebar host: the service, the
   rail-launcher registry, `ActivityBar.svelte`. Each view it shows is a sibling
-  plugin directory (`explorer/`, `worktrees/`, `gitChanges/`, `agents/`,
-  `checkpoints/`, `extensions/`, `setup/`) holding its plugin and the components
-  only it renders.
+  plugin directory (`explorer/`, `worktrees/`, `gitChanges/`, `checkpoints/`,
+  `extensions/`, `setup/`) holding its plugin and the components only it renders.
 - `src/renderer/src/components/` — components shared across features. A component
   only one feature renders belongs in that feature's plugin directory instead.
 - `src/renderer/src/lib/` — the non-visual half: stores (`*.svelte.ts`), keymap and

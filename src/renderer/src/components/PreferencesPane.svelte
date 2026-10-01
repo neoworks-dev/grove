@@ -19,7 +19,6 @@
   import MagnifyingGlassIcon from 'phosphor-svelte/lib/MagnifyingGlassIcon'
   import ArrowCounterClockwiseIcon from 'phosphor-svelte/lib/ArrowCounterClockwiseIcon'
 
-  let { leafId }: { leafId: string } = $props()
 
   // The Agent Harness dropdown lists the catalog's harnesses; nothing else may
   // have loaded it yet.

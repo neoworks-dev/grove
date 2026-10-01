@@ -502,6 +502,14 @@ function mergeSameDirection(
   })
 }
 
+// Built-in pane types that no longer exist, and what a stored leaf of one opens
+// as instead. Unlike a plugin's pane, these will never register again, so the
+// placeholder they would otherwise get is a dead window. The Agents sidebar view
+// became the Worktrees one, which lists each worktree's sessions too.
+const RETIRED_PANE_TYPES: Record<string, string> = {
+  agents: 'worktrees'
+}
+
 // Validate a deserialized tree. Malformed nodes are dropped; leaves with
 // unknown pane types are KEPT (a plugin may register the type later — the
 // renderer shows a placeholder until then). Duplicate ids are reassigned.
@@ -524,14 +532,22 @@ function sanitizeNode(value: unknown, seenIds: Set<string>): LayoutNode | null {
 
 function sanitizeLeaf(node: Record<string, unknown>, seenIds: Set<string>): LeafNode | null {
   if (typeof node.paneTypeId !== 'string' || node.paneTypeId.length === 0) return null
+  const replacement = RETIRED_PANE_TYPES[node.paneTypeId]
   const leaf: LeafNode = {
     kind: 'leaf',
     id: claimId(node.id, 'leaf', seenIds),
-    paneTypeId: node.paneTypeId
+    paneTypeId: replacement || node.paneTypeId
   }
+  // A retired pane's state belonged to a component that is gone.
+  if (replacement) return withStoredSize(leaf, node)
   if (node.paneState && typeof node.paneState === 'object' && !Array.isArray(node.paneState)) {
     leaf.paneState = node.paneState as Record<string, unknown>
   }
+  return withStoredSize(leaf, node)
+}
+
+/** Carries a stored leaf's pixel size over, when it has a usable one. */
+function withStoredSize(leaf: LeafNode, node: Record<string, unknown>): LeafNode {
   if (typeof node.sizePx === 'number' && Number.isFinite(node.sizePx) && node.sizePx > 0) {
     leaf.sizePx = node.sizePx
   }

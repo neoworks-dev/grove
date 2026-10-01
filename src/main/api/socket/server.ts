@@ -12,8 +12,8 @@ import { FrameDecoder, FrameError, encodeFrame } from '../../../../sdk/src/frame
 import { GROVE_API_VERSION, type HelloParams, type RpcMessage } from '../../../shared/plugins'
 import { RpcEndpoint } from '../../../shared/rpc'
 import type { ClientRecord } from '../clients'
-import type { ApiDispatcher } from '../dispatcher'
-import { ApiError } from '../registry'
+import type { ApiDispatcher, InvokeOptions } from '../dispatcher'
+import { ApiError, type ApiConnection } from '../registry'
 import type { AppPairing } from './pairing'
 
 const HELLO_DEADLINE_MS = 5_000
@@ -28,12 +28,18 @@ interface SocketServerDeps {
   // Discovery file advertising the socket to clients; skipped when null.
   discoveryPath: string | null
   log?: (message: string) => void
+  // Told about each connection once its hello succeeds, so a service can talk
+  // back down it (a connected browser provider, before it provides a tab).
+  onHello?: (connection: ApiConnection) => void
 }
 
 interface Connection {
   socket: Socket
   client: ClientRecord | null
   callIds: Set<string>
+  // What routes see of this connection; set once hello succeeds.
+  api: ApiConnection | null
+  closeListeners: (() => void)[]
 }
 
 export class ApiSocketServer {
@@ -91,7 +97,13 @@ export class ApiSocketServer {
   private handleConnection(socket: Socket): void {
     this.connectionCounter += 1
     const connectionId = this.connectionCounter
-    const connection: Connection = { socket, client: null, callIds: new Set() }
+    const connection: Connection = {
+      socket,
+      client: null,
+      callIds: new Set(),
+      api: null,
+      closeListeners: []
+    }
     this.connections.add(connection)
     let callCounter = 0
     const decoder = new FrameDecoder()
@@ -113,6 +125,10 @@ export class ApiSocketServer {
       if (method === 'api.hello') {
         const { client, result } = await this.deps.pairing.hello(params as HelloParams)
         connection.client = client
+        connection.api = apiConnectionOf(connection, connectionId, client, endpoint)
+        // Told after the reply is on its way, so the app has its token before
+        // anything is asked of it.
+        setImmediate(() => this.announce(connection))
         return result
       }
       const client = connection.client
@@ -124,10 +140,9 @@ export class ApiSocketServer {
       connection.callIds.add(callId)
       context.token.onCancel(() => this.deps.dispatcher.cancel(client.key, callId))
       try {
-        return await this.deps.dispatcher.invoke(client, callId, method, params, {
-          transport: 'socket',
-          emit: context.emit
-        })
+        const options: InvokeOptions = { transport: 'socket', emit: context.emit }
+        if (connection.api) options.connection = connection.api
+        return await this.deps.dispatcher.invoke(client, callId, method, params, options)
       } finally {
         connection.callIds.delete(callId)
       }
@@ -165,6 +180,9 @@ export class ApiSocketServer {
     const cleanup = (): void => {
       clearTimeout(helloTimer)
       this.connections.delete(connection)
+      // Requests sent down this connection will never be answered now.
+      endpoint.failAllPending('the app disconnected')
+      for (const listener of connection.closeListeners.splice(0)) listener()
       const client = connection.client
       if (!client) return
       for (const callId of connection.callIds) {
@@ -174,6 +192,30 @@ export class ApiSocketServer {
     }
     socket.on('close', cleanup)
     socket.on('error', () => socket.destroy())
+  }
+
+  /** Tells the owner about a connection that has said hello, unless it already closed. */
+  private announce(connection: Connection): void {
+    if (!connection.api) return
+    if (!this.connections.has(connection)) return
+    this.deps.onHello?.(connection.api)
+  }
+}
+
+/** What routes see of a connection that has said hello. */
+function apiConnectionOf(
+  connection: Connection,
+  connectionId: number,
+  client: ClientRecord,
+  endpoint: RpcEndpoint
+): ApiConnection {
+  return {
+    id: connectionId,
+    client,
+    endpoint,
+    onClose: (listener) => {
+      connection.closeListeners.push(listener)
+    }
   }
 }
 

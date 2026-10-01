@@ -445,6 +445,13 @@ export interface GithubMilestone {
   dueOn: string | null
 }
 
+/** A milestone as the repository defines it, for the pickers that offer them. */
+export interface GithubMilestoneDefinition extends GithubMilestone {
+  description: string
+  openIssues: number
+  closedIssues: number
+}
+
 /** An organisation's issue type — Bug, Feature, Task, whatever it defines. */
 export interface GithubIssueType {
   name: string
@@ -1101,4 +1108,3 @@ export interface RepoInfo {
   name: string
   currentBranch: string
 }
-

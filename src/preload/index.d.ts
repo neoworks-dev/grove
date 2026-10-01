@@ -50,7 +50,7 @@ import type {
   GithubItemAction,
   GithubItemCommand,
   GithubLabelDefinition,
-  GithubMilestone,
+  GithubMilestoneDefinition,
   GithubIssueDraft,
   GithubCreatedIssue,
   GithubLabelChange,
@@ -276,7 +276,7 @@ export interface WorkbenchApi {
     branchPulls: () => Promise<Record<string, BranchPull>>
     item: (kind: GithubItemKind, number: number) => Promise<GithubItemDetail>
     labels: () => Promise<GithubLabelDefinition[]>
-    milestones: () => Promise<GithubMilestone[]>
+    milestones: () => Promise<GithubMilestoneDefinition[]>
     changeMilestone: (kind: GithubItemKind, number: number, title: string | null) => Promise<void>
     mentionables: () => Promise<GithubActor[]>
     setSubscription: (nodeId: string, subscribed: boolean) => Promise<void>

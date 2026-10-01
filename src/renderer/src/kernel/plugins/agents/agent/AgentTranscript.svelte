@@ -7,6 +7,7 @@
   // block is the section box rather than the whole transcript, the header pins
   // only while its own turn is on screen and scrolls away with it.
 
+  import type { Snippet } from 'svelte'
   import Icon from '@iconify/svelte'
   import CaretRight from 'phosphor-svelte/lib/CaretRight'
   import PaperPlaneTilt from 'phosphor-svelte/lib/PaperPlaneTilt'
@@ -59,7 +60,8 @@
     subagentSessions,
     liveAgentIds,
     viewport = $bindable(),
-    onscroll
+    onscroll,
+    footer
   }: {
     sessionId: string
     items: TranscriptItem[]
@@ -85,6 +87,8 @@
     liveAgentIds: Set<string>
     viewport?: HTMLDivElement
     onscroll: () => void
+    /** The last row of the flow, after the newest item: what the agent is doing now. */
+    footer?: Snippet
   } = $props()
 
   interface Section {
@@ -470,5 +474,6 @@
     {#if items.length === 0 && !thinking}
       <p class="text-dim">Nothing yet. Write a prompt below.</p>
     {/if}
+    {@render footer?.()}
   </div>
 </FloatingScrollbar>

@@ -1,8 +1,9 @@
 // LSP manager. Spawns a language server (from an installed `lsp` extension) per
 // (worktree, server), speaks LSP over stdio via vscode-jsonrpc, and exposes the
 // operations the editor needs: document sync, completion, hover, and pushed
-// diagnostics. Full-text document sync keeps it simple. Servers must be on PATH;
-// a missing binary fails softly (no crash).
+// diagnostics. Full-text document sync keeps it simple. A server's binary is
+// looked up in the editor's Mason directory and on PATH; a missing binary fails
+// softly (no crash).
 
 import { spawn, type ChildProcess } from 'child_process'
 import { promises as fs } from 'fs'
@@ -59,8 +60,10 @@ import {
   type SymbolInformation,
   type WorkspaceSymbol
 } from 'vscode-languageserver-protocol'
-import { catalogEntry, listInstalled } from './editorCatalog'
-import type { CatalogEntry, LspCompletion, LspDiagnostic, LspPosition } from '../shared/types'
+import { listCatalog, listInstalled } from './editorCatalog'
+import { findExecutableIn, pathDirectories } from './debug/registry'
+import { chooseLspServer, type LspServerChoice } from './lspServerChoice'
+import type { LspCompletion, LspDiagnostic, LspPosition } from '../shared/types'
 
 export interface LspEvents {
   onDiagnostics: (uri: string, diagnostics: LspDiagnostic[]) => void
@@ -75,16 +78,6 @@ interface Server {
   // change only when the text moved and always with a higher version.
   sent: Map<string, { version: number; text: string }>
   alive: boolean // false once the process/stream dies — never write again
-}
-
-async function lspEntryFor(language: string): Promise<CatalogEntry | null> {
-  const installed = await listInstalled()
-  for (const record of installed) {
-    if (!record.enabled || record.kind !== 'lsp') continue
-    const entry = catalogEntry(record.id)
-    if (entry?.lsp?.languages.includes(language)) return entry
-  }
-  return null
 }
 
 function toLspDiagnostic(diagnostic: Diagnostic): LspDiagnostic {
@@ -124,7 +117,19 @@ export class LspManager {
   private published = new Map<string, Published>()
   private diagnosticWaiters = new Map<string, Set<() => void>>()
 
-  constructor(private events: LspEvents) {}
+  constructor(
+    private events: LspEvents,
+    private executableDirectories: () => string[] = pathDirectories
+  ) {}
+
+  /** The server for a language, if one is installed or can be found. */
+  private async serverChoiceFor(language: string): Promise<LspServerChoice | null> {
+    const installed = await listInstalled()
+    const directories = this.executableDirectories()
+    return chooseLspServer(language, listCatalog(), installed, (name) =>
+      findExecutableIn(directories, name)
+    )
+  }
 
   private key(worktreeId: string, extId: string): string {
     return `${worktreeId}::${extId}`
@@ -134,9 +139,9 @@ export class LspManager {
     worktreeId: string,
     language: string
   ): Promise<Server | null> {
-    const entry = await lspEntryFor(language)
-    if (!entry?.lsp) return null
-    return this.servers.get(this.key(worktreeId, entry.id)) || null
+    const choice = await this.serverChoiceFor(language)
+    if (!choice) return null
+    return this.servers.get(this.key(worktreeId, choice.entry.id)) || null
   }
 
   // Run a write only if the server is still alive, swallowing both a synchronous
@@ -159,12 +164,12 @@ export class LspManager {
     uri: string,
     text: string
   ): Promise<boolean> {
-    const entry = await lspEntryFor(language)
-    if (!entry?.lsp) return false
-    const key = this.key(worktreeId, entry.id)
+    const choice = await this.serverChoiceFor(language)
+    if (!choice) return false
+    const key = this.key(worktreeId, choice.entry.id)
     let server: Server | null = this.servers.get(key) ?? null
     if (!server) {
-      server = this.start(key, worktreePath, entry)
+      server = this.start(key, worktreePath, choice)
       if (!server) return false
     }
     try {
@@ -184,11 +189,11 @@ export class LspManager {
     return true
   }
 
-  private start(key: string, worktreePath: string, entry: CatalogEntry): Server | null {
-    const lsp = entry.lsp!
+  private start(key: string, worktreePath: string, choice: LspServerChoice): Server | null {
+    const lsp = choice.entry.lsp!
     let child: ChildProcess
     try {
-      child = spawn(lsp.command, lsp.args || [], {
+      child = spawn(choice.executable, lsp.args || [], {
         cwd: worktreePath,
         stdio: ['pipe', 'pipe', 'pipe']
       })

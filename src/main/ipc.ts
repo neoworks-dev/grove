@@ -696,9 +696,13 @@ function startApiSocket(): void {
   })
 }
 
-const lsp = new LspManager({
-  onDiagnostics: (uri, diagnostics) => send('event:lsp-diagnostics', { uri, diagnostics })
-})
+// Language servers are found where the editor's are: Mason first, then PATH.
+const lsp = new LspManager(
+  {
+    onDiagnostics: (uri, diagnostics) => send('event:lsp-diagnostics', { uri, diagnostics })
+  },
+  () => [masonBinDirectory(masonRoot(nvimEnvOverlay().XDG_DATA_HOME)), ...pathDirectories()]
+)
 // Registered here (not with the other route modules) because it needs the
 // LspManager instance above.
 registerLanguagesRoutes(apiRegistry, { lsp, documents: editorDocs })

@@ -355,9 +355,23 @@ class LayoutStore {
     return findLeaf(this.tree, keymap.activeLeafId)
   }
 
+  /** Focuses a leaf once the DOM has settled, first unfolding it if focus mode hides it. */
   private focusLeafSoon(leafId: string): void {
+    this.leaveFocusModeHiding(leafId)
     // The leaf may not be mounted yet; focus after the DOM settles.
     requestAnimationFrame(() => keymap.focusPane(leafId))
+  }
+
+  /**
+   * Leaves focus mode when it folds this leaf away. A folded leaf cannot take
+   * focus, and focus mode follows whichever leaf has it, so without this the
+   * maximized pane stays on screen and the one asked for never shows.
+   */
+  private leaveFocusModeHiding(leafId: string): void {
+    if (!this.focusMode) return
+    if (this.zoomPath.has(leafId)) return
+    this.focusMode = false
+    this.schedule()
   }
 
   /**

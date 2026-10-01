@@ -12,7 +12,7 @@ import { routePlugins } from './routes'
 import type { WorkbenchService, NvimService, PluginsService, AppsService } from './kernel/services'
 import type { WorkbenchConfig, Worktree, RepoInfo } from '../shared/types'
 import * as git from './git'
-import { CheckpointManager } from './checkpoints'
+import { CheckpointManager, captureTree, diffTrees, pinTreePair, unpinTrees } from './checkpoints'
 import * as config from './config'
 import { LspManager } from './lsp'
 import * as worktrees from './worktrees'
@@ -57,6 +57,7 @@ import { AgentService } from './agents/service'
 import { AgentReviewBridge } from './agents/reviewBridge'
 import { AgentHandoffBridge } from './agents/handoffBridge'
 import { AgentRoster } from './agents/roster'
+import { EditStepRecorder, stepsRef } from './agents/editSteps'
 import type { AgentWorktrees } from './agents/tools/worktreeTools'
 import { runSetup } from './routes/worktrees'
 import { agentSection, section } from './agents/systemPrompt'
@@ -175,7 +176,10 @@ const agents = new AgentService({
     ...aiBridge.pluginTools()
   ],
   systemPrompt: (session) => buildSystemPrompt(session),
-  sessionRemoved: (session) => agentHandoffBridge.reportClosed(session),
+  sessionRemoved: async (session) => {
+    await editSteps.forget(session).catch(() => {})
+    await agentHandoffBridge.reportClosed(session)
+  },
   publish: (event) => send('event:agent-event', event),
   publishShellOutput: (update) => send('event:agent-shell-output', update),
   defaultHarness: () => settings.get<string>('workbench.agentHarness'),
@@ -238,6 +242,20 @@ async function buildSystemPrompt(session: {
 
 // Hands a spawned agent's closing words back to the agent that started it.
 const agentHandoffBridge = new AgentHandoffBridge({ store: sessionStore, roster: agentRoster })
+
+// Each tool call that changed the worktree, with the trees either side of it:
+// the steps a session replay walks.
+const editSteps = new EditStepRecorder({
+  store: sessionStore,
+  trees: {
+    capture: (worktreePath) => captureTree(worktreePath),
+    pin: (worktreePath, sessionId, before, after) =>
+      pinTreePair(worktreePath, stepsRef(sessionId), before, after),
+    unpin: (worktreePath, sessionId) => unpinTrees(worktreePath, stepsRef(sessionId)),
+    diff: (worktreePath, from, to) => diffTrees(worktreePath, from, to)
+  },
+  publish: (sessionId, step) => send('event:agent-step', { sessionId, step })
+})
 
 // Watches the event log so a review keeps blocking the agent whether or not the
 // agent pane is open.
@@ -678,6 +696,7 @@ const mainServices = {
     ctx.provide('switchboard', switchboard)
     ctx.provide('agents', agents)
     ctx.provide('agentReview', agentReviewBridge)
+    ctx.provide('editSteps', editSteps)
 
     // The review bridge follows the log for the life of the process: a gated
     // write blocks the agent whether or not any pane is watching.
@@ -686,6 +705,9 @@ const mainServices = {
     // A spawned agent reports back when it finishes a turn, whether or not
     // anyone is looking at either pane.
     ctx.effect(() => agentHandoffBridge.watch(), 'agents:handoff-bridge')
+
+    // Edits are recorded as they happen, whether or not a replay is open.
+    ctx.effect(() => editSteps.watch(), 'agents:edit-steps')
 
     // One-time startup work that belongs to no single route domain: the local
     // API socket external apps connect over, and the user settings file.

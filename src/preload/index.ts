@@ -179,6 +179,13 @@ const workbench = {
     restore: (worktreeId: string, commit: string) =>
       ipcRenderer.invoke('checkpoints:restore', worktreeId, commit)
   },
+  replay: {
+    session: (sessionId: string) => ipcRenderer.invoke('replay:session', sessionId),
+    compare: (sessionId: string, from: string, to: string) =>
+      ipcRenderer.invoke('replay:compare', sessionId, from, to),
+    restore: (sessionId: string, tree: string) =>
+      ipcRenderer.invoke('replay:restore', sessionId, tree)
+  },
   chat: {
     send: (worktreeId: string, text: string) => ipcRenderer.invoke('chat:send', worktreeId, text),
     history: (worktreeId: string, since?: number) =>

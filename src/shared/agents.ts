@@ -15,6 +15,7 @@ import type {
   RequestPermissionRequest,
   SessionUpdate as AcpSessionUpdate
 } from '@neoworks/harness'
+import type { TreeFileChange } from './types'
 
 export type SessionStatus = 'idle' | 'running' | 'terminated'
 
@@ -660,4 +661,92 @@ export interface HarnessCatalog {
   skills: SkillInfo[]
   models: ModelEntry[]
   default: { provider: string; model: string } | null
+}
+
+// ── Replay ──────────────────────────────────────────────────────
+
+/**
+ * One tool call that changed the worktree: the tree just before the call was
+ * reported and the tree once it settled. The trees are pinned under a private
+ * ref, so they outlive the checkpoint cap.
+ */
+export interface AgentEditStep {
+  /** 1-based, in the order the calls settled. */
+  index: number
+  /** The message that started the turn the call ran in; null before any message. */
+  turnSeq: number | null
+  /** The event that first reported the call. */
+  seq: number
+  toolCallId: string
+  title: string
+  kind: string
+  /** When the call settled. */
+  at: string
+  before: string
+  after: string
+  files: TreeFileChange[]
+}
+
+/** One turn of a replay: the message that started it, and the edits it made. */
+export interface ReplayTurn {
+  /** The message's seq, or null for edits made before any message. */
+  seq: number | null
+  at: string
+  /** Who sent it: "You", or the label grove or another agent sent it under. */
+  from: string
+  prompt: string
+  steps: AgentEditStep[]
+}
+
+/** A session's history as the replay view walks it. */
+export interface SessionReplay {
+  sessionId: string
+  title: string
+  workspaceRoot: string
+  turns: ReplayTurn[]
+}
+
+// ── Prompt blame ────────────────────────────────────────────────
+
+/**
+ * The prompt behind lines an agent wrote, as blame reports it. Copied out of
+ * the session when the edit was made, so it still reads after the session is
+ * deleted.
+ */
+export interface PromptAttribution {
+  sessionId: string
+  sessionTitle: string
+  harness: string
+  /** The message that started the turn; null when the edit preceded any message. */
+  turnSeq: number | null
+  stepIndex: number
+  /** Who sent the prompt: "You", or the label it came under. */
+  from: string
+  prompt: string
+  /** When the edit was made. */
+  at: string
+  /** Whether the session can still be opened. */
+  sessionExists: boolean
+}
+
+/** The commit that last changed a line, as `git blame` has it. */
+export interface LineCommit {
+  sha: string
+  author: string
+  /** Author time, in ms. */
+  time: number
+  summary: string
+}
+
+/** One line, blamed: the commit that last changed it and the prompt that wrote it. */
+export interface LineBlame {
+  /** Null for a line that is not committed yet, or that blame could not place. */
+  commit: LineCommit | null
+  /** Null for a line a person wrote, as far as grove knows. */
+  prompt: PromptAttribution | null
+}
+
+/** A prompt behind some of a commit's added lines, and how many. */
+export interface CommitPrompt extends PromptAttribution {
+  lines: number
 }

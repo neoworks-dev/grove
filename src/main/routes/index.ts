@@ -18,6 +18,8 @@ import { terminalsRoutes } from './terminals'
 import { nvimRoutes } from './nvim'
 import { stateRoutes } from './state'
 import { agentRoutes } from './agents'
+import { replayRoutes } from './replay'
+import { blameRoutes } from './blame'
 import { browserRoutes } from './browser'
 import { pluginsRoutes } from './plugins'
 import { actionsRoutes } from './actions'
@@ -47,6 +49,8 @@ export const routePlugins = [
   nvimRoutes,
   stateRoutes,
   agentRoutes,
+  replayRoutes,
+  blameRoutes,
   browserRoutes,
   pluginsRoutes,
   actionsRoutes,

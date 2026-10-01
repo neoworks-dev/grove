@@ -1,12 +1,18 @@
 <script lang="ts">
-  // Every breakpoint, in any worktree, with a switch to turn it off and a jump
-  // to its line; and while a session runs, the exception filters its adapter
+  // Every breakpoint, in any worktree, with a switch to turn it off, a jump to
+  // its line and an editor for its condition, hit count and log message; and while a session runs, the exception filters its adapter
   // offers ("Uncaught Exceptions", "Raised Exceptions", …).
   import Checkbox from '@neoworks-dev/ui/Checkbox'
   import XIcon from 'phosphor-svelte/lib/XIcon'
   import TrashIcon from 'phosphor-svelte/lib/TrashIcon'
-  import type { DebugBreakpoint, DebugExceptionFilter } from '../../../../../shared/debug'
+  import PencilSimpleIcon from 'phosphor-svelte/lib/PencilSimpleIcon'
+  import type {
+    DebugBreakpoint,
+    DebugBreakpointOptions,
+    DebugExceptionFilter
+  } from '../../../../../shared/debug'
   import DebugSection from './DebugSection.svelte'
+  import BreakpointForm from './BreakpointForm.svelte'
   import RowAction from '../gitChanges/RowAction.svelte'
   import { debug } from './store.svelte'
   import { store, openFileAtLine } from '../../../lib/store.svelte'
@@ -18,6 +24,44 @@
   )
   const session = $derived(debug.focusedSession)
   const exceptionFilters = $derived(session?.exceptionFilters || [])
+
+  /** The breakpoint whose options are open under its row. */
+  let editingId = $state<string | null>(null)
+
+  /** Opens a breakpoint's options under its row, or closes them. */
+  function toggleEditing(breakpoint: DebugBreakpoint): void {
+    if (editingId === breakpoint.id) {
+      editingId = null
+      return
+    }
+    editingId = breakpoint.id
+  }
+
+  /** Saves the options edited under a row and closes them. */
+  function saveOptions(breakpoint: DebugBreakpoint, options: DebugBreakpointOptions): void {
+    editingId = null
+    void debug.saveBreakpoint(breakpoint.path, breakpoint.line, options)
+  }
+
+  /** Whether a breakpoint only stops sometimes, or logs instead of stopping. */
+  function isSpecial(breakpoint: DebugBreakpoint): boolean {
+    return Boolean(breakpoint.condition || breakpoint.hitCondition || breakpoint.logMessage)
+  }
+
+  /** What a breakpoint does besides stopping, in a line: its condition, hit count and log message. */
+  function summaryOf(breakpoint: DebugBreakpoint): string {
+    const parts: string[] = []
+    if (breakpoint.condition) {
+      parts.push(`when ${breakpoint.condition}`)
+    }
+    if (breakpoint.hitCondition) {
+      parts.push(`hit ${breakpoint.hitCondition}`)
+    }
+    if (breakpoint.logMessage) {
+      parts.push(`log ${breakpoint.logMessage}`)
+    }
+    return parts.join(' · ')
+  }
 
   function fileName(path: string): string {
     return path.split('/').pop() || path
@@ -110,9 +154,19 @@
         onchange={() =>
           void window.workbench.debugger.setBreakpointEnabled(breakpoint.id, !breakpoint.enabled)}
       />
+      <!-- A dot like the gutter's sign: a diamond when it only stops sometimes,
+           blue when it logs instead. -->
       <span
-        class="size-2 shrink-0 rounded-full"
-        class:bg-red={breakpoint.enabled && (breakpoint.verified || !debug.active)}
+        class="size-2 shrink-0"
+        class:rounded-full={!isSpecial(breakpoint)}
+        class:rotate-45={isSpecial(breakpoint)}
+        class:scale-90={isSpecial(breakpoint)}
+        class:bg-red={breakpoint.enabled &&
+          (breakpoint.verified || !debug.active) &&
+          !breakpoint.logMessage}
+        class:bg-blue={breakpoint.enabled &&
+          (breakpoint.verified || !debug.active) &&
+          Boolean(breakpoint.logMessage)}
         class:border={!breakpoint.enabled || (debug.active && !breakpoint.verified)}
         class:border-line-strong={!breakpoint.enabled || (debug.active && !breakpoint.verified)}
       ></span>
@@ -129,7 +183,12 @@
       <span class="shrink-0 font-mono text-2xs text-dim group-hover/breakpoint:hidden"
         >{breakpoint.line}</span
       >
-      <span class="hidden group-hover/breakpoint:block">
+      <span class="hidden items-center group-hover/breakpoint:flex">
+        <RowAction
+          icon={PencilSimpleIcon}
+          title="Edit condition, hit count and log message"
+          onclick={() => toggleEditing(breakpoint)}
+        />
         <RowAction
           icon={XIcon}
           title="Remove breakpoint"
@@ -137,8 +196,30 @@
         />
       </span>
     </div>
+    {#if isSpecial(breakpoint) && editingId !== breakpoint.id}
+      <div
+        class="-mt-0.5 truncate pb-0.5 pl-[2.75rem] pr-3 font-mono text-2xs text-dim"
+        title={summaryOf(breakpoint)}
+      >
+        {summaryOf(breakpoint)}
+      </div>
+    {/if}
+    {#if editingId === breakpoint.id}
+      <div class="py-1 pl-[2.75rem] pr-3">
+        <BreakpointForm
+          initial={breakpoint}
+          autofocus
+          stacked
+          onsave={(options) => saveOptions(breakpoint, options)}
+          oncancel={() => (editingId = null)}
+        />
+      </div>
+    {/if}
   {/each}
   {#if breakpoints.length === 0}
-    <p class="px-3 py-1 text-2xs text-dim">Click the editor's gutter or press F9 to add one.</p>
+    <p class="px-3 py-1 text-2xs text-dim">
+      Click the editor's gutter or press F9 to add one; right-click it or press Shift+F9 for a
+      condition or log message.
+    </p>
   {/if}
 </DebugSection>

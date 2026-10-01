@@ -33,7 +33,7 @@ export type PluginPermission =
   | 'services.read' // dev-service status + logs
   | 'services.manage' // start/stop dev services
   | 'debug.all' // arbitrary lua/JS execution; only registered under GROVE_DEBUG
-  | 'browser.provide' // hand a browser tab to a worktree's agents (the Firefox extension)
+  | 'browser.provide' // hand a browser tab to a worktree's agents (Kit)
 
 export const PLUGIN_PERMISSIONS: PluginPermission[] = [
   'workspace.read',
@@ -176,7 +176,8 @@ export const PERMISSION_META: Record<PluginPermission, PermissionMeta> = {
   },
   'browser.provide': {
     label: 'Provide a browser tab',
-    description: 'Hand a browser tab to a worktree’s agents, which then navigate, read and act in it',
+    description:
+      'Hand a tab in this browser to a worktree’s agents, which then navigate, read and act in it, and open tabs for them',
     risk: 'write'
   }
 }
@@ -573,3 +574,81 @@ export interface HelloResult {
   // subsequent connections.
   token?: string
 }
+
+// ── Browser provider (socket transport, `browser.provide` scope) ─
+// A browser such as Kit hands Grove a tab per worktree, and the agents' browser
+// tool drives it with the DevTools protocol. Requests go both ways on the
+// provider's own connection; see neoworks-dev/grove#353.
+//
+// Provider → Grove (requests):
+//   browser.worktrees()                → BrowserWorktree[]
+//   browser.provide(BrowserProvideParams)
+//   browser.withdraw(BrowserWithdrawParams)
+// Grove → provider (requests):
+//   browser.cdp(BrowserCdpParams)      → the CDP result; fails with a CdpError
+//   browser.open(BrowserOpenParams)    → answered once the tab is provided, or failed
+// Provider → Grove (events):
+//   browser.cdpEvent: BrowserCdpEvent
+
+/** A worktree a browser can offer a tab to. `id` is its path, as the agent's tool sees it. */
+export interface BrowserWorktree {
+  id: string
+  name: string
+  branch: string
+  path: string
+}
+
+/** The tab serving a worktree, as the provider last saw it. */
+export interface BrowserTab {
+  url: string
+  title: string
+}
+
+/** This connection now serves the worktree, replacing whatever served it before. */
+export interface BrowserProvideParams {
+  worktreeId: string
+  tab: BrowserTab
+}
+
+/** The tab closed, or the user disconnected it. */
+export interface BrowserWithdrawParams {
+  worktreeId: string
+}
+
+/** One DevTools protocol command for the tab serving a worktree. */
+export interface BrowserCdpParams {
+  worktreeId: string
+  method: string
+  params: Record<string, unknown>
+}
+
+/**
+ * How a provider fails a `browser.cdp` request: a CDP-style error. An unknown
+ * method is `-32601` with `'<method>' wasn't found`. Grove shows the agent the
+ * message.
+ */
+export interface CdpError {
+  code: number
+  message: string
+}
+
+/** A provider is connected but nothing serves the worktree: open a tab for it. */
+export interface BrowserOpenParams {
+  worktreeId: string
+  url?: string
+}
+
+/**
+ * A DevTools protocol event from the served tab. Grove reads
+ * Runtime.consoleAPICalled, Runtime.exceptionThrown, Network.requestWillBeSent
+ * (to name later failures), Network.responseReceived, Network.loadingFailed,
+ * Page.frameNavigated and Page.navigatedWithinDocument.
+ */
+export interface BrowserCdpEvent {
+  worktreeId: string
+  method: string
+  params: Record<string, unknown>
+}
+
+/** The event channel a provider sends BrowserCdpEvent on. */
+export const BROWSER_CDP_EVENT = 'browser.cdpEvent'

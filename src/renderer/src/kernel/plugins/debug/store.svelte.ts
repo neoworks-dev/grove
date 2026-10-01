@@ -14,6 +14,7 @@ import { store, openFileAtLine } from '../../../lib/store.svelte'
 import { activeNvimSession } from '../../../lib/nvim/registry'
 import { dialogs } from '../../../lib/dialogs.svelte'
 import { layout } from '../../../lib/layout.svelte'
+import { messageOf } from './messages'
 
 const OUTPUT_LIMIT = 5000
 
@@ -317,17 +318,6 @@ class DebugStore {
     }
     openFileAtLine(worktreeId, path, line)
   }
-}
-
-/** An IPC error's message without Electron's "Error invoking remote method" prefix. */
-export function messageOf(error: unknown): string {
-  let message = 'unknown error'
-  if (error instanceof Error) {
-    message = error.message
-  } else if (typeof error === 'string') {
-    message = error
-  }
-  return message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
 }
 
 export const debug = new DebugStore()

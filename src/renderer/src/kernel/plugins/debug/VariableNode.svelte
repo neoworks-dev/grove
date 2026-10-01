@@ -6,7 +6,7 @@
   import CaretDownIcon from 'phosphor-svelte/lib/CaretDownIcon'
   import type { DebugVariable } from '../../../../../shared/debug'
   import VariableNode from './VariableNode.svelte'
-  import { messageOf } from './store.svelte'
+  import { messageOf } from './messages'
 
   let {
     sessionId,

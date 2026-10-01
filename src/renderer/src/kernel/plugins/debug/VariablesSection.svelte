@@ -5,7 +5,8 @@
   import type { DebugScope } from '../../../../../shared/debug'
   import DebugSection from './DebugSection.svelte'
   import VariableNode from './VariableNode.svelte'
-  import { debug, messageOf } from './store.svelte'
+  import { debug } from './store.svelte'
+  import { messageOf } from './messages'
 
   /** Scopes, with the stop and frame they were loaded for. */
   let loaded = $state<{ key: string; scopes: DebugScope[] } | null>(null)

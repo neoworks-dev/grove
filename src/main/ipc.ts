@@ -62,6 +62,8 @@ import type { AgentWorktrees } from './agents/tools/worktreeTools'
 import { runSetup } from './routes/worktrees'
 import { agentSection, section } from './agents/systemPrompt'
 import { groveTools } from './agents/tools'
+import { browserTools } from './agents/tools/browserTools'
+import { BrowserService } from './browser'
 
 interface RepoContext {
   repoPath: string | null
@@ -165,6 +167,11 @@ const sessionStore = new SessionStore(join(app.getPath('userData'), 'agent-sessi
   console.error(`[agents] ${message}`)
 )
 
+// The worktrees' browser previews, which agents drive through their tools.
+const browser = new BrowserService({
+  onActivity: (activity) => send('event:browser-activity', activity)
+})
+
 const agents = new AgentService({
   store: sessionStore,
   harnesses,
@@ -180,6 +187,7 @@ const agents = new AgentService({
       worktrees: agentWorktrees,
       conflicts: conflictProposals
     }),
+    ...browserTools(browser),
     ...aiBridge.pluginTools()
   ],
   systemPrompt: (session) => buildSystemPrompt(session),
@@ -685,6 +693,7 @@ const mainServices = {
     ctx.provide('harnesses', harnesses)
     ctx.provide('switchboard', switchboard)
     ctx.provide('agents', agents)
+    ctx.provide('browser', browser)
     ctx.provide('agentReview', agentReviewBridge)
     ctx.provide('conflictProposals', conflictProposals)
 

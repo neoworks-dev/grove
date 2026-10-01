@@ -30,6 +30,7 @@ const SERVICE_STUBS: Record<string, unknown> = {
   chat: {},
   actions: {},
   agents: { watch: () => () => {} },
+  browser: { watchNewPages: () => () => {}, dispose: () => {} },
   agentReview: {},
   conflictProposals: {},
   harnesses: { register: () => () => {} },

@@ -87,7 +87,8 @@ import type {
   LspDiagnostic,
   TerminalSessionInfo,
   BranchPosition,
-  BranchPull
+  BranchPull,
+  BrowserPickedElement
 } from '../shared/types'
 import type {
   BlobDescriptor,
@@ -602,6 +603,14 @@ export interface WorkbenchApi {
     set: (key: string, value: unknown, scope: 'user' | 'project') => Promise<SettingsSnapshotShape>
     // The scope's settings file, created if missing; null for project scope with no repo.
     filePath: (scope: 'user' | 'project') => Promise<string | null>
+  }
+  browser: {
+    /** Hands a worktree's preview page to the main process, replacing any earlier one. */
+    attach: (worktreeId: string, contentsId: number) => Promise<void>
+    detach: (worktreeId: string, contentsId: number) => Promise<void>
+    /** Lets the user point at an element; null when they pressed Escape. */
+    pick: (worktreeId: string) => Promise<BrowserPickedElement | null>
+    cancelPick: (worktreeId: string) => Promise<void>
   }
   openExternal: (url: string) => Promise<void>
   // Bring grove's window to the front, e.g. from a desktop notification.

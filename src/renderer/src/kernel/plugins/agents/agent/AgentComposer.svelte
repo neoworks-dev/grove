@@ -24,10 +24,23 @@
   import type {
     ClientEventBody,
     FileBlock,
-    ImageBlock,
     UserContentBlock
   } from '../../../../lib/agents/types'
   import type { Snippet } from 'svelte'
+  import ArrowCounterClockwise from 'phosphor-svelte/lib/ArrowCounterClockwise'
+  import ImageMarkup from './ImageMarkup.svelte'
+  import type { Mark } from '../../../../lib/agents/imageMarkup'
+  import {
+    attachedImage,
+    forgetAttachments,
+    imageBlockOf,
+    marksOf,
+    sentImage,
+    shownUrl,
+    withMarkup,
+    withoutMarkup,
+    type ComposerImage
+  } from '../../../../lib/agents/composerImages'
 
   let {
     sessionId,
@@ -87,8 +100,11 @@
   let error = $state('')
 
   // Images pasted or dropped into the composer, already uploaded and waiting to
-  // ride along with the next message.
-  let attachments = $state<ImageBlock[]>([])
+  // ride along with the next message. Each keeps the file it was attached as, so
+  // it can be marked up and the marks taken off again until it is sent.
+  let attachments = $state<ComposerImage[]>([])
+  // The attachment open in the markup editor.
+  let markingUp = $state<ComposerImage | null>(null)
 
   // File slices sent over from the editor, riding along with the next message so
   // the model reads the code rather than resolving a path itself.
@@ -325,6 +341,7 @@
 
     onSend(events)
     draft = ''
+    forgetAttachments(attachments)
     attachments = []
     references = []
     historyIndex = -1
@@ -333,7 +350,7 @@
 
   /** Everything riding along with the message: attached slices, then images. */
   function carriedBlocks(): UserContentBlock[] {
-    return [...activeReferences(), ...attachments]
+    return [...activeReferences(), ...attachments.map(sentImage)]
   }
 
   /** A submitted draft, as the client events a session expects for it. */
@@ -451,12 +468,53 @@
       if (!file.type.startsWith('image/')) continue
       try {
         const blob = await uploadBlob(sessionId, file)
-        attachments = [...attachments, { type: 'image', ref: blob.ref, mediaType: blob.mediaType }]
+        const image = imageBlockOf(blob)
+        attachments = [...attachments, attachedImage(image, file)]
         error = ''
       } catch (cause) {
         error = cause instanceof Error ? cause.message : String(cause)
       }
     }
+  }
+
+  /** Takes an image out of the draft. */
+  function removeAttachment(target: ComposerImage): void {
+    forgetAttachments([target])
+    attachments = attachments.filter((attachment) => attachment.id !== target.id)
+  }
+
+  /**
+   * Keeps what the markup editor made: the marks, and the picture they make
+   * uploaded in place of the original. No marks puts the original back.
+   */
+  async function finishMarkup(target: ComposerImage, marks: Mark[], picture: Blob | null): Promise<void> {
+    closeMarkup()
+    if (!picture) {
+      replaceAttachment(withoutMarkup(target))
+      return
+    }
+    try {
+      const file = new File([picture], 'marked-up.png', { type: 'image/png' })
+      const blob = await uploadBlob(sessionId, file)
+      replaceAttachment(withMarkup(target, imageBlockOf(blob), picture, marks))
+      error = ''
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause)
+    }
+  }
+
+  /** Closes the markup editor, back to writing the message. */
+  function closeMarkup(): void {
+    markingUp = null
+    promptEl?.focus()
+  }
+
+  /** Swaps an attachment for a newer version of itself, where it still is. */
+  function replaceAttachment(next: ComposerImage): void {
+    attachments = attachments.map((attachment) => {
+      if (attachment.id !== next.id) return attachment
+      return next
+    })
   }
 
   function onPaste(event: ClipboardEvent): void {
@@ -516,16 +574,52 @@
 
   {#if attachments.length > 0}
     <div class="mb-1.5 flex flex-wrap gap-1.5">
-      {#each attachments as attachment, index (attachment.ref)}
-        <button
-          class="rounded border border-line bg-canvas px-1.5 py-0.5 font-mono text-2xs text-muted hover:text-red"
-          title="Remove attachment"
-          onclick={() => (attachments = attachments.filter((_, at) => at !== index))}
-        >
-          image ✕
-        </button>
+      {#each attachments as attachment (attachment.id)}
+        <div class="group/attachment relative" data-testid="composer-image">
+          <button
+            class="block overflow-hidden rounded border border-line bg-canvas hover:border-accent"
+            title="Mark up this image"
+            aria-label="Mark up this image"
+            onclick={() => (markingUp = attachment)}
+          >
+            <img class="h-14 max-w-28 object-cover" src={shownUrl(attachment)} alt="" />
+          </button>
+          {#if attachment.marked}
+            <span
+              class="pointer-events-none absolute bottom-0.5 left-0.5 whitespace-nowrap rounded bg-black/70 px-1 text-2xs text-default"
+            >
+              marked up
+            </span>
+            <button
+              class="absolute -left-1.5 -top-1.5 hidden size-4 items-center justify-center rounded-full border border-line bg-elevated text-muted hover:text-default group-hover/attachment:flex"
+              title="Send the original instead of the marked-up image"
+              aria-label="Send the original"
+              onclick={() => replaceAttachment(withoutMarkup(attachment))}
+            >
+              <ArrowCounterClockwise size={10} />
+            </button>
+          {/if}
+          <button
+            class="absolute -right-1.5 -top-1.5 hidden size-4 items-center justify-center rounded-full border border-line bg-elevated text-2xs leading-none text-muted hover:text-red group-hover/attachment:flex"
+            title="Remove attachment"
+            aria-label="Remove attachment"
+            onclick={() => removeAttachment(attachment)}
+          >
+            ✕
+          </button>
+        </div>
       {/each}
     </div>
+  {/if}
+
+  {#if markingUp}
+    {@const target = markingUp}
+    <ImageMarkup
+      source={target.original.file}
+      marks={marksOf(target)}
+      onDone={(marks, picture) => void finishMarkup(target, marks, picture)}
+      onCancel={closeMarkup}
+    />
   {/if}
 
   {#if error}

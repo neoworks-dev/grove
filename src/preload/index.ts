@@ -240,6 +240,9 @@ const workbench = {
       ipcRenderer.invoke('agents:interruptShell', sessionId, toolUseId),
     resolveLocations: (worktreeId: string, locations: unknown[]) =>
       ipcRenderer.invoke('agents:resolveLocations', worktreeId, locations),
+    editedFiles: (sessionId: string) => ipcRenderer.invoke('agents:editedFiles', sessionId),
+    editedFileBase: (sessionId: string, path: string) =>
+      ipcRenderer.invoke('agents:editedFileBase', sessionId, path),
 
     completeShell: (sessionId: string, line: string) =>
       ipcRenderer.invoke('agents:completeShell', sessionId, line),

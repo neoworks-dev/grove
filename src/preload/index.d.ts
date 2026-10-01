@@ -96,6 +96,7 @@ import type {
   CreateSessionOptions,
   FileMatch,
   ResolvedLocation,
+  EditedFile,
   ShellCompletion,
   HarnessCatalog,
   HarnessInfo,
@@ -393,6 +394,10 @@ export interface WorkbenchApi {
       worktreeId: string,
       locations: CodeLocation[]
     ) => Promise<ResolvedLocation[]>
+    /** Every file the session has edited, with the lines its edits added and removed. */
+    editedFiles: (sessionId: string) => Promise<EditedFile[]>
+    /** A file the session edited, as it would be without those edits. */
+    editedFileBase: (sessionId: string, path: string) => Promise<string>
 
     completeShell: (sessionId: string, line: string) => Promise<ShellCompletion[]>
     shellName: () => Promise<string>

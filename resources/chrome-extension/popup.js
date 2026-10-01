@@ -12,7 +12,7 @@ const STATES = {
   'host-missing': {
     label: 'Not connected',
     title: 'Grove isn’t connected to this browser',
-    text: 'In Grove, open Settings ▸ Connect Chrome and connect this browser.'
+    text: 'In Grove, open View ▸ Connect Chrome and connect this browser.'
   },
   'grove-down': {
     label: 'Not running',

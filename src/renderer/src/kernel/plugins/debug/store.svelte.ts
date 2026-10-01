@@ -319,7 +319,9 @@ class DebugStore {
 
   /** Adds the breakpoint on a line with these options, or changes the one there. */
   async saveBreakpoint(path: string, line: number, options: DebugBreakpointOptions): Promise<void> {
-    await this.run(() => window.workbench.debugger.setBreakpoint(path, line, options).then(() => {}))
+    await this.run(() =>
+      window.workbench.debugger.setBreakpoint(path, line, options).then(() => {})
+    )
   }
 
   /** Closes the editor's breakpoint box and gives the editor its keyboard back. */

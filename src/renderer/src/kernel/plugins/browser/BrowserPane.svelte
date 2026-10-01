@@ -18,9 +18,10 @@
   import GlobeSimple from 'phosphor-svelte/lib/GlobeSimple'
   import { untrack } from 'svelte'
   import PaneControls from '../../../components/PaneControls.svelte'
-  import { insertIntoComposer, store } from '../../../lib/store.svelte'
+  import { insertTextIntoComposer, store } from '../../../lib/store.svelte'
   import { layout } from '../../../lib/layout.svelte'
-  import { addressOf, browserState, describePickedElement, startingUrl } from './browserState.svelte'
+  import { browserState } from './browserState.svelte'
+  import { addressOf, describePickedElement, startingUrl } from './browserAddress'
 
   /** The parts of Electron's <webview> the pane uses. */
   interface WebviewElement extends HTMLElement {
@@ -194,7 +195,7 @@
       const picked = await window.workbench.browser.pick(worktreeId)
       if (!picked) return
       layout.ensurePane('agent')
-      insertIntoComposer(describePickedElement(picked))
+      insertTextIntoComposer(describePickedElement(picked))
     } catch (error) {
       failure = (error as Error).message
     } finally {

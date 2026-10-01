@@ -15,7 +15,7 @@
   import Kbd from '../../../components/Kbd.svelte'
   import GithubBadge from './GithubBadge.svelte'
   import { nvimSessionFor } from '../../../lib/nvim/registry'
-  import { placeCommentBox } from './prCommentPlacement'
+  import { placeCommentBox } from '../../../lib/nvim/overlayPlacement'
   import {
     cancelPrComment,
     deletePrReviewComment,

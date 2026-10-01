@@ -7,6 +7,10 @@
 --   grove_debug_ready                sent once on load, so a new editor gets
 --                                    the state without waiting for a change.
 --   grove_debug_toggle_breakpoint    a click in the gutter.
+--   grove_debug_edit_breakpoint      a right-click in the gutter (through
+--                                    init.lua's right-click handler), or
+--                                    M.edit_at_cursor(): the renderer opens the
+--                                    breakpoint editor over that screen row.
 --   grove_debug_breakpoints_moved    after a write, where each breakpoint's
 --                                    mark ended up once lines above it changed.
 --
@@ -185,6 +189,44 @@ local function gutter_click()
     M.toggle(buffer, mouse.line)
   end)
   return ''
+end
+
+--- Asks Grove to open the breakpoint editor for a line, at a screen position.
+local function request_edit(buffer, line, screen_row, screen_col)
+  local path = buffer_path(buffer)
+  if path == nil then
+    return
+  end
+  vim.rpcnotify(0, 'grove_debug_edit_breakpoint', {
+    path = path,
+    line = line,
+    screenRow = screen_row,
+    screenCol = screen_col
+  })
+end
+
+--- A right-click in the gutter edits that line's breakpoint. Called by
+--- init.lua's right-click handler first; true when the click was the gutter's.
+function M.gutter_right_click()
+  local mouse = vim.fn.getmousepos()
+  if not in_gutter(mouse) then
+    return false
+  end
+  local buffer = vim.api.nvim_win_get_buf(mouse.winid)
+  local info = vim.fn.getwininfo(mouse.winid)[1]
+  -- Anchor the editor at the start of the text, not under the pointer in the gutter.
+  local text_col = info.wincol + info.textoff
+  request_edit(buffer, mouse.line, mouse.screenrow, text_col)
+  return true
+end
+
+--- Opens the breakpoint editor for the cursor's line (the "Edit breakpoint" key).
+function M.edit_at_cursor()
+  local window = vim.api.nvim_get_current_win()
+  local buffer = vim.api.nvim_win_get_buf(window)
+  local line = vim.api.nvim_win_get_cursor(window)[1]
+  local position = vim.fn.screenpos(window, line, 1)
+  request_edit(buffer, line, position.row, position.col)
 end
 
 function M.setup()

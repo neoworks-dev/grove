@@ -1155,6 +1155,10 @@ local function popup_items(mode)
 end
 
 local function grove_right_click()
+  -- In the gutter, a right-click edits that line's breakpoint instead.
+  if _G.grove_debug and _G.grove_debug.gutter_right_click() then
+    return
+  end
   local mode = place_cursor_at_mouse(vim.fn.getmousepos(), popup_mode())
   vim.api.nvim_exec_autocmds('MenuPopup', { pattern = mode, modeline = false })
   vim.rpcnotify(0, 'grove_popup_menu', { mode = mode, items = popup_items(mode) })

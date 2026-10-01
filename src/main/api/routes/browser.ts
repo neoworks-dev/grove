@@ -1,15 +1,16 @@
-// browser.* routes: a browser (Kit) handing Grove a tab per worktree, which the
+// browser.* routes: a browser provider (Kit, or Chrome through Grove's
+// extension) handing Grove a tab per worktree, which the
 // agents' browser tool then drives. Socket-only, because Grove talks back down
 // the provider's own connection (`browser.cdp`, `browser.open`). The protocol
 // is neoworks-dev/grove#353; its types are in sdk/src/protocol.ts.
 
 import type { BrowserProvideParams, BrowserWorktree } from '../../../../sdk/src/protocol'
 import type { Worktree } from '../../../shared/types'
-import type { KitBrowserService } from '../../kitBrowser'
+import type { BrowserProviderService } from '../../browserProviders'
 import { ApiError, type ApiConnection, type RouteContext, type RouteRegistry } from '../registry'
 
 interface BrowserRouteDeps {
-  kit: KitBrowserService
+  providers: BrowserProviderService
   /** The open repository's worktrees; empty when none is open. */
   worktrees: () => Worktree[]
 }
@@ -21,7 +22,7 @@ export function registerBrowserRoutes(registry: RouteRegistry, deps: BrowserRout
     transports: ['socket'],
     describe: () => 'list the worktrees it can offer a browser tab to',
     handler: async (_args, context) => {
-      deps.kit.connected(connectionOf(context))
+      deps.providers.connected(connectionOf(context))
       return deps.worktrees().map(browserWorktreeOf)
     }
   })
@@ -33,7 +34,7 @@ export function registerBrowserRoutes(registry: RouteRegistry, deps: BrowserRout
     describe: (args) => `hand its tab to the agents in ${String(args.worktreeId)}`,
     handler: async (args, context) => {
       const params = provideParamsOf(args, deps.worktrees())
-      deps.kit.provide(connectionOf(context), params)
+      deps.providers.provide(connectionOf(context), params)
       return null
     }
   })
@@ -44,7 +45,7 @@ export function registerBrowserRoutes(registry: RouteRegistry, deps: BrowserRout
     transports: ['socket'],
     describe: (args) => `take its tab back from ${String(args.worktreeId)}`,
     handler: async (args, context) => {
-      deps.kit.withdraw(connectionOf(context), String(args.worktreeId))
+      deps.providers.withdraw(connectionOf(context), String(args.worktreeId))
       return null
     }
   })

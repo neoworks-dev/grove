@@ -5,6 +5,7 @@
     "src/main/**/*",
     "src/preload/**/*",
     "src/shared/**/*",
+    "src/browserHost/**/*",
     "sdk/src/**/*"
   ],
   "compilerOptions": {

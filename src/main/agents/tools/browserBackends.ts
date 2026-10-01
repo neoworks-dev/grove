@@ -1,5 +1,6 @@
-// Which browser the tool drives for a worktree: the Kit tab serving it when
-// there is one, the Electron Browser pane otherwise. The pane goes away in
+// Which browser the tool drives for a worktree: the provided tab (Kit, or
+// Chrome through Grove's extension) serving it when there is one, the Electron
+// Browser pane otherwise. The pane goes away in
 // #354, and with it this choice.
 
 import type { AgentBrowser } from './browserTools'
@@ -7,19 +8,19 @@ import type { AgentBrowser } from './browserTools'
 /** The Browser pane's side of the tool's interface: it opens through the UI, not on request. */
 export type PaneBrowser = Omit<AgentBrowser, 'openTab'>
 
-/** One `AgentBrowser` over both backends, preferring Kit per worktree. */
-export function kitOrPane(kit: AgentBrowser, pane: PaneBrowser): AgentBrowser {
-  /** The backend serving the worktree: Kit when it has a tab for it. */
+/** One `AgentBrowser` over both backends, preferring a provided tab per worktree. */
+export function providerOrPane(providers: AgentBrowser, pane: PaneBrowser): AgentBrowser {
+  /** The backend serving the worktree: the providers when one has a tab for it. */
   function servingBackend(worktreeId: string): PaneBrowser {
-    if (kit.isAttached(worktreeId)) return kit
+    if (providers.isAttached(worktreeId)) return providers
     return pane
   }
 
   return {
-    isAttached: (worktreeId) => kit.isAttached(worktreeId) || pane.isAttached(worktreeId),
+    isAttached: (worktreeId) => providers.isAttached(worktreeId) || pane.isAttached(worktreeId),
     waitForAttach: (worktreeId, timeoutMs) =>
-      eitherAttaches(kit.waitForAttach(worktreeId, timeoutMs), pane.waitForAttach(worktreeId, timeoutMs)),
-    openTab: (worktreeId, timeoutMs) => kit.openTab(worktreeId, timeoutMs),
+      eitherAttaches(providers.waitForAttach(worktreeId, timeoutMs), pane.waitForAttach(worktreeId, timeoutMs)),
+    openTab: (worktreeId, timeoutMs) => providers.openTab(worktreeId, timeoutMs),
     location: (worktreeId) => servingBackend(worktreeId).location(worktreeId),
     cdp: (worktreeId, method, params) => servingBackend(worktreeId).cdp(worktreeId, method, params),
     consoleLog: (worktreeId) => servingBackend(worktreeId).consoleLog(worktreeId),

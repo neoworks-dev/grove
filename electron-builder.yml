@@ -30,6 +30,13 @@ extraResources:
   # current build target only — CI fetches per platform).
   - from: resources/nvim
     to: nvim
+  # The browser extension, loaded unpacked, and its native-messaging host
+  # (built by scripts/build-browser-host.ts). "Connect Chrome" copies both into
+  # userData before pointing a browser at them.
+  - from: resources/chrome-extension
+    to: chrome-extension
+  - from: resources/browser-host/dist
+    to: browser-host
 asarUnpack:
   - resources/**
   # Ripgrep ships a native binary that must run from disk, not inside the asar.

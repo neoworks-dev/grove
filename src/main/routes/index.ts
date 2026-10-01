@@ -21,6 +21,7 @@ import { agentRoutes } from './agents'
 import { replayRoutes } from './replay'
 import { blameRoutes } from './blame'
 import { browserRoutes } from './browser'
+import { browserHostRoutes } from './browserHost'
 import { pluginsRoutes } from './plugins'
 import { actionsRoutes } from './actions'
 import { endpointRoutes } from './endpoints'
@@ -52,6 +53,7 @@ export const routePlugins = [
   replayRoutes,
   blameRoutes,
   browserRoutes,
+  browserHostRoutes,
   pluginsRoutes,
   actionsRoutes,
   endpointRoutes,

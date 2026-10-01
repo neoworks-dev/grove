@@ -125,6 +125,14 @@ const VIEW_ITEMS: MenuItem[] = [
     order: 4,
     run: () => layout.ensurePane('keybindings'),
     accelerator: '␣ k'
+  },
+  {
+    id: 'view.connectChrome',
+    menuId: 'view',
+    label: 'Connect Chrome',
+    group: '5-general',
+    order: 5,
+    run: () => layout.ensurePane('connect-chrome')
   }
 ]
 

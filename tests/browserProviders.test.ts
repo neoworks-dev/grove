@@ -1,7 +1,8 @@
-// Kit's side of the browser tool (#353): a fake Kit pairs over the real API
-// socket, provides and withdraws tabs, answers browser.cdp and browser.open,
-// and sends CDP events up; the tool drives it, and falls back to the Browser
-// pane when no Kit tab serves the worktree.
+// Browser providers behind the browser tool (#353, #357): a fake provider (Kit,
+// or Chrome's extension through its host) pairs over the real API socket,
+// provides and withdraws tabs, answers browser.cdp and browser.open, and sends
+// CDP events up; the tool drives it, and falls back to the Browser pane when
+// no provided tab serves the worktree.
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'fs/promises'
@@ -11,7 +12,7 @@ import { join } from 'path'
 import type { BrowserCdpParams, BrowserOpenParams } from '../sdk/src/protocol'
 import { FrameDecoder, encodeFrame } from '../sdk/src/frames'
 import type { GroveTool, GroveToolContext } from '../src/main/agents/harness'
-import { kitOrPane, type PaneBrowser } from '../src/main/agents/tools/browserBackends'
+import { providerOrPane, type PaneBrowser } from '../src/main/agents/tools/browserBackends'
 import { browserTools } from '../src/main/agents/tools/browserTools'
 import type { PermissionBroker } from '../src/main/api/broker'
 import { ApiDispatcher } from '../src/main/api/dispatcher'
@@ -19,7 +20,7 @@ import { RouteRegistry } from '../src/main/api/registry'
 import { registerBrowserRoutes } from '../src/main/api/routes/browser'
 import { AppPairing } from '../src/main/api/socket/pairing'
 import { ApiSocketServer } from '../src/main/api/socket/server'
-import { KitBrowserService } from '../src/main/kitBrowser'
+import { BrowserProviderService } from '../src/main/browserProviders'
 import type { ShowTarget } from '../src/shared/agents'
 import type { RpcMessage } from '../src/shared/plugins'
 import { RpcEndpoint } from '../src/shared/rpc'
@@ -45,14 +46,14 @@ const worktrees: Worktree[] = [
 let directory: string
 let socketPath: string
 let server: ApiSocketServer
-let kit: KitBrowserService
+let kit: BrowserProviderService
 let sockets: Socket[]
 
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), 'grove-kit-'))
   socketPath = join(directory, 'grove.sock')
   sockets = []
-  kit = new KitBrowserService({ cdpTimeoutMs: 2000 })
+  kit = new BrowserProviderService({ cdpTimeoutMs: 2000 })
   server = buildServer()
   await server.listen()
 })
@@ -66,7 +67,7 @@ afterEach(async () => {
 /** The real socket server with only the browser routes, approving every pairing and scope. */
 function buildServer(): ApiSocketServer {
   const registry = new RouteRegistry()
-  registerBrowserRoutes(registry, { kit, worktrees: () => worktrees })
+  registerBrowserRoutes(registry, { providers: kit, worktrees: () => worktrees })
   const broker = { ensure: async () => {} } as unknown as PermissionBroker
   const dispatcher = new ApiDispatcher({ registry, broker, findWorktree: () => worktrees[0] })
   const pairing = new AppPairing(
@@ -170,7 +171,7 @@ function fakePane(opens: boolean): FakePane {
 
 /** The browser tool over Kit and the given pane. */
 function toolOver(pane: PaneBrowser): GroveTool {
-  return browserTools(kitOrPane(kit, pane), { helpersPath: join(directory, 'browser-helpers.js') })[0]
+  return browserTools(providerOrPane(kit, pane), { helpersPath: join(directory, 'browser-helpers.js') })[0]
 }
 
 /** A tool context for the worktree that records what it was asked to show. */
@@ -372,11 +373,30 @@ maybe('opening a tab and falling back to the pane', () => {
     expect(pane.sent).toEqual(['Page.reload'])
   })
 
-  test('with neither, the agent is told to ask for a Kit tab or the pane', async () => {
+  test('with neither, the agent is told to ask for a tab from Kit or Chrome, or the pane', async () => {
     const reply = await toolOver(fakePane(false)).execute({ method: 'Page.reload' }, contextFor())
     expect(reply.isError).toBe(true)
-    expect(reply.content).toContain('connect a Kit tab')
+    expect(reply.content).toContain('hand a tab to this worktree from Kit or from Grove’s Chrome extension')
     expect(reply.content).toContain('Browser pane')
+  })
+
+  test('when the newest provider cannot open a tab, the one before it is asked', async () => {
+    const chrome = await connectKit(
+      () => ({ from: 'chrome' }),
+      async (self, call) => {
+        await self.endpoint.request('browser.provide', { worktreeId: call.worktreeId, tab: { url: 'about:blank', title: '' } })
+        return null
+      }
+    )
+    const kitWithoutWindow = await connectKit()
+    const pane = fakePane(true)
+    const shown: ShowTarget[] = []
+    const reply = await toolOver(pane).execute({ method: 'Runtime.evaluate' }, contextFor(shown))
+    expect(kitWithoutWindow.openCalls).toHaveLength(1)
+    expect(chrome.openCalls).toHaveLength(1)
+    expect(reply.content).toStartWith('{"from":"chrome"}')
+    expect(shown).toEqual([])
+    expect(pane.sent).toEqual([])
   })
 
   test('a Kit tab wins over an open pane', async () => {

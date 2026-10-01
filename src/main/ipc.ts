@@ -286,7 +286,9 @@ const editSteps = new EditStepRecorder({
 // answers once a session is deleted.
 const promptBlame = new PromptBlame({
   directory: join(app.getPath('userData'), 'prompt-blame'),
-  sessionExists: (sessionId) => sessionStore.peek(sessionId) !== undefined
+  sessionExists: (sessionId) => sessionStore.peek(sessionId) !== undefined,
+  // Declared by the git plugin's settings in the renderer.
+  sharingNotes: () => settings.get<boolean>('git.sharePromptBlame') === true
 })
 
 /** Hands a new step, with the prompt its turn answered, to prompt blame. */

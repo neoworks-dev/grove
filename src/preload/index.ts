@@ -192,6 +192,17 @@ const workbench = {
     commitPrompts: (worktreeId: string, sha: string) =>
       ipcRenderer.invoke('blame:commitPrompts', worktreeId, sha)
   },
+  conflicts: {
+    agentPrompt: (worktreeId: string, paths: string[] | null) =>
+      ipcRenderer.invoke('conflicts:agentPrompt', worktreeId, paths),
+    proposals: (worktreeId: string) => ipcRenderer.invoke('conflicts:proposals', worktreeId),
+    clearProposals: (worktreeId: string) =>
+      ipcRenderer.invoke('conflicts:clearProposals', worktreeId),
+    write: (worktreeId: string, resolutions: unknown) =>
+      ipcRenderer.invoke('conflicts:write', worktreeId, resolutions),
+    preview: (worktreeId: string, path: string, resolutions: unknown) =>
+      ipcRenderer.invoke('conflicts:preview', worktreeId, path, resolutions)
+  },
   chat: {
     send: (worktreeId: string, text: string) => ipcRenderer.invoke('chat:send', worktreeId, text),
     history: (worktreeId: string, since?: number) =>

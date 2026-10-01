@@ -21,6 +21,7 @@ import type { BrowserService } from '../browser'
 import type { AgentReviewBridge } from '../agents/reviewBridge'
 import type { EditStepRecorder } from '../agents/editSteps'
 import type { PromptBlame } from '../promptBlame'
+import type { ConflictProposals } from '../conflictResolution'
 import type { HarnessRegistry } from '../agents/harness'
 import type { SwitchboardHost } from '../agents/switchboard/host'
 import type { PermissionBroker } from '../api/broker'
@@ -104,6 +105,7 @@ declare module '@neoworks/extension-system' {
     agentReview: AgentReviewBridge
     editSteps: EditStepRecorder
     promptBlame: PromptBlame
+    conflictProposals: ConflictProposals
     plugins: PluginsService
     apps: AppsService
     debug: DebugService

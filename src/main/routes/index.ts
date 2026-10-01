@@ -6,6 +6,7 @@ import { worktreesRoutes } from './worktrees'
 import { gitRoutes } from './git'
 import { githubRoutes } from './github'
 import { checkpointsRoutes } from './checkpoints'
+import { conflictsRoutes } from './conflicts'
 import { configRoutes } from './config'
 import { servicesRoutes } from './services'
 import { reviewRoutes } from './review'
@@ -36,6 +37,7 @@ export const routePlugins = [
   gitRoutes,
   githubRoutes,
   checkpointsRoutes,
+  conflictsRoutes,
   configRoutes,
   servicesRoutes,
   reviewRoutes,

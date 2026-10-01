@@ -42,6 +42,8 @@ import type {
   MergePreview,
   MergeResult,
   ConflictHunk,
+  ConflictProposal,
+  ConflictResolutionLines,
   ConflictChoice,
   MergeState,
   PrCheckoutState,
@@ -371,6 +373,17 @@ export interface WorkbenchApi {
   blame: {
     line: (worktreeId: string, path: string, line: number, text: string) => Promise<LineBlame>
     commitPrompts: (worktreeId: string, sha: string) => Promise<CommitPrompt[]>
+  },
+  conflicts: {
+    agentPrompt: (worktreeId: string, paths: string[] | null) => Promise<string>
+    proposals: (worktreeId: string) => Promise<ConflictProposal[]>
+    clearProposals: (worktreeId: string) => Promise<void>
+    write: (worktreeId: string, resolutions: ConflictResolutionLines[]) => Promise<string[]>
+    preview: (
+      worktreeId: string,
+      path: string,
+      resolutions: ConflictResolutionLines[]
+    ) => Promise<{ current: string; resolved: string }>
   }
   chat: {
     send: (worktreeId: string, text: string) => Promise<WorktreeChatMessage>

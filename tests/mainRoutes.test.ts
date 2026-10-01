@@ -34,6 +34,7 @@ const SERVICE_STUBS: Record<string, unknown> = {
   agentReview: {},
   editSteps: {},
   promptBlame: {},
+  conflictProposals: {},
   harnesses: { register: () => () => {} },
   plugins: { registry: { loadAll: async () => [] } },
   apps: {},

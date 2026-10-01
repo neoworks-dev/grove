@@ -106,7 +106,9 @@ import type {
   SessionMeta,
   SessionSnapshot,
   SessionUpdate,
-  SessionReplay
+  SessionReplay,
+  LineBlame,
+  CommitPrompt
 } from '../shared/agents'
 
 interface OpenRepoResult {
@@ -344,6 +346,10 @@ export interface WorkbenchApi {
       sessionId: string,
       tree: string
     ) => Promise<{ restoredTree: string; preRestore: CheckpointMeta | null }>
+  }
+  blame: {
+    line: (worktreeId: string, path: string, line: number, text: string) => Promise<LineBlame>
+    commitPrompts: (worktreeId: string, sha: string) => Promise<CommitPrompt[]>
   }
   chat: {
     send: (worktreeId: string, text: string) => Promise<WorktreeChatMessage>

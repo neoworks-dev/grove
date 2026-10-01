@@ -11,7 +11,10 @@
   import { openCommitFileDiff } from '../../../lib/nvim/revisionDiff'
   import { copyText } from '../gitChanges/refActions'
   import { createBranchAt } from './commitActions'
+  import { openPrompt } from '../../../lib/agents/promptBlame'
+  import { promptHeadline } from '../../../lib/agents/blameLabel'
   import type { CommitSummary, DiffFile } from '../../../../../shared/types'
+  import type { CommitPrompt } from '../../../../../shared/agents'
 
   let {
     worktreeId,
@@ -32,6 +35,8 @@
 
   let message = $state('')
   let files = $state<DiffFile[] | null>(null)
+  // The agent prompts behind the commit's added lines, if any wrote them.
+  let prompts = $state<CommitPrompt[]>([])
   let branchName = $state('')
   let switchToBranch = $state(true)
   let nameInput = $state<HTMLInputElement>()
@@ -55,6 +60,24 @@
       store.setError((err as Error).message)
       files = []
     }
+  }
+
+  /** Reads which agent prompts wrote the commit's lines; none is the common case. */
+  async function loadPrompts(sha: string): Promise<void> {
+    prompts = []
+    try {
+      const found = await window.workbench.blame.commitPrompts(worktreeId, sha)
+      if (sha !== commit.sha) return
+      prompts = found
+    } catch {
+      prompts = []
+    }
+  }
+
+  /** "1 line", "4 lines". */
+  function linesLabel(count: number): string {
+    if (count === 1) return '1 line'
+    return `${count} lines`
   }
 
   /** Opens one of the commit's files as its change. */
@@ -81,6 +104,7 @@
 
   $effect(() => {
     void load(commit.sha)
+    void loadPrompts(commit.sha)
   })
 
   $effect(() => {
@@ -158,6 +182,26 @@
         </form>
       {/if}
     </div>
+
+    {#if prompts.length > 0}
+      <div class="flex flex-col pb-2">
+        <p class="px-3 pb-1 text-2xs text-dim">Written by agents</p>
+        {#each prompts as prompt (`${prompt.sessionId}:${prompt.turnSeq}`)}
+          <button
+            class="flex items-baseline gap-2 px-3 py-[3px] text-left hover:bg-hover"
+            title={prompt.prompt}
+            onclick={() => openPrompt(prompt)}
+          >
+            <span class="shrink-0 text-violet">✦</span>
+            <span class="min-w-0 flex-1 truncate text-muted">
+              “{promptHeadline(prompt.prompt)}”
+              <span class="text-dim">— {prompt.sessionTitle}</span>
+            </span>
+            <span class="shrink-0 text-2xs text-dim">{linesLabel(prompt.lines)}</span>
+          </button>
+        {/each}
+      </div>
+    {/if}
 
     <div role="tree" class="pb-2">
       {#if files === null}

@@ -972,6 +972,65 @@ vim.api.nvim_create_autocmd({ 'CursorMoved', 'CursorMovedI', 'BufEnter' }, {
   end
 })
 
+-- Prompt blame. When the cursor rests on a line, grove is told which; if an
+-- agent wrote it, grove answers with grove_show_prompt_blame, which puts the
+-- commit and the prompt that wrote the line at its end. Lines a person wrote
+-- get nothing, and the text goes as soon as the cursor moves.
+local prompt_blame_ns = vim.api.nvim_create_namespace('grove_prompt_blame')
+local prompt_blame_timer = nil
+local prompt_blame_buf = nil
+
+--- The cursor line of a file buffer, as grove blames it; nil anywhere else.
+local function grove_blame_context()
+  local buf = vim.api.nvim_get_current_buf()
+  if vim.bo[buf].buftype ~= '' then return nil end
+  local name = vim.api.nvim_buf_get_name(buf)
+  if name == '' then return nil end
+  local line = vim.api.nvim_win_get_cursor(0)[1]
+  local text = vim.api.nvim_buf_get_lines(buf, line - 1, line, false)[1] or ''
+  return { buf = buf, path = name, line = line, text = text }
+end
+
+local function clear_prompt_blame()
+  if prompt_blame_buf and vim.api.nvim_buf_is_valid(prompt_blame_buf) then
+    vim.api.nvim_buf_clear_namespace(prompt_blame_buf, prompt_blame_ns, 0, -1)
+  end
+  prompt_blame_buf = nil
+end
+
+vim.api.nvim_create_autocmd({ 'CursorMoved', 'BufEnter', 'InsertLeave' }, {
+  group = vim.api.nvim_create_augroup('grove.prompt_blame', { clear = true }),
+  callback = function()
+    clear_prompt_blame()
+    if prompt_blame_timer then prompt_blame_timer:stop() end
+    prompt_blame_timer = vim.defer_fn(function()
+      if vim.api.nvim_get_mode().mode ~= 'n' then return end
+      local context = grove_blame_context()
+      if context then vim.rpcnotify(0, 'grove_line_blame', context) end
+    end, 400)
+  end
+})
+vim.api.nvim_create_autocmd('InsertEnter', { group = 'grove.prompt_blame', callback = clear_prompt_blame })
+
+--- Shows `label` at the end of `line`, if the cursor is still on it reading `text`.
+_G.grove_show_prompt_blame = function(buf, line, text, label)
+  if buf ~= vim.api.nvim_get_current_buf() or not vim.api.nvim_buf_is_valid(buf) then return end
+  if vim.api.nvim_win_get_cursor(0)[1] ~= line then return end
+  if (vim.api.nvim_buf_get_lines(buf, line - 1, line, false)[1] or '') ~= text then return end
+  clear_prompt_blame()
+  vim.api.nvim_buf_set_extmark(buf, prompt_blame_ns, line - 1, 0, {
+    virt_text = { { '    ' .. label, 'GroveAgentMarkAnnotation' } },
+    virt_text_pos = 'eol',
+    hl_mode = 'combine',
+  })
+  prompt_blame_buf = buf
+end
+
+leader('gp', function()
+  local context = grove_blame_context()
+  if context then vim.rpcnotify(0, 'grove_open_line_prompt', context) end
+end, 'Prompt that wrote this line')
+
 -- Right-click menu. nvim would draw its PopUp menu as grid cells, which grove
 -- renders but cannot make clickable, so right-click instead does what
 -- 'mousemodel' popup_setpos does to the cursor, lets the MenuPopup autocmds

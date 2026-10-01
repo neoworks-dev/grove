@@ -117,7 +117,7 @@
       {#if action.kind === 'type'}
         <span class="min-w-0 truncate text-default">“{action.detail}”</span>
       {:else if action.kind === 'key'}
-        <kbd class="shrink-0 rounded border border-line bg-surface px-1 text-default"
+        <kbd class="shrink-0 rounded border border-line bg-surface px-1 font-mono leading-none text-default"
           >{action.detail}</kbd
         >
       {:else if action.detail}
@@ -172,11 +172,10 @@
           )}</pre>
       {/if}
     {:else}
-      <!-- Anything else: the command as sent and what came back. -->
-      <div class="mt-1 pl-4 font-mono text-2xs text-dim">{action.method}</div>
+      <!-- Anything else: the parameters it was sent with and what came back. -->
       {#if Object.keys(action.params).length > 0}
         <pre
-          class="max-h-60 overflow-auto whitespace-pre-wrap pl-4 font-mono text-2xs text-muted">{JSON.stringify(
+          class="mt-1 max-h-60 overflow-auto whitespace-pre-wrap pl-4 font-mono text-2xs text-muted">{JSON.stringify(
             action.params,
             null,
             2

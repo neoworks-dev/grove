@@ -303,6 +303,15 @@ export interface CheckpointMeta {
   note?: string
 }
 
+/** One file that differs between two trees (two checkpoints, or two agent steps). */
+export interface TreeFileChange {
+  path: string
+  status: 'added' | 'modified' | 'deleted'
+  /** Lines added and removed; both -1 for a binary file. */
+  added: number
+  removed: number
+}
+
 // ── Inline agent edit (per-hunk accept/reject) ──────────────────
 
 // One hunk of an inline edit, with its line bodies. `beforeStart`/`afterStart`

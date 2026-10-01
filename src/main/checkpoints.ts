@@ -13,7 +13,7 @@ import { createHash, randomUUID } from 'crypto'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { rm } from 'fs/promises'
-import type { CheckpointMeta, CheckpointTrigger } from '../shared/types'
+import type { CheckpointMeta, CheckpointTrigger, TreeFileChange } from '../shared/types'
 
 // Machine identity for checkpoint commits, so they never depend on (or pollute)
 // the user's configured git author.
@@ -89,6 +89,108 @@ async function writeWorkingTree(worktreePath: string, hasHead: boolean): Promise
   } finally {
     await rm(tmpIndex, { force: true }).catch(() => {})
   }
+}
+
+/** The working tree as a tree object, written without touching HEAD, the index or the files. */
+export async function captureTree(worktreePath: string): Promise<string> {
+  const head = await headCommit(gitFor(worktreePath))
+  return writeWorkingTree(worktreePath, head !== null)
+}
+
+/**
+ * Keeps a pair of trees reachable under `ref`, so gc cannot take them while
+ * something still points at them by hash. Each call adds a commit for the
+ * earlier tree and one for the later on top of whatever `ref` held.
+ */
+export async function pinTreePair(
+  worktreePath: string,
+  ref: string,
+  earlier: string,
+  later: string
+): Promise<void> {
+  const git = gitFor(worktreePath).env(childEnv(CHECKPOINT_ENV))
+  const parents: string[] = []
+  const current = await refCommit(git, ref)
+  if (current) parents.push('-p', current)
+  const first = (await git.raw(['commit-tree', earlier, ...parents, '-m', 'agent step: before'])).trim()
+  const second = (await git.raw(['commit-tree', later, '-p', first, '-m', 'agent step: after'])).trim()
+  await git.raw(['update-ref', ref, second])
+}
+
+/** Drops a ref `pinTreePair` kept trees under. A ref that is already gone is not an error. */
+export async function unpinTrees(worktreePath: string, ref: string): Promise<void> {
+  await gitFor(worktreePath)
+    .raw(['update-ref', '-d', ref])
+    .catch(() => {})
+}
+
+/** The commit a ref points at, or null when it does not exist. */
+async function refCommit(git: SimpleGit, ref: string): Promise<string | null> {
+  try {
+    return (await git.raw(['rev-parse', '--verify', '--quiet', ref])).trim() || null
+  } catch {
+    return null
+  }
+}
+
+/** Every file that differs between two trees, with its line counts. */
+export async function diffTrees(
+  worktreePath: string,
+  from: string,
+  to: string
+): Promise<TreeFileChange[]> {
+  if (from === to) return []
+  const git = gitFor(worktreePath)
+  const [statuses, counts] = await Promise.all([
+    git.raw(['diff', '--no-renames', '--name-status', '-z', from, to]),
+    git.raw(['diff', '--no-renames', '--numstat', '-z', from, to])
+  ])
+  const lineCounts = parseNumstatZ(counts)
+  return parseNameStatusZ(statuses).map((entry) => {
+    const lines = lineCounts.get(entry.path)
+    if (!lines) return { ...entry, added: 0, removed: 0 }
+    return { ...entry, ...lines }
+  })
+}
+
+/** `git diff --name-status -z`: a status letter, then the path, each NUL-terminated. */
+export function parseNameStatusZ(
+  output: string
+): { path: string; status: TreeFileChange['status'] }[] {
+  const fields = output.split('\0')
+  const entries: { path: string; status: TreeFileChange['status'] }[] = []
+  for (let index = 0; index + 1 < fields.length; index += 2) {
+    const letter = fields[index]
+    const path = fields[index + 1]
+    if (!letter || !path) continue
+    entries.push({ path, status: statusOfLetter(letter) })
+  }
+  return entries
+}
+
+/** `git diff --numstat -z`: "added\tremoved\tpath", NUL-terminated; "-" for binary. */
+export function parseNumstatZ(output: string): Map<string, { added: number; removed: number }> {
+  const counts = new Map<string, { added: number; removed: number }>()
+  for (const record of output.split('\0')) {
+    const parts = record.split('\t')
+    if (parts.length < 3) continue
+    const path = parts.slice(2).join('\t')
+    counts.set(path, { added: countOf(parts[0]), removed: countOf(parts[1]) })
+  }
+  return counts
+}
+
+/** A numstat count, or -1 for the "-" git writes for a binary file. */
+function countOf(field: string): number {
+  if (field === '-') return -1
+  return Number.parseInt(field, 10)
+}
+
+/** What a name-status letter means for one file. */
+function statusOfLetter(letter: string): TreeFileChange['status'] {
+  if (letter === 'A') return 'added'
+  if (letter === 'D') return 'deleted'
+  return 'modified'
 }
 
 export interface CheckpointEvents {
@@ -231,10 +333,21 @@ export class CheckpointManager {
     if (!list.some((m) => m.commit === commit)) {
       throw new Error('unknown checkpoint')
     }
+    const tree = (await gitFor(worktreePath).raw(['rev-parse', `${commit}^{tree}`])).trim()
+    return this.restoreTree(worktreePath, tree)
+  }
+
+  /**
+   * Restores the working tree to any tree object — an agent step's, say —
+   * without moving HEAD or the branch, checkpointing first so it can be undone.
+   */
+  async restoreTree(
+    worktreePath: string,
+    tree: string
+  ): Promise<{ restoredTree: string; preRestore: CheckpointMeta | null }> {
     const preRestore = await this.snapshot(worktreePath, 'pre-restore')
 
     const git = gitFor(worktreePath)
-    const tree = (await git.raw(['rev-parse', `${commit}^{tree}`])).trim()
     // read-tree --reset -u makes the index and tracked worktree files match the
     // tree, deleting tracked files absent from it. Files created since the
     // snapshot remain untracked and are removed by clean. Then a mixed reset

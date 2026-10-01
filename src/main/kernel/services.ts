@@ -18,6 +18,7 @@ import type { WorktreeChannel } from '../worktreeChannel'
 import type { ActionRunner } from '../actions'
 import type { AgentService } from '../agents/service'
 import type { AgentReviewBridge } from '../agents/reviewBridge'
+import type { EditStepRecorder } from '../agents/editSteps'
 import type { HarnessRegistry } from '../agents/harness'
 import type { SwitchboardHost } from '../agents/switchboard/host'
 import type { PermissionBroker } from '../api/broker'
@@ -96,6 +97,7 @@ declare module '@neoworks/extension-system' {
     harnesses: HarnessRegistry
     switchboard: SwitchboardHost
     agentReview: AgentReviewBridge
+    editSteps: EditStepRecorder
     plugins: PluginsService
     apps: AppsService
   }

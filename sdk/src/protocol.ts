@@ -33,6 +33,7 @@ export type PluginPermission =
   | 'services.read' // dev-service status + logs
   | 'services.manage' // start/stop dev services
   | 'debug.all' // arbitrary lua/JS execution; only registered under GROVE_DEBUG
+  | 'browser.provide' // hand a browser tab to a worktree's agents (the Firefox extension)
 
 export const PLUGIN_PERMISSIONS: PluginPermission[] = [
   'workspace.read',
@@ -54,7 +55,8 @@ export const PLUGIN_PERMISSIONS: PluginPermission[] = [
   'languages.read',
   'services.read',
   'services.manage',
-  'debug.all'
+  'debug.all',
+  'browser.provide'
 ]
 
 export type PermissionRisk = 'read' | 'write' | 'danger'
@@ -171,6 +173,11 @@ export const PERMISSION_META: Record<PluginPermission, PermissionMeta> = {
     description:
       'Run arbitrary Lua in the editor and arbitrary JavaScript in the UI — full control of the app',
     risk: 'danger'
+  },
+  'browser.provide': {
+    label: 'Provide a browser tab',
+    description: 'Hand a browser tab to a worktree’s agents, which then navigate, read and act in it',
+    risk: 'write'
   }
 }
 

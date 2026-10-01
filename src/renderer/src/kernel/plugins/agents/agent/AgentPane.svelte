@@ -366,10 +366,16 @@
     stickToBottom = true
   }
 
-  function decide(toolUseId: string, result: ConfirmationResult, reason?: string): Promise<void> {
+  /** Answer a parked call; `input` is what it runs with when the user changed it. */
+  function decide(
+    toolUseId: string,
+    result: ConfirmationResult,
+    reason?: string,
+    input?: unknown
+  ): Promise<void> {
     if (!activeId) return Promise.resolve()
     return agentSessions.send(activeId, [
-      { type: 'user.tool_confirmation', toolUseId, result, reason }
+      { type: 'user.tool_confirmation', toolUseId, result, reason, input }
     ])
   }
 
@@ -974,8 +980,11 @@
               item={shownApproval}
               tool={catalog.toolNamed(shownApproval.name)}
               batch={gatedReview}
-              onDecide={(result, reason) => void decide(shownApproval.toolUseId, result, reason)}
+              onDecide={(result, reason, input) =>
+                void decide(shownApproval.toolUseId, result, reason, input)}
               onShowChange={showChange}
+              onRequestKey={requestCredential}
+              onAddEndpoint={() => (addingEndpoint = true)}
             />
           {/key}
         {/if}

@@ -22,6 +22,7 @@ import type {
   SessionEvent,
   SessionNote,
   SessionStatus,
+  SpawnTarget,
   ToolCallUpdate,
   ToolPermission,
   UiNode,
@@ -101,15 +102,10 @@ export interface ToolItem {
   /** Files the call touches, for following along in the editor. */
   locations: { path: string; line?: number | null }[]
   /**
-   * What a grove tool said about the call before it ran, for its approval to
-   * show: the runtime and model a spawned agent will use.
+   * What a spawn said it would run on before it ran, for its approval to show
+   * and let the user change. Null for any other call.
    */
-  facts: ToolFact[]
-}
-
-export interface ToolFact {
-  label: string
-  value: string
+  spawn: SpawnTarget | null
 }
 
 export interface ShellItem {
@@ -467,7 +463,7 @@ function toolFor(state: TranscriptState, event: SessionEvent, update: ToolCallUp
       images: [],
       content: [],
       locations: [],
-      facts: []
+      spawn: null
     })
     tool = state.items[state.items.length - 1] as ToolItem
   }
@@ -478,22 +474,18 @@ function toolFor(state: TranscriptState, event: SessionEvent, update: ToolCallUp
   if (update.rawInput !== undefined) tool.input = update.rawInput
   if (update.content) tool.content = update.content.filter((entry) => entry.type !== 'content')
   if (update.locations) tool.locations = update.locations
-  const facts = factsOf(update._meta)
-  if (facts) tool.facts = facts
+  const spawn = spawnOf(update._meta)
+  if (spawn) tool.spawn = spawn
   return tool
 }
 
-/** The facts a grove tool attached under `_meta.grove.facts`, or null when it attached none. */
-function factsOf(meta: { [key: string]: unknown } | null | undefined): ToolFact[] | null {
-  const grove = meta?.grove as { facts?: unknown } | undefined
-  if (!Array.isArray(grove?.facts)) return null
-  return grove.facts.filter(isToolFact)
-}
-
-/** A label and value, both text. */
-function isToolFact(entry: unknown): entry is ToolFact {
-  const fact = entry as { label?: unknown; value?: unknown } | null
-  return typeof fact?.label === 'string' && typeof fact.value === 'string'
+/** What `spawn_agent` attached under `_meta.grove.spawn`, or null when it attached nothing. */
+function spawnOf(meta: { [key: string]: unknown } | null | undefined): SpawnTarget | null {
+  const grove = meta?.grove as { spawn?: unknown } | undefined
+  const spawn = grove?.spawn as SpawnTarget | undefined
+  if (!spawn || typeof spawn !== 'object') return null
+  if (typeof spawn.modelIsDefault !== 'boolean') return null
+  return spawn
 }
 
 // How harnesses spell a tool grove serves: Claude and Codex prefix the server,

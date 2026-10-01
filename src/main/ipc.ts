@@ -13,6 +13,7 @@ import type { WorkbenchService, NvimService, PluginsService, AppsService } from 
 import type { WorkbenchConfig, Worktree, RepoInfo } from '../shared/types'
 import * as git from './git'
 import { CheckpointManager } from './checkpoints'
+import { ConflictProposals } from './conflictResolution'
 import * as config from './config'
 import { LspManager } from './lsp'
 import * as worktrees from './worktrees'
@@ -65,6 +66,8 @@ import type { AgentWorktrees } from './agents/tools/worktreeTools'
 import { runSetup } from './routes/worktrees'
 import { agentSection, section } from './agents/systemPrompt'
 import { groveTools } from './agents/tools'
+import { browserTools } from './agents/tools/browserTools'
+import { BrowserService } from './browser'
 
 interface RepoContext {
   repoPath: string | null
@@ -97,6 +100,12 @@ const checkpoints = new CheckpointManager({
     send('event:checkpoints', all)
     if (context.repoPath) void updateRepoState(context.repoPath, { checkpoints: all })
   }
+})
+
+// Merge-conflict resolutions an agent proposed, waiting on the user.
+const conflictProposals = new ConflictProposals({
+  publish: (worktreePath) => send('event:conflict-proposals', { worktreeId: worktreePath }),
+  file: join(app.getPath('userData'), 'conflict-proposals.json')
 })
 
 const watcher = new WorktreeWatcher((change) => {
@@ -162,6 +171,11 @@ const sessionStore = new SessionStore(join(app.getPath('userData'), 'agent-sessi
   console.error(`[agents] ${message}`)
 )
 
+// The worktrees' browser previews, which agents drive through their tools.
+const browser = new BrowserService({
+  onActivity: (activity) => send('event:browser-activity', activity)
+})
+
 const agents = new AgentService({
   store: sessionStore,
   harnesses,
@@ -174,8 +188,10 @@ const agents = new AgentService({
       roster: agentRoster,
       notes: agents,
       screen: agents,
-      worktrees: agentWorktrees
+      worktrees: agentWorktrees,
+      conflicts: conflictProposals
     }),
+    ...browserTools(browser),
     ...aiBridge.pluginTools()
   ],
   systemPrompt: (session) => buildSystemPrompt(session),
@@ -725,9 +741,11 @@ const mainServices = {
     ctx.provide('harnesses', harnesses)
     ctx.provide('switchboard', switchboard)
     ctx.provide('agents', agents)
+    ctx.provide('browser', browser)
     ctx.provide('agentReview', agentReviewBridge)
     ctx.provide('debug', debugService)
     ctx.provide('debugAdapters', debugAdapters)
+    ctx.provide('conflictProposals', conflictProposals)
 
     // The review bridge follows the log for the life of the process: a gated
     // write blocks the agent whether or not any pane is watching.

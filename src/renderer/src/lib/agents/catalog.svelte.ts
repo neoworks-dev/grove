@@ -111,6 +111,22 @@ export class Catalog {
     if (this.active) await this.fetchCatalog(this.active)
   }
 
+  /**
+   * Fetch a harness's offering without pointing the catalog at it, for a view
+   * about a harness other than the pane's: a spawn's approval, say.
+   */
+  async prefetch(harnessId: string): Promise<void> {
+    await this.load()
+    await this.fetchCatalog(harnessId)
+  }
+
+  /** The models one harness offers, empty until `prefetch` or `use` has fetched them. */
+  modelsOf(harnessId: string): ModelEntry[] {
+    const offering = this.byHarness[harnessId]
+    if (!offering) return []
+    return offering.models
+  }
+
   toolNamed(name: string): ToolInfo | undefined {
     return this.tools.find((tool) => tool.name === name)
   }

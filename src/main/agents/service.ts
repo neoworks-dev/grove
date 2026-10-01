@@ -18,6 +18,7 @@ import type {
   ConfirmationResult,
   CreateSessionOptions,
   DeliverAs,
+  EditedFile,
   FileMatch,
   HarnessCatalog,
   HarnessInfo,
@@ -40,6 +41,14 @@ import type {
 import { ATTACHABLE_IMAGE_TYPES } from '../../shared/agents'
 import { ShellOutputHub } from './shellOutput'
 import * as files from '../files'
+import * as inlineDiff from '../inlineDiff'
+import {
+  relativeInside,
+  sessionEdits,
+  textWithoutEdits,
+  type DiffLines,
+  type SessionEdit
+} from './sessionEdits'
 import { PARENT_LABEL } from './handoffBridge'
 import type {
   ApprovalDecision,
@@ -994,6 +1003,45 @@ export class AgentService {
     return readFile(join(this.store.dirOf(sessionId), BLOBS_DIR, ref))
   }
 
+  // ── What the session changed ────────────────────────────────────
+
+  /** Every file the session has edited inside its workspace, in the order it first did. */
+  async editedFiles(sessionId: string): Promise<EditedFile[]> {
+    const session = await this.store.require(sessionId)
+    const root = session.workspaceRoot
+    const edited: EditedFile[] = []
+    for (const [path, edits] of sessionEdits(await this.store.eventsSince(sessionId))) {
+      const relativePath = relativeInside(root, path)
+      if (relativePath === null) continue
+      const current = await readOrEmpty(root, join(root, relativePath))
+      const before = await textWithoutEdits(current, edits, linesDifferIn(root))
+      const hunks = await inlineDiff.hunksBetween(root, before, current)
+      let added = 0
+      let removed = 0
+      for (const hunk of hunks) {
+        added += hunk.added.length
+        removed += hunk.removed.length
+      }
+      edited.push({ path: relativePath, added, removed, created: edits[0].oldText === null })
+    }
+    return edited
+  }
+
+  /**
+   * One edited file as it would be without the session's edits, so a diff
+   * against the file on disk shows only what the session did.
+   */
+  async editedFileBase(sessionId: string, relativePath: string): Promise<string> {
+    const session = await this.store.require(sessionId)
+    const root = session.workspaceRoot
+    const absolute = join(root, relativePath)
+    if (relativeInside(root, absolute) === null) throw new Error('path outside the workspace')
+    const edits = editsOfFile(sessionEdits(await this.store.eventsSince(sessionId)), root, relativePath)
+    const current = await readOrEmpty(root, absolute)
+    if (!edits) return current
+    return textWithoutEdits(current, edits, linesDifferIn(root))
+  }
+
   /** Fuzzy path search over the session's workspace, for `@` mentions. */
   async searchFiles(sessionId: string, query: string, limit = 20): Promise<FileMatch[]> {
     const session = await this.store.require(sessionId)
@@ -1205,6 +1253,32 @@ function blockText(block: UserContentBlock): string {
  * Subsequence match with a bonus for contiguity and for hits in the file name,
  * which is what makes `agpane` find `AgentPane.svelte` above `agents/pane.ts`.
  */
+/** Line hunks between two texts, diffed by git from inside the workspace. */
+function linesDifferIn(root: string): DiffLines {
+  return (before, after) => inlineDiff.hunksBetween(root, before, after)
+}
+
+/** A file's text, or empty when it does not exist (any more). */
+async function readOrEmpty(root: string, absolutePath: string): Promise<string> {
+  try {
+    return await files.readFileContent(root, absolutePath)
+  } catch {
+    return ''
+  }
+}
+
+/** The edits made to one workspace-relative file, however the harness spelled its path. */
+function editsOfFile(
+  byPath: Map<string, SessionEdit[]>,
+  root: string,
+  relativePath: string
+): SessionEdit[] | null {
+  for (const [path, edits] of byPath) {
+    if (relativeInside(root, path) === relativePath) return edits
+  }
+  return null
+}
+
 function scorePath(path: string, needle: string): number {
   if (needle.length === 0) return 1
   let score = 0

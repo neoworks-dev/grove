@@ -129,6 +129,12 @@ describe('claude harness models', () => {
     expect(normalizeModelId('au.anthropic.claude-opus-4-6-v1')).toBe('claude-opus-4-6')
   })
 
+  test('keeps what the CLI says its alias resolves to', () => {
+    // The only place `default` is named for the model it currently is.
+    const route = entryFor('default')?.routes.find((candidate) => candidate.id === 'default')
+    expect(route?.description).toBe('Whatever the CLI recommends')
+  })
+
   test('puts what the account can run first', () => {
     const entries = modelsOf(cliModels, catalog, noCredentials)
     expect(entries[0].routes.some((route) => route.native)).toBe(true)

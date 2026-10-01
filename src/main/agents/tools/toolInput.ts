@@ -19,3 +19,15 @@ export function unknownAgent(reference: string): { content: string; isError: tru
     isError: true
   }
 }
+
+/** A string a model wrote, trimmed, or null when it wrote none. */
+export function textOf(value: unknown): string | null {
+  if (typeof value !== 'string' || value.trim().length === 0) return null
+  return value.trim()
+}
+
+/** A finite number a model wrote, or null. */
+export function numberOf(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null
+  return value
+}

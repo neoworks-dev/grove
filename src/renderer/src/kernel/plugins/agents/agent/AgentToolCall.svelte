@@ -283,6 +283,15 @@
           >
             Stop
           </button>
+          {#if item.status === 'running'}
+            <button
+              class="rounded border border-line px-1.5 hover:bg-hover hover:text-default"
+              title="Let the agent carry on while the command keeps running (Ctrl+B)"
+              onclick={() => shellOutputs.background(sessionId)}
+            >
+              Background
+            </button>
+          {/if}
         {/if}
       </div>
     </div>

@@ -55,6 +55,11 @@ class ShellOutputs {
     void window.workbench.agents.interruptShell(sessionId, toolUseId)
   }
 
+  /** Ctrl+B: the agent stops waiting on its running commands, which keep going. */
+  background(sessionId: string): void {
+    void window.workbench.agents.backgroundShell(sessionId)
+  }
+
   private sessionEntry(sessionId: string): Record<string, LiveCommandOutput> {
     if (!this.bySession[sessionId]) this.bySession[sessionId] = {}
     return this.bySession[sessionId]

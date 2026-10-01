@@ -59,6 +59,9 @@ export const agentRoutes = {
     route(ctx, 'agents:interruptShell', (_e, sessionId: string, toolUseId: string) =>
       ctx.agents.interruptShell(sessionId, toolUseId)
     )
+    route(ctx, 'agents:backgroundShell', (_e, sessionId: string) =>
+      ctx.agents.backgroundShell(sessionId)
+    )
     // Where the places an agent pointed at are now, after the code moved under them.
     route(ctx, 'agents:resolveLocations', (_e, worktreeId: string, locations: CodeLocation[]) => {
       const worktree = ctx.workbench.findWorktree(worktreeId)

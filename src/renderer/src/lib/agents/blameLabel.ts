@@ -12,17 +12,18 @@ export function promptHeadline(prompt: string, limit = 60): string {
 
 /**
  * The end-of-line text for a blamed line, or null for a line no prompt wrote:
- * the commit (or that it is uncommitted), then the prompt beside it.
+ * the prompt first, since it is what the line is shown for, then the commit
+ * (or that it is uncommitted). The session's name is left to opening it.
  */
 export function blameLabel(blame: LineBlame, now: number = Date.now()): string | null {
   const prompt = blame.prompt
   if (!prompt) return null
-  let commit = 'Uncommitted'
+  let commit = 'uncommitted'
   if (blame.commit) {
     const when = ageLabel(new Date(blame.commit.time).toISOString(), now)
     commit = `${blame.commit.author}, ${when} · ${blame.commit.summary}`
   }
-  const headline = promptHeadline(prompt.prompt)
-  if (headline.length === 0) return `${commit}  ✦ ${prompt.sessionTitle}`
-  return `${commit}  ✦ “${headline}” — ${prompt.sessionTitle}`
+  let headline = promptHeadline(prompt.prompt, 50)
+  if (headline.length === 0) headline = prompt.sessionTitle
+  return `✦ “${headline}”  ·  ${commit}`
 }

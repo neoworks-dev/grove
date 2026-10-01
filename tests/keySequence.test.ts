@@ -8,6 +8,7 @@ import {
   findConflicts,
   stepMatchesSequence,
   stepLabel,
+  firesWhileTyping,
   type KeyStep
 } from '../src/renderer/src/lib/keySequence'
 
@@ -211,5 +212,16 @@ describe('stepLabel', () => {
 
   it('leaves a printable character literal', () => {
     expect(stepLabel(step('p'))).toBe('p')
+  })
+})
+
+describe('firesWhileTyping', () => {
+  it('lets chords and function keys through a text field, never plain keys', () => {
+    expect(firesWhileTyping(step('k', { ctrl: true }))).toBe(true)
+    expect(firesWhileTyping(step('f10'))).toBe(true)
+    expect(firesWhileTyping(step('f11', { shift: true }))).toBe(true)
+    expect(firesWhileTyping(step('f'))).toBe(false)
+    expect(firesWhileTyping(step('F'))).toBe(false)
+    expect(firesWhileTyping(step('enter'))).toBe(false)
   })
 })

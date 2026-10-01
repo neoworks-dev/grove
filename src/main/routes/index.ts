@@ -25,7 +25,9 @@ import { endpointRoutes } from './endpoints'
 import { secretsRoutes } from './secrets'
 import { settingsRoutes } from './settings'
 import { miscRoutes } from './misc'
+import { debugRoutes } from './debug'
 import { switchboardHarnesses } from '../agents/switchboard/harnesses'
+import { debugAdapterPlugins } from '../debug/adapters'
 
 export const routePlugins = [
   repoRoutes,
@@ -52,6 +54,9 @@ export const routePlugins = [
   secretsRoutes,
   settingsRoutes,
   miscRoutes,
+  debugRoutes,
+  // Debug adapters, one plugin each, registered into the adapter registry.
+  ...debugAdapterPlugins,
   // Agent harnesses. Each registers itself into the harness registry and can be
   // unloaded without the rest noticing; adding another means adding a file here.
   switchboardHarnesses

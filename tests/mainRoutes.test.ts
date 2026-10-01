@@ -35,7 +35,9 @@ const SERVICE_STUBS: Record<string, unknown> = {
   conflictProposals: {},
   harnesses: { register: () => () => {} },
   plugins: { registry: { loadAll: async () => [] } },
-  apps: {}
+  apps: {},
+  debug: {},
+  debugAdapters: { register: () => () => {} }
 }
 
 /** Channels the renderer can invoke, read straight off the preload bridge. */

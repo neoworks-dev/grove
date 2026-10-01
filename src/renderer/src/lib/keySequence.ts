@@ -108,6 +108,18 @@ function hasNonShiftModifier(step: KeyStep): boolean {
   return step.ctrl || step.alt || step.meta
 }
 
+/**
+ * Whether a key can never be text, so its binding fires even while a field or
+ * an insert-mode editor has the keyboard: a Ctrl/Alt/Meta chord, or a function
+ * key (the debugger's F5/F10/F11 must step from anywhere).
+ */
+export function firesWhileTyping(step: KeyStep): boolean {
+  if (hasNonShiftModifier(step)) {
+    return true
+  }
+  return /^f([1-9]|1[0-2])$/.test(step.key)
+}
+
 // Canonical form: chords lowercase their character and keep the shift flag;
 // bare printable characters drop shift (the character encodes it).
 function normalizeStep(step: KeyStep): KeyStep | null {
@@ -295,7 +307,11 @@ export function stepMatchesSequence(text: string, step: KeyStep): boolean {
 
 export function stepsEqual(a: KeyStep, b: KeyStep): boolean {
   return (
-    a.key === b.key && a.ctrl === b.ctrl && a.alt === b.alt && a.shift === b.shift && a.meta === b.meta
+    a.key === b.key &&
+    a.ctrl === b.ctrl &&
+    a.alt === b.alt &&
+    a.shift === b.shift &&
+    a.meta === b.meta
   )
 }
 

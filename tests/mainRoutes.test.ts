@@ -35,7 +35,9 @@ const SERVICE_STUBS: Record<string, unknown> = {
   promptBlame: {},
   harnesses: { register: () => () => {} },
   plugins: { registry: { loadAll: async () => [] } },
-  apps: {}
+  apps: {},
+  debug: {},
+  debugAdapters: { register: () => () => {} }
 }
 
 /** Channels the renderer can invoke, read straight off the preload bridge. */

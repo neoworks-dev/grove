@@ -28,6 +28,10 @@ import { SettingsService } from './settings'
 import { ActionRunner } from './actions'
 import { TerminalManager } from './terminals'
 import { NeovimManager } from './nvim'
+import { nvimBinary, nvimConfigArgs, nvimEnvOverlay } from './nvimPaths'
+import { DebugService } from './debug/service'
+import { DebugAdapterRegistry, pathDirectories } from './debug/registry'
+import { masonBinDirectory, masonRoot } from './debug/mason'
 import { buildWorktreeEnv, spawnEnv } from './env'
 import { PermissionBroker, PermissionError } from './api/broker'
 import { clientFromPlugin, type ClientRecord } from './api/clients'
@@ -348,12 +352,55 @@ const nvims = new NeovimManager({
     send('event:nvim-exit', { id, exitCode })
   },
   onNotify: (id, method, args) => {
+    if (debugService.handleNvimNotify(id, method, args)) return
     editorDocs.handleNotify(nvimSessionWorktrees.get(id) ?? null, method, args)
     send('event:nvim-notify', { id, method, args })
   },
   onSetupStep: (step) => send('event:nvim-setup', { step }),
   onSetupFailed: (failedSteps) => send('event:nvim-setup-failed', { failedSteps })
 })
+
+// The debugger. Adapters are mounted as plugins into the registry; the service
+// draws breakpoints into every nvim session and keeps them per repository.
+const debugAdapters = new DebugAdapterRegistry(() => [
+  masonBinDirectory(masonRoot(nvimEnvOverlay().XDG_DATA_HOME)),
+  ...pathDirectories()
+])
+const debugService = new DebugService({
+  registry: debugAdapters,
+  nvim: nvims,
+  send,
+  environmentFor: debugEnvironmentFor,
+  masonRoot: () => masonRoot(nvimEnvOverlay().XDG_DATA_HOME),
+  headlessNvim: () => ({
+    binary: nvimBinary(),
+    args: nvimConfigArgs(),
+    env: { ...process.env, ...nvimEnvOverlay() }
+  }),
+  load: async (repoPath) => {
+    const repoState = await getRepoState(repoPath)
+    return {
+      breakpoints: repoState.debugBreakpoints || [],
+      watches: repoState.debugWatches || []
+    }
+  },
+  save: async (repoPath, debugState) => {
+    await updateRepoState(repoPath, {
+      debugBreakpoints: debugState.breakpoints,
+      debugWatches: debugState.watches
+    })
+  }
+})
+
+/** A worktree's WT_* and PORT_n variables over the app's environment, for a debug adapter. */
+function debugEnvironmentFor(worktreePath: string): NodeJS.ProcessEnv {
+  const worktree = context.worktrees.find((candidate) => candidate.path === worktreePath)
+  if (!worktree || !context.config) {
+    return spawnEnv({})
+  }
+  const ports = worktrees.portsForWorktree(context.config, worktree.portSlot)
+  return spawnEnv(buildWorktreeEnv(worktree, ports))
+}
 
 const pluginBroker = new PermissionBroker({
   onPermissionRequest: (request) => send('event:plugin-permission', request)
@@ -637,6 +684,7 @@ async function openRepo(repoPath: string): Promise<{
   send('event:plugins-changed', pluginList())
   const repoState = await getRepoState(root)
   checkpoints.hydrate(repoState.checkpoints || {})
+  await debugService.openRepo(root)
   const list = await refreshWorktrees()
   return {
     info: {
@@ -720,6 +768,8 @@ const mainServices = {
     ctx.provide('agentReview', agentReviewBridge)
     ctx.provide('editSteps', editSteps)
     ctx.provide('promptBlame', promptBlame)
+    ctx.provide('debug', debugService)
+    ctx.provide('debugAdapters', debugAdapters)
 
     // The review bridge follows the log for the life of the process: a gated
     // write blocks the agent whether or not any pane is watching.
@@ -786,6 +836,7 @@ export async function shutdown(): Promise<void> {
   await mainContext.fiber.dispose().catch(() => {})
   await apiSocketServer?.close().catch(() => {})
   await agents.stopAll().catch(() => {})
+  await debugService.stopAll().catch(() => {})
   await switchboard.close().catch(() => {})
   await sessionStore.flush().catch(() => {})
   await supervisor.stopAll()

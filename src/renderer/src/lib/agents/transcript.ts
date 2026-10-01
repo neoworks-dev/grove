@@ -112,6 +112,12 @@ export interface ShellItem {
   kind: 'shell'
   seq: number
   eventId: string
+  /** The id its live output streams under: the `user.shell` event that started it. */
+  shellId: string | null
+  /** Still going: no result yet. */
+  running: boolean
+  /** It was sent to the background; a shared one went to the agent when it exited. */
+  background: boolean
   command: string
   output: string
   exitCode: number
@@ -571,21 +577,74 @@ function tasksOf(
   }))
 }
 
+/**
+ * A `!` command shows from the moment it is submitted, running, and its result
+ * fills the same row in. A result whose start is not on the log stands alone.
+ */
 function applyShell(state: TranscriptState, event: SessionEvent): void {
+  if (event.type === 'user.shell') {
+    state.items.push({
+      kind: 'shell',
+      seq: event.seq,
+      eventId: event.id,
+      shellId: event.id,
+      running: true,
+      background: false,
+      command: event.command,
+      output: '',
+      exitCode: 0,
+      outcome: '',
+      shared: event.share === true,
+      delivered: false
+    })
+    return
+  }
   if (event.type !== 'session.shell_result') {
+    return
+  }
+  const background = event.background === true
+  const started = runningShellItem(state, event.shellId, event.command)
+  if (started) {
+    started.running = false
+    started.background = background
+    started.output = event.output
+    started.exitCode = event.exitCode
+    started.outcome = event.outcome
+    started.delivered = background && started.shared
     return
   }
   state.items.push({
     kind: 'shell',
     seq: event.seq,
     eventId: event.id,
+    shellId: event.shellId ?? null,
+    running: false,
+    background,
     command: event.command,
     output: event.output,
     exitCode: event.exitCode,
     outcome: event.outcome,
     shared: event.share,
-    delivered: false
+    delivered: background && event.share
   })
+}
+
+/**
+ * The row a result belongs to: the one started by its `user.shell` event, or —
+ * on logs from before results named it — the oldest running row for the same
+ * command line.
+ */
+function runningShellItem(
+  state: TranscriptState,
+  shellId: string | undefined,
+  command: string
+): ShellItem | undefined {
+  for (const item of state.items) {
+    if (item.kind !== 'shell' || !item.running) continue
+    if (shellId !== undefined && item.shellId === shellId) return item
+    if (shellId === undefined && item.command === command) return item
+  }
+  return undefined
 }
 
 /**
@@ -596,7 +655,8 @@ function applyShell(state: TranscriptState, event: SessionEvent): void {
  */
 function markShellDelivered(state: TranscriptState): void {
   for (const item of state.items) {
-    if (item.kind === 'shell' && item.shared) item.delivered = true
+    // A command still running has nothing to hand over yet.
+    if (item.kind === 'shell' && item.shared && !item.running) item.delivered = true
   }
 }
 

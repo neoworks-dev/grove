@@ -148,6 +148,10 @@ export type GroveEventBody =
       exitCode: number
       outcome: string
       share: boolean
+      /** The `user.shell` event that started it; absent on logs from before it was recorded. */
+      shellId?: string
+      /** It was sent to the background; a shared one was handed to the agent when it exited. */
+      background?: boolean
     }
   | { type: 'ui.surface'; surfaceId: string; slot: UiSlot; view: UiNode }
   | { type: 'ui.surface'; surfaceId: string; view: null }

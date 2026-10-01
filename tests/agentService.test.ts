@@ -411,12 +411,25 @@ describe('AgentService', () => {
     }
   })
 
+  /** Resolves once a `!` command's result is on the session's log; the command runs unawaited. */
+  function shellResultOf(service: AgentService, sessionId: string): Promise<void> {
+    return new Promise((resolve) => {
+      const stop = service.observe(sessionId, (event) => {
+        if (event.type !== 'session.shell_result') return
+        stop()
+        resolve()
+      })
+    })
+  }
+
   test('a shell command runs in grove and lands on the log, whatever the harness', async () => {
     const { service, store, runs, cleanup } = await setup()
     const workspace = await mkdtemp(join(tmpdir(), 'grove-agent-shell-'))
     try {
       const session = await service.createSession({ workspace })
+      const finished = shellResultOf(service, session.id)
       await service.send(session.id, [{ type: 'user.shell', command: 'echo hello', share: false }])
+      await finished
 
       const events = await store.eventsSince(session.id, 0)
       const result = events.find((event) => event.type === 'session.shell_result')
@@ -430,12 +443,37 @@ describe('AgentService', () => {
     }
   })
 
+  test('a shared shell command sent to the background goes to the agent when it exits', async () => {
+    const { service, runs, cleanup } = await setup()
+    const workspace = await mkdtemp(join(tmpdir(), 'grove-agent-shell-'))
+    try {
+      const session = await service.createSession({ workspace })
+      const finished = shellResultOf(service, session.id)
+      await service.send(session.id, [
+        { type: 'user.shell', command: 'sleep 0.2; echo ready', share: true }
+      ])
+      await Bun.sleep(50)
+      expect(service.backgroundShell(session.id)).toBe(true)
+      await finished
+      await settle()
+
+      expect(runs[0].prompts[0]).toBe(
+        '[Background command finished]\n<shell-command outcome="exit 0">\n$ sleep 0.2; echo ready\nready\n\n</shell-command>'
+      )
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+      await cleanup()
+    }
+  })
+
   test('a shared shell command rides along with the next message, once', async () => {
     const { service, runs, cleanup } = await setup()
     const workspace = await mkdtemp(join(tmpdir(), 'grove-agent-shell-'))
     try {
       const session = await service.createSession({ workspace })
+      const finished = shellResultOf(service, session.id)
       await service.send(session.id, [{ type: 'user.shell', command: 'echo hello', share: true }])
+      await finished
       expect(runs).toHaveLength(0)
 
       await service.send(session.id, [say('fix it')])

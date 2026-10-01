@@ -61,7 +61,7 @@ import type {
   SubagentIdentity
 } from './harness'
 import { toolInfoOf } from './harness'
-import { runShellCommand, type ShellResult } from './shell'
+import { startShellCommand, type ShellResult } from './shell'
 import { completeShellLine } from './shellCompletion'
 import { firstPromptText, isDefaultTitle, titleFromPrompt } from './sessionSummary'
 import { resolveLoginShell } from './loginShell'
@@ -380,8 +380,16 @@ export class AgentService {
       return
     }
     if (event.type === 'user.shell') {
-      await this.store.append(sessionId, event)
-      await this.runShell(sessionId, event.command, event.share === true)
+      const stamped = await this.store.append(sessionId, event)
+      // Not awaited: the command streams into the transcript while the user
+      // goes on typing, and may be sent to the background.
+      void this.runShell(sessionId, stamped.id, event.command, event.share === true).catch(
+        (cause: Error) =>
+          this.store.append(sessionId, {
+            type: 'session.notice',
+            message: `The command could not run: ${cause.message}`
+          })
+      )
       return
     }
     // Compaction and branching belong to the harness; the ones that cannot do
@@ -581,24 +589,48 @@ export class AgentService {
    * Run a `!` command in the session's worktree.
    *
    * The shell is grove's, not the harness's: every runtime gets the same `!`,
-   * including the ones whose SDK has no passthrough of its own. A shared command
-   * is held for the next message rather than sent on its own — running one is
-   * looking something up, not starting a turn.
+   * including the ones whose SDK has no passthrough of its own. What it prints
+   * streams under the id of the event that started it, where Stop and Ctrl+B
+   * reach it. A shared command is held for the next message rather than sent on
+   * its own — running one is looking something up, not starting a turn — unless
+   * it was sent to the background: the agent is told when that one exits.
    */
-  private async runShell(sessionId: string, command: string, share: boolean): Promise<void> {
+  private async runShell(
+    sessionId: string,
+    shellId: string,
+    command: string,
+    share: boolean
+  ): Promise<void> {
     const session = await this.store.require(sessionId)
-    const result = await runShellCommand(command, {
+    const sink = this.shellOutputs.sinkFor(sessionId)
+    const running = startShellCommand(command, {
       cwd: session.workspaceRoot,
-      shell: resolveLoginShell().path
+      shell: resolveLoginShell().path,
+      onOutput: (text) => sink.append(shellId, text)
     })
+    let background = false
+    const sendToBackground = (): void => {
+      background = true
+      running.background()
+    }
+    sink.begin(shellId, () => running.interrupt(), sendToBackground)
+
+    const result = await running.result
+    sink.end(shellId)
     await this.store.append(sessionId, {
       type: 'session.shell_result',
       command,
       output: result.output,
       exitCode: result.exitCode,
       outcome: result.outcome,
-      share
+      share,
+      shellId,
+      background
     })
+    this.shellOutputs.settle(sessionId, shellId)
+    if (background && share) {
+      await this.notify(sessionId, 'Background command finished', shellContext(command, result))
+    }
   }
 
   /**
@@ -617,7 +649,8 @@ export class AgentService {
         runs.length = 0
         continue
       }
-      if (event.type === 'session.shell_result' && event.share) {
+      // One sent to the background was handed over the moment it exited.
+      if (event.type === 'session.shell_result' && event.share && !event.background) {
         runs.push(shellContext(event.command, event))
       }
     }

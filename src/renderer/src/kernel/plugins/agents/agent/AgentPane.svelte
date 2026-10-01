@@ -483,13 +483,17 @@
     pickMode(nextMode(mode))
   }
 
-  // A command the agent is running, which Ctrl+B can send to the background.
+  // A command running in the session — the agent's or a `!` one — which
+  // Ctrl+B can send to the background.
   const commandRunning = $derived.by(() => {
-    if (!activeId || !running) return false
+    if (!activeId) return false
     return Object.values(shellOutputs.forSession(activeId)).some((command) => command.running)
   })
 
-  /** Hands the agent its turn back while the commands it is waiting on keep running. */
+  /**
+   * Sends the session's running commands to the background: the agent gets its
+   * call back, and a `!` command runs past its time limit.
+   */
   function backgroundShell(): void {
     if (activeId) shellOutputs.background(activeId)
   }

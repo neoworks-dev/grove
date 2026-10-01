@@ -32,6 +32,7 @@ const SERVICE_STUBS: Record<string, unknown> = {
   agents: { watch: () => () => {} },
   agentReview: {},
   editSteps: {},
+  promptBlame: {},
   harnesses: { register: () => () => {} },
   plugins: { registry: { loadAll: async () => [] } },
   apps: {}

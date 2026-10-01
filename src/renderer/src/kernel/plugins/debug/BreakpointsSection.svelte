@@ -89,7 +89,12 @@
       class="flex h-5 items-center gap-2 px-3 text-xs text-default hover:bg-hover"
       title={filter.description}
     >
-      <Checkbox size="sm" checked={filter.enabled} onchange={() => toggleFilter(filter)} />
+      <Checkbox
+        size="sm"
+        checked={filter.enabled}
+        aria-label={filter.label}
+        onchange={() => toggleFilter(filter)}
+      />
       <span class="truncate">{filter.label}</span>
     </label>
   {/each}
@@ -101,6 +106,7 @@
       <Checkbox
         size="sm"
         checked={breakpoint.enabled}
+        aria-label="Breakpoint at {fileName(breakpoint.path)}:{breakpoint.line}"
         onchange={() =>
           void window.workbench.debugger.setBreakpointEnabled(breakpoint.id, !breakpoint.enabled)}
       />

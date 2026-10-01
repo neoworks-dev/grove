@@ -251,6 +251,29 @@ export interface ConflictedFile {
 // Which side of one conflict to keep. `both` keeps ours followed by theirs.
 export type ConflictChoice = 'ours' | 'theirs' | 'both'
 
+// An agent's proposed resolution for one conflict, pending the user's say.
+// `fingerprint` ties it to the conflict as it was when proposed: once the
+// region changes (resolved by hand, or the merge restarted) it no longer
+// applies and is dropped.
+export interface ConflictProposal {
+  path: string
+  hunkIndex: number
+  fingerprint: string
+  // What replaces the whole region, markers included; null when the agent was
+  // not confident enough to propose anything.
+  lines: string[] | null
+  reason: string
+  confident: boolean
+  sessionId: string
+}
+
+// One settled conflict, as written back: the lines that replace its region.
+export interface ConflictResolutionLines {
+  path: string
+  hunkIndex: number
+  lines: string[]
+}
+
 // A merge underway in a worktree. `inProgress` outlives the conflicts: once
 // every one is resolved and staged the merge is still open, waiting to be
 // committed, and that is when finishing it is the only thing left to offer.

@@ -357,10 +357,9 @@ export interface AppliedRange {
 // ── Agent write review ──────────────────────────────────────────
 
 // How a review was raised. 'gated' is a single not-yet-applied write held at the
-// permission prompt; 'agent' is a batch the agent itself closed by calling
-// request_review; 'turn-end' is the backstop that closes whatever is still
-// staged when the agent goes idle.
-export type ReviewOrigin = 'gated' | 'agent' | 'turn-end'
+// permission prompt; 'turn-end' is the batch of writes staged during a turn,
+// raised when the agent goes idle.
+export type ReviewOrigin = 'gated' | 'turn-end'
 
 // One file in a review. `baseline` is its content before the batch (empty for a
 // file the agent created), `current` is what it holds now — or, for a gated

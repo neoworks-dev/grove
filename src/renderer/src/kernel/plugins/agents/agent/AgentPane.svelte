@@ -186,7 +186,6 @@
   const newSessionGroveMode = $derived(defaultSessionGroveMode())
 
   const reviewMode = $derived(settings.get<string>('workbench.reviewMode') ?? 'pre')
-  const reviewPause = $derived(settings.get<boolean>('workbench.reviewPause') ?? false)
 
   function setReviewSetting(key: string, value: string | boolean): void {
     void settings.set(key, value, 'user')
@@ -1095,7 +1094,6 @@
               {running}
               models={catalog.models}
               {reviewMode}
-              {reviewPause}
               tokensLabel={contextLabel}
               {costLabel}
               contextTokens={snapshot.context.usedTokens}

@@ -496,9 +496,8 @@ describe('starting another agent', () => {
       .map((tool) => tool.name)
 
     expect(posted).toEqual([])
-    // `request_review` parks the turn on purpose: that is how the review flow
-    // holds the agent. Of the rest, only spawning an agent or a worktree asks.
-    expect(asking).toEqual(['request_review', 'spawn_agent', 'create_worktree'])
+    // Only spawning an agent or a worktree asks.
+    expect(asking).toEqual(['spawn_agent', 'create_worktree'])
   })
 
   test('labels the new session with the agent that asked for it', async () => {

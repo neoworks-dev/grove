@@ -34,7 +34,7 @@ function build(mode: 'pre' | 'post'): {
       onStaged: (_worktreeId, count) => staged.push(count),
       onFeedback: () => {}
     },
-    { pause: () => false, postApprove: () => mode === 'post' }
+    { postApprove: () => mode === 'post' }
   )
   return { review, raised, staged }
 }
@@ -62,28 +62,6 @@ describe('resolving a gated review', () => {
       // Writing here would land the change before the allowed tool runs, and the
       // tool would then fail to find its own oldText.
       expect(await readFile(join(root, 'a.ts'), 'utf8')).toBe('one\ntwo\n')
-    } finally {
-      await rm(root, { recursive: true, force: true })
-    }
-  })
-
-  it('does not fabricate a user message when request_review follows an accepted write', async () => {
-    const root = await worktreeWith('a.ts', 'one\ntwo\n')
-    try {
-      const { review } = build('pre')
-      const batchId = await review.raiseGated(root, 'nib', 'session-1', 'call-1', 'edit', {
-        relPath: 'a.ts',
-        baseline: 'one\ntwo\n',
-        current: 'one\nTWO\n',
-        hunks: [{ beforeStart: 2, removed: ['two'], afterStart: 2, added: ['TWO'] }]
-      })
-
-      await review.resolve(batchId, [{ relPath: 'a.ts', hunkIndex: 0, accepted: true }])
-
-      // Gated mode already presented the change at the write permission. Its
-      // conventional end-of-task request_review has no second batch to raise and
-      // must not be echoed into the transcript as if the user sent a message.
-      expect(await review.requestReview(root, 'nib', 'session-1', 'done')).toBeNull()
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -161,10 +139,11 @@ describe('staging follows the review mode', () => {
       // once it has happened.
       await Promise.resolve()
       review.noteWrite(root, 'a.ts')
-      await review.closeTurn(root, 'nib', 'session-1')
+      await review.closeTurn(root, 'nib', 'session-1', 'Fixed the tab overflow.')
 
       expect(raised).toHaveLength(1)
       expect(raised[0].origin).toBe('turn-end')
+      expect(raised[0].summary).toBe('Fixed the tab overflow.')
       expect(raised[0].files.map((file) => file.relPath)).toEqual(['a.ts'])
     } finally {
       await rm(root, { recursive: true, force: true })

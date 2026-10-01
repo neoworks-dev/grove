@@ -1,10 +1,9 @@
 // Agent-write review. Owns the staging layer, raises review requests to the
-// renderer, holds the agent when a run is configured to pause for review, and
-// applies the user's per-hunk decisions back to disk.
+// renderer, and applies the user's per-hunk decisions back to disk.
 //
 // Two shapes of review arrive here:
 //  - post-approve: writes already on disk, accumulated into a batch by
-//    ReviewStaging and closed by request_review or the turn-end backstop.
+//    ReviewStaging and closed when the agent's turn ends.
 //  - pre-approve ('gated'): a single Write/Edit held at the permission prompt.
 //    Accepting a subset cannot be expressed as "allow", so the tool is denied and
 //    the accepted hunks are written here instead.
@@ -31,8 +30,6 @@ export interface ReviewEvents {
 }
 
 export interface ReviewSettings {
-  // Hold the agent at request_review until the user has decided.
-  pause: () => boolean
   // Review writes after they land rather than gating them at the permission
   // prompt. When false, nothing is staged: the gated review already covered the
   // write, and staging it again would raise a second review for the same edit.
@@ -48,8 +45,6 @@ export class ReviewService {
   private staging: ReviewStaging
   // Reviews raised to the user and not yet resolved, keyed by batch id.
   private pending = new Map<string, PendingReview>()
-  // Batch ids whose agent is blocked inside request_review awaiting the verdict.
-  private awaited = new Set<string>()
 
   constructor(
     baseline: BaselineSource,
@@ -84,37 +79,11 @@ export class ReviewService {
   // ── Raising reviews ─────────────────────────────────────────────
 
   /**
-   * The agent called request_review. Closes the batch and raises it. Resolves
-   * with the text the model reads back: the user's verdict when the run pauses
-   * for review, or an acknowledgement when reviews are queued instead. Gated
-   * mode returns no message because each write was already reviewed at its
-   * permission prompt; presenting that expected empty batch as a new user
-   * message would falsely imply the user sent feedback.
+   * The agent's turn ended: close whatever is staged and raise it, headed by
+   * the summary the agent ended on.
    */
-  async requestReview(
-    worktreePath: string,
-    agent: string,
-    chatId: string,
-    summary: string
-  ): Promise<string | null> {
-    const batch = await this.closeAndRaise(worktreePath, agent, chatId, 'agent', summary)
-    if (!batch) {
-      return this.settings.postApprove()
-        ? 'No file changes to review since your last request.'
-        : null
-    }
-
-    if (!this.settings.pause()) {
-      return 'Submitted for review. The user will respond in their own time — carry on.'
-    }
-    this.awaited.add(batch.id)
-    const resolution = await this.awaitResolution(batch)
-    return describeResolution(batch, resolution) ?? 'All changes accepted with no comments.'
-  }
-
-  /** Turn-end backstop: close whatever is still staged and raise it. */
-  async closeTurn(worktreePath: string, agent: string, chatId: string): Promise<void> {
-    await this.closeAndRaise(worktreePath, agent, chatId, 'turn-end')
+  async closeTurn(worktreePath: string, agent: string, chatId: string, summary?: string): Promise<void> {
+    await this.closeAndRaise(worktreePath, agent, chatId, 'turn-end', summary)
   }
 
   /**
@@ -165,12 +134,6 @@ export class ReviewService {
     return batch
   }
 
-  private awaitResolution(batch: ReviewBatch): Promise<ReviewResolution> {
-    return new Promise((resolve) => {
-      this.pending.set(batch.id, { batch, resolve })
-    })
-  }
-
   // ── Resolving ───────────────────────────────────────────────────
 
   /**
@@ -185,20 +148,11 @@ export class ReviewService {
 
     await this.applyDecisions(entry.batch, decisions)
 
-    const wasAwaited = this.awaited.delete(batchId)
     entry.resolve({ batchId, decisions })
-    // An agent blocked in request_review reads the verdict as that tool's
-    // result; anything else has to be told, and only when there is news.
-    if (!wasAwaited) {
-      const feedback = describeResolution(entry.batch, { batchId, decisions })
-      if (feedback) {
-        this.events.onFeedback(
-          entry.batch.worktreeId,
-          entry.batch.agent,
-          entry.batch.chatId,
-          feedback
-        )
-      }
+    // The agent is told only when there is news.
+    const feedback = describeResolution(entry.batch, { batchId, decisions })
+    if (feedback) {
+      this.events.onFeedback(entry.batch.worktreeId, entry.batch.agent, entry.batch.chatId, feedback)
     }
     return entry.batch
   }
@@ -222,7 +176,6 @@ export class ReviewService {
     const entry = this.pending.get(batchId)
     if (!entry) return
     this.pending.delete(batchId)
-    this.awaited.delete(batchId)
     entry.resolve({ batchId, decisions: [] })
   }
 

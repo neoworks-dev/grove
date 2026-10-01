@@ -143,7 +143,6 @@ const review = new ReviewService(
     }
   },
   {
-    pause: () => settings.get<boolean>('workbench.reviewPause') === true,
     postApprove: () => settings.get<string>('workbench.reviewMode') === 'post'
   }
 )

@@ -7,10 +7,11 @@
 // click lands as a real pointer press wherever the window's focus is, and the
 // user watches it happen in the pane.
 //
-// Console and network are collected from the moment the pane attaches, so an
-// agent asking what went wrong sees what happened before it asked.
+// Console and network are collected from the moment a preview page exists, so
+// an agent asking what went wrong sees what happened before it asked —
+// loading included.
 
-import { webContents as allWebContents, type WebContents } from 'electron'
+import { app, webContents as allWebContents, type WebContents } from 'electron'
 import type {
   BrowserActivity,
   BrowserConsoleEntry,
@@ -44,9 +45,13 @@ export interface BrowserEvents {
 
 interface AttachedBrowser {
   contents: WebContents
+  logs: PageLogs
+}
+
+/** What a preview's page has logged and requested since it was created. */
+interface PageLogs {
   console: BrowserConsoleEntry[]
   network: BrowserNetworkEntry[]
-  release(): void
 }
 
 /** A point in the page's viewport, in CSS pixels. */
@@ -57,25 +62,114 @@ export interface PagePoint {
 
 export class BrowserService {
   private browsers = new Map<string, AttachedBrowser>()
+  // Every preview page's logs from the moment it exists, by web contents id:
+  // the pane can only hand a page over once it has loaded, and what it did
+  // while loading is usually what an agent needs to see.
+  private logs = new Map<number, PageLogs>()
   private waiters = new Map<string, Array<() => void>>()
   private watchedSessions = new WeakSet<object>()
 
   constructor(private events: BrowserEvents) {}
 
+  // ── Following pages ─────────────────────────────────────────────
+
+  /** Starts logging every preview page as it is created; returns the inverse. */
+  watchNewPages(): () => void {
+    const onCreated = (_event: unknown, contents: WebContents): void => {
+      if (contents.getType() === 'webview') this.follow(contents)
+    }
+    app.on('web-contents-created', onCreated)
+    return () => {
+      app.off('web-contents-created', onCreated)
+    }
+  }
+
+  /** Logs one page's console and requests until it is destroyed; returns its logs. */
+  private follow(contents: WebContents): PageLogs {
+    const logs: PageLogs = { console: [], network: [] }
+    const id = contents.id
+    this.logs.set(id, logs)
+    this.watchNetwork(contents)
+    contents.on('console-message', (details) => {
+      pushCapped(logs.console, {
+        level: details.level,
+        message: details.message,
+        source: sourceOf(details.sourceId, details.lineNumber),
+        at: Date.now()
+      })
+    })
+    contents.on('did-fail-load', (_event, code, description, url, mainFrame) => {
+      if (!mainFrame || code === -3) return
+      pushCapped(logs.console, {
+        level: 'error',
+        message: `Failed to load ${url}: ${description} (${code})`,
+        source: '',
+        at: Date.now()
+      })
+    })
+    // Popups open in the preview itself rather than in a window of their own.
+    contents.setWindowOpenHandler((details) => {
+      void contents.loadURL(details.url)
+      return { action: 'deny' }
+    })
+    contents.once('destroyed', () => this.forget(id))
+    return logs
+  }
+
+  /** Drops a destroyed page: its logs, and the worktree it was attached to. */
+  private forget(contentsId: number): void {
+    this.logs.delete(contentsId)
+    for (const [worktreeId, browser] of this.browsers) {
+      if (browser.contents.id === contentsId) this.browsers.delete(worktreeId)
+    }
+  }
+
+  /** Records requests of every preview sharing this one's session. */
+  private watchNetwork(contents: WebContents): void {
+    const session = contents.session
+    if (this.watchedSessions.has(session)) return
+    this.watchedSessions.add(session)
+    session.webRequest.onCompleted((details) => {
+      this.recordRequest(details.webContentsId, {
+        method: details.method,
+        url: details.url,
+        status: details.statusCode,
+        type: details.resourceType,
+        error: null,
+        at: Date.now()
+      })
+    })
+    session.webRequest.onErrorOccurred((details) => {
+      this.recordRequest(details.webContentsId, {
+        method: details.method,
+        url: details.url,
+        status: null,
+        type: details.resourceType,
+        error: details.error,
+        at: Date.now()
+      })
+    })
+  }
+
+  /** Adds a request to the log of the page that made it. */
+  private recordRequest(contentsId: number | undefined, entry: BrowserNetworkEntry): void {
+    if (contentsId === undefined) return
+    const logs = this.logs.get(contentsId)
+    if (logs) pushCapped(logs.network, entry)
+  }
+
   // ── Attaching ───────────────────────────────────────────────────
 
-  /** Takes over the pane's webview for a worktree, replacing whatever had it before. */
+  /** Takes over the pane's page for a worktree, replacing whatever had it before. */
   attach(worktreeId: string, contentsId: number): void {
     const contents = allWebContents.fromId(contentsId)
     if (!contents) throw new Error('No such web contents.')
     // Only a preview is ever driven: never the workbench itself.
     if (contents.getType() !== 'webview') throw new Error('Only a browser preview can be attached.')
     this.detach(worktreeId)
-    this.watchNetwork(contents)
-
-    const browser: AttachedBrowser = { contents, console: [], network: [], release: () => {} }
-    browser.release = this.watchContents(worktreeId, browser)
-    this.browsers.set(worktreeId, browser)
+    let logs = this.logs.get(contentsId)
+    if (!logs) logs = this.follow(contents)
+    this.browsers.set(worktreeId, { contents, logs })
     this.wakeWaiters(worktreeId)
   }
 
@@ -84,7 +178,9 @@ export class BrowserService {
     const browser = this.browsers.get(worktreeId)
     if (!browser) return
     if (contentsId !== undefined && browser.contents.id !== contentsId) return
-    browser.release()
+    if (!browser.contents.isDestroyed() && browser.contents.debugger.isAttached()) {
+      browser.contents.debugger.detach()
+    }
     this.browsers.delete(worktreeId)
   }
 
@@ -118,79 +214,6 @@ export class BrowserService {
     if (!waiting) return
     this.waiters.delete(worktreeId)
     for (const wake of waiting) wake()
-  }
-
-  /** Follows a preview's console and its lifetime; returns the inverse. */
-  private watchContents(worktreeId: string, browser: AttachedBrowser): () => void {
-    const contents = browser.contents
-    const onConsole = (details: { message: string; level: string; sourceId: string; lineNumber: number }): void => {
-      pushCapped(browser.console, {
-        level: details.level,
-        message: details.message,
-        source: sourceOf(details.sourceId, details.lineNumber),
-        at: Date.now()
-      })
-    }
-    const onFailedLoad = (_event: unknown, code: number, description: string, url: string, mainFrame: boolean): void => {
-      if (!mainFrame || code === -3) return
-      pushCapped(browser.console, {
-        level: 'error',
-        message: `Failed to load ${url}: ${description} (${code})`,
-        source: '',
-        at: Date.now()
-      })
-    }
-    const onGone = (): void => this.detach(worktreeId, contents.id)
-    // Popups open in the preview itself rather than in a window of their own.
-    contents.setWindowOpenHandler((details) => {
-      void contents.loadURL(details.url)
-      return { action: 'deny' }
-    })
-    contents.on('console-message', onConsole)
-    contents.on('did-fail-load', onFailedLoad)
-    contents.once('destroyed', onGone)
-    return () => {
-      if (contents.isDestroyed()) return
-      contents.off('console-message', onConsole)
-      contents.off('did-fail-load', onFailedLoad)
-      contents.off('destroyed', onGone)
-      if (contents.debugger.isAttached()) contents.debugger.detach()
-    }
-  }
-
-  /** Records requests of every preview sharing this one's session. */
-  private watchNetwork(contents: WebContents): void {
-    const session = contents.session
-    if (this.watchedSessions.has(session)) return
-    this.watchedSessions.add(session)
-    session.webRequest.onCompleted((details) => {
-      this.recordRequest(details.webContentsId, {
-        method: details.method,
-        url: details.url,
-        status: details.statusCode,
-        type: details.resourceType,
-        error: null,
-        at: Date.now()
-      })
-    })
-    session.webRequest.onErrorOccurred((details) => {
-      this.recordRequest(details.webContentsId, {
-        method: details.method,
-        url: details.url,
-        status: null,
-        type: details.resourceType,
-        error: details.error,
-        at: Date.now()
-      })
-    })
-  }
-
-  /** Adds a request to the log of the preview that made it. */
-  private recordRequest(contentsId: number | undefined, entry: BrowserNetworkEntry): void {
-    if (contentsId === undefined) return
-    for (const browser of this.browsers.values()) {
-      if (browser.contents.id === contentsId) pushCapped(browser.network, entry)
-    }
   }
 
   // ── Reading ─────────────────────────────────────────────────────
@@ -227,19 +250,19 @@ export class BrowserService {
 
   /** What the page has logged since the pane attached, oldest first. */
   consoleLog(worktreeId: string): BrowserConsoleEntry[] {
-    return [...this.require(worktreeId).console]
+    return [...this.require(worktreeId).logs.console]
   }
 
   /** What the page has requested since the pane attached, oldest first. */
   networkLog(worktreeId: string): BrowserNetworkEntry[] {
-    return [...this.require(worktreeId).network]
+    return [...this.require(worktreeId).logs.network]
   }
 
   /** Forgets the console and network logs, so the next read shows only what follows. */
   clearLogs(worktreeId: string): void {
-    const browser = this.require(worktreeId)
-    browser.console.length = 0
-    browser.network.length = 0
+    const logs = this.require(worktreeId).logs
+    logs.console.length = 0
+    logs.network.length = 0
   }
 
   /**

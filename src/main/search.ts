@@ -3,7 +3,7 @@
 // parser is pure (testable); the spawn wrapper streams matches to a callback.
 
 import { spawn } from 'child_process'
-import { rgPath } from '@vscode/ripgrep'
+import { ripgrepBinary } from './ripgrepBinary'
 import type { SearchMatch } from '../shared/types'
 
 export type { SearchMatch }
@@ -52,7 +52,7 @@ export function ripgrepSearch(
   onDone: () => void
 ): SearchHandle {
   const child = spawn(
-    rgPath,
+    ripgrepBinary,
     [
       '--json',
       '--smart-case',

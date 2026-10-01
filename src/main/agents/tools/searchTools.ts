@@ -4,7 +4,7 @@
 // matches grouped under the file they are in, and a cut-off that says so.
 
 import { spawn } from 'child_process'
-import { rgPath } from '@vscode/ripgrep'
+import { ripgrepBinary } from '../../ripgrepBinary'
 import type { GroveTool } from '../harness'
 import { displayPath, resolvePath } from './workspaceFiles'
 
@@ -153,7 +153,7 @@ export interface RipgrepOutput {
  */
 export function ripgrep(cwd: string, target: string, args: string[]): Promise<RipgrepOutput> {
   return new Promise((resolve) => {
-    const child = spawn(rgPath, [...args, '--', target], {
+    const child = spawn(ripgrepBinary, [...args, '--', target], {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe']
     })

@@ -977,6 +977,31 @@ describe('a spawn that names a model', () => {
 
     expect(created).toEqual([{ model: 'pi-opus', provider: 'anthropic' }])
   })
+
+  test('keeps the provider its approval picked over the first one serving the model', async () => {
+    const { roster } = testRoster([sessionMeta('a', 'Planner')])
+    const created: { model?: string; provider?: string }[] = []
+    const spy = roster as unknown as {
+      options: { agents: { createSession: (options: Record<string, unknown>) => unknown } }
+    }
+    const original = spy.options.agents.createSession
+    spy.options.agents.createSession = (options): unknown => {
+      created.push({ model: options.model as string, provider: options.provider as string })
+      return original(options)
+    }
+
+    await roster.spawn({
+      workspaceRoot: '/repo',
+      title: 'Reader',
+      harness: 'pi',
+      model: 'pi-opus',
+      provider: 'bedrock',
+      prompt: 'read it',
+      parentSessionId: 'a'
+    })
+
+    expect(created).toEqual([{ model: 'pi-opus', provider: 'bedrock' }])
+  })
 })
 
 describe('what a spawn runs on', () => {
@@ -991,11 +1016,14 @@ describe('what a spawn runs on', () => {
 
     expect(described?._meta).toEqual({
       grove: {
-        facts: [
-          { label: 'Runtime', value: 'pi' },
-          { label: 'Model', value: 'pi-opus (default) · pi-opus, as recommended' },
-          { label: 'Effort', value: 'runtime default' }
-        ]
+        spawn: {
+          harness: 'pi',
+          provider: 'anthropic',
+          model: 'pi-opus',
+          modelIsDefault: true,
+          modelDescription: 'pi-opus, as recommended',
+          effort: null
+        }
       }
     })
   })
@@ -1010,11 +1038,14 @@ describe('what a spawn runs on', () => {
 
     expect(described?._meta).toEqual({
       grove: {
-        facts: [
-          { label: 'Runtime', value: 'pi' },
-          { label: 'Model', value: 'pi-opus' },
-          { label: 'Effort', value: 'medium' }
-        ]
+        spawn: {
+          harness: 'pi',
+          provider: 'anthropic',
+          model: 'pi-opus',
+          modelIsDefault: false,
+          modelDescription: 'pi-opus, as recommended',
+          effort: 'medium'
+        }
       }
     })
   })
@@ -1057,12 +1088,20 @@ describe('what a spawn runs on', () => {
   })
 
   test('the transcript keeps what the approval was told', () => {
+    const target = {
+      harness: 'pi',
+      provider: 'anthropic',
+      model: 'pi-opus',
+      modelIsDefault: true,
+      modelDescription: null,
+      effort: null
+    }
     const toolCall = {
       toolCallId: 'call-1',
       name: 'mcp__grove__spawn_agent',
       title: 'Start another agent',
       rawInput: { title: 'Reviewer', prompt: 'review it' },
-      _meta: { grove: { facts: [{ label: 'Runtime', value: 'pi' }] } }
+      _meta: { grove: { spawn: target } }
     }
     const events = [
       {
@@ -1078,6 +1117,6 @@ describe('what a spawn runs on', () => {
     for (const event of events) applyEvent(state, event)
     const tool = state.items.find((item) => item.kind === 'tool') as ToolItem
 
-    expect(tool.facts).toEqual([{ label: 'Runtime', value: 'pi' }])
+    expect(tool.spawn).toEqual(target)
   })
 })

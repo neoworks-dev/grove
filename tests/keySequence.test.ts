@@ -101,14 +101,7 @@ describe('formatSequence / normalizeSequence', () => {
 
 describe('stepFromEvent', () => {
   function keyEvent(key: string, mods: Partial<KeyboardEvent> = {}): KeyboardEvent {
-    return {
-      key,
-      ctrlKey: false,
-      altKey: false,
-      shiftKey: false,
-      metaKey: false,
-      ...mods
-    } as KeyboardEvent
+    return { key, ctrlKey: false, altKey: false, shiftKey: false, metaKey: false, ...mods } as KeyboardEvent
   }
 
   it('maps named keys', () => {
@@ -161,9 +154,7 @@ describe('findConflicts', () => {
   })
 
   it('ignores different contexts and leader/non-leader differences', () => {
-    expect(
-      findConflicts([entry('a', 'leader x', 'tree'), entry('b', 'leader x', 'global')])
-    ).toHaveLength(0)
+    expect(findConflicts([entry('a', 'leader x', 'tree'), entry('b', 'leader x', 'global')])).toHaveLength(0)
     expect(findConflicts([entry('a', 'leader x'), entry('b', 'x')])).toHaveLength(0)
   })
 })

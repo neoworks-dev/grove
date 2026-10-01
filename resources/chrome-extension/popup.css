@@ -1,0 +1,210 @@
+/* Neoworks design tokens (packages/ui/src/styles/tokens.css), dark theme. */
+:root {
+  --bg: #141416;
+  --surface: #1c1c1e;
+  --surface-raised: #262628;
+  --surface-hover: #2e2e31;
+  --border: #29292b;
+  --border-strong: #3f3f46;
+  --text: #fafafa;
+  --text-muted: #a1a1aa;
+  --text-dim: #71717a;
+  --green: #4ade80;
+  --green-soft: rgba(74, 222, 128, 0.14);
+  --amber: #fbbf24;
+  --red: #f87171;
+  --font-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, 'SF Mono', 'Roboto Mono', monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  width: 320px;
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 12px/1.5 var(--font-sans);
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.link {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.link::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--text-dim);
+}
+
+.link.connected::before {
+  background: var(--green);
+}
+
+.link.waiting::before {
+  background: var(--amber);
+}
+
+main {
+  padding: 12px;
+}
+
+h2 {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+p {
+  margin: 0 0 8px;
+  color: var(--text-muted);
+}
+
+.detail {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.caps {
+  margin: 12px 0 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.serving {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(74, 222, 128, 0.35);
+  border-radius: 8px;
+  background: var(--green-soft);
+}
+
+.serving .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: var(--green);
+}
+
+.serving .name {
+  font-weight: 600;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.primary {
+  margin-top: 4px;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--green);
+  color: #000;
+  font-weight: 600;
+}
+
+.secondary {
+  margin-left: auto;
+  padding: 4px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface-raised);
+}
+
+.secondary:hover {
+  background: var(--surface-hover);
+}
+
+.worktrees {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.worktree {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+}
+
+.worktree:hover {
+  background: var(--surface-hover);
+}
+
+.worktree .branch {
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--text-dim);
+  font: 11px var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.activity li {
+  display: flex;
+  gap: 8px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.activity li:first-child {
+  color: var(--text);
+}
+
+.activity li:not(:first-child) {
+  color: var(--text-muted);
+}
+
+.activity .when {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--text-dim);
+  font: 11px var(--font-mono);
+}
+
+.error {
+  margin-top: 8px;
+  color: var(--red);
+}

@@ -9,6 +9,7 @@ import type { WorktreeChannel } from '../../worktreeChannel'
 import type { GroveTool } from '../harness'
 import type { AgentRoster } from '../roster'
 import { chatTools } from './chatTools'
+import { conflictTool, type ConflictProposalSink } from './conflictTools'
 import { fileTools } from './fileTools'
 import { lspTool, renameTool, type AgentLanguages } from './lspTools'
 import { searchTools } from './searchTools'
@@ -31,6 +32,8 @@ export interface GroveToolOptions {
   screen: AgentScreen
   /** The repository's worktrees, to list, create and spawn agents into. */
   worktrees: AgentWorktrees
+  /** Where proposed merge-conflict resolutions wait for the user. */
+  conflicts: ConflictProposalSink
   now?: () => number
 }
 
@@ -44,7 +47,8 @@ export function groveTools(options: GroveToolOptions): GroveTool[] {
     runtimesTool(options.roster),
     spawnTool(options.roster, options.worktrees),
     ...transcriptTools(options.roster),
-    ...worktreeTools(options.worktrees)
+    ...worktreeTools(options.worktrees),
+    conflictTool(options.conflicts)
   ]
 }
 

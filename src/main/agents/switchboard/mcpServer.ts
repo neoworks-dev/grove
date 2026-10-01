@@ -25,7 +25,13 @@ import {
   type CallToolResult
 } from '@modelcontextprotocol/sdk/types.js'
 import type { McpServer, ToolCallUpdate } from '@neoworks/harness'
-import type { ApprovalDecision, ApprovalRequest, GroveTool, GroveToolContext } from '../harness'
+import type {
+  ApprovalDecision,
+  ApprovalRequest,
+  GroveTool,
+  GroveToolContext,
+  GroveToolResult
+} from '../harness'
 
 /** The name grove's tools are published under; harnesses prefix it onto each tool. */
 export const GROVE_SERVER = 'grove'
@@ -208,10 +214,20 @@ async function callTool(
 
   try {
     const result = await tool.execute(runWith, context)
-    return { content: [{ type: 'text', text: result.content }], isError: result.isError === true }
+    return { content: resultContent(result), isError: result.isError === true }
   } catch (cause) {
     return errorResult((cause as Error).message)
   }
+}
+
+/** A tool's result as MCP content: its text, then any pictures. */
+export function resultContent(result: GroveToolResult): CallToolResult['content'] {
+  const content: CallToolResult['content'] = [{ type: 'text', text: result.content }]
+  if (!result.images) return content
+  for (const image of result.images) {
+    content.push({ type: 'image', data: image.data, mimeType: image.mimeType })
+  }
+  return content
 }
 
 /** Put a call to grove's approval flow, as the permission request ACP would send. */

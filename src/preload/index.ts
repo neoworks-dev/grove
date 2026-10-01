@@ -179,6 +179,17 @@ const workbench = {
     restore: (worktreeId: string, commit: string) =>
       ipcRenderer.invoke('checkpoints:restore', worktreeId, commit)
   },
+  conflicts: {
+    agentPrompt: (worktreeId: string, paths: string[] | null) =>
+      ipcRenderer.invoke('conflicts:agentPrompt', worktreeId, paths),
+    proposals: (worktreeId: string) => ipcRenderer.invoke('conflicts:proposals', worktreeId),
+    clearProposals: (worktreeId: string) =>
+      ipcRenderer.invoke('conflicts:clearProposals', worktreeId),
+    write: (worktreeId: string, resolutions: unknown) =>
+      ipcRenderer.invoke('conflicts:write', worktreeId, resolutions),
+    preview: (worktreeId: string, path: string, resolutions: unknown) =>
+      ipcRenderer.invoke('conflicts:preview', worktreeId, path, resolutions)
+  },
   chat: {
     send: (worktreeId: string, text: string) => ipcRenderer.invoke('chat:send', worktreeId, text),
     history: (worktreeId: string, since?: number) =>
@@ -229,6 +240,9 @@ const workbench = {
       ipcRenderer.invoke('agents:interruptShell', sessionId, toolUseId),
     resolveLocations: (worktreeId: string, locations: unknown[]) =>
       ipcRenderer.invoke('agents:resolveLocations', worktreeId, locations),
+    editedFiles: (sessionId: string) => ipcRenderer.invoke('agents:editedFiles', sessionId),
+    editedFileBase: (sessionId: string, path: string) =>
+      ipcRenderer.invoke('agents:editedFileBase', sessionId, path),
 
     completeShell: (sessionId: string, line: string) =>
       ipcRenderer.invoke('agents:completeShell', sessionId, line),
@@ -455,6 +469,15 @@ const workbench = {
     set: (key: string, value: unknown, scope: 'user' | 'project') =>
       ipcRenderer.invoke('settings:set', key, value, scope),
     filePath: (scope: 'user' | 'project') => ipcRenderer.invoke('settings:filePath', scope)
+  },
+  // The Browser pane's page, handed to the main process for agents to drive.
+  browser: {
+    attach: (worktreeId: string, contentsId: number) =>
+      ipcRenderer.invoke('browser:attach', worktreeId, contentsId),
+    detach: (worktreeId: string, contentsId: number) =>
+      ipcRenderer.invoke('browser:detach', worktreeId, contentsId),
+    pick: (worktreeId: string) => ipcRenderer.invoke('browser:pick', worktreeId),
+    cancelPick: (worktreeId: string) => ipcRenderer.invoke('browser:cancelPick', worktreeId)
   },
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   raiseWindow: () => ipcRenderer.invoke('window:raise'),

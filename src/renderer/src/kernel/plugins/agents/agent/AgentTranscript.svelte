@@ -132,8 +132,10 @@
 
   /** What a folded summary says a run of calls did, file names included. */
   function tallyCalls(calls: ToolItem[]): ToolTally[] {
-    return tallyOf(calls, (call) =>
-      fileOfCall(displayOf(call), call.editedInput ?? call.input, root)
+    return tallyOf(
+      calls,
+      (call) => fileOfCall(displayOf(call), call.editedInput ?? call.input, root),
+      (call) => displayOf(call)?.title || call.name
     )
   }
 

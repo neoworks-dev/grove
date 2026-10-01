@@ -6,6 +6,7 @@ import { worktreesRoutes } from './worktrees'
 import { gitRoutes } from './git'
 import { githubRoutes } from './github'
 import { checkpointsRoutes } from './checkpoints'
+import { conflictsRoutes } from './conflicts'
 import { configRoutes } from './config'
 import { servicesRoutes } from './services'
 import { reviewRoutes } from './review'
@@ -17,6 +18,7 @@ import { terminalsRoutes } from './terminals'
 import { nvimRoutes } from './nvim'
 import { stateRoutes } from './state'
 import { agentRoutes } from './agents'
+import { browserRoutes } from './browser'
 import { pluginsRoutes } from './plugins'
 import { actionsRoutes } from './actions'
 import { endpointRoutes } from './endpoints'
@@ -33,6 +35,7 @@ export const routePlugins = [
   gitRoutes,
   githubRoutes,
   checkpointsRoutes,
+  conflictsRoutes,
   configRoutes,
   servicesRoutes,
   reviewRoutes,
@@ -44,6 +47,7 @@ export const routePlugins = [
   nvimRoutes,
   stateRoutes,
   agentRoutes,
+  browserRoutes,
   pluginsRoutes,
   actionsRoutes,
   endpointRoutes,

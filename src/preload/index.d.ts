@@ -41,6 +41,8 @@ import type {
   MergePreview,
   MergeResult,
   ConflictHunk,
+  ConflictProposal,
+  ConflictResolutionLines,
   ConflictChoice,
   MergeState,
   PrCheckoutState,
@@ -98,7 +100,8 @@ import type {
   LspDiagnostic,
   TerminalSessionInfo,
   BranchPosition,
-  BranchPull
+  BranchPull,
+  BrowserPickedElement
 } from '../shared/types'
 import type {
   BlobDescriptor,
@@ -107,6 +110,7 @@ import type {
   CreateSessionOptions,
   FileMatch,
   ResolvedLocation,
+  EditedFile,
   ShellCompletion,
   HarnessCatalog,
   HarnessInfo,
@@ -354,6 +358,17 @@ export interface WorkbenchApi {
       commit: string
     ) => Promise<{ restoredTree: string; preRestore: CheckpointMeta | null }>
   }
+  conflicts: {
+    agentPrompt: (worktreeId: string, paths: string[] | null) => Promise<string>
+    proposals: (worktreeId: string) => Promise<ConflictProposal[]>
+    clearProposals: (worktreeId: string) => Promise<void>
+    write: (worktreeId: string, resolutions: ConflictResolutionLines[]) => Promise<string[]>
+    preview: (
+      worktreeId: string,
+      path: string,
+      resolutions: ConflictResolutionLines[]
+    ) => Promise<{ current: string; resolved: string }>
+  }
   chat: {
     send: (worktreeId: string, text: string) => Promise<WorktreeChatMessage>
     history: (worktreeId: string, since?: number) => Promise<WorktreeChatMessage[]>
@@ -400,6 +415,10 @@ export interface WorkbenchApi {
       worktreeId: string,
       locations: CodeLocation[]
     ) => Promise<ResolvedLocation[]>
+    /** Every file the session has edited, with the lines its edits added and removed. */
+    editedFiles: (sessionId: string) => Promise<EditedFile[]>
+    /** A file the session edited, as it would be without those edits. */
+    editedFileBase: (sessionId: string, path: string) => Promise<string>
 
     completeShell: (sessionId: string, line: string) => Promise<ShellCompletion[]>
     shellName: () => Promise<string>
@@ -650,6 +669,14 @@ export interface WorkbenchApi {
     set: (key: string, value: unknown, scope: 'user' | 'project') => Promise<SettingsSnapshotShape>
     // The scope's settings file, created if missing; null for project scope with no repo.
     filePath: (scope: 'user' | 'project') => Promise<string | null>
+  }
+  browser: {
+    /** Hands a worktree's preview page to the main process, replacing any earlier one. */
+    attach: (worktreeId: string, contentsId: number) => Promise<void>
+    detach: (worktreeId: string, contentsId: number) => Promise<void>
+    /** Lets the user point at an element; null when they pressed Escape. */
+    pick: (worktreeId: string) => Promise<BrowserPickedElement | null>
+    cancelPick: (worktreeId: string) => Promise<void>
   }
   openExternal: (url: string) => Promise<void>
   // Bring grove's window to the front, e.g. from a desktop notification.

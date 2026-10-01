@@ -17,7 +17,9 @@ import type { WorktreeWatcher } from '../watcher'
 import type { WorktreeChannel } from '../worktreeChannel'
 import type { ActionRunner } from '../actions'
 import type { AgentService } from '../agents/service'
+import type { BrowserService } from '../browser'
 import type { AgentReviewBridge } from '../agents/reviewBridge'
+import type { ConflictProposals } from '../conflictResolution'
 import type { HarnessRegistry } from '../agents/harness'
 import type { SwitchboardHost } from '../agents/switchboard/host'
 import type { PermissionBroker } from '../api/broker'
@@ -95,9 +97,11 @@ declare module '@neoworks/extension-system' {
     chat: WorktreeChannel
     actions: ActionRunner
     agents: AgentService
+    browser: BrowserService
     harnesses: HarnessRegistry
     switchboard: SwitchboardHost
     agentReview: AgentReviewBridge
+    conflictProposals: ConflictProposals
     plugins: PluginsService
     apps: AppsService
     debug: DebugService

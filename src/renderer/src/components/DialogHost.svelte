@@ -25,7 +25,7 @@
   // A clicked button takes focus and goes with the dialog; hand focus back to
   // wherever it was before the dialog opened.
   let surfaceEl = $state<HTMLDivElement>()
-  let returnFocus: ((surface: HTMLElement | undefined) => void) | null = null
+  let returnFocus: ((surface: HTMLElement | null | undefined) => void) | null = null
   $effect(() => {
     const open = active !== null
     if (open && returnFocus === null) {

@@ -93,6 +93,15 @@ function createWindow(): void {
     reapNvimSessions()
   })
 
+  // The Browser pane's <webview> shows whatever page the user or an agent opens:
+  // it gets no preload and no Node, whatever the markup asked for.
+  mainWindow.webContents.on('will-attach-webview', (_event, webPreferences) => {
+    delete webPreferences.preload
+    webPreferences.nodeIntegration = false
+    webPreferences.contextIsolation = true
+    webPreferences.sandbox = true
+  })
+
   mainWindow.webContents.setWindowOpenHandler((details) => {
     openExternally(details.url)
     return { action: 'deny' }

@@ -1,5 +1,6 @@
 // Starting other agents, and finding out what they can be run on.
 
+import type { SpawnTarget, ThinkingLevel } from '../../../shared/agents'
 import type { GroveTool } from '../harness'
 import type { AgentRoster, AgentRuntime } from '../roster'
 import { findWorktree, type AgentWorktrees } from './worktreeTools'
@@ -32,6 +33,10 @@ export function runtimesTool(roster: AgentRoster): GroveTool {
   }
 }
 
+// The efforts a spawn may ask for. Leaving it out is the runtime's own default,
+// which is what the composer's `off` means, so `off` is not offered.
+const SPAWN_EFFORTS: ThinkingLevel[] = ['low', 'medium', 'high', 'xhigh', 'max']
+
 /**
  * Starting another agent.
  *
@@ -55,6 +60,15 @@ export function spawnTool(roster: AgentRoster, worktrees: AgentWorktrees): Grove
         prompt: { type: 'string', description: 'The whole task.' },
         harness: { type: 'string', enum: roster.harnessIds() },
         model: { type: 'string', description: "Model id from list_runtimes; else the runtime's default." },
+        provider: {
+          type: 'string',
+          description: 'Provider from list_runtimes, when several serve the model.'
+        },
+        effort: {
+          type: 'string',
+          enum: SPAWN_EFFORTS,
+          description: "Reasoning effort; else the runtime's default."
+        },
         worktree: { type: 'string', description: 'Branch or path from list_worktrees, to start it there.' },
         removeWhenDone: {
           type: 'boolean',
@@ -65,7 +79,18 @@ export function spawnTool(roster: AgentRoster, worktrees: AgentWorktrees): Grove
       additionalProperties: false
     },
     policy: 'ask',
-    display: { label: '{title}', input: 'message', result: 'text' },
+    display: { title: 'Start agent', label: '{title}', input: 'message', result: 'text' },
+
+    // The approval shows, and lets the user change, what the agent will run on.
+    async describe(input, context) {
+      const spawn: SpawnTarget = await roster.spawnTarget(context.sessionId, {
+        harness: stringOrNothing(input.harness),
+        provider: stringOrNothing(input.provider),
+        model: stringOrNothing(input.model),
+        effort: effortOf(input.effort)
+      })
+      return { _meta: { grove: { spawn } } }
+    },
 
     async execute(input, context) {
       const title = String(input.title).trim()
@@ -80,6 +105,14 @@ export function spawnTool(roster: AgentRoster, worktrees: AgentWorktrees): Grove
         return { content: `Unknown harness "${harness}". Mounted: ${known}.`, isError: true }
       }
 
+      const effort = effortOf(input.effort)
+      if (input.effort !== undefined && !effort) {
+        return {
+          content: `Unknown effort ${JSON.stringify(input.effort)}. One of: ${SPAWN_EFFORTS.join(', ')}.`,
+          isError: true
+        }
+      }
+
       const model = stringOrNothing(input.model)
       const modelError = await checkModel(roster, context.sessionId, harness, model)
       if (modelError) return modelError
@@ -92,6 +125,8 @@ export function spawnTool(roster: AgentRoster, worktrees: AgentWorktrees): Grove
         title,
         harness,
         model,
+        provider: stringOrNothing(input.provider),
+        thinkingLevel: effort,
         prompt,
         parentSessionId: context.sessionId,
         removeWhenDone: input.removeWhenDone === true
@@ -167,6 +202,11 @@ async function checkModel(
     content: `${target} cannot run "${model}". It offers: ${known}.`,
     isError: true
   }
+}
+
+/** A spawn's effort, when the call asked for one grove knows. */
+function effortOf(value: unknown): ThinkingLevel | undefined {
+  return SPAWN_EFFORTS.find((level) => level === value)
 }
 
 /** One runtime, as the model reads it. */

@@ -36,6 +36,9 @@ function isWork(row: TranscriptRow, standsAlone: (call: ToolItem) => boolean): b
   if (row.kind === 'toolRun') {
     return true
   }
+  if (row.kind === 'callGroup') {
+    return row.items.every((call) => call.status === 'ok' && !standsAlone(call))
+  }
   const item = row.item
   if (item.kind === 'tool') {
     return item.status === 'ok' && !standsAlone(item)
@@ -80,7 +83,7 @@ export function foldTurn(
 export function foldedCalls(rows: TranscriptRow[]): ToolItem[] {
   const calls: ToolItem[] = []
   for (const row of rows) {
-    if (row.kind === 'toolRun') {
+    if (row.kind === 'toolRun' || row.kind === 'callGroup') {
       calls.push(...row.items)
       continue
     }

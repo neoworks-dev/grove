@@ -26,7 +26,20 @@ export interface ItemRow {
   item: TranscriptItem
 }
 
-export type TranscriptRow = ItemRow | ToolRunRow
+/**
+ * Consecutive calls to one tool that read as a single block of work — a run of browser
+ * commands driving one page — kept together whatever their status, so the block can show
+ * them as the one thing they did.
+ */
+export interface CallGroupRow {
+  kind: 'callGroup'
+  key: string
+  /** What the caller named the group: the tool its calls share. */
+  group: string
+  items: ToolItem[]
+}
+
+export type TranscriptRow = ItemRow | ToolRunRow | CallGroupRow
 
 /** One tool name and how many times the run called it. */
 export interface ToolTally {
@@ -49,14 +62,19 @@ function isFoldable(
 
 /**
  * The render list: every item in order, with runs of settled tool calls replaced by one row.
- * `standsAlone` names the calls that keep a row of their own and break a run.
+ * `standsAlone` names the calls that keep a row of their own and break a run. `groupOf` names
+ * the group a call belongs to, or null; two or more consecutive calls of one group become a
+ * single group row, and a lone one is treated like any other call.
  */
 export function toTranscriptRows(
   items: TranscriptItem[],
-  standsAlone: (call: ToolItem) => boolean = () => false
+  standsAlone: (call: ToolItem) => boolean = () => false,
+  groupOf: (call: ToolItem) => string | null = () => null
 ): TranscriptRow[] {
   const rows: TranscriptRow[] = []
   let run: ToolItem[] = []
+  let group: ToolItem[] = []
+  let groupName = ''
 
   const flush = (): void => {
     if (run.length === 0) return
@@ -70,16 +88,56 @@ export function toTranscriptRows(
     run = []
   }
 
-  for (const item of items) {
+  const place = (item: TranscriptItem): void => {
     if (isFoldable(item, standsAlone)) {
       run.push(item)
-      continue
+      return
     }
     flush()
     rows.push({ kind: 'item', key: item.eventId, item })
   }
+
+  // A group of one is just a call, so it only becomes a row once a second call joins it.
+  const closeGroup = (): void => {
+    if (group.length >= MIN_RUN) {
+      flush()
+      rows.push({ kind: 'callGroup', key: `group:${group[0].eventId}`, group: groupName, items: group })
+    } else {
+      group.forEach(place)
+    }
+    group = []
+  }
+
+  for (const item of items) {
+    const name = groupNameOf(item, groupOf)
+    if (name !== null && group.length > 0 && name !== groupName) {
+      closeGroup()
+    }
+    if (name !== null) {
+      groupName = name
+      group.push(item as ToolItem)
+      continue
+    }
+    closeGroup()
+    place(item)
+  }
+  closeGroup()
   flush()
   return rows
+}
+
+/**
+ * The group a transcript item joins, or null. A call still waiting on the user's approval
+ * joins none: it is the reason to read the transcript, so it keeps a row of its own.
+ */
+function groupNameOf(
+  item: TranscriptItem,
+  groupOf: (call: ToolItem) => string | null
+): string | null {
+  if (item.kind !== 'tool' || item.status === 'pending') {
+    return null
+  }
+  return groupOf(item)
 }
 
 /**

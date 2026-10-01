@@ -124,3 +124,32 @@ describe('foldTurn', () => {
     expect(fold.kept).toEqual(rows)
   })
 })
+
+describe('a group of calls in a finished turn', () => {
+  const browserGroup = (call: ToolItem): string | null => (call.name === 'browser' ? 'browser' : null)
+  const hasImages = (call: ToolItem): boolean => call.images.length > 0
+
+  test('folds away when every call went well', () => {
+    const rows = toTranscriptRows(
+      [toolCall('browser'), toolCall('browser'), agentMessage('it works')],
+      hasImages,
+      browserGroup
+    )
+    const fold = foldTurn(rows, hasImages)
+    expect(fold.kept.map((row) => row.kind)).toEqual(['item'])
+    expect(foldedCalls(fold.hidden)).toHaveLength(2)
+  })
+
+  test('stays on screen when a call failed or returned a picture', () => {
+    const screenshot = toolCall('browser') as ToolItem
+    screenshot.images = [{ ref: 'r1', mimeType: 'image/png' }] as ToolItem['images']
+    const failed = toTranscriptRows(
+      [toolCall('browser'), toolCall('browser', 'error'), agentMessage('broken')],
+      hasImages,
+      browserGroup
+    )
+    const pictured = toTranscriptRows([toolCall('browser'), screenshot, agentMessage('looks right')], hasImages, browserGroup)
+    expect(foldTurn(failed, hasImages).kept.map((row) => row.kind)).toEqual(['callGroup', 'item'])
+    expect(foldTurn(pictured, hasImages).kept.map((row) => row.kind)).toEqual(['callGroup', 'item'])
+  })
+})

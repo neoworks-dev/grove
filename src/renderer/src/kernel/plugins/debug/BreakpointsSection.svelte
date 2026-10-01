@@ -209,6 +209,7 @@
         <BreakpointForm
           initial={breakpoint}
           autofocus
+          stacked
           onsave={(options) => saveOptions(breakpoint, options)}
           oncancel={() => (editingId = null)}
         />

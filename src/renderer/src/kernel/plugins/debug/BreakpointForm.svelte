@@ -12,6 +12,7 @@
     initial,
     autofocus = false,
     removable = false,
+    stacked = false,
     onsave,
     oncancel,
     onremove
@@ -21,6 +22,8 @@
     autofocus?: boolean
     /** Offer to remove the breakpoint, when there is one to remove. */
     removable?: boolean
+    /** Labels above the fields rather than beside them, for a narrow sidebar. */
+    stacked?: boolean
     onsave: (options: DebugBreakpointOptions) => void
     oncancel: () => void
     onremove?: () => void
@@ -65,8 +68,8 @@
 </script>
 
 <div class="flex flex-col gap-1 text-2xs">
-  <label class="flex items-center gap-2">
-    <span class="w-16 shrink-0 text-dim">Condition</span>
+  <label class="flex gap-x-2 gap-y-0.5" class:flex-col={stacked} class:items-center={!stacked}>
+    <span class="w-20 shrink-0 whitespace-nowrap text-dim">Condition</span>
     <input
       bind:this={firstField}
       bind:value={condition}
@@ -76,8 +79,8 @@
       spellcheck="false"
     />
   </label>
-  <label class="flex items-center gap-2">
-    <span class="w-16 shrink-0 text-dim">Hit count</span>
+  <label class="flex gap-x-2 gap-y-0.5" class:flex-col={stacked} class:items-center={!stacked}>
+    <span class="w-20 shrink-0 whitespace-nowrap text-dim">Hit count</span>
     <input
       bind:value={hitCondition}
       {onkeydown}
@@ -86,13 +89,13 @@
       spellcheck="false"
     />
   </label>
-  <label class="flex items-center gap-2">
-    <span class="w-16 shrink-0 text-dim">Log message</span>
+  <label class="flex gap-x-2 gap-y-0.5" class:flex-col={stacked} class:items-center={!stacked}>
+    <span class="w-20 shrink-0 whitespace-nowrap text-dim">Log message</span>
     <input
       bind:value={logMessage}
       {onkeydown}
       class="min-w-0 flex-1 rounded border border-line bg-input px-1.5 py-0.5 font-mono text-default outline-none focus:border-line-strong"
-      placeholder="Log instead of stopping; {'{expression}'} is evaluated"
+      placeholder="Log instead of stopping: x is {'{x}'}"
       spellcheck="false"
     />
   </label>

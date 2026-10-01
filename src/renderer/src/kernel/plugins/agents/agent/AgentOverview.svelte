@@ -7,8 +7,7 @@
   // running, waiting on permission, unread, errored.
   //
   // Choosing a session is a jump: it selects that worktree and makes the session
-  // the pane's active one. The sidebar's AgentsOverview shows the same fleet, but
-  // it navigates the whole workbench; this one only moves the pane it lives in.
+  // the pane's active one.
 
   import Icon from '@iconify/svelte'
   import { onMount } from 'svelte'

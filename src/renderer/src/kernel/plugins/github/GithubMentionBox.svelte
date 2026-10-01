@@ -30,7 +30,10 @@
     placeholder = '',
     rows = 4,
     disabled = false,
-    onsubmit
+    onsubmit,
+    onfocus,
+    onblur,
+    chrome = true
   }: {
     value?: string
     placeholder?: string
@@ -74,6 +77,16 @@
       target.setSelectionRange(result.selectionStart, result.selectionEnd)
     })
   }
+
+  /**
+   * Stops a toolbar press from taking focus off the textarea. A caller that
+   * collapses the box on blur would otherwise fold the toolbar away between
+   * mousedown and click, and the button would never fire.
+   */
+  function keepFocus(event: MouseEvent): void {
+    event.preventDefault()
+  }
+
   let mention = $state<MentionQuery | null>(null)
   let highlighted = $state(0)
 
@@ -188,6 +201,7 @@
             title={tool.label}
             aria-label={tool.label}
             {disabled}
+            onmousedown={keepFocus}
             onclick={() => format(tool.edit)}
           >
             {#if tool.edit === 'heading'}

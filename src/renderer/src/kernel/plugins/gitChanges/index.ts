@@ -7,7 +7,7 @@ import type { Context } from '@neoworks/extension-system'
 import GitChangesView from './GitChangesView.svelte'
 import { repoOpen } from '../guards'
 import { settings } from '../../../lib/settings.svelte'
-import { LAYOUT_SETTING } from './changeTree'
+import { LAYOUT_SETTING, SHARE_PROMPT_BLAME_SETTING } from './changeTree'
 
 export const gitChanges = {
   name: 'core/git-changes',
@@ -31,6 +31,15 @@ export const gitChanges = {
                 { value: 'tree', label: 'Tree' },
                 { value: 'list', label: 'List' }
               ]
+            },
+            {
+              key: SHARE_PROMPT_BLAME_SETTING,
+              type: 'boolean',
+              default: false,
+              title: 'Share Prompt Blame',
+              description:
+                'Attach the prompt behind agent-written lines to commits as git notes, push them with the branch and fetch teammates\' notes on fetch. The prompts become readable by anyone with access to the remote.',
+              category: 'Git'
             }
           ]
         }),

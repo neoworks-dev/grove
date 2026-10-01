@@ -6,7 +6,7 @@
 // they add.
 
 import type { WorktreeChannel } from '../../worktreeChannel'
-import type { GroveTool } from '../harness'
+import type { GroveSkill, GroveTool } from '../harness'
 import type { AgentRoster } from '../roster'
 import { chatTools } from './chatTools'
 import { conflictTool, type ConflictProposalSink } from './conflictTools'
@@ -19,6 +19,7 @@ import { noteTools, type AgentNotes } from './noteTools'
 import { requestReviewTool } from './reviewTools'
 import { showTools, type AgentScreen } from './showTools'
 import { runtimesTool, spawnTool } from './spawnTools'
+import { callTool, toolSearchTool } from './toolSearchTools'
 import { transcriptTools } from './transcriptTools'
 import { worktreeTools, type AgentWorktrees } from './worktreeTools'
 
@@ -34,12 +35,15 @@ export interface GroveToolOptions {
   worktrees: AgentWorktrees
   /** Where proposed merge-conflict resolutions wait for the user. */
   conflicts: ConflictProposalSink
+  /** The skills plugins registered, which `tool_search` reads out on demand. */
+  skills: () => GroveSkill[]
   now?: () => number
 }
 
 /** Every tool grove contributes, in the order they are offered to a harness. */
 export function groveTools(options: GroveToolOptions): GroveTool[] {
   return [
+    toolSearchTool(options.skills),
     requestReviewTool(),
     ...showTools(options.screen),
     ...noteTools(options.notes),
@@ -60,8 +64,9 @@ export interface WorkspaceToolOptions {
 
 /**
  * The tools grove mode works with in place of a harness's own: reading and
- * editing files, finding them, asking the language server, running commands.
- * Made per session, since the edit tool remembers what it was last asked.
+ * editing files, finding them, asking the language server, running commands,
+ * and calling whatever tool is listed by name only. Made per session, since
+ * the edit tool remembers what it was last asked.
  */
 export function workspaceTools(options: WorkspaceToolOptions): GroveTool[] {
   return [
@@ -69,6 +74,7 @@ export function workspaceTools(options: WorkspaceToolOptions): GroveTool[] {
     ...searchTools(),
     lspTool(options.languages, options.files, options.worktrees),
     renameTool(options.languages, options.files, options.worktrees),
-    shellTool()
+    shellTool(),
+    callTool()
   ]
 }

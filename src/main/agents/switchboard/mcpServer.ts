@@ -32,6 +32,7 @@ import type {
   GroveToolContext,
   GroveToolResult
 } from '../harness'
+import { CALL_TOOL, dispatchedCall } from '../tools/toolSearchTools'
 
 /** The name grove's tools are published under; harnesses prefix it onto each tool. */
 export const GROVE_SERVER = 'grove'
@@ -54,7 +55,10 @@ export function groveToolName(name: string): string | null {
 export interface ToolBinding {
   /** The harness's id for the session, which a permission request names. */
   harnessSessionId(): string
+  /** Every tool the session can call. */
   tools(): GroveTool[]
+  /** The tools whose schemas the harness is given; the rest are reached through `call_tool`. */
+  listed(): GroveTool[]
   context: GroveToolContext
   /** Park a call on grove's approval flow. */
   confirm(request: ApprovalRequest): Promise<ApprovalDecision>
@@ -164,7 +168,7 @@ function protocolServer(binding: ToolBinding): ProtocolServer {
 
   server.setRequestHandler(ListToolsRequestSchema, () => ({
     tools: binding
-      .tools()
+      .listed()
       .filter((tool) => tool.policy !== 'deny')
       .map((tool) => ({
         name: tool.name,
@@ -175,10 +179,19 @@ function protocolServer(binding: ToolBinding): ProtocolServer {
   }))
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const tool = binding.tools().find((candidate) => candidate.name === request.params.name)
-    if (!tool || tool.policy === 'deny') return errorResult(`No tool named ${request.params.name}.`)
+    let name = request.params.name
     let input: Record<string, unknown> = {}
     if (request.params.arguments) input = request.params.arguments
+    // A call through `call_tool` is the call it names, approval and all.
+    if (name === CALL_TOOL) {
+      const called = dispatchedCall(input)
+      if (!called) return errorResult(`${CALL_TOOL} needs the name of a tool to call.`)
+      if (called.name === CALL_TOOL) return errorResult(`${CALL_TOOL} cannot call itself.`)
+      name = called.name
+      input = called.input
+    }
+    const tool = binding.tools().find((candidate) => candidate.name === name)
+    if (!tool || tool.policy === 'deny') return errorResult(`No tool named ${name}.`)
     return callTool(binding, tool, input)
   })
 

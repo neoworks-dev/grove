@@ -21,6 +21,7 @@ export function searchTools(): GroveTool[] {
 function findTool(): GroveTool {
   return {
     name: 'find',
+    alwaysLoad: true,
     summary: 'Find files',
     description: `Find files by glob, e.g. "**/*.test.ts" or "src/**/store*". Respects .gitignore. Lists at most ${MAX_FILES} paths.`,
     inputSchema: {
@@ -50,6 +51,7 @@ function findTool(): GroveTool {
 function grepTool(): GroveTool {
   return {
     name: 'grep',
+    alwaysLoad: true,
     summary: 'Search file contents',
     description: `Search file contents with a regular expression (ripgrep syntax). Respects .gitignore. Shows at most ${MAX_MATCHES} matching lines, grouped by file, as LINE:text.`,
     inputSchema: {

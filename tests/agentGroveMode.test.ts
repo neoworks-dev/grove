@@ -13,6 +13,7 @@ import type { ToolBinding } from '../src/main/agents/switchboard/mcpServer'
 /** A tool standing in for the workspace tools grove mode serves. */
 const WORKSPACE_TOOL = {
   name: 'read',
+  alwaysLoad: true,
   summary: 'Read a file',
   description: 'Read a file, in full.',
   promptGuidelines: ['Read only what you need'],

@@ -37,6 +37,7 @@ import type {
   SubagentIdentity
 } from '../harness'
 import { toolNameOf } from '../acpLog'
+import { CALL_TOOL, dispatchedCall } from '../tools/toolSearchTools'
 import { groveToolName, type BoundServer, type ToolBinding } from './mcpServer'
 import type { SwitchboardHost } from './host'
 import { TerminalRelay } from './terminalRelay'
@@ -51,6 +52,12 @@ export interface RunProfile {
    * they run are the ones that change something, and plan mode refuses them.
    */
   tools?(options: HarnessRunOptions): GroveTool[]
+  /**
+   * Whether a tool's schema is given to the harness up front. One that is not
+   * stays callable through `call_tool` once `tool_search` has loaded it. Every
+   * tool is listed when the profile does not say.
+   */
+  listsUpFront?(tool: GroveTool): boolean
   /** Variables the harness is started with, for a model reached through another provider. */
   environment?(options: HarnessRunOptions): Promise<Record<string, string> | undefined>
 }
@@ -74,6 +81,8 @@ export class SwitchboardRun implements HarnessRun {
   private calls = new Map<string, TrackedCall>()
   /** What grove's own tools added to their calls, kept through the harness's later reports. */
   private reported = new Map<string, ToolCallContent[]>()
+  /** Calls made through `call_tool`: the harness's name for it, and the tool it named once known. */
+  private dispatched = new Map<string, { dispatcher: string; inner: string | null }>()
   private usage: Usage
   private cost: number
   private contextUsed = 0
@@ -201,10 +210,15 @@ export class SwitchboardRun implements HarnessRun {
     let profileTools: GroveTool[] = []
     if (this.profile.tools) profileTools = this.profile.tools(this.options)
     const tools = [...this.options.tools, ...profileTools]
+    const listsUpFront = this.profile.listsUpFront
+    let listed = tools
+    if (listsUpFront) listed = tools.filter((tool) => listsUpFront(tool))
     return {
       harnessSessionId: () => this.session?.id ?? '',
       tools: () => tools,
+      listed: () => listed,
       context: {
+        tools: () => tools,
         sessionId: this.options.sessionId,
         workspaceRoot: this.options.workspaceRoot,
         surface: (surfaceId, slot, view) =>
@@ -287,8 +301,9 @@ export class SwitchboardRun implements HarnessRun {
     if (update.sessionUpdate === 'usage_update') return
     let logged: SessionUpdate | null = update
     if (update.sessionUpdate === 'tool_call' || update.sessionUpdate === 'tool_call_update') {
-      this.track(update)
-      logged = this.terminals.relay(update)
+      const unwrapped = this.unwrapped(update)
+      this.track(unwrapped)
+      logged = this.terminals.relay(unwrapped)
     }
     if (!logged) return
     const stored = this.withReportedContent(this.withStoredImages(logged))
@@ -298,6 +313,35 @@ export class SwitchboardRun implements HarnessRun {
       return
     }
     this.options.emit({ type: 'update', update: stored })
+  }
+
+  /**
+   * A call made through `call_tool` as a call to the tool it named, so the
+   * transcript, approvals and display settings see that tool. Any other call
+   * as it came.
+   */
+  private unwrapped<Update extends ToolCallUpdate>(update: Update): Update {
+    const name = toolNameOf(update)
+    if (name && groveToolName(name) === CALL_TOOL) {
+      if (!this.dispatched.has(update.toolCallId)) {
+        this.dispatched.set(update.toolCallId, { dispatcher: name, inner: null })
+      }
+    }
+    const dispatch = this.dispatched.get(update.toolCallId)
+    if (!dispatch) return update
+
+    const unwrapped: Update = { ...update }
+    const called = dispatchedCall(update.rawInput)
+    if (update.rawInput !== undefined && called) {
+      dispatch.inner = called.name
+      unwrapped.rawInput = called.input
+    }
+    if (!dispatch.inner) return unwrapped
+    const innerName = dispatch.dispatcher.slice(0, -CALL_TOOL.length) + dispatch.inner
+    unwrapped.name = innerName
+    if (update.title) unwrapped.title = dispatch.inner
+    if (update._meta) unwrapped._meta = withToolName(update._meta, innerName)
+    return unwrapped
   }
 
   /** Remember what a call is and was asked to do, for approvals and subagent lanes. */
@@ -460,6 +504,13 @@ export class SwitchboardRun implements HarnessRun {
 }
 
 /** A prompt as ACP content: the text, then any images. */
+/** A call's harness metadata naming another tool, for Claude Code's own record of the name. */
+function withToolName(meta: Record<string, unknown>, toolName: string): Record<string, unknown> {
+  const claudeCode = meta.claudeCode
+  if (!claudeCode || typeof claudeCode !== 'object') return meta
+  return { ...meta, claudeCode: { ...(claudeCode as Record<string, unknown>), toolName } }
+}
+
 function promptContent(text: string, attachments: PromptAttachment[]): ContentBlock[] {
   const content: ContentBlock[] = [{ type: 'text', text }]
   for (const attachment of attachments) {

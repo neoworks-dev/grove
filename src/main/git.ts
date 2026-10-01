@@ -98,6 +98,35 @@ export function parseWorktreePorcelain(output: string): Array<{
   })
 }
 
+/**
+ * The directories git ignores in a worktree, relative to it. Only the topmost
+ * one is listed: git collapses a directory with nothing tracked in it.
+ */
+export async function ignoredDirectories(worktreePath: string): Promise<string[]> {
+  const output = await gitFor(worktreePath).raw([
+    'ls-files',
+    '--others',
+    '--ignored',
+    '--exclude-standard',
+    '--directory',
+    '-z'
+  ])
+  return output
+    .split('\0')
+    .filter((path) => path.endsWith('/'))
+    .map((path) => path.slice(0, -1))
+}
+
+/**
+ * Whether git ignores a path in a worktree. Read from the output, not the exit
+ * code: `check-ignore` exits 1 for "not ignored" without writing to stderr,
+ * which simple-git does not reject on.
+ */
+export async function isIgnoredByGit(worktreePath: string, relativePath: string): Promise<boolean> {
+  const output = await gitFor(worktreePath).raw(['check-ignore', '--', relativePath])
+  return output.trim().length > 0
+}
+
 export async function isDirty(worktreePath: string): Promise<boolean> {
   const out = await gitFor(worktreePath).raw(['status', '--porcelain'])
   return out.trim().length > 0

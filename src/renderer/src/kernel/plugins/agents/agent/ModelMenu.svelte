@@ -31,6 +31,8 @@
     model,
     switchCostWarning,
     boundary,
+    below = false,
+    acceptsTypedId = true,
     onPick,
     onRequestKey,
     onAddEndpoint
@@ -43,6 +45,13 @@
     switchCostWarning: string
     /** The element the menu stays inside, when it would open past its right edge. */
     boundary?: HTMLElement
+    /** Open under the control instead of above it, when there is no room above. */
+    below?: boolean
+    /**
+     * Whether an id typed into the search can be run as is. Off where the pick
+     * is stored as a setting that only keeps models the harness lists.
+     */
+    acceptsTypedId?: boolean
     onPick: (provider: string, model: string) => void
     /** Ask for the key a route needs before it can be taken. */
     onRequestKey: (request: { provider: string; variables: string[] }) => void
@@ -79,10 +88,15 @@
   /** What was typed, when it names no model grove knows — run it anyway. */
   const typedId = $derived.by(() => {
     const trimmed = query.trim()
-    if (trimmed.length === 0) return ''
+    if (!acceptsTypedId || trimmed.length === 0) return ''
     const known = models.some((entry) => entry.routes.some((route) => route.id === trimmed))
     if (known) return ''
     return trimmed
+  })
+
+  const searchPlaceholder = $derived.by(() => {
+    if (acceptsTypedId) return 'search models, or type an id'
+    return 'search models'
   })
 
   function isActive(route: ModelRoute): boolean {
@@ -231,7 +245,11 @@
 {/snippet}
 
 <div
-  class="absolute bottom-full left-0 z-30 mb-1 flex w-80 flex-col rounded-md border border-line bg-elevated shadow-lg"
+  class="absolute left-0 z-30 flex w-80 flex-col rounded-md border border-line bg-elevated shadow-lg"
+  class:bottom-full={!below}
+  class:mb-1={!below}
+  class:top-full={below}
+  class:mt-1={below}
   bind:this={root}
   use:keepInside={boundary}
   onmouseleave={() => (flyout = null)}
@@ -249,7 +267,7 @@
   <div class="border-b border-line p-1">
     <input
       class="w-full rounded border border-line bg-surface px-1.5 py-1 text-2xs text-default"
-      placeholder="search models, or type an id"
+      placeholder={searchPlaceholder}
       bind:value={query}
       onkeydown={(event) => {
         if (event.key !== 'Enter') return

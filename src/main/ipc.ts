@@ -5,6 +5,7 @@
 import { app, dialog, BrowserWindow } from 'electron'
 import { dirname, join } from 'path'
 import { mkdirSync } from 'fs'
+import { homedir } from 'os'
 import { profileHash, profileSocketPath } from './socketPath'
 import type { Context } from '@neoworks/extension-system'
 import { mainContext } from './kernel/context'
@@ -74,6 +75,7 @@ import { browserTools } from './agents/tools/browserTools'
 import { BrowserService } from './browser'
 import { BrowserProviderService } from './browserProviders'
 import { providerOrPane } from './agents/tools/browserBackends'
+import { BrowserHostInstaller } from './browserHostInstaller'
 
 interface RepoContext {
   repoPath: string | null
@@ -183,6 +185,44 @@ const browser = new BrowserService({
 // Tabs browser providers (Kit, the Chrome extension) hand over through the API
 // socket; the tool prefers them to the pane.
 const browserProviders = new BrowserProviderService()
+// "Connect Chrome": the extension's native-messaging host, installed per browser
+// only when the user asks.
+const browserHostInstaller = new BrowserHostInstaller({
+  platform: process.platform,
+  home: homedir(),
+  configHome: configHome(),
+  userData: app.getPath('userData'),
+  electronBinary: nodeRunnableBinary(),
+  hostScript: shippedResource(join('browser-host', 'host.cjs'), join('browser-host', 'dist', 'host.cjs')),
+  extensionSource: shippedResource('chrome-extension', 'chrome-extension')
+})
+void browserHostInstaller.refresh().catch((error: Error) => {
+  console.warn(`[browser-host] could not refresh the installed host: ${error.message}`)
+})
+
+/** Linux's per-user config root, where Chromium-family browsers keep theirs. */
+function configHome(): string {
+  const fromEnvironment = process.env.XDG_CONFIG_HOME
+  if (fromEnvironment) return fromEnvironment
+  return join(homedir(), '.config')
+}
+
+/**
+ * The executable that runs a script as Node under ELECTRON_RUN_AS_NODE. An
+ * AppImage's own binary sits on a mount that changes every launch, so it is
+ * the AppImage file instead.
+ */
+function nodeRunnableBinary(): string {
+  const appImage = process.env.APPIMAGE
+  if (appImage) return appImage
+  return process.execPath
+}
+
+/** A file that ships beside the app: under resources/ packaged, in the repo's resources/ in dev. */
+function shippedResource(packagedPath: string, developmentPath: string): string {
+  if (app.isPackaged) return join(process.resourcesPath, packagedPath)
+  return join(app.getAppPath(), 'resources', developmentPath)
+}
 
 const agents = new AgentService({
   store: sessionStore,
@@ -792,6 +832,7 @@ const mainServices = {
     ctx.provide('switchboard', switchboard)
     ctx.provide('agents', agents)
     ctx.provide('browser', browser)
+    ctx.provide('browserHost', browserHostInstaller)
     ctx.provide('agentReview', agentReviewBridge)
     ctx.provide('editSteps', editSteps)
     ctx.provide('promptBlame', promptBlame)

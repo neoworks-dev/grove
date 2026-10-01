@@ -7,6 +7,7 @@ import type {
   Command,
   InlayHint
 } from 'vscode-languageserver-types'
+import type { BrowserConnectorStatus, ChromiumBrowserId } from '../shared/browserHost'
 import type {
   DebugAdapterInfo,
   DebugBreakpoint,
@@ -693,6 +694,15 @@ export interface WorkbenchApi {
     /** Lets the user point at an element; null when they pressed Escape. */
     pick: (worktreeId: string) => Promise<BrowserPickedElement | null>
     cancelPick: (worktreeId: string) => Promise<void>
+  }
+  browserHost: {
+    status: () => Promise<BrowserConnectorStatus>
+    /** Writes the host manifest for one browser, copying the host and extension first. */
+    install: (browser: ChromiumBrowserId) => Promise<BrowserConnectorStatus>
+    /** Deletes the host manifest for one browser. */
+    remove: (browser: ChromiumBrowserId) => Promise<BrowserConnectorStatus>
+    /** Opens the unpacked extension's folder in the file manager. */
+    revealExtension: () => Promise<void>
   }
   openExternal: (url: string) => Promise<void>
   // Bring grove's window to the front, e.g. from a desktop notification.

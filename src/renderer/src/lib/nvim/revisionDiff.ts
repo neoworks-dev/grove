@@ -143,7 +143,7 @@ async function contentAt(
 }
 
 /** A file's lines, without the empty one a final newline would add. */
-function linesOf(content: string): string[] {
+export function linesOf(content: string): string[] {
   const lines = content.split('\n')
   if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop()
   return lines
@@ -206,6 +206,36 @@ export async function openRevisionDiff(request: RevisionDiffRequest): Promise<vo
   })
 }
 
+/**
+ * Two texts of one file side by side, neither of them a revision: what is on
+ * disk beside what grove would write, say.
+ */
+export async function openTextDiff(request: {
+  path: string
+  left: string
+  right: string
+  leftLabel: string
+  rightLabel: string
+}): Promise<void> {
+  const tabPath = await openScratch({
+    title: `${baseName(request.path)} @ ${request.rightLabel}`,
+    tabName: baseName(request.path),
+    diff: { left: request.leftLabel, right: request.rightLabel },
+    lines: linesOf(request.right),
+    readonly: true,
+    onWrite: () => {}
+  })
+  if (!tabPath) return
+
+  const session = await waitForNvimSession()
+  if (!session || !session.id) return
+  await showRestorableDiff(session.id, tabPath, {
+    name: `${request.path} @ ${request.leftLabel}`,
+    path: request.path,
+    lines: linesOf(request.left)
+  })
+}
+
 /** How long to wait for the editor to finish opening the working-tree file. */
 const OPEN_TIMEOUT_MS = 4000
 
@@ -238,7 +268,31 @@ export async function openWorkingTreeDiff(request: {
   if (request.oldPath) leftPath = request.oldPath
   const left = await readRevision(request.worktreeId, request.revision, leftPath)
   if (!left) return
+  await openWorkingTreeAgainst({
+    worktreeId: request.worktreeId,
+    worktreePath: request.worktreePath,
+    path: request.path,
+    leftPath,
+    leftLines: left,
+    label: request.label
+  })
+}
 
+/**
+ * Opens a working-tree file beside lines that are not a revision of it — what
+ * it was before an agent session edited it, say. `label` names that side.
+ */
+export async function openWorkingTreeAgainst(request: {
+  worktreeId: string
+  worktreePath: string
+  path: string
+  /** The path the left side's buffer is named after, when it differs. */
+  leftPath?: string
+  leftLines: string[]
+  label: string
+}): Promise<void> {
+  let leftPath = request.path
+  if (request.leftPath) leftPath = request.leftPath
   const absolutePath = `${request.worktreePath}/${request.path}`
   openFileInEditor(request.worktreeId, absolutePath)
   store.setTabDiff(request.worktreeId, absolutePath, {
@@ -251,7 +305,7 @@ export async function openWorkingTreeDiff(request: {
   await showRestorableDiff(session.id, absolutePath, {
     name: `${leftPath} @ ${request.label}`,
     path: request.path,
-    lines: left
+    lines: request.leftLines
   })
 }
 

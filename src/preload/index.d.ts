@@ -8,6 +8,19 @@ import type {
   InlayHint
 } from 'vscode-languageserver-types'
 import type {
+  DebugAdapterInfo,
+  DebugBreakpoint,
+  DebugBreakpointOptions,
+  DebugConfigurationEntry,
+  DebugEvaluation,
+  DebugOutputLine,
+  DebugScope,
+  DebugSnapshot,
+  DebugStackFrame,
+  DebugVariable,
+  MasonDebugPackage
+} from '../shared/debug'
+import type {
   Worktree,
   WorktreeSetupState,
   BranchList,
@@ -29,6 +42,8 @@ import type {
   MergePreview,
   MergeResult,
   ConflictHunk,
+  ConflictProposal,
+  ConflictResolutionLines,
   ConflictChoice,
   MergeState,
   PrCheckoutState,
@@ -86,7 +101,8 @@ import type {
   LspDiagnostic,
   TerminalSessionInfo,
   BranchPosition,
-  BranchPull
+  BranchPull,
+  BrowserPickedElement
 } from '../shared/types'
 import type {
   BlobDescriptor,
@@ -95,6 +111,7 @@ import type {
   CreateSessionOptions,
   FileMatch,
   ResolvedLocation,
+  EditedFile,
   ShellCompletion,
   HarnessCatalog,
   HarnessInfo,
@@ -176,6 +193,13 @@ export interface CustomEndpointShape {
   baseUrl: string
   keyVariable?: string
   models?: string[]
+}
+
+/** Where a debug configuration is listed or started from. */
+interface DebugEditorContext {
+  worktreeId: string
+  activeFile?: string
+  activeLine?: number
 }
 
 export interface WorkbenchApi {
@@ -350,6 +374,17 @@ export interface WorkbenchApi {
     line: (worktreeId: string, path: string, line: number, text: string) => Promise<LineBlame>
     commitPrompts: (worktreeId: string, sha: string) => Promise<CommitPrompt[]>
   }
+  conflicts: {
+    agentPrompt: (worktreeId: string, paths: string[] | null) => Promise<string>
+    proposals: (worktreeId: string) => Promise<ConflictProposal[]>
+    clearProposals: (worktreeId: string) => Promise<void>
+    write: (worktreeId: string, resolutions: ConflictResolutionLines[]) => Promise<string[]>
+    preview: (
+      worktreeId: string,
+      path: string,
+      resolutions: ConflictResolutionLines[]
+    ) => Promise<{ current: string; resolved: string }>
+  }
   chat: {
     send: (worktreeId: string, text: string) => Promise<WorktreeChatMessage>
     history: (worktreeId: string, since?: number) => Promise<WorktreeChatMessage[]>
@@ -396,6 +431,10 @@ export interface WorkbenchApi {
       worktreeId: string,
       locations: CodeLocation[]
     ) => Promise<ResolvedLocation[]>
+    /** Every file the session has edited, with the lines its edits added and removed. */
+    editedFiles: (sessionId: string) => Promise<EditedFile[]>
+    /** A file the session edited, as it would be without those edits. */
+    editedFileBase: (sessionId: string, path: string) => Promise<string>
 
     completeShell: (sessionId: string, line: string) => Promise<ShellCompletion[]>
     shellName: () => Promise<string>
@@ -536,6 +575,52 @@ export interface WorkbenchApi {
     /** Take one over; resolves with the output printed while grove was away. */
     attach: (id: string, cols: number, rows: number) => Promise<string>
   }
+  debugger: {
+    snapshot: () => Promise<DebugSnapshot>
+    output: () => Promise<DebugOutputLine[]>
+    clearOutput: () => Promise<void>
+    /** Launch configurations for a worktree, with the editor's file for current-file ones. */
+    configurations: (editor: DebugEditorContext) => Promise<DebugConfigurationEntry[]>
+    adapters: () => Promise<DebugAdapterInfo[]>
+    masonPackages: () => Promise<MasonDebugPackage[]>
+    installAdapter: (masonPackage: string) => Promise<void>
+    /** Starts a configuration; resolves with the session's id once it runs. */
+    start: (editor: DebugEditorContext, configuration: Record<string, unknown>) => Promise<string>
+    stop: (sessionId?: string) => Promise<void>
+    restart: (sessionId?: string) => Promise<void>
+    continue: (sessionId?: string, threadId?: number) => Promise<void>
+    pause: (sessionId?: string, threadId?: number) => Promise<void>
+    stepOver: (sessionId?: string, threadId?: number) => Promise<void>
+    stepInto: (sessionId?: string, threadId?: number) => Promise<void>
+    stepOut: (sessionId?: string, threadId?: number) => Promise<void>
+    focus: (sessionId: string, threadId: number | null, frameId: number | null) => Promise<void>
+    setExceptionFilters: (sessionId: string, filters: string[]) => Promise<void>
+    stackTrace: (
+      sessionId: string,
+      threadId: number,
+      startFrame: number,
+      levels: number
+    ) => Promise<{ frames: DebugStackFrame[]; total: number | null }>
+    scopes: (sessionId?: string, frameId?: number) => Promise<DebugScope[]>
+    variables: (sessionId: string, variablesReference: number) => Promise<DebugVariable[]>
+    evaluate: (
+      expression: string,
+      context: 'repl' | 'watch' | 'hover',
+      sessionId?: string,
+      frameId?: number
+    ) => Promise<DebugEvaluation>
+    toggleBreakpoint: (path: string, line: number) => Promise<void>
+    setBreakpoint: (
+      path: string,
+      line: number,
+      options: DebugBreakpointOptions
+    ) => Promise<DebugBreakpoint>
+    removeBreakpoint: (id: string) => Promise<void>
+    removeAllBreakpoints: () => Promise<void>
+    setBreakpointEnabled: (id: string, enabled: boolean) => Promise<void>
+    addWatch: (expression: string) => Promise<void>
+    removeWatch: (expression: string) => Promise<void>
+  }
   nvim: {
     spawn: (worktreeId: string | null) => Promise<string>
     attach: (id: string, cols: number, rows: number, file?: string) => Promise<void>
@@ -600,6 +685,14 @@ export interface WorkbenchApi {
     set: (key: string, value: unknown, scope: 'user' | 'project') => Promise<SettingsSnapshotShape>
     // The scope's settings file, created if missing; null for project scope with no repo.
     filePath: (scope: 'user' | 'project') => Promise<string | null>
+  }
+  browser: {
+    /** Hands a worktree's preview page to the main process, replacing any earlier one. */
+    attach: (worktreeId: string, contentsId: number) => Promise<void>
+    detach: (worktreeId: string, contentsId: number) => Promise<void>
+    /** Lets the user point at an element; null when they pressed Escape. */
+    pick: (worktreeId: string) => Promise<BrowserPickedElement | null>
+    cancelPick: (worktreeId: string) => Promise<void>
   }
   openExternal: (url: string) => Promise<void>
   // Bring grove's window to the front, e.g. from a desktop notification.

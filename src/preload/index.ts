@@ -192,6 +192,17 @@ const workbench = {
     commitPrompts: (worktreeId: string, sha: string) =>
       ipcRenderer.invoke('blame:commitPrompts', worktreeId, sha)
   },
+  conflicts: {
+    agentPrompt: (worktreeId: string, paths: string[] | null) =>
+      ipcRenderer.invoke('conflicts:agentPrompt', worktreeId, paths),
+    proposals: (worktreeId: string) => ipcRenderer.invoke('conflicts:proposals', worktreeId),
+    clearProposals: (worktreeId: string) =>
+      ipcRenderer.invoke('conflicts:clearProposals', worktreeId),
+    write: (worktreeId: string, resolutions: unknown) =>
+      ipcRenderer.invoke('conflicts:write', worktreeId, resolutions),
+    preview: (worktreeId: string, path: string, resolutions: unknown) =>
+      ipcRenderer.invoke('conflicts:preview', worktreeId, path, resolutions)
+  },
   chat: {
     send: (worktreeId: string, text: string) => ipcRenderer.invoke('chat:send', worktreeId, text),
     history: (worktreeId: string, since?: number) =>
@@ -242,6 +253,9 @@ const workbench = {
       ipcRenderer.invoke('agents:interruptShell', sessionId, toolUseId),
     resolveLocations: (worktreeId: string, locations: unknown[]) =>
       ipcRenderer.invoke('agents:resolveLocations', worktreeId, locations),
+    editedFiles: (sessionId: string) => ipcRenderer.invoke('agents:editedFiles', sessionId),
+    editedFileBase: (sessionId: string, path: string) =>
+      ipcRenderer.invoke('agents:editedFileBase', sessionId, path),
 
     completeShell: (sessionId: string, line: string) =>
       ipcRenderer.invoke('agents:completeShell', sessionId, line),
@@ -287,6 +301,54 @@ const workbench = {
     setEnabled: (id: string, enabled: boolean) =>
       ipcRenderer.invoke('extensions:setEnabled', id, enabled),
     grammar: (id: string) => ipcRenderer.invoke('extensions:grammar', id)
+  },
+  // The debugger (src/main/debug). State arrives as event:debug-state snapshots
+  // and event:debug-output lines; these are the commands.
+  debugger: {
+    snapshot: () => ipcRenderer.invoke('debug:snapshot'),
+    output: () => ipcRenderer.invoke('debug:output'),
+    clearOutput: () => ipcRenderer.invoke('debug:clearOutput'),
+    configurations: (editor: unknown) => ipcRenderer.invoke('debug:configurations', editor),
+    adapters: () => ipcRenderer.invoke('debug:adapters'),
+    masonPackages: () => ipcRenderer.invoke('debug:masonPackages'),
+    installAdapter: (masonPackage: string) =>
+      ipcRenderer.invoke('debug:installAdapter', masonPackage),
+    start: (editor: unknown, configuration: unknown) =>
+      ipcRenderer.invoke('debug:start', editor, configuration),
+    stop: (sessionId?: string) => ipcRenderer.invoke('debug:stop', sessionId),
+    restart: (sessionId?: string) => ipcRenderer.invoke('debug:restart', sessionId),
+    continue: (sessionId?: string, threadId?: number) =>
+      ipcRenderer.invoke('debug:continue', sessionId, threadId),
+    pause: (sessionId?: string, threadId?: number) =>
+      ipcRenderer.invoke('debug:pause', sessionId, threadId),
+    stepOver: (sessionId?: string, threadId?: number) =>
+      ipcRenderer.invoke('debug:stepOver', sessionId, threadId),
+    stepInto: (sessionId?: string, threadId?: number) =>
+      ipcRenderer.invoke('debug:stepInto', sessionId, threadId),
+    stepOut: (sessionId?: string, threadId?: number) =>
+      ipcRenderer.invoke('debug:stepOut', sessionId, threadId),
+    focus: (sessionId: string, threadId: number | null, frameId: number | null) =>
+      ipcRenderer.invoke('debug:focus', sessionId, threadId, frameId),
+    setExceptionFilters: (sessionId: string, filters: string[]) =>
+      ipcRenderer.invoke('debug:setExceptionFilters', sessionId, filters),
+    stackTrace: (sessionId: string, threadId: number, startFrame: number, levels: number) =>
+      ipcRenderer.invoke('debug:stackTrace', sessionId, threadId, startFrame, levels),
+    scopes: (sessionId?: string, frameId?: number) =>
+      ipcRenderer.invoke('debug:scopes', sessionId, frameId),
+    variables: (sessionId: string, variablesReference: number) =>
+      ipcRenderer.invoke('debug:variables', sessionId, variablesReference),
+    evaluate: (expression: string, context: string, sessionId?: string, frameId?: number) =>
+      ipcRenderer.invoke('debug:evaluate', expression, context, sessionId, frameId),
+    toggleBreakpoint: (path: string, line: number) =>
+      ipcRenderer.invoke('debug:toggleBreakpoint', path, line),
+    setBreakpoint: (path: string, line: number, options: unknown) =>
+      ipcRenderer.invoke('debug:setBreakpoint', path, line, options),
+    removeBreakpoint: (id: string) => ipcRenderer.invoke('debug:removeBreakpoint', id),
+    removeAllBreakpoints: () => ipcRenderer.invoke('debug:removeAllBreakpoints'),
+    setBreakpointEnabled: (id: string, enabled: boolean) =>
+      ipcRenderer.invoke('debug:setBreakpointEnabled', id, enabled),
+    addWatch: (expression: string) => ipcRenderer.invoke('debug:addWatch', expression),
+    removeWatch: (expression: string) => ipcRenderer.invoke('debug:removeWatch', expression)
   },
   lsp: {
     ensure: (worktreeId: string, language: string, uri: string, text: string) =>
@@ -420,6 +482,15 @@ const workbench = {
     set: (key: string, value: unknown, scope: 'user' | 'project') =>
       ipcRenderer.invoke('settings:set', key, value, scope),
     filePath: (scope: 'user' | 'project') => ipcRenderer.invoke('settings:filePath', scope)
+  },
+  // The Browser pane's page, handed to the main process for agents to drive.
+  browser: {
+    attach: (worktreeId: string, contentsId: number) =>
+      ipcRenderer.invoke('browser:attach', worktreeId, contentsId),
+    detach: (worktreeId: string, contentsId: number) =>
+      ipcRenderer.invoke('browser:detach', worktreeId, contentsId),
+    pick: (worktreeId: string) => ipcRenderer.invoke('browser:pick', worktreeId),
+    cancelPick: (worktreeId: string) => ipcRenderer.invoke('browser:cancelPick', worktreeId)
   },
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   raiseWindow: () => ipcRenderer.invoke('window:raise'),

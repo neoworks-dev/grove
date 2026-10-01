@@ -30,12 +30,16 @@ const SERVICE_STUBS: Record<string, unknown> = {
   chat: {},
   actions: {},
   agents: { watch: () => () => {} },
+  browser: { watchNewPages: () => () => {}, dispose: () => {} },
   agentReview: {},
   editSteps: {},
   promptBlame: {},
+  conflictProposals: {},
   harnesses: { register: () => () => {} },
   plugins: { registry: { loadAll: async () => [] } },
-  apps: {}
+  apps: {},
+  debug: {},
+  debugAdapters: { register: () => () => {} }
 }
 
 /** Channels the renderer can invoke, read straight off the preload bridge. */

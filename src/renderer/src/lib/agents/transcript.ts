@@ -22,6 +22,7 @@ import type {
   SessionEvent,
   SessionNote,
   SessionStatus,
+  SpawnTarget,
   ToolCallUpdate,
   ToolPermission,
   UiNode,
@@ -100,6 +101,11 @@ export interface ToolItem {
   content: ToolContent[]
   /** Files the call touches, for following along in the editor. */
   locations: { path: string; line?: number | null }[]
+  /**
+   * What a spawn said it would run on before it ran, for its approval to show
+   * and let the user change. Null for any other call.
+   */
+  spawn: SpawnTarget | null
 }
 
 export interface ShellItem {
@@ -456,7 +462,8 @@ function toolFor(state: TranscriptState, event: SessionEvent, update: ToolCallUp
       rawResult: '',
       images: [],
       content: [],
-      locations: []
+      locations: [],
+      spawn: null
     })
     tool = state.items[state.items.length - 1] as ToolItem
   }
@@ -467,7 +474,18 @@ function toolFor(state: TranscriptState, event: SessionEvent, update: ToolCallUp
   if (update.rawInput !== undefined) tool.input = update.rawInput
   if (update.content) tool.content = update.content.filter((entry) => entry.type !== 'content')
   if (update.locations) tool.locations = update.locations
+  const spawn = spawnOf(update._meta)
+  if (spawn) tool.spawn = spawn
   return tool
+}
+
+/** What `spawn_agent` attached under `_meta.grove.spawn`, or null when it attached nothing. */
+function spawnOf(meta: { [key: string]: unknown } | null | undefined): SpawnTarget | null {
+  const grove = meta?.grove as { spawn?: unknown } | undefined
+  const spawn = grove?.spawn as SpawnTarget | undefined
+  if (!spawn || typeof spawn !== 'object') return null
+  if (typeof spawn.modelIsDefault !== 'boolean') return null
+  return spawn
 }
 
 // How harnesses spell a tool grove serves: Claude and Codex prefix the server,

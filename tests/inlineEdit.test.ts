@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  chooseInlineSession,
   pickAgentMode,
   relFromRoot,
   reviewShownIn,
@@ -87,5 +88,44 @@ describe('workingTreeReviewSettled', () => {
   test('an inline edit is diffed against its own snapshot, not git, so it stays', () => {
     const inline = { ...review, origin: 'inlineEdit' as const }
     expect(workingTreeReviewSettled(inline, 'wt-1', [])).toBe(false)
+  })
+})
+
+describe('chooseInlineSession', () => {
+  const TITLE = 'Inline edits'
+  const session = (id: string, harness: string, started: boolean, workspaceRoot = '/wt') => ({
+    id,
+    title: TITLE,
+    workspaceRoot,
+    harness,
+    started
+  })
+
+  test('reuses the inline session already on the picked harness', () => {
+    const sessions = [session('a', 'claude', true), session('b', 'codex', true)]
+    const chosen = chooseInlineSession(sessions, '/wt', 'codex', 'a', TITLE)
+    expect(chosen?.session.id).toBe('b')
+    expect(chosen?.switchHarness).toBe(false)
+  })
+
+  test('switches an unstarted session to the picked harness', () => {
+    const chosen = chooseInlineSession([session('a', 'claude', false)], '/wt', 'codex', 'a', TITLE)
+    expect(chosen?.session.id).toBe('a')
+    expect(chosen?.switchHarness).toBe(true)
+  })
+
+  test('needs a new session when every inline one started on another harness', () => {
+    const chosen = chooseInlineSession([session('a', 'claude', true)], '/wt', 'codex', 'a', TITLE)
+    expect(chosen).toBeNull()
+  })
+
+  test('prefers the remembered session and ignores other worktrees', () => {
+    const sessions = [
+      session('other', 'claude', true, '/elsewhere'),
+      session('a', 'claude', true),
+      session('b', 'claude', true)
+    ]
+    const chosen = chooseInlineSession(sessions, '/wt', 'claude', 'b', TITLE)
+    expect(chosen?.session.id).toBe('b')
   })
 })

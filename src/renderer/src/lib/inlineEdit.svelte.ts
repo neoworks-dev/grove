@@ -24,6 +24,7 @@ import {
   type ReviewMode
 } from './inlineEditRef'
 import { catalog } from './agents/catalog.svelte'
+import type { ModelEntry } from './agents/types'
 import {
   discoveredModelOptions,
   encodeModelSelection,
@@ -32,9 +33,11 @@ import {
   type ModelSelection
 } from './agents/modelSelection'
 import { agentSessions } from './agents/sessions.svelte'
+import { defaultSessionHarness } from './agents/newSession'
 
 const MODE_SETTING = 'workbench.inlineEditMode'
 const MODEL_SETTING = 'inlineEdit.model'
+const HARNESS_SETTING = 'inlineEdit.harness'
 const EDITOR_PANE = 'nvim'
 
 // The editor session a diff preview should land in. A proposed edit arrives
@@ -125,28 +128,51 @@ class InlineEdit {
     return next
   }
 
-  // Models are provider-discovered at runtime. Registering the resulting enum
-  // only after the harness answers keeps a newly installed provider from requiring a
-  // Grove code change, while also exposing the same choice in Preferences.
+  // Harnesses and their models are discovered at runtime. Registering the
+  // resulting enums only after the harness answers keeps a newly installed
+  // provider from requiring a Grove code change, while also exposing the same
+  // choice in Preferences.
   async loadModels(): Promise<void> {
     await catalog.load()
+    await catalog.prefetch(this.harness)
     const options = this.modelOptions
     if (options.length === 0) return
-    const fallback = resolveModelSelection('', catalog.defaults, catalog.models)
-    const signature = JSON.stringify({ options: options.map((option) => option.key), fallback })
+    const fallback = resolveModelSelection('', catalog.defaultsOf(this.harness), this.models)
+    const signature = JSON.stringify({
+      harnesses: catalog.harnesses.map((harness) => harness.id),
+      options: options.map((option) => option.key),
+      fallback
+    })
     if (signature === this.modelSchemaSignature) return
     this.modelSchemaSignature = signature
+    let modelDefault = ''
+    if (fallback) {
+      modelDefault = encodeModelSelection(fallback)
+    }
     settings.registerSchemas({
       contributorId: 'inlineEdit',
       title: 'Inline Edits',
       settings: [
         {
+          key: HARNESS_SETTING,
+          type: 'enum',
+          default: '',
+          title: 'Harness',
+          description:
+            'Agent runtime used by inline edits. Automatic follows the one new Agent pane sessions start on.',
+          category: 'Agents',
+          enumValues: [
+            { value: '', label: 'Automatic' },
+            ...catalog.harnesses.map((harness) => ({ value: harness.id, label: harness.label }))
+          ]
+        },
+        {
           key: MODEL_SETTING,
           type: 'enum',
-          default: fallback ? encodeModelSelection(fallback) : '',
+          default: modelDefault,
           title: 'Model',
           description:
-            'Provider and model used by inline edits. Agent pane sessions keep their own model.',
+            'Provider and model used by inline edits, from the inline harness. Agent pane sessions keep their own model.',
           category: 'Agents',
           enumValues: options.map((option) => ({ value: option.key, label: option.label }))
         }
@@ -154,12 +180,36 @@ class InlineEdit {
     })
   }
 
+  /** The harness inline edits run on: the one picked for them, else the Agent pane's default. */
+  get harness(): string {
+    const picked = settings.get<string>(HARNESS_SETTING)
+    if (picked) return picked
+    return defaultSessionHarness()
+  }
+
+  /** Points inline edits at another harness. Its models differ, so the model starts over at its default. */
+  setHarness(harnessId: string): void {
+    if (harnessId === this.harness) return
+    void settings.set(HARNESS_SETTING, harnessId || undefined, 'user')
+    void settings.set(MODEL_SETTING, undefined, 'user')
+    void this.loadModels()
+  }
+
+  /** The models the inline harness offers. */
+  get models(): ModelEntry[] {
+    return catalog.modelsOf(this.harness)
+  }
+
   get modelOptions(): ModelOption[] {
-    return discoveredModelOptions(catalog.models)
+    return discoveredModelOptions(this.models)
   }
 
   get modelSelection(): ModelSelection | null {
-    return resolveModelSelection(settings.get(MODEL_SETTING), catalog.defaults, catalog.models)
+    return resolveModelSelection(
+      settings.get(MODEL_SETTING),
+      catalog.defaultsOf(this.harness),
+      this.models
+    )
   }
 
   get modelKey(): string {
@@ -249,6 +299,7 @@ class InlineEdit {
     await this.loadModels()
     const sessionId = await agentSessions.ensureInlineFor(
       selection.worktreeId,
+      this.harness,
       this.modelSelection ?? undefined
     )
     if (!sessionId) {

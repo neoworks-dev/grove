@@ -103,6 +103,7 @@ export function lspTool(
 ): GroveTool {
   return {
     name: 'lsp',
+    alwaysLoad: true,
     summary: 'Ask the language server',
     promptGuidelines: ['Check lsp diagnostics on the files you changed'],
     description: [
@@ -148,6 +149,7 @@ export function renameTool(
 ): GroveTool {
   return {
     name: 'rename',
+    alwaysLoad: true,
     summary: 'Rename a symbol everywhere it is used',
     promptGuidelines: ['Rename symbols with rename, not by editing each use'],
     description: [

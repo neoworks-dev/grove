@@ -36,7 +36,7 @@
   // the effect below so it records focus before the input takes it; one
   // overlay replacing another keeps the first one's return point.
   let surfaceEl = $state<HTMLDivElement>()
-  let returnFocus: ((surface: HTMLElement | undefined) => void) | null = null
+  let returnFocus: ((surface: HTMLElement | null | undefined) => void) | null = null
   $effect(() => {
     const open = descriptor !== null
     if (open && returnFocus === null) {

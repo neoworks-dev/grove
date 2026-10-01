@@ -11,7 +11,7 @@ import { keymap } from './keymap.svelte'
  * if focus was dropped: an action that moved it on purpose — opening a file
  * into the editor — wins.
  */
-export function rememberFocus(): (surface: HTMLElement | undefined) => void {
+export function rememberFocus(): (surface: HTMLElement | null | undefined) => void {
   const previous = document.activeElement
   return (surface) => {
     // After the closing action's own effects have had their turn to move focus.
@@ -20,7 +20,7 @@ export function rememberFocus(): (surface: HTMLElement | undefined) => void {
 }
 
 /** Puts focus back on `previous`, or on the focused pane if that is gone. */
-function restoreFocus(previous: Element | null, surface: HTMLElement | undefined): void {
+function restoreFocus(previous: Element | null, surface: HTMLElement | null | undefined): void {
   if (!focusWasDropped(surface)) return
   if (previous instanceof HTMLElement && previous.isConnected) {
     previous.focus({ preventScroll: true })
@@ -33,10 +33,12 @@ function restoreFocus(previous: Element | null, surface: HTMLElement | undefined
 /**
  * Whether focus is gone, or about to be: nothing holds it, or the closing
  * surface still does — it stays in the DOM, focused, for its exit transition.
+ * A surface that `bind:this` has already cleared to null is gone, and holds
+ * nothing.
  */
-function focusWasDropped(surface: HTMLElement | undefined): boolean {
+function focusWasDropped(surface: HTMLElement | null | undefined): boolean {
   const active = document.activeElement
   if (active === null || active === document.body) return true
-  if (surface === undefined) return false
+  if (surface === undefined || surface === null) return false
   return surface.contains(active)
 }

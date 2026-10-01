@@ -16,6 +16,7 @@ export const browserRoutes = {
     )
     route(ctx, 'browser:pick', (_e, worktreeId: string) => ctx.browser.pick(worktreeId))
     route(ctx, 'browser:cancelPick', (_e, worktreeId: string) => ctx.browser.cancelPick(worktreeId))
+    ctx.effect(() => ctx.browser.watchNewPages(), 'browser:watch-pages')
     ctx.effect(() => () => ctx.browser.dispose(), 'browser:dispose')
   }
 }

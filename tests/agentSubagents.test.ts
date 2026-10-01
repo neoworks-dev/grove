@@ -35,12 +35,43 @@ interface Fixture {
   service: AgentService
   store: SessionStore
   runs: FakeRun[]
+  /** Every event the store has put on any log, in order. */
+  logged: SessionEvent[]
   cleanup: () => Promise<void>
 }
 
-/** Let the service's own promise chains settle before asserting on them. */
-function settle(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 5))
+/** How long an event the test is waiting for may take before the test fails. */
+const LOG_TIMEOUT_MS = 2000
+
+/**
+ * Resolves once the store has logged an event matching `matches`, whether it
+ * already has or does so later. The service's work runs on promise chains the
+ * test cannot await, so it waits for their outcome rather than for a timer.
+ */
+function untilLogged(
+  fixture: Fixture,
+  matches: (event: SessionEvent) => boolean
+): Promise<SessionEvent> {
+  const already = fixture.logged.find(matches)
+  if (already) return Promise.resolve(already)
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      unsubscribe()
+      reject(new Error(`no matching event was logged within ${LOG_TIMEOUT_MS}ms`))
+    }, LOG_TIMEOUT_MS)
+    const unsubscribe = fixture.store.subscribe((event) => {
+      if (!matches(event)) return
+      clearTimeout(timer)
+      unsubscribe()
+      resolve(event)
+    })
+  })
+}
+
+/** Resolves once a message chunk with exactly this text has been logged. */
+function untilChunk(fixture: Fixture, text: string): Promise<SessionEvent> {
+  return untilLogged(fixture, (event) => texts([event]).includes(text))
 }
 
 async function setup(): Promise<Fixture> {
@@ -48,6 +79,8 @@ async function setup(): Promise<Fixture> {
   const store = new SessionStore(root)
   const harnesses = new HarnessRegistry()
   const runs: FakeRun[] = []
+  const logged: SessionEvent[] = []
+  store.subscribe((event) => logged.push(event))
 
   harnesses.register({
     id: 'fake',
@@ -88,7 +121,13 @@ async function setup(): Promise<Fixture> {
     defaultHarness: () => 'fake'
   })
 
-  return { service, store, runs, cleanup: () => rm(root, { recursive: true, force: true }) }
+  /** Let queued disk writes land before their directory goes. */
+  async function cleanup(): Promise<void> {
+    await store.flush()
+    await rm(root, { recursive: true, force: true })
+  }
+
+  return { service, store, runs, logged, cleanup }
 }
 
 /** Start a session, get its run going, and hand back both. */
@@ -97,7 +136,10 @@ async function running(fixture: Fixture): Promise<{ sessionId: string; run: Fake
   await fixture.service.send(session.id, [
     { type: 'user.message', content: [{ type: 'text', text: 'go' }] }
   ])
-  await settle()
+  await untilLogged(
+    fixture,
+    (event) => event.sessionId === session.id && event.type === 'session.status_running'
+  )
   return { sessionId: session.id, run: fixture.runs[0] }
 }
 
@@ -131,7 +173,7 @@ describe('a harness running its own agent', () => {
     try {
       const { sessionId, run } = await running(fixture)
       run.options.emitFrom(EXPLORER, chunk('looking'))
-      await settle()
+      await untilChunk(fixture, 'looking')
 
       const [child] = await others(fixture, sessionId)
       expect(child.title).toBe('explore')
@@ -151,7 +193,7 @@ describe('a harness running its own agent', () => {
     try {
       const { sessionId, run } = await running(fixture)
       run.options.emitFrom(EXPLORER, chunk('looking'))
-      await settle()
+      await untilChunk(fixture, 'looking')
 
       const [child] = await others(fixture, sessionId)
       const events = await fixture.service.listEvents(child.id)
@@ -169,7 +211,7 @@ describe('a harness running its own agent', () => {
       run.options.emit(chunk('the answer is '))
       run.options.emitFrom(EXPLORER, chunk('still looking'))
       run.options.emit(chunk('forty-two'))
-      await settle()
+      await Promise.all([untilChunk(fixture, 'still looking'), untilChunk(fixture, 'forty-two')])
 
       expect(texts(await fixture.service.listEvents(sessionId))).toEqual([
         'the answer is ',
@@ -189,7 +231,7 @@ describe('a harness running its own agent', () => {
         { toolUseId: 'toolu_other', title: 'review' },
         chunk('two')
       )
-      await settle()
+      await Promise.all([untilChunk(fixture, 'one'), untilChunk(fixture, 'two')])
 
       expect((await others(fixture, sessionId)).map((session) => session.title).sort()).toEqual([
         'explore',
@@ -205,9 +247,9 @@ describe('a harness running its own agent', () => {
     try {
       const { sessionId, run } = await running(fixture)
       run.options.emitFrom(EXPLORER, chunk('one '))
-      await settle()
+      await untilChunk(fixture, 'one ')
       run.options.emitFrom(EXPLORER, chunk('two'))
-      await settle()
+      await untilChunk(fixture, 'two')
 
       const children = await others(fixture, sessionId)
       expect(children).toHaveLength(1)
@@ -222,12 +264,12 @@ describe('a harness running its own agent', () => {
     try {
       const { sessionId, run } = await running(fixture)
       run.options.emitFrom(EXPLORER, chunk('looking'))
-      await settle()
+      await untilChunk(fixture, 'looking')
       run.options.emit({
         type: 'update',
         update: { sessionUpdate: 'tool_call_update', toolCallId: 'toolu_task', status: 'completed' }
       })
-      await settle()
+      await untilLogged(fixture, (event) => event.type === 'session.status_terminated')
 
       const [child] = await others(fixture, sessionId)
       expect((await fixture.service.getSession(child.id)).status).toBe('terminated')
@@ -241,13 +283,16 @@ describe('a harness running its own agent', () => {
     try {
       const { sessionId, run } = await running(fixture)
       run.options.emitFrom(EXPLORER, chunk('looking'))
-      await settle()
+      await untilChunk(fixture, 'looking')
 
       const [child] = await others(fixture, sessionId)
       await fixture.service.send(child.id, [
         { type: 'user.message', content: [{ type: 'text', text: 'carry on' }] }
       ])
-      await settle()
+      await untilLogged(
+        fixture,
+        (event) => event.sessionId === child.id && event.type === 'session.notice'
+      )
 
       expect(fixture.runs).toHaveLength(1)
       const events = await fixture.service.listEvents(child.id)

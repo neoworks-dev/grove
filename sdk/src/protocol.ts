@@ -33,7 +33,7 @@ export type PluginPermission =
   | 'services.read' // dev-service status + logs
   | 'services.manage' // start/stop dev services
   | 'debug.all' // arbitrary lua/JS execution; only registered under GROVE_DEBUG
-  | 'browser.provide' // hand a browser tab to a worktree's agents (Kit)
+  | 'browser.provide' // hand a browser tab to a worktree's agents (Kit, Chrome)
 
 export const PLUGIN_PERMISSIONS: PluginPermission[] = [
   'workspace.read',
@@ -576,7 +576,7 @@ export interface HelloResult {
 }
 
 // ── Browser provider (socket transport, `browser.provide` scope) ─
-// A browser such as Kit hands Grove a tab per worktree, and the agents' browser
+// A browser such as Kit, or Chrome through Grove's extension, hands Grove a tab per worktree, and the agents' browser
 // tool drives it with the DevTools protocol. Requests go both ways on the
 // provider's own connection; see neoworks-dev/grove#353.
 //

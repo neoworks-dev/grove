@@ -4,6 +4,7 @@
 import type { Context } from '@neoworks/extension-system'
 import { route } from '../kernel/route'
 import * as git from '../git'
+import { withProblems } from '../promptNotes'
 import * as commitOps from '../commitOps'
 import * as conflicts from '../conflicts'
 import * as history from '../history'
@@ -22,7 +23,7 @@ import type {
 
 export const gitRoutes = {
   name: 'main/routes/git',
-  inject: ['workbench', 'checkpoints', 'supervisor'],
+  inject: ['workbench', 'checkpoints', 'supervisor', 'promptBlame'],
 
   apply(ctx: Context): void {
     // ── Git (branches + diff) ─────────────────────────────────────
@@ -116,9 +117,10 @@ export const gitRoutes = {
       return git.pull(worktree.path)
     })
 
-    route(ctx, 'git:fetch', (_e, worktreeId: string) => {
+    route(ctx, 'git:fetch', async (_e, worktreeId: string) => {
       const worktree = ctx.workbench.findWorktree(worktreeId)
-      return git.fetch(worktree.path)
+      const summary = await git.fetch(worktree.path)
+      return withProblems(summary, [await ctx.promptBlame.receiveNotes(worktree.path, 'origin')])
     })
 
     // ── History ─────────────────────────────────────────────────────
@@ -170,9 +172,12 @@ export const gitRoutes = {
       return git.commit(worktree.path, message)
     })
 
-    route(ctx, 'git:push', (_e, worktreeId: string) => {
+    route(ctx, 'git:push', async (_e, worktreeId: string) => {
       const worktree = ctx.workbench.findWorktree(worktreeId)
-      return git.push(worktree.path)
+      const annotating = await ctx.promptBlame.prepareToPublish(worktree.path)
+      const summary = await git.push(worktree.path)
+      const sharing = await ctx.promptBlame.publishNotes(worktree.path, 'origin')
+      return withProblems(summary, [annotating, sharing])
     })
 
     // Local merge runs in the main worktree (repoPath), merging the feature

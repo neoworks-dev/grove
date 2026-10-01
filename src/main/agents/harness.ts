@@ -19,6 +19,7 @@ import type {
   HarnessInfo,
   ImageBlock,
   ModelEntry,
+  RecordedPrompt,
   ServerEventBody,
   ShowTarget,
   SkillInfo,
@@ -172,6 +173,12 @@ export interface HarnessRunOptions {
    * cannot take a prompt ignores it and loses only the coordination.
    */
   systemPrompt: string
+  /**
+   * The prompt the conversation being resumed started with, as its transcript
+   * recorded it. A run resuming that conversation is handed it in place of one
+   * composed now, which would differ (the date, the peers) and lose the cache.
+   */
+  recordedPrompt?: RecordedPrompt
   /** Report progress. The store stamps and persists whatever is emitted. */
   emit(body: ServerEventBody): void
   /**

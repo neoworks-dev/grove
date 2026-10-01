@@ -170,13 +170,30 @@ export class SwitchboardRun implements HarnessRun {
       harness: this.profile.harness,
       cwd: this.options.workspaceRoot,
       mcpServers: [bound.server],
-      options: this.profile.sessionOptions(this.options),
+      options: this.withPinnedPrompt(this.profile.sessionOptions(this.options)),
       onPermission: (request) => this.answerPermission(request),
       onQuestion: (request) => this.answerQuestion(request),
       usage: switchboardUsageOf(this.options.startingStats)
     }
     if (this.profile.environment) init.env = await this.profile.environment(this.options)
     return init
+  }
+
+  /**
+   * The options with the system prompt the conversation started with. A harness
+   * resuming takes the prompt from its options, not its transcript, so a fresh
+   * conversation records the prompt it was given and a resumed one is handed
+   * that back rather than one composed now.
+   */
+  private withPinnedPrompt(options: SessionOptions): SessionOptions {
+    const recorded = this.options.recordedPrompt
+    if (recorded && this.options.resumeKey) {
+      return { ...options, systemPrompt: { ...recorded } }
+    }
+    if (options.systemPrompt) {
+      this.options.emit({ type: 'session.system_prompt', systemPrompt: { ...options.systemPrompt } })
+    }
+    return options
   }
 
   /** grove's tools as this session serves them to the harness. */

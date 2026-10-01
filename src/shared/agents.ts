@@ -155,6 +155,17 @@ export type GroveEventBody =
   | { type: 'ui.show'; target: ShowTarget }
   /** The session's notes list, whole, after the user or the agent changed it. */
   | { type: 'session.notes'; notes: SessionNote[] }
+  /**
+   * The system prompt a conversation started with. A resumed run is handed it
+   * back unchanged, so the harness's prompt cache still holds.
+   */
+  | { type: 'session.system_prompt'; systemPrompt: RecordedPrompt }
+
+/** A system prompt as handed to the harness: in place of its own, or after it. */
+export interface RecordedPrompt {
+  replace?: string
+  append?: string
+}
 
 export type ServerEventBody = HarnessEventBody | GroveEventBody
 

@@ -666,3 +666,48 @@ export interface SessionReplay {
   workspaceRoot: string
   turns: ReplayTurn[]
 }
+
+// ── Prompt blame ────────────────────────────────────────────────
+
+/**
+ * The prompt behind lines an agent wrote, as blame reports it. Copied out of
+ * the session when the edit was made, so it still reads after the session is
+ * deleted.
+ */
+export interface PromptAttribution {
+  sessionId: string
+  sessionTitle: string
+  harness: string
+  /** The message that started the turn; null when the edit preceded any message. */
+  turnSeq: number | null
+  stepIndex: number
+  /** Who sent the prompt: "You", or the label it came under. */
+  from: string
+  prompt: string
+  /** When the edit was made. */
+  at: string
+  /** Whether the session can still be opened. */
+  sessionExists: boolean
+}
+
+/** The commit that last changed a line, as `git blame` has it. */
+export interface LineCommit {
+  sha: string
+  author: string
+  /** Author time, in ms. */
+  time: number
+  summary: string
+}
+
+/** One line, blamed: the commit that last changed it and the prompt that wrote it. */
+export interface LineBlame {
+  /** Null for a line that is not committed yet, or that blame could not place. */
+  commit: LineCommit | null
+  /** Null for a line a person wrote, as far as grove knows. */
+  prompt: PromptAttribution | null
+}
+
+/** A prompt behind some of a commit's added lines, and how many. */
+export interface CommitPrompt extends PromptAttribution {
+  lines: number
+}

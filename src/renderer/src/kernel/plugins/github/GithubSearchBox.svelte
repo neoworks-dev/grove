@@ -10,8 +10,12 @@
     tokenAt,
     type SearchSuggestion,
     type SearchToken,
+    type SuggestionBranch,
     type SuggestionSources
   } from './searchSuggestions'
+  import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
+  import GithubSearchSuggestionRow from './GithubSearchSuggestionRow.svelte'
+  import type { GithubActor, GithubIssueType } from '../../../../../shared/types'
 
   let {
     value = $bindable(''),
@@ -36,20 +40,65 @@
   // People are whoever the repository could assign plus whoever wrote something
   // loaded here, which covers outside contributors.
   const sources = $derived.by<SuggestionSources>(() => {
-    const people = [...github.mentionables.map((actor) => actor.login), ...github.authorOptions]
-    const branches: string[] = []
-    if (github.dashboard) {
-      for (const pull of github.dashboard.pulls) branches.push(pull.headRefName, pull.baseRefName)
+    const people = [...github.mentionables]
+    for (const login of github.authorOptions) {
+      if (people.some((actor) => actor.login === login)) continue
+      people.push({ login, avatarUrl: avatarFor(login) })
     }
     return {
-      labels: github.labels.map((label) => label.name),
+      labels: github.labels,
       people,
-      milestones: github.milestones.map((milestone) => milestone.title),
-      types: github.typeOptions,
+      viewer: viewerActor(people),
+      milestones: github.milestones,
+      types: issueTypesOnTab(),
       projects: github.projectOptions,
-      branches
+      branches: branchesOfPulls()
     }
   })
+
+  /**
+   * An avatar for someone known only by login: github.com redirects `<login>.png`
+   * to it. Bots and the deleted-user placeholder have none to redirect to.
+   */
+  function avatarFor(login: string): string | null {
+    if (login === 'ghost' || login.includes('[')) return null
+    return `https://github.com/${login}.png`
+  }
+
+  /** The signed-in user as an actor, for the `@me` row; null until it is known. */
+  function viewerActor(people: GithubActor[]): GithubActor | null {
+    const login = github.viewer
+    if (login === null) return null
+    const known = people.find((actor) => actor.login === login)
+    if (known) return known
+    return { login, avatarUrl: avatarFor(login) }
+  }
+
+  /** The issue types on the loaded items, once each, with their colours. */
+  function issueTypesOnTab(): GithubIssueType[] {
+    const types: GithubIssueType[] = []
+    for (const item of github.tabItems) {
+      if (!item.issueType) continue
+      if (types.some((type) => type.name === item.issueType?.name)) continue
+      types.push(item.issueType)
+    }
+    return types.sort((left, right) => left.name.localeCompare(right.name))
+  }
+
+  /** The branches the loaded pulls come from, each with its pull, then their bases. */
+  function branchesOfPulls(): SuggestionBranch[] {
+    if (!github.dashboard) return []
+    const pulls = github.dashboard.pulls
+    const branches: SuggestionBranch[] = pulls.map((pull) => ({
+      name: pull.headRefName,
+      pull: { number: pull.number, title: pull.title }
+    }))
+    for (const pull of pulls) {
+      if (branches.some((branch) => branch.name === pull.baseRefName)) continue
+      branches.push({ name: pull.baseRefName, pull: null })
+    }
+    return branches
+  }
 
   const suggestions = $derived.by<SearchSuggestion[]>(() => {
     if (!token) return []
@@ -92,17 +141,27 @@
     })
   }
 
+  /** Scrolls the highlighted row into the list's view once it has re-rendered. */
+  function revealHighlighted(): void {
+    requestAnimationFrame(() => {
+      const row = document.querySelector(`#${CSS.escape(listId)} [aria-selected="true"]`)
+      if (row) row.scrollIntoView({ block: 'nearest' })
+    })
+  }
+
   /** Arrow keys move through the list, Enter or Tab accepts, Escape closes it. */
   function onKeydown(event: KeyboardEvent): void {
     if (!open) return
     if (event.key === 'ArrowDown') {
       event.preventDefault()
       highlighted = (highlighted + 1) % suggestions.length
+      revealHighlighted()
       return
     }
     if (event.key === 'ArrowUp') {
       event.preventDefault()
       highlighted = (highlighted - 1 + suggestions.length) % suggestions.length
+      revealHighlighted()
       return
     }
     if (event.key === 'Enter' || event.key === 'Tab') {
@@ -140,28 +199,30 @@
   />
 
   {#if open}
-    <ul
-      id={listId}
-      class="absolute left-0 top-full z-20 mt-1 max-h-64 w-56 max-w-[80vw] overflow-auto rounded-md border border-line bg-raised py-0.5 shadow-lg"
-      role="listbox"
+    <div
+      class="absolute left-0 top-full z-20 mt-1 w-80 max-w-[80vw] rounded-md border border-line bg-raised p-1 shadow-lg"
     >
-      {#each suggestions as suggestion, index (suggestion.insert)}
-        <li>
-          <button
-            class="flex w-full items-center px-2 py-1 text-left font-mono text-2xs text-default hover:bg-hover"
-            class:bg-hover={index === highlighted}
-            role="option"
-            aria-selected={index === highlighted}
-            onmousedown={(event) => {
-              // mousedown, not click: blur would close the list first.
-              event.preventDefault()
-              accept(suggestion)
-            }}
-          >
-            <span class="truncate">{suggestion.label}</span>
-          </button>
-        </li>
-      {/each}
-    </ul>
+      <FloatingScrollbar class="max-h-80">
+        <ul id={listId} role="listbox">
+          {#each suggestions as suggestion, index (suggestion.insert)}
+            <li>
+              <button
+                class="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-2xs hover:bg-hover"
+                class:bg-hover={index === highlighted}
+                role="option"
+                aria-selected={index === highlighted}
+                onmousedown={(event) => {
+                  // mousedown, not click: blur would close the list first.
+                  event.preventDefault()
+                  accept(suggestion)
+                }}
+              >
+                <GithubSearchSuggestionRow {suggestion} />
+              </button>
+            </li>
+          {/each}
+        </ul>
+      </FloatingScrollbar>
+    </div>
   {/if}
 </div>

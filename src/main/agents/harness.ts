@@ -52,6 +52,8 @@ export interface GroveToolContext {
 export interface GroveToolResult {
   content: string
   isError?: boolean
+  /** Pictures that go back with the text, as base64. */
+  images?: { data: string; mimeType: string }[]
 }
 
 /**

@@ -5,18 +5,26 @@
 // part of the markdown. Streaming rewrites the HTML constantly, hence the
 // MutationObserver. Links are made only for files main says exist in the
 // worktree; until then a candidate is plain text.
+//
+// Fenced blocks are code by default and left alone. A caller whose text is
+// written by people (an issue body) can opt into the fences that hold
+// references rather than code: plain, shell and log output, and a diff, whose
+// `a/` and `b/` prefixes are not part of the path.
 
 import {
   findCodeReferences,
   parseCodeReference,
   worktreePathOf,
-  type CodeReference
+  type CodeReference,
+  type ProseReference
 } from './codeReferences'
 
 export interface CodeReferenceLinkOptions {
   /** The worktree the session runs in; its path is also its id. */
   root: string
   onOpen: (reference: CodeReference) => void
+  /** Also link paths in plain, shell, log and diff fences. */
+  fences?: boolean
 }
 
 // How long an answer about a path is trusted. Short, since the agent creates and
@@ -29,6 +37,30 @@ const SCAN_DELAY_MS = 150
 
 // Text under these is already something else — a link, code, a control.
 const SKIPPED_ANCESTORS = 'pre, code, a, button, [data-code-ref]'
+
+// Inside a fence opted into, only these are skipped.
+const SKIPPED_IN_FENCE = 'a, button, [data-code-ref]'
+
+// Fence languages whose text is output or prose rather than a program; '' is a
+// fence with no language.
+const REFERENCE_FENCES = new Set([
+  '',
+  'text',
+  'txt',
+  'plain',
+  'plaintext',
+  'console',
+  'shell',
+  'sh',
+  'bash',
+  'zsh',
+  'fish',
+  'log',
+  'output'
+])
+
+// A diff's file headers name both sides as `a/<path>` and `b/<path>`.
+const DIFF_SIDE_PREFIX = /^[ab]\//
 
 const existence = new Map<string, { exists: boolean; checkedAt: number }>()
 
@@ -65,7 +97,7 @@ export function linkCodeReferences(
     const root = options.root
     if (!root) return
     const codes = codeCandidates(container, root)
-    const texts = textCandidates(container, root)
+    const texts = textCandidates(container, root, options.fences === true)
     const paths = new Set<string>()
     for (const entry of codes) paths.add(entry.candidate.relativePath)
     for (const entry of texts) {
@@ -96,6 +128,8 @@ export function linkCodeReferences(
 
   return {
     update(next) {
+      // Links were made against the old worktree; it may not have those files.
+      if (next.root !== options.root) unlinkAll(container)
       options = next
       schedule()
     },
@@ -123,15 +157,15 @@ function codeCandidates(
   return found
 }
 
-/** Text nodes of prose, with the paths each one names. */
-function textCandidates(container: HTMLElement, root: string): TextCandidates[] {
+/** Text nodes of prose (and of opted-in fences), with the paths each one names. */
+function textCandidates(container: HTMLElement, root: string, fences: boolean): TextCandidates[] {
   const found: TextCandidates[] = []
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT)
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     const text = node as Text
-    if (text.parentElement?.closest(SKIPPED_ANCESTORS)) continue
+    const references = referencesIn(text, fences)
     const candidates: PlacedCandidate[] = []
-    for (const reference of findCodeReferences(text.data)) {
+    for (const reference of references) {
       const candidate = candidateOf(reference, root)
       if (candidate)
         candidates.push({ ...candidate, index: reference.index, length: reference.length })
@@ -139,6 +173,37 @@ function textCandidates(container: HTMLElement, root: string): TextCandidates[] 
     if (candidates.length > 0) found.push({ node: text, text: text.data, candidates })
   }
   return found
+}
+
+/** The paths a text node names, or none when it sits somewhere paths are not looked for. */
+function referencesIn(text: Text, fences: boolean): ProseReference[] {
+  const parent = text.parentElement
+  if (!parent) return []
+  const fence = parent.closest('pre')
+  if (!fence) {
+    if (parent.closest(SKIPPED_ANCESTORS)) return []
+    return findCodeReferences(text.data)
+  }
+  if (!fences || parent.closest(SKIPPED_IN_FENCE)) return []
+  const language = fenceLanguage(fence)
+  if (language === 'diff') return findCodeReferences(text.data).map(withoutDiffSide)
+  if (REFERENCE_FENCES.has(language)) return findCodeReferences(text.data)
+  return []
+}
+
+/** The language a fence was written with, lower-cased; '' when it names none. */
+function fenceLanguage(fence: HTMLElement): string {
+  const code = fence.querySelector('code')
+  if (!code) return ''
+  for (const name of code.classList) {
+    if (name.startsWith('language-')) return name.slice('language-'.length).toLowerCase()
+  }
+  return ''
+}
+
+/** A diff header's path without its `a/` or `b/`; the link still covers the whole token. */
+function withoutDiffSide(reference: ProseReference): ProseReference {
+  return { ...reference, path: reference.path.replace(DIFF_SIDE_PREFIX, '') }
 }
 
 /** The candidate a parsed reference makes, or null when it is outside the worktree. */
@@ -193,6 +258,8 @@ function linkText(entry: TextCandidates, existing: Set<string>): void {
     fragment.append(text.slice(cursor, candidate.index))
     const link = document.createElement('span')
     link.textContent = text.slice(candidate.index, end)
+    // Made here, so unlinking puts the text back rather than keeping the span.
+    link.dataset.codeRefWrap = ''
     markAsLink(link, candidate.reference)
     fragment.append(link)
     cursor = end
@@ -209,6 +276,28 @@ function markAsLink(element: HTMLElement, reference: CodeReference): void {
   element.setAttribute('role', 'link')
   element.tabIndex = 0
   element.title = `Open ${reference.path}`
+}
+
+/** Undoes every link under `container`, leaving the text as it was rendered. */
+function unlinkAll(container: HTMLElement): void {
+  for (const link of container.querySelectorAll<HTMLElement>('[data-code-ref]')) {
+    if (link.hasAttribute('data-code-ref-wrap')) {
+      link.replaceWith(link.textContent ?? '')
+      continue
+    }
+    for (const attribute of [
+      'data-code-ref',
+      'data-line',
+      'data-end-line',
+      'role',
+      'tabindex',
+      'title'
+    ]) {
+      link.removeAttribute(attribute)
+    }
+  }
+  // Rejoin the text the wrappers split, so the next scan sees whole paths.
+  container.normalize()
 }
 
 /** The reference a link element carries. */

@@ -32,7 +32,7 @@
 
   // Run a ship-it step with shared busy/error/log handling, then refresh the
   // file list so staged state and the diff reflect the new HEAD.
-  async function run(label: string, action: () => Promise<string | void>): Promise<void> {
+  async function run(label: string, action: () => Promise<unknown>): Promise<void> {
     if (busy) return
     busy = true
     mergeMenuOpen = false

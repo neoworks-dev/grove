@@ -100,7 +100,7 @@
   <div
     bind:this={anchor}
     class="pointer-events-none absolute z-40"
-    style="top: {placement.top}px; left: {placement.left}px; width: {placement.width}px"
+    style:top="{placement.top}px" style:left="{placement.left}px" style:width="{placement.width}px"
   >
     <div
       bind:clientHeight={boxHeight}

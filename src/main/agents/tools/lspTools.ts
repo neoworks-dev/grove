@@ -24,7 +24,7 @@ import type { LspDiagnostic, LspPosition } from '../../../shared/types'
 import { detectLanguage } from '../../git'
 import type { LspManager } from '../../lsp'
 import type { GroveTool, GroveToolContext, GroveToolResult } from '../harness'
-import { ripgrep } from './searchTools'
+import { ripgrep } from '../../ripgrep'
 import {
   displayPath,
   joinText,

@@ -3,7 +3,7 @@
 // parser is pure (testable); the spawn wrapper streams matches to a callback.
 
 import { spawn } from 'child_process'
-import { ripgrepBinary } from './ripgrepBinary'
+import { ripgrepBinary } from './ripgrep'
 import type { SearchMatch } from '../shared/types'
 
 export type { SearchMatch }

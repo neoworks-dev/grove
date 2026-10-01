@@ -2,12 +2,14 @@ import { describe, it, expect } from 'bun:test'
 import { mkdtemp, mkdir, writeFile, stat, readFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import { simpleGit } from 'simple-git'
 import {
   createFile,
   createDir,
   renamePath,
   removePath,
   listDir,
+  listAll,
   readFileBytes
 } from '../src/main/files'
 
@@ -84,5 +86,48 @@ describe('readFileBytes', () => {
   it('refuses a path outside the worktree', async () => {
     const root = await tempRoot()
     await expect(readFileBytes(root, join(root, '..', 'elsewhere.bin'))).rejects.toThrow()
+  })
+})
+
+// The file finder and "@" mentions rank every file listAll returns, so what it
+// leaves out matters as much as what it finds: a gitignored dataset must not
+// reach them.
+describe('listAll', () => {
+  /** Writes an empty file at `relativePath` under `root`, making its directories. */
+  async function put(root: string, relativePath: string, content = ''): Promise<void> {
+    const path = join(root, relativePath)
+    await mkdir(join(path, '..'), { recursive: true })
+    await writeFile(path, content)
+  }
+
+  it('lists files, dotfiles included, but not what .gitignore or the app ignore', async () => {
+    const root = await tempRoot()
+    await simpleGit({ baseDir: root }).init()
+    await put(root, '.gitignore', 'runs/\n')
+    await put(root, '.env.example')
+    await put(root, 'src/train.py')
+    await put(root, 'runs/first/shot.jpg')
+    await put(root, 'node_modules/pkg/index.js')
+    await put(root, '.workbench/attachments/a.png')
+
+    expect(await listAll(root)).toEqual(['.env.example', '.gitignore', 'src/train.py'])
+  })
+
+  it('honours .gitignore outside a git repository too', async () => {
+    const root = await tempRoot()
+    await put(root, '.gitignore', 'data/\n')
+    await put(root, 'data/big.bin')
+    await put(root, 'notes.md')
+
+    expect(await listAll(root)).toEqual(['.gitignore', 'notes.md'])
+  })
+
+  it('stops at the limit', async () => {
+    const root = await tempRoot()
+    await put(root, 'a.txt')
+    await put(root, 'b.txt')
+    await put(root, 'c.txt')
+
+    expect(await listAll(root, 2)).toEqual(['a.txt', 'b.txt'])
   })
 })

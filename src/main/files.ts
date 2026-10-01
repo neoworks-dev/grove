@@ -17,6 +17,7 @@ import { randomUUID } from 'crypto'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import type { FileNode } from '../shared/types'
+import { ripgrep } from './ripgrep'
 
 const execFileAsync = promisify(execFile)
 
@@ -53,33 +54,33 @@ export async function listDir(worktreeRoot: string, relPath: string): Promise<Fi
   return nodes
 }
 
-// Recursively list every file (not directory) under the worktree, as paths
-// relative to the root. Used for the agent prompt's "@" file-mention menu and
-// the file finder, both of which rank the whole list — so the walk is complete
-// by default and callers cap it themselves when they want a shorter answer.
+/**
+ * Every file under the worktree, as paths relative to the root, skipping what
+ * .gitignore and the app's own ignore list exclude. Used for the agent
+ * prompt's "@" file-mention menu and the file finder, both of which rank the
+ * whole list — so it is complete by default and callers cap it themselves when
+ * they want a shorter answer. Listed by ripgrep: a gitignored dataset or build
+ * output can hold hundreds of thousands of files nobody wants to open.
+ */
 export async function listAll(
   worktreeRoot: string,
   limit = Number.POSITIVE_INFINITY
 ): Promise<string[]> {
-  const results: string[] = []
-
-  async function walk(dir: string): Promise<void> {
-    if (results.length >= limit) return
-    const entries = await readdir(dir, { withFileTypes: true })
-    for (const entry of entries) {
-      if (IGNORED.has(entry.name)) continue
-      if (results.length >= limit) return
-      const abs = join(dir, entry.name)
-      if (entry.isDirectory()) {
-        await walk(abs)
-      } else {
-        results.push(relative(worktreeRoot, abs))
-      }
-    }
+  const excluded = [...IGNORED].flatMap((name) => ['--glob', `!${name}`])
+  const output = await ripgrep(worktreeRoot, worktreeRoot, [
+    '--files',
+    '--hidden',
+    '--no-require-git',
+    ...excluded
+  ])
+  const paths = output.lines.filter((line) => line.length > 0)
+  if (output.failed && paths.length === 0) {
+    throw new Error(`listing files failed: ${output.error}`)
   }
-
-  await walk(worktreeRoot)
-  return results.sort((a, b) => a.localeCompare(b))
+  return paths
+    .map((path) => relative(worktreeRoot, path))
+    .sort((a, b) => a.localeCompare(b))
+    .slice(0, limit)
 }
 
 // List the entries of an arbitrary directory for the composer's @ path

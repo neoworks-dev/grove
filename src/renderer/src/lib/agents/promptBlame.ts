@@ -13,8 +13,10 @@ import type { PromptAttribution } from '../../../../shared/agents'
  * session that has since been deleted is shown as the prompt it kept.
  */
 export async function openPrompt(attribution: PromptAttribution): Promise<void> {
+  // The attribution may have been read before the session was deleted.
+  await agentSessions.refreshList()
   const meta = agentSessions.list.find((session) => session.id === attribution.sessionId)
-  if (!attribution.sessionExists || !meta) {
+  if (!meta) {
     await showKeptPrompt(attribution)
     return
   }

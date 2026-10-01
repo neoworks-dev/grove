@@ -231,14 +231,14 @@ describe('how a blamed line reads', () => {
     expect(blameLabel({ commit: null, prompt: null })).toBeNull()
   })
 
-  test('the prompt sits beside the commit, or beside "Uncommitted"', () => {
+  test('the prompt sits beside the commit, or says the line is uncommitted', () => {
     const now = Date.parse('2026-01-01T05:00:00Z')
     const commit = { sha: 'abc', author: 'Ada', time: Date.parse('2026-01-01T02:00:00Z'), summary: 'consts' }
     expect(blameLabel({ commit, prompt }, now)).toBe(
-      'Ada, 3h ago · consts  ✦ “add a second constant” — Constants'
+      '✦ “add a second constant”  ·  Ada, 3h ago · consts'
     )
     expect(blameLabel({ commit: null, prompt }, now)).toBe(
-      'Uncommitted  ✦ “add a second constant” — Constants'
+      '✦ “add a second constant”  ·  uncommitted'
     )
   })
 

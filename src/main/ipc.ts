@@ -11,6 +11,7 @@ import { mainContext } from './kernel/context'
 import { routePlugins } from './routes'
 import type { WorkbenchService, NvimService, PluginsService, AppsService } from './kernel/services'
 import type { WorkbenchConfig, Worktree, RepoInfo } from '../shared/types'
+import type { AgentEditStep } from '../shared/agents'
 import * as git from './git'
 import { CheckpointManager, captureTree, diffTrees, pinTreePair, unpinTrees } from './checkpoints'
 import * as config from './config'
@@ -57,7 +58,8 @@ import { AgentService } from './agents/service'
 import { AgentReviewBridge } from './agents/reviewBridge'
 import { AgentHandoffBridge } from './agents/handoffBridge'
 import { AgentRoster } from './agents/roster'
-import { EditStepRecorder, stepsRef } from './agents/editSteps'
+import { EditStepRecorder, promptAt, stepsRef } from './agents/editSteps'
+import { PromptBlame } from './promptBlame'
 import type { AgentWorktrees } from './agents/tools/worktreeTools'
 import { runSetup } from './routes/worktrees'
 import { agentSection, section } from './agents/systemPrompt'
@@ -254,8 +256,28 @@ const editSteps = new EditStepRecorder({
     unpin: (worktreePath, sessionId) => unpinTrees(worktreePath, stepsRef(sessionId)),
     diff: (worktreePath, from, to) => diffTrees(worktreePath, from, to)
   },
-  publish: (sessionId, step) => send('event:agent-step', { sessionId, step })
+  publish: (sessionId, step) => {
+    send('event:agent-step', { sessionId, step })
+    void recordPromptBlame(sessionId, step)
+  }
 })
+
+// Which prompt wrote which lines, kept apart from the sessions so blame still
+// answers once a session is deleted.
+const promptBlame = new PromptBlame({
+  directory: join(app.getPath('userData'), 'prompt-blame'),
+  sessionExists: (sessionId) => sessionStore.peek(sessionId) !== undefined
+})
+
+/** Hands a new step, with the prompt its turn answered, to prompt blame. */
+async function recordPromptBlame(sessionId: string, step: AgentEditStep): Promise<void> {
+  const session = sessionStore.peek(sessionId)
+  if (!session) return
+  const turn = promptAt(sessionStore.peekEvents(sessionId), step.turnSeq)
+  await promptBlame
+    .recordStep(session.workspaceRoot, session, step, turn)
+    .catch((error: Error) => console.error(`[blame] recording a step failed: ${error.message}`))
+}
 
 // Watches the event log so a review keeps blocking the agent whether or not the
 // agent pane is open.
@@ -697,6 +719,7 @@ const mainServices = {
     ctx.provide('agents', agents)
     ctx.provide('agentReview', agentReviewBridge)
     ctx.provide('editSteps', editSteps)
+    ctx.provide('promptBlame', promptBlame)
 
     // The review bridge follows the log for the life of the process: a gated
     // write blocks the agent whether or not any pane is watching.

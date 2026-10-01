@@ -186,6 +186,12 @@ const workbench = {
     restore: (sessionId: string, tree: string) =>
       ipcRenderer.invoke('replay:restore', sessionId, tree)
   },
+  blame: {
+    line: (worktreeId: string, path: string, line: number, text: string) =>
+      ipcRenderer.invoke('blame:line', worktreeId, path, line, text),
+    commitPrompts: (worktreeId: string, sha: string) =>
+      ipcRenderer.invoke('blame:commitPrompts', worktreeId, sha)
+  },
   chat: {
     send: (worktreeId: string, text: string) => ipcRenderer.invoke('chat:send', worktreeId, text),
     history: (worktreeId: string, since?: number) =>

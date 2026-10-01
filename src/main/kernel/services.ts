@@ -19,6 +19,7 @@ import type { ActionRunner } from '../actions'
 import type { AgentService } from '../agents/service'
 import type { AgentReviewBridge } from '../agents/reviewBridge'
 import type { EditStepRecorder } from '../agents/editSteps'
+import type { PromptBlame } from '../promptBlame'
 import type { HarnessRegistry } from '../agents/harness'
 import type { SwitchboardHost } from '../agents/switchboard/host'
 import type { PermissionBroker } from '../api/broker'
@@ -98,6 +99,7 @@ declare module '@neoworks/extension-system' {
     switchboard: SwitchboardHost
     agentReview: AgentReviewBridge
     editSteps: EditStepRecorder
+    promptBlame: PromptBlame
     plugins: PluginsService
     apps: AppsService
   }

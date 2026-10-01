@@ -111,3 +111,13 @@ describe('tool runs', () => {
     ])
   })
 })
+
+describe('a folded run of calls', () => {
+  test('names a call the way its tool names itself', () => {
+    const spawn = tool('mcp__grove__spawn_agent')
+    const tallies = tallyOf([spawn, tool('Bash')], () => null, (item) =>
+      item === spawn ? 'Start agent' : item.name
+    )
+    expect(tallies.map((tally) => tally.name)).toEqual(['Start agent', 'Bash'])
+  })
+})

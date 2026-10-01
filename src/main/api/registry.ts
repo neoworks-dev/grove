@@ -12,6 +12,7 @@ import type { Worktree } from '../../shared/types'
 import type { PluginPermission, RpcError } from '../../shared/plugins'
 import type { ClientRecord } from './clients'
 import type { PermissionBroker } from './broker'
+import type { RpcEndpoint } from '../../../sdk/src/rpc'
 
 export type ApiTransport = 'worker' | 'socket'
 
@@ -24,6 +25,18 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * One external app's live socket connection, for routes that talk back down it
+ * (a browser provider receives `browser.cdp` this way).
+ */
+export interface ApiConnection {
+  id: number
+  client: ClientRecord
+  endpoint: RpcEndpoint
+  /** Runs once the connection has closed. */
+  onClose(listener: () => void): void
+}
+
 export interface RouteContext {
   client: ClientRecord
   callId: string
@@ -33,6 +46,8 @@ export interface RouteContext {
   // Fires on explicit cancel, client death, or transport disconnect.
   signal: AbortSignal
   worktreeFor: (params: Record<string, unknown>) => Worktree
+  // The socket connection the call came in on; null on the worker transport.
+  connection: ApiConnection | null
 }
 
 export interface RouteDefinition {

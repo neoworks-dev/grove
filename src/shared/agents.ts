@@ -564,6 +564,16 @@ export interface FileMatch {
   score: number
 }
 
+/** A file a session has edited, and how much of it its edits changed. */
+export interface EditedFile {
+  /** Relative to the session's workspace. */
+  path: string
+  added: number
+  removed: number
+  /** The session made the file; it did not exist before. */
+  created: boolean
+}
+
 export interface BlobDescriptor {
   ref: string
   mediaType: string

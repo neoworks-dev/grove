@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { join } from 'path'
-import { unpackedPath } from '../src/main/ripgrepBinary'
+import { unpackedPath } from '../src/main/ripgrep'
 
 describe('unpackedPath', () => {
   test('points a binary inside app.asar at its unpacked copy', () => {

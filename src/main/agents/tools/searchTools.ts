@@ -3,8 +3,7 @@
 // Both answer in as few tokens as will do: paths relative to the workspace,
 // matches grouped under the file they are in, and a cut-off that says so.
 
-import { spawn } from 'child_process'
-import { ripgrepBinary } from '../../ripgrepBinary'
+import { ripgrep } from '../../ripgrep'
 import type { GroveTool } from '../harness'
 import { displayPath, resolvePath } from './workspaceFiles'
 
@@ -138,38 +137,4 @@ function parseGrepLine(
 function searchRoot(workspaceRoot: string, path: unknown): string {
   if (typeof path !== 'string' || path.length === 0) return workspaceRoot
   return resolvePath(workspaceRoot, path)
-}
-
-export interface RipgrepOutput {
-  lines: string[]
-  /** ripgrep exits 1 for "nothing found" and 2 for errors, even beside matches. */
-  failed: boolean
-  error: string
-}
-
-/**
- * Run ripgrep over a file or directory and collect what it prints. The target
- * is passed absolute, so every path it prints is too.
- */
-export function ripgrep(cwd: string, target: string, args: string[]): Promise<RipgrepOutput> {
-  return new Promise((resolve) => {
-    const child = spawn(ripgrepBinary, [...args, '--', target], {
-      cwd,
-      stdio: ['ignore', 'pipe', 'pipe']
-    })
-    let stdout = ''
-    let stderr = ''
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString()
-    })
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString()
-    })
-    child.on('error', (cause) => resolve({ lines: [], failed: true, error: cause.message }))
-    child.on('close', (code) => {
-      const lines = stdout.split('\n')
-      const failed = code === 2 && stdout.trim().length === 0
-      resolve({ lines, failed, error: stderr.trim() })
-    })
-  })
 }

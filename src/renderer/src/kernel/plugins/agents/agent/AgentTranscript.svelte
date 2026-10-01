@@ -35,6 +35,8 @@
   import AgentMessageCards from './AgentMessageCards.svelte'
   import AgentToolCall from './AgentToolCall.svelte'
   import AgentSurface from './AgentSurface.svelte'
+  import { clearReveal, transcriptReveal } from '../../../../lib/agents/transcriptReveal.svelte'
+  import { sectionHolding } from '../../../../lib/agents/sectionHolding'
 
   let {
     sessionId,
@@ -99,6 +101,27 @@
     }
     if (current.header || current.body.length > 0) result.push(current)
     return result
+  })
+
+  /** Where a section starts, for finding the one a seq falls in. */
+  function sectionStart(section: Section): { key: string; startSeq: number | null } {
+    let first: TranscriptItem | undefined = section.body[0]
+    if (section.header) first = section.header
+    if (!first) return { key: section.key, startSeq: null }
+    return { key: section.key, startSeq: first.seq }
+  }
+
+  // Something outside the pane — a blamed line, a commit's prompt — asked for a
+  // turn of this session. Scrolled to once its section is on screen.
+  $effect(() => {
+    const target = transcriptReveal.seq
+    if (target === null || transcriptReveal.sessionId !== sessionId || !viewport) return
+    const key = sectionHolding(sections.map(sectionStart), target)
+    if (!key) return
+    const element = viewport.querySelector(`[data-section="${CSS.escape(key)}"]`)
+    if (!(element instanceof HTMLElement)) return
+    element.scrollIntoView({ block: 'start' })
+    clearReveal()
   })
 
   // Runs of finished tool calls collapse into one line, so a burst of reads does
@@ -411,7 +434,7 @@
       {@const rows = toTranscriptRows(section.body, standsAlone)}
       {@const fold = isSettled(index) ? foldTurn(rows, standsAlone) : { hidden: [], kept: rows }}
       {@const open = Boolean(expandedTurns[section.key])}
-      <div>
+      <div data-section={section.key}>
         {#if section.header}
           <div class="sticky top-0 z-10">
             {@render row(section.header)}

@@ -11,8 +11,9 @@ import { mainContext } from './kernel/context'
 import { routePlugins } from './routes'
 import type { WorkbenchService, NvimService, PluginsService, AppsService } from './kernel/services'
 import type { WorkbenchConfig, Worktree, RepoInfo } from '../shared/types'
+import type { AgentEditStep } from '../shared/agents'
 import * as git from './git'
-import { CheckpointManager } from './checkpoints'
+import { CheckpointManager, captureTree, diffTrees, pinTreePair, unpinTrees } from './checkpoints'
 import { ConflictProposals } from './conflictResolution'
 import * as config from './config'
 import { LspManager } from './lsp'
@@ -62,6 +63,8 @@ import { AgentService } from './agents/service'
 import { AgentReviewBridge } from './agents/reviewBridge'
 import { AgentHandoffBridge } from './agents/handoffBridge'
 import { AgentRoster } from './agents/roster'
+import { EditStepRecorder, promptAt, stepsRef } from './agents/editSteps'
+import { PromptBlame } from './promptBlame'
 import type { AgentWorktrees } from './agents/tools/worktreeTools'
 import { runSetup } from './routes/worktrees'
 import { agentSection, section } from './agents/systemPrompt'
@@ -195,7 +198,10 @@ const agents = new AgentService({
     ...aiBridge.pluginTools()
   ],
   systemPrompt: (session) => buildSystemPrompt(session),
-  sessionRemoved: (session) => agentHandoffBridge.reportClosed(session),
+  sessionRemoved: async (session) => {
+    await editSteps.forget(session).catch(() => {})
+    await agentHandoffBridge.reportClosed(session)
+  },
   publish: (event) => send('event:agent-event', event),
   publishShellOutput: (update) => send('event:agent-shell-output', update),
   defaultHarness: () => settings.get<string>('workbench.agentHarness'),
@@ -258,6 +264,40 @@ async function buildSystemPrompt(session: {
 
 // Hands a spawned agent's closing words back to the agent that started it.
 const agentHandoffBridge = new AgentHandoffBridge({ store: sessionStore, roster: agentRoster })
+
+// Each tool call that changed the worktree, with the trees either side of it:
+// the steps a session replay walks.
+const editSteps = new EditStepRecorder({
+  store: sessionStore,
+  trees: {
+    capture: (worktreePath) => captureTree(worktreePath),
+    pin: (worktreePath, sessionId, before, after) =>
+      pinTreePair(worktreePath, stepsRef(sessionId), before, after),
+    unpin: (worktreePath, sessionId) => unpinTrees(worktreePath, stepsRef(sessionId)),
+    diff: (worktreePath, from, to) => diffTrees(worktreePath, from, to)
+  },
+  publish: (sessionId, step) => {
+    send('event:agent-step', { sessionId, step })
+    void recordPromptBlame(sessionId, step)
+  }
+})
+
+// Which prompt wrote which lines, kept apart from the sessions so blame still
+// answers once a session is deleted.
+const promptBlame = new PromptBlame({
+  directory: join(app.getPath('userData'), 'prompt-blame'),
+  sessionExists: (sessionId) => sessionStore.peek(sessionId) !== undefined
+})
+
+/** Hands a new step, with the prompt its turn answered, to prompt blame. */
+async function recordPromptBlame(sessionId: string, step: AgentEditStep): Promise<void> {
+  const session = sessionStore.peek(sessionId)
+  if (!session) return
+  const turn = promptAt(sessionStore.peekEvents(sessionId), step.turnSeq)
+  await promptBlame
+    .recordStep(session.workspaceRoot, session, step, turn)
+    .catch((error: Error) => console.error(`[blame] recording a step failed: ${error.message}`))
+}
 
 // Watches the event log so a review keeps blocking the agent whether or not the
 // agent pane is open.
@@ -743,6 +783,8 @@ const mainServices = {
     ctx.provide('agents', agents)
     ctx.provide('browser', browser)
     ctx.provide('agentReview', agentReviewBridge)
+    ctx.provide('editSteps', editSteps)
+    ctx.provide('promptBlame', promptBlame)
     ctx.provide('debug', debugService)
     ctx.provide('debugAdapters', debugAdapters)
     ctx.provide('conflictProposals', conflictProposals)
@@ -754,6 +796,9 @@ const mainServices = {
     // A spawned agent reports back when it finishes a turn, whether or not
     // anyone is looking at either pane.
     ctx.effect(() => agentHandoffBridge.watch(), 'agents:handoff-bridge')
+
+    // Edits are recorded as they happen, whether or not a replay is open.
+    ctx.effect(() => editSteps.watch(), 'agents:edit-steps')
 
     // One-time startup work that belongs to no single route domain: the local
     // API socket external apps connect over, and the user settings file.

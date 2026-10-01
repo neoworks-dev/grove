@@ -179,6 +179,19 @@ const workbench = {
     restore: (worktreeId: string, commit: string) =>
       ipcRenderer.invoke('checkpoints:restore', worktreeId, commit)
   },
+  replay: {
+    session: (sessionId: string) => ipcRenderer.invoke('replay:session', sessionId),
+    compare: (sessionId: string, from: string, to: string) =>
+      ipcRenderer.invoke('replay:compare', sessionId, from, to),
+    restore: (sessionId: string, tree: string) =>
+      ipcRenderer.invoke('replay:restore', sessionId, tree)
+  },
+  blame: {
+    line: (worktreeId: string, path: string, line: number, text: string) =>
+      ipcRenderer.invoke('blame:line', worktreeId, path, line, text),
+    commitPrompts: (worktreeId: string, sha: string) =>
+      ipcRenderer.invoke('blame:commitPrompts', worktreeId, sha)
+  },
   conflicts: {
     agentPrompt: (worktreeId: string, paths: string[] | null) =>
       ipcRenderer.invoke('conflicts:agentPrompt', worktreeId, paths),

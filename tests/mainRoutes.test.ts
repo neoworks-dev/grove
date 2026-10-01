@@ -32,6 +32,8 @@ const SERVICE_STUBS: Record<string, unknown> = {
   agents: { watch: () => () => {} },
   browser: { watchNewPages: () => () => {}, dispose: () => {} },
   agentReview: {},
+  editSteps: {},
+  promptBlame: {},
   conflictProposals: {},
   harnesses: { register: () => () => {} },
   plugins: { registry: { loadAll: async () => [] } },

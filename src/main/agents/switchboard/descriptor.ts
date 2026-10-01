@@ -90,14 +90,17 @@ export function switchboardHarness(
 
 /**
  * A profile switched to grove mode: grove's prompt and workspace tools in
- * place of the harness's, and everything else it brings turned off. The
- * harness itself and how it reaches its model stay as they are.
+ * place of the harness's, and everything else it brings turned off. Only the
+ * tools marked `alwaysLoad` are given with their schemas; the rest are loaded
+ * with `tool_search`. The harness itself and how it reaches its model stay as
+ * they are.
  */
 function inGroveMode(profile: RunProfile, tools: GroveTool[]): RunProfile {
   return {
     ...profile,
     sessionOptions: (options) => groveModeOptions(options, tools),
-    tools: () => tools
+    tools: () => tools,
+    listsUpFront: (tool) => tool.alwaysLoad === true
   }
 }
 

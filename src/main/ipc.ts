@@ -192,7 +192,8 @@ const agents = new AgentService({
       notes: agents,
       screen: agents,
       worktrees: agentWorktrees,
-      conflicts: conflictProposals
+      conflicts: conflictProposals,
+      skills: () => aiBridge.skillList()
     }),
     ...browserTools(browser),
     ...aiBridge.pluginTools()
@@ -257,8 +258,8 @@ async function buildSystemPrompt(session: {
     agentRoster.relativesElsewhere(session.id)
   ])
   const agent = agentSection({ agentId, title: session.title, peers, relatives })
-  // Skills plugins registered go to every agent run.
-  const skills = section('skills', aiBridge.systemAppend())
+  // Skills plugins registered are listed to every agent run, read on demand.
+  const skills = section('skills', aiBridge.skillListing())
   return [agent, skills].filter((part) => part.length > 0).join('\n\n')
 }
 

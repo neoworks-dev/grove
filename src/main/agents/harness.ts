@@ -48,6 +48,15 @@ export interface GroveToolContext {
    * the way a harness reports its own tools. Kept when the call's result comes.
    */
   report?(update: Omit<ToolCallUpdate, 'toolCallId'>): void
+  /** Every tool the session is served, listed up front or not. */
+  tools?(): GroveTool[]
+}
+
+/** A skill a plugin registered: listed in the prompt by name, its instructions read on demand. */
+export interface GroveSkill {
+  name: string
+  description: string
+  instructions: string
 }
 
 export interface GroveToolResult {
@@ -76,8 +85,10 @@ export interface GroveTool {
   display?: ToolDisplay
   /**
    * Offer the tool up front on a runtime that otherwise hides tools behind a
-   * search. For a tool the model should reach for unprompted: one it has to go
-   * looking for first only gets used when the user names it.
+   * search — grove mode among them, which lists every other tool by name and
+   * summary until `tool_search` loads it. For a tool the model should reach for
+   * unprompted: one it has to go looking for first only gets used when the
+   * user names it.
    */
   alwaysLoad?: boolean
   /**

@@ -1,6 +1,6 @@
 // Bridges plugin AI contributions into agent runs. Plugin MCP tools are served
 // beside grove's own tools, and each call proxies back into the plugin's worker.
-// Skills append to the agent's system prompt. ai.prompt runs a standalone
+// Skills are listed in the agent's system prompt and read on demand. ai.prompt runs a standalone
 // one-shot Claude Code session through switchboard that never touches the
 // user's chat slots.
 
@@ -10,7 +10,7 @@ import type { ClientRecord } from '../api/clients'
 import type { PluginRegistry } from './loader'
 import { PermissionError } from '../api/broker'
 import type { RequestPermissionRequest } from '@neoworks/harness'
-import type { GroveTool } from '../agents/harness'
+import type { GroveSkill, GroveTool } from '../agents/harness'
 import type { SwitchboardHost } from '../agents/switchboard/host'
 
 export interface JsonSchemaObject {
@@ -138,17 +138,28 @@ export class AiBridge {
     }
   }
 
-  // Skill blocks for the `skills` section of the agent's system prompt (v1
-  // mechanism; swaps to native SDK skills when available). Empty when no
-  // plugin registered one.
-  systemAppend(): string {
-    const blocks: string[] = []
+  /** Every skill plugins registered, for `tool_search` to read out when the agent asks. */
+  skillList(): GroveSkill[] {
+    const skills: GroveSkill[] = []
     for (const byName of this.skills.values()) {
       for (const skill of byName.values()) {
-        blocks.push(`## ${skill.name}\n${skill.description}\n\n${skill.instructions}`)
+        skills.push({ name: skill.name, description: skill.description, instructions: skill.instructions })
       }
     }
-    return blocks.join('\n\n')
+    return skills
+  }
+
+  /**
+   * The `skills` section of the agent's system prompt: each skill by name and
+   * description, its instructions loaded with `tool_search` when it is used.
+   * Empty when no plugin registered one.
+   */
+  skillListing(): string {
+    const skills = this.skillList()
+    if (skills.length === 0) return ''
+    const lines = ['Load a skill with tool_search before following it.']
+    for (const skill of skills) lines.push(`- ${skill.name}: ${skill.description}`)
+    return lines.join('\n')
   }
 
   // ── Tool proxy round trip (main → renderer host → plugin worker) ──

@@ -42,16 +42,23 @@ const WORKING_RULES = [
   'Show file paths as path:line'
 ]
 
-/** The whole prompt for a grove mode session, around the session's context sections. */
+/**
+ * The whole prompt for a grove mode session, around the session's context
+ * sections. Tools marked `alwaysLoad` come with their rules; the rest are
+ * listed by name and summary, their rules arriving when `tool_search` loads them.
+ */
 export function groveModePrompt(
   tools: GroveTool[],
   context: string,
   environment: PromptEnvironment
 ): string {
+  const upFront = tools.filter((tool) => tool.alwaysLoad === true)
+  const onDemand = tools.filter((tool) => tool.alwaysLoad !== true)
   return joinSections([
     `You are an expert coding assistant operating inside ${GROVE}. You help users by reading files, searching code, running commands, editing code, and writing new files.`,
-    section('tools', toolLines(tools)),
-    section('rules', rules(tools, WORKING_RULES)),
+    section('tools', toolLines(upFront)),
+    section('more_tools', onDemandLines(onDemand)),
+    section('rules', rules(upFront, WORKING_RULES)),
     context,
     section('environment', environmentLines(environment))
   ])
@@ -100,6 +107,15 @@ function joinSections(sections: string[]): string {
 /** One line per tool, pi's `- name: what it does`. */
 function toolLines(tools: GroveTool[]): string {
   return tools.map((tool) => `- ${tool.name}: ${tool.summary.replace(/\.$/, '')}`).join('\n')
+}
+
+/** The tools listed by name only, under how to reach them; nothing when there are none. */
+function onDemandLines(tools: GroveTool[]): string {
+  if (tools.length === 0) return ''
+  return [
+    'Load any of these with tool_search, then call it with call_tool:',
+    toolLines(tools)
+  ].join('\n')
 }
 
 /** The tools' own rules in the order the tools come, then the fixed ones, each said once. */

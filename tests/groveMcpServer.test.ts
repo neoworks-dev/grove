@@ -28,15 +28,17 @@ function tool(name: string, policy: GroveTool['policy'], extra: Partial<GroveToo
   }
 }
 
-/** A binding over the given tools, recording what it was asked to approve. */
+/** A binding over the given tools, all of them listed unless told otherwise, recording what it was asked to approve. */
 function binding(
   tools: GroveTool[],
-  decide: (request: ApprovalRequest) => ApprovalDecision
+  decide: (request: ApprovalRequest) => ApprovalDecision,
+  listed: GroveTool[] = tools
 ): { bound: ToolBinding; asked: ApprovalRequest[] } {
   const asked: ApprovalRequest[] = []
   const bound: ToolBinding = {
     harnessSessionId: () => 'harness-1',
     tools: () => tools,
+    listed: () => listed,
     context: { sessionId: 's1', workspaceRoot: '/w', surface: () => {}, show: () => {} },
     confirm: (request) => {
       asked.push(request)
@@ -166,6 +168,43 @@ describe('the MCP server', () => {
     expect(result.isError).toBe(true)
     expect(textOf(result)).toBe('not now')
     expect(asked).toHaveLength(0)
+    await client.close()
+  })
+
+  test('lists only the tools given up front, and calls the rest through call_tool', async () => {
+    const server = new GroveMcpServer()
+    servers.push(server)
+    const dispatcher = tool('call_tool', 'allow')
+    const hidden = tool('show_diff', 'ask')
+    const { bound, asked } = binding([tool('read', 'allow'), hidden, dispatcher], () => ({ result: 'allow' }), [
+      tool('read', 'allow'),
+      dispatcher
+    ])
+    const client = await connect(server, bound)
+
+    const listed = await client.listTools()
+    expect(listed.tools.map((entry) => entry.name)).toEqual(['read', 'call_tool'])
+
+    const result = await client.callTool({
+      name: 'call_tool',
+      arguments: { name: 'show_diff', input: { text: 'a' } }
+    })
+    expect(textOf(result)).toBe('show_diff:a:call-show_diff')
+    expect(asked).toHaveLength(1)
+    expect(asked[0].toolCall).toMatchObject({ name: 'mcp__grove__show_diff', rawInput: { text: 'a' } })
+    await client.close()
+  })
+
+  test('call_tool refuses a denied tool, an unknown one and itself', async () => {
+    const server = new GroveMcpServer()
+    servers.push(server)
+    const { bound } = binding([tool('hidden', 'deny'), tool('call_tool', 'allow')], () => ({ result: 'allow' }))
+    const client = await connect(server, bound)
+
+    for (const name of ['hidden', 'missing', 'call_tool']) {
+      const result = await client.callTool({ name: 'call_tool', arguments: { name, input: {} } })
+      expect(result.isError).toBe(true)
+    }
     await client.close()
   })
 })

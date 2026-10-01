@@ -31,6 +31,7 @@ const ANSI_ESCAPE =
 export function shellTool(): GroveTool {
   return {
     name: 'shell',
+    alwaysLoad: true,
     summary: 'Run a command',
     promptGuidelines: ['Use shell for builds, tests and git, not to read, search or edit files'],
     description: `Run a bash command in the working directory and get its output and exit code. Long output is cut to its start and end. Times out after ${DEFAULT_TIMEOUT_SECONDS}s unless timeout says otherwise (at most ${MAX_TIMEOUT_SECONDS}s). Prefer read, find, grep and edit over cat, find, grep and sed.`,

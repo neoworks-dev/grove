@@ -41,6 +41,7 @@ export function fileTools(files: WorkspaceFiles): GroveTool[] {
 function readTool(files: WorkspaceFiles): GroveTool {
   return {
     name: 'read',
+    alwaysLoad: true,
     summary: 'Read a file',
     promptGuidelines: [
       'Find code with grep, find or lsp before reading it',
@@ -78,6 +79,7 @@ function editTool(files: WorkspaceFiles): GroveTool {
 
   return {
     name: 'edit',
+    alwaysLoad: true,
     summary: 'Edit a file',
     promptGuidelines: ['Edit with the LINE#ID tags from read, every change to a file in one call'],
     description: [
@@ -138,6 +140,7 @@ function editTool(files: WorkspaceFiles): GroveTool {
 function writeTool(files: WorkspaceFiles): GroveTool {
   return {
     name: 'write',
+    alwaysLoad: true,
     summary: 'Write a file',
     promptGuidelines: ['Use write only for new files or complete rewrites'],
     description:

@@ -256,6 +256,19 @@ export function replayTurns(
   return turns
 }
 
+/** Who sent the message at `seq` and what it said, or null when there is none. */
+export function promptAt(
+  events: readonly SessionEvent[],
+  seq: number | null
+): { from: string; prompt: string } | null {
+  if (seq === null) return null
+  const event = events.find((candidate) => candidate.seq === seq)
+  if (!event) return null
+  const turn = turnOf(event)
+  if (!turn) return null
+  return { from: turn.from, prompt: turn.prompt }
+}
+
 /** The turn a message starts, or null for an event that is not a message. */
 function turnOf(event: SessionEvent): ReplayTurn | null {
   if (event.type === 'user.message') {

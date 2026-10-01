@@ -15,6 +15,7 @@ import type {
   RequestPermissionRequest,
   SessionUpdate as AcpSessionUpdate
 } from '@neoworks/harness'
+import type { TreeFileChange } from './types'
 
 export type SessionStatus = 'idle' | 'running' | 'terminated'
 
@@ -636,4 +637,47 @@ export interface HarnessCatalog {
   skills: SkillInfo[]
   models: ModelEntry[]
   default: { provider: string; model: string } | null
+}
+
+// ── Replay ──────────────────────────────────────────────────────
+
+/**
+ * One tool call that changed the worktree: the tree just before the call was
+ * reported and the tree once it settled. The trees are pinned under a private
+ * ref, so they outlive the checkpoint cap.
+ */
+export interface AgentEditStep {
+  /** 1-based, in the order the calls settled. */
+  index: number
+  /** The message that started the turn the call ran in; null before any message. */
+  turnSeq: number | null
+  /** The event that first reported the call. */
+  seq: number
+  toolCallId: string
+  title: string
+  kind: string
+  /** When the call settled. */
+  at: string
+  before: string
+  after: string
+  files: TreeFileChange[]
+}
+
+/** One turn of a replay: the message that started it, and the edits it made. */
+export interface ReplayTurn {
+  /** The message's seq, or null for edits made before any message. */
+  seq: number | null
+  at: string
+  /** Who sent it: "You", or the label grove or another agent sent it under. */
+  from: string
+  prompt: string
+  steps: AgentEditStep[]
+}
+
+/** A session's history as the replay view walks it. */
+export interface SessionReplay {
+  sessionId: string
+  title: string
+  workspaceRoot: string
+  turns: ReplayTurn[]
 }

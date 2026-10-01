@@ -24,6 +24,7 @@ import type {
   DiffHunks,
   DiffStats,
   CheckpointMeta,
+  TreeFileChange,
   MergeMode,
   MergePreview,
   MergeResult,
@@ -104,7 +105,8 @@ import type {
   ShellOutputSnapshot,
   SessionMeta,
   SessionSnapshot,
-  SessionUpdate
+  SessionUpdate,
+  SessionReplay
 } from '../shared/agents'
 
 interface OpenRepoResult {
@@ -333,6 +335,14 @@ export interface WorkbenchApi {
     restore: (
       worktreeId: string,
       commit: string
+    ) => Promise<{ restoredTree: string; preRestore: CheckpointMeta | null }>
+  }
+  replay: {
+    session: (sessionId: string) => Promise<SessionReplay>
+    compare: (sessionId: string, from: string, to: string) => Promise<TreeFileChange[]>
+    restore: (
+      sessionId: string,
+      tree: string
     ) => Promise<{ restoredTree: string; preRestore: CheckpointMeta | null }>
   }
   chat: {

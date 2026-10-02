@@ -2,6 +2,7 @@
 // streamed events (logs, service/agent status) to the renderer. This is the
 // single source of truth for the API exposed via preload.
 
+import { writeShellIntegration } from './terminals/shellIntegration'
 import { app, dialog, BrowserWindow } from 'electron'
 import { dirname, join } from 'path'
 import { mkdirSync } from 'fs'
@@ -377,8 +378,26 @@ const terminals = new TerminalManager(
     },
     onTitle: (id, title) => send('event:terminal-title', { id, title })
   },
-  { socketPath: terminalSocketPath(app.getPath('userData')) }
+  {
+    socketPath: terminalSocketPath(app.getPath('userData')),
+    shellIntegrationDir: shellIntegrationDir(app.getPath('userData'))
+  }
 )
+
+/**
+ * Where grove's zsh and bash startup files live, written fresh at each start
+ * so they match this version. A shell started without them is just unmarked.
+ */
+function shellIntegrationDir(userData: string): string | undefined {
+  const directory = join(userData, 'shell-integration')
+  try {
+    writeShellIntegration(directory)
+    return directory
+  } catch (cause) {
+    console.warn('shell integration unavailable:', cause)
+    return undefined
+  }
+}
 
 /**
  * The terminal daemon's socket for this profile. The daemon binds it without

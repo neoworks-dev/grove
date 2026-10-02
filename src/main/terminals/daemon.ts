@@ -123,7 +123,9 @@ class TerminalDaemon {
   private create(message: Extract<ClientMessage, { type: 'create' }>): void {
     if (this.sessions.has(message.id)) return
 
-    const pty = spawnPty(shellOf(message.env), shellArgs(), {
+    let args = shellArgs()
+    if (Array.isArray(message.args)) args = message.args
+    const pty = spawnPty(shellOf(message.env), args, {
       name: 'xterm-256color',
       cwd: message.cwd,
       cols: Math.max(1, message.cols),

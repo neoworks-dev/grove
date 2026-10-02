@@ -5,7 +5,8 @@
 // including the ones whose SDK has no shell passthrough at all. The service puts
 // the result on the transcript and decides whether the model gets to see it.
 
-import { spawn } from 'node:child_process'
+import type { CommandSpawner } from './commandTerminal'
+import { runInTerminal, type CommandOutcome } from './commandRun'
 
 export interface ShellResult {
   output: string
@@ -24,6 +25,10 @@ export interface ShellOptions {
   maxOutputChars?: number
   /** Called with what the command prints, as it prints it. */
   onOutput?(text: string): void
+  /** Called when it starts or stops waiting for someone to type. */
+  onWaiting?(waiting: boolean): void
+  /** What runs it; a pty unless a test asks for pipes. */
+  spawn?: CommandSpawner
 }
 
 /** A `!` command on its way, and what the user can do to it meanwhile. */
@@ -33,14 +38,12 @@ export interface RunningShellCommand {
   interrupt(): void
   /** Lifts the timeout, so it runs until it exits or is stopped (Ctrl+B). */
   background(): void
-}
-
-/** The shell to spawn: the one asked for, or Node's platform default. */
-function shellOf(options: ShellOptions): string | true {
-  if (options.shell === undefined) {
-    return true
-  }
-  return options.shell
+  /** Types into it. */
+  write(data: string): void
+  /** Resizes its terminal to the view showing it. */
+  resize(cols: number, rows: number): void
+  /** Stops it and everything it started, for good. */
+  kill(): void
 }
 
 const DEFAULT_TIMEOUT_MS = 120_000
@@ -50,83 +53,55 @@ const DEFAULT_MAX_OUTPUT_CHARS = 64 * 1024
 const NOT_RUN_EXIT_CODE = 127
 
 /**
- * Run one shell command and collect what it printed.
- *
- * stdout and stderr are merged, because what the user sees in a terminal is both
- * interleaved. stdin is closed rather than piped: a command that reads input
- * should hit EOF straight away instead of hanging until the timeout.
+ * Run one shell command and collect what it printed: the text left on its
+ * terminal's screen, so stdout and stderr interleaved as the user saw them.
+ * A command that reads input waits for it, its time limit paused.
  */
 export function runShellCommand(command: string, options: ShellOptions): Promise<ShellResult> {
   return startShellCommand(command, options).result
 }
 
 /**
- * Start one shell command, in its own process group so that stopping it stops
- * whatever it started too, and hand back its result with the controls the
- * user has over it while it runs.
+ * Start one shell command in a terminal of its own, and hand back its result
+ * with the controls the user has over it while it runs.
  */
 export function startShellCommand(command: string, options: ShellOptions): RunningShellCommand {
   const timeoutMs = timeoutOf(options)
-  const limit = outputLimitOf(options)
-  const child = spawn(command, {
+  const running = runInTerminal({
+    command,
     cwd: options.cwd,
-    env: process.env,
-    shell: shellOf(options),
-    stdio: ['ignore', 'pipe', 'pipe'],
-    detached: true
+    shell: options.shell,
+    spawn: options.spawn,
+    timeoutMs,
+    onOutput: options.onOutput,
+    onWaiting: options.onWaiting
   })
-
-  const chunks: string[] = []
-  const collect = (chunk: Buffer): void => {
-    const text = chunk.toString('utf8')
-    chunks.push(text)
-    options.onOutput?.(text)
-  }
-  child.stdout.on('data', collect)
-  child.stderr.on('data', collect)
-
-  let timedOut = false
-  const timer = setTimeout(() => {
-    timedOut = true
-    signalGroup(child.pid, 'SIGKILL')
-  }, timeoutMs)
-
-  const result = new Promise<ShellResult>((resolve) => {
-    child.on('error', (cause: Error) => {
-      clearTimeout(timer)
-      resolve({
-        output: chunks.join(''),
-        exitCode: NOT_RUN_EXIT_CODE,
-        outcome: `could not run: ${cause.message}`
-      })
-    })
-
-    child.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
-      clearTimeout(timer)
-      const output = capOutput(chunks.join(''), limit)
-      if (timedOut) {
-        resolve({ output, exitCode: NOT_RUN_EXIT_CODE, outcome: timeoutOutcome(timeoutMs) })
-        return
-      }
-      resolve({ output, exitCode: exitCodeOf(code, signal), outcome: outcomeOf(code, signal) })
-    })
-  })
-
   return {
-    result,
-    interrupt: () => signalGroup(child.pid, 'SIGINT'),
-    background: () => clearTimeout(timer)
+    result: running.result.then((outcome) => shellResultOf(outcome, timeoutMs, outputLimitOf(options))),
+    interrupt: () => running.interrupt(),
+    background: () => running.background(),
+    write: (data) => running.write(data),
+    resize: (cols, rows) => running.resize(cols, rows),
+    kill: () => running.kill()
   }
 }
 
-/** Signal a command's whole process group. */
-function signalGroup(pid: number | undefined, signal: NodeJS.Signals): void {
-  if (pid === undefined) return
-  try {
-    process.kill(-pid, signal)
-  } catch {
-    // Already gone.
+/** How a finished command is reported on the transcript. */
+function shellResultOf(outcome: CommandOutcome, timeoutMs: number, limit: number): ShellResult {
+  if (outcome.startError !== undefined) {
+    return { output: '', exitCode: NOT_RUN_EXIT_CODE, outcome: `could not run: ${outcome.startError}` }
   }
+  const output = capOutput(outcome.text, limit)
+  if (outcome.timedOut) {
+    return { output, exitCode: NOT_RUN_EXIT_CODE, outcome: timeoutOutcome(timeoutMs) }
+  }
+  let code: number | null = null
+  let signal: NodeJS.Signals | null = null
+  if (outcome.exit) {
+    code = outcome.exit.code
+    signal = outcome.exit.signal
+  }
+  return { output, exitCode: exitCodeOf(code, signal), outcome: outcomeOf(code, signal) }
 }
 
 function timeoutOf(options: ShellOptions): number {

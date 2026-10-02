@@ -5,6 +5,7 @@
 // A fake harness stands in for the SDKs so the protocol itself is what is tested
 // rather than any one of them.
 
+import { spawnOnPipes } from '../src/main/agents/commandTerminal'
 import { describe, expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -128,7 +129,8 @@ function openService(root: string): Harness {
     harnesses,
     tools: () => [],
     publish: () => {},
-    defaultHarness: () => 'fake'
+    defaultHarness: () => 'fake',
+    spawnCommand: spawnOnPipes
   })
 
   return {
@@ -458,7 +460,7 @@ describe('AgentService', () => {
       await settle()
 
       expect(runs[0].prompts[0]).toBe(
-        '[Background command finished]\n<shell-command outcome="exit 0">\n$ sleep 0.2; echo ready\nready\n\n</shell-command>'
+        '[Background command finished]\n<shell-command outcome="exit 0">\n$ sleep 0.2; echo ready\nready\n</shell-command>'
       )
     } finally {
       await rm(workspace, { recursive: true, force: true })
@@ -478,7 +480,7 @@ describe('AgentService', () => {
 
       await service.send(session.id, [say('fix it')])
       expect(runs[0].prompts[0]).toBe(
-        '<shell-command outcome="exit 0">\n$ echo hello\nhello\n\n</shell-command>\nfix it'
+        '<shell-command outcome="exit 0">\n$ echo hello\nhello\n</shell-command>\nfix it'
       )
 
       runs[0].finish()

@@ -27,6 +27,15 @@ export class ScreenText {
     })
   }
 
+  /**
+   * What the terminal says back to the command: the answers to the questions
+   * programs ask a terminal (what are you, where is the cursor). fish waits ten
+   * seconds for one before it reads a line, so they go back into the command.
+   */
+  onReply(listener: (data: string) => void): void {
+    this.terminal.onData(listener)
+  }
+
   /** Draws more of the command's output. */
   write(data: string): void {
     this.terminal.write(data)

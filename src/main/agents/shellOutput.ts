@@ -8,15 +8,27 @@
 
 import type { ShellOutputSnapshot, ShellOutputUpdate } from '../../shared/agents'
 
+/** What the user can do to a running command, as far as whoever runs it allows. */
+export interface CommandControls {
+  /** Stops it the way Ctrl+C would. */
+  interrupt?(): void
+  /** Hands its call back to the agent while it keeps running. */
+  background?(): void
+  /** Types into it. */
+  write?(data: string): void
+  /** Resizes its terminal to the view showing it. */
+  resize?(cols: number, rows: number): void
+  /** Stops it and everything it started for good, when grove or the session goes away. */
+  kill?(): void
+}
+
 /** What a harness calls as a command it runs prints. */
 export interface ShellOutputSink {
-  /**
-   * A command started; `interrupt` stops it the way Ctrl+C would, and
-   * `background` hands its call back to the agent while it keeps running, when
-   * the harness can do either.
-   */
-  begin(toolUseId: string, interrupt?: () => void, background?: () => void): void
+  /** A command started, with what can be done to it while it runs. */
+  begin(toolUseId: string, controls?: CommandControls): void
   append(toolUseId: string, text: string): void
+  /** It started or stopped waiting for someone to type. */
+  waiting?(toolUseId: string, waiting: boolean): void
   end(toolUseId: string): void
 }
 
@@ -38,8 +50,9 @@ interface LiveCommand {
   settled: boolean
   /** Nothing waits on it any more, though it still runs: listed for the user to stop. */
   inBackground: boolean
-  interrupt?: () => void
-  background?: () => void
+  /** Blocked reading its input: someone has to type. */
+  waitingForInput: boolean
+  controls: CommandControls
   flushTimer?: ReturnType<typeof setTimeout>
 }
 
@@ -51,9 +64,9 @@ export class ShellOutputHub {
   /** A sink that reports into this hub on behalf of one session. */
   sinkFor(sessionId: string): ShellOutputSink {
     return {
-      begin: (toolUseId, interrupt, background) =>
-        this.begin(sessionId, toolUseId, interrupt, background),
+      begin: (toolUseId, controls) => this.begin(sessionId, toolUseId, controls),
       append: (toolUseId, text) => this.append(sessionId, toolUseId, text),
+      waiting: (toolUseId, waiting) => this.setWaiting(sessionId, toolUseId, waiting),
       end: (toolUseId) => this.end(sessionId, toolUseId)
     }
   }
@@ -67,7 +80,8 @@ export class ShellOutputHub {
         toolUseId: command.toolUseId,
         text: command.text,
         running: command.running,
-        background: command.inBackground
+        background: command.inBackground,
+        waitingForInput: command.waitingForInput
       })
     }
     return found
@@ -75,10 +89,33 @@ export class ShellOutputHub {
 
   /** Stops a running command, as Ctrl+C would. False when there is nothing to stop. */
   interrupt(sessionId: string, toolUseId: string): boolean {
-    const command = this.commands.get(keyOf(sessionId, toolUseId))
-    if (!command || !command.running || !command.interrupt) return false
-    command.interrupt()
+    const command = this.runningCommand(sessionId, toolUseId)
+    if (!command || !command.controls.interrupt) return false
+    command.controls.interrupt()
     return true
+  }
+
+  /** Types into a running command. False when it takes no input. */
+  write(sessionId: string, toolUseId: string, data: string): boolean {
+    const command = this.runningCommand(sessionId, toolUseId)
+    if (!command || !command.controls.write) return false
+    command.controls.write(data)
+    return true
+  }
+
+  /** Resizes a running command's terminal to the view showing it. */
+  resize(sessionId: string, toolUseId: string, cols: number, rows: number): boolean {
+    const command = this.runningCommand(sessionId, toolUseId)
+    if (!command || !command.controls.resize) return false
+    command.controls.resize(cols, rows)
+    return true
+  }
+
+  /** A command of the session that is still running, if there is one by that id. */
+  private runningCommand(sessionId: string, toolUseId: string): LiveCommand | undefined {
+    const command = this.commands.get(keyOf(sessionId, toolUseId))
+    if (!command || !command.running) return undefined
+    return command
   }
 
   /**
@@ -90,9 +127,9 @@ export class ShellOutputHub {
     let moved = false
     for (const command of this.commands.values()) {
       if (command.sessionId !== sessionId || command.settled) continue
-      if (!command.running || !command.background) continue
-      const background = command.background
-      command.background = undefined
+      if (!command.running || !command.controls.background) continue
+      const background = command.controls.background
+      command.controls = { ...command.controls, background: undefined }
       background()
       this.markBackground(command)
       moved = true
@@ -137,23 +174,17 @@ export class ShellOutputHub {
 
   /** Drops a command, stopping it first if it is still running in the background. */
   private forget(command: LiveCommand): void {
-    if (command.running && command.interrupt) command.interrupt()
+    if (command.running) stopForGood(command.controls)
     clearTimeout(command.flushTimer)
     this.commands.delete(keyOf(command.sessionId, command.toolUseId))
   }
 
-  private begin(
-    sessionId: string,
-    toolUseId: string,
-    interrupt?: () => void,
-    background?: () => void
-  ): void {
+  private begin(sessionId: string, toolUseId: string, controls: CommandControls = {}): void {
     const key = keyOf(sessionId, toolUseId)
     const existing = this.commands.get(key)
     if (existing) {
       existing.running = true
-      existing.interrupt = interrupt
-      existing.background = background
+      existing.controls = controls
       return
     }
     this.commands.set(key, {
@@ -164,10 +195,17 @@ export class ShellOutputHub {
       running: true,
       settled: false,
       inBackground: false,
-      interrupt,
-      background
+      waitingForInput: false,
+      controls
     })
-    this.publish({ sessionId, toolUseId, text: '', running: true, background: false })
+    this.publish({
+      sessionId,
+      toolUseId,
+      text: '',
+      running: true,
+      background: false,
+      waitingForInput: false
+    })
   }
 
   private append(sessionId: string, toolUseId: string, text: string): void {
@@ -189,8 +227,8 @@ export class ShellOutputHub {
     const command = this.commands.get(keyOf(sessionId, toolUseId))
     if (!command || !command.running) return
     command.running = false
-    command.interrupt = undefined
-    command.background = undefined
+    command.waitingForInput = false
+    command.controls = {}
     this.flush(command)
     if (command.settled) this.forget(command)
   }
@@ -206,8 +244,17 @@ export class ShellOutputHub {
       toolUseId: command.toolUseId,
       text,
       running: command.running,
-      background: command.inBackground
+      background: command.inBackground,
+      waitingForInput: command.waitingForInput
     })
+  }
+
+  /** Notes a running command starting or stopping to wait for input, and tells the renderer. */
+  private setWaiting(sessionId: string, toolUseId: string, waiting: boolean): void {
+    const command = this.runningCommand(sessionId, toolUseId)
+    if (!command || command.waitingForInput === waiting) return
+    command.waitingForInput = waiting
+    this.flush(command)
   }
 }
 
@@ -227,6 +274,15 @@ export function addedOutput(previous: string, next: string): string {
   const at = next.lastIndexOf(anchor)
   if (anchor.length > 0 && at >= 0) return next.slice(at + anchor.length)
   return next
+}
+
+/** Kills a command where whoever runs it can, else interrupts it. */
+function stopForGood(controls: CommandControls): void {
+  if (controls.kill) {
+    controls.kill()
+    return
+  }
+  controls.interrupt?.()
 }
 
 function keyOf(sessionId: string, toolUseId: string): string {

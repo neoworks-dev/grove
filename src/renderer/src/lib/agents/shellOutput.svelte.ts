@@ -12,6 +12,8 @@ export interface LiveCommandOutput {
   running: boolean
   /** Nothing waits on it any more: its call returned, or it was sent to the background. */
   background: boolean
+  /** Blocked reading its input: someone has to type. */
+  waitingForInput: boolean
 }
 
 // Only the end of a very long run is kept, as in main.
@@ -39,13 +41,15 @@ class ShellOutputs {
       session[update.toolUseId] = {
         text: update.text,
         running: update.running,
-        background: update.background
+        background: update.background,
+        waitingForInput: update.waitingForInput
       }
       return
     }
     existing.text = keepTail(existing.text + update.text)
     existing.running = update.running
     existing.background = update.background
+    existing.waitingForInput = update.waitingForInput
   }
 
   /** Catches up on a session's running commands, for a view opening mid-run. */
@@ -56,7 +60,8 @@ class ShellOutputs {
       session[command.toolUseId] = {
         text: command.text,
         running: command.running,
-        background: command.background
+        background: command.background,
+        waitingForInput: command.waitingForInput
       }
     }
   }
@@ -64,6 +69,16 @@ class ShellOutputs {
   /** Ctrl+C for a command the session is running. */
   interrupt(sessionId: string, toolUseId: string): void {
     void window.workbench.agents.interruptShell(sessionId, toolUseId)
+  }
+
+  /** Types into a command the session is running. */
+  write(sessionId: string, toolUseId: string, data: string): void {
+    void window.workbench.agents.writeShell(sessionId, toolUseId, data)
+  }
+
+  /** Resizes a running command's terminal to the view showing it. */
+  resize(sessionId: string, toolUseId: string, cols: number, rows: number): void {
+    void window.workbench.agents.resizeShell(sessionId, toolUseId, cols, rows)
   }
 
   /** Ctrl+B: the agent stops waiting on its running commands, which keep going. */

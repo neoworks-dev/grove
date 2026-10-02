@@ -11,7 +11,6 @@
 // to know whether it was already up: `create` picks the id itself and returns it
 // straight away.
 
-import { withShellIntegration, type ShellLaunch } from './terminals/shellIntegration'
 import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { connect, type Socket } from 'node:net'
@@ -56,8 +55,6 @@ export interface TerminalManagerOptions {
   socketPath: string
   /** The daemon entry point, spawned when nothing is listening yet. */
   daemonScript?: string
-  /** Where grove's shell integration files are, to start zsh and bash with them. */
-  shellIntegrationDir?: string
 }
 
 export class TerminalManager {
@@ -81,16 +78,11 @@ export class TerminalManager {
    */
   create(options: CreateTerminalOptions): string {
     const id = `term-${randomUUID()}`
-    let launch: ShellLaunch = { env: stringEnv(options.env) }
-    if (this.options.shellIntegrationDir) {
-      launch = withShellIntegration(launch.env, this.options.shellIntegrationDir)
-    }
     this.send({
       type: 'create',
       id,
       cwd: options.cwd,
-      env: launch.env,
-      args: launch.args,
+      env: stringEnv(options.env),
       cols: options.cols ?? 80,
       rows: options.rows ?? 24,
       worktreeId: options.worktreeId ?? null

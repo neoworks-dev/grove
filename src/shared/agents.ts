@@ -152,8 +152,6 @@ export type GroveEventBody =
       shellId?: string
       /** It was sent to the background; a shared one was handed to the agent when it exited. */
       background?: boolean
-      /** The user ran it in the agent terminal's shell, not with `!`. */
-      fromTerminal?: boolean
     }
   | { type: 'ui.surface'; surfaceId: string; slot: UiSlot; view: UiNode }
   | { type: 'ui.surface'; surfaceId: string; view: null }
@@ -199,24 +197,14 @@ export interface ShellOutputUpdate {
   running: boolean
   /** Nothing waits on it any more: its call returned, or it was sent to the background. */
   background: boolean
-  /** Blocked reading its input: someone has to type. */
-  waitingForInput: boolean
 }
 
 /** Everything a running (or just finished) command has printed so far. */
-/** A command the user finished in the agent terminal's shell, as its terminal saw it. */
-export interface TerminalCommand {
-  command: string
-  output: string
-  exitCode: number
-}
-
 export interface ShellOutputSnapshot {
   toolUseId: string
   text: string
   running: boolean
   background: boolean
-  waitingForInput: boolean
 }
 
 /** A kind of pane the renderer can open, as it reports them to the agents. */

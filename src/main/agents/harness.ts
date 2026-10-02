@@ -56,8 +56,6 @@ export interface GroveToolContext {
   report?(update: Omit<ToolCallUpdate, 'toolCallId'>): void
   /** Every tool the session is served, listed up front or not. */
   tools?(): GroveTool[]
-  /** The session's permission mode as it is now; it can change mid-call. */
-  permissionMode?(): AgentMode
 }
 
 /** A skill a plugin registered: listed in the prompt by name, its instructions read on demand. */

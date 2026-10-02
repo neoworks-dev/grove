@@ -1,32 +1,26 @@
 <script lang="ts">
-  // The agent's terminal. The first tab is a shell of the user's own, in the
-  // worktree, like any terminal: every command finished in it goes on the
-  // session's log, so the agent sees what the user did there with the next
-  // message. The next is the commands the session runs — the agent's and the
-  // user's `!` ones — each under its command line, with what it printed
-  // streaming in, and the one running at the bottom taking the keyboard.
-  //
-  // The session's commands run one after another share that tab. A command left running
-  // in the background gets a tab of its own as soon as it goes there, so a dev
-  // server printing away does not keep redrawing the commands after it; its tab
-  // stays until it has exited and is closed.
+  // The agent's terminal: every command the session on screen ran, each under
+  // its command line, with what it printed streaming in as it runs. Read-only —
+  // the one key it takes is Ctrl+C, which stops the running command (or copies
+  // the selection, when there is one).
+  import type { Terminal } from '@xterm/xterm'
+  import XtermSurface from '../../../components/XtermSurface.svelte'
   import { agentSessions } from '../../../lib/agents/sessions.svelte'
   import { catalog } from '../../../lib/agents/catalog.svelte'
   import { shellOutputs } from '../../../lib/agents/shellOutput.svelte'
-  import { agentTerminal } from '../../../lib/agents/agentTerminal.svelte'
-  import { shellCommandsOf, type ShellCommand } from '../../../lib/agents/shellTranscript'
-  import { warmLanguage } from '../../../lib/highlight'
+  import {
+    ansiOfTokens,
+    planTerminalWrite,
+    shellCommandsOf,
+    type CommandPainter,
+    type WrittenCommand
+  } from '../../../lib/agents/shellTranscript'
+  import { highlightCodeSync, warmLanguage } from '../../../lib/highlight'
   import { inputViewOf } from '../../../lib/agents/tools'
   import { visibleItems, type ToolItem } from '../../../lib/agents/transcript'
   import { store } from '../../../lib/store.svelte'
-  import AgentTerminalView from './AgentTerminalView.svelte'
-  import TerminalView from '../../../components/TerminalView.svelte'
-  import type { FailedCommand } from '../../../lib/terminalCommands'
 
   let { leafId }: { leafId: string } = $props()
-
-  const SHELL_TAB = 'shell'
-  const MAIN_TAB = 'agent'
 
   const worktreePath = $derived(store.selectedWorktree?.path ?? '')
   const sessionId = $derived(worktreePath ? agentSessions.resolveActive(worktreePath) : null)
@@ -58,198 +52,93 @@
     const items = visibleItems(live.transcript)
     return shellCommandsOf(items, isShellCall, shellOutputs.forSession(sessionId))
   })
-
-  // The background commands with a tab, in the order they went there, for the
-  // session they belong to.
-  let backgroundTabs = $state<string[]>([])
-  let tabsSession: string | null = null
-  let activeTab = $state(SHELL_TAB)
-  // Bumped when the user's shell exits, so a fresh one starts in its place.
-  let shellGeneration = $state(0)
-  let views = $state<Record<string, AgentTerminalView>>({})
-
-  // A new session starts from its own commands; a command that goes to the
-  // background gets its tab.
-  $effect(() => {
-    const session = sessionId
-    const live = session ? shellOutputs.forSession(session) : {}
-    if (session !== tabsSession) {
-      tabsSession = session
-      backgroundTabs = []
-      activeTab = SHELL_TAB
-    }
-    for (const command of commands) {
-      if (live[command.toolUseId]?.background && !backgroundTabs.includes(command.toolUseId)) {
-        backgroundTabs = [...backgroundTabs, command.toolUseId]
-      }
-    }
-  })
-
-  const mainCommands = $derived(commands.filter((command) => !backgroundTabs.includes(command.toolUseId)))
-
-  /** The command a background tab holds, while the transcript still has it. */
-  function commandOf(id: string): ShellCommand | undefined {
-    return commands.find((command) => command.toolUseId === id)
-  }
-
-  /** Where a command stands, for the dot on its tab. */
-  function stateOf(command: ShellCommand | undefined): 'waiting' | 'running' | 'failed' | 'done' {
-    if (!command || !sessionId) return 'done'
-    if (shellOutputs.of(sessionId, command.toolUseId)?.waitingForInput) return 'waiting'
-    if (command.running) return 'running'
-    if (command.failure) return 'failed'
-    return 'done'
-  }
-
-  const mainState = $derived(stateOf(mainCommands.findLast((command) => command.running)))
-
-  // Where the shown tab's command stands, for the hint beside the tabs.
-  const activeState = $derived.by(() => {
-    if (activeTab === MAIN_TAB) return mainState
-    return stateOf(commandOf(activeTab))
-  })
-
-  /** Shows a tab and gives it the keyboard. */
-  function selectTab(id: string): void {
-    activeTab = id
-    if (id === SHELL_TAB) return
-    requestAnimationFrame(() => views[id]?.focus())
-  }
-
-  /** Puts a command the user finished in their shell on the session's log, for the agent. */
-  function recordShellCommand(finished: FailedCommand): void {
-    if (!sessionId) return
-    const command = { command: finished.command, output: finished.output, exitCode: finished.exitCode }
-    void window.workbench.agents.recordTerminalCommand(sessionId, command)
-  }
-
-  /** The user's shell exited: forget it, and start another. */
-  function shellExited(session: string): void {
-    delete agentTerminal.shells[session]
-    shellGeneration += 1
-  }
-
-  // Asked to show a command — its card's "Answer in terminal", a background
-  // task picked under the composer — the tab holding it comes up with the keyboard.
-  let handledRequest = 0
-  $effect(() => {
-    const request = agentTerminal.requested
-    if (!request || request.at === handledRequest || request.sessionId !== sessionId) return
-    handledRequest = request.at
-    if (backgroundTabs.includes(request.commandId)) {
-      selectTab(request.commandId)
-      return
-    }
-    selectTab(MAIN_TAB)
-  })
-
-  /** Closes a background tab whose command has exited. */
-  function closeTab(id: string): void {
-    backgroundTabs = backgroundTabs.filter((tab) => tab !== id)
-    if (activeTab === id) activeTab = MAIN_TAB
-  }
+  const running = $derived(commands.findLast((command) => command.running))
 
   // Prompts are coloured as shell, the way a tool call's command is. The grammar
   // loads once; nothing is written until it has settled, so a prompt is never
   // left plain above coloured ones. One that fails to load leaves them all plain.
+  const COMMAND_LANGUAGE = 'shell'
   let grammarSettled = $state(false)
-  void warmLanguage('shell').finally(() => {
+  void warmLanguage(COMMAND_LANGUAGE).finally(() => {
     grammarSettled = true
+  })
+
+  /** The command in bold, coloured as shell when the grammar has loaded. */
+  function paintCommand(command: string, scheme: 'dark' | 'light'): string {
+    const lines = highlightCodeSync(command, COMMAND_LANGUAGE, scheme)
+    if (!lines) return `\u001b[1m${command}\u001b[0m`
+    return `\u001b[1m${ansiOfTokens(lines)}\u001b[0m`
+  }
+
+  let term = $state.raw<Terminal | null>(null)
+  let written: WrittenCommand[] = []
+  let writtenSession: string | null = null
+  let writtenScheme: string | null = null
+
+  /** Ctrl+C copies a selection, else stops the running command; every other key is the app's. */
+  function onKey(event: KeyboardEvent): boolean {
+    if (event.type !== 'keydown' || !event.ctrlKey || event.key.toLowerCase() !== 'c') return false
+    const selection = term?.getSelection() ?? ''
+    if (selection) {
+      void navigator.clipboard.writeText(selection)
+      term?.clearSelection()
+      return false
+    }
+    if (sessionId && running) shellOutputs.interrupt(sessionId, running.toolUseId)
+    return false
+  }
+
+  /** Takes the keys this read-only terminal handles, and hides its cursor. */
+  function onReady(terminal: Terminal): void {
+    terminal.attachCustomKeyEventHandler(onKey)
+    // Nothing is typed here, so there is no cursor to show.
+    terminal.write('\u001b[?25l')
+    term = terminal
+  }
+
+  // Write what is new; start over for another session, rewritten history, or
+  // a scheme change that recolours the prompts.
+  $effect(() => {
+    const current = commands
+    const session = sessionId
+    const scheme = store.activeTheme.scheme
+    if (!term || !grammarSettled) return
+    const startOver = session !== writtenSession || scheme !== writtenScheme
+    if (startOver) written = []
+    const paint: CommandPainter = (command) => paintCommand(command, scheme)
+    const plan = planTerminalWrite(written, current, paint)
+    if (plan.reset || startOver) {
+      term.reset()
+      term.write('\u001b[?25l')
+    }
+    for (const chunk of plan.chunks) term.write(chunk)
+    written = plan.written
+    writtenSession = session
+    writtenScheme = scheme
   })
 </script>
 
-{#snippet dot(state: 'waiting' | 'running' | 'failed' | 'done')}
-  <span
-    class="size-1.5 shrink-0 rounded-full"
-    class:bg-amber={state === 'waiting'}
-    class:bg-green={state === 'running'}
-    class:animate-pulse={state === 'running' || state === 'waiting'}
-    class:bg-red={state === 'failed'}
-    class:bg-dim={state === 'done'}
-    aria-hidden="true"
-  ></span>
-{/snippet}
-
 <div class="flex h-full min-h-0 flex-col">
-  <div class="flex h-7 shrink-0 items-center gap-1 border-b border-line px-1 text-2xs text-dim">
-    <button
-      class="flex items-center gap-1.5 rounded px-2 py-0.5 hover:text-default"
-      class:bg-hover={activeTab === SHELL_TAB}
-      class:text-default={activeTab === SHELL_TAB}
-      title="Your shell in this worktree; the agent sees the commands you finish here"
-      onclick={() => selectTab(SHELL_TAB)}
-    >
-      Terminal
-    </button>
-    <button
-      class="flex items-center gap-1.5 rounded px-2 py-0.5 hover:text-default"
-      class:bg-hover={activeTab === MAIN_TAB}
-      class:text-default={activeTab === MAIN_TAB}
-      title={meta?.title || 'Agent terminal'}
-      onclick={() => selectTab(MAIN_TAB)}
-    >
-      {@render dot(mainState)}
-      <span class="max-w-40 truncate">{meta?.title || 'Agent'}</span>
-    </button>
-    {#each backgroundTabs as id (id)}
-      {@const command = commandOf(id)}
-      {@const state = stateOf(command)}
-      <div
-        class="flex min-w-0 items-center gap-1.5 rounded px-2 py-0.5 hover:text-default"
-        class:bg-hover={activeTab === id}
-        class:text-default={activeTab === id}
+  <div class="flex h-7 shrink-0 items-center gap-2 border-b border-line px-3 text-2xs text-dim">
+    <span class="min-w-0 truncate text-muted">{meta?.title || 'Agent terminal'}</span>
+    {#if running}
+      <span class="ml-auto shrink-0"
+        >Ctrl+C stops <span class="font-mono">{running.command}</span></span
       >
-        <button class="flex min-w-0 items-center gap-1.5" title={command?.command} onclick={() => selectTab(id)}>
-          {@render dot(state)}
-          <span class="max-w-40 truncate font-mono">{command?.command ?? 'command'}</span>
-        </button>
-        {#if state === 'done' || state === 'failed'}
-          <button class="shrink-0 hover:text-red" title="Close" onclick={() => closeTab(id)}>✕</button>
-        {/if}
-      </div>
-    {/each}
-    {#if activeState === 'waiting'}
-      <span class="ml-auto shrink-0 pr-2 text-amber">Waiting for input — type here</span>
     {/if}
   </div>
   {#if !sessionId}
     <p class="p-3 text-xs text-dim">No agent session in this worktree.</p>
-  {:else}
-    <div class="min-h-0 flex-1">
-      {#key `${sessionId}:${shellGeneration}`}
-        {@const session = sessionId}
-        <div class="h-full min-h-0" class:hidden={activeTab !== SHELL_TAB}>
-          <TerminalView
-            {leafId}
-            worktreeId={store.selectedWorktreeId}
-            attachId={agentTerminal.shells[session]}
-            active={activeTab === SHELL_TAB}
-            onSession={(ptyId) => (agentTerminal.shells[session] = ptyId)}
-            onExit={() => shellExited(session)}
-            onTitle={() => {}}
-            onCommandFinished={recordShellCommand}
-          />
-        </div>
-      {/key}
-      <AgentTerminalView
-        bind:this={views[MAIN_TAB]}
-        {leafId}
-        {sessionId}
-        commands={mainCommands}
-        {grammarSettled}
-        hidden={activeTab !== MAIN_TAB}
-      />
-      {#each backgroundTabs as id (id)}
-        {@const command = commandOf(id)}
-        <AgentTerminalView
-          bind:this={views[id]}
-          {leafId}
-          {sessionId}
-          commands={command ? [command] : []}
-          {grammarSettled}
-          hidden={activeTab !== id}
-        />
-      {/each}
-    </div>
+  {:else if commands.length === 0}
+    <p class="p-3 text-xs text-dim">
+      The commands this session's agent runs show here as they run.
+    </p>
   {/if}
+  <div class="min-h-0 flex-1" class:hidden={!sessionId || commands.length === 0}>
+    <XtermSurface
+      {leafId}
+      options={{ convertEol: true, cursorInactiveStyle: 'none', scrollback: 10_000 }}
+      {onReady}
+    />
+  </div>
 </div>

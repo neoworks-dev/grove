@@ -1,20 +1,20 @@
 // Running commands in grove mode.
 //
-// Each command runs in a terminal of its own (see commandRun), so it behaves
-// as in the user's shell and can be typed into from the agent terminal. What it
-// prints streams to the transcript as it runs, the same way a harness's own
-// shell does. What goes back to the model is the text that was on the
-// terminal's screen — colour and progress-bar redraws gone — cut to its start
-// and its end: a build's middle is rarely what the next step turns on, and
-// every line of it would be paid for again on every later turn.
+// What a command prints streams to the transcript as it runs, the same way a
+// harness's own shell does. What goes back to the model is cut to its start and
+// its end: a build's middle is rarely what the next step turns on, and every
+// line of it would be paid for again on every later turn.
 //
-// A command that stops to ask for input waits for the user, its time limit
-// paused. In bypass mode nobody is there to answer, so its input is ended
-// instead and the agent is told what it asked.
+// A command runs on pipes, not a terminal, so tools would drop their colours.
+// It is told to keep them, for the transcript's terminal; the model is given
+// the same output with the escapes taken out, since to it they are only noise.
+// The environment asks for colour rather than a pty giving a terminal: a pty
+// would also change what the model reads — tools lay out for its width, draw
+// progress bars, wait on a prompt instead of seeing no input — where the
+// environment changes the colour and nothing else.
 
+import { spawn, type ChildProcess } from 'child_process'
 import type { GroveTool, GroveToolContext, GroveToolResult } from '../harness'
-import type { CommandSpawner } from '../commandTerminal'
-import { runInTerminal, type CommandOutcome, type RunningCommand } from '../commandRun'
 
 const DEFAULT_TIMEOUT_SECONDS = 120
 const MAX_TIMEOUT_SECONDS = 600
@@ -28,8 +28,7 @@ const ANSI_ESCAPE =
   // eslint-disable-next-line no-control-regex
   /\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b\][^\u0007]*(?:\u0007|\u001b\\)|\u001b[()][0-9A-Za-z]/g
 
-/** The shell tool. `spawn` picks what runs commands; a pty unless a test asks for pipes. */
-export function shellTool(spawn?: CommandSpawner): GroveTool {
+export function shellTool(): GroveTool {
   return {
     name: 'shell',
     alwaysLoad: true,
@@ -62,8 +61,8 @@ export function shellTool(spawn?: CommandSpawner): GroveTool {
 
     execute(input, context) {
       const command = String(input.command)
-      if (input.run_in_background === true) return runInBackground(command, context, spawn)
-      return runCommand(command, timeoutOf(input.timeout), context, spawn)
+      if (input.run_in_background === true) return runInBackground(command, context)
+      return runCommand(command, timeoutOf(input.timeout), context)
     }
   }
 }
@@ -73,79 +72,83 @@ function timeoutOf(value: unknown): number {
   return Math.min(Math.max(1, Math.round(value)), MAX_TIMEOUT_SECONDS)
 }
 
+/** A command's process, as the helpers below follow it. */
+interface StartedCommand {
+  child: ChildProcess
+  live: { append(text: string): void; end(): void }
+  /** Everything it printed so far. */
+  output(): string
+}
+
 /**
- * Starts a command in its own terminal, its output streamed to the session and
- * its controls handed to the session's live view. `background` is what Ctrl+B
- * on it does, when anything.
+ * Start a command in its own process group, its output collected and streamed
+ * to the session. `background` is what Ctrl+B on it does, when anything.
  */
 function startCommand(
   command: string,
   context: GroveToolContext,
-  timeoutSeconds: number | null,
-  spawn: CommandSpawner | undefined,
   background?: () => void
-): RunningCommand {
-  const sink = context.shellOutput
-  const toolCallId = context.toolCallId
-  let timeoutMs: number | null = null
-  if (timeoutSeconds !== null) timeoutMs = timeoutSeconds * 1000
-  const running = runInTerminal({
-    command,
+): StartedCommand {
+  const child = spawn('bash', ['-c', command], {
     cwd: context.workspaceRoot,
-    spawn,
-    timeoutMs,
-    onOutput: (text) => {
-      if (sink && toolCallId) sink.append(toolCallId, text)
+    env: {
+      ...colourEnvironment(),
+      ...process.env,
+      PAGER: 'cat',
+      GIT_PAGER: 'cat',
+      GIT_TERMINAL_PROMPT: '0'
     },
-    onWaiting: (waiting) => {
-      if (sink && toolCallId) sink.waiting?.(toolCallId, waiting)
-    },
-    endInputOnWait: () => isBypass(context)
+    stdio: ['ignore', 'pipe', 'pipe'],
+    // Its own process group, so stopping it stops what it started too.
+    detached: true
   })
-  if (sink && toolCallId) {
-    sink.begin(toolCallId, {
-      interrupt: () => running.interrupt(),
-      background,
-      write: (data) => running.write(data),
-      resize: (cols, rows) => running.resize(cols, rows),
-      kill: () => running.kill()
-    })
-    void running.result.then(() => sink.end(toolCallId))
+  const live = liveOutput(context, () => stop(child.pid), background)
+  let output = ''
+  const collect = (chunk: Buffer): void => {
+    const text = chunk.toString()
+    output += text
+    live.append(text)
   }
-  return running
-}
-
-/** Whether the session runs without asking: nobody is there to answer a prompt. */
-function isBypass(context: GroveToolContext): boolean {
-  if (!context.permissionMode) return false
-  return context.permissionMode() === 'bypass'
+  child.stdout?.on('data', collect)
+  child.stderr?.on('data', collect)
+  return { child, live, output: () => output }
 }
 
 /**
- * Run one command to its end. Sent to the background on the way, the call
- * returns there and then, and the agent hears about the end in a message
- * instead.
+ * Run one command to its end, reporting its output live when the session can
+ * show it. Sent to the background on the way, the call returns there and then
+ * and the agent hears about the end in a message instead.
  */
-function runCommand(
-  command: string,
-  timeoutSeconds: number,
-  context: GroveToolContext,
-  spawn: CommandSpawner | undefined
-): Promise<GroveToolResult> {
+function runCommand(command: string, timeoutSeconds: number, context: GroveToolContext): Promise<GroveToolResult> {
   return new Promise((resolve) => {
     let returned = false
-    let running: RunningCommand | undefined
+    let timedOut = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+
     const sendToBackground = (): void => {
-      if (returned || !running) return
+      if (returned) return
       returned = true
-      running.background()
-      resolve({ content: backgroundedResult(running.pid, 'The user sent the command to the background') })
+      clearTimeout(timer)
+      resolve({ content: backgroundedResult(started.child.pid, 'The user sent the command to the background') })
     }
-    let background: (() => void) | undefined
-    if (canNotify(context)) background = sendToBackground
-    running = startCommand(command, context, timeoutSeconds, spawn, background)
-    void running.result.then((outcome) => {
-      const result = resultOf(outcome, timeoutSeconds)
+    const started = startCommand(command, context, canNotify(context) ? sendToBackground : undefined)
+
+    timer = setTimeout(() => {
+      timedOut = true
+      stop(started.child.pid)
+    }, timeoutSeconds * 1000)
+
+    started.child.on('error', (cause) => {
+      clearTimeout(timer)
+      started.live.end()
+      if (returned) return
+      returned = true
+      resolve({ content: `Could not run the command: ${cause.message}`, isError: true })
+    })
+    started.child.on('close', (code, signal) => {
+      clearTimeout(timer)
+      started.live.end()
+      const result = commandResult(started.output(), code, signal, timedOut, timeoutSeconds)
       if (returned) {
         notifyExit(context, command, result)
         return
@@ -157,39 +160,20 @@ function runCommand(
 }
 
 /** Start a command and return at once; the agent is told when it exits. */
-function runInBackground(
-  command: string,
-  context: GroveToolContext,
-  spawn: CommandSpawner | undefined
-): GroveToolResult {
+function runInBackground(command: string, context: GroveToolContext): GroveToolResult {
   if (!canNotify(context)) {
     return { content: 'This session cannot run commands in the background.', isError: true }
   }
-  const running = startCommand(command, context, null, spawn)
-  void running.result.then((outcome) => notifyExit(context, command, resultOf(outcome, 0)))
-  return { content: backgroundedResult(running.pid, 'Started in the background') }
-}
-
-/** What the model is told of a finished command. */
-function resultOf(outcome: CommandOutcome, timeoutSeconds: number): GroveToolResult {
-  if (outcome.startError !== undefined) {
-    return { content: `Could not run the command: ${outcome.startError}`, isError: true }
-  }
-  let code: number | null = null
-  let signal: NodeJS.Signals | null = null
-  if (outcome.exit) {
-    code = outcome.exit.code
-    signal = outcome.exit.signal
-  }
-  const result = commandResult(outcome.text, code, signal, outcome.timedOut, timeoutSeconds)
-  if (outcome.endedInputAt.length === 0) return result
-  return { ...result, content: `${result.content}\n${endedInputNote(outcome.endedInputAt)}` }
-}
-
-/** Says which prompts went unanswered because the session runs in bypass mode. */
-function endedInputNote(prompts: string[]): string {
-  const asked = prompts.map((prompt) => `"${prompt}"`).join(', ')
-  return `[It stopped to wait for input at ${asked}. Nobody answers prompts in bypass mode, so its input was ended. Run it without needing input, or ask the user to run it.]`
+  const started = startCommand(command, context)
+  started.child.on('error', (cause) => {
+    started.live.end()
+    notifyExit(context, command, { content: `Could not run the command: ${cause.message}`, isError: true })
+  })
+  started.child.on('close', (code, signal) => {
+    started.live.end()
+    notifyExit(context, command, commandResult(started.output(), code, signal, false, 0))
+  })
+  return { content: backgroundedResult(started.child.pid, 'Started in the background') }
 }
 
 /** Whether the session can hear about a command after its call has returned. */
@@ -206,6 +190,44 @@ function backgroundedResult(pid: number | undefined, how: string): string {
 function notifyExit(context: GroveToolContext, command: string, result: GroveToolResult): void {
   if (!context.notify) return
   context.notify('Background command finished', `$ ${command}\n${result.content}`)
+}
+
+/**
+ * What asks a tool to colour its output though it is writing to a pipe:
+ * `FORCE_COLOR` for Node's ecosystem and most test runners, `CLICOLOR_FORCE`
+ * for the tools that follow the CLICOLOR convention. Spread before the
+ * process's own environment, so a user who set either keeps their value; and
+ * left out entirely when they asked for no colour at all.
+ */
+function colourEnvironment(): Record<string, string> {
+  if (process.env.NO_COLOR) return {}
+  return { FORCE_COLOR: '1', CLICOLOR_FORCE: '1' }
+}
+
+/** The session's live output for this call, or a sink that drops it. */
+function liveOutput(
+  context: GroveToolContext,
+  interrupt: () => void,
+  background?: () => void
+): { append(text: string): void; end(): void } {
+  const sink = context.shellOutput
+  const toolCallId = context.toolCallId
+  if (!sink || !toolCallId) return { append: () => {}, end: () => {} }
+  sink.begin(toolCallId, interrupt, background)
+  return {
+    append: (text) => sink.append(toolCallId, text),
+    end: () => sink.end(toolCallId)
+  }
+}
+
+/** Stop a command and everything it started, as Ctrl+C would. */
+function stop(pid: number | undefined): void {
+  if (pid === undefined) return
+  try {
+    process.kill(-pid, 'SIGINT')
+  } catch {
+    // Already gone.
+  }
 }
 
 export function commandResult(

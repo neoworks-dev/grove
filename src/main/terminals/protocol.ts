@@ -19,8 +19,6 @@ export type ClientMessage =
       cols: number
       rows: number
       worktreeId: string | null
-      /** The shell's arguments, when grove's shell integration needs its own; a login shell otherwise. */
-      args?: string[]
     }
   | { type: 'write'; id: string; data: string }
   | { type: 'resize'; id: string; cols: number; rows: number }

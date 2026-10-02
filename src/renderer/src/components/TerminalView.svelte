@@ -23,8 +23,7 @@
     onExit,
     onTitle,
     onStatus,
-    onCommandFailed,
-    onCommandFinished
+    onCommandFailed
   }: {
     leafId: string
     worktreeId: string
@@ -38,8 +37,6 @@
     onStatus?: (status: { running: boolean; exitCode?: number }) => void
     /** A command exited non-zero; carries what it was and what it printed. */
     onCommandFailed?: (failure: FailedCommand) => void
-    /** Any command finished, whatever its exit code, with what it printed. */
-    onCommandFinished?: (finished: FailedCommand) => void
   } = $props()
 
   // What a shell reports for a command stopped by SIGINT: 128 + 2.
@@ -131,19 +128,16 @@
     runningCommand = { command: command || '', outputStart }
   }
 
-  /** Reports a command that finished, and one that failed, with its output; forgets it either way. */
+  /** Reports a command that failed, with its output, and forgets it either way. */
   function finishCommand(exitCode: number | undefined): void {
     const finished = runningCommand
     runningCommand = null
     if (!term || !finished) return
     const outputStart = finished.outputStart
-    if (finished.command && !outputStart.isDisposed) {
+    if (isFailure(exitCode) && finished.command && !outputStart.isDisposed) {
       const buffer = term.buffer.active
       const output = commandOutput(buffer, outputStart.line, buffer.baseY + buffer.cursorY)
-      let code = 0
-      if (exitCode !== undefined) code = exitCode
-      onCommandFinished?.({ command: finished.command, exitCode: code, output })
-      if (isFailure(exitCode)) onCommandFailed?.({ command: finished.command, exitCode, output })
+      onCommandFailed?.({ command: finished.command, exitCode, output })
     }
     outputStart.dispose()
   }

@@ -195,6 +195,8 @@ export interface ShellOutputUpdate {
   text: string
   /** False once the command has exited. */
   running: boolean
+  /** Nothing waits on it any more: its call returned, or it was sent to the background. */
+  background: boolean
 }
 
 /** Everything a running (or just finished) command has printed so far. */
@@ -202,6 +204,7 @@ export interface ShellOutputSnapshot {
   toolUseId: string
   text: string
   running: boolean
+  background: boolean
 }
 
 /** A kind of pane the renderer can open, as it reports them to the agents. */

@@ -446,3 +446,22 @@ describe('grantedScopes', () => {
     expect(grantedScopes(body)).toBeNull()
   })
 })
+
+describe('branch pulls off GitHub', () => {
+  it('a repository with no GitHub remote has no pull requests, rather than failing', async () => {
+    const { mkdtempSync, rmSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const { execFileSync } = await import('node:child_process')
+    const { fetchBranchPulls } = await import('../src/main/githubDashboard')
+    const repoPath = mkdtempSync(join(tmpdir(), 'grove-no-remote-'))
+    try {
+      execFileSync('git', ['init', '-q'], { cwd: repoPath })
+      expect(await fetchBranchPulls(repoPath)).toEqual({})
+      execFileSync('git', ['remote', 'add', 'origin', 'https://gitlab.com/a/b.git'], { cwd: repoPath })
+      expect(await fetchBranchPulls(repoPath)).toEqual({})
+    } finally {
+      rmSync(repoPath, { recursive: true, force: true })
+    }
+  })
+})

@@ -125,6 +125,25 @@ export async function repoRef(repoPath: string): Promise<GithubRepoRef> {
   return parsed
 }
 
+// What gh says when a repository has no remote it can map to GitHub: none at
+// all, or only ones on other hosts.
+const NOT_ON_GITHUB = ['no git remotes found', 'none of the git remotes configured']
+
+/** Whether gh failed because the repository is not on GitHub, rather than for a reason worth reporting. */
+export function isNotOnGithub(error: Error): boolean {
+  return NOT_ON_GITHUB.some((phrase) => error.message.includes(phrase))
+}
+
+/** The GitHub repository a local path points at, or null when it has no remote on GitHub. */
+async function githubRepoOf(repoPath: string): Promise<GithubRepoRef | null> {
+  try {
+    return await repoRef(repoPath)
+  } catch (error) {
+    if (isNotOnGithub(error as Error)) return null
+    throw error
+  }
+}
+
 /**
  * Whether the dashboard can run here: gh present, authenticated, and the path
  * backed by a GitHub repository. Failures are reported, not thrown — the pane
@@ -550,7 +569,8 @@ interface BranchPullsResponse {
  * shows beside its branch.
  */
 export async function fetchBranchPulls(repoPath: string): Promise<Record<string, BranchPull>> {
-  const repo = await repoRef(repoPath)
+  const repo = await githubRepoOf(repoPath)
+  if (!repo) return {}
   const [owner, name] = repo.nameWithOwner.split('/')
   const raw = await runGh(repoPath, [
     'api',

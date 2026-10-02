@@ -55,6 +55,7 @@
     onInterrupt,
     onCycleMode,
     onBack,
+    onLeaveDown,
     header
   }: {
     sessionId: string
@@ -89,6 +90,11 @@
      * from an empty draft, so ArrowLeft stays a cursor key while typing.
      */
     onBack?: () => void
+    /**
+     * Step down out of the prompt, to what sits under it. Offered from the last
+     * line when not stepping through history; says whether anything took focus.
+     */
+    onLeaveDown?: () => boolean
     /** Drawn flush on top of the prompt box, as its top section: the notes list. */
     header?: Snippet
   } = $props()
@@ -430,7 +436,17 @@
     if (event.key === 'ArrowDown' && historyIndex >= 0) {
       event.preventDefault()
       stepHistory(1)
+      return
     }
+    if (event.key === 'ArrowDown' && caretOnLastLine() && onLeaveDown?.()) {
+      event.preventDefault()
+    }
+  }
+
+  /** Whether the caret sits on the draft's last line, where ArrowDown has nowhere left to go. */
+  function caretOnLastLine(): boolean {
+    if (!promptEl) return false
+    return !draft.slice(promptEl.selectionEnd).includes('\n')
   }
 
   function handleMenuKey(event: KeyboardEvent): boolean {

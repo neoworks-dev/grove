@@ -175,6 +175,7 @@
   let expandedTools = $state<Record<string, boolean>>({})
   let transcriptViewport = $state<HTMLDivElement>()
   let composer = $state<{ focus: () => boolean }>()
+  let backgroundList = $state<{ focus: () => boolean }>()
   // The approval or question card standing in for the composer, while one is up.
   let promptCard = $state<{ focus: () => void }>()
   let rootEl = $state<HTMLDivElement>()
@@ -626,6 +627,12 @@
 
   function focusComposer(): void {
     composer?.focus()
+  }
+
+  /** Moves the keyboard to the background tasks under the composer; false when there are none. */
+  function focusBackgroundList(): boolean {
+    if (!backgroundList) return false
+    return backgroundList.focus()
   }
 
   // ── Focus ───────────────────────────────────────────────────────
@@ -1116,12 +1123,18 @@
               onInterrupt={interrupt}
               onCycleMode={cycleMode}
               onBack={showOverview}
+              onLeaveDown={focusBackgroundList}
               header={live ? notesHeader : undefined}
             />
           {/if}
 
           {#if activeId && live && !shownApproval}
-            <AgentBackgroundCommands sessionId={activeId} items={live.transcript.items} />
+            <AgentBackgroundCommands
+              bind:this={backgroundList}
+              sessionId={activeId}
+              items={live.transcript.items}
+              onLeave={focusComposer}
+            />
           {/if}
 
           {#if snapshot && !shownApproval}

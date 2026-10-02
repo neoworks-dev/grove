@@ -10,6 +10,7 @@
   import { agentSessions } from '../../../lib/agents/sessions.svelte'
   import { catalog } from '../../../lib/agents/catalog.svelte'
   import { shellOutputs } from '../../../lib/agents/shellOutput.svelte'
+  import { agentTerminal } from '../../../lib/agents/agentTerminal.svelte'
   import { shellCommandsOf, type ShellCommand } from '../../../lib/agents/shellTranscript'
   import { warmLanguage } from '../../../lib/highlight'
   import { inputViewOf } from '../../../lib/agents/tools'
@@ -105,6 +106,20 @@
     activeTab = id
     requestAnimationFrame(() => views[id]?.focus())
   }
+
+  // Asked to show a command — its card's "Answer in terminal", a background
+  // task picked under the composer — the tab holding it comes up with the keyboard.
+  let handledRequest = 0
+  $effect(() => {
+    const request = agentTerminal.requested
+    if (!request || request.at === handledRequest || request.sessionId !== sessionId) return
+    handledRequest = request.at
+    if (backgroundTabs.includes(request.commandId)) {
+      selectTab(request.commandId)
+      return
+    }
+    selectTab(MAIN_TAB)
+  })
 
   /** Closes a background tab whose command has exited. */
   function closeTab(id: string): void {

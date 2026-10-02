@@ -3,8 +3,12 @@
 // Escape sequences (colour, cursor movement) and what a carriage return
 // overwrote are for a terminal; a preview shows each line as it ended up.
 
-// eslint-disable-next-line no-control-regex
-const ANSI_ESCAPE = /\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g
+// CSI (private markers `?<=>` included, as in `ESC [ > 0 q`), OSC, DCS, and
+// the two-character escapes for character sets and keypad modes. A command
+// in a pty sends all of these, a shell starting up most of all.
+const ANSI_ESCAPE =
+  // eslint-disable-next-line no-control-regex
+  /\u001b\[[0-9;?<=>]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001bP[^\u001b]*\u001b\\|\u001b[()][0-9A-Za-z]|\u001b[=>]/g
 
 /** The last lines of the output as a terminal would leave them, without escapes. */
 export function outputTail(text: string, lineCount: number): string[] {

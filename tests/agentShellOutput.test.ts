@@ -10,6 +10,7 @@ import { addedOutput, ShellOutputHub } from '../src/main/agents/shellOutput'
 import { commandResult, shellTool } from '../src/main/agents/tools/shellTool'
 import type { GroveToolContext } from '../src/main/agents/harness'
 import type { ShellOutputUpdate } from '../src/shared/agents'
+import { spawnOnPipes } from '../src/main/agents/commandTerminal'
 
 /** A hub that records what it publishes. */
 function recordingHub(): { hub: ShellOutputHub; updates: ShellOutputUpdate[] } {
@@ -29,9 +30,9 @@ describe('the output hub', () => {
     sink.end('t1')
 
     expect(updates).toEqual([
-      { sessionId: 's1', toolUseId: 't1', text: '', running: true, background: false },
-      { sessionId: 's1', toolUseId: 't1', text: 'one\ntwo\n', running: true, background: false },
-      { sessionId: 's1', toolUseId: 't1', text: '', running: false, background: false }
+      { sessionId: 's1', toolUseId: 't1', text: '', running: true, background: false, waitingForInput: false },
+      { sessionId: 's1', toolUseId: 't1', text: 'one\ntwo\n', running: true, background: false, waitingForInput: false },
+      { sessionId: 's1', toolUseId: 't1', text: '', running: false, background: false, waitingForInput: false }
     ])
   })
 
@@ -42,7 +43,7 @@ describe('the output hub', () => {
     sink.append('t1', 'building…\n')
 
     expect(hub.snapshot('s1')).toEqual([
-      { toolUseId: 't1', text: 'building…\n', running: true, background: false }
+      { toolUseId: 't1', text: 'building…\n', running: true, background: false, waitingForInput: false }
     ])
     expect(hub.snapshot('s2')).toEqual([])
   })
@@ -67,7 +68,7 @@ describe('the output hub', () => {
     sink.append('t1', 'still going\n')
 
     expect(hub.snapshot('s1')).toEqual([
-      { toolUseId: 't1', text: 'still going\n', running: true, background: true }
+      { toolUseId: 't1', text: 'still going\n', running: true, background: true, waitingForInput: false }
     ])
     sink.end('t1')
     expect(hub.snapshot('s1')).toEqual([])
@@ -75,7 +76,7 @@ describe('the output hub', () => {
 
   test('marks a command sent to the background with Ctrl+B, so the user can stop it later', () => {
     const { hub, updates } = recordingHub()
-    hub.sinkFor('s1').begin('t1', () => {}, () => {})
+    hub.sinkFor('s1').begin('t1', { interrupt: () => {}, background: () => {} })
 
     expect(hub.background('s1')).toBe(true)
 
@@ -84,7 +85,8 @@ describe('the output hub', () => {
       toolUseId: 't1',
       text: '',
       running: true,
-      background: true
+      background: true,
+      waitingForInput: false
     })
     expect(hub.snapshot('s1')[0].background).toBe(true)
   })
@@ -92,8 +94,10 @@ describe('the output hub', () => {
   test('interrupts a running command through the harness', () => {
     const { hub } = recordingHub()
     let interrupted = 0
-    hub.sinkFor('s1').begin('t1', () => {
-      interrupted += 1
+    hub.sinkFor('s1').begin('t1', {
+      interrupt: () => {
+        interrupted += 1
+      }
     })
 
     expect(hub.interrupt('s1', 't1')).toBe(true)
@@ -130,17 +134,17 @@ describe("grove mode's shell", () => {
 
   test('streams what the command prints to the call it belongs to', async () => {
     const { hub } = recordingHub()
-    const result = await shellTool().execute({ command: 'echo one; echo two >&2' }, contextFor(hub))
+    const result = await shellTool(spawnOnPipes).execute({ command: 'echo one; echo two >&2' }, contextFor(hub))
 
     expect(result).toEqual({ content: 'one\ntwo', isError: false })
     expect(hub.snapshot('s1')).toEqual([
-      { toolUseId: 't1', text: 'one\ntwo\n', running: false, background: false }
+      { toolUseId: 't1', text: 'one\ntwo\n', running: false, background: false, waitingForInput: false }
     ])
   })
 
   test('runs in the working directory and reports a failing exit code', async () => {
     const { hub } = recordingHub()
-    const result = await shellTool().execute({ command: 'pwd; exit 3' }, contextFor(hub))
+    const result = await shellTool(spawnOnPipes).execute({ command: 'pwd; exit 3' }, contextFor(hub))
 
     expect(result.content).toBe(`${tmpdir()}\n[Exit code 3.]`)
     expect(result.isError).toBe(true)
@@ -148,29 +152,52 @@ describe("grove mode's shell", () => {
 
   test('stops a command that runs past its timeout', async () => {
     const { hub } = recordingHub()
-    const result = await shellTool().execute({ command: 'sleep 5', timeout: 1 }, contextFor(hub))
+    const result = await shellTool(spawnOnPipes).execute({ command: 'sleep 5', timeout: 1 }, contextFor(hub))
 
     expect(result.content).toBe('[Stopped after 1s.]')
     expect(result.isError).toBe(true)
   })
 
-  // Stands in for a tool that colours only when told to, as one writing to a
-  // pipe does.
-  const COLOURS_WHEN_FORCED =
-    'if [ -n "$FORCE_COLOR" ]; then printf "\\033[31mfailed\\033[0m\\n"; else echo failed; fi'
+  const COLOURED = 'printf "\\033[31mfailed\\033[0m\\n"'
 
-  test('asks the command for colour, and streams the colour to the terminal', async () => {
+  test('streams the colour to the terminal, and hands the model the text without it', async () => {
     const { hub } = recordingHub()
-    await shellTool().execute({ command: COLOURS_WHEN_FORCED }, contextFor(hub))
+    const result = await shellTool(spawnOnPipes).execute({ command: COLOURED }, contextFor(hub))
 
     expect(hub.snapshot('s1')[0].text).toBe('\u001b[31mfailed\u001b[0m\n')
+    expect(result.content).toBe('failed')
   })
 
-  test('hands the model the output without its escapes', async () => {
+  test('the user can type into a command waiting for input', async () => {
     const { hub } = recordingHub()
-    const result = await shellTool().execute({ command: COLOURS_WHEN_FORCED }, contextFor(hub))
+    const call = shellTool(spawnOnPipes).execute({ command: 'read answer; echo "got $answer"' }, contextFor(hub))
+    await Bun.sleep(100)
+    expect(hub.write('s1', 't1', 'yes\n')).toBe(true)
 
-    expect(result.content).toBe('failed')
+    expect((await call).content).toBe('got yes')
+  })
+
+  test('a waiting command is marked waiting, and its time limit is paused', async () => {
+    const { hub, updates } = recordingHub()
+    const call = shellTool(spawnOnPipes).execute({ command: 'read answer; echo "got $answer"', timeout: 2 }, contextFor(hub))
+    await Bun.sleep(2600)
+    expect(updates.some((update) => update.waitingForInput)).toBe(true)
+    hub.write('s1', 't1', 'late\n')
+
+    expect((await call).content).toBe('got late')
+  })
+
+  test('in bypass mode a waiting command gets end of input, and the agent hears the prompt', async () => {
+    const { hub } = recordingHub()
+    const context = { ...contextFor(hub), permissionMode: () => 'bypass' as const }
+    const result = await shellTool(spawnOnPipes).execute(
+      { command: 'printf "Password: "; if read secret; then echo read; else echo "no input"; exit 1; fi' },
+      context
+    )
+
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('no input')
+    expect(result.content).toContain('stopped to wait for input at "Password:"')
   })
 
   test('strips cursor and title sequences as well as colour', () => {
@@ -216,7 +243,7 @@ describe('commands in the background', () => {
     const { hub } = recordingHub()
     const { context, told } = notifyingContext(hub)
 
-    const result = await shellTool().execute(
+    const result = await shellTool(spawnOnPipes).execute(
       { command: 'sleep 0.3; echo built; exit 2', run_in_background: true },
       context
     )
@@ -232,7 +259,7 @@ describe('commands in the background', () => {
     const { hub } = recordingHub()
     const { context, told } = notifyingContext(hub)
 
-    const call = shellTool().execute({ command: 'sleep 0.3; echo done' }, context)
+    const call = shellTool(spawnOnPipes).execute({ command: 'sleep 0.3; echo done' }, context)
     await Bun.sleep(50)
     expect(hub.background('s1')).toBe(true)
 
@@ -245,7 +272,7 @@ describe('commands in the background', () => {
     const { hub } = recordingHub()
     const { context, told } = notifyingContext(hub)
 
-    const call = shellTool().execute({ command: 'sleep 1.5; echo survived', timeout: 1 }, context)
+    const call = shellTool(spawnOnPipes).execute({ command: 'sleep 1.5; echo survived', timeout: 1 }, context)
     await Bun.sleep(50)
     hub.background('s1')
     await call
@@ -262,9 +289,9 @@ describe('commands in the background', () => {
     const { hub } = recordingHub()
     const { context, told } = notifyingContext(hub)
 
-    await shellTool().execute({ command: 'sleep 30', run_in_background: true }, context)
+    await shellTool(spawnOnPipes).execute({ command: 'sleep 30', run_in_background: true }, context)
     hub.forgetSession('s1')
 
-    expect((await told()).text).toContain('[Killed by SIGINT.]')
+    expect((await told()).text).toContain('[Killed by SIGKILL.]')
   })
 })

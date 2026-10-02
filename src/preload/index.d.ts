@@ -429,6 +429,10 @@ export interface WorkbenchApi {
     interruptShell: (sessionId: string, toolUseId: string) => Promise<boolean>
     /** Sends the commands the session's agent is waiting on to the background (Ctrl+B). */
     backgroundShell: (sessionId: string) => Promise<boolean>
+    /** Types into a running command of the session. */
+    writeShell: (sessionId: string, toolUseId: string, data: string) => Promise<boolean>
+    /** Resizes a running command's terminal to the view showing it. */
+    resizeShell: (sessionId: string, toolUseId: string, cols: number, rows: number) => Promise<boolean>
     /** Where places an agent pointed at are now, after edits, renames and deletions. */
     resolveLocations: (
       worktreeId: string,

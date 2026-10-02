@@ -197,6 +197,8 @@ export interface ShellOutputUpdate {
   running: boolean
   /** Nothing waits on it any more: its call returned, or it was sent to the background. */
   background: boolean
+  /** Blocked reading its input: someone has to type. */
+  waitingForInput: boolean
 }
 
 /** Everything a running (or just finished) command has printed so far. */
@@ -205,6 +207,7 @@ export interface ShellOutputSnapshot {
   text: string
   running: boolean
   background: boolean
+  waitingForInput: boolean
 }
 
 /** A kind of pane the renderer can open, as it reports them to the agents. */

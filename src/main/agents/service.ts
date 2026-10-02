@@ -62,6 +62,7 @@ import type {
 } from './harness'
 import { toolInfoOf } from './harness'
 import { startShellCommand, type ShellResult } from './shell'
+import type { CommandSpawner } from './commandTerminal'
 import { completeShellLine } from './shellCompletion'
 import { firstPromptText, isDefaultTitle, titleFromPrompt } from './sessionSummary'
 import { resolveLoginShell } from './loginShell'
@@ -119,6 +120,8 @@ export interface AgentServiceOptions {
   defaultHarness: () => string | undefined
   /** Where man-page completions generated for fish are kept. */
   shellCompletionsDir?: string
+  /** What runs `!` commands; a pty unless a test asks for pipes. */
+  spawnCommand?: CommandSpawner
 }
 
 export class AgentService {
@@ -330,6 +333,16 @@ export class AgentService {
    */
   backgroundShell(sessionId: string): boolean {
     return this.shellOutputs.background(sessionId)
+  }
+
+  /** Types into a running command of the session, from its terminal. */
+  writeShell(sessionId: string, toolUseId: string, data: string): boolean {
+    return this.shellOutputs.write(sessionId, toolUseId, data)
+  }
+
+  /** Resizes a running command's terminal to the view showing it. */
+  resizeShell(sessionId: string, toolUseId: string, cols: number, rows: number): boolean {
+    return this.shellOutputs.resize(sessionId, toolUseId, cols, rows)
   }
 
   /**
@@ -606,14 +619,22 @@ export class AgentService {
     const running = startShellCommand(command, {
       cwd: session.workspaceRoot,
       shell: resolveLoginShell().path,
-      onOutput: (text) => sink.append(shellId, text)
+      spawn: this.options.spawnCommand,
+      onOutput: (text) => sink.append(shellId, text),
+      onWaiting: (waiting) => sink.waiting?.(shellId, waiting)
     })
     let background = false
     const sendToBackground = (): void => {
       background = true
       running.background()
     }
-    sink.begin(shellId, () => running.interrupt(), sendToBackground)
+    sink.begin(shellId, {
+      interrupt: () => running.interrupt(),
+      background: sendToBackground,
+      write: (data) => running.write(data),
+      resize: (cols, rows) => running.resize(cols, rows),
+      kill: () => running.kill()
+    })
 
     const result = await running.result
     sink.end(shellId)

@@ -15,7 +15,7 @@ import { registerCoreShowHandlers, reportPaneTypes } from './screen.svelte'
 
 export const agents = {
   name: 'core/agents',
-  inject: ['panes', 'editor', 'keymap'],
+  inject: ['panes', 'panel', 'editor', 'keymap'],
 
   apply(ctx: Context): void {
     initHarnessIcons()
@@ -45,9 +45,8 @@ export const agents = {
       'pane:agent'
     )
 
-    // The terminals the session on screen's commands run in: a pane of its
-    // own, with a tab per background command. Opens below the focused pane —
-    // under the agent, when a command's card asks for it.
+    // What the session on screen's commands print, as they run. Beside the
+    // shell terminal in the bottom panel, and opened from a command's card.
     ctx.effect(
       () =>
         ctx.panes.register({
@@ -57,15 +56,22 @@ export const agents = {
           component: AgentShellPane,
           containerClass: 'bg-surface',
           minHeight: 120,
-          preferredOrientation: 'column',
-          // Typing goes to the running command in 'terminal'; Ctrl+\ Ctrl+N
-          // gives the keys back to the app in 'normal'.
-          modes: ['normal', 'terminal'],
           ownsFontScale: true,
           keywords: 'agent terminal commands output bash shell running',
           when: repoOpen
         }),
       'pane:agent-shell'
+    )
+    ctx.effect(
+      () =>
+        ctx.panel.registerTab({
+          id: 'agent-shell',
+          title: 'Agent terminal',
+          icon: TerminalWindow,
+          paneTypeId: 'agent-shell',
+          order: 15
+        }),
+      'panel:agent-shell'
     )
 
     // A walkthrough plays in the editor: its bar rides over the buffer, and

@@ -4,7 +4,6 @@
   // Background (Ctrl+B) beside it.
   import { outputTail } from '../../../../lib/agents/outputTail'
   import { shellOutputs } from '../../../../lib/agents/shellOutput.svelte'
-  import { agentTerminal } from '../../../../lib/agents/agentTerminal.svelte'
   import type { ShellItem } from '../../../../lib/agents/transcript'
   import { highlightCode, type HighlightedToken } from '../../../../lib/highlight'
   import { store } from '../../../../lib/store.svelte'
@@ -47,15 +46,14 @@
 <div class="mb-2">
   <div class="flex items-center gap-2 font-mono text-2xs">
     <span class="shrink-0 text-blue">$</span>
-    <span class="min-w-[8ch] truncate text-muted"
+    <span class="min-w-0 truncate text-muted"
       >{#if commandTokens.length > 0}{#each commandTokens as token, index (index)}<span
             style:color={token.color}>{token.text}</span
           >{/each}{:else}{item.command}{/if}</span
     >
     {#if item.running}<span class="shrink-0 text-dim">· running</span>{/if}
-    {#if item.fromTerminal}<span class="min-w-0 truncate text-dim">· in your terminal</span>{/if}
     {#if !item.shared}<span class="shrink-0 text-dim">· private</span
-      >{:else if !item.running && !item.delivered}<span class="min-w-0 truncate text-amber"
+      >{:else if !item.running && !item.delivered}<span class="shrink-0 text-amber"
         >· goes with your next message</span
       >{:else if item.background}<span class="shrink-0 text-dim">· sent to the agent when it exited</span
       >{/if}
@@ -72,18 +70,6 @@
     {#if stoppable && item.shellId}
       {@const shellId = item.shellId}
       <div class="ml-4 mt-1 flex gap-1.5 text-2xs text-dim">
-        {#if liveOutput?.waitingForInput}
-          <span class="self-center text-amber">Waiting for input</span>
-        {/if}
-        <button
-          class="rounded border border-line px-1.5 hover:bg-hover hover:text-default"
-          class:border-amber={liveOutput?.waitingForInput}
-          class:text-amber={liveOutput?.waitingForInput}
-          title="Type into it in the agent terminal"
-          onclick={() => agentTerminal.show(sessionId, shellId)}
-        >
-          Answer in terminal
-        </button>
         <button
           class="rounded border border-line px-1.5 hover:bg-hover hover:text-red"
           title="Stop the command, as Ctrl+C would"

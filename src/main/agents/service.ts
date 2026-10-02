@@ -36,7 +36,6 @@ import type {
   ShellCompletion,
   ShellOutputSnapshot,
   ShellOutputUpdate,
-  TerminalCommand,
   ThinkingLevel,
   UserContentBlock
 } from '../../shared/agents'
@@ -63,7 +62,6 @@ import type {
 } from './harness'
 import { toolInfoOf } from './harness'
 import { startShellCommand, type ShellResult } from './shell'
-import type { CommandSpawner } from './commandTerminal'
 import { completeShellLine } from './shellCompletion'
 import { firstPromptText, isDefaultTitle, titleFromPrompt } from './sessionSummary'
 import { resolveLoginShell } from './loginShell'
@@ -121,8 +119,6 @@ export interface AgentServiceOptions {
   defaultHarness: () => string | undefined
   /** Where man-page completions generated for fish are kept. */
   shellCompletionsDir?: string
-  /** What runs `!` commands; a pty unless a test asks for pipes. */
-  spawnCommand?: CommandSpawner
 }
 
 export class AgentService {
@@ -334,35 +330,6 @@ export class AgentService {
    */
   backgroundShell(sessionId: string): boolean {
     return this.shellOutputs.background(sessionId)
-  }
-
-  /**
-   * A command the user finished in the agent terminal's shell, put on the log
-   * as shared shell output: the agent gets it with the next message, as it
-   * would a `!` command, and the transcript shows it. The output keeps its end.
-   */
-  async recordTerminalCommand(sessionId: string, command: TerminalCommand): Promise<void> {
-    await this.store.require(sessionId)
-    await this.store.append(sessionId, {
-      type: 'session.shell_result',
-      command: command.command,
-      output: tailOf(command.output, TERMINAL_OUTPUT_CHARS),
-      exitCode: command.exitCode,
-      outcome: `exit ${command.exitCode}`,
-      share: true,
-      shellId: randomUUID(),
-      fromTerminal: true
-    })
-  }
-
-  /** Types into a running command of the session, from its terminal. */
-  writeShell(sessionId: string, toolUseId: string, data: string): boolean {
-    return this.shellOutputs.write(sessionId, toolUseId, data)
-  }
-
-  /** Resizes a running command's terminal to the view showing it. */
-  resizeShell(sessionId: string, toolUseId: string, cols: number, rows: number): boolean {
-    return this.shellOutputs.resize(sessionId, toolUseId, cols, rows)
   }
 
   /**
@@ -639,22 +606,14 @@ export class AgentService {
     const running = startShellCommand(command, {
       cwd: session.workspaceRoot,
       shell: resolveLoginShell().path,
-      spawn: this.options.spawnCommand,
-      onOutput: (text) => sink.append(shellId, text),
-      onWaiting: (waiting) => sink.waiting?.(shellId, waiting)
+      onOutput: (text) => sink.append(shellId, text)
     })
     let background = false
     const sendToBackground = (): void => {
       background = true
       running.background()
     }
-    sink.begin(shellId, {
-      interrupt: () => running.interrupt(),
-      background: sendToBackground,
-      write: (data) => running.write(data),
-      resize: (cols, rows) => running.resize(cols, rows),
-      kill: () => running.kill()
-    })
+    sink.begin(shellId, () => running.interrupt(), sendToBackground)
 
     const result = await running.result
     sink.end(shellId)
@@ -1338,16 +1297,6 @@ function groupRoutesByProvider(models: ModelEntry[]): [string, string[]][] {
 function withPendingShell(pending: string, text: string): string {
   if (pending.length === 0) return text
   return `${pending}\n${text}`
-}
-
-// What the agent is given of a command run in the terminal: its end, as with
-// a long `!` command, so a noisy build does not crowd out the message.
-const TERMINAL_OUTPUT_CHARS = 16 * 1024
-
-/** The end of `text`, at most `limit` characters, saying what was cut. */
-function tailOf(text: string, limit: number): string {
-  if (text.length <= limit) return text
-  return `[${text.length - limit} earlier characters dropped]\n${text.slice(-limit)}`
 }
 
 function shellContext(command: string, result: ShellResult): string {

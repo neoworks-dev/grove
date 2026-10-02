@@ -10,8 +10,7 @@ import type {
   CodeLocation,
   CreateSessionOptions,
   PaneTypeInfo,
-  SessionUpdate,
-  TerminalCommand
+  SessionUpdate
 } from '../../shared/agents'
 
 export const agentRoutes = {
@@ -63,18 +62,6 @@ export const agentRoutes = {
     route(ctx, 'agents:backgroundShell', (_e, sessionId: string) =>
       ctx.agents.backgroundShell(sessionId)
     )
-    route(ctx, 'agents:recordTerminalCommand', (_e, sessionId: string, command: TerminalCommand) =>
-      ctx.agents.recordTerminalCommand(sessionId, terminalCommandOf(command))
-    )
-    route(ctx, 'agents:writeShell', (_e, sessionId: string, toolUseId: string, data: string) =>
-      ctx.agents.writeShell(sessionId, toolUseId, data)
-    )
-    route(
-      ctx,
-      'agents:resizeShell',
-      (_e, sessionId: string, toolUseId: string, cols: number, rows: number) =>
-        ctx.agents.resizeShell(sessionId, toolUseId, cols, rows)
-    )
     // Where the places an agent pointed at are now, after the code moved under them.
     route(ctx, 'agents:resolveLocations', (_e, worktreeId: string, locations: CodeLocation[]) => {
       const worktree = ctx.workbench.findWorktree(worktreeId)
@@ -105,16 +92,4 @@ export const agentRoutes = {
         ctx.agents.putBlob(sessionId, bytes, mediaType, filename)
     )
   }
-}
-
-/** A terminal command from the renderer, checked field by field before it goes on the log. */
-function terminalCommandOf(value: TerminalCommand): TerminalCommand {
-  if (typeof value?.command !== 'string' || value.command.trim().length === 0) {
-    throw new Error('a terminal command needs a command line')
-  }
-  let output = ''
-  if (typeof value.output === 'string') output = value.output
-  let exitCode = 0
-  if (Number.isInteger(value.exitCode)) exitCode = value.exitCode
-  return { command: value.command, output, exitCode }
 }

@@ -225,8 +225,7 @@ export class SwitchboardRun implements HarnessRun {
           this.options.emit({ type: 'ui.surface', surfaceId, slot, view } as never),
         show: (target) => this.options.emit({ type: 'ui.show', target }),
         shellOutput: this.options.shellOutput,
-        notify: (label, text) => this.options.notify(label, text),
-        permissionMode: () => this.mode
+        notify: (label, text) => this.options.notify(label, text)
       },
       confirm: (request) => this.options.confirm(request),
       callFor: (toolName, input) => this.callFor(toolName, input),

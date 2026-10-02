@@ -120,7 +120,6 @@ import type {
   SessionNote,
   PaneTypeInfo,
   ShellOutputSnapshot,
-  TerminalCommand,
   SessionMeta,
   SessionSnapshot,
   SessionUpdate,
@@ -430,12 +429,6 @@ export interface WorkbenchApi {
     interruptShell: (sessionId: string, toolUseId: string) => Promise<boolean>
     /** Sends the commands the session's agent is waiting on to the background (Ctrl+B). */
     backgroundShell: (sessionId: string) => Promise<boolean>
-    /** Puts a command the user finished in the agent terminal's shell on the session's log, for the agent. */
-    recordTerminalCommand: (sessionId: string, command: TerminalCommand) => Promise<void>
-    /** Types into a running command of the session. */
-    writeShell: (sessionId: string, toolUseId: string, data: string) => Promise<boolean>
-    /** Resizes a running command's terminal to the view showing it. */
-    resizeShell: (sessionId: string, toolUseId: string, cols: number, rows: number) => Promise<boolean>
     /** Where places an agent pointed at are now, after edits, renames and deletions. */
     resolveLocations: (
       worktreeId: string,

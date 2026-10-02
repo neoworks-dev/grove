@@ -6,7 +6,7 @@
 // rather than redrawing; it starts over only when what it already wrote no
 // longer matches (another session, or a command before the last one growing).
 
-import type { ShellItem, ToolItem, TranscriptItem } from './transcript'
+import type { ToolItem, TranscriptItem } from './transcript'
 import type { LiveCommandOutput } from './shellOutput.svelte'
 import type { HighlightedToken } from '../highlight'
 
@@ -46,7 +46,7 @@ export interface TerminalWrite {
 /** The statuses a call has once its result is in. */
 const FINISHED_STATUSES = new Set<ToolItem['status']>(['ok', 'error', 'denied'])
 
-/** The session's commands — the agent's shell calls and the user's `!` runs — oldest first, with whatever output each has. */
+/** The session's shell calls, oldest first, with whatever output each has. */
 export function shellCommandsOf(
   items: TranscriptItem[],
   isShellCall: (item: ToolItem) => boolean,
@@ -54,46 +54,21 @@ export function shellCommandsOf(
 ): ShellCommand[] {
   const commands: ShellCommand[] = []
   for (const item of items) {
-    // What the user ran in the terminal's shell is on screen there already.
-    if (item.kind === 'shell' && item.fromTerminal) continue
-    if (item.kind === 'shell' && item.shellId) {
-      commands.push(shellRunCommand(item, item.shellId, live[item.shellId]))
-      continue
-    }
     if (item.kind !== 'tool' || !isShellCall(item)) continue
-    commands.push(toolCallCommand(item, live[item.toolUseId]))
+    const streamed = live[item.toolUseId]
+    const command: ShellCommand = {
+      toolUseId: item.toolUseId,
+      command: commandOf(item),
+      output: streamed ? streamed.text : resultOutputOf(item),
+      running: streamed ? streamed.running : item.status === 'running',
+      finished: FINISHED_STATUSES.has(item.status)
+    }
+    if (item.status === 'error') {
+      command.failure = { exitCode: exitCodeOf(item.result) }
+    }
+    commands.push(command)
   }
   return commands
-}
-
-/** An agent's shell call as the terminal shows it. */
-function toolCallCommand(item: ToolItem, streamed: LiveCommandOutput | undefined): ShellCommand {
-  const command: ShellCommand = {
-    toolUseId: item.toolUseId,
-    command: commandOf(item),
-    output: streamed ? streamed.text : resultOutputOf(item),
-    running: streamed ? streamed.running : item.status === 'running',
-    finished: FINISHED_STATUSES.has(item.status)
-  }
-  if (item.status === 'error') {
-    command.failure = { exitCode: exitCodeOf(item.result) }
-  }
-  return command
-}
-
-/** A `!` run as the terminal shows it: streamed while it runs, its recorded output after. */
-function shellRunCommand(item: ShellItem, shellId: string, streamed: LiveCommandOutput | undefined): ShellCommand {
-  const command: ShellCommand = {
-    toolUseId: shellId,
-    command: item.command,
-    output: streamed ? streamed.text : item.output,
-    running: streamed ? streamed.running : item.running,
-    finished: !item.running
-  }
-  if (!item.running && item.exitCode !== 0) {
-    command.failure = { exitCode: item.exitCode }
-  }
-  return command
 }
 
 // The status line grove's shell ends a failed result with, for the model.

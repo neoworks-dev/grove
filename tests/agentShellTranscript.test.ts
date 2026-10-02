@@ -50,6 +50,13 @@ function command(toolUseId: string, output: string, running = false): ShellComma
   return { toolUseId, command: toolUseId, output, running, finished: !running }
 }
 
+describe('the preview of a command in a terminal', () => {
+  test('drops what a shell sends a terminal on start, not just colour', () => {
+    const started = '\u001b[?u\u001b[>0q\u001b]11;?\u001b\\\u001bP+q696e646e\u001b\\\u001b[?1049h\u001b=\u001b(BContinue? '
+    expect(outputTail(started, 3)).toEqual(['Continue? '])
+  })
+})
+
 describe('the commands a session ran', () => {
   test('takes streamed output over the result, and skips other calls', () => {
     const items: TranscriptItem[] = [

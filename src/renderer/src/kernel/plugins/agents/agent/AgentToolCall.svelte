@@ -9,10 +9,9 @@
   import Icon from '@iconify/svelte'
   import CodeBlock from '../../../../components/CodeBlock.svelte'
   import ShimmerText from '../../../../components/ShimmerText.svelte'
-  import { layout } from '../../../../lib/layout.svelte'
-  import { panels } from '../../../../lib/panels.svelte'
   import { outputTail } from '../../../../lib/agents/outputTail'
   import { shellOutputs } from '../../../../lib/agents/shellOutput.svelte'
+  import { agentTerminal } from '../../../../lib/agents/agentTerminal.svelte'
   import { fileIcon } from '../../../../lib/icons'
   import { formatShellCommand } from '../../../../lib/shellSyntax.svelte'
   import { diffLines, fileDiffsOf, hunksOf, statsOf } from '../../../../lib/agents/diff'
@@ -147,9 +146,9 @@
   const liveTail = $derived(liveOutput ? outputTail(liveOutput.text, LIVE_TAIL_LINES) : [])
 
   /** Shows the session's commands in the bottom panel's agent terminal tab. */
+  /** Shows this call's command in the agent terminal, where it can be typed into. */
   function openAgentTerminal(): void {
-    panels.reveal('agent-shell')
-    layout.ensurePane('panel')
+    agentTerminal.show(sessionId, item.toolUseId)
   }
 
   /** The one field a `code` or `command` view is about. */
@@ -268,12 +267,17 @@
         <div class="italic">No output yet</div>
       {/each}
       <div class="mt-1 flex gap-1.5 font-sans">
+        {#if liveOutput.waitingForInput}
+          <span class="self-center text-amber">Waiting for input</span>
+        {/if}
         <button
           class="rounded border border-line px-1.5 hover:bg-hover hover:text-default"
-          title="Everything this session's commands printed"
+          class:border-amber={liveOutput.waitingForInput}
+          class:text-amber={liveOutput.waitingForInput}
+          title="Watch it, or type into it, in the agent terminal"
           onclick={openAgentTerminal}
         >
-          Open in terminal
+          {#if liveOutput.waitingForInput}Answer in terminal{:else}Open in terminal{/if}
         </button>
         {#if liveOutput.running}
           <button

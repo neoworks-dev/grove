@@ -10,6 +10,8 @@ export interface BackgroundCommand {
   /** The id its output streams under, which Stop goes to. */
   id: string
   command: string
+  /** Blocked reading its input: someone has to type. */
+  waitingForInput: boolean
 }
 
 /** The session's running background commands, oldest first, each with its command line. */
@@ -23,7 +25,7 @@ export function backgroundCommandsOf(
     if (id === null) continue
     const output = live[id]
     if (!output || !output.running || !output.background) continue
-    commands.push({ id, command: commandLineOf(item) })
+    commands.push({ id, command: commandLineOf(item), waitingForInput: output.waitingForInput })
   }
   return commands
 }

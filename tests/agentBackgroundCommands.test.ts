@@ -24,20 +24,20 @@ describe('background commands', () => {
   test('lists running commands nothing waits on, with their command lines', () => {
     const items = [toolCall('t1', 'bun run dev'), shellRun('evt_2', 'tail -f log'), toolCall('t3', 'ls')]
     const live = {
-      t1: { text: '', running: true, background: true },
-      evt_2: { text: '', running: true, background: true },
-      t3: { text: '', running: true, background: false }
+      t1: { text: '', running: true, background: true, waitingForInput: false },
+      evt_2: { text: '', running: true, background: true, waitingForInput: true },
+      t3: { text: '', running: true, background: false, waitingForInput: false }
     }
 
     expect(backgroundCommandsOf(items, live)).toEqual([
-      { id: 't1', command: 'bun run dev' },
-      { id: 'evt_2', command: 'tail -f log' }
+      { id: 't1', command: 'bun run dev', waitingForInput: false },
+      { id: 'evt_2', command: 'tail -f log', waitingForInput: true }
     ])
   })
 
   test('drops one once it has exited', () => {
     const items = [toolCall('t1', 'bun run dev')]
-    const live = { t1: { text: '', running: false, background: true } }
+    const live = { t1: { text: '', running: false, background: true, waitingForInput: false } }
 
     expect(backgroundCommandsOf(items, live)).toEqual([])
   })

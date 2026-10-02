@@ -9,6 +9,7 @@
   import { onDestroy } from 'svelte'
   import { backgroundCommandsOf } from '../../../../lib/agents/backgroundCommands'
   import { shellOutputs } from '../../../../lib/agents/shellOutput.svelte'
+  import { agentTerminal } from '../../../../lib/agents/agentTerminal.svelte'
   import type { TranscriptItem } from '../../../../lib/agents/transcript'
   import { keyDispatch, KeyPriority } from '../../../../lib/keyDispatch'
 
@@ -101,9 +102,14 @@
     selected = -1
   }
 
-  /** Enter on the count row opens or folds the list; on a command it does nothing. */
+  /** Enter on the count row opens or folds the list; on a command, shows it in the agent terminal. */
   function enter(): void {
-    if (selected === -1) toggle()
+    if (selected === -1) {
+      toggle()
+      return
+    }
+    const command = commands[selected]
+    if (command) agentTerminal.show(sessionId, command.id)
   }
 
   const KEY_ACTIONS: Record<string, () => void> = {
@@ -169,9 +175,17 @@
             role="option"
             aria-selected={selected === index}
           >
-            <span class="min-w-0 flex-1 truncate font-mono" title={command.command}>
+            <button
+              class="min-w-0 flex-1 truncate text-left font-mono hover:text-default"
+              tabindex="-1"
+              title="Show it in the agent terminal (Enter)"
+              onclick={() => agentTerminal.show(sessionId, command.id)}
+            >
               {command.command}
-            </span>
+            </button>
+            {#if command.waitingForInput}
+              <span class="shrink-0 text-amber">waiting for input</span>
+            {/if}
             <button
               class="shrink-0 text-dim hover:text-red"
               tabindex="-1"
@@ -182,7 +196,7 @@
         {/each}
       </div>
       {#if focused}
-        <div class="border-t border-line px-2 py-0.5 text-dim">↑↓ pick · x stop · esc close</div>
+        <div class="border-t border-line px-2 py-0.5 text-dim">↑↓ pick · enter show · x stop · esc close</div>
       {/if}
     {/if}
   </div>

@@ -46,8 +46,9 @@ export type CommandSpawner = (
   options: CommandSpawnOptions
 ) => CommandTerminal
 
-// What a terminal's line discipline turns into SIGINT and end of file. EOF only
-// ends input at the start of a line, so a half-typed line is ended first.
+// What a terminal turns into SIGINT and end of file. Nothing has been typed
+// when grove ends a command's input, so ^D lands at the start of a line, where
+// it is end of file; a newline first would submit an empty answer instead.
 const CTRL_C = '\u0003'
 const CTRL_D = '\u0004'
 
@@ -71,7 +72,7 @@ export const spawnInPty: CommandSpawner = (file, args, options) => {
     write: (data) => pty.write(data),
     resize: (cols, rows) => pty.resize(cols, rows),
     interrupt: () => pty.write(CTRL_C),
-    endInput: () => pty.write(`\n${CTRL_D}`),
+    endInput: () => pty.write(CTRL_D),
     kill: () => signalGroup(pty.pid, 'SIGKILL')
   }
 }

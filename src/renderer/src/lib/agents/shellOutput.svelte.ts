@@ -10,6 +10,8 @@ import type { ShellOutputUpdate } from './types'
 export interface LiveCommandOutput {
   text: string
   running: boolean
+  /** Nothing waits on it any more: its call returned, or it was sent to the background. */
+  background: boolean
 }
 
 // Only the end of a very long run is kept, as in main.
@@ -34,11 +36,16 @@ class ShellOutputs {
     const session = this.sessionEntry(update.sessionId)
     const existing = session[update.toolUseId]
     if (!existing) {
-      session[update.toolUseId] = { text: update.text, running: update.running }
+      session[update.toolUseId] = {
+        text: update.text,
+        running: update.running,
+        background: update.background
+      }
       return
     }
     existing.text = keepTail(existing.text + update.text)
     existing.running = update.running
+    existing.background = update.background
   }
 
   /** Catches up on a session's running commands, for a view opening mid-run. */
@@ -46,7 +53,11 @@ class ShellOutputs {
     const snapshot = await window.workbench.agents.shellOutput(sessionId).catch(() => [])
     const session = this.sessionEntry(sessionId)
     for (const command of snapshot) {
-      session[command.toolUseId] = { text: command.text, running: command.running }
+      session[command.toolUseId] = {
+        text: command.text,
+        running: command.running,
+        background: command.background
+      }
     }
   }
 

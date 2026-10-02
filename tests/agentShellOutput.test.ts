@@ -29,9 +29,9 @@ describe('the output hub', () => {
     sink.end('t1')
 
     expect(updates).toEqual([
-      { sessionId: 's1', toolUseId: 't1', text: '', running: true },
-      { sessionId: 's1', toolUseId: 't1', text: 'one\ntwo\n', running: true },
-      { sessionId: 's1', toolUseId: 't1', text: '', running: false }
+      { sessionId: 's1', toolUseId: 't1', text: '', running: true, background: false },
+      { sessionId: 's1', toolUseId: 't1', text: 'one\ntwo\n', running: true, background: false },
+      { sessionId: 's1', toolUseId: 't1', text: '', running: false, background: false }
     ])
   })
 
@@ -41,7 +41,9 @@ describe('the output hub', () => {
     sink.begin('t1')
     sink.append('t1', 'building…\n')
 
-    expect(hub.snapshot('s1')).toEqual([{ toolUseId: 't1', text: 'building…\n', running: true }])
+    expect(hub.snapshot('s1')).toEqual([
+      { toolUseId: 't1', text: 'building…\n', running: true, background: false }
+    ])
     expect(hub.snapshot('s2')).toEqual([])
   })
 
@@ -64,9 +66,27 @@ describe('the output hub', () => {
     hub.settle('s1', 't1')
     sink.append('t1', 'still going\n')
 
-    expect(hub.snapshot('s1')).toEqual([{ toolUseId: 't1', text: 'still going\n', running: true }])
+    expect(hub.snapshot('s1')).toEqual([
+      { toolUseId: 't1', text: 'still going\n', running: true, background: true }
+    ])
     sink.end('t1')
     expect(hub.snapshot('s1')).toEqual([])
+  })
+
+  test('marks a command sent to the background with Ctrl+B, so the user can stop it later', () => {
+    const { hub, updates } = recordingHub()
+    hub.sinkFor('s1').begin('t1', () => {}, () => {})
+
+    expect(hub.background('s1')).toBe(true)
+
+    expect(updates.at(-1)).toEqual({
+      sessionId: 's1',
+      toolUseId: 't1',
+      text: '',
+      running: true,
+      background: true
+    })
+    expect(hub.snapshot('s1')[0].background).toBe(true)
   })
 
   test('interrupts a running command through the harness', () => {
@@ -113,7 +133,9 @@ describe("grove mode's shell", () => {
     const result = await shellTool().execute({ command: 'echo one; echo two >&2' }, contextFor(hub))
 
     expect(result).toEqual({ content: 'one\ntwo', isError: false })
-    expect(hub.snapshot('s1')).toEqual([{ toolUseId: 't1', text: 'one\ntwo\n', running: false }])
+    expect(hub.snapshot('s1')).toEqual([
+      { toolUseId: 't1', text: 'one\ntwo\n', running: false, background: false }
+    ])
   })
 
   test('runs in the working directory and reports a failing exit code', async () => {

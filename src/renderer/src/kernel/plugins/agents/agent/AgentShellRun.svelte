@@ -77,13 +77,15 @@
         >
           Stop
         </button>
-        <button
-          class="rounded border border-line px-1.5 hover:bg-hover hover:text-default"
-          title="Let it run past the time limit (Ctrl+B)"
-          onclick={() => shellOutputs.background(sessionId)}
-        >
-          Background
-        </button>
+        {#if !liveOutput?.background}
+          <button
+            class="rounded border border-line px-1.5 hover:bg-hover hover:text-default"
+            title="Let it run past the time limit (Ctrl+B)"
+            onclick={() => shellOutputs.background(sessionId)}
+          >
+            Background
+          </button>
+        {/if}
       </div>
     {/if}
   {:else if item.output}

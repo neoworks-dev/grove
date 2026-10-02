@@ -59,7 +59,7 @@ describe('the commands a session ran', () => {
     ]
 
     const commands = shellCommandsOf(items, (item) => item.name === 'Bash', {
-      t3: { text: 'running 4 tests\n', running: true }
+      t3: { text: 'running 4 tests\n', running: true, background: false }
     })
 
     expect(commands).toEqual([

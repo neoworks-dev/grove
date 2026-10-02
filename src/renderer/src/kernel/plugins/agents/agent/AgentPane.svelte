@@ -62,6 +62,7 @@
   import { saveNotes as saveSessionNotes } from '../../../../lib/agents/api'
   import AgentApproval from './AgentApproval.svelte'
   import AgentComposer from './AgentComposer.svelte'
+  import AgentBackgroundCommands from './AgentBackgroundCommands.svelte'
   import AgentNotes from './AgentNotes.svelte'
   import AgentQuestion from './AgentQuestion.svelte'
   import AgentControls from './AgentControls.svelte'
@@ -1117,6 +1118,10 @@
               onBack={showOverview}
               header={live ? notesHeader : undefined}
             />
+          {/if}
+
+          {#if activeId && live && !shownApproval}
+            <AgentBackgroundCommands sessionId={activeId} items={live.transcript.items} />
           {/if}
 
           {#if snapshot && !shownApproval}

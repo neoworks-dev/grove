@@ -1,9 +1,8 @@
 <script lang="ts">
-  // One terminal of the agent terminal pane: commands written one after
-  // another, each under its command line, with what it printed streaming in.
-  // The command still running at the bottom is the one the keyboard reaches —
-  // typing goes into its terminal in main, Ctrl+C stops it, and the view's size
-  // is its terminal's size.
+  // One terminal of the agent terminal pane: the agent's commands written one
+  // after another, each under its command line, with what it printed streaming
+  // in. While a command runs, the keyboard reaches it: typing goes into its
+  // terminal in main, Ctrl+C stops it, and the view's size is its terminal's size.
   import type { Terminal } from '@xterm/xterm'
   import XtermSurface from '../../../components/XtermSurface.svelte'
   import { keymap } from '../../../lib/keymap.svelte'
@@ -36,8 +35,6 @@
   } = $props()
 
   const COMMAND_LANGUAGE = 'shell'
-  const HIDE_CURSOR = '\u001b[?25l'
-  const SHOW_CURSOR = '\u001b[?25h'
 
   let surface = $state<XtermSurface>()
   let term = $state.raw<Terminal | null>(null)
@@ -50,10 +47,6 @@
     const last = commands.at(-1)
     if (!last || !last.running) return null
     return last
-  })
-  const waiting = $derived.by(() => {
-    if (!target) return false
-    return shellOutputs.of(sessionId, target.toolUseId)?.waitingForInput === true
   })
 
   /** Focuses the terminal for typing. */
@@ -86,24 +79,28 @@
     })
   }
 
-  /** What the user types goes to the running command; Ctrl+C stops it even where it takes no input. */
-  function sendInput(data: string): void {
+  /** What the user types goes to the running command, if there is one. */
+  function onInput(data: string): void {
     if (!target || isTerminalReply(data)) return
+    sendToCommand(target.toolUseId, data)
+  }
+
+  /** Typing into the running command; Ctrl+C stops it even where it takes no input. */
+  function sendToCommand(id: string, data: string): void {
     if (data === '\u0003') {
-      shellOutputs.interrupt(sessionId, target.toolUseId)
+      shellOutputs.interrupt(sessionId, id)
       return
     }
-    shellOutputs.write(sessionId, target.toolUseId, data)
+    shellOutputs.write(sessionId, id, data)
   }
 
   function onReady(terminal: Terminal): void {
     wireKeys(terminal)
-    terminal.onData(sendInput)
+    terminal.onData(onInput)
     terminal.onResize(({ cols, rows }) => {
       if (target) shellOutputs.resize(sessionId, target.toolUseId, cols, rows)
     })
     terminal.textarea?.addEventListener('focus', () => keymap.setPaneMode(leafId, 'terminal'))
-    terminal.write(HIDE_CURSOR)
     term = terminal
   }
 
@@ -114,20 +111,13 @@
     shellOutputs.resize(sessionId, id, term.cols, term.rows)
   })
 
-  // The cursor shows while a command waits for someone to type, nowhere else.
-  $effect(() => {
-    if (!term) return
-    if (waiting) term.write(SHOW_CURSOR)
-    if (!target) term.write(HIDE_CURSOR)
-  })
-
   // Shown again after being hidden, the grid is fitted to the space it now has.
   $effect(() => {
     if (!hidden) surface?.refit()
   })
 
   // Write what is new; start over for another session, rewritten history, or
-  // a scheme change that recolours the prompts.
+  // a scheme change that recolours the command lines.
   $effect(() => {
     const current = commands
     const session = sessionId
@@ -137,10 +127,7 @@
     if (startOver) written = []
     const paint: CommandPainter = (command) => paintCommand(command, scheme)
     const plan = planTerminalWrite(written, current, paint)
-    if (plan.reset || startOver) {
-      term.reset()
-      term.write(HIDE_CURSOR)
-    }
+    if (plan.reset || startOver) term.reset()
     for (const chunk of plan.chunks) term.write(chunk)
     written = plan.written
     writtenSession = session
@@ -152,7 +139,13 @@
   <XtermSurface
     bind:this={surface}
     {leafId}
-    options={{ convertEol: true, cursorInactiveStyle: 'none', scrollback: 10_000 }}
+    options={{
+      convertEol: true,
+      cursorBlink: true,
+      cursorStyle: 'block',
+      cursorInactiveStyle: 'outline',
+      scrollback: 10_000
+    }}
     {onReady}
   />
 </div>

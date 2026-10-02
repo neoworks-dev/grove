@@ -468,6 +468,24 @@ describe('AgentService', () => {
     }
   })
 
+  test('a command the user finished in the terminal goes to the agent with the next message', async () => {
+    const { service, runs, cleanup } = await setup()
+    const workspace = await mkdtemp(join(tmpdir(), 'grove-agent-terminal-'))
+    try {
+      const session = await service.createSession({ workspace })
+      await service.recordTerminalCommand(session.id, { command: 'ls', output: 'README.md', exitCode: 0 })
+      expect(runs).toHaveLength(0)
+
+      await service.send(session.id, [say('what is here?')])
+      expect(runs[0].prompts[0]).toBe(
+        '<shell-command outcome="exit 0">\n$ ls\nREADME.md\n</shell-command>\nwhat is here?'
+      )
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+      await cleanup()
+    }
+  })
+
   test('a shared shell command rides along with the next message, once', async () => {
     const { service, runs, cleanup } = await setup()
     const workspace = await mkdtemp(join(tmpdir(), 'grove-agent-shell-'))

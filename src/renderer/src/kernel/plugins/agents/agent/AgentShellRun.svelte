@@ -47,14 +47,15 @@
 <div class="mb-2">
   <div class="flex items-center gap-2 font-mono text-2xs">
     <span class="shrink-0 text-blue">$</span>
-    <span class="min-w-0 truncate text-muted"
+    <span class="min-w-[8ch] truncate text-muted"
       >{#if commandTokens.length > 0}{#each commandTokens as token, index (index)}<span
             style:color={token.color}>{token.text}</span
           >{/each}{:else}{item.command}{/if}</span
     >
     {#if item.running}<span class="shrink-0 text-dim">· running</span>{/if}
+    {#if item.fromTerminal}<span class="min-w-0 truncate text-dim">· in your terminal</span>{/if}
     {#if !item.shared}<span class="shrink-0 text-dim">· private</span
-      >{:else if !item.running && !item.delivered}<span class="shrink-0 text-amber"
+      >{:else if !item.running && !item.delivered}<span class="min-w-0 truncate text-amber"
         >· goes with your next message</span
       >{:else if item.background}<span class="shrink-0 text-dim">· sent to the agent when it exited</span
       >{/if}

@@ -50,6 +50,16 @@ function command(toolUseId: string, output: string, running = false): ShellComma
   return { toolUseId, command: toolUseId, output, running, finished: !running }
 }
 
+describe("the user's own terminal commands", () => {
+  test('stay out of the agent tab, which would only show them twice', () => {
+    const items = [
+      { kind: 'shell', shellId: 'a', command: 'ls', output: 'x', running: false, exitCode: 0, fromTerminal: true },
+      { kind: 'shell', shellId: 'b', command: 'pwd', output: '/', running: false, exitCode: 0, fromTerminal: false }
+    ] as unknown as Parameters<typeof shellCommandsOf>[0]
+    expect(shellCommandsOf(items, () => true, {}).map((command) => command.command)).toEqual(['pwd'])
+  })
+})
+
 describe('the preview of a command in a terminal', () => {
   test('drops what a shell sends a terminal on start, not just colour', () => {
     const started = '\u001b[?u\u001b[>0q\u001b]11;?\u001b\\\u001bP+q696e646e\u001b\\\u001b[?1049h\u001b=\u001b(BContinue? '

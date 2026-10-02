@@ -87,8 +87,9 @@
    * sees it; only the toggle chord is swallowed outright.
    */
   function handleTerminalOwnership(event: KeyboardEvent): boolean {
-    const inPanelTerminal = keymap.activePaneType === 'panel' && keymap.mode === 'terminal'
-    if (keymap.activePaneType !== 'terminal' && !inPanelTerminal) return false
+    // The shell pane, and any pane in 'terminal' mode: the panel's Terminal
+    // tab, the agent terminal while it takes typing.
+    if (keymap.activePaneType !== 'terminal' && keymap.mode !== 'terminal') return false
     if (event.ctrlKey && event.key === '`' && !event.altKey && !event.metaKey) {
       event.preventDefault()
       event.stopPropagation()

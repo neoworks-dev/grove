@@ -152,6 +152,8 @@ export type GroveEventBody =
       shellId?: string
       /** It was sent to the background; a shared one was handed to the agent when it exited. */
       background?: boolean
+      /** The user ran it in the agent terminal's shell, not with `!`. */
+      fromTerminal?: boolean
     }
   | { type: 'ui.surface'; surfaceId: string; slot: UiSlot; view: UiNode }
   | { type: 'ui.surface'; surfaceId: string; view: null }
@@ -202,6 +204,13 @@ export interface ShellOutputUpdate {
 }
 
 /** Everything a running (or just finished) command has printed so far. */
+/** A command the user finished in the agent terminal's shell, as its terminal saw it. */
+export interface TerminalCommand {
+  command: string
+  output: string
+  exitCode: number
+}
+
 export interface ShellOutputSnapshot {
   toolUseId: string
   text: string

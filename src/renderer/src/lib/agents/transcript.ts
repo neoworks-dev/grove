@@ -123,6 +123,8 @@ export interface ShellItem {
   exitCode: number
   outcome: string
   shared: boolean
+  /** The user ran it in the agent terminal's shell, not with `!`. */
+  fromTerminal: boolean
   /**
    * Has the agent been given this yet?
    *
@@ -595,6 +597,7 @@ function applyShell(state: TranscriptState, event: SessionEvent): void {
       exitCode: 0,
       outcome: '',
       shared: event.share === true,
+      fromTerminal: false,
       delivered: false
     })
     return
@@ -625,6 +628,7 @@ function applyShell(state: TranscriptState, event: SessionEvent): void {
     exitCode: event.exitCode,
     outcome: event.outcome,
     shared: event.share,
+    fromTerminal: event.fromTerminal === true,
     delivered: background && event.share
   })
 }

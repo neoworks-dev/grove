@@ -36,6 +36,7 @@ import type {
   ShellCompletion,
   ShellOutputSnapshot,
   ShellOutputUpdate,
+  TerminalCommand,
   ThinkingLevel,
   UserContentBlock
 } from '../../shared/agents'
@@ -333,6 +334,25 @@ export class AgentService {
    */
   backgroundShell(sessionId: string): boolean {
     return this.shellOutputs.background(sessionId)
+  }
+
+  /**
+   * A command the user finished in the agent terminal's shell, put on the log
+   * as shared shell output: the agent gets it with the next message, as it
+   * would a `!` command, and the transcript shows it. The output keeps its end.
+   */
+  async recordTerminalCommand(sessionId: string, command: TerminalCommand): Promise<void> {
+    await this.store.require(sessionId)
+    await this.store.append(sessionId, {
+      type: 'session.shell_result',
+      command: command.command,
+      output: tailOf(command.output, TERMINAL_OUTPUT_CHARS),
+      exitCode: command.exitCode,
+      outcome: `exit ${command.exitCode}`,
+      share: true,
+      shellId: randomUUID(),
+      fromTerminal: true
+    })
   }
 
   /** Types into a running command of the session, from its terminal. */
@@ -1318,6 +1338,16 @@ function groupRoutesByProvider(models: ModelEntry[]): [string, string[]][] {
 function withPendingShell(pending: string, text: string): string {
   if (pending.length === 0) return text
   return `${pending}\n${text}`
+}
+
+// What the agent is given of a command run in the terminal: its end, as with
+// a long `!` command, so a noisy build does not crowd out the message.
+const TERMINAL_OUTPUT_CHARS = 16 * 1024
+
+/** The end of `text`, at most `limit` characters, saying what was cut. */
+function tailOf(text: string, limit: number): string {
+  if (text.length <= limit) return text
+  return `[${text.length - limit} earlier characters dropped]\n${text.slice(-limit)}`
 }
 
 function shellContext(command: string, result: ShellResult): string {

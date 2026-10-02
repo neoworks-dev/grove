@@ -54,6 +54,8 @@ export function shellCommandsOf(
 ): ShellCommand[] {
   const commands: ShellCommand[] = []
   for (const item of items) {
+    // What the user ran in the terminal's shell is on screen there already.
+    if (item.kind === 'shell' && item.fromTerminal) continue
     if (item.kind === 'shell' && item.shellId) {
       commands.push(shellRunCommand(item, item.shellId, live[item.shellId]))
       continue

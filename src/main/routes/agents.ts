@@ -10,7 +10,8 @@ import type {
   CodeLocation,
   CreateSessionOptions,
   PaneTypeInfo,
-  SessionUpdate
+  SessionUpdate,
+  TerminalCommand
 } from '../../shared/agents'
 
 export const agentRoutes = {
@@ -62,6 +63,9 @@ export const agentRoutes = {
     route(ctx, 'agents:backgroundShell', (_e, sessionId: string) =>
       ctx.agents.backgroundShell(sessionId)
     )
+    route(ctx, 'agents:recordTerminalCommand', (_e, sessionId: string, command: TerminalCommand) =>
+      ctx.agents.recordTerminalCommand(sessionId, terminalCommandOf(command))
+    )
     route(ctx, 'agents:writeShell', (_e, sessionId: string, toolUseId: string, data: string) =>
       ctx.agents.writeShell(sessionId, toolUseId, data)
     )
@@ -101,4 +105,16 @@ export const agentRoutes = {
         ctx.agents.putBlob(sessionId, bytes, mediaType, filename)
     )
   }
+}
+
+/** A terminal command from the renderer, checked field by field before it goes on the log. */
+function terminalCommandOf(value: TerminalCommand): TerminalCommand {
+  if (typeof value?.command !== 'string' || value.command.trim().length === 0) {
+    throw new Error('a terminal command needs a command line')
+  }
+  let output = ''
+  if (typeof value.output === 'string') output = value.output
+  let exitCode = 0
+  if (Number.isInteger(value.exitCode)) exitCode = value.exitCode
+  return { command: value.command, output, exitCode }
 }

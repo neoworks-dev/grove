@@ -1,9 +1,12 @@
 <script lang="ts">
-  // The agent's terminal: the commands the session on screen runs — the
-  // agent's and the user's `!` ones — each under its command line, with what it
-  // printed streaming in, and the one running at the bottom taking the keyboard.
+  // The agent's terminal. The first tab is a shell of the user's own, in the
+  // worktree, like any terminal: every command finished in it goes on the
+  // session's log, so the agent sees what the user did there with the next
+  // message. The next is the commands the session runs — the agent's and the
+  // user's `!` ones — each under its command line, with what it printed
+  // streaming in, and the one running at the bottom taking the keyboard.
   //
-  // Commands run one after another share the first tab. A command left running
+  // The session's commands run one after another share that tab. A command left running
   // in the background gets a tab of its own as soon as it goes there, so a dev
   // server printing away does not keep redrawing the commands after it; its tab
   // stays until it has exited and is closed.
@@ -17,9 +20,12 @@
   import { visibleItems, type ToolItem } from '../../../lib/agents/transcript'
   import { store } from '../../../lib/store.svelte'
   import AgentTerminalView from './AgentTerminalView.svelte'
+  import TerminalView from '../../../components/TerminalView.svelte'
+  import type { FailedCommand } from '../../../lib/terminalCommands'
 
   let { leafId }: { leafId: string } = $props()
 
+  const SHELL_TAB = 'shell'
   const MAIN_TAB = 'agent'
 
   const worktreePath = $derived(store.selectedWorktree?.path ?? '')
@@ -57,7 +63,9 @@
   // session they belong to.
   let backgroundTabs = $state<string[]>([])
   let tabsSession: string | null = null
-  let activeTab = $state(MAIN_TAB)
+  let activeTab = $state(SHELL_TAB)
+  // Bumped when the user's shell exits, so a fresh one starts in its place.
+  let shellGeneration = $state(0)
   let views = $state<Record<string, AgentTerminalView>>({})
 
   // A new session starts from its own commands; a command that goes to the
@@ -68,7 +76,7 @@
     if (session !== tabsSession) {
       tabsSession = session
       backgroundTabs = []
-      activeTab = MAIN_TAB
+      activeTab = SHELL_TAB
     }
     for (const command of commands) {
       if (live[command.toolUseId]?.background && !backgroundTabs.includes(command.toolUseId)) {
@@ -104,7 +112,21 @@
   /** Shows a tab and gives it the keyboard. */
   function selectTab(id: string): void {
     activeTab = id
+    if (id === SHELL_TAB) return
     requestAnimationFrame(() => views[id]?.focus())
+  }
+
+  /** Puts a command the user finished in their shell on the session's log, for the agent. */
+  function recordShellCommand(finished: FailedCommand): void {
+    if (!sessionId) return
+    const command = { command: finished.command, output: finished.output, exitCode: finished.exitCode }
+    void window.workbench.agents.recordTerminalCommand(sessionId, command)
+  }
+
+  /** The user's shell exited: forget it, and start another. */
+  function shellExited(session: string): void {
+    delete agentTerminal.shells[session]
+    shellGeneration += 1
   }
 
   // Asked to show a command — its card's "Answer in terminal", a background
@@ -152,6 +174,15 @@
   <div class="flex h-7 shrink-0 items-center gap-1 border-b border-line px-1 text-2xs text-dim">
     <button
       class="flex items-center gap-1.5 rounded px-2 py-0.5 hover:text-default"
+      class:bg-hover={activeTab === SHELL_TAB}
+      class:text-default={activeTab === SHELL_TAB}
+      title="Your shell in this worktree; the agent sees the commands you finish here"
+      onclick={() => selectTab(SHELL_TAB)}
+    >
+      Terminal
+    </button>
+    <button
+      class="flex items-center gap-1.5 rounded px-2 py-0.5 hover:text-default"
       class:bg-hover={activeTab === MAIN_TAB}
       class:text-default={activeTab === MAIN_TAB}
       title={meta?.title || 'Agent terminal'}
@@ -183,13 +214,23 @@
   </div>
   {#if !sessionId}
     <p class="p-3 text-xs text-dim">No agent session in this worktree.</p>
-  {:else if commands.length === 0}
-    <p class="p-3 text-xs text-dim">
-      The commands this session runs show here as they run, and take what you type.
-    </p>
-  {/if}
-  {#if sessionId}
-    <div class="min-h-0 flex-1" class:hidden={commands.length === 0}>
+  {:else}
+    <div class="min-h-0 flex-1">
+      {#key `${sessionId}:${shellGeneration}`}
+        {@const session = sessionId}
+        <div class="h-full min-h-0" class:hidden={activeTab !== SHELL_TAB}>
+          <TerminalView
+            {leafId}
+            worktreeId={store.selectedWorktreeId}
+            attachId={agentTerminal.shells[session]}
+            active={activeTab === SHELL_TAB}
+            onSession={(ptyId) => (agentTerminal.shells[session] = ptyId)}
+            onExit={() => shellExited(session)}
+            onTitle={() => {}}
+            onCommandFinished={recordShellCommand}
+          />
+        </div>
+      {/key}
       <AgentTerminalView
         bind:this={views[MAIN_TAB]}
         {leafId}

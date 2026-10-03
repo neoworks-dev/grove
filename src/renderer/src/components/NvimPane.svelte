@@ -49,6 +49,7 @@
   import { references } from '../lib/references.svelte'
   import { nvimSetup } from '../lib/nvim/setup.svelte'
   import WaveSpinner from './WaveSpinner.svelte'
+  import { dialogs } from '../lib/dialogs.svelte'
 
   let { leafId }: { leafId: string } = $props()
 
@@ -339,6 +340,76 @@
         .request(id, 'nvim_exec_lua', [CLOSE_BUFFER_LUA, [path]])
         .catch(() => {})
     }
+  }
+
+  // Saves or discards one unsaved buffer ahead of its tab closing, so the
+  // close that follows can delete it. Returns the write's error, if any.
+  const SETTLE_UNSAVED_LUA = `
+local path, save = ...
+local buf = vim.fn.bufnr(path)
+if buf <= 0 or not vim.bo[buf].modified then return nil end
+if not save then
+  vim.bo[buf].modified = false
+  return nil
+end
+local ok, err = pcall(vim.api.nvim_buf_call, buf, function() vim.cmd('silent write') end)
+if ok then return nil end
+return tostring(err)
+`
+
+  // Every tab close asks here first, wherever it came from.
+  $effect(() => {
+    store.closeGuard = guardClose
+    return () => {
+      if (store.closeGuard === guardClose) store.closeGuard = null
+    }
+  })
+
+  /** Lets tabs close straight away unless one holds unsaved changes. */
+  function guardClose(paths: string[]): boolean | Promise<boolean> {
+    const unsaved = paths.filter((path) => dirtyPaths[path])
+    if (unsaved.length === 0) return true
+    return confirmUnsaved(unsaved)
+  }
+
+  /** Asks whether to save unsaved files before their tabs close; false keeps them open. */
+  async function confirmUnsaved(paths: string[]): Promise<boolean> {
+    const names = paths.map((path) => path.split(/[\\/]/).pop() || path)
+    let title = `Save changes to ${names[0]}?`
+    let detail: string | undefined = undefined
+    if (paths.length > 1) {
+      title = `Save changes to ${paths.length} files?`
+      detail = names.join('\n')
+    }
+    const choice = await dialogs.confirm({
+      title,
+      body: "Your changes will be lost if you don't save them.",
+      detail,
+      actions: [
+        { id: 'save', label: 'Save', kind: 'primary' },
+        { id: 'discard', label: "Don't Save", kind: 'danger' },
+        { id: 'cancel', label: 'Cancel' }
+      ]
+    })
+    if (choice === 'save') return settleUnsaved(paths, true)
+    if (choice === 'discard') return settleUnsaved(paths, false)
+    return false
+  }
+
+  /** Writes or discards each unsaved buffer; false, with a toast, if a write fails. */
+  async function settleUnsaved(paths: string[], save: boolean): Promise<boolean> {
+    const id = session?.id
+    if (!id) return false
+    for (const path of paths) {
+      const error = await window.workbench.nvim
+        .request(id, 'nvim_exec_lua', [SETTLE_UNSAVED_LUA, [path, save]])
+        .catch((failure: unknown) => String(failure))
+      if (typeof error === 'string') {
+        dialogs.notify({ level: 'error', message: `Could not save ${path}: ${error}` })
+        return false
+      }
+    }
+    return true
   }
 
   function cssVar(name: string, fallback: string): string {
@@ -642,7 +713,7 @@ pcall(vim.api.nvim_buf_delete, buf, {})
   function closeDeletedBuffer(path: unknown): void {
     if (typeof path !== 'string' || path === '') return
     if (path === lastPushedPath) lastPushedPath = null
-    store.closeTab(path)
+    store.removeTab(path)
   }
 
   /**

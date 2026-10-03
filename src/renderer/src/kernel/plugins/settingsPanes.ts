@@ -2,6 +2,10 @@
 // review, and connecting Chrome. They open beside the editor rather than replacing it.
 
 import type { Context } from '@neoworks/extension-system'
+import GearSixIcon from 'phosphor-svelte/lib/GearSixIcon'
+import KeyboardIcon from 'phosphor-svelte/lib/KeyboardIcon'
+import ShieldCheckIcon from 'phosphor-svelte/lib/ShieldCheckIcon'
+import GoogleChromeLogoIcon from 'phosphor-svelte/lib/GoogleChromeLogoIcon'
 import PreferencesPane from '../../components/PreferencesPane.svelte'
 import KeyboardPane from '../../components/KeyboardPane.svelte'
 import GrantsPane from '../../components/GrantsPane.svelte'
@@ -17,6 +21,7 @@ export const settingsPanes = {
         ctx.editor.registerAuxPane({
           id: 'preferences',
           title: 'Preferences',
+          icon: GearSixIcon,
           component: PreferencesPane,
           orientation: 'row',
           minWidth: 320,
@@ -30,6 +35,7 @@ export const settingsPanes = {
         ctx.editor.registerAuxPane({
           id: 'keybindings',
           title: 'Keyboard Shortcuts',
+          icon: KeyboardIcon,
           component: KeyboardPane,
           orientation: 'row',
           minWidth: 320,
@@ -43,6 +49,7 @@ export const settingsPanes = {
         ctx.editor.registerAuxPane({
           id: 'permissions',
           title: 'Permissions & Access',
+          icon: ShieldCheckIcon,
           component: GrantsPane,
           orientation: 'row',
           containerClass: 'bg-elevated',
@@ -57,6 +64,7 @@ export const settingsPanes = {
         ctx.editor.registerAuxPane({
           id: 'connect-chrome',
           title: 'Connect Chrome',
+          icon: GoogleChromeLogoIcon,
           component: ConnectChromePane,
           orientation: 'row',
           minWidth: 320,

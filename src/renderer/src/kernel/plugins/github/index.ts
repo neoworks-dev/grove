@@ -5,6 +5,7 @@
 // GitHub swapped the whole layout for it.
 
 import type { Context } from '@neoworks/extension-system'
+import GithubLogoIcon from 'phosphor-svelte/lib/GithubLogoIcon'
 import GithubPane from './GithubPane.svelte'
 import GithubPrCommentBox from './GithubPrCommentBox.svelte'
 import { CENTER_SLOT } from '../../../lib/paneSlots'
@@ -27,6 +28,7 @@ export const githubDashboard = {
         ctx.panes.register({
           id: 'github',
           title: 'GitHub',
+          icon: GithubLogoIcon,
           component: GithubPane,
           slot: CENTER_SLOT,
           minWidth: 320,

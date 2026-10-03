@@ -57,7 +57,7 @@
   data-zoom-container={leaf.id}
   style={zoomStyle}
   onpointerdown={onPointerDown}
-  class="pane-surface group/pane relative flex h-full w-full min-w-0 min-h-0 flex-col overflow-hidden rounded-xl border border-line-faint outline-none {surfaceClass} {keymap.activeSurfaceId ===
+  class="pane-surface group/pane relative flex h-full w-full min-w-0 min-h-0 flex-col overflow-hidden rounded-lg border border-line-faint outline-none {surfaceClass} {keymap.activeSurfaceId ===
   leaf.id
     ? 'pane-active'
     : ''} {dragged ? 'opacity-40' : ''}"

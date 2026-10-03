@@ -2,6 +2,7 @@
 // in, and the per-worktree chat pane.
 
 import ChatCircle from 'phosphor-svelte/lib/ChatCircle'
+import Robot from 'phosphor-svelte/lib/Robot'
 import TerminalWindow from 'phosphor-svelte/lib/TerminalWindow'
 import type { Context } from '@neoworks/extension-system'
 import AgentPane from './agent/AgentPane.svelte'
@@ -29,6 +30,7 @@ export const agents = {
         ctx.panes.register({
           id: 'agent',
           title: 'Agent',
+          icon: Robot,
           component: AgentPane,
           containerClass: 'bg-surface',
           minWidth: 240,

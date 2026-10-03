@@ -8,28 +8,28 @@
   import { sidebar } from './launchers.svelte'
 </script>
 
-<div class="flex w-11 shrink-0 flex-col items-center gap-1 py-2">
+<div class="flex w-9 shrink-0 flex-col items-center gap-1 py-2">
   {#each panes.railTypes() as type (type.id)}
     {@const RailIcon = type.icon}
     <button
-      class="flex h-9 w-9 items-center justify-center rounded-md {layout.hasPaneType(type.id)
+      class="flex h-8 w-8 items-center justify-center rounded-md {layout.hasPaneType(type.id)
         ? 'bg-raised text-default'
         : 'text-dim hover:bg-hover hover:text-default'}"
       title={type.title}
       aria-label={type.title}
       onclick={() => layout.togglePane(type.id)}
     >
-      {#if RailIcon}<RailIcon size={20} />{/if}
+      {#if RailIcon}<RailIcon size={18} />{/if}
     </button>
   {/each}
   {#each sidebar.launchers as launcher (launcher.id)}
     <button
-      class="flex h-9 w-9 items-center justify-center rounded-md text-dim hover:bg-hover hover:text-default"
+      class="flex h-8 w-8 items-center justify-center rounded-md text-dim hover:bg-hover hover:text-default"
       title={launcher.label}
       aria-label={launcher.label}
       onclick={() => void launcher.run()}
     >
-      <Icon icon={launcher.icon} width="20" height="20" />
+      <Icon icon={launcher.icon} width="18" height="18" />
     </button>
   {/each}
 </div>

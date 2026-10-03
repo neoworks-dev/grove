@@ -42,7 +42,7 @@ export class PanelService extends Service {
           openable: false,
           // Opens below the focused editor, like the problems pane.
           preferredOrientation: 'column',
-          containerClass: 'bg-canvas',
+          containerClass: 'bg-surface',
           minHeight: 160,
           // The Terminal tab forwards keys to the shell ('terminal'); other tabs
           // run in 'normal'. The active tab reports which.

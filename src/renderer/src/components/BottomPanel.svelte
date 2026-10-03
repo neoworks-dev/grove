@@ -74,7 +74,7 @@
   })
 </script>
 
-<div class="flex h-full w-full flex-col bg-canvas">
+<div class="flex h-full w-full flex-col bg-surface">
   <!-- Tab strip -->
   <div class="flex h-8 shrink-0 items-center gap-1 border-b border-line px-1">
     {#each views as view (view.id)}

@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import { cubicOut } from 'svelte/easing'
   import ActivityBar from './kernel/plugins/sidebar/ActivityBar.svelte'
+  import PaneRail from './components/PaneRail.svelte'
   import SplitTree from './components/SplitTree.svelte'
   import TopBar from './components/TopBar.svelte'
   import Overlay from './components/Overlay.svelte'
@@ -200,7 +201,8 @@
     </div>
   {/if}
 
-  <!-- Main body: the launcher rail plus the split trees. Every window — the
+  <!-- Main body: the launcher rail, the split trees, and the pane rail on the
+       right. Every window — the
        sidebar, the editor, the agent panel — is a leaf of the tree, so all of
        them drag, split and close alike. Every visited view stays mounted; only
        the active one is shown (others display:none), so switching views flips
@@ -209,9 +211,8 @@
   <div class="flex min-h-0 min-w-0 flex-1 overflow-hidden">
     {#if !layout.focusMode}
       <div class="flex min-h-0 shrink-0" transition:collapseWidth>
-        <div class="flex shrink-0 overflow-hidden rounded-xl border border-line-faint bg-surface">
-          <ActivityBar />
-        </div>
+        <!-- No container: the rail sits on the canvas itself. -->
+        <ActivityBar />
         <!-- Matches a split gutter, so the rail sits the same distance from the
              first pane as panes sit from each other. -->
         <div class="w-2 shrink-0"></div>
@@ -229,6 +230,13 @@
         </div>
       {/each}
     </div>
+
+    {#if !layout.focusMode}
+      <div class="flex min-h-0 shrink-0" transition:collapseWidth>
+        <div class="w-2 shrink-0"></div>
+        <PaneRail />
+      </div>
+    {/if}
   </div>
 
   <StatusBar />

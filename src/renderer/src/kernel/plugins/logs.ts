@@ -1,6 +1,7 @@
 // Service logs: output of the processes Grove supervises per worktree.
 
 import type { Context } from '@neoworks/extension-system'
+import ScrollIcon from 'phosphor-svelte/lib/ScrollIcon'
 import LogsPane from '../../components/LogsPane.svelte'
 
 export const logs = {
@@ -13,6 +14,7 @@ export const logs = {
         ctx.panes.register({
           id: 'logs',
           title: 'Logs',
+          icon: ScrollIcon,
           component: LogsPane,
           containerClass: 'bg-elevated',
           minHeight: 120,

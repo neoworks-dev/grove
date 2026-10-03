@@ -3,6 +3,7 @@
 // user is looking at without importing the nvim session registry itself.
 
 import type { Component } from 'svelte'
+import FileCodeIcon from 'phosphor-svelte/lib/FileCodeIcon'
 import { Service, type Context } from '@neoworks/extension-system'
 import { panes } from '../../lib/panes.svelte'
 import { store, openFileInEditor, openFileAtLine } from '../../lib/store.svelte'
@@ -53,6 +54,7 @@ export class EditorService extends Service {
         panes.register({
           id: 'nvim',
           title: 'Neovim',
+          icon: FileCodeIcon,
           component: NvimPane,
           slot: CENTER_SLOT,
           containerClass: 'bg-surface',

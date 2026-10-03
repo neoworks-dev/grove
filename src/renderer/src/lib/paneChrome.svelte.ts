@@ -1,9 +1,8 @@
-// The window controls every pane carries — switch type, split, maximize, close —
-// live in the pane's own header row, like an OS title bar. PaneLeaf publishes
-// which leaf they act on through context; a header claims them by rendering
-// <PaneControls />. A pane whose header does not (or that has no header at the
-// moment) gets them in its top-right corner from PaneLeaf instead. Either way
-// they show only while the pointer is over the pane.
+// The close button every pane carries lives in the pane's own header row, like
+// an OS title bar. PaneLeaf publishes which leaf it acts on through context; a
+// header claims it by rendering <PaneControls />. A pane whose header does not
+// (or that has no header at the moment) gets it in its top-right corner from
+// PaneLeaf instead, shown only while the pointer is over the pane.
 
 import { getContext, setContext } from 'svelte'
 

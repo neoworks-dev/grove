@@ -8,6 +8,7 @@
   import ArrowsLeftRightIcon from 'phosphor-svelte/lib/ArrowsLeftRightIcon'
   import CaretLeftIcon from 'phosphor-svelte/lib/CaretLeftIcon'
   import CaretRightIcon from 'phosphor-svelte/lib/CaretRightIcon'
+  import XIcon from 'phosphor-svelte/lib/XIcon'
   import {
     nextHiddenTab,
     revealScrollLeft,
@@ -190,17 +191,23 @@
   onclick: (event: MouseEvent) => void
 )}
   <button
-    class="ml-1 inline-flex w-3.5 shrink-0 cursor-pointer items-center justify-center text-dim hover:text-red"
+    class="ml-1 flex size-3.5 shrink-0 cursor-pointer items-center justify-center text-dim hover:text-red"
     {title}
     {onclick}
   >
     {#if dirty}
-      <span
-        class="text-[8px] leading-none text-amber group-hover/tab:hidden"
-        title="Unsaved changes">●</span
-      >
+      <span class="size-1.5 rounded-full bg-amber group-hover/tab:hidden" title="Unsaved changes"
+      ></span>
     {/if}
-    <span class={['group-hover/tab:inline', (dirty || !alwaysShown) && 'hidden']}>✕</span>
+    <span
+      class={[
+        'group-hover/tab:flex',
+        (dirty || !alwaysShown) && 'hidden',
+        alwaysShown && !dirty && 'flex'
+      ]}
+    >
+      <XIcon size={11} />
+    </span>
   </button>
 {/snippet}
 

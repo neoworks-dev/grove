@@ -14,6 +14,16 @@ export const miscRoutes = {
       shell.openExternal(url)
     )
     route(ctx, 'window:raise', (event: IpcMainInvokeEvent) => raiseWindow(event))
+    route(ctx, 'window:controls', (event: IpcMainInvokeEvent) => windowControls(event))
+    route(ctx, 'window:minimize', (event: IpcMainInvokeEvent) => {
+      BrowserWindow.fromWebContents(event.sender)?.minimize()
+    })
+    route(ctx, 'window:toggleFullScreen', (event: IpcMainInvokeEvent) =>
+      toggleFullScreen(event)
+    )
+    route(ctx, 'window:close', (event: IpcMainInvokeEvent) => {
+      BrowserWindow.fromWebContents(event.sender)?.close()
+    })
   }
 }
 
@@ -28,4 +38,57 @@ function raiseWindow(event: IpcMainInvokeEvent): void {
   }
   window.show()
   window.focus()
+}
+
+// Tiling compositors have no minimised state to send a window to: minimize()
+// is a silent no-op there. Electron cannot ask the compositor what it supports
+// (Wayland's xdg_toplevel wm_capabilities is not exposed), so the desktop name
+// is the best signal there is.
+const TILING_DESKTOPS = [
+  'hyprland',
+  'sway',
+  'i3',
+  'niri',
+  'river',
+  'bspwm',
+  'dwm',
+  'qtile',
+  'xmonad',
+  'awesome',
+  'herbstluftwm',
+  'wayfire'
+]
+
+/** Whether the desktop the app runs on can minimise a window. */
+function canMinimize(): boolean {
+  if (process.platform !== 'linux') {
+    return true
+  }
+  const desktops = (process.env.XDG_CURRENT_DESKTOP || '').toLowerCase().split(':')
+  return !desktops.some((desktop) => TILING_DESKTOPS.includes(desktop))
+}
+
+/** Which window controls the title bar should offer, and the fullscreen state. */
+function windowControls(event: IpcMainInvokeEvent): {
+  minimize: boolean
+  fullScreen: boolean
+  isFullScreen: boolean
+} {
+  const window = BrowserWindow.fromWebContents(event.sender)
+  let isFullScreen = false
+  if (window) {
+    isFullScreen = window.isFullScreen()
+  }
+  return { minimize: canMinimize(), fullScreen: true, isFullScreen }
+}
+
+/** Flips the asking window in or out of fullscreen; resolves to the new state. */
+function toggleFullScreen(event: IpcMainInvokeEvent): boolean {
+  const window = BrowserWindow.fromWebContents(event.sender)
+  if (!window) {
+    return false
+  }
+  const next = !window.isFullScreen()
+  window.setFullScreen(next)
+  return next
 }

@@ -92,6 +92,11 @@ describe('main route plugins', () => {
     const root = new Context()
     await Promise.all(routePlugins.map((plugin) => root.plugin(plugin)))
     // Only the two domains that inject nothing (editor catalog, misc) can run.
-    expect(handlers.size).toBeLessThan(10)
+    const serviceFreePrefixes = ['extensions:', 'shell:', 'window:']
+    const running = [...handlers.keys()].filter(
+      (channel) => !serviceFreePrefixes.some((prefix) => channel.startsWith(prefix))
+    )
+    expect(running).toEqual([])
+    expect(handlers.size).toBeGreaterThan(0)
   })
 })

@@ -1,9 +1,12 @@
 <script lang="ts">
-  // App header, VSCode command-center style: the app menu on the left and a
-  // centered project pill that opens the file finder.
+  // App header, VSCode command-center style: the app menu on the left, a
+  // centered project pill that opens the file finder, window controls right.
   import { store, openRepoResult } from '../lib/store.svelte'
   import { commands } from '../lib/commands.svelte'
   import MenuBar from './MenuBar.svelte'
+  import WindowControls from './WindowControls.svelte'
+  // The app icon itself, the same artwork the AppImage and the window carry.
+  import groveIcon from '../../../../resources/grove-icon.png'
 
   const projectName = $derived(store.repo?.name ?? 'Open a project…')
 
@@ -30,8 +33,11 @@
 </script>
 
 <div class="grid h-full grid-cols-[1fr_auto_1fr] items-center gap-2">
-  <!-- Left: the app menu. -->
-  <MenuBar />
+  <!-- Left: the Grove mark and the app menu. -->
+  <div class="flex items-center gap-1.5">
+    <img class="ml-1 size-[18px] shrink-0 rounded" src={groveIcon} alt="Grove" />
+    <MenuBar />
+  </div>
 
   <!-- Center: command-center pill — click opens the file finder. -->
   <button
@@ -46,6 +52,6 @@
     <span class="truncate">{projectName}</span>
   </button>
 
-  <!-- Right: empty, so the pill stays centred on the window. -->
-  <div></div>
+  <!-- Right: settings and the window controls. -->
+  <WindowControls />
 </div>

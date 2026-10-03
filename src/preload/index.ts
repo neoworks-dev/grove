@@ -502,6 +502,13 @@ const workbench = {
   },
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   raiseWindow: () => ipcRenderer.invoke('window:raise'),
+  window: {
+    controls: (): Promise<{ minimize: boolean; fullScreen: boolean; isFullScreen: boolean }> =>
+      ipcRenderer.invoke('window:controls'),
+    minimize: () => ipcRenderer.invoke('window:minimize'),
+    toggleFullScreen: (): Promise<boolean> => ipcRenderer.invoke('window:toggleFullScreen'),
+    close: () => ipcRenderer.invoke('window:close')
+  },
 
   // Whether the app was started with GROVE_DEBUG=1. The renderer only publishes
   // its stores on window when this is set, so a normal build exposes nothing.

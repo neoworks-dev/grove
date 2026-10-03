@@ -256,7 +256,35 @@ class WorkbenchStore {
     this.tabsByWorktree = { ...this.tabsByWorktree, [worktreeId]: updated }
   }
 
+  // Asked before tabs close, with the paths about to go; the editor installs it
+  // to offer saving unsaved files. True (or a promise of it) lets the close go
+  // ahead. A plain value keeps a close with nothing to ask about synchronous.
+  closeGuard: ((paths: string[]) => boolean | Promise<boolean>) | null = null
+
+  /** Runs `close` once the guard allows closing `paths`; never, if it refuses. */
+  private closeGuarded(paths: string[], close: () => void): void {
+    if (paths.length === 0 || !this.closeGuard) {
+      close()
+      return
+    }
+    const verdict = this.closeGuard(paths)
+    if (verdict === true) {
+      close()
+      return
+    }
+    if (verdict === false) return
+    void verdict.then((allowed) => {
+      if (allowed) close()
+    })
+  }
+
+  /** Closes a tab, asking first about unsaved changes. */
   closeTab(path: string): void {
+    this.closeGuarded([path], () => this.removeTab(path))
+  }
+
+  /** Drops a tab without asking — for a buffer nvim has already deleted. */
+  removeTab(path: string): void {
     this.tabs = this.tabs.filter((tab) => tab.path !== path)
     if (this.activeTabPath === path) {
       this.activeTabPath = this.tabs.length > 0 ? this.tabs[this.tabs.length - 1].path : null
@@ -278,6 +306,11 @@ class WorkbenchStore {
   // was among those closed.
   private dropTabs(doomed: Set<string>, keepActive: string): void {
     if (doomed.size === 0) return
+    this.closeGuarded([...doomed], () => this.removeTabs(doomed, keepActive))
+  }
+
+  /** Drops the given paths without asking; see dropTabs. */
+  private removeTabs(doomed: Set<string>, keepActive: string): void {
     this.tabs = this.tabs.filter((tab) => !doomed.has(tab.path))
     if (this.activeTabPath && doomed.has(this.activeTabPath)) {
       this.activeTabPath = this.tabs.some((tab) => tab.path === keepActive) ? keepActive : null

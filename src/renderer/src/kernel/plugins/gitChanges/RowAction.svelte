@@ -27,7 +27,7 @@
 </script>
 
 <button
-  class="-my-1 grid size-5 shrink-0 place-items-center rounded text-dim hover:bg-raised hover:text-default disabled:opacity-40"
+  class="-my-1 grid size-5 shrink-0 cursor-pointer place-items-center rounded text-dim hover:bg-raised hover:text-default disabled:cursor-default disabled:opacity-40"
   {title}
   aria-label={title}
   {disabled}

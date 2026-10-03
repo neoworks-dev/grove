@@ -82,7 +82,7 @@
     {/if}
   </div>
   <!-- A pane with no header showing the controls gets them in its top-right
-       corner instead, on hover only like everywhere else. -->
+       corner instead, on hover only. -->
   {#if chrome.claims === 0}
     <PaneControls fallback />
   {/if}

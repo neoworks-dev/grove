@@ -19,6 +19,7 @@ import { githubDashboard } from './github'
 import { logs } from './logs'
 import { browser } from './browser'
 import { settingsPanes } from './settingsPanes'
+import { designSystem } from './designSystem'
 import { views } from './views.svelte'
 import { statusBar } from './statusBar'
 import { workbench } from './workbench'
@@ -44,5 +45,6 @@ export const corePlugins = [
   githubDashboard,
   logs,
   browser,
-  settingsPanes
+  settingsPanes,
+  designSystem
 ]

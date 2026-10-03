@@ -162,15 +162,9 @@
   })
 </script>
 
-<!-- A tab's face: pin, unsaved dot, file icon, name and, for a diff, its sides. -->
+<!-- A tab's face: pin, file icon, name and, for a diff, its sides. -->
 {#snippet tabLabel(tab: Tab)}
   {#if tab.pinned}<Icon icon="ph:push-pin-fill" width="11" height="11" class="text-amber" />{/if}
-  <!-- Unsaved marker sits ahead of the file icon, so a scanning eye
-     finds every dirty tab in one straight column. -->
-  {#if dirtyPaths[tab.path]}<span
-      class="shrink-0 text-[8px] leading-none text-amber"
-      title="Unsaved changes">●</span
-    >{/if}
   <Icon icon={iconFor(tab)} width="13" height="13" class="shrink-0" />
   <span>{tab.name}</span>
   {#if tab.diff}
@@ -183,6 +177,31 @@
       <span class="truncate">{tab.diff.right}</span>
     </span>
   {/if}
+{/snippet}
+
+<!-- The close slot at a tab's end. It always takes its width, so the tab never
+   grows under the pointer; the ✕ shows on the active tab and on any tab
+   hovered (the enclosing `group/tab`). An unsaved file shows a dot there
+   instead, which turns into the ✕ on hover. -->
+{#snippet closeSlot(
+  title: string,
+  dirty: boolean,
+  alwaysShown: boolean,
+  onclick: (event: MouseEvent) => void
+)}
+  <button
+    class="ml-1 inline-flex w-3.5 shrink-0 cursor-pointer items-center justify-center text-dim hover:text-red"
+    {title}
+    {onclick}
+  >
+    {#if dirty}
+      <span
+        class="text-[8px] leading-none text-amber group-hover/tab:hidden"
+        title="Unsaved changes">●</span
+      >
+    {/if}
+    <span class={['group-hover/tab:inline', (dirty || !alwaysShown) && 'hidden']}>✕</span>
+  </button>
 {/snippet}
 
 {#snippet plainTab(tab: Tab)}
@@ -211,11 +230,9 @@
     <button class="flex cursor-pointer items-center gap-1.5" onclick={() => onSelect(tab.path)}>
       {@render tabLabel(tab)}
     </button>
-    <button
-      class="inline-flex w-0 shrink-0 cursor-pointer items-center overflow-hidden text-dim opacity-0 transition-all duration-150 ease-out hover:text-red group-hover/tab:ml-1 group-hover/tab:w-3.5 group-hover/tab:opacity-100"
-      title="Close tab"
-      onclick={(event) => onClose(tab.path, event)}>✕</button
-    >
+    {@render closeSlot('Close tab', dirtyPaths[tab.path] === true, active, (event) =>
+      onClose(tab.path, event)
+    )}
   </div>
 {/snippet}
 
@@ -235,7 +252,7 @@
       {@const focused = segment.win === currentWin}
       {#if index > 0}<span class="px-0.5 text-dim" aria-hidden="true">|</span>{/if}
       <div
-        class="group/split flex items-center rounded px-1"
+        class="group/tab flex items-center rounded px-1"
         class:text-default={focused}
         class:text-dim={!focused}
         class:hover:text-default={!focused}
@@ -247,11 +264,12 @@
         >
           {@render tabLabel(segment.tab)}
         </button>
-        <button
-          class="inline-flex w-0 shrink-0 cursor-pointer items-center overflow-hidden text-dim opacity-0 transition-all duration-150 ease-out hover:text-red group-hover/split:ml-1 group-hover/split:w-3.5 group-hover/split:opacity-100"
-          title="Close split"
-          onclick={(event) => onCloseSplit?.(segment.win, event)}>✕</button
-        >
+        {@render closeSlot(
+          'Close split',
+          dirtyPaths[segment.tab.path] === true,
+          active && focused,
+          (event) => onCloseSplit?.(segment.win, event)
+        )}
       </div>
     {/each}
   </div>

@@ -24,7 +24,7 @@ function tab(page: Page, relativePath: string) {
   return page.locator(`[data-tab$="${relativePath}"]`)
 }
 
-/** The unsaved-changes dot the tab strip puts ahead of a modified file. */
+/** The unsaved-changes dot in a modified file's tab, where its close button sits. */
 function unsavedMarker(page: Page) {
   return page.locator('[title="Unsaved changes"]')
 }
@@ -142,8 +142,7 @@ test('two files open as two tabs, and closing one leaves the other', async ({ gr
 
   await expect(grove.page.locator('[data-tab]')).toHaveCount(2)
 
-  // The close button is zero-width until the tab is hovered and its transition
-  // has run, so it needs waiting for rather than clicking at.
+  // An inactive tab draws its close button only while hovered.
   const closeUtil = tab(grove.page, 'src/util.ts').getByTitle('Close tab')
   await tab(grove.page, 'src/util.ts').hover()
   await expect(closeUtil).toBeVisible()

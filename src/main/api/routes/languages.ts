@@ -13,7 +13,6 @@ import { pathToFileURL, fileURLToPath } from 'url'
 import type { Worktree, LspPosition, LspRange } from '../../../shared/types'
 import type { LspManager } from '../../lsp'
 import type { CodeAction, Command, WorkspaceEdit, TextEdit } from 'vscode-languageserver-protocol'
-import { detectLanguage } from '../../git'
 import type { DocumentRegistry, RangedEdit } from '../../editorDocs'
 import { ApiError, type RouteRegistry, type RouteContext } from '../registry'
 
@@ -45,7 +44,7 @@ export function registerLanguagesRoutes(registry: RouteRegistry, deps: Languages
     language: string
   }
 
-  function targetOf(args: Record<string, unknown>, context: RouteContext): Target {
+  async function targetOf(args: Record<string, unknown>, context: RouteContext): Promise<Target> {
     const worktree = context.worktreeFor(args)
     const path = String(args.path ?? '')
     if (path.length === 0) throw new ApiError('path is required', 'invalid')
@@ -55,7 +54,7 @@ export function registerLanguagesRoutes(registry: RouteRegistry, deps: Languages
       path,
       absPath,
       uri: pathToFileURL(absPath).toString(),
-      language: detectLanguage(path)
+      language: await deps.lsp.languageOf(absPath)
     }
   }
 
@@ -110,7 +109,7 @@ export function registerLanguagesRoutes(registry: RouteRegistry, deps: Languages
       method,
       scope: 'languages.read',
       handler: async (args, context) => {
-        const target = targetOf(args, context)
+        const target = await targetOf(args, context)
         await ensureSynced(target)
         return run(target, args)
       }
@@ -203,7 +202,7 @@ export function registerLanguagesRoutes(registry: RouteRegistry, deps: Languages
       scope: 'languages.read',
       handler: async (args, context) => {
         await context.broker.ensure(context.client, 'editor.edit', method)
-        const target = targetOf(args, context)
+        const target = await targetOf(args, context)
         await ensureSynced(target)
         return run(target, args, context)
       }

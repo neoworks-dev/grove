@@ -1,12 +1,15 @@
-// LSP manager. Spawns a language server (from an installed `lsp` extension) per
-// (worktree, server), speaks LSP over stdio via vscode-jsonrpc, and exposes the
-// operations the editor needs: document sync, completion, hover, and pushed
-// diagnostics. Full-text document sync keeps it simple. A server's binary is
+// LSP manager. Spawns a language server per (worktree, server), speaks LSP over
+// stdio via vscode-jsonrpc, and exposes the operations the editor and the agent
+// tools need: document sync, completion, hover, and pushed diagnostics.
+// Full-text document sync keeps it simple. The servers are the ones the editor's
+// nvim profile enables (editorLanguages.ts), then Grove's own `lsp` catalog
+// entries; a file's language is nvim's filetype for it. A server's binary is
 // looked up in the editor's Mason directory and on PATH; a missing binary fails
 // softly (no crash).
 
 import { spawn, type ChildProcess } from 'child_process'
-import { promises as fs } from 'fs'
+import { promises as fs, existsSync } from 'fs'
+import { isAbsolute } from 'path'
 import { pathToFileURL, fileURLToPath } from 'url'
 import {
   createMessageConnection,
@@ -63,6 +66,14 @@ import {
 import { listCatalog, listInstalled } from './editorCatalog'
 import { findExecutableIn, pathDirectories } from './debug/registry'
 import { chooseLspServer, type LspServerChoice } from './lspServerChoice'
+import {
+  EditorLanguageCatalog,
+  NO_EDITOR_LANGUAGES,
+  editorServerEntries,
+  filetypeOf,
+  type EditorLanguages
+} from './editorLanguages'
+import { detectLanguage } from './git'
 import type { LspCompletion, LspDiagnostic, LspPosition } from '../shared/types'
 
 export interface LspEvents {
@@ -78,6 +89,13 @@ interface Server {
   // change only when the text moved and always with a higher version.
   sent: Map<string, { version: number; text: string }>
   alive: boolean // false once the process/stream dies — never write again
+}
+
+/** A server's executable: an absolute command as it is, a bare one looked up in the directories. */
+function executableNamed(directories: string[], name: string): string | null {
+  if (!isAbsolute(name)) return findExecutableIn(directories, name)
+  if (existsSync(name)) return name
+  return null
 }
 
 function toLspDiagnostic(diagnostic: Diagnostic): LspDiagnostic {
@@ -119,16 +137,52 @@ export class LspManager {
 
   constructor(
     private events: LspEvents,
-    private executableDirectories: () => string[] = pathDirectories
+    private executableDirectories: () => string[] = pathDirectories,
+    private editorLanguages: EditorLanguageCatalog = new EditorLanguageCatalog(
+      () => Promise.resolve(NO_EDITOR_LANGUAGES),
+      () => {}
+    )
   ) {}
 
-  /** The server for a language, if one is installed or can be found. */
+  /**
+   * The language a file is, as the servers are told and chosen by: nvim's
+   * filetype for it, or Grove's own guess when the editor has none.
+   */
+  async languageOf(path: string): Promise<string> {
+    const languages = await this.editorLanguages.current()
+    const filetype = filetypeOf(languages, path)
+    if (filetype) return filetype
+    return detectLanguage(path)
+  }
+
+  /** Whether the same server handles both languages, as one does `.ts` and `.tsx`. */
+  async servedTogether(language: string, other: string): Promise<boolean> {
+    if (language === other) return true
+    const choice = await this.serverChoiceFor(language)
+    if (!choice || !choice.entry.lsp) return false
+    return choice.entry.lsp.languages.includes(other)
+  }
+
+  /**
+   * The server for a language, if one is installed or can be found. A miss
+   * reads the editor's servers again, so one installed since is found.
+   */
   private async serverChoiceFor(language: string): Promise<LspServerChoice | null> {
+    const choice = await this.chooseFrom(language, await this.editorLanguages.current())
+    if (choice) return choice
+    return this.chooseFrom(language, await this.editorLanguages.afterMiss())
+  }
+
+  // The editor's servers come before Grove's own entries, so a file is served
+  // by what serves it in the editor; one the user installed still comes first.
+  private async chooseFrom(
+    language: string,
+    languages: EditorLanguages
+  ): Promise<LspServerChoice | null> {
     const installed = await listInstalled()
     const directories = this.executableDirectories()
-    return chooseLspServer(language, listCatalog(), installed, (name) =>
-      findExecutableIn(directories, name)
-    )
+    const catalog = [...editorServerEntries(languages), ...listCatalog()]
+    return chooseLspServer(language, catalog, installed, (name) => executableNamed(directories, name))
   }
 
   private key(worktreeId: string, extId: string): string {

@@ -21,7 +21,6 @@ import type {
   WorkspaceSymbol
 } from 'vscode-languageserver-protocol'
 import type { LspDiagnostic, LspPosition } from '../../../shared/types'
-import { detectLanguage } from '../../git'
 import type { LspManager } from '../../lsp'
 import type { GroveTool, GroveToolContext, GroveToolResult } from '../harness'
 import { ripgrep } from '../../ripgrep'
@@ -39,6 +38,8 @@ import {
 /** The part of the language server manager the tool uses. */
 export type AgentLanguages = Pick<
   LspManager,
+  | 'languageOf'
+  | 'servedTogether'
   | 'sync'
   | 'diagnosticsAfter'
   | 'diagnosticsUnder'
@@ -310,9 +311,9 @@ class LanguageQuery {
   }
 
   /**
-   * Open every file of the target's language that mentions the name on its
-   * server. A server without a project file only knows the files it has been
-   * shown, and renames in those alone.
+   * Open every file the target's server handles that mentions the name. A
+   * server without a project file only knows the files it has been shown, and
+   * renames in those alone.
    */
   private async openMentioningFiles(target: Target, name: string): Promise<void> {
     const worktree = target.worktree
@@ -324,10 +325,11 @@ class LanguageQuery {
     ])
     const paths = output.lines.filter((path) => path.length > 0).slice(0, MAX_MENTIONING_FILES)
     for (const absolutePath of paths) {
-      if (detectLanguage(absolutePath) !== target.language) continue
+      const language = await this.languages.languageOf(absolutePath)
+      if (!(await this.languages.servedTogether(language, target.language))) continue
       const file = await this.files.read(absolutePath)
       const uri = pathToFileURL(absolutePath).toString()
-      await this.languages.sync(worktree.id, worktree.path, target.language, uri, joinText(file.lines, file))
+      await this.languages.sync(worktree.id, worktree.path, language, uri, joinText(file.lines, file))
     }
   }
 
@@ -363,7 +365,7 @@ class LanguageQuery {
     const worktree = this.worktreeOf(absolutePath)
     const file = await this.files.read(absolutePath)
     if (!file.exists) throw new Error(`${path} does not exist.`)
-    const language = detectLanguage(absolutePath)
+    const language = await this.languages.languageOf(absolutePath)
     const uri = pathToFileURL(absolutePath).toString()
     const text = joinText(file.lines, file)
     const handled = await this.languages.sync(worktree.id, worktree.path, language, uri, text)

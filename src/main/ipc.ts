@@ -18,6 +18,7 @@ import { CheckpointManager, captureTree, diffTrees, pinTreePair, unpinTrees } fr
 import { ConflictProposals } from './conflictResolution'
 import * as config from './config'
 import { LspManager } from './lsp'
+import { EditorLanguageCatalog, readEditorLanguages } from './editorLanguages'
 import * as worktrees from './worktrees'
 import { ServiceSupervisor } from './services'
 import { WorktreeWatcher } from './watcher'
@@ -696,12 +697,22 @@ function startApiSocket(): void {
   })
 }
 
-// Language servers are found where the editor's are: Mason first, then PATH.
+// Language servers are the editor's, found where the editor's are: Mason first,
+// then PATH. Which ones exist is read from the editor's own profile, headless.
 const lsp = new LspManager(
   {
     onDiagnostics: (uri, diagnostics) => send('event:lsp-diagnostics', { uri, diagnostics })
   },
-  () => [masonBinDirectory(masonRoot(nvimEnvOverlay().XDG_DATA_HOME)), ...pathDirectories()]
+  () => [masonBinDirectory(masonRoot(nvimEnvOverlay().XDG_DATA_HOME)), ...pathDirectories()],
+  new EditorLanguageCatalog(
+    () =>
+      readEditorLanguages({
+        binary: nvimBinary(),
+        args: nvimConfigArgs(),
+        env: { ...process.env, ...nvimEnvOverlay() }
+      }),
+    (line) => console.warn(line)
+  )
 )
 // Registered here (not with the other route modules) because it needs the
 // LspManager instance above.

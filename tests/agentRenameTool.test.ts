@@ -35,11 +35,26 @@ function memoryFiles(initial: Record<string, string>): WorkspaceFiles & { text(p
   }
 }
 
+/** nvim's filetype for the extensions these tests use. */
+function languageOf(path: string): Promise<string> {
+  if (path.endsWith('.tsx')) return Promise.resolve('typescriptreact')
+  if (path.endsWith('.ts')) return Promise.resolve('typescript')
+  return Promise.resolve('markdown')
+}
+
+/** A TypeScript server: it handles .ts and .tsx, and nothing else. */
+function servedTogether(language: string, other: string): Promise<boolean> {
+  const typescript = ['typescript', 'typescriptreact']
+  return Promise.resolve(language === other || (typescript.includes(language) && typescript.includes(other)))
+}
+
 /** A language server that answers every rename with the given edit, and records where it was asked. */
 function languagesAnswering(edit: WorkspaceEdit | null): AgentLanguages & { asked: unknown[] } {
   const asked: unknown[] = []
   return {
     asked,
+    languageOf,
+    servedTogether,
     sync: () => Promise.resolve(true),
     rename: (_worktree: string, _language: string, uri: string, position: unknown, newName: string) => {
       asked.push({ uri, position, newName })
@@ -156,11 +171,14 @@ describe('the rename tool on a real worktree', () => {
     const root = mkdtempSync(join(tmpdir(), 'grove-rename-'))
     writeFileSync(join(root, 'a.ts'), 'export const count = 1\n')
     writeFileSync(join(root, 'b.ts'), "import { count } from './a'\n")
+    writeFileSync(join(root, 'c.tsx'), "import { count } from './a'\n")
     writeFileSync(join(root, 'notes.md'), 'count\n')
-    const synced: string[] = []
+    const synced: { uri: string; language: string }[] = []
     const languages = {
-      sync: (_worktree: string, _path: string, _language: string, uri: string) => {
-        synced.push(uri)
+      languageOf,
+      servedTogether,
+      sync: (_worktree: string, _path: string, language: string, uri: string) => {
+        synced.push({ uri, language })
         return Promise.resolve(true)
       },
       // A server that knows only a.ts, as one without a project file might.
@@ -173,8 +191,11 @@ describe('the rename tool on a real worktree', () => {
       { ...context, workspaceRoot: root }
     )
 
-    expect(synced).toContain(pathToFileURL(join(root, 'b.ts')).toString())
-    expect(synced).not.toContain(pathToFileURL(join(root, 'notes.md')).toString())
+    const uri = (name: string): string => pathToFileURL(join(root, name)).toString()
+    expect(synced).toContainEqual({ uri: uri('b.ts'), language: 'typescript' })
+    // Another filetype, but the same server: it has to see the file too, as itself.
+    expect(synced).toContainEqual({ uri: uri('c.tsx'), language: 'typescriptreact' })
+    expect(synced.map((entry) => entry.uri)).not.toContain(uri('notes.md'))
     expect(result.content).toContain('still appears')
     expect(result.content).toContain('b.ts:1')
   })

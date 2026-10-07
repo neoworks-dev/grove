@@ -505,6 +505,7 @@ class AgentSessions {
 export function badgeOf(meta: SessionMeta, session: LiveSession | undefined): SessionBadge {
   if (session !== undefined) return liveBadge(session)
   if (meta.pendingApprovals.length > 0) return 'requires_action'
+  if (meta.heldMessages.length > 0) return 'requires_action'
   if (meta.status === 'running') return 'running'
   if (meta.stopReason === 'error') return 'error'
   return 'idle'
@@ -512,6 +513,7 @@ export function badgeOf(meta: SessionMeta, session: LiveSession | undefined): Se
 
 function liveBadge(session: LiveSession): SessionBadge {
   if (pendingApprovals(session.transcript).length > 0) return 'requires_action'
+  if (session.transcript.held.length > 0) return 'requires_action'
   if (session.transcript.status === 'running') return 'running'
   if (session.transcript.stopReason === 'error' || session.error.length > 0) return 'error'
   return 'idle'

@@ -170,7 +170,8 @@ export class AgentService {
         session,
         this.isLive(session.id),
         this.runtimeOf(session.id),
-        this.store.previewOf(session.id)
+        this.store.previewOf(session.id),
+        this.store.heldMessagesOf(session.id)
       )
     )
   }
@@ -377,6 +378,12 @@ export class AgentService {
     if (event.type === 'user.command') {
       await this.store.append(sessionId, event)
       await this.runCommand(sessionId, event.name, event.args)
+      return
+    }
+    // Recorded only: a held message must not start the turn it was held to
+    // avoid, and the wake gate (wakeGate.ts) acts on the decision from the log.
+    if (event.type === 'app.held_message' || event.type === 'user.decide_held_message') {
+      await this.store.append(sessionId, event)
       return
     }
     if (event.type === 'user.shell') {
@@ -1180,7 +1187,8 @@ export class AgentService {
       this.isLive(session.id),
       runtime ?? idleRuntime(),
       runtime?.messageCount ?? 0,
-      this.store.previewOf(session.id)
+      this.store.previewOf(session.id),
+      this.store.heldMessagesOf(session.id)
     )
   }
 

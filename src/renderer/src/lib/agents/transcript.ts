@@ -17,6 +17,7 @@ import type {
   AcpSessionUpdate,
   AgentTask,
   FileBlock,
+  HeldMessage,
   IdleReason,
   ImageBlock,
   SessionEvent,
@@ -168,6 +169,8 @@ export interface TranscriptState {
   notes: SessionNote[]
   /** The harness's own plan, as last reported. */
   tasks: AgentTask[]
+  /** Agent messages held off this sleeping session until the user decides (wakeGate.ts). */
+  held: HeldMessage[]
 }
 
 const ROOT = 0
@@ -182,7 +185,8 @@ export function createTranscript(): TranscriptState {
     stopReason: null,
     lastSeq: 0,
     notes: [],
-    tasks: []
+    tasks: [],
+    held: []
   }
 }
 
@@ -289,6 +293,16 @@ export function applyEvent(state: TranscriptState, event: SessionEvent): void {
   }
   if (event.type === 'update' && event.update.sessionUpdate === 'plan') {
     state.tasks = tasksOf(event.update.entries)
+    return
+  }
+  // A held message waits above the composer until the user decides on it; it
+  // only enters the conversation as the message sent once they do.
+  if (event.type === 'app.held_message') {
+    state.held = [...state.held, heldMessageOf(event)]
+    return
+  }
+  if (event.type === 'user.decide_held_message') {
+    state.held = state.held.filter((held) => held.heldId !== event.heldId)
     return
   }
 
@@ -848,5 +862,19 @@ function closeOpenAgentItem(state: TranscriptState): void {
   const last = lastActiveItem(state)
   if (last && last.kind === 'agent') {
     last.streaming = false
+  }
+}
+
+/** The held message an event records, without the event's envelope. */
+function heldMessageOf(event: Extract<SessionEvent, { type: 'app.held_message' }>): HeldMessage {
+  return {
+    heldId: event.heldId,
+    from: event.from,
+    fromSessionId: event.fromSessionId,
+    text: event.text,
+    idleSince: event.idleSince,
+    contextTokens: event.contextTokens,
+    wakeCost: event.wakeCost,
+    canCompact: event.canCompact
   }
 }

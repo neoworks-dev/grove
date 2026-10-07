@@ -30,6 +30,7 @@ import type { HarnessRegistry } from './harness'
 import { agentIdOf } from './identity'
 import type { AgentService } from './service'
 import { isSubagentSession } from './subagents'
+import type { DeliveryOutcome, WakeGate } from './wakeGate'
 
 export interface AgentPeer {
   sessionId: string
@@ -87,6 +88,8 @@ export interface SpawnOptions {
 export interface AgentRosterOptions {
   agents: AgentService
   harnesses: HarnessRegistry
+  /** Holds a message that would wake a long-idle session; without one, everything goes straight in. */
+  gate?: WakeGate
 }
 
 export class AgentRoster {
@@ -186,12 +189,21 @@ export class AgentRoster {
    *
    * It arrives as an app message rather than a user one, so the transcript keeps
    * saying who is talking, and steers: a peer already mid-turn should hear this
-   * now rather than after it has finished the work the message is about.
+   * now rather than after it has finished the work the message is about. A
+   * session asleep past its prompt cache is not woken: the message is held for
+   * the user to decide on (wakeGate.ts).
    */
-  async deliver(sessionId: string, from: string, text: string): Promise<void> {
+  async deliver(
+    sessionId: string,
+    from: string,
+    text: string,
+    fromSessionId: string | null = null
+  ): Promise<DeliveryOutcome> {
+    if (this.options.gate) return this.options.gate.deliver(sessionId, from, text, fromSessionId)
     await this.options.agents.send(sessionId, [
       { type: 'app.message', label: 'Agent message', from, text, deliverAs: 'steer' }
     ])
+    return { kind: 'delivered' }
   }
 
   /** Start a new session in the same worktree and give it its first instruction. */

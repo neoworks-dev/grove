@@ -24,6 +24,8 @@ export type {
   EventEnvelope,
   FileBlock,
   FileMatch,
+  HeldMessage,
+  HeldMessageDecision,
   ShellCompletion,
   HarnessCapabilities,
   HarnessCatalog,

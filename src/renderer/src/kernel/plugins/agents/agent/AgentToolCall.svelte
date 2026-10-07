@@ -11,7 +11,7 @@
   import ShimmerText from '../../../../components/ShimmerText.svelte'
   import { layout } from '../../../../lib/layout.svelte'
   import { panels } from '../../../../lib/panels.svelte'
-  import { outputTail } from '../../../../lib/agents/outputTail'
+  import { outputTail, showsCommandOutput } from '../../../../lib/agents/outputTail'
   import { shellOutputs } from '../../../../lib/agents/shellOutput.svelte'
   import { fileIcon } from '../../../../lib/icons'
   import { formatShellCommand } from '../../../../lib/shellSyntax.svelte'
@@ -44,7 +44,8 @@
     onToggle,
     onOpenFile,
     agentSessionId = null,
-    onOpenSession
+    onOpenSession,
+    live = false
   }: {
     item: ToolItem
     /** The session the call ran in, which the images it returned are stored under. */
@@ -58,6 +59,12 @@
     /** The session holding the conversation this call ran, when it ran an agent. */
     agentSessionId?: string | null
     onOpenSession?: (sessionId: string) => void
+    /**
+     * The call belongs to the turn in flight. Its output stays on screen once it
+     * finishes, so the transcript only grows while the user watches it; the
+     * turn folds it away when it ends.
+     */
+    live?: boolean
   } = $props()
 
   // The user may have rewritten the arguments before approving; what ran is what
@@ -144,7 +151,25 @@
   const liveOutput = $derived(
     inputView === 'command' ? shellOutputs.of(sessionId, item.toolUseId) : undefined
   )
-  const liveTail = $derived(liveOutput ? outputTail(liveOutput.text, LIVE_TAIL_LINES) : [])
+  const outputLines = $derived(commandOutputLines())
+  // While it runs, and in the turn in flight after it finishes too, so the row
+  // never shrinks under the reader.
+  const showsOutput = $derived(
+    inputView === 'command' &&
+      showsCommandOutput({
+        callRunning: item.status === 'running',
+        streamed: liveOutput,
+        live,
+        result: item.result
+      })
+  )
+
+  /** The last lines a command printed: streamed when it was, else from its result. */
+  function commandOutputLines(): string[] {
+    if (liveOutput) return outputTail(liveOutput.text, LIVE_TAIL_LINES)
+    if (inputView !== 'command') return []
+    return outputTail(item.result, LIVE_TAIL_LINES)
+  }
 
   /** Shows the session's commands in the bottom panel's agent terminal tab. */
   function openAgentTerminal(): void {
@@ -255,14 +280,14 @@
       >{/if}
   </div>
 
-  {#if liveOutput && (item.status === 'running' || liveOutput.running)}
+  {#if showsOutput}
     <!-- A command's last lines as it prints them; the whole of it is in the
          session's terminal. A command sent to the background keeps this after
          its call has returned, for as long as it runs. -->
     <div
       class="ml-4 mt-1 rounded border border-line bg-surface px-2 py-1 font-mono text-2xs text-dim"
     >
-      {#each liveTail as line, index (index)}
+      {#each outputLines as line, index (index)}
         <div class="truncate whitespace-pre">{line || ' '}</div>
       {:else}
         <div class="italic">No output yet</div>
@@ -275,7 +300,7 @@
         >
           Open in terminal
         </button>
-        {#if liveOutput.running}
+        {#if liveOutput?.running}
           <button
             class="rounded border border-line px-1.5 hover:bg-hover hover:text-red"
             title="Stop the command, as Ctrl+C would"

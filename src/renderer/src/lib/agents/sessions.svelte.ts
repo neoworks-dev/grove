@@ -465,8 +465,13 @@ class AgentSessions {
       if (event.type === 'user.message' && this.viewing === session.id) clearAgentMarks()
       // Usage and the queue only live in the snapshot, so a turn boundary is
       // worth a re-read — and so is every settled tool call, a step in the turn
-      // after which the harness has counted its tokens.
-      if (event.type === 'session.status_idle' || settledApproval(event) !== null) {
+      // after which the harness has counted its tokens, and a cleared
+      // conversation, which starts its totals over and frees the harness again.
+      if (
+        event.type === 'session.status_idle' ||
+        event.type === 'session_changed' ||
+        settledApproval(event) !== null
+      ) {
         void this.refreshSnapshot(session.id)
       }
     })

@@ -10,13 +10,19 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { AgentService } from '../src/main/agents/service'
-import { HarnessRegistry, type ApprovalRequest, type HarnessRunOptions } from '../src/main/agents/harness'
+import {
+  HarnessRegistry,
+  type ApprovalRequest,
+  type HarnessRunOptions,
+  type PromptAttachment
+} from '../src/main/agents/harness'
 import { SessionStore } from '../src/main/agents/store'
 
 class FakeRun {
   resumeKey = 'thread-1'
   prompts: string[] = []
   steered: string[] = []
+  steeredImages: PromptAttachment[][] = []
   interrupted = 0
   disposed = 0
 
@@ -27,8 +33,13 @@ class FakeRun {
     this.options.emit({ type: 'session.status_running' })
   }
 
-  async steer(text: string): Promise<void> {
+  async steer(
+    text: string,
+    _deliverAs?: unknown,
+    attachments: PromptAttachment[] = []
+  ): Promise<void> {
     this.steered.push(text)
+    this.steeredImages.push(attachments)
   }
 
   async interrupt(): Promise<void> {
@@ -145,7 +156,11 @@ function say(text: string): { type: 'user.message'; content: { type: 'text'; tex
 }
 
 /** A permission request as ACP sends one. */
-function approvalRequest(toolCallId: string, name: string, rawInput: Record<string, unknown>): ApprovalRequest {
+function approvalRequest(
+  toolCallId: string,
+  name: string,
+  rawInput: Record<string, unknown>
+): ApprovalRequest {
   return { sessionId: 'harness-1', toolCall: { toolCallId, name, rawInput }, options: [] }
 }
 
@@ -167,7 +182,10 @@ describe('AgentService', () => {
   test('an unnamed session is named after its first prompt, and keeps that name', async () => {
     const { service, cleanup } = await setup()
     try {
-      const session = await service.createSession({ workspace: '/tmp/worktree', title: 'Session 2' })
+      const session = await service.createSession({
+        workspace: '/tmp/worktree',
+        title: 'Session 2'
+      })
       await service.send(session.id, [say('Fix the tab strip overflow\nIt clips the last tab')])
       await service.send(session.id, [say('and the close button')])
 
@@ -182,7 +200,10 @@ describe('AgentService', () => {
   test('a session somebody named keeps its name', async () => {
     const { service, cleanup } = await setup()
     try {
-      const session = await service.createSession({ workspace: '/tmp/worktree', title: 'Inline edits' })
+      const session = await service.createSession({
+        workspace: '/tmp/worktree',
+        title: 'Inline edits'
+      })
       await service.send(session.id, [say('rewrite this')])
       expect((await service.getSession(session.id)).title).toBe('Inline edits')
     } finally {
@@ -266,6 +287,95 @@ describe('AgentService', () => {
     }
   })
 
+  test('a steer an interrupted turn never took up starts the next turn', async () => {
+    const { service, runs, cleanup } = await setup()
+    try {
+      const session = await service.createSession({ workspace: '/tmp/worktree' })
+      await service.send(session.id, [say('first')])
+      await service.send(session.id, [{ ...say('urgent'), deliverAs: 'steer' }])
+
+      await service.send(session.id, [{ type: 'user.interrupt' }])
+      runs[0].options.emit({ type: 'session.status_idle', stopReason: 'aborted' })
+      await settle()
+
+      expect(runs[0].interrupted).toBe(1)
+      expect(runs[0].prompts).toEqual(['first', 'urgent'])
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('a steer hands its images to the running turn', async () => {
+    const { service, runs, cleanup } = await setup()
+    try {
+      const session = await service.createSession({ workspace: '/tmp/worktree' })
+      await service.send(session.id, [say('first')])
+      const blob = await service.putBlob(session.id, new Uint8Array([1, 2, 3]), 'image/png')
+      await service.send(session.id, [
+        {
+          type: 'user.message',
+          content: [
+            { type: 'text', text: 'look at this' },
+            { type: 'image', ref: blob.ref, mediaType: 'image/png' }
+          ],
+          deliverAs: 'steer'
+        }
+      ])
+
+      expect(runs[0].steered).toEqual(['look at this'])
+      expect(runs[0].steeredImages).toEqual([[{ mediaType: 'image/png', data: 'AQID' }]])
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('taking back a steer stops the turn and does not send it again', async () => {
+    const { service, store, runs, cleanup } = await setup()
+    try {
+      const session = await service.createSession({ workspace: '/tmp/worktree' })
+      await service.send(session.id, [say('first')])
+      await service.send(session.id, [{ ...say('urgent'), deliverAs: 'steer' }])
+      const steered = store
+        .peekEvents(session.id)
+        .filter((event) => event.type === 'user.message')
+        .at(-1)
+
+      await service.send(session.id, [{ type: 'user.unqueue', messageId: steered?.id ?? '' }])
+      runs[0].options.emit({ type: 'session.status_idle', stopReason: 'aborted' })
+      await settle()
+
+      expect(runs[0].interrupted).toBe(1)
+      expect(runs[0].prompts).toEqual(['first'])
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('a steer the model already took up is not sent again after an interrupt', async () => {
+    const { service, runs, cleanup } = await setup()
+    try {
+      const session = await service.createSession({ workspace: '/tmp/worktree' })
+      await service.send(session.id, [say('first')])
+      await service.send(session.id, [{ ...say('urgent'), deliverAs: 'steer' }])
+      runs[0].options.emit({
+        type: 'update',
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          messageId: 'reply-after-steer',
+          content: { type: 'text', text: 'on it' }
+        }
+      })
+
+      await service.send(session.id, [{ type: 'user.interrupt' }])
+      runs[0].options.emit({ type: 'session.status_idle', stopReason: 'aborted' })
+      await settle()
+
+      expect(runs[0].prompts).toEqual(['first'])
+    } finally {
+      await cleanup()
+    }
+  })
+
   test('an unqueued message is never delivered', async () => {
     const { service, runs, cleanup } = await setup()
     try {
@@ -290,7 +400,10 @@ describe('AgentService', () => {
       const session = await service.createSession({ workspace: '/tmp/worktree' })
       await service.send(session.id, [say('go')])
 
-      const confirm = service['requestApproval'](session.id, approvalRequest('call-1', 'write', { path: 'a.ts' }))
+      const confirm = service['requestApproval'](
+        session.id,
+        approvalRequest('call-1', 'write', { path: 'a.ts' })
+      )
       const snapshot = await service.getSession(session.id)
       expect(snapshot.pendingApprovals).toEqual(['call-1'])
 
@@ -316,7 +429,10 @@ describe('AgentService', () => {
       ])
       expect(await first).toEqual({ result: 'always_session' })
 
-      const second = await service['requestApproval'](session.id, approvalRequest('call-2', 'write', {}))
+      const second = await service['requestApproval'](
+        session.id,
+        approvalRequest('call-2', 'write', {})
+      )
       expect(second).toEqual({ result: 'allow' })
     } finally {
       await cleanup()
@@ -355,6 +471,29 @@ describe('AgentService', () => {
         'once a session has started'
       )
       expect((await store.require(started.id)).harness).toBe(started.harness)
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('a cleared conversation frees the harness until a message reaches the new one', async () => {
+    const { service, store, runs, cleanup } = await setup()
+    try {
+      const session = await service.createSession({ workspace: '/tmp/worktree' })
+      await service.send(session.id, [say('go')])
+      runs[0].finish()
+      await settle()
+
+      // The harness moved to a new, empty conversation (`/clear`).
+      runs[0].options.emit({ type: 'session_changed', sessionId: 'thread-cleared' })
+      await settle()
+      await service.updateSession(session.id, { harness: 'other' })
+      expect((await store.require(session.id)).harness).toBe('other')
+
+      await service.send(session.id, [say('carry on')])
+      await expect(service.updateSession(session.id, { harness: 'fake' })).rejects.toThrow(
+        'once a session has started'
+      )
     } finally {
       await cleanup()
     }

@@ -77,6 +77,8 @@ import { interruptedTurn } from './interruptedTurn'
 import { notesOf } from './notes'
 import { diffsOf, isSettled, toolNameOf } from './acpLog'
 import { groveToolName } from './switchboard/mcpServer'
+import { rewindPoint, type RewindPoint } from './rewind'
+import { SteerBacklog } from './steerBacklog'
 
 const BLOBS_DIR = 'blobs'
 
@@ -91,6 +93,8 @@ interface Runtime extends RuntimeState {
   starting: Promise<HarnessRun> | null
   approvals: Map<string, PendingApproval>
   messageCount: number
+  // Steers the model has not taken up yet; an interrupted turn hands them on.
+  steers: SteerBacklog<ImageBlock>
 }
 
 export interface AgentServiceOptions {
@@ -368,7 +372,7 @@ export class AgentService {
     }
     if (event.type === 'user.unqueue') {
       await this.store.append(sessionId, event)
-      this.dropQueued(sessionId, event.messageId)
+      await this.dropQueued(sessionId, event.messageId)
       return
     }
     if (event.type === 'user.message' || event.type === 'app.message') {
@@ -378,6 +382,10 @@ export class AgentService {
     if (event.type === 'user.command') {
       await this.store.append(sessionId, event)
       await this.runCommand(sessionId, event.name, event.args)
+      return
+    }
+    if (event.type === 'user.branch') {
+      await this.rewind(sessionId, event)
       return
     }
     // Recorded only: a held message must not start the turn it was held to
@@ -441,6 +449,7 @@ export class AgentService {
     const pending = await this.pendingShellContext(sessionId)
     const stamped = await this.store.append(sessionId, event)
     await this.nameFromFirstPrompt(sessionId)
+    await this.endClearedState(sessionId)
     const runtime = this.runtimeOrCreate(sessionId)
     const text = withPendingShell(pending, textOf(event))
     const attachments = await this.attachmentsFor(sessionId, event)
@@ -454,10 +463,24 @@ export class AgentService {
     const deliverAs: DeliverAs = event.deliverAs ?? 'followUp'
     const run = runtime.run
     if (deliverAs === 'steer' && run?.steer) {
-      await run.steer(text, deliverAs).catch((cause: Error) => this.reportError(sessionId, cause))
+      try {
+        // Read here, as for a prompt: the harness takes the bytes, the log keeps references.
+        const resolved = await this.resolveAttachments(sessionId, attachments)
+        await run.steer(text, deliverAs, resolved)
+        runtime.steers.add({ id: stamped.id, text, attachments })
+      } catch (cause) {
+        await this.reportError(sessionId, cause as Error)
+      }
       return
     }
     runtime.queued = [...runtime.queued, { id: stamped.id, text, deliverAs, attachments }]
+  }
+
+  /** A message reached a cleared conversation, which therefore holds something again. */
+  private async endClearedState(sessionId: string): Promise<void> {
+    const session = await this.store.require(sessionId)
+    if (session.cleared !== true) return
+    await this.store.patch(sessionId, { cleared: false })
   }
 
   /**
@@ -564,10 +587,70 @@ export class AgentService {
     return isSubagentSession(session)
   }
 
-  /** Take a message back out of the queue before it is delivered. */
-  private dropQueued(sessionId: string, messageId: string): void {
+  /**
+   * Take a message back before the model reads it. A queued one just leaves the
+   * queue. A steered one is already with the harness, which has no way to give it
+   * back, so the turn is stopped; the backlog forgets the message first, so the
+   * stop hands on only the other steers.
+   */
+  private async dropQueued(sessionId: string, messageId: string): Promise<void> {
     const runtime = this.runtimeOrCreate(sessionId)
     runtime.queued = runtime.queued.filter((message) => message.id !== messageId)
+    if (runtime.steers.remove(messageId)) {
+      await this.interruptRun(sessionId)
+    }
+  }
+
+  /**
+   * Take the conversation back to the event at `fromSeq`, the harness's along with
+   * the transcript's. The run is stopped; the next one opens a copy of the
+   * stored conversation cut after the last agent message on the way back
+   * (`forkAt`), or a new conversation when nothing the agent said is kept.
+   *
+   * Whatever stands in the way throws, before anything lands on the log: the
+   * edited message sent in the same batch must not reach the agent on top of the
+   * conversation it was meant to replace.
+   */
+  private async rewind(
+    sessionId: string,
+    event: Extract<ClientEventBody, { type: 'user.branch' }>
+  ): Promise<void> {
+    const point = await this.rewindPointFor(sessionId, event.fromSeq)
+    await this.store.append(sessionId, event)
+    await this.stopRun(sessionId)
+    if (point.kind === 'start') {
+      await this.store.patch(sessionId, { resumeKey: null, forkAt: undefined })
+    } else {
+      await this.store.patch(sessionId, { forkAt: point.messageId })
+    }
+    await this.store.append(sessionId, { type: 'session.branched', fromSeq: event.fromSeq })
+  }
+
+  /** Where the harness's conversation is cut for a rewind to `fromSeq`; throws when it cannot be. */
+  private async rewindPointFor(
+    sessionId: string,
+    fromSeq: number
+  ): Promise<Exclude<RewindPoint, { kind: 'unidentified' }>> {
+    const session = await this.store.require(sessionId)
+    if (isSubagentSession(session)) {
+      throw new Error('This agent was run inside a tool call and cannot be taken back.')
+    }
+    if (this.options.harnesses.get(session.harness)?.capabilities.rewind !== true) {
+      throw new Error(
+        `The ${session.harness} harness cannot take a conversation back to an earlier message.`
+      )
+    }
+    if (this.runtimeOf(sessionId)?.status === 'running') {
+      throw new Error('Stop the agent before taking the conversation back to an earlier message.')
+    }
+    const point = rewindPoint(this.store.peekEvents(sessionId), fromSeq)
+    if (!point) throw new Error(`There is no event ${fromSeq} to take the conversation back to.`)
+    if (point.kind === 'unidentified') {
+      throw new Error(
+        'The harness gave its messages no ids, so the conversation cannot be cut there.'
+      )
+    }
+    return point
   }
 
   /**
@@ -870,6 +953,7 @@ export class AgentService {
       permissionMode: session.permissionMode,
       groveMode: session.groveMode,
       resumeKey: session.resumeKey,
+      forkAt: session.forkAt,
       tools: this.toolsFor(descriptor),
       systemPrompt: await this.systemPromptFor(session),
       recordedPrompt: await this.recordedPromptOf(sessionId),
@@ -887,6 +971,9 @@ export class AgentService {
     if (run.resumeKey && run.resumeKey !== session.resumeKey) {
       await this.store.patch(sessionId, { resumeKey: run.resumeKey })
     }
+    // The copy is open and is the conversation from now on; cutting it again
+    // would drop what is said in it.
+    if (session.forkAt !== undefined) await this.store.patch(sessionId, { forkAt: undefined })
     return run
   }
 
@@ -970,12 +1057,22 @@ export class AgentService {
       runtime.status = 'terminated'
       runtime.run = null
     }
+    // The harness cleared its conversation: until a message reaches the new one,
+    // the session is open again (see `hasStarted`).
+    if (body.type === 'session_changed') {
+      await this.store.patch(sessionId, { cleared: true })
+    }
 
+    runtime.steers.observe(body)
     await this.store.append(sessionId, body)
     if (body.type === 'session.status_idle') await this.finishTurn(sessionId, body.stopReason)
   }
 
-  /** A turn ended: settle the status, then hand over whatever was queued. */
+  /**
+   * A turn ended: settle the status, then hand over whatever was queued. A
+   * stopped turn first hands on the steers it never took up, which the harness
+   * dropped with it, so the conversation goes on with what was written.
+   */
   private async finishTurn(
     sessionId: string,
     stopReason: RuntimeState['stopReason']
@@ -984,6 +1081,14 @@ export class AgentService {
     runtime.status = 'idle'
     runtime.stopReason = stopReason
     await this.persistResumeKey(sessionId)
+
+    const untaken = runtime.steers.take()
+    if (stopReason === 'aborted' && untaken.length > 0) {
+      const text = untaken.map((message) => message.text).join('\n\n')
+      const attachments = untaken.flatMap((message) => message.attachments)
+      await this.startTurn(sessionId, text, attachments)
+      return
+    }
 
     const next = runtime.queued[0]
     if (!next) return
@@ -1111,7 +1216,11 @@ export class AgentService {
     const root = session.workspaceRoot
     const absolute = join(root, relativePath)
     if (relativeInside(root, absolute) === null) throw new Error('path outside the workspace')
-    const edits = editsOfFile(sessionEdits(await this.store.eventsSince(sessionId)), root, relativePath)
+    const edits = editsOfFile(
+      sessionEdits(await this.store.eventsSince(sessionId)),
+      root,
+      relativePath
+    )
     const current = await readOrEmpty(root, absolute)
     if (!edits) return current
     return textWithoutEdits(current, edits, linesDifferIn(root))
@@ -1164,7 +1273,8 @@ export class AgentService {
       run: null,
       starting: null,
       approvals: new Map(),
-      messageCount: 0
+      messageCount: 0,
+      steers: new SteerBacklog()
     }
     this.runtimes.set(sessionId, runtime)
     return runtime

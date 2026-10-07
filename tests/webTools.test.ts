@@ -7,43 +7,65 @@ import {
   matchingSections,
   outlineOf,
   pageOf,
-  parseBingResults,
-  parseDuckDuckGoResults
+  parseBraveResults,
+  parseExaResults
 } from '../src/main/agents/tools/webTools'
 
 describe('search results', () => {
-  test('reads DuckDuckGo results, direct and redirected, and skips its ads', () => {
-    const html = `
-      <div class="result results_links web-result result--ad">
-        <h2><a class="result__a" href="https://ads.example/buy">Buy now</a></h2>
-      </div>
-      <div class="result results_links web-result">
-        <h2><a class="result__a" href="https://svelte.dev/blog/runes">Introducing <b>runes</b></a></h2>
-        <a class="result__snippet">What are <b>runes</b>?</a>
-      </div>
-      <div class="result results_links web-result">
-        <h2><a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fdocs&rut=x">Docs</a></h2>
-      </div>`
+  test("reads Exa's title, URL and highlight blocks", () => {
+    const text = [
+      'Title: Variables | Developer Docs',
+      'URL: https://developers.figma.com/docs/rest-api/variables/',
+      'Published: N/A',
+      'Author: N/A',
+      'Highlights:',
+      'The Variables REST API includes endpoints.',
+      '...',
+      'Publish them before use.',
+      '',
+      '---',
+      '',
+      'Title: Endpoints',
+      'URL: https://developers.figma.com/docs/rest-api/variables-endpoints/',
+      'Highlights:',
+      ''
+    ].join('\n')
 
-    expect(parseDuckDuckGoResults(html)).toEqual([
-      { title: 'Introducing runes', url: 'https://svelte.dev/blog/runes', snippet: 'What are runes?' },
-      { title: 'Docs', url: 'https://example.com/docs', snippet: '' }
+    expect(parseExaResults(text)).toEqual([
+      {
+        title: 'Variables | Developer Docs',
+        url: 'https://developers.figma.com/docs/rest-api/variables/',
+        snippet: 'The Variables REST API includes endpoints. Publish them before use.'
+      },
+      {
+        title: 'Endpoints',
+        url: 'https://developers.figma.com/docs/rest-api/variables-endpoints/',
+        snippet: ''
+      }
     ])
   })
 
-  test("unwraps Bing's redirect links", () => {
-    const target = Buffer.from('https://de.wikipedia.org/wiki/Svelte').toString('base64url')
-    const html = `
-      <li class="b_algo">
-        <h2><a href="https://www.bing.com/ck/a?!&amp;p=1&amp;u=a1${target}&amp;ntb=1">Svelte – Wikipedia</a></h2>
-        <div class="b_caption"><p>Svelte ist eine freie Bibliothek.</p></div>
-      </li>`
+  test('skips an Exa block without a URL, such as its rate-limit notice', () => {
+    expect(parseExaResults("You've hit Exa's free MCP rate limit.")).toEqual([])
+  })
 
-    expect(parseBingResults(html)).toEqual([
+  test("reads Brave's web results and skips everything else on the page", () => {
+    const html = `
+      <div class="snippet" data-type="news"><a href="https://news.example/x"><div class="title">News</div></a></div>
+      <div class="snippet svelte-jmfu5f" data-pos="0" data-type="web">
+        <a href="https://tokio.rs/tokio/tutorial/select" class="l1">
+          <cite class="snippet-url">tokio.rs › tokio › tutorial</cite>
+          <div class="title search-snippet-title" title="Select | Tokio">Select | Tokio</div>
+        </a>
+        <div class="generic-snippet"><div class="content"><!---->So far, when we wanted to add <strong>concurrency</strong>.</div></div>
+      </div>
+      <div class="snippet" data-type="web"><a href="/search?q=more"><div class="title">More</div></a></div>`
+
+    expect(parseBraveResults(html)).toEqual([
       {
-        title: 'Svelte – Wikipedia',
-        url: 'https://de.wikipedia.org/wiki/Svelte',
-        snippet: 'Svelte ist eine freie Bibliothek.'
+        title: 'Select | Tokio',
+        url: 'https://tokio.rs/tokio/tutorial/select',
+        snippet: 'So far, when we wanted to add concurrency.'
       }
     ])
   })
@@ -62,7 +84,11 @@ describe('a fetched page', () => {
   </body></html>`
 
   test('keeps the content as Markdown, without the furniture, tooltips or heading anchors', () => {
-    const page = pageOf(docsPage, 'text/html; charset=utf-8', 'https://svelte.dev/docs/svelte/$state')
+    const page = pageOf(
+      docsPage,
+      'text/html; charset=utf-8',
+      'https://svelte.dev/docs/svelte/$state'
+    )
 
     expect(page?.markdown).toContain('## Deep state\n')
     expect(page?.markdown).toContain('let count = $state(0);')

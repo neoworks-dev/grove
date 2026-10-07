@@ -41,7 +41,12 @@ const MCP_PATH = '/mcp'
 
 // How harnesses spell a tool grove serves: Claude and Codex prefix the server,
 // pi's MCP adapter joins it with an underscore.
-const GROVE_TOOL_PREFIXES = [`mcp__${GROVE_SERVER}__`, `${GROVE_SERVER}__`, `${GROVE_SERVER}.`, `${GROVE_SERVER}_`]
+const GROVE_TOOL_PREFIXES = [
+  `mcp__${GROVE_SERVER}__`,
+  `${GROVE_SERVER}__`,
+  `${GROVE_SERVER}.`,
+  `${GROVE_SERVER}_`
+]
 
 /** A grove tool's bare name, or null when the name belongs to another tool. */
 export function groveToolName(name: string): string | null {
@@ -220,7 +225,9 @@ async function callTool(
 
   let runWith = input
   if (tool.policy === 'ask') {
-    const decision = await approve(binding, tool, input, call, context)
+    const described = await describeCall(tool, input, context)
+    if ('failure' in described) return errorResult(described.failure)
+    const decision = await approve(binding, tool, input, call, described.update)
     if (decision.result === 'deny') return errorResult(declined(decision))
     if (decision.input !== undefined) runWith = decision.input as Record<string, unknown>
   }
@@ -249,10 +256,8 @@ async function approve(
   tool: GroveTool,
   input: Record<string, unknown>,
   call: { toolCallId: string; name: string },
-  context: GroveToolContext
+  described: Partial<ToolCallUpdate>
 ): Promise<ApprovalDecision> {
-  const described = await describeOrNothing(tool, input, context)
-
   return binding.confirm({
     sessionId: binding.harnessSessionId(),
     toolCall: {
@@ -272,28 +277,30 @@ async function approve(
 }
 
 /**
- * What a tool says a call would do. A call it cannot describe — a path that
- * does not resolve, anchors gone stale — is still put to the user, and fails
- * with the reason when it runs.
+ * What a tool says a call would do, or why it cannot. A call the tool cannot
+ * describe (a path that does not resolve, anchors gone stale) would fail the
+ * same way when it ran, so it goes back to the agent with the reason instead of
+ * to the user as an approval with nothing to review.
  */
-async function describeOrNothing(
+async function describeCall(
   tool: GroveTool,
   input: Record<string, unknown>,
   context: GroveToolContext
-): Promise<Partial<ToolCallUpdate>> {
+): Promise<{ update: Partial<ToolCallUpdate> } | { failure: string }> {
+  if (!tool.describe) return { update: {} }
   try {
-    const described = await tool.describe?.(input, context)
-    if (!described) return {}
-    return described
-  } catch {
-    return {}
+    const described = await tool.describe(input, context)
+    return { update: described }
+  } catch (cause) {
+    return { failure: (cause as Error).message }
   }
 }
 
 /** The port a listening server was given. */
 function portOf(http: HttpServer): number {
   const address: AddressInfo | string | null = http.address()
-  if (address === null || typeof address === 'string') throw new Error('The tool server has no port.')
+  if (address === null || typeof address === 'string')
+    throw new Error('The tool server has no port.')
   return address.port
 }
 

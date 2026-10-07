@@ -1,9 +1,10 @@
-// Opening a repository: pick a directory, open it, remember the last one.
+// Opening a repository: pick a directory, open it, remember the last one and
+// the recent ones.
 
 import type { Context } from '@neoworks/extension-system'
 import { route } from '../kernel/route'
 import { dialog } from 'electron'
-import { loadState } from '../state'
+import { loadState, clearRecentRepos } from '../state'
 
 export const repoRoutes = {
   name: 'main/routes/repo',
@@ -22,6 +23,16 @@ export const repoRoutes = {
     route(ctx, 'repo:last', async () => {
       const state = await loadState()
       return state.lastRepoPath
+    })
+
+    route(ctx, 'repo:recent', async () => {
+      const state = await loadState()
+      return state.recentRepoPaths
+    })
+
+    route(ctx, 'repo:clearRecent', async () => {
+      await clearRecentRepos()
+      ctx.workbench.send('event:recent-repos', [])
     })
   }
 }

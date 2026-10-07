@@ -20,3 +20,26 @@ function afterLastCarriageReturn(line: string): string {
   if (index < 0) return trimmed
   return trimmed.slice(index + 1)
 }
+
+export interface CommandOutputState {
+  /** The call is still running. */
+  callRunning: boolean
+  /** What the harness streamed, when it streams: is the command itself still going. */
+  streamed: { running: boolean } | undefined
+  /** The call belongs to the turn in flight. */
+  live: boolean
+  /** The call's returned result. */
+  result: string
+}
+
+/**
+ * Whether a command's output box shows: while it runs (or keeps running in the
+ * background), and — in the turn in flight — after it finishes too, so the row
+ * never shrinks under the reader. A settled turn folds it away.
+ */
+export function showsCommandOutput(state: CommandOutputState): boolean {
+  if (state.streamed && (state.callRunning || state.streamed.running)) return true
+  if (!state.live) return false
+  if (state.streamed) return true
+  return state.result.length > 0
+}

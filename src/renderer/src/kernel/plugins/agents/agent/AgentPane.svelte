@@ -31,10 +31,14 @@
     type SessionBadge
   } from '../../../../lib/agents/sessions.svelte'
   import {
+    compacting,
     pendingApprovals,
     toolCallOut,
+    turnInFlightSince,
     visibleItems,
-    type ToolItem
+    waitingMessages,
+    type ToolItem,
+    type UserItem
   } from '../../../../lib/agents/transcript'
   import { shellOutputs } from '../../../../lib/agents/shellOutput.svelte'
   import {
@@ -45,7 +49,9 @@
     subagentSessions
   } from '../../../../lib/agents/sessionTree'
   import { displayOfCall, fileOfCall } from '../../../../lib/agents/tools'
+  import { followStep } from '../../../../lib/agents/follow'
   import { questionsOf } from '../../../../lib/agents/questions'
+  import { canEditMessage, editMessageEvents } from '../../../../lib/agents/editMessage'
   import { modeOf, nextMode, type AgentMode } from '../../../../lib/agents/modes'
   import { nextThinkingLevel } from '../../../../lib/agents/thinking'
   import { followsAfterScroll } from '../../../../lib/agents/scrollFollow'
@@ -149,9 +155,15 @@
   // harness named the tool.
   const questions = $derived(approvals[0] ? questionsOf(approvals[0].input) : null)
   const running = $derived(live?.transcript.status === 'running')
-  // The model is writing: the turn is running and not out on a tool call, which
-  // shows its own progress on its row.
-  const writing = $derived(running && live !== undefined && !toolCallOut(live.transcript))
+  const turnStart = $derived.by(() => {
+    if (!live) return null
+    return turnInFlightSince(live.transcript)
+  })
+  // The model is writing: the turn is running and not out on a tool call or a
+  // compaction, each of which shows its own progress on its row.
+  const writing = $derived(
+    running && live !== undefined && !toolCallOut(live.transcript) && !compacting(live.transcript)
+  )
   // A session standing for an agent the harness ran inside a tool call. It is a
   // record of that conversation: the runtime is the only thing that ever spoke
   // there, so there is nothing to write to.
@@ -167,6 +179,15 @@
     return sessionList.find((session) => session.id === parentId) ?? null
   })
   const queued = $derived(snapshot?.queued ?? [])
+  // Steered messages the agent has not taken up: already with the harness, so
+  // shown but not removable. Queued ones are in `queued`, with a remove button.
+  const steered = $derived.by(() => {
+    if (!live) return []
+    const queuedIds = new Set(queued.map((message) => message.id))
+    return waitingMessages(live.transcript)
+      .filter((item) => !queuedIds.has(item.eventId))
+      .map((item) => ({ id: item.eventId, text: item.text }))
+  })
 
   // Read straight off the session: the mode is stored there, so it is the same
   // answer in every window and after a restart.
@@ -410,6 +431,19 @@
     void agentSessions.send(activeId, [{ type: 'user.interrupt' }])
   }
 
+  /**
+   * Withdraws the newest message still waiting for the agent and hands back its
+   * text, for the composer to edit. Queued ones come first, being the newest; a
+   * steered one is already with the harness, so main stops the turn to take it back.
+   */
+  function takeBackWaiting(): string | null {
+    let newest: { id: string; text: string } | undefined = queued[queued.length - 1]
+    if (!newest) newest = steered[steered.length - 1]
+    if (!newest) return null
+    unqueue(newest.id)
+    return newest.text
+  }
+
   function unqueue(messageId: string): void {
     if (!activeId) return
     void agentSessions.send(activeId, [{ type: 'user.unqueue', messageId }])
@@ -419,6 +453,24 @@
   function decideHeld(heldId: string, decision: HeldMessageDecision): void {
     if (!activeId) return
     void agentSessions.send(activeId, [{ type: 'user.decide_held_message', heldId, decision }])
+  }
+
+  // The session's harness can take its conversation back, so a sent message can
+  // be edited and the conversation rerun from it.
+  const rewinds = $derived(
+    catalog.harnesses.find((entry) => entry.id === harness)?.capabilities.rewind === true
+  )
+
+  /** Whether a sent message offers to be edited. */
+  function canEdit(item: UserItem): boolean {
+    if (!live) return false
+    return canEditMessage(item, live.transcript, rewinds)
+  }
+
+  /** Replace a sent message: the conversation goes back to before it, then the edit is sent. */
+  function editMessage(item: UserItem, text: string): void {
+    if (!live) return
+    send(editMessageEvents(live.transcript, item, text))
   }
 
   /** Save the notes list; it comes back through the stream like any change. */
@@ -601,23 +653,20 @@
     return displayOfCall(catalog.tools, call)
   }
 
-  /** Opens the file of every call seen for the first time; only ever moves forward. */
+  /**
+   * Opens the file of every call whose file is newly known; only ever moves
+   * forward. A call still streaming its arguments is looked at again later.
+   */
   // The set is replaced rather than added to: it is plain bookkeeping, not state,
   // and the effect below both reads and writes it.
   function followNewCalls(): void {
-    const newlySeen: string[] = []
-    for (const item of items) {
-      if (item.kind !== 'tool') continue
-      if (followedCalls.has(item.toolUseId)) continue
-      newlySeen.push(item.toolUseId)
-      const path = fileOfCall(displayOf(item), item.editedInput ?? item.input, worktreePath)
-      // The agent opened this, not the user: show it, but leave focus where the
-      // user is, which is often mid-sentence in the composer.
-      if (path) openFile(path, { focus: false })
-    }
-    if (newlySeen.length > 0) {
-      followedCalls = new Set([...followedCalls, ...newlySeen])
-    }
+    const step = followStep(items, followedCalls, (call) =>
+      fileOfCall(displayOf(call), call.editedInput ?? call.input, worktreePath)
+    )
+    followedCalls = step.followed
+    // The agent opened these, not the user: show them, but leave focus where the
+    // user is, which is often mid-sentence in the composer.
+    for (const path of step.open) openFile(path, { focus: false })
   }
 
   $effect(() => {
@@ -841,11 +890,12 @@
         description: 'Session overview',
         run: showOverview
       },
+      // Not tied to normal mode: the composer holds focus whenever the pane does,
+      // and Alt+H/L type nothing there, so they switch sessions from it too.
       {
         id: `agent.prevSession:${leafId}`,
         keys: 'alt+h',
         context: leafId,
-        mode: 'normal',
         group: 'Agent',
         description: 'Previous session',
         run: () => cycleSession(-1)
@@ -854,7 +904,6 @@
         id: `agent.nextSession:${leafId}`,
         keys: 'alt+l',
         context: leafId,
-        mode: 'normal',
         group: 'Agent',
         description: 'Next session',
         run: () => cycleSession(1)
@@ -962,7 +1011,7 @@
         root={worktreePath}
         {expandedTools}
         thinking={running && approvals.length === 0}
-        {running}
+        turnInFlightSince={turnStart}
         toggleTool={(id) => (expandedTools = { ...expandedTools, [id]: !expandedTools[id] })}
         onOpenFile={openFile}
         onOpenLocation={openLocation}
@@ -970,6 +1019,8 @@
         onOpenSession={selectSession}
         subagentSessions={agentCallSessions}
         liveAgentIds={liveAgents}
+        {canEdit}
+        onEditMessage={editMessage}
         bind:viewport={transcriptViewport}
         onscroll={onTranscriptScroll}
       >
@@ -1020,6 +1071,9 @@
       </div>
     {/if}
 
+    {#if steered.length > 0 && !overviewOpen}
+      <AgentQueue messages={steered} />
+    {/if}
     {#if queued.length > 0 && !overviewOpen}
       <AgentQueue messages={queued} onCancel={unqueue} />
     {/if}
@@ -1137,6 +1191,7 @@
               onCycleMode={cycleMode}
               onBack={showOverview}
               onLeaveDown={focusBackgroundList}
+              onTakeBack={takeBackWaiting}
               header={live ? notesHeader : undefined}
             />
           {/if}

@@ -32,7 +32,8 @@ export const CAPABILITIES: HarnessCapabilities = {
   steering: true,
   groveTools: true,
   groveMode: true,
-  attachments: true
+  attachments: true,
+  rewind: true
 }
 
 /** The options a harness runs with as it comes, grove's part of the prompt appended. */

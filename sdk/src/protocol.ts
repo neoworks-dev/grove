@@ -263,6 +263,12 @@ export interface PaneContribution {
     title?: string
     order?: number
   }
+  // HTML page relative to the plugin root, e.g. "pages/main.html". When set,
+  // the pane is that page — drawn however the plugin likes — in a sandboxed
+  // frame with no network and no Grove API; it talks to the plugin's worker
+  // through '@grove/plugin-sdk/pane' (see PanePageMessage). Without it the
+  // pane is a declarative surface rendered from panes.registerPaneType.
+  page?: string
 }
 
 export interface ViewContribution {
@@ -421,6 +427,7 @@ function validateContributions(manifest: Record<string, unknown>, errors: string
   }
   validateContributionIds(contributes as PluginContributions, errors)
   validateFileViewers(manifest, contributes as PluginContributions, errors)
+  validatePanePages(contributes as PluginContributions, errors)
 }
 
 function validateFileViewers(
@@ -447,16 +454,27 @@ function validateFileViewers(
     if (!extensionsValid) {
       errors.push(`fileViewers.${viewer.id}: extensions must be lowercase, without the dot`)
     }
-    const page = viewer.page
-    if (
-      typeof page !== 'string' ||
-      page.length === 0 ||
-      page.startsWith('/') ||
-      page.includes('..')
-    ) {
+    if (!isPluginRelativePath(viewer.page)) {
       errors.push(`fileViewers.${viewer.id}: page must be a path inside the plugin directory`)
     }
   }
+}
+
+function validatePanePages(contributes: PluginContributions, errors: string[]): void {
+  const panes = contributes.panes
+  if (!Array.isArray(panes)) return
+  for (const pane of panes) {
+    if (!pane || typeof pane !== 'object' || pane.page === undefined) continue
+    if (!isPluginRelativePath(pane.page)) {
+      errors.push(`panes.${pane.id}: page must be a path inside the plugin directory`)
+    }
+  }
+}
+
+function isPluginRelativePath(path: unknown): boolean {
+  return (
+    typeof path === 'string' && path.length > 0 && !path.startsWith('/') && !path.includes('..')
+  )
 }
 
 function validateContributionIds(contributes: PluginContributions, errors: string[]): void {
@@ -480,21 +498,45 @@ function validateContributionIds(contributes: PluginContributions, errors: strin
   }
 }
 
-// ── File viewer pages ───────────────────────────────────────────
-// What passes between Grove and a viewer page over postMessage. The page
-// announces itself once it is listening; Grove answers with the file, and
-// again whenever the file changes on disk or the theme does.
+// ── Plugin pages (file viewers, panes) ──────────────────────────
+// What passes between Grove and a plugin's page over postMessage. Every page
+// announces itself once it is listening and nothing is sent to it before.
 
-export interface FileViewerTheme {
+// Grove's theme, for a page to draw itself like the panes around it.
+export interface PageTheme {
   // Whether the theme is dark, for pages that only switch a scheme.
   dark: boolean
+  // The canvas behind the panes.
   background: string
+  // A pane's own background; a pane page should paint this, not `background`.
   surface: string
   text: string
   textMuted: string
   border: string
   accent: string
+  // Grove's design tokens as they are right now: CSS custom properties by
+  // name ('--surface', '--text-dim', '--ctx-green', '--font-mono', …), the
+  // ones @neoworks-dev/ui's styles resolve through. Setting them on :root (and
+  // `data-theme` to `scheme`) makes the kit draw in the user's actual theme;
+  // '@grove/plugin-sdk/pane' does both.
+  scheme?: 'dark' | 'light'
+  tokens?: Record<string, string>
 }
+
+// A key the page had no use for, passed up so Grove's own bindings (the
+// leader, pane navigation) keep working while the page has focus.
+export interface PageKey {
+  key: string
+  code: string
+  ctrlKey: boolean
+  altKey: boolean
+  shiftKey: boolean
+  metaKey: boolean
+}
+
+// File viewers: Grove answers the page with the file, and again whenever the
+// file changes on disk or the theme does.
+export type FileViewerTheme = PageTheme
 
 export type FileViewerMessage =
   | { type: 'grove.viewer.ready' }
@@ -509,17 +551,20 @@ export type FileViewerMessage =
     }
   | { type: 'grove.viewer.theme'; theme: FileViewerTheme }
   | { type: 'grove.viewer.error'; message: string }
-  // A key the page had no use for, passed up so Grove's own bindings (the
-  // leader, pane navigation) keep working while the page has focus.
-  | {
-      type: 'grove.viewer.key'
-      key: string
-      code: string
-      ctrlKey: boolean
-      altKey: boolean
-      shiftKey: boolean
-      metaKey: boolean
-    }
+  | ({ type: 'grove.viewer.key' } & PageKey)
+
+// Pane pages: Grove answers `ready` with `init`; after that `message` flows
+// both ways between the page and its plugin's worker, as opaque data the
+// two agree on (structured-cloneable). Each open copy of the pane is its own
+// page with its own instance id on the worker side.
+export type PanePageMessage =
+  | { type: 'grove.pane.ready' }
+  // controlsInset: px Grove's own pane controls (the close button) take at
+  // the right end of the page's first row; leave them that room.
+  | { type: 'grove.pane.init'; theme: PageTheme; controlsInset?: number }
+  | { type: 'grove.pane.theme'; theme: PageTheme }
+  | { type: 'grove.pane.message'; data: unknown }
+  | ({ type: 'grove.pane.key' } & PageKey)
 
 // ── RPC envelope ────────────────────────────────────────────────
 

@@ -183,7 +183,8 @@ function capabilitiesOf(claimed: HarnessCapabilities, harnesses: SwitchboardInfo
     liveModelSwitch: all((capabilities) => capabilities.liveModel),
     thinking: all((capabilities) => capabilities.effort !== 'none'),
     steering: all((capabilities) => capabilities.steering),
-    attachments: all((capabilities) => capabilities.images)
+    attachments: all((capabilities) => capabilities.images),
+    rewind: all((capabilities) => capabilities.fork)
   }
 }
 

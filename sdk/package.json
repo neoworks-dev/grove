@@ -11,6 +11,26 @@
     "./frames": "./src/frames.ts",
     "./rpc": "./src/rpc.ts",
     "./client": "./src/client/node.ts",
-    "./viewer": "./src/viewer.ts"
+    "./viewer": "./src/viewer.ts",
+    "./pane": "./src/pane.ts",
+    "./terminal": "./src/terminal.ts",
+    "./page.css": "./src/page.css",
+    "./vite": "./src/vite.ts"
+  },
+  "peerDependencies": {
+    "@neoworks-dev/ui": "*",
+    "@sveltejs/vite-plugin-svelte": "^6.2.4",
+    "@tailwindcss/vite": "^4.3.2",
+    "svelte": "^5.56.4",
+    "tailwindcss": "^4.3.2",
+    "vite": "^7.3.6"
+  },
+  "peerDependenciesMeta": {
+    "@neoworks-dev/ui": { "optional": true },
+    "@sveltejs/vite-plugin-svelte": { "optional": true },
+    "@tailwindcss/vite": { "optional": true },
+    "svelte": { "optional": true },
+    "tailwindcss": { "optional": true },
+    "vite": { "optional": true }
   }
 }

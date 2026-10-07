@@ -1,0 +1,62 @@
+/*
+ * The base stylesheet for a Grove plugin page. Import it first from the
+ * page's own CSS entry:
+ *
+ *   @import '@grove/plugin-sdk/page.css';
+ *
+ * It brings Tailwind v4 and @neoworks-dev/ui's tokens, so the page has the
+ * same utilities Grove's own panes use (bg-surface, text-dim, border-line,
+ * text-2xs, …) and the kit's components render as they do in Grove. The
+ * token values here are the kit's defaults; '@grove/plugin-sdk/pane' replaces
+ * them with Grove's live theme as soon as the page connects.
+ */
+
+@import 'tailwindcss';
+@import '@neoworks-dev/ui/styles';
+
+/* The kit's components carry their classes in their own source. */
+@source '../../node_modules/@neoworks-dev/ui/src';
+
+/* Grove's own base: a 14px root, so rem-based utilities (h-9, px-3, …) come
+   out exactly the size they are in Grove's panes, on the pane's surface. */
+@layer base {
+  html {
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: var(--surface);
+    color: var(--text);
+  }
+
+  html,
+  body {
+    height: 100%;
+    margin: 0;
+  }
+
+  /* Grove's scrollbar: thin, floating, shown while the area is hovered. */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: transparent;
+    border: 3px solid transparent;
+    border-radius: 9999px;
+  }
+  :hover::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--text-dim);
+    background-clip: padding-box;
+  }
+}

@@ -94,9 +94,16 @@ export class CanvasGridRenderer implements GridRenderer {
     this.canvas.style.height = `${height / dpr}px`
     if (carried && this.ctx) this.ctx.drawImage(carried, 0, 0)
     // Spread the backing across cols/rows so every cell is `cellW`/`cellH` or
-    // one px larger, distributed evenly — the grid reaches every edge.
-    this.colX = buildEdges(cols, width)
-    this.rowY = buildEdges(rows, height)
+    // one px larger, distributed evenly — the grid reaches every edge. A grid
+    // larger than its backing (a float clamped to the pane) keeps whole cells
+    // and runs past the edge to be clipped: squeezing cells below a glyph's
+    // advance would draw each character over the one before it. The floor, not
+    // the rounded cell, so a grid that exactly fits its box is never judged
+    // too wide.
+    const minimumCellWidth = Math.max(1, Math.floor(this.metrics.cellWidth * dpr))
+    const minimumCellHeight = Math.max(1, Math.floor(this.metrics.cellHeight * dpr))
+    this.colX = buildEdges(cols, Math.max(width, cols * minimumCellWidth))
+    this.rowY = buildEdges(rows, Math.max(height, rows * minimumCellHeight))
   }
 
   // Copy of the current backing store, used to survive a backing resize.

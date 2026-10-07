@@ -79,6 +79,28 @@ describe('CanvasGridRenderer grid geometry', () => {
     expect(renderer.gridRows).toBe(39)
   })
 
+  // A float clamped to the pane is narrower than its grid. Squeezing 200
+  // columns into 300px drew every glyph over the one before it.
+  test('keeps whole cells when the grid is wider than its canvas', () => {
+    const renderer = new CanvasGridRenderer()
+    renderer.attach(fakeCanvas())
+    renderer.setFont({ family: 'monospace', sizePx: 13 }, { cellWidth: 8, cellHeight: 18, baseline: 14 })
+    renderer.resize(200, 30, 1, 300, 100)
+    const columnEdges = (renderer as unknown as { colX: number[] }).colX
+    const rowEdges = (renderer as unknown as { rowY: number[] }).rowY
+    expect(Math.min(...widths(columnEdges))).toBe(8)
+    expect(Math.min(...widths(rowEdges))).toBe(18)
+  })
+
+  test('a grid that fits its box still fills it exactly', () => {
+    const renderer = new CanvasGridRenderer()
+    renderer.attach(fakeCanvas())
+    renderer.setFont({ family: 'monospace', sizePx: 13 }, { cellWidth: 7.6, cellHeight: 17.4, baseline: 14 })
+    renderer.resize(80, 10, 1, 608, 174)
+    const columnEdges = (renderer as unknown as { colX: number[] }).colX
+    expect(columnEdges[80]).toBe(608)
+  })
+
   test('reports nothing before a resize', () => {
     const renderer = new CanvasGridRenderer()
     renderer.attach(fakeCanvas())

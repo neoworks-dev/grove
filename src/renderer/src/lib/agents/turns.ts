@@ -53,10 +53,15 @@ function isWork(row: TranscriptRow, standsAlone: (call: ToolItem) => boolean): b
  * much a detail as one before it, so the whole turn reduces to a single summary line plus the
  * answer. A turn that never produced an answer folds nothing: there would be nothing left.
  * Calls `standsAlone` names (an edit, one that returned an image) stay on screen too.
+ *
+ * The answer is the agent's last message, and the messages before it that only a call
+ * `partOfAnswer` names stands between: an answer the agent split around a card of
+ * locations is one answer, and folding its first half would cut it off mid-sentence.
  */
 export function foldTurn(
   rows: TranscriptRow[],
-  standsAlone: (call: ToolItem) => boolean = () => false
+  standsAlone: (call: ToolItem) => boolean = () => false,
+  partOfAnswer: (call: ToolItem) => boolean = () => false
 ): TurnFold {
   let lastAnswer = -1
   for (let index = 0; index < rows.length; index++) {
@@ -65,18 +70,52 @@ export function foldTurn(
   if (lastAnswer < 0) {
     return { hidden: [], kept: rows }
   }
+  const answerStart = startOfAnswer(rows, lastAnswer, standsAlone, partOfAnswer)
 
   const hidden: TranscriptRow[] = []
   const kept: TranscriptRow[] = []
   for (let index = 0; index < rows.length; index++) {
     const row = rows[index]
-    if (index !== lastAnswer && isWork(row, standsAlone)) {
+    const inAnswer = index >= answerStart && index <= lastAnswer && isAnswer(row)
+    if (!inAnswer && isWork(row, standsAlone)) {
       hidden.push(row)
       continue
     }
     kept.push(row)
   }
   return { hidden, kept }
+}
+
+/**
+ * Where the answer ending at `lastAnswer` begins: walking back over the agent's messages,
+ * rows that are not work, and calls that are part of the answer, up to the first real work.
+ */
+function startOfAnswer(
+  rows: TranscriptRow[],
+  lastAnswer: number,
+  standsAlone: (call: ToolItem) => boolean,
+  partOfAnswer: (call: ToolItem) => boolean
+): number {
+  let start = lastAnswer
+  for (let index = lastAnswer - 1; index >= 0; index--) {
+    const row = rows[index]
+    if (isAnswer(row)) {
+      start = index
+      continue
+    }
+    if (isWork(row, standsAlone) && !callsAll(row, partOfAnswer)) {
+      break
+    }
+  }
+  return start
+}
+
+/** Whether a row is tool calls only, every one of them named by `predicate`. */
+function callsAll(row: TranscriptRow, predicate: (call: ToolItem) => boolean): boolean {
+  if (row.kind === 'toolRun' || row.kind === 'callGroup') {
+    return row.items.every(predicate)
+  }
+  return row.item.kind === 'tool' && predicate(row.item)
 }
 
 /** Every tool call inside the folded rows, run summaries included. */

@@ -1,5 +1,6 @@
 // grove-plugin:// serves plugin bundle files: the worker's code, and the pages
-// (with their scripts, styles and images) a plugin shows as a file viewer.
+// (with their scripts, styles and images) a plugin shows as a file viewer or
+// a pane.
 // Only loaded + trusted + enabled plugins are served, path-validated to their
 // own directory. PLUGIN_SCHEME is declared with the others in main/index.ts.
 

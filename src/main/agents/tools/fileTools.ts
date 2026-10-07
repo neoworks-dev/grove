@@ -4,10 +4,12 @@
 // lines it changes by those tags. The model never has to reproduce the text it
 // replaces, which is most of what an edit costs in tokens, and a tag that no
 // longer matches fails the edit instead of changing the wrong line.
+// An image reads as a picture the model sees, never as its bytes in text.
 
-import { readdir } from 'fs/promises'
+import { readdir, readFile } from 'fs/promises'
+import { extname } from 'path'
 import type { ToolCallUpdate } from '@neoworks/harness'
-import type { GroveTool, GroveToolContext } from '../harness'
+import type { GroveTool, GroveToolContext, GroveToolResult } from '../harness'
 import { applyEdits, StaleAnchorError, type HashlineEdit } from './hashline/apply'
 import { formatLines, parseAnchor } from './hashline/hash'
 import {
@@ -27,10 +29,25 @@ const RESULT_CONTEXT = 2
 const RESULT_LINES = 60
 /** Identical edits in a row that change nothing before the model is told to re-read. */
 const NOOP_LIMIT = 3
+/**
+ * The largest image a read hands back. The model APIs refuse images over 5MB
+ * of base64, which this many raw bytes stays under.
+ */
+const MAX_IMAGE_BYTES = Math.floor((5 * 1024 * 1024 * 3) / 4)
+/** Extensions a read tries to show as an image; the bytes decide whether it is one. */
+const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp']
 
 const PATH_PROPERTY = {
   type: 'string',
   description: 'File path, absolute or relative to the working directory.'
+}
+
+// Kept with the lines the call writes, so prompt blame can say why they are
+// there long after the session is gone (see editRationale.ts).
+const EXPLANATION_PROPERTY = {
+  type: 'string',
+  description:
+    'Why this change: one or two sentences for someone reading these lines later, without the conversation.'
 }
 
 /** read, edit and write over the given files. */
@@ -48,7 +65,7 @@ function readTool(files: WorkspaceFiles): GroveTool {
       'Read only the part you need, with offset and limit'
     ],
     description:
-      'Read a text file, or list a directory. Each line comes back as LINE#ID:text, e.g. `5#ZP:  const x = 1;`. ' +
+      'Read a text file or an image, or list a directory. Each line comes back as LINE#ID:text, e.g. `5#ZP:  const x = 1;`. ' +
       `Pass the LINE#ID tags to edit to change lines. Shows at most ${MAX_LINES} lines or 50KB; use offset and limit for more.`,
     inputSchema: {
       type: 'object',
@@ -67,6 +84,8 @@ function readTool(files: WorkspaceFiles): GroveTool {
       const path = resolvePath(context.workspaceRoot, String(input.path))
       const listing = await listDirectory(path)
       if (listing !== null) return { content: listing }
+      const image = await readImage(path, String(input.path))
+      if (image !== null) return image
       const file = await files.read(path)
       if (!file.exists) return { content: `${String(input.path)} does not exist.`, isError: true }
       return { content: shownLines(file, input) }
@@ -91,6 +110,7 @@ function editTool(files: WorkspaceFiles): GroveTool {
       type: 'object',
       properties: {
         path: PATH_PROPERTY,
+        explanation: EXPLANATION_PROPERTY,
         edits: {
           type: 'array',
           minItems: 1,
@@ -108,7 +128,7 @@ function editTool(files: WorkspaceFiles): GroveTool {
           }
         }
       },
-      required: ['path', 'edits'],
+      required: ['path', 'explanation', 'edits'],
       additionalProperties: false
     },
     policy: 'ask',
@@ -149,9 +169,10 @@ function writeTool(files: WorkspaceFiles): GroveTool {
       type: 'object',
       properties: {
         path: PATH_PROPERTY,
+        explanation: EXPLANATION_PROPERTY,
         content: { type: 'string', description: 'The whole new content of the file.' }
       },
-      required: ['path', 'content'],
+      required: ['path', 'explanation', 'content'],
       additionalProperties: false
     },
     policy: 'ask',
@@ -191,6 +212,43 @@ async function listDirectory(path: string): Promise<string | null> {
     .sort()
   if (names.length === 0) return '(empty directory)'
   return names.join('\n')
+}
+
+/**
+ * An image file as a result the model sees as a picture, or null when the path
+ * is not one, so the read goes on as text. Images come from the disk: an editor
+ * buffer only ever holds them as mangled text.
+ */
+async function readImage(path: string, shownPath: string): Promise<GroveToolResult | null> {
+  if (!IMAGE_EXTENSIONS.includes(extname(path).toLowerCase())) return null
+  const bytes = await readFile(path).catch(() => null)
+  if (bytes === null) return null
+  const mimeType = imageType(bytes)
+  if (mimeType === null) return null
+  if (bytes.length > MAX_IMAGE_BYTES) {
+    const megabytes = (bytes.length / (1024 * 1024)).toFixed(1)
+    return { content: `${shownPath} is a ${megabytes}MB image, too large to show.`, isError: true }
+  }
+  return {
+    content: `Image: ${shownPath} (${mimeType}, ${Math.ceil(bytes.length / 1024)}KB).`,
+    images: [{ data: bytes.toString('base64'), mimeType }]
+  }
+}
+
+/**
+ * The media type an image's leading bytes name, or null when they name none the
+ * model APIs take. The bytes decide rather than the extension: an API refuses an
+ * image whose declared type does not match its contents.
+ */
+function imageType(bytes: Buffer): string | null {
+  if (bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+    return 'image/png'
+  }
+  if (bytes.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))) return 'image/jpeg'
+  const header = bytes.subarray(0, 12).toString('latin1')
+  if (header.startsWith('GIF87a') || header.startsWith('GIF89a')) return 'image/gif'
+  if (header.startsWith('RIFF') && header.slice(8, 12) === 'WEBP') return 'image/webp'
+  return null
 }
 
 /** The lines a read asked for, tagged, cut to fit the size limit. */

@@ -177,6 +177,21 @@ export type SurfaceNode =
     }
   | { type: 'button'; label: string; command: string }
 
+// One open copy of a page pane (`contributes.panes[].page`). The same pane can
+// be open in several windows at once, and each is its own page.
+export interface PaneInstance {
+  instanceId: string
+}
+
+export interface PanePageHandler {
+  // A page finished loading and is listening.
+  onOpen?(instance: PaneInstance): void
+  // Whatever the page sent with `post` (see '@grove/plugin-sdk/pane').
+  onMessage(data: unknown, instance: PaneInstance): void | Promise<void>
+  // The page went away: its window closed, or the pane was swapped out.
+  onClose?(instance: PaneInstance): void
+}
+
 export interface PanesApi {
   registerPaneType(
     id: string,
@@ -184,6 +199,11 @@ export interface PanesApi {
   ): Disposable
   // Asks the host to re-invoke render for all leaves showing this pane type.
   update(id: string): void
+  // The worker's side of a page pane declared in the manifest. Pages that
+  // open before this is registered are announced to it when it is.
+  registerPage(id: string, handler: PanePageHandler): Disposable
+  // Sends data to the pane's pages: one of them, or every open one.
+  postMessage(id: string, data: unknown, options?: { instanceId?: string }): void
 }
 
 // ── views ───────────────────────────────────────────────────────

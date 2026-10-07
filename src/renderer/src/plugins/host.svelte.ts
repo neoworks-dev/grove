@@ -10,6 +10,7 @@
 // the sidebar, editor or panel it targets goes away.
 
 import type { Context, Fiber } from '@neoworks/extension-system'
+import { untrack } from 'svelte'
 import type { PluginManifest } from '../../../shared/plugins'
 import { GROVE_API_VERSION, PERMISSION_META } from '../../../shared/plugins'
 import { RpcEndpoint } from './rpc'
@@ -25,6 +26,7 @@ import type { SettingDefinition } from '../../../shared/settings'
 import DeclarativeSurface from '../components/DeclarativeSurface.svelte'
 import DeclarativeStatusItem from '../components/DeclarativeStatusItem.svelte'
 import type { PluginViewerOptions } from './PluginFileViewer.svelte'
+import PluginPagePane from './PluginPagePane.svelte'
 
 export interface PluginRecordShape {
   id: string
@@ -63,6 +65,9 @@ interface PluginInstance {
   worker: Worker | null
   rpc: RpcEndpoint | null
   activating: Promise<void> | null
+  // True once the worker has finished `activate`; page panes are announced
+  // to it from then on.
+  workerReady: boolean
   runtimeError: string | null
   // Effect disposers the plugin can revert individually through a `:dispose`
   // RPC call, keyed by registration. The fiber owns them too, so an unload
@@ -75,6 +80,21 @@ interface PluginInstance {
   // Skill/MCP declarations stashed for the AI bridge (wired in a later phase).
   mcpServers: Map<string, unknown>
   skills: Map<string, unknown>
+}
+
+// One mounted copy of a page pane, as the host tracks it.
+interface PageInstance {
+  pluginId: string
+  paneTypeId: string
+  // Delivers data from the worker to the page.
+  post: (data: unknown) => void
+}
+
+// What a page pane component holds on to while it is mounted.
+export interface PageInstanceConnection {
+  // Sends data from the page to the worker.
+  send(data: unknown): void
+  close(): void
 }
 
 /**
@@ -116,6 +136,10 @@ class PluginHost {
   private paneOwners = new Map<string, string>()
   private commandOwners = new Map<string, string>()
   private overlayOwners = new Map<string, string>()
+  // Page panes: paneTypeId → the plugin and page behind it, and every
+  // mounted copy by instance id.
+  private pagePanes = new Map<string, { pluginId: string; page: string }>()
+  private pageInstances = new Map<string, PageInstance>()
   private trustPrompted = new Set<string>()
 
   // ── Public accessors used by declarative components ──────────
@@ -132,6 +156,63 @@ class PluginHost {
     if (!instance) return { type: 'text', text: 'Plugin not available.' }
     await this.ensureActivated(instance.record.id)
     return instance.rpc?.request('pane:render', { paneId: paneTypeId })
+  }
+
+  /** The page a page pane loads, or null when the pane has none. */
+  pagePaneUrl(paneTypeId: string): string | null {
+    const page = this.pagePanes.get(paneTypeId)
+    if (!page) return null
+    return `grove-plugin://${page.pluginId}/${page.page}`
+  }
+
+  /**
+   * Connects one mounted copy of a page pane to its plugin's worker, starting
+   * the worker if it isn't running. `post` delivers what the worker sends;
+   * the returned connection carries the page's messages the other way.
+   */
+  openPageInstance(
+    paneTypeId: string,
+    post: (data: unknown) => void
+  ): PageInstanceConnection | null {
+    const pluginId = this.pagePanes.get(paneTypeId)?.pluginId
+    if (!pluginId) return null
+    const instanceId = `${paneTypeId}:${crypto.randomUUID()}`
+    this.pageInstances.set(instanceId, { pluginId, paneTypeId, post })
+    const event = { paneId: paneTypeId, instanceId }
+
+    // A running worker hears of the page now; one that is still starting hears
+    // of it, with every other open page, once it is ready (announcePages).
+    const plugin = this.instances.get(pluginId)
+    if (plugin?.workerReady) plugin.rpc?.event('pane:open', event)
+    else void this.ensureActivated(pluginId).catch(() => undefined)
+
+    return {
+      send: (data) => {
+        const target = this.instances.get(pluginId)
+        if (target?.workerReady) {
+          target.rpc?.event('pane:message', { ...event, data })
+          return
+        }
+        // Restarts a worker that went away; announcePages reopens this page
+        // first, so the message arrives after its open.
+        void this.ensureActivated(pluginId)
+          .then(() => this.instances.get(pluginId)?.rpc?.event('pane:message', { ...event, data }))
+          .catch(() => undefined)
+      },
+      close: () => {
+        if (!this.pageInstances.delete(instanceId)) return
+        const target = this.instances.get(pluginId)
+        if (target?.workerReady) target.rpc?.event('pane:close', event)
+      }
+    }
+  }
+
+  /** Tells a worker that just became ready about every page already open. */
+  private announcePages(instance: PluginInstance): void {
+    for (const [instanceId, page] of this.pageInstances) {
+      if (page.pluginId !== instance.record.id) continue
+      instance.rpc?.event('pane:open', { paneId: page.paneTypeId, instanceId })
+    }
   }
 
   async executeCommandById(commandId: string, args: unknown[]): Promise<unknown> {
@@ -163,8 +244,24 @@ class PluginHost {
     window.workbench.on('event:plugins-changed', (payload) =>
       this.applyRecords(payload as PluginRecordShape[])
     )
+    // The selected worktree lives here, not in main's event hub, so the host
+    // delivers its change itself to the plugins that subscribed.
+    $effect.root(() => {
+      $effect(() => {
+        const worktreeId = store.selectedWorktreeId
+        untrack(() => this.deliverEvent('workspace.didChangeWorktree', { worktreeId }))
+      })
+    })
     const records = await window.workbench.plugins.list()
     this.applyRecords(records as PluginRecordShape[])
+  }
+
+  /** Hands a renderer-owned event to every running plugin subscribed to it. */
+  private deliverEvent(event: string, payload: unknown): void {
+    for (const instance of this.instances.values()) {
+      if (!instance.workerReady || !instance.subscribedEvents.has(event)) continue
+      instance.rpc?.event(`grove-event:${event}`, payload)
+    }
   }
 
   private applyRecords(records: PluginRecordShape[]): void {
@@ -193,6 +290,7 @@ class PluginHost {
       worker: null,
       rpc: null,
       activating: null,
+      workerReady: false,
       runtimeError: null,
       effects: new Map(),
       overlayDeclarations: new Map(),
@@ -223,6 +321,7 @@ class PluginHost {
     instance.worker = null
     instance.rpc = null
     instance.activating = null
+    instance.workerReady = false
     this.contribute(instance)
     const activation = instance.record.manifest.activation ?? ['onStartup']
     if (activation.includes('onStartup')) void this.ensureActivated(pluginId)
@@ -239,6 +338,7 @@ class PluginHost {
     instance.worker = null
     instance.rpc = null
     instance.activating = null
+    instance.workerReady = false
     void window.workbench.plugins.cancelAll(instance.record.id)
   }
 
@@ -332,8 +432,10 @@ class PluginHost {
   async ensureActivated(pluginId: string): Promise<void> {
     const instance = this.instances.get(pluginId)
     if (!instance) throw new Error(`plugin not loaded: ${pluginId}`)
-    if (instance.rpc) return
+    // The pending activation first: rpc exists from the moment the worker
+    // spawns, well before its `activate` has run.
     if (instance.activating) return instance.activating
+    if (instance.rpc) return
     instance.activating = this.activate(instance)
     return instance.activating
   }
@@ -354,7 +456,11 @@ class PluginHost {
         instance.worker = worker
         instance.rpc = rpc
 
-        rpc.onEvent('lifecycle:ready', () => resolve())
+        rpc.onEvent('lifecycle:ready', () => {
+          instance.workerReady = true
+          this.announcePages(instance)
+          resolve()
+        })
         rpc.onEvent('lifecycle:error', (payload) => {
           const message = (payload as { message?: string }).message ?? 'plugin crashed'
           this.crash(instance, message)
@@ -508,14 +614,16 @@ class PluginHost {
     for (const pane of contributes.panes ?? []) {
       add(() => {
         this.paneOwners.set(pane.id, pluginId)
+        if (pane.page) this.pagePanes.set(pane.id, { pluginId, page: pane.page })
         const dispose = ctx.panes.register({
           id: pane.id,
           title: pane.title,
-          component: DeclarativeSurface
+          component: pane.page ? PluginPagePane : DeclarativeSurface
         })
         return () => {
           dispose()
           this.paneOwners.delete(pane.id)
+          this.pagePanes.delete(pane.id)
         }
       }, `pane:${pane.id}`)
 
@@ -804,6 +912,19 @@ class PluginHost {
     rpc.handle('host.updatePane', async (params) => {
       const { id } = params as { id: string }
       this.paneVersions = { ...this.paneVersions, [id]: (this.paneVersions[id] ?? 0) + 1 }
+      return undefined
+    })
+    rpc.handle('host.postPaneMessage', async (params) => {
+      const { id, data, instanceId } = params as {
+        id: string
+        data: unknown
+        instanceId?: string
+      }
+      for (const [key, page] of this.pageInstances) {
+        if (page.pluginId !== pluginId || page.paneTypeId !== id) continue
+        if (instanceId !== undefined && instanceId !== key) continue
+        page.post(data)
+      }
       return undefined
     })
 

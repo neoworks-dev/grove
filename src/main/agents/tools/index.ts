@@ -13,6 +13,7 @@ import { conflictTool, type ConflictProposalSink } from './conflictTools'
 import { fileTools } from './fileTools'
 import { lspTool, renameTool, type AgentLanguages } from './lspTools'
 import { searchTools } from './searchTools'
+import { askUserTool } from './questionTools'
 import { shellTool } from './shellTool'
 import type { WorkspaceFiles, WorktreeLocation } from './workspaceFiles'
 import { noteTools, type AgentNotes } from './noteTools'
@@ -64,9 +65,9 @@ export interface WorkspaceToolOptions {
 /**
  * The tools grove mode works with in place of a harness's own: reading and
  * editing files, finding them, asking the language server, running commands,
- * searching and reading the web, and calling whatever tool is listed by name
- * only. Made per session, since
- * the edit tool remembers what it was last asked.
+ * searching and reading the web, asking the user, and calling whatever tool is
+ * listed by name only. Made per session, since the edit tool remembers what it
+ * was last asked.
  */
 export function workspaceTools(options: WorkspaceToolOptions): GroveTool[] {
   return [
@@ -76,6 +77,7 @@ export function workspaceTools(options: WorkspaceToolOptions): GroveTool[] {
     renameTool(options.languages, options.files, options.worktrees),
     shellTool(),
     ...webTools(),
+    askUserTool(),
     callTool()
   ]
 }

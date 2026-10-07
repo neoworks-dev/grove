@@ -15,6 +15,20 @@
   let isFullScreen = $state(false)
   const fullScreenLabel = $derived(labelForFullScreen(isFullScreen))
 
+  // Which build this is: the commit tells an installed app from a dev checkout,
+  // which share a version number.
+  const versionLabel = buildLabel()
+  const versionTitle = `Grove ${__APP_VERSION__}, commit ${__APP_COMMIT__}, built ${__APP_BUILT_AT__}`
+
+  /** Version and commit, marked when running from the dev server. */
+  function buildLabel(): string {
+    const label = `v${__APP_VERSION__} · ${__APP_COMMIT__}`
+    if (import.meta.env.DEV) {
+      return `${label} · dev`
+    }
+    return label
+  }
+
   /** The fullscreen button's label: what pressing it would do. */
   function labelForFullScreen(fullScreen: boolean): string {
     if (fullScreen) {
@@ -47,6 +61,9 @@
 </script>
 
 <div class="flex items-center justify-end gap-0.5">
+  <span class="mr-1 select-text font-mono text-2xs text-dim" title={versionTitle}
+    >{versionLabel}</span
+  >
   <button
     class="flex h-6 w-7 items-center justify-center rounded-md text-dim hover:bg-hover hover:text-default"
     title="Settings"

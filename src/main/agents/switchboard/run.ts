@@ -27,7 +27,7 @@ import type {
   ToolCallUpdate,
   Usage as SwitchboardUsage
 } from '@neoworks/harness'
-import type { AgentMode, IdleReason, ThinkingLevel, Usage } from '../../../shared/agents'
+import type { AgentMode, DeliverAs, IdleReason, ThinkingLevel, Usage } from '../../../shared/agents'
 import type {
   ApprovalDecision,
   GroveTool,
@@ -38,6 +38,7 @@ import type {
 } from '../harness'
 import { toolNameOf } from '../acpLog'
 import { CALL_TOOL, dispatchedCall } from '../tools/toolSearchTools'
+import { ASK_USER } from '../tools/questionTools'
 import { groveToolName, type BoundServer, type ToolBinding } from './mcpServer'
 import type { SwitchboardHost } from './host'
 import { TerminalRelay } from './terminalRelay'
@@ -108,7 +109,11 @@ export class SwitchboardRun implements HarnessRun {
     return this.session.id
   }
 
-  /** Open the harness session, resuming the stored conversation when there is one. */
+  /**
+   * Open the harness session: a copy of the stored conversation cut short when
+   * the session was taken back to an earlier message, the stored conversation
+   * when there is one, or a new one.
+   */
   async start(): Promise<void> {
     const switchboard = await this.host.switchboard()
     const harnesses = await switchboard.listHarnesses()
@@ -116,9 +121,13 @@ export class SwitchboardRun implements HarnessRun {
     if (info) this.capabilities = info.capabilities
     this.bound = await this.host.toolServer.bind(this.toolBinding())
     const init = await this.sessionInit(this.bound)
+    const resumeKey = this.options.resumeKey
+    const forkAt = this.options.forkAt
     let session: HarnessSession
-    if (this.options.resumeKey) {
-      session = await switchboard.resumeSession(this.options.resumeKey, init)
+    if (resumeKey && forkAt) {
+      session = await switchboard.forkSession(resumeKey, init, { upToMessageId: forkAt })
+    } else if (resumeKey) {
+      session = await switchboard.resumeSession(resumeKey, init)
     } else {
       session = await switchboard.createSession(init)
     }
@@ -133,7 +142,16 @@ export class SwitchboardRun implements HarnessRun {
     return Promise.resolve()
   }
 
-  async steer(text: string): Promise<void> {
+  /** Delivers into the running turn; images go along as ACP content, as with a prompt. */
+  async steer(
+    text: string,
+    _deliverAs?: DeliverAs,
+    attachments: PromptAttachment[] = []
+  ): Promise<void> {
+    if (attachments.length > 0) {
+      await this.requireSession().steer(promptContent(text, attachments))
+      return
+    }
     await this.requireSession().steer(text)
   }
 
@@ -200,7 +218,10 @@ export class SwitchboardRun implements HarnessRun {
       return { ...options, systemPrompt: { ...recorded } }
     }
     if (options.systemPrompt) {
-      this.options.emit({ type: 'session.system_prompt', systemPrompt: { ...options.systemPrompt } })
+      this.options.emit({
+        type: 'session.system_prompt',
+        systemPrompt: { ...options.systemPrompt }
+      })
     }
     return options
   }
@@ -243,9 +264,14 @@ export class SwitchboardRun implements HarnessRun {
     })
   }
 
-  /** Plan mode keeps the session to looking: the profile's tools that change things are off. */
+  /**
+   * Plan mode keeps the session to looking: the profile's tools that change
+   * things are off. Asking the user is held for an answer too, but changes
+   * nothing, so it stays.
+   */
   private refusalOf(tool: GroveTool, profileTools: GroveTool[]): string | null {
     if (this.mode !== 'plan') return null
+    if (tool.name === ASK_USER) return null
     if (tool.policy !== 'ask' || !profileTools.includes(tool)) return null
     return `${tool.name} is not available in plan mode. Present the plan instead.`
   }
@@ -269,7 +295,13 @@ export class SwitchboardRun implements HarnessRun {
   private finishTurn(turn: PromiseLike<PromptResult>, result: PromptResult): void {
     if (this.turn === turn) this.turn = null
     const notice = stopNotice(result.stopReason)
-    if (notice) this.options.emit({ type: 'session.notice', message: notice })
+    if (notice && result.stopReason === 'refusal') {
+      // The refused prompt stays in the conversation and gets every later one
+      // refused too; marked, the notice offers to reword it instead.
+      this.options.emit({ type: 'session.notice', message: notice, refusal: true })
+    } else if (notice) {
+      this.options.emit({ type: 'session.notice', message: notice })
+    }
     this.options.emit({ type: 'session.status_idle', stopReason: idleReasonOf(result.stopReason) })
   }
 
@@ -440,7 +472,9 @@ export class SwitchboardRun implements HarnessRun {
     if (this.capabilities?.editedInput) return { outcome, updatedInput: decision.input }
     // A harness that runs a call only as it asked is told what the user
     // changed instead, and makes the call again.
-    this.tellAgent(`The user changed that call before allowing it. Make it again with this input:\n${JSON.stringify(decision.input)}`)
+    this.tellAgent(
+      `The user changed that call before allowing it. Make it again with this input:\n${JSON.stringify(decision.input)}`
+    )
     return 'reject'
   }
 
@@ -477,7 +511,11 @@ export class SwitchboardRun implements HarnessRun {
 
   // ── Totals ──────────────────────────────────────────────────────
 
-  /** The session's totals, as switchboard keeps them across turns. */
+  /**
+   * The session's totals, exactly as switchboard keeps them: across turns, and
+   * starting over when the conversation does (`/clear`), when it sends empty
+   * totals and no context. Grove only takes them as given.
+   */
   private absorbUsage(event: Extract<HarnessEvent, { type: 'usage' }>): void {
     const total = event.total
     this.usage = {
@@ -486,10 +524,13 @@ export class SwitchboardRun implements HarnessRun {
       cacheReadTokens: countOf(total.cacheRead),
       cacheWriteTokens: countOf(total.cacheWrite)
     }
-    if (typeof total.costUsd === 'number') this.cost = total.costUsd
+    this.cost = countOf(total.costUsd)
     if (event.context) {
       this.contextUsed = event.context.used
       this.contextWindow = event.context.size
+    } else {
+      // Nothing in context yet: a fresh conversation. The window keeps its size.
+      this.contextUsed = 0
     }
     this.reportStats()
   }

@@ -13,6 +13,7 @@ import type {
   DockLayoutState
 } from '../shared/types'
 import type { DebugBreakpoint } from '../shared/debug'
+import { withRecent } from './recentRepos'
 
 export type { InstalledExtension }
 
@@ -65,12 +66,16 @@ export interface RepoState {
 
 export interface AppState {
   lastRepoPath: string | null
+  // Repositories opened before, most recent first, for File › Recent Projects.
+  recentRepoPaths: string[]
   repos: Record<string, RepoState> // repoPath -> state
   extensions: InstalledExtension[]
 }
 
+
 const EMPTY_STATE: AppState = {
   lastRepoPath: null,
+  recentRepoPaths: [],
   repos: {},
   extensions: []
 }
@@ -149,8 +154,21 @@ export async function updateRepoState(
   return next
 }
 
-export async function setLastRepo(repoPath: string): Promise<void> {
+/**
+ * Records a repository as the one to reopen on launch and moves it to the front
+ * of the recent list, which it returns so the caller can push it to the renderer.
+ */
+export async function setLastRepo(repoPath: string): Promise<string[]> {
   const state = await loadState()
   state.lastRepoPath = repoPath
+  state.recentRepoPaths = withRecent(state.recentRepoPaths, repoPath)
+  await saveState(state)
+  return state.recentRepoPaths
+}
+
+/** Forgets every recent repository; the open one stays the launch default. */
+export async function clearRecentRepos(): Promise<void> {
+  const state = await loadState()
+  state.recentRepoPaths = []
   await saveState(state)
 }

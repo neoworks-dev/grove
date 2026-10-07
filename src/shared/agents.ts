@@ -11,10 +11,7 @@
 // run produces (`ServerEventBody`). Both are persisted, so replaying the log
 // reconstructs the whole conversation.
 
-import type {
-  RequestPermissionRequest,
-  SessionUpdate as AcpSessionUpdate
-} from '@neoworks/harness'
+import type { RequestPermissionRequest, SessionUpdate as AcpSessionUpdate } from '@neoworks/harness'
 import type { TreeFileChange } from './types'
 
 export type SessionStatus = 'idle' | 'running' | 'terminated'
@@ -111,6 +108,12 @@ export type ClientEventBody =
   | { type: 'user.command'; name: string; args: string }
   | { type: 'user.compact' }
   | { type: 'user.unqueue'; messageId: string }
+  /**
+   * Take the conversation back to the event at `fromSeq` (0 for its start), so
+   * what follows continues from there; the log keeps what came after. Sent
+   * before the message that replaces the one being edited. Only where the
+   * harness has `rewind`.
+   */
   | { type: 'user.branch'; fromSeq: number }
   | { type: 'user.shell'; command: string; share?: boolean }
   /**
@@ -145,9 +148,15 @@ export type GroveEventBody =
   | { type: 'session.status_idle'; stopReason: IdleReason }
   | { type: 'session.status_terminated'; reason: string }
   | { type: 'session.error'; message: string }
-  | { type: 'session.notice'; message: string }
+  | {
+      type: 'session.notice'
+      message: string
+      /** The turn ended in the model refusing it, so the prompt that started it is worth rewording. */
+      refusal?: boolean
+    }
   | { type: 'session.info_changed'; changed: string[] }
   | { type: 'session.forked'; childSessionId: string; afterSeq: number }
+  /** The conversation now continues from `fromSeq`; whatever followed it is off the path shown. */
   | { type: 'session.branched'; fromSeq: number }
   | {
       type: 'session.shell_result'
@@ -582,6 +591,16 @@ export interface ToolDisplay {
   languageFrom?: string
   /** The call changes a file, so it keeps a row of its own rather than folding into a summary. */
   edits?: boolean
+  /**
+   * The call is part of the agent's answer (a card of the places it is about), so
+   * the prose around it reads as one answer and a finished turn keeps all of it.
+   */
+  answer?: boolean
+  /**
+   * The call puts what it did on screen as a surface of its own, so once it has
+   * succeeded its row would only repeat it and is left out.
+   */
+  surface?: boolean
 }
 
 /**
@@ -677,6 +696,11 @@ export interface HarnessCapabilities {
   groveMode: boolean
   /** Images attached to a message reach the model. */
   attachments: boolean
+  /**
+   * The conversation can be taken back to before an earlier message and carried
+   * on from there (`user.branch`), so a sent message can be edited and rerun.
+   */
+  rewind: boolean
 }
 
 /**
@@ -773,6 +797,10 @@ export interface PromptAttribution {
   prompt: string
   /** When the edit was made. */
   at: string
+  /** What the agent said the change was for; '' when it gave no explanation. */
+  explanation: string
+  /** What the agent said and thought in the turn before the edit; '' for none. */
+  reasoning: string
   /** Whether the session can still be opened. */
   sessionExists: boolean
 }

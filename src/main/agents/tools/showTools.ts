@@ -107,7 +107,7 @@ function locationsTool(): GroveTool {
       additionalProperties: false
     },
     policy: 'allow',
-    display: { label: '{title}', input: 'hidden', result: 'hidden' },
+    display: { label: '{title}', input: 'hidden', result: 'hidden', answer: true, surface: true },
     alwaysLoad: true,
 
     async execute(input, context) {

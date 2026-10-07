@@ -21,12 +21,9 @@
   import { highlightCodeSync, warmLanguage } from '../../../../lib/highlight'
   import { selectionRef } from '../../../../lib/inlineEditRef'
   import { store } from '../../../../lib/store.svelte'
-  import type {
-    ClientEventBody,
-    FileBlock,
-    UserContentBlock
-  } from '../../../../lib/agents/types'
-  import type { Snippet } from 'svelte'
+  import type { ClientEventBody, FileBlock, UserContentBlock } from '../../../../lib/agents/types'
+  import { onDestroy, type Snippet } from 'svelte'
+  import { SentDrafts } from '../../../../lib/agents/sentDrafts'
   import ArrowCounterClockwise from 'phosphor-svelte/lib/ArrowCounterClockwise'
   import ImageMarkup from './ImageMarkup.svelte'
   import type { Mark } from '../../../../lib/agents/imageMarkup'
@@ -56,6 +53,7 @@
     onCycleMode,
     onBack,
     onLeaveDown,
+    onTakeBack,
     header
   }: {
     sessionId: string
@@ -95,6 +93,12 @@
      * line when not stepping through history; says whether anything took focus.
      */
     onLeaveDown?: () => boolean
+    /**
+     * Take back the newest message still waiting for the agent, returning its text,
+     * or null when none is waiting. Offered from an empty draft, ahead of history:
+     * a message not yet taken up is the one most likely to want rewording.
+     */
+    onTakeBack?: () => string | null
     /** Drawn flush on top of the prompt box, as its top section: the notes list. */
     header?: Snippet
   } = $props()
@@ -354,13 +358,43 @@
     if (events.length === 0) return
 
     onSend(events)
+    if (!keepSent(submission, events)) forgetAttachments(attachments)
     draft = ''
-    forgetAttachments(attachments)
     attachments = []
     references = []
     historyIndex = -1
     suggestions = []
   }
+
+  // Messages sent while the agent is busy wait before it reads them, and until
+  // then can be taken back. Their drafts are kept so taking one back restores it
+  // as written: images with their marks still editable, slices still attached.
+  const sentDrafts = new SentDrafts<KeptDraft>(8)
+
+  interface KeptDraft {
+    draft: string
+    attachments: ComposerImage[]
+    references: FileBlock[]
+  }
+
+  /** Keeps a message sent mid-turn for taking back; says whether its images were kept. */
+  function keepSent(
+    submission: ReturnType<typeof parseSubmission>,
+    events: ClientEventBody[]
+  ): boolean {
+    if (!running || events[0]?.type !== 'user.message') return false
+    let text = ''
+    if (submission?.kind === 'message') text = submission.text
+    const kept = { draft, attachments, references: activeReferences() }
+    for (const evicted of sentDrafts.keep(sessionId, text, kept)) {
+      forgetAttachments(evicted.attachments)
+    }
+    return true
+  }
+
+  onDestroy(() => {
+    for (const kept of sentDrafts.clear()) forgetAttachments(kept.attachments)
+  })
 
   /** Everything riding along with the message: attached slices, then images. */
   function carriedBlocks(): UserContentBlock[] {
@@ -423,6 +457,16 @@
       onBack()
       return
     }
+    if (
+      event.key === 'ArrowUp' &&
+      draft.length === 0 &&
+      attachments.length === 0 &&
+      historyIndex < 0 &&
+      takeBack()
+    ) {
+      event.preventDefault()
+      return
+    }
     if (event.key === 'ArrowUp' && draft.length === 0 && history.length > 0) {
       event.preventDefault()
       stepHistory(-1)
@@ -441,6 +485,21 @@
     if (event.key === 'ArrowDown' && caretOnLastLine() && onLeaveDown?.()) {
       event.preventDefault()
     }
+  }
+
+  /** Moves a waiting message back into the draft; says whether there was one. */
+  function takeBack(): boolean {
+    const text = onTakeBack?.() ?? null
+    if (text === null) return false
+    const kept = sentDrafts.take(sessionId, text)
+    if (kept === null) {
+      draft = text
+      return true
+    }
+    draft = kept.draft
+    attachments = kept.attachments
+    references = kept.references
+    return true
   }
 
   /** Whether the caret sits on the draft's last line, where ArrowDown has nowhere left to go. */
@@ -511,7 +570,11 @@
    * Keeps what the markup editor made: the marks, and the picture they make
    * uploaded in place of the original. No marks puts the original back.
    */
-  async function finishMarkup(target: ComposerImage, marks: Mark[], picture: Blob | null): Promise<void> {
+  async function finishMarkup(
+    target: ComposerImage,
+    marks: Mark[],
+    picture: Blob | null
+  ): Promise<void> {
     closeMarkup()
     if (!picture) {
       replaceAttachment(withoutMarkup(target))

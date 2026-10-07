@@ -15,7 +15,8 @@
   import { store } from '../lib/store.svelte'
   import { extensionOf } from '../lib/fileUrl'
   import type { FileViewerProps } from '../lib/fileViewers.svelte'
-  import type { FileViewerMessage, FileViewerTheme } from '../../../shared/plugins'
+  import type { FileViewerMessage } from '../../../shared/plugins'
+  import { currentPageTheme, replayPageKey } from './pageFrame'
 
   let { worktreeId, path, src, options }: FileViewerProps = $props()
 
@@ -34,7 +35,7 @@
       if (!frameEl || event.source !== frameEl.contentWindow) return
       const message = event.data as FileViewerMessage
       if (message?.type === 'grove.viewer.ready') pageReady = true
-      if (message?.type === 'grove.viewer.key') replayKey(message)
+      if (message?.type === 'grove.viewer.key') replayPageKey(frameEl, message)
     }
     window.addEventListener('message', listener)
     return () => window.removeEventListener('message', listener)
@@ -52,27 +53,8 @@
   $effect(() => {
     void store.activeTheme
     if (!pageReady) return
-    post({ type: 'grove.viewer.theme', theme: currentTheme() })
+    post({ type: 'grove.viewer.theme', theme: currentPageTheme() })
   })
-
-  /**
-   * Replays a key from the page as if pressed on the frame, so Grove's key
-   * dispatch — which listens on the window — sees it. Keys inside a sandboxed
-   * frame never reach this document on their own.
-   */
-  function replayKey(message: Extract<FileViewerMessage, { type: 'grove.viewer.key' }>): void {
-    const event = new KeyboardEvent('keydown', {
-      key: message.key,
-      code: message.code,
-      ctrlKey: message.ctrlKey,
-      altKey: message.altKey,
-      shiftKey: message.shiftKey,
-      metaKey: message.metaKey,
-      bubbles: true,
-      cancelable: true
-    })
-    frameEl?.dispatchEvent(event)
-  }
 
   /** Reads the file as the plugin and transfers its bytes to the page. */
   async function sendFile(fileWorktreeId: string, filePath: string): Promise<void> {
@@ -88,7 +70,7 @@
         name,
         extension: extensionOf(filePath),
         bytes,
-        theme: currentTheme()
+        theme: currentPageTheme()
       }
       frameEl?.contentWindow?.postMessage(message, '*', [bytes])
     } catch (cause) {
@@ -113,35 +95,6 @@
   /** Posts a message to the page. Its origin is opaque, hence '*'. */
   function post(message: FileViewerMessage): void {
     frameEl?.contentWindow?.postMessage(message, '*')
-  }
-
-  /** The theme's colours, in the shape a viewer page is promised. */
-  function currentTheme(): FileViewerTheme {
-    const style = getComputedStyle(document.documentElement)
-    const background = cssValue(style, '--bg')
-    return {
-      dark: isDark(background),
-      background,
-      surface: cssValue(style, '--surface'),
-      text: cssValue(style, '--text'),
-      textMuted: cssValue(style, '--text-muted'),
-      border: cssValue(style, '--border'),
-      accent: cssValue(style, '--primary')
-    }
-  }
-
-  /** A custom property's value on the document, trimmed. */
-  function cssValue(style: CSSStyleDeclaration, name: string): string {
-    return style.getPropertyValue(name).trim()
-  }
-
-  /** Whether a #rrggbb colour is dark; anything else is taken as dark. */
-  function isDark(color: string): boolean {
-    const match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(color)
-    if (!match) return true
-    const [red, green, blue] = match.slice(1).map((part) => parseInt(part, 16))
-    const luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue
-    return luminance < 128
   }
 </script>
 

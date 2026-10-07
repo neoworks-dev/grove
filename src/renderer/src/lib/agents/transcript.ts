@@ -46,6 +46,8 @@ export interface UserItem {
    * reaches the model with the next message the agent starts.
    */
   pending: boolean
+  /** A slash command, read back as the line typed; it ran as the command, not as this text. */
+  command?: boolean
 }
 
 export interface AgentItem {
@@ -140,6 +142,30 @@ export interface NoticeItem {
   eventId: string
   tone: 'info' | 'error'
   text: string
+  /** The turn ended in the model refusing it; the notice offers to reword the prompt. */
+  refusal?: boolean
+}
+
+export type CompactionStatus = 'running' | 'completed' | 'failed' | 'cancelled'
+
+/**
+ * The harness shrinking its context: one row from the moment it starts, which
+ * every later report on the same compaction updates in place, as ACP has it.
+ */
+export interface CompactionItem {
+  kind: 'compaction'
+  seq: number
+  eventId: string
+  compactionId: string
+  status: CompactionStatus
+  /** `/compact` asked for it, or the harness ran out of room; null when not said. */
+  trigger: 'manual' | 'automatic' | null
+  /** The context before and after, in tokens, when the harness reports them. */
+  tokensBefore: number | null
+  tokensAfter: number | null
+  /** What the conversation was reduced to, when the harness shows it. */
+  summary: string
+  error: string
 }
 
 /** An extension's own UI. `slot` decides whether it belongs in the conversation or beside it. */
@@ -153,7 +179,7 @@ export interface SurfaceItem {
 }
 
 export type TranscriptItem =
-  UserItem | AppItem | AgentItem | ToolItem | ShellItem | NoticeItem | SurfaceItem
+  UserItem | AppItem | AgentItem | ToolItem | ShellItem | NoticeItem | CompactionItem | SurfaceItem
 
 export interface TranscriptState {
   /** Every item ever created, in seq order — including branches not currently in play. */
@@ -171,6 +197,12 @@ export interface TranscriptState {
   tasks: AgentTask[]
   /** Agent messages held off this sleeping session until the user decides (wakeGate.ts). */
   held: HeldMessage[]
+  /**
+   * The seq the latest turn started at: its `session.status_running`. A message
+   * steered into a turn lands after it, a message that started one before it,
+   * which is how the pane tells the two apart.
+   */
+  turnStartSeq: number
 }
 
 const ROOT = 0
@@ -186,7 +218,8 @@ export function createTranscript(): TranscriptState {
     lastSeq: 0,
     notes: [],
     tasks: [],
-    held: []
+    held: [],
+    turnStartSeq: ROOT
   }
 }
 
@@ -194,10 +227,27 @@ export function createTranscript(): TranscriptState {
  * What to render: the path from the head back to the root, in transcript order.
  *
  * Panel surfaces are held in the same list — one array keeps the fold and its reactivity simple —
- * but they are not part of the conversation, so they are not part of this.
+ * but they are not part of the conversation, so they are not part of this. Nor is a message the
+ * agent has not taken up yet: it waits above the composer (`waitingMessages`) and joins the
+ * conversation where the agent takes it.
  */
 export function visibleItems(state: TranscriptState): TranscriptItem[] {
-  return active(state).filter((item) => item.kind !== 'surface' || item.slot !== 'panel')
+  return active(state).filter((item) => !isPanel(item) && !isWaiting(item))
+}
+
+/** Messages written mid-turn that the agent has not taken up yet, oldest first. */
+export function waitingMessages(state: TranscriptState): UserItem[] {
+  return active(state).filter((item): item is UserItem => isWaiting(item))
+}
+
+/** Whether an item is a panel surface, which sits beside the conversation rather than in it. */
+function isPanel(item: TranscriptItem): boolean {
+  return item.kind === 'surface' && item.slot === 'panel'
+}
+
+/** Whether an item is a user message still waiting for the agent to take it up. */
+function isWaiting(item: TranscriptItem): boolean {
+  return item.kind === 'user' && item.pending
 }
 
 function active(state: TranscriptState): TranscriptItem[] {
@@ -262,6 +312,19 @@ export function toolCallOut(state: TranscriptState): boolean {
   )
 }
 
+/** Whether the harness is compacting its context, which the compaction's own row shows. */
+export function compacting(state: TranscriptState): boolean {
+  return visibleItems(state).some((item) => item.kind === 'compaction' && item.status === 'running')
+}
+
+/** The seq the turn in flight started at, or null when no turn is running. */
+export function turnInFlightSince(state: TranscriptState): number | null {
+  if (state.status !== 'running') {
+    return null
+  }
+  return state.turnStartSeq
+}
+
 export function applyEvent(state: TranscriptState, event: SessionEvent): void {
   // Replay and live stream overlap by design; the seq guard makes the fold idempotent.
   if (event.seq <= state.lastSeq) {
@@ -315,6 +378,7 @@ export function applyEvent(state: TranscriptState, event: SessionEvent): void {
   applyTool(state, event)
   applyShell(state, event)
   applyNotice(state, event)
+  applyCompaction(state, event)
   applySurface(state, event)
 }
 
@@ -339,26 +403,37 @@ function recomputeActive(state: TranscriptState): void {
 function applyStatus(state: TranscriptState, event: SessionEvent): void {
   if (event.type === 'session.status_running') {
     state.status = 'running'
+    state.turnStartSeq = event.seq
     state.stopReason = null
   }
   if (event.type === 'session.status_idle') {
     state.status = 'idle'
     state.stopReason = event.stopReason
     closeOpenAgentItem(state)
+    endCompactions(state)
   }
   if (event.type === 'session.status_terminated') {
     state.status = 'terminated'
     closeOpenAgentItem(state)
+    endCompactions(state)
   }
 }
 
 /**
  * A message the agent starts is a new request to the model, and that request
- * carries everything written to it so far: nothing is waiting any more.
+ * carries everything written to it so far: nothing is waiting any more. The
+ * waiting messages move to the end of the list, so they read where the agent
+ * took them up rather than where they were typed.
  */
 function markUserMessagesTaken(state: TranscriptState): void {
-  for (const item of state.items) {
-    if (item.kind === 'user' && item.pending) item.pending = false
+  const taken = state.items.filter((item): item is UserItem => isWaiting(item))
+  if (taken.length === 0) {
+    return
+  }
+  state.items = state.items.filter((item) => !isWaiting(item))
+  for (const item of taken) {
+    item.pending = false
+    state.items.push(item)
   }
 }
 
@@ -389,7 +464,8 @@ function applyMessage(state: TranscriptState, event: SessionEvent): void {
       text: commandLine(event.name, event.args),
       attachments: [],
       references: [],
-      pending: false
+      pending: false,
+      command: true
     })
   }
   if (event.type === 'app.message') {
@@ -724,6 +800,7 @@ function applyNotice(state: TranscriptState, event: SessionEvent): void {
   }
   if (event.type === 'session.notice') {
     pushNotice(state, event, 'info', event.message)
+    if (event.refusal === true) markRefusal(state)
   }
   if (event.type === 'session.status_terminated') {
     pushNotice(state, event, 'info', `Session terminated: ${event.reason}`)
@@ -731,18 +808,138 @@ function applyNotice(state: TranscriptState, event: SessionEvent): void {
   if (event.type === 'user.interrupt') {
     pushNotice(state, event, 'info', 'Interrupted.')
   }
-  if (
-    event.type === 'update' &&
-    event.update.sessionUpdate === 'compaction_update' &&
-    event.update.status === 'completed'
-  ) {
-    pushNotice(state, event, 'info', 'Context compacted.')
-  }
   if (event.type === 'update' && event.update.sessionUpdate === 'notice') {
     pushNotice(state, event, 'info', noticeText(event.update.title, event.update.description))
   }
   if (event.type === 'session.forked') {
     pushNotice(state, event, 'info', `Forked into a new session at seq ${event.afterSeq}.`)
+  }
+}
+
+type CompactionUpdate = Extract<AcpSessionUpdate, { sessionUpdate: 'compaction_update' }>
+
+/**
+ * Compaction as ACP reports it: the first update for an id places the row, and
+ * later ones patch it in place. Summary chunks stream into it meanwhile.
+ */
+function applyCompaction(state: TranscriptState, event: SessionEvent): void {
+  if (event.type !== 'update') {
+    return
+  }
+  const update = event.update
+  if (update.sessionUpdate === 'compaction_update') {
+    patchCompaction(compactionFor(state, event, update.compactionId), update)
+  }
+  if (update.sessionUpdate === 'compaction_summary_chunk') {
+    const compaction = findCompaction(state, update.compactionId)
+    if (compaction) compaction.summary += chunkText(update.content)
+  }
+}
+
+/**
+ * Folds an update into its row. `summary`, `error` and `_meta` are patches:
+ * left alone when absent, cleared by `null`. Claude sends a compaction's
+ * outcome twice, the second time only to add the token counts.
+ */
+function patchCompaction(compaction: CompactionItem, update: CompactionUpdate): void {
+  const status = compactionStatusOf(update.status)
+  if (status) compaction.status = status
+  if (update.summary !== undefined) {
+    compaction.summary = textOfBlocks(update.summary)
+  }
+  if (update.error !== undefined) {
+    compaction.error = ''
+    if (update.error !== null) compaction.error = update.error
+  }
+  if (update._meta !== undefined) {
+    applyCompactionFacts(compaction, update._meta)
+  }
+}
+
+/** The row's status for an ACP one; null for a status this fold does not know. */
+function compactionStatusOf(status: string): CompactionStatus | null {
+  if (status === 'in_progress') return 'running'
+  if (status === 'completed' || status === 'failed' || status === 'cancelled') return status
+  return null
+}
+
+function textOfBlocks(blocks: AcpContentBlock[] | null): string {
+  if (blocks === null) return ''
+  return blocks.map(chunkText).join('')
+}
+
+/**
+ * The facts claude-agent-acp, codex-acp and pi attach under
+ * `_meta.contextCompaction`. `_meta` replaces what was there, so a fact it
+ * leaves out is gone.
+ */
+function applyCompactionFacts(
+  compaction: CompactionItem,
+  meta: { [key: string]: unknown } | null
+): void {
+  const facts = recordOf(meta?.contextCompaction)
+  compaction.trigger = triggerOf(facts.trigger)
+  compaction.tokensBefore = tokenCountOf(facts.preTokens)
+  compaction.tokensAfter = tokenCountOf(facts.postTokens)
+}
+
+function recordOf(value: unknown): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null) return {}
+  return value as Record<string, unknown>
+}
+
+function triggerOf(value: unknown): CompactionItem['trigger'] {
+  if (value === 'manual' || value === 'automatic') return value
+  return null
+}
+
+function tokenCountOf(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null
+  return value
+}
+
+/** The row for a compaction, created on first sight. */
+function compactionFor(
+  state: TranscriptState,
+  event: SessionEvent,
+  compactionId: string
+): CompactionItem {
+  const existing = findCompaction(state, compactionId)
+  if (existing) {
+    return existing
+  }
+  closeOpenAgentItem(state)
+  const compaction: CompactionItem = {
+    kind: 'compaction',
+    seq: event.seq,
+    eventId: event.id,
+    compactionId,
+    status: 'running',
+    trigger: null,
+    tokensBefore: null,
+    tokensAfter: null,
+    summary: '',
+    error: ''
+  }
+  state.items.push(compaction)
+  return compaction
+}
+
+/** Searches the branch in play, as `findTool` does. */
+function findCompaction(state: TranscriptState, compactionId: string): CompactionItem | undefined {
+  return active(state).findLast(
+    (item): item is CompactionItem =>
+      item.kind === 'compaction' && item.compactionId === compactionId
+  )
+}
+
+/**
+ * A turn that ended took its compaction with it. The harness should have said
+ * so; one that crashed never will, and the row must not spin on forever.
+ */
+function endCompactions(state: TranscriptState): void {
+  for (const item of active(state)) {
+    if (item.kind === 'compaction' && item.status === 'running') item.status = 'cancelled'
   }
 }
 
@@ -753,6 +950,12 @@ function pushNotice(
   text: string
 ): void {
   state.items.push({ kind: 'notice', seq: event.seq, eventId: event.id, tone, text })
+}
+
+/** The notice just pushed is a refusal. */
+function markRefusal(state: TranscriptState): void {
+  const notice = state.items[state.items.length - 1]
+  if (notice?.kind === 'notice') notice.refusal = true
 }
 
 function noticeText(title: string, description: string | null | undefined): string {
@@ -812,10 +1015,11 @@ function findTool(state: TranscriptState, toolUseId: string): ToolItem | undefin
   return undefined
 }
 
+/** The last item on the branch in play; a waiting message is not in the conversation yet. */
 function lastActiveItem(state: TranscriptState): TranscriptItem | undefined {
   for (let index = state.items.length - 1; index >= 0; index -= 1) {
     const item = state.items[index]
-    if (item !== undefined && state.activeSeqs.has(item.seq)) {
+    if (item !== undefined && state.activeSeqs.has(item.seq) && !isWaiting(item)) {
       return item
     }
   }

@@ -2,7 +2,7 @@
 // left alone, and how a run describes itself.
 
 import { describe, expect, test } from 'bun:test'
-import { tallyOf, toTranscriptRows } from '../src/renderer/src/lib/agents/toolRuns'
+import { tallyOf, toTranscriptRows, turnRows } from '../src/renderer/src/lib/agents/toolRuns'
 import type { ToolItem, TranscriptItem } from '../src/renderer/src/lib/agents/transcript'
 
 let nextSeq = 0
@@ -148,5 +148,21 @@ describe('a group of calls to one tool', () => {
       browserGroup
     )
     expect(rows.map((row) => row.kind)).toEqual(['callGroup', 'item', 'callGroup'])
+  })
+})
+
+describe('the turn in flight', () => {
+  const browserGroup = (call: ToolItem): string | null => (call.name === 'browser' ? 'browser' : null)
+
+  test('shows every call on its own row, never a run or a group', () => {
+    const items = [tool('Read'), tool('Read'), tool('browser'), tool('browser'), tool('Bash')]
+    const rows = turnRows(items, false, () => false, browserGroup)
+    expect(rows.map((row) => row.kind)).toEqual(['item', 'item', 'item', 'item', 'item'])
+  })
+
+  test('folds its runs once it has settled', () => {
+    const items = [tool('Read'), tool('Read'), tool('browser'), tool('browser')]
+    const rows = turnRows(items, true, () => false, browserGroup)
+    expect(rows.map((row) => row.kind)).toEqual(['toolRun', 'callGroup'])
   })
 })

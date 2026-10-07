@@ -68,22 +68,19 @@ import { AgentHandoffBridge } from './agents/handoffBridge'
 import { AgentRoster } from './agents/roster'
 import { WakeGate, catalogPricing } from './agents/wakeGate'
 import { EditStepRecorder, promptAt, stepsRef } from './agents/editSteps'
+import { rationaleOf } from './agents/editRationale'
 import { PromptBlame } from './promptBlame'
 import type { AgentWorktrees } from './agents/tools/worktreeTools'
 import { runSetup } from './routes/worktrees'
 import { agentSection, section } from './agents/systemPrompt'
+import { rootInstructionsSection } from './agents/projectInstructions'
 import { groveTools } from './agents/tools'
 import { browserTools } from './agents/tools/browserTools'
 import { BrowserService } from './browser'
 import { BrowserProviderService } from './browserProviders'
 import { providerOrPane } from './agents/tools/browserBackends'
 import { BrowserHostInstaller } from './browserHostInstaller'
-
-interface RepoContext {
-  repoPath: string | null
-  config: WorkbenchConfig | null
-  worktrees: Worktree[]
-}
+import { refreshRepoWorktrees, type RepoContext } from './repoContext'
 
 const context: RepoContext = { repoPath: null, config: null, worktrees: [] }
 
@@ -195,7 +192,10 @@ const browserHostInstaller = new BrowserHostInstaller({
   configHome: configHome(),
   userData: app.getPath('userData'),
   electronBinary: nodeRunnableBinary(),
-  hostScript: shippedResource(join('browser-host', 'host.cjs'), join('browser-host', 'dist', 'host.cjs')),
+  hostScript: shippedResource(
+    join('browser-host', 'host.cjs'),
+    join('browser-host', 'dist', 'host.cjs')
+  ),
   extensionSource: shippedResource('chrome-extension', 'chrome-extension')
 })
 void browserHostInstaller.refresh().catch((error: Error) => {
@@ -242,7 +242,9 @@ const agents = new AgentService({
       conflicts: conflictProposals,
       skills: () => aiBridge.skillList()
     }),
-    ...browserTools(providerOrPane(browserProviders, browser), { helpersPath: join(app.getPath('userData'), 'browser-helpers.js') }),
+    ...browserTools(providerOrPane(browserProviders, browser), {
+      helpersPath: join(app.getPath('userData'), 'browser-helpers.js')
+    }),
     ...aiBridge.pluginTools()
   ],
   systemPrompt: (session) => buildSystemPrompt(session),
@@ -302,21 +304,27 @@ async function createWorktreeForAgent(branch: string, base: string | undefined):
   return created
 }
 
-/** A session's context sections: who it is here, who else is, and plugin skills. */
+/**
+ * A session's context sections: who it is here, who else is, plugin skills,
+ * and — in grove mode, where no harness reads them itself — the worktree
+ * root's AGENTS.md / CLAUDE.md.
+ */
 async function buildSystemPrompt(session: {
   id: string
   title: string
   workspaceRoot: string
+  groveMode?: boolean
 }): Promise<string> {
-  const [agentId, peers, relatives] = await Promise.all([
+  const [agentId, peers, relatives, instructions] = await Promise.all([
     agentRoster.agentIdOf(session.id),
     agentRoster.peers(session.workspaceRoot),
-    agentRoster.relativesElsewhere(session.id)
+    agentRoster.relativesElsewhere(session.id),
+    session.groveMode ? rootInstructionsSection(session.workspaceRoot) : Promise.resolve('')
   ])
   const agent = agentSection({ agentId, title: session.title, peers, relatives })
   // Skills plugins registered are listed to every agent run, read on demand.
   const skills = section('skills', aiBridge.skillListing())
-  return [agent, skills].filter((part) => part.length > 0).join('\n\n')
+  return [instructions, agent, skills].filter((part) => part.length > 0).join('\n\n')
 }
 
 // Hands a spawned agent's closing words back to the agent that started it.
@@ -348,13 +356,14 @@ const promptBlame = new PromptBlame({
   sharingNotes: () => settings.get<boolean>('git.sharePromptBlame') === true
 })
 
-/** Hands a new step, with the prompt its turn answered, to prompt blame. */
+/** Hands a new step, with the prompt its turn answered and the agent's reasons, to prompt blame. */
 async function recordPromptBlame(sessionId: string, step: AgentEditStep): Promise<void> {
   const session = sessionStore.peek(sessionId)
   if (!session) return
-  const turn = promptAt(sessionStore.peekEvents(sessionId), step.turnSeq)
+  const events = sessionStore.peekEvents(sessionId)
+  const turn = promptAt(events, step.turnSeq)
   await promptBlame
-    .recordStep(session.workspaceRoot, session, step, turn)
+    .recordStep(session.workspaceRoot, session, step, turn, rationaleOf(events, step))
     .catch((error: Error) => console.error(`[blame] recording a step failed: ${error.message}`))
 }
 
@@ -499,7 +508,10 @@ eventHub.registerTopicScope('services.', 'services.read')
 
 const apiRegistry = new RouteRegistry()
 registerWorkspaceRoutes(apiRegistry)
-registerBrowserRoutes(apiRegistry, { providers: browserProviders, worktrees: () => context.worktrees })
+registerBrowserRoutes(apiRegistry, {
+  providers: browserProviders,
+  worktrees: () => context.worktrees
+})
 registerAiRoutes(apiRegistry, { aiBridge })
 registerStorageRoutes(apiRegistry, {
   storagePath: () => join(app.getPath('userData'), 'plugin-storage.json')
@@ -752,10 +764,9 @@ function pluginList(): unknown[] {
   }))
 }
 
-async function refreshWorktrees(): Promise<Worktree[]> {
-  const { repoPath, config: cfg } = requireRepo()
-  context.worktrees = await worktrees.listWithPorts(repoPath, cfg)
-  return context.worktrees
+/** Re-lists the open repo's worktrees; repoContext.ts says why this is not a plain assignment. */
+function refreshWorktrees(): Promise<Worktree[]> {
+  return refreshRepoWorktrees(context, worktrees.listWithPorts)
 }
 
 // Open a repo: validate, load config, remember it, list worktrees.
@@ -764,12 +775,12 @@ async function openRepo(repoPath: string): Promise<{
   worktrees: Worktree[]
 }> {
   if (!(await git.isGitRepo(repoPath))) {
-    throw new Error('not a git repository')
+    throw new Error(`${repoPath} is not a git repository`)
   }
   const root = await git.repoRoot(repoPath)
   context.repoPath = root
   context.config = await config.loadConfig(root)
-  await setLastRepo(root)
+  send('event:recent-repos', await setLastRepo(root))
   await settings.attachRepo(root)
   await pluginRegistry.loadAll(root)
   send('event:plugins-changed', pluginList())

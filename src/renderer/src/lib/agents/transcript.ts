@@ -405,6 +405,10 @@ function applyStatus(state: TranscriptState, event: SessionEvent): void {
     state.status = 'running'
     state.turnStartSeq = event.seq
     state.stopReason = null
+    // The turn's prompt carries whatever was waiting (after an interrupt, the
+    // service restarts with the steers the harness dropped), so those messages
+    // are sent now, not when the first reply text arrives seconds later.
+    markUserMessagesTaken(state)
   }
   if (event.type === 'session.status_idle') {
     state.status = 'idle'

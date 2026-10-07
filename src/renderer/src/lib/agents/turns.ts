@@ -24,6 +24,19 @@ function isAnswer(row: TranscriptRow): boolean {
   return row.kind === 'item' && row.item.kind === 'agent' && row.item.text.length > 0
 }
 
+/** An agent row with reasoning and no prose: work, unless it leads into a card of the answer. */
+function isThought(row: TranscriptRow): boolean {
+  if (row.kind !== 'item' || row.item.kind !== 'agent') {
+    return false
+  }
+  return row.item.text.length === 0 && row.item.thinking.length > 0
+}
+
+/** A surface in the transcript: what a call that drew one shows instead of its own row. */
+function isSurface(row: TranscriptRow): boolean {
+  return row.kind === 'item' && row.item.kind === 'surface'
+}
+
 /**
  * Rows that are the turn working rather than talking: settled calls, runs of them, and the
  * agent's interim messages.
@@ -56,7 +69,9 @@ function isWork(row: TranscriptRow, standsAlone: (call: ToolItem) => boolean): b
  *
  * The answer is the agent's last message, and the messages before it that only a call
  * `partOfAnswer` names stands between: an answer the agent split around a card of
- * locations is one answer, and folding its first half would cut it off mid-sentence.
+ * locations is one answer, and folding its first half would cut it off mid-sentence. A
+ * thought directly before such a card counts as that first half: models sometimes write
+ * the prose that introduces the card as reasoning, and Grove shows reasoning in full.
  */
 export function foldTurn(
   rows: TranscriptRow[],
@@ -70,13 +85,13 @@ export function foldTurn(
   if (lastAnswer < 0) {
     return { hidden: [], kept: rows }
   }
-  const answerStart = startOfAnswer(rows, lastAnswer, standsAlone, partOfAnswer)
+  const answerRows = rowsOfAnswer(rows, lastAnswer, standsAlone, partOfAnswer)
 
   const hidden: TranscriptRow[] = []
   const kept: TranscriptRow[] = []
   for (let index = 0; index < rows.length; index++) {
     const row = rows[index]
-    const inAnswer = index >= answerStart && index <= lastAnswer && isAnswer(row)
+    const inAnswer = answerRows.has(index)
     if (!inAnswer && isWork(row, standsAlone)) {
       hidden.push(row)
       continue
@@ -87,27 +102,39 @@ export function foldTurn(
 }
 
 /**
- * Where the answer ending at `lastAnswer` begins: walking back over the agent's messages,
- * rows that are not work, and calls that are part of the answer, up to the first real work.
+ * The indices of the rows that make up the answer ending at `lastAnswer`: walking back over
+ * the agent's messages and the thoughts that lead into a card of the answer, passing over
+ * rows that are not work, other thoughts and calls that are part of the answer, up to the
+ * first real work.
  */
-function startOfAnswer(
+function rowsOfAnswer(
   rows: TranscriptRow[],
   lastAnswer: number,
   standsAlone: (call: ToolItem) => boolean,
   partOfAnswer: (call: ToolItem) => boolean
-): number {
-  let start = lastAnswer
+): Set<number> {
+  const answer = new Set([lastAnswer])
+  let followsCard = false
   for (let index = lastAnswer - 1; index >= 0; index--) {
     const row = rows[index]
-    if (isAnswer(row)) {
-      start = index
+    if (isAnswer(row) || (followsCard && isThought(row))) {
+      answer.add(index)
+      followsCard = false
       continue
     }
-    if (isWork(row, standsAlone) && !callsAll(row, partOfAnswer)) {
+    if (isSurface(row)) {
+      followsCard = true
+      continue
+    }
+    if (!isWork(row, standsAlone) || isThought(row)) {
+      continue
+    }
+    if (!callsAll(row, partOfAnswer)) {
       break
     }
+    followsCard = true
   }
-  return start
+  return answer
 }
 
 /** Whether a row is tool calls only, every one of them named by `predicate`. */

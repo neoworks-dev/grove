@@ -1279,7 +1279,7 @@ return vim.api.nvim_get_current_win() ~= before
             <div
               class={isTransientFloat(floating)
                 ? 'absolute overflow-hidden'
-                : 'group absolute overflow-hidden rounded-lg border border-line bg-elevated shadow-2xl'}
+                : 'group absolute overflow-hidden rounded-lg border border-line bg-surface shadow-2xl'}
               style={floatStyle(floating)}
             >
               <!-- Only a float the cursor is in needs a way out by mouse; a

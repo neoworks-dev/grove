@@ -5,7 +5,7 @@
 // The editor already knows: mason-lspconfig enables a server for every one
 // Mason installed, with the command and filetypes nvim-lspconfig gives it. So
 // rather than keeping a list of its own that drifts from the editor's, Grove
-// asks the editor's profile, run headless (see GROVE_LSP_DUMP in init.lua), for
+// asks the editor's profile, run headless (see GROVE_LSP_DUMP in lua/grove/language_dump.lua), for
 // those servers and for the filetype nvim gives each file extension. A file's
 // language is then nvim's filetype, which is also the LSP language id nvim
 // sends, so both sides name `.svelte` and `.tsx` the same way.
@@ -45,7 +45,7 @@ const DUMP_TIMEOUT_MS = 60_000
  */
 const REREAD_AFTER_MISS_MS = 60_000
 
-/** Reads the dump init.lua writes; anything malformed is left out rather than trusted. */
+/** Reads the dump language_dump.lua writes; anything malformed is left out rather than trusted. */
 export function parseEditorLanguages(text: string): EditorLanguages {
   let parsed: unknown
   try {

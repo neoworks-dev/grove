@@ -2,7 +2,7 @@
 // plugins, completion binary, mason tools and treesitter parsers on first use;
 // done inside an editor, every progress message became a hit-enter prompt and
 // every pane installed at once. So grove runs the config once, headless, before
-// the first editor starts (see "First-run setup" in init.lua), and every spawn
+// the first editor starts (see "First-run setup" in lua/grove/provision.lua), and every spawn
 // waits for that one run. A stamp keyed on what the config installs skips it on
 // later launches and brings it back when that changes.
 

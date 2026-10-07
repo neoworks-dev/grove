@@ -8,7 +8,7 @@
 --                                    the state without waiting for a change.
 --   grove_debug_toggle_breakpoint    a click in the gutter.
 --   grove_debug_edit_breakpoint      a right-click in the gutter (through
---                                    init.lua's right-click handler), or
+--                                    popup_menu.lua's right-click handler), or
 --                                    M.edit_at_cursor(): the renderer opens the
 --                                    breakpoint editor over that screen row.
 --   grove_debug_breakpoints_moved    after a write, where each breakpoint's
@@ -206,7 +206,7 @@ local function request_edit(buffer, line, screen_row, screen_col)
 end
 
 --- A right-click in the gutter edits that line's breakpoint. Called by
---- init.lua's right-click handler first; true when the click was the gutter's.
+--- popup_menu.lua's right-click handler first; true when the click was the gutter's.
 function M.gutter_right_click()
   local mouse = vim.fn.getmousepos()
   if not in_gutter(mouse) then

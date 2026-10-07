@@ -165,6 +165,21 @@ describe('transcript fold', () => {
     expect(waitingMessages(taken)).toEqual([])
   })
 
+  test('a message waiting when a turn stops joins the conversation as the next turn starts', () => {
+    const state = fold([
+      { type: 'user.message', content: [{ type: 'text', text: 'go' }] },
+      { type: 'session.status_running' },
+      chunk('on it', 'm1'),
+      { type: 'user.message', content: [{ type: 'text', text: 'also this' }] },
+      { type: 'user.interrupt' },
+      { type: 'session.status_idle', stopReason: 'aborted' },
+      { type: 'session.status_running' }
+    ])
+
+    expect(waitingMessages(state)).toEqual([])
+    expect(textsOf(visibleItems(state))).toContain('also this')
+  })
+
   test('a new harness conversation empties the transcript without losing the log', () => {
     const state = fold([
       { type: 'user.message', content: [{ type: 'text', text: 'first' }] },

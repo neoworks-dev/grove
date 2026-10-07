@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { relativePath } from '../src/renderer/src/lib/paths'
+import { relativeInside, relativePath } from '../src/renderer/src/lib/paths'
 
 describe('relativePath', () => {
   it('strips the worktree base from an absolute path', () => {
@@ -23,5 +23,36 @@ describe('relativePath', () => {
 
   it('returns the absolute path when the base is empty', () => {
     expect(relativePath('', '/home/user/project/a.ts')).toBe('/home/user/project/a.ts')
+  })
+})
+
+describe('relativeInside', () => {
+  it('relativizes an absolute path inside the worktree', () => {
+    expect(relativeInside('/repo', '/repo/src/app.ts')).toBe('src/app.ts')
+  })
+
+  it('takes a relative path against the worktree', () => {
+    expect(relativeInside('/repo', 'src/./app.ts')).toBe('src/app.ts')
+  })
+
+  it('returns null for a relative path that climbs out', () => {
+    expect(relativeInside('/repo', '../other/a.ts')).toBeNull()
+  })
+
+  it('returns null for an absolute path that climbs out through the root', () => {
+    expect(relativeInside('/repo', '/repo/../other/a.ts')).toBeNull()
+  })
+
+  it('returns null for a path elsewhere on disk or in a sibling directory', () => {
+    expect(relativeInside('/repo', '/etc/hosts')).toBeNull()
+    expect(relativeInside('/repo', '/repo-two/a.ts')).toBeNull()
+  })
+
+  it('keeps a `..` that stays inside the worktree', () => {
+    expect(relativeInside('/repo/', '/repo/src/../lib/a.ts')).toBe('lib/a.ts')
+  })
+
+  it('returns an empty path for the root itself', () => {
+    expect(relativeInside('/repo', '/repo/')).toBe('')
   })
 })

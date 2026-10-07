@@ -61,13 +61,33 @@
     }
   })
 
-  // Insert separators where the group changes.
-  function withSeparators(items: MenuItem[]): { item: MenuItem; separator: boolean }[] {
+  interface MenuEntry {
+    item: MenuItem
+    separator: boolean
+    heading: string | null
+  }
+
+  /** Marks where the group changes, for a separator and the group's heading if it has one. */
+  function withSeparators(items: MenuItem[]): MenuEntry[] {
     return items.map((item, index) => {
       const previous = items[index - 1]
-      const separator = index > 0 && (previous.group ?? '') !== (item.group ?? '')
-      return { item, separator }
+      const startsGroup = index === 0 || (previous.group ?? '') !== (item.group ?? '')
+      const separator = index > 0 && startsGroup
+      let heading: string | null = null
+      if (startsGroup) {
+        heading = groupHeading(items, item.group ?? '')
+      }
+      return { item, separator, heading }
     })
+  }
+
+  /** The first heading any visible item of the group declares, or null. */
+  function groupHeading(items: MenuItem[], group: string): string | null {
+    const labelled = items.find((entry) => (entry.group ?? '') === group && entry.groupLabel)
+    if (!labelled?.groupLabel) {
+      return null
+    }
+    return labelled.groupLabel
   }
 </script>
 
@@ -94,8 +114,12 @@
             {#if entry.separator}
               <div class="my-1 border-t border-line"></div>
             {/if}
+            {#if entry.heading}
+              <div class="px-3 pb-0.5 pt-1 text-2xs uppercase tracking-wide text-dim">{entry.heading}</div>
+            {/if}
             <button
               class="flex w-full items-center gap-3 px-3 py-1.5 text-left text-xs text-muted hover:bg-hover hover:text-default"
+              title={entry.item.detail}
               onclick={() => runItem(entry.item)}
             >
               <span class="flex-1 truncate">{entry.item.label}</span>

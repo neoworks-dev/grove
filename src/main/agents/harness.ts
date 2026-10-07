@@ -182,6 +182,13 @@ export interface HarnessRunOptions {
   groveMode: boolean
   /** The harness-native conversation id from a previous grove run, if any. */
   resumeKey: string | null
+  /**
+   * An agent message of the `resumeKey` conversation, as its ACP `messageId`, to
+   * continue from rather than from the end: the run opens a copy of the
+   * conversation that stops after it, and that copy becomes its `resumeKey`.
+   * Only handed to a harness with `rewind`.
+   */
+  forkAt?: string
   tools: GroveTool[]
   /**
    * The session's context as tagged system prompt sections — its name among
@@ -276,8 +283,12 @@ export interface HarnessRun {
    * get told they cannot, rather than having the ask silently dropped.
    */
   command?(name: string, args: string): Promise<void>
-  /** Deliver into a turn already in flight; only when `capabilities.steering`. */
-  steer?(text: string, deliverAs: DeliverAs): Promise<void>
+  /**
+   * Deliver into a turn already in flight; only when `capabilities.steering`.
+   * Takes the message's images like `prompt` does, so one attached mid-turn
+   * reaches the model rather than being dropped on the way.
+   */
+  steer?(text: string, deliverAs: DeliverAs, attachments?: PromptAttachment[]): Promise<void>
   interrupt(): Promise<void>
   setModel?(provider: string | null, model: string): Promise<void>
   setThinkingLevel?(level: ThinkingLevel): Promise<void>

@@ -7,6 +7,7 @@
   import { openScratch } from '../../../lib/nvim/scratch.svelte'
   import { fileIcon, folderIcon } from '../../../lib/icons'
   import { diagnostics, SEVERITY } from '../../../lib/diagnostics.svelte'
+  import { relativeInside } from '../../../lib/paths'
   import ContextMenu, { type MenuItem } from '../../../components/ContextMenu.svelte'
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
   import type { FileNode, DiffFile } from '../../../../../shared/types'
@@ -213,9 +214,13 @@
   })
 
   // ── Reveal (from the search overlays) ──────────────────────────
-  // Expand every ancestor directory of a worktree-relative path, then select
-  // and scroll its row into view.
-  async function reveal(relPath: string): Promise<void> {
+  // Expand every ancestor directory of a path, then select and scroll its row
+  // into view. The path is normalized against the worktree first: a buffer can
+  // live outside it (an agent editing `../sibling/file`), and such a path has no
+  // row here — listing its ancestors would only be rejected by the host.
+  async function reveal(path: string): Promise<void> {
+    const relPath = relativeInside(store.selectedWorktree?.path || '', path)
+    if (!relPath) return
     const parts = relPath.split('/')
     let rel = ''
     for (let depth = 0; depth < parts.length - 1; depth++) {
@@ -249,11 +254,7 @@
     // Run untracked: reveal reads and writes `expanded` (via the spread), which
     // would otherwise make this effect depend on state it mutates → an infinite
     // update loop when expanding nested paths.
-    untrack(() => {
-      const root = store.selectedWorktree?.path || ''
-      const rel = active.startsWith(`${root}/`) ? active.slice(root.length + 1) : active
-      void reveal(rel)
-    })
+    untrack(() => void reveal(active))
   })
 
   // Row background: cursor row is the strong neutral highlight; other rows in

@@ -10,7 +10,8 @@ import type {
   OverlayHandler,
   OverlayItem,
   SurfaceNode,
-  McpToolSpec
+  McpToolSpec,
+  PanePageHandler
 } from '../../../../../sdk/src/api'
 import { GROVE_API_VERSION } from '../../../../../sdk/src/protocol'
 import type { RpcEndpoint, RpcToken } from '../rpc'
@@ -31,10 +32,24 @@ function bridgeToken(token: RpcToken): CancellationToken {
   }
 }
 
+// Host→worker traffic for one page pane instance.
+interface PageEvent {
+  kind: 'open' | 'message' | 'close'
+  paneId: string
+  instanceId: string
+  data?: unknown
+}
+
+const MAX_PENDING_PAGE_EVENTS = 1000
+
 export function buildGroveApi(rpc: RpcEndpoint, pluginId: string): GroveApi {
   const commandHandlers = new Map<string, (...args: unknown[]) => unknown>()
   const overlayHandlers = new Map<string, OverlayHandler>()
   const paneRenderers = new Map<string, (token: CancellationToken) => Promise<SurfaceNode>>()
+  const pageHandlers = new Map<string, PanePageHandler>()
+  // Page traffic for panes with no handler yet, replayed on registerPage, so
+  // a plugin may register its page handler whenever it likes.
+  const pendingPageEvents = new Map<string, PageEvent[]>()
   const mcpTools = new Map<string, McpToolSpec>()
   const settingsSubscribers = new Map<string, Set<(value: unknown) => void>>()
 
@@ -73,6 +88,27 @@ export function buildGroveApi(rpc: RpcEndpoint, pluginId: string): GroveApi {
     if (!renderer) return { type: 'text', text: 'No renderer registered.' }
     return renderer(bridgeToken(context.token))
   })
+
+  const dispatchPageEvent = (event: PageEvent): void => {
+    const handler = pageHandlers.get(event.paneId)
+    if (!handler) {
+      const pending = pendingPageEvents.get(event.paneId) ?? []
+      pending.push(event)
+      if (pending.length > MAX_PENDING_PAGE_EVENTS) pending.shift()
+      pendingPageEvents.set(event.paneId, pending)
+      return
+    }
+    const instance = { instanceId: event.instanceId }
+    if (event.kind === 'open') handler.onOpen?.(instance)
+    else if (event.kind === 'close') handler.onClose?.(instance)
+    else void handler.onMessage(event.data, instance)
+  }
+  for (const kind of ['open', 'message', 'close'] as const) {
+    rpc.onEvent(`pane:${kind}`, (payload) => {
+      const { paneId, instanceId, data } = payload as Omit<PageEvent, 'kind'>
+      dispatchPageEvent({ kind, paneId, instanceId, data })
+    })
+  }
 
   rpc.handle('mcp:invokeTool', async (params) => {
     const { tool, input } = params as { tool: string; input: unknown }
@@ -185,6 +221,18 @@ export function buildGroveApi(rpc: RpcEndpoint, pluginId: string): GroveApi {
       },
       update(id) {
         void rpc.request('host.updatePane', { id })
+      },
+      registerPage(id, handler) {
+        pageHandlers.set(id, handler)
+        const pending = pendingPageEvents.get(id) ?? []
+        pendingPageEvents.delete(id)
+        for (const event of pending) dispatchPageEvent(event)
+        return toDisposable(() => {
+          if (pageHandlers.get(id) === handler) pageHandlers.delete(id)
+        })
+      },
+      postMessage(id, data, options) {
+        void rpc.request('host.postPaneMessage', { id, data, instanceId: options?.instanceId })
       }
     },
 

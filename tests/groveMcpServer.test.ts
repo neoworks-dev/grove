@@ -138,6 +138,28 @@ describe('the MCP server', () => {
     await client.close()
   })
 
+  test('a call its tool cannot describe fails with the reason, without asking or running', async () => {
+    const server = new GroveMcpServer()
+    servers.push(server)
+    let ran = false
+    const edit = tool('edit', 'ask', {
+      describe: () => Promise.reject(new Error('1 line has changed since the last read')),
+      execute: () => {
+        ran = true
+        return { content: '' }
+      }
+    })
+    const { bound, asked } = binding([edit], () => ({ result: 'allow' }))
+    const client = await connect(server, bound)
+
+    const result = await client.callTool({ name: 'edit', arguments: {} })
+    expect(result.isError).toBe(true)
+    expect(textOf(result)).toContain('changed since the last read')
+    expect(asked).toHaveLength(0)
+    expect(ran).toBe(false)
+    await client.close()
+  })
+
   test('a declined call fails with the reason, without running', async () => {
     const server = new GroveMcpServer()
     servers.push(server)

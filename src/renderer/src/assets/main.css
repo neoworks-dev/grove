@@ -873,20 +873,30 @@
   outline: none;
 }
 
-/* An agent's answer in the transcript: the dominant text of the pane, at the
-   design system's body size. Cards, tool rows and metadata around it stay at
-   --text-xs and below, so the words outrank the chrome. Surfaces rendered as
-   cards keep the compact defaults above. */
-.agent-markdown.prose.agent-message {
+/* What the agent says in the transcript — its answer and its reasoning — is the
+   dominant text of the pane, at the design system's body size, the same as the
+   messages around it. Tool rows and metadata stay at --text-xs and below, so
+   the words outrank the chrome. Surfaces rendered as cards keep the compact
+   defaults above. */
+.agent-markdown.prose:is(.agent-message, .agent-thinking) {
   font-size: var(--text-base);
 }
-.agent-markdown.prose.agent-message :where(h1, h2) {
+.agent-markdown.prose:is(.agent-message, .agent-thinking) :where(h1, h2) {
   font-size: var(--text-md);
 }
-.agent-markdown.prose.agent-message :where(h3, h4) {
+.agent-markdown.prose:is(.agent-message, .agent-thinking) :where(h3, h4) {
   font-size: var(--text-base);
 }
-.agent-markdown.prose.agent-message pre,
-.agent-markdown.prose.agent-message :not(pre) > code {
+.agent-markdown.prose:is(.agent-message, .agent-thinking) pre,
+.agent-markdown.prose:is(.agent-message, .agent-thinking) :not(pre) > code {
   font-size: var(--text-xs);
+}
+
+/* The agent's reasoning, a step quieter than its answer: muted rather than
+   default, at the same size. */
+.agent-markdown.prose.agent-thinking {
+  --tw-prose-body: var(--text-muted);
+  --tw-prose-headings: var(--text-muted);
+  --tw-prose-bold: var(--text-muted);
+  --tw-prose-code: var(--text-muted);
 }

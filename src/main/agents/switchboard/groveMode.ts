@@ -14,6 +14,7 @@ import type { GroveTool, HarnessRunOptions } from '../harness'
 import { workspaceTools } from '../tools'
 import { EditorWorkspaceFiles } from '../tools/workspaceFiles'
 import { groveModePrompt } from '../systemPrompt'
+import { NestedInstructions, withNestedInstructions } from '../projectInstructions'
 import { effortOf, permissionPolicyOf } from './run'
 
 const EXTRAS_OFF: Feature[] = [
@@ -57,9 +58,14 @@ export function groveModeOptions(
   return sessionOptions
 }
 
-/** The workspace tools a grove mode session is served, made fresh for each session. */
+/**
+ * The workspace tools a grove mode session is served, made fresh for each
+ * session — which also gives each session its own record of the directories
+ * whose AGENTS.md / CLAUDE.md it has been handed.
+ */
 export function groveModeTools(ctx: Context): GroveTool[] {
   const worktrees = (): { id: string; path: string }[] => ctx.workbench.worktrees
   const files = new EditorWorkspaceFiles(ctx.documents, worktrees)
-  return workspaceTools({ files, languages: ctx.lsp, worktrees })
+  const nested = new NestedInstructions(() => worktrees().map((worktree) => worktree.path))
+  return withNestedInstructions(workspaceTools({ files, languages: ctx.lsp, worktrees }), nested)
 }

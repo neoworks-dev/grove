@@ -4,25 +4,29 @@
     onCancel
   }: {
     messages: { id: string; text: string }[]
-    onCancel: (id: string) => void
+    /** Absent for messages already handed to the harness, which cannot be taken back. */
+    onCancel?: (id: string) => void
   } = $props()
 </script>
 
-<!-- Messages waiting for the current run to finish; auto-submitted on a clean
-     exit, removable until then. -->
-<div
-  class="flex max-h-20 shrink-0 flex-wrap gap-1 overflow-auto border-t border-line bg-elevated px-3 py-1.5"
->
+<!-- Messages written while the agent was busy, waiting for it to take them up:
+     queued ones are auto-submitted on a clean exit and removable until then;
+     steered ones reach the model with its next request. Drawn like a sent user
+     message, only muted, since that is what each becomes once taken up. -->
+<div class="flex max-h-32 shrink-0 flex-col gap-1 overflow-auto bg-elevated px-3 py-2">
   {#each messages as message (message.id)}
-    <span
-      class="flex max-w-full items-center gap-1 rounded-full border border-line px-2 py-0.5 text-2xs text-muted"
+    <div
+      class="flex min-w-0 items-start gap-2 text-base text-muted"
+      title={onCancel ? undefined : 'Waiting for the agent to take it up'}
     >
-      <span class="truncate" title={message.text}>{message.text}</span>
-      <button
-        class="shrink-0 text-dim hover:text-red"
-        title="Remove queued message"
-        onclick={() => onCancel(message.id)}>✕</button
-      >
-    </span>
+      <span class="min-w-0 flex-1 truncate" title={message.text}>{message.text}</span>
+      {#if onCancel}
+        <button
+          class="shrink-0 text-dim hover:text-red"
+          title="Remove queued message"
+          onclick={() => onCancel(message.id)}>✕</button
+        >
+      {/if}
+    </div>
   {/each}
 </div>

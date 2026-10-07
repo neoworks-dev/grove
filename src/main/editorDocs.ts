@@ -219,7 +219,19 @@ local tick = vim.api.nvim_buf_get_changedtick(buf)
 if expected ~= vim.NIL and tick ~= expected then
   return { stale = true, currentVersion = tick }
 end
-vim.api.nvim_buf_call(buf, function() vim.cmd('silent keepalt write') end)
+-- Writes exactly the text the caller holds a version of. BufWritePre is where
+-- format-on-save and editorconfig's trimming rewrite the buffer, which would
+-- leave the caller's text stale; BufWritePost still runs, so linters, the
+-- language server and Grove's own write tracking see the save.
+local ignored = vim.o.eventignore
+if ignored == '' then
+  vim.o.eventignore = 'BufWritePre'
+else
+  vim.o.eventignore = ignored .. ',BufWritePre'
+end
+local ok, err = pcall(vim.api.nvim_buf_call, buf, function() vim.cmd('silent keepalt write') end)
+vim.o.eventignore = ignored
+if not ok then error(err, 0) end
 return { version = vim.api.nvim_buf_get_changedtick(buf) }
 `
 

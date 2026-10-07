@@ -28,7 +28,11 @@ import { SwitchboardRun, type RunProfile } from '../src/main/agents/switchboard/
 import type { ServerEventBody } from '../src/shared/agents'
 
 /** A turn the test ends when it likes. */
-function turn(): { run: PromiseLike<PromptResult>; finish(result: PromptResult): void; fail(cause: Error): void } {
+function turn(): {
+  run: PromiseLike<PromptResult>
+  finish(result: PromptResult): void
+  fail(cause: Error): void
+} {
   let finish: (result: PromptResult) => void = () => {}
   let fail: (cause: Error) => void = () => {}
   const run = new Promise<PromptResult>((resolve, reject) => {
@@ -111,6 +115,10 @@ async function started(
     decide?: (request: RequestPermissionRequest) => ApprovalDecision
     profileTools?: GroveTool[]
     editedInput?: boolean
+    resumeKey?: string
+    forkAt?: string
+    /** Records how the run opened its harness session. */
+    opened?: string[]
   } = {}
 ): Promise<Fixture> {
   let session: FakeSession | null = null
@@ -119,8 +127,25 @@ async function started(
     switchboard: () =>
       Promise.resolve({
         listHarnesses: () =>
-          Promise.resolve([{ id: 'claude', available: true, capabilities: { editedInput: options.editedInput === true } }]),
+          Promise.resolve([
+            {
+              id: 'claude',
+              available: true,
+              capabilities: { editedInput: options.editedInput === true }
+            }
+          ]),
         createSession: (init: SessionInit) => {
+          options.opened?.push('create')
+          session = new FakeSession(init)
+          return Promise.resolve(session)
+        },
+        resumeSession: (sessionId: string, init: SessionInit) => {
+          options.opened?.push(`resume ${sessionId}`)
+          session = new FakeSession(init)
+          return Promise.resolve(session)
+        },
+        forkSession: (sessionId: string, init: SessionInit, point?: { upToMessageId: string }) => {
+          options.opened?.push(`fork ${sessionId} up to ${point?.upToMessageId}`)
           session = new FakeSession(init)
           return Promise.resolve(session)
         }
@@ -154,7 +179,8 @@ async function started(
     activeTools: null,
     permissionMode: 'default',
     groveMode: false,
-    resumeKey: null,
+    resumeKey: options.resumeKey ?? null,
+    forkAt: options.forkAt,
     tools: [],
     systemPrompt: '',
     emit: (body) => emitted.push(body),
@@ -197,6 +223,19 @@ const chunk: SessionUpdate = {
 }
 
 describe('a switchboard run', () => {
+  test('a steer with images hands them to the harness as content', async () => {
+    const { run, session } = await started()
+    await run.prompt('go')
+    await run.steer('look', 'steer', [{ mediaType: 'image/png', data: 'AQID' }])
+
+    expect(session.steered).toEqual([
+      [
+        { type: 'text', text: 'look' },
+        { type: 'image', mimeType: 'image/png', data: 'AQID' }
+      ]
+    ])
+  })
+
   test('logs what the harness reports as it came, between running and idle', async () => {
     const { run, session, emitted } = await started()
     await run.prompt('go')
@@ -211,9 +250,34 @@ describe('a switchboard run', () => {
     ])
   })
 
+  test('opens a copy cut at the agent message a rewind kept, rather than resuming it all', async () => {
+    const opened: string[] = []
+    await started({ resumeKey: 'conversation-1', forkAt: 'msg-1', opened })
+    await started({ resumeKey: 'conversation-1', opened })
+    expect(opened).toEqual(['fork conversation-1 up to msg-1', 'resume conversation-1'])
+  })
+
+  test('marks the notice of a refused turn, so it can offer to reword the prompt', async () => {
+    const { run, session, emitted } = await started()
+    await run.prompt('go')
+    session.turns[0].finish({ stopReason: 'refusal' } as PromptResult)
+    await settle()
+    expect(emitted).toContainEqual({
+      type: 'session.notice',
+      message: 'The model declined to continue.',
+      refusal: true
+    })
+  })
+
   test('seeds switchboard with the totals the session already had', async () => {
     const { session } = await started()
-    expect(session.init.usage).toEqual({ input: 10, output: 0, cacheRead: 0, cacheWrite: 0, costUsd: 1 })
+    expect(session.init.usage).toEqual({
+      input: 10,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      costUsd: 1
+    })
   })
 
   test("reports switchboard's running totals and context fill, off the log", async () => {
@@ -306,7 +370,10 @@ describe('a switchboard run', () => {
       title: 'Task',
       rawInput: { subagent_type: 'explore', prompt: 'map the review flow' }
     } as SessionUpdate)
-    const inner = { ...chunk, _meta: { claudeCode: { parentToolUseId: 'task-1' } } } as SessionUpdate
+    const inner = {
+      ...chunk,
+      _meta: { claudeCode: { parentToolUseId: 'task-1' } }
+    } as SessionUpdate
     session.report(inner)
 
     expect(emitted).toHaveLength(1)
@@ -344,7 +411,11 @@ describe('a switchboard run', () => {
 
   test('a deny with a reason refuses the call and hands the agent the reason', async () => {
     const { session } = await started({ decide: () => ({ result: 'deny', reason: 'use rg' }) })
-    const reply = await session.ask({ sessionId: 'harness-1', toolCall: { toolCallId: 'c1', name: 'Bash' }, options: [] })
+    const reply = await session.ask({
+      sessionId: 'harness-1',
+      toolCall: { toolCallId: 'c1', name: 'Bash' },
+      options: []
+    })
     await settle()
 
     expect(reply).toBe('reject')
@@ -356,14 +427,24 @@ describe('a switchboard run', () => {
       editedInput: true,
       decide: () => ({ result: 'allow', input: { command: 'ls -la' } })
     })
-    const reply = await session.ask({ sessionId: 'harness-1', toolCall: { toolCallId: 'c1', name: 'Bash' }, options: [] })
+    const reply = await session.ask({
+      sessionId: 'harness-1',
+      toolCall: { toolCallId: 'c1', name: 'Bash' },
+      options: []
+    })
 
     expect(reply).toEqual({ outcome: 'once', updatedInput: { command: 'ls -la' } })
   })
 
   test('where it cannot, the call is refused and the agent told what to run instead', async () => {
-    const { session } = await started({ decide: () => ({ result: 'allow', input: { command: 'ls -la' } }) })
-    const reply = await session.ask({ sessionId: 'harness-1', toolCall: { toolCallId: 'c1', name: 'Bash' }, options: [] })
+    const { session } = await started({
+      decide: () => ({ result: 'allow', input: { command: 'ls -la' } })
+    })
+    const reply = await session.ask({
+      sessionId: 'harness-1',
+      toolCall: { toolCallId: 'c1', name: 'Bash' },
+      options: []
+    })
     await settle()
 
     expect(reply).toBe('reject')
@@ -374,8 +455,16 @@ describe('a switchboard run', () => {
     const { session, binding, emitted } = await started()
     const diff = { type: 'diff' as const, path: '/w/a.ts', oldText: 'a', newText: 'b' }
     binding.report('c1', { content: [diff] })
-    const text = { type: 'content' as const, content: { type: 'text' as const, text: 'Edited a.ts.' } }
-    session.report({ sessionUpdate: 'tool_call_update', toolCallId: 'c1', status: 'completed', content: [text] })
+    const text = {
+      type: 'content' as const,
+      content: { type: 'text' as const, text: 'Edited a.ts.' }
+    }
+    session.report({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'c1',
+      status: 'completed',
+      content: [text]
+    })
 
     expect(emitted[0]).toEqual({
       type: 'update',

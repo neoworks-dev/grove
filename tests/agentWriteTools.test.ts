@@ -6,13 +6,18 @@
 // edit semantics. grove mode's read, edit and write produce those diffs
 // themselves, and edit by hashline tags.
 
-import { describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'bun:test'
+import { mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 import type { RequestPermissionRequest } from '@neoworks/harness'
 import { writeOf } from '../src/main/agents/reviewBridge'
 import type { GroveTool, GroveToolContext } from '../src/main/agents/harness'
 import { changedRegion, fileTools } from '../src/main/agents/tools/fileTools'
+import { resultContent } from '../src/main/agents/switchboard/mcpServer'
 import { formatAnchor } from '../src/main/agents/tools/hashline/hash'
 import {
+  DiskWorkspaceFiles,
   joinText,
   splitText,
   type FileText,
@@ -194,6 +199,55 @@ describe("grove mode's file tools", () => {
     expect(files.text('/w/new.ts')).toBe('x\n')
     expect(result.content).toBe('Created new.ts (1 lines).')
     expect(described.content).toEqual([{ type: 'diff', path: '/w/new.ts', oldText: null, newText: 'x\n' }])
+  })
+})
+
+const directories: string[] = []
+
+afterEach(() => {
+  for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true })
+})
+
+/** A workspace on disk holding the given files, which the test cleans up. */
+function diskWorkspace(contents: Record<string, Buffer>): GroveToolContext {
+  const directory = mkdtempSync(join(tmpdir(), 'grove-read-'))
+  directories.push(directory)
+  for (const [name, bytes] of Object.entries(contents)) writeFileSync(join(directory, name), bytes)
+  return { ...context, workspaceRoot: directory }
+}
+
+const PNG_BYTES = Buffer.concat([
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  Buffer.from([0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0xff, 0xfe])
+])
+
+describe("grove mode's read, on an image", () => {
+  test('hands the image back as a picture, not its bytes as text', async () => {
+    const workspace = diskWorkspace({ 'shot.png': PNG_BYTES })
+    const result = await toolNamed(new DiskWorkspaceFiles(), 'read').execute({ path: 'shot.png' }, workspace)
+
+    expect(result.isError).toBeUndefined()
+    expect(result.content).not.toContain('PNG')
+    expect(result.images).toEqual([{ data: PNG_BYTES.toString('base64'), mimeType: 'image/png' }])
+    expect(resultContent(result)[1]).toEqual({
+      type: 'image',
+      data: PNG_BYTES.toString('base64'),
+      mimeType: 'image/png'
+    })
+  })
+
+  test('names the type the bytes have, whatever the extension says', async () => {
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10])
+    const workspace = diskWorkspace({ 'photo.png': jpeg })
+    const result = await toolNamed(new DiskWorkspaceFiles(), 'read').execute({ path: 'photo.png' }, workspace)
+    expect(result.images?.[0].mimeType).toBe('image/jpeg')
+  })
+
+  test('a file named like an image that is text reads as text', async () => {
+    const workspace = diskWorkspace({ 'fake.png': Buffer.from('just text\n') })
+    const result = await toolNamed(new DiskWorkspaceFiles(), 'read').execute({ path: 'fake.png' }, workspace)
+    expect(result.images).toBeUndefined()
+    expect(result.content).toBe(`${formatAnchor(1, 'just text')}:just text`)
   })
 })
 

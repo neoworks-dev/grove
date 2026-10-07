@@ -1,0 +1,16 @@
+@import '@grove/plugin-sdk/page.css';
+@import '@xterm/xterm/css/xterm.css';
+
+/* The process terminals sit on the pane's own surface. */
+.xterm .xterm-viewport {
+  background: transparent !important;
+}
+
+@keyframes process-pulse {
+  70% {
+    box-shadow: 0 0 0 4px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}

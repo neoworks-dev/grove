@@ -49,6 +49,19 @@ export interface StoredSession {
   contextUsed?: number
   contextWindow: number
   lastSeq: number
+  /**
+   * The harness cleared its conversation (`/clear`) and no message has reached the
+   * new one yet. It holds nothing, so the session is as open as a new one: another
+   * harness or grove mode can take it over. Absent on sessions never cleared.
+   */
+  cleared?: boolean
+  /**
+   * The conversation was taken back to an earlier message (`user.branch`): the
+   * next run continues `resumeKey` only up to this agent message, as its ACP
+   * `messageId`, and stores the copy it opens as the new `resumeKey`. Kept until
+   * that run has started, so a restart in between still rewinds.
+   */
+  forkAt?: string
 }
 
 export interface CreateRecordOptions {
@@ -73,9 +86,11 @@ const EVENTS_FILE = 'events.jsonl'
  *
  * A resume key is the harness's own conversation id, which only exists once it
  * has answered; tokens are the same evidence for a harness that resumes without
- * one. Either way the transcript now belongs to that runtime.
+ * one. Either way the transcript now belongs to that runtime — unless it was
+ * cleared since, and the conversation it would resume is empty.
  */
 export function hasStarted(session: StoredSession): boolean {
+  if (session.cleared === true) return false
   if (session.resumeKey !== null) return true
   return session.usage.inputTokens + session.usage.outputTokens > 0
 }

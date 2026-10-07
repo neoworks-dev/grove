@@ -7,6 +7,7 @@
 //   receiveFiles((file) => render(new Uint8Array(file.bytes)))
 
 import type { FileViewerMessage, FileViewerTheme } from './protocol'
+import { forwardUnhandledKeys } from './pageKeys'
 
 export type { FileViewerTheme } from './protocol'
 
@@ -42,38 +43,16 @@ export function receiveFiles(
     handleMessage(event.data as FileViewerMessage, onFile, handlers)
   }
   window.addEventListener('message', listener)
-  window.addEventListener('keydown', forwardKey)
+  const stopKeys = forwardUnhandledKeys((key) => {
+    const message: FileViewerMessage = { type: 'grove.viewer.key', ...key }
+    window.parent.postMessage(message, '*')
+  })
   const ready: FileViewerMessage = { type: 'grove.viewer.ready' }
   window.parent.postMessage(ready, '*')
   return () => {
     window.removeEventListener('message', listener)
-    window.removeEventListener('keydown', forwardKey)
+    stopKeys()
   }
-}
-
-/**
- * Passes a key up to Grove unless the page handled it (called
- * preventDefault) or it was typed into a text field.
- */
-function forwardKey(event: KeyboardEvent): void {
-  if (event.defaultPrevented || isTextEntry(event.target)) return
-  const message: FileViewerMessage = {
-    type: 'grove.viewer.key',
-    key: event.key,
-    code: event.code,
-    ctrlKey: event.ctrlKey,
-    altKey: event.altKey,
-    shiftKey: event.shiftKey,
-    metaKey: event.metaKey
-  }
-  window.parent.postMessage(message, '*')
-}
-
-/** Whether keys aimed at `target` are text being typed. */
-function isTextEntry(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false
-  if (target.isContentEditable) return true
-  return target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT'
 }
 
 /** Routes one message from Grove to the handler it is for. */

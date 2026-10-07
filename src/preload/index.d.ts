@@ -208,6 +208,9 @@ export interface WorkbenchApi {
     pick: () => Promise<OpenRepoResult | null>
     open: (repoPath: string) => Promise<OpenRepoResult>
     last: () => Promise<string | null>
+    // Repositories opened before, most recent first.
+    recent: () => Promise<string[]>
+    clearRecent: () => Promise<void>
   }
   worktrees: {
     list: () => Promise<Worktree[]>

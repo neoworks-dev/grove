@@ -1,6 +1,8 @@
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
 import tailwindcss from '@tailwindcss/vite'
+import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 
 // Externalize node deps so the agent SDKs (ESM-only, and they spawn their own
 // CLIs/servers) load from node_modules at runtime via dynamic import() instead
@@ -10,6 +12,24 @@ import tailwindcss from '@tailwindcss/vite'
 // entry, so an externalized require() from the main chunk would fail. It has
 // zero runtime dependencies, so bundling it in costs nothing.
 const bundledDeps = ['@neoworks/extension-system']
+
+/** The commit being built, short, or 'unknown' outside a git checkout. */
+function buildCommit(): string {
+  try {
+    return execFileSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).trim()
+  } catch {
+    return 'unknown'
+  }
+}
+
+// Which build is running, for the top bar: the version alone is the same for an
+// installed app and every dev checkout, so the commit and build time ride along.
+const packageVersion = JSON.parse(readFileSync('package.json', 'utf8')).version as string
+const buildInfo = {
+  __APP_VERSION__: JSON.stringify(packageVersion),
+  __APP_COMMIT__: JSON.stringify(buildCommit()),
+  __APP_BUILT_AT__: JSON.stringify(new Date().toISOString())
+}
 
 export default defineConfig({
   main: {
@@ -30,6 +50,7 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin({ exclude: bundledDeps })]
   },
   renderer: {
-    plugins: [tailwindcss(), svelte()]
+    plugins: [tailwindcss(), svelte()],
+    define: buildInfo
   }
 })

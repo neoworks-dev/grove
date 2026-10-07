@@ -6,8 +6,9 @@
 // rather than carrying the whole page through every later turn. `find` returns
 // the matching sections in the same call, which usually saves that second step.
 //
-// Search scrapes DuckDuckGo's HTML endpoint, with Bing's results page behind it
-// for when DuckDuckGo turns the request away: neither needs a key.
+// Search asks Exa's hosted MCP server, with Brave's results page behind it for
+// when Exa stays throttled or fails: neither needs a key. Both are rate-limited
+// per IP, so each is paced, and one that turns us away sits out a cooldown.
 
 import { createHash } from 'crypto'
 import { mkdir, writeFile } from 'fs/promises'
@@ -23,6 +24,18 @@ const BROWSER_USER_AGENT =
 const REQUEST_TIMEOUT_MS = 20_000
 const DEFAULT_RESULT_COUNT = 8
 const MAX_RESULT_COUNT = 20
+const EXA_MCP_URL = 'https://mcp.exa.ai/mcp'
+const EXA_RETRY_DELAY_MS = 1_500
+/** Exa's free tier lets a few searches through in a burst; this keeps us under it. */
+const EXA_SPACING_MS = 1_000
+const EXA_COOLDOWN_MS = 15_000
+/** Brave turns us away after about ten quick searches, and for longer. */
+const BRAVE_SPACING_MS = 2_000
+const BRAVE_COOLDOWN_MS = 60_000
+/** A search waits at most this long for its turn before trying the next provider. */
+const MAX_QUEUE_WAIT_MS = 10_000
+/** Exa's highlights are long; a result's snippet keeps this much of them. */
+const SNIPPET_CHARACTERS = 500
 /** A page up to this long comes back whole; anything longer goes to a file. */
 const INLINE_CHARACTERS = 12_000
 /** At most this much of the matching sections comes back for `find`. */
@@ -81,7 +94,7 @@ function webSearchTool(): GroveTool {
       }
       const count = countOf(input.count)
       try {
-        const results = await search(query)
+        const results = await search(query, count)
         if (results.length === 0) return { content: `No results for "${query}".` }
         return { content: formatResults(results.slice(0, count)) }
       } catch (cause) {
@@ -106,7 +119,8 @@ function webFetchTool(): GroveTool {
         url: { type: 'string', description: 'The http(s) URL to read.' },
         find: {
           type: 'string',
-          description: 'Words to look for; the sections containing them are returned with the outline.'
+          description:
+            'Words to look for; the sections containing them are returned with the outline.'
         }
       },
       required: ['url'],
@@ -123,7 +137,10 @@ function webFetchTool(): GroveTool {
       try {
         return await fetchPage(url, find, context)
       } catch (cause) {
-        return { content: `Could not fetch ${url.href}: ${(cause as Error).message}`, isError: true }
+        return {
+          content: `Could not fetch ${url.href}: ${(cause as Error).message}`,
+          isError: true
+        }
       }
     }
   }
@@ -131,94 +148,168 @@ function webFetchTool(): GroveTool {
 
 // ── Search ──────────────────────────────────────────────────────
 
-/** Results from DuckDuckGo, or from Bing when DuckDuckGo gives none. */
-async function search(query: string): Promise<SearchResult[]> {
-  let duckDuckGoFailure: Error | null = null
+/** Results from Exa, or from Brave when Exa gives none. */
+async function search(query: string, count: number): Promise<SearchResult[]> {
+  let exaFailure: Error | null = null
   try {
-    const results = await searchDuckDuckGo(query)
+    const results = await searchExa(query, count)
     if (results.length > 0) return results
   } catch (cause) {
-    duckDuckGoFailure = cause as Error
+    exaFailure = cause as Error
   }
   try {
-    return await searchBing(query)
+    return await searchBrave(query)
   } catch (cause) {
-    if (duckDuckGoFailure) throw duckDuckGoFailure
+    if (!exaFailure) throw cause
+    throw new Error(`Exa: ${exaFailure.message}; Brave: ${(cause as Error).message}`)
+  }
+}
+
+class RateLimited extends Error {}
+
+/**
+ * Paces one keyless provider: its requests leave at least `spacingMs` apart, in
+ * the order they asked, and once it rate-limits us it sits out `cooldownMs`, so
+ * searches in the meantime go straight to the next provider.
+ */
+class Pacer {
+  private nextSlot = 0
+  private coolingUntil = 0
+
+  constructor(
+    private readonly name: string,
+    private readonly spacingMs: number,
+    private readonly cooldownMs: number
+  ) {}
+
+  /** Waits for this request's turn; refuses while cooling down or when the queue is long. */
+  async turn(): Promise<void> {
+    const now = Date.now()
+    if (now < this.coolingUntil) {
+      const seconds = Math.ceil((this.coolingUntil - now) / 1000)
+      throw new RateLimited(`${this.name} is cooling down for ${seconds}s`)
+    }
+    const slot = Math.max(now, this.nextSlot)
+    if (slot - now > MAX_QUEUE_WAIT_MS) throw new RateLimited(`${this.name} is busy`)
+    this.nextSlot = slot + this.spacingMs
+    if (slot > now) await sleep(slot - now)
+  }
+
+  coolDown(): void {
+    this.coolingUntil = Date.now() + this.cooldownMs
+  }
+}
+
+const exaPacer = new Pacer('Exa', EXA_SPACING_MS, EXA_COOLDOWN_MS)
+const bravePacer = new Pacer('Brave', BRAVE_SPACING_MS, BRAVE_COOLDOWN_MS)
+
+/** Exa, tried again once after a pause when its free tier throttles the first try. */
+async function searchExa(query: string, count: number): Promise<SearchResult[]> {
+  await exaPacer.turn()
+  try {
+    return await callExa(query, count)
+  } catch (cause) {
+    if (!(cause instanceof RateLimited)) throw cause
+  }
+  await sleep(EXA_RETRY_DELAY_MS)
+  await exaPacer.turn()
+  try {
+    return await callExa(query, count)
+  } catch (cause) {
+    if (cause instanceof RateLimited) exaPacer.coolDown()
     throw cause
   }
 }
 
-async function searchDuckDuckGo(query: string): Promise<SearchResult[]> {
-  const response = await request('https://html.duckduckgo.com/html/', {
+async function callExa(query: string, count: number): Promise<SearchResult[]> {
+  const response = await fetch(EXA_MCP_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ q: query }).toString()
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: 'web_search_exa', arguments: { query, numResults: count } }
+    })
   })
-  return parseDuckDuckGoResults(await response.text())
+  if (response.status === 429) throw new RateLimited('Exa rate limit')
+  if (!response.ok) throw new Error(`HTTP ${response.status}`)
+  const message = exaMessage(await response.text())
+  if (message.error) throw new Error(message.error.message ?? 'Exa error')
+  const result = message.result
+  if (result?._meta?.['ai.exa/rateLimited']) throw new RateLimited('Exa rate limit')
+  if (result?.isError) throw new Error(result.content?.[0]?.text ?? 'Exa error')
+  return parseExaResults(result?.content?.map((part) => part.text ?? '').join('\n') ?? '')
 }
 
-async function searchBing(query: string): Promise<SearchResult[]> {
-  const url = `https://www.bing.com/search?${new URLSearchParams({ q: query, setlang: 'en' })}`
-  const response = await request(url, {})
-  return parseBingResults(await response.text())
+interface ExaMessage {
+  error?: { message?: string }
+  result?: { _meta?: Record<string, unknown>; isError?: boolean; content?: { text?: string }[] }
 }
 
-/** The organic results on DuckDuckGo's HTML page, ads left out. */
-export function parseDuckDuckGoResults(html: string): SearchResult[] {
-  const { document } = parseHTML(html)
+/** The JSON-RPC message in Exa's reply, sent as plain JSON or as a server-sent event. */
+function exaMessage(body: string): ExaMessage {
+  const data = body
+    .split('\n')
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.slice(5).trim())
+    .join('')
+  return JSON.parse(data || body) as ExaMessage
+}
+
+/** Exa's results: `Title:`, `URL:` and `Highlights:` blocks separated by `---`. */
+export function parseExaResults(text: string): SearchResult[] {
   const results: SearchResult[] = []
-  for (const result of document.querySelectorAll('.result')) {
-    if (result.classList.contains('result--ad')) continue
-    const link = result.querySelector('a.result__a')
-    if (!link) continue
-    const url = duckDuckGoTarget(link.getAttribute('href') ?? '')
+  for (const block of text.split(/\n-{3,}\n/)) {
+    const title = /^Title: *(.*)$/m.exec(block)?.[1] ?? ''
+    const url = parsedUrl(/^URL: *(.*)$/m.exec(block)?.[1]?.trim() ?? '')
     if (!url) continue
+    const highlights = /^Highlights:\s*([\s\S]*)$/m.exec(block)?.[1] ?? ''
+    const snippet = cleanText(highlights.replace(/^\.\.\.$/gm, ' '))
     results.push({
-      title: cleanText(link.textContent),
-      url,
-      snippet: cleanText(result.querySelector('.result__snippet')?.textContent)
+      title: cleanText(title) || url.href,
+      url: url.href,
+      snippet:
+        snippet.length > SNIPPET_CHARACTERS ? `${snippet.slice(0, SNIPPET_CHARACTERS)}…` : snippet
     })
   }
   return results
 }
 
-/** The organic results on Bing's results page. */
-export function parseBingResults(html: string): SearchResult[] {
+async function searchBrave(query: string): Promise<SearchResult[]> {
+  await bravePacer.turn()
+  const url = `https://search.brave.com/search?${new URLSearchParams({ q: query, source: 'web' })}`
+  try {
+    const response = await request(url, {})
+    return parseBraveResults(await response.text())
+  } catch (cause) {
+    if (cause instanceof RateLimited) bravePacer.coolDown()
+    throw cause
+  }
+}
+
+/** The web results on Brave's results page. */
+export function parseBraveResults(html: string): SearchResult[] {
   const { document } = parseHTML(html)
   const results: SearchResult[] = []
-  for (const result of document.querySelectorAll('li.b_algo')) {
-    const link = result.querySelector('h2 a')
-    if (!link) continue
-    const url = bingTarget(link.getAttribute('href') ?? '')
+  for (const result of document.querySelectorAll('.snippet[data-type="web"]')) {
+    const url = parsedUrl(result.querySelector('a[href]')?.getAttribute('href') ?? '')
     if (!url) continue
+    const title = result.querySelector('.title')
     results.push({
-      title: cleanText(link.textContent),
-      url,
-      snippet: cleanText(result.querySelector('.b_caption p, p')?.textContent)
+      title: cleanText(title?.getAttribute('title') || title?.textContent) || url.href,
+      url: url.href,
+      snippet: cleanText(
+        result.querySelector('.generic-snippet .content, .snippet-description')?.textContent
+      )
     })
   }
   return results
 }
 
-/** Where a DuckDuckGo result link goes: direct, or through its `/l/?uddg=` redirect. */
-function duckDuckGoTarget(href: string): string | null {
-  if (href.startsWith('http')) return href
-  const redirect = parsedUrl(new URL(href, 'https://duckduckgo.com').href)
-  const target = redirect?.searchParams.get('uddg')
-  if (!target) return null
-  return target
-}
-
-/** Where a Bing result link goes: direct, or through its `/ck/a?u=a1<base64>` redirect. */
-function bingTarget(href: string): string | null {
-  const url = parsedUrl(href)
-  if (!url) return null
-  if (url.hostname !== 'www.bing.com' || !url.pathname.startsWith('/ck/')) return url.href
-  const encoded = url.searchParams.get('u')
-  if (!encoded || !encoded.startsWith('a1')) return null
-  const decoded = Buffer.from(encoded.slice(2), 'base64url').toString('utf8')
-  if (!decoded.startsWith('http')) return null
-  return decoded
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function formatResults(results: SearchResult[]): string {
@@ -239,13 +330,20 @@ function countOf(value: unknown): number {
 // ── Fetching ────────────────────────────────────────────────────
 
 /** Fetch a page and hand it back whole, or saved with its outline when it is long. */
-async function fetchPage(url: URL, find: string, context: GroveToolContext): Promise<GroveToolResult> {
+async function fetchPage(
+  url: URL,
+  find: string,
+  context: GroveToolContext
+): Promise<GroveToolResult> {
   const response = await request(url.href, {})
   const contentType = response.headers.get('content-type') ?? ''
   const body = await response.text()
   const page = pageOf(body, contentType, response.url || url.href)
   if (page === null) {
-    return { content: `${url.href} is ${contentType || 'not text'}, which web_fetch cannot read.`, isError: true }
+    return {
+      content: `${url.href} is ${contentType || 'not text'}, which web_fetch cannot read.`,
+      isError: true
+    }
   }
 
   const header = pageHeader(page.title, response.url || url.href)
@@ -269,7 +367,11 @@ export function pageOf(
   url: string
 ): { title: string; markdown: string } | null {
   if (contentType === '' || contentType.includes('html')) return htmlPage(body, url)
-  if (contentType.startsWith('text/') || contentType.includes('json') || contentType.includes('xml')) {
+  if (
+    contentType.startsWith('text/') ||
+    contentType.includes('json') ||
+    contentType.includes('xml')
+  ) {
     return { title: '', markdown: body.trim() }
   }
   return null
@@ -336,11 +438,17 @@ function absolutise(document: Document, selector: string, attribute: string, url
 }
 
 /** Readability's reading of a document, or null when it finds no article. */
-function readableArticle(document: Document): { title: string; content: string; textContent: string } | null {
+function readableArticle(
+  document: Document
+): { title: string; content: string; textContent: string } | null {
   try {
     const article = new Readability(document).parse()
     if (!article || !article.content) return null
-    return { title: article.title ?? '', content: article.content, textContent: article.textContent ?? '' }
+    return {
+      title: article.title ?? '',
+      content: article.content,
+      textContent: article.textContent ?? ''
+    }
   } catch {
     return null
   }
@@ -404,7 +512,9 @@ export function outlineOf(lines: string[]): OutlineEntry[] {
 
 function formatOutline(outline: OutlineEntry[]): string {
   if (outline.length === 0) return '(no headings)'
-  return outline.map((entry) => `${'  '.repeat(entry.level - 1)}${entry.line}: ${entry.text}`).join('\n')
+  return outline
+    .map((entry) => `${'  '.repeat(entry.level - 1)}${entry.line}: ${entry.text}`)
+    .join('\n')
 }
 
 /**
@@ -417,7 +527,10 @@ export function matchingSections(lines: string[], find: string): string {
     .split(/\s+/)
     .filter((word) => word.length > 0)
   const scored = sectionsOf(lines)
-    .map((section) => ({ ...section, score: scoreOf(section.text.toLowerCase(), find.toLowerCase(), words) }))
+    .map((section) => ({
+      ...section,
+      score: scoreOf(section.text.toLowerCase(), find.toLowerCase(), words)
+    }))
     .filter((section) => section.score > 0)
     .sort((left, right) => right.score - left.score)
   if (scored.length === 0) return `Nothing matches "${find}".`
@@ -477,6 +590,7 @@ async function request(url: string, init: RequestInit): Promise<Response> {
       ...(init.headers as Record<string, string> | undefined)
     }
   })
+  if (response.status === 429) throw new RateLimited('HTTP 429')
   if (!response.ok) throw new Error(`HTTP ${response.status}`)
   return response
 }

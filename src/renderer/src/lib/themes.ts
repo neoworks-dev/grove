@@ -183,6 +183,16 @@ export function paletteFor(name: string): ThemePalette {
   return themeFor(name).palette
 }
 
+/** A theme's palette as the CSS custom properties it sets, by property name. */
+export function themeTokens(name: string): Record<string, string> {
+  const palette = paletteFor(name)
+  const tokens: Record<string, string> = {}
+  for (const key of Object.keys(CSS_VARS) as (keyof ThemePalette)[]) {
+    tokens[CSS_VARS[key]] = palette[key]
+  }
+  return tokens
+}
+
 // The design-system base palette for a scheme — catalog themes provide partial
 // overrides merged over this so they don't have to specify all 30 fields.
 export function basePalette(scheme: 'dark' | 'light'): ThemePalette {

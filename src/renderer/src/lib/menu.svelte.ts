@@ -17,6 +17,10 @@ export interface MenuItem {
   label: string
   // Items are grouped; separators render between groups.
   group?: string
+  // Heading shown above the group, taken from its first item that sets one.
+  groupLabel?: string
+  // Hover text, e.g. the full path behind a short label.
+  detail?: string
   order?: number
   // Display-only hint (real keys live in the keymap).
   accelerator?: string

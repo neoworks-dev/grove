@@ -151,6 +151,21 @@ export function toItemRows(items: TranscriptItem[]): TranscriptRow[] {
 }
 
 /**
+ * One turn's rows. The turn in flight shows every item on a row of its own — no
+ * runs, no groups — so nothing the user is watching folds away under them; a
+ * settled turn folds its runs of finished calls as `toTranscriptRows` does.
+ */
+export function turnRows(
+  items: TranscriptItem[],
+  settled: boolean,
+  standsAlone: (call: ToolItem) => boolean = () => false,
+  groupOf: (call: ToolItem) => string | null = () => null
+): TranscriptRow[] {
+  if (!settled) return toItemRows(items)
+  return toTranscriptRows(items, standsAlone, groupOf)
+}
+
+/**
  * What the run did, by tool name, in the order the names first appeared.
  *
  * Nothing here knows any tool: the harness decides what its tools are called, so the summary

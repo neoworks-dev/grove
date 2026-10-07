@@ -26,14 +26,26 @@ export async function openPrompt(attribution: PromptAttribution): Promise<void> 
   if (attribution.turnSeq !== null) revealTurn(meta.id, attribution.turnSeq)
 }
 
-/** The prompt as blame kept it, for a session that no longer exists. */
+/** The prompt as blame kept it, with the agent's reasons, for a session that no longer exists. */
 async function showKeptPrompt(attribution: PromptAttribution): Promise<void> {
   let from = attribution.from
   if (from.length === 0) from = 'Unknown'
   await dialogs.confirm({
     title: `Written for “${attribution.sessionTitle}”`,
     body: `The session has been deleted. ${from} asked this ${ageLabel(attribution.at)}:`,
-    detail: attribution.prompt,
+    detail: keptDetail(attribution),
     actions: [{ id: 'close', label: 'Close', kind: 'primary' }]
   })
+}
+
+/** The prompt, then why the agent made the change and what it reasoned on the way. */
+function keptDetail(attribution: PromptAttribution): string {
+  const parts = [attribution.prompt]
+  if (attribution.explanation) {
+    parts.push(`Why: ${attribution.explanation}`)
+  }
+  if (attribution.reasoning) {
+    parts.push(`The agent, before the edit:\n${attribution.reasoning}`)
+  }
+  return parts.join('\n\n')
 }

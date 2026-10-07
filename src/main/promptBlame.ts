@@ -26,6 +26,7 @@ import type {
   PromptAttribution
 } from '../shared/agents'
 import { fetchNotes, pushNotes, readNote, unpublishedCommits, writeNote } from './promptNotes'
+import type { EditRationale } from './agents/editRationale'
 
 // A commit's author time has second resolution and the clocks agree only
 // roughly, so a prompt a little after the commit still counts as before it.
@@ -44,6 +45,10 @@ export interface StoredAttribution {
   from: string
   prompt: string
   at: string
+  /** What the agent said the change was for, when its tool took an explanation. */
+  explanation?: string
+  /** What the agent said and thought in the turn before the edit; see editRationale.ts. */
+  reasoning?: string
   /** Path → keys of the lines the step added there. */
   files: Record<string, string[]>
 }
@@ -77,12 +82,13 @@ export class PromptBlame {
 
   constructor(private options: PromptBlameOptions) {}
 
-  /** Records the lines one step added, with the prompt its turn answered. */
+  /** Records the lines one step added, with the prompt its turn answered and why the agent made it. */
   async recordStep(
     worktreePath: string,
     session: BlameSession,
     step: AgentEditStep,
-    turn: { from: string; prompt: string } | null
+    turn: { from: string; prompt: string } | null,
+    rationale: EditRationale | null = null
   ): Promise<void> {
     const diff = await simpleGit({ baseDir: worktreePath }).raw([
       'diff',
@@ -113,6 +119,9 @@ export class PromptBlame {
       at: step.at,
       files
     }
+    // Left out when empty, so records without them stay as small as before.
+    if (rationale?.explanation) record.explanation = rationale.explanation
+    if (rationale?.reasoning) record.reasoning = rationale.reasoning
     const commonDir = await this.commonDirOf(worktreePath)
     const records = await this.load(commonDir)
     records.push(record)
@@ -250,6 +259,8 @@ export class PromptBlame {
       from: record.from,
       prompt: record.prompt,
       at: record.at,
+      explanation: record.explanation ?? '',
+      reasoning: record.reasoning ?? '',
       sessionExists: this.options.sessionExists(record.sessionId)
     }
   }

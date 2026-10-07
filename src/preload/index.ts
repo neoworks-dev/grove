@@ -8,7 +8,9 @@ const workbench = {
   repo: {
     pick: () => ipcRenderer.invoke('repo:pick'),
     open: (repoPath: string) => ipcRenderer.invoke('repo:open', repoPath),
-    last: () => ipcRenderer.invoke('repo:last')
+    last: () => ipcRenderer.invoke('repo:last'),
+    recent: () => ipcRenderer.invoke('repo:recent'),
+    clearRecent: () => ipcRenderer.invoke('repo:clearRecent')
   },
   worktrees: {
     list: () => ipcRenderer.invoke('worktrees:list'),

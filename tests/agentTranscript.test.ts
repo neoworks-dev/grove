@@ -8,6 +8,7 @@ import {
   pendingApprovals,
   toolCallOut,
   visibleItems,
+  waitingMessages,
   visiblePanels,
   type TranscriptItem
 } from '../src/renderer/src/lib/agents/transcript'
@@ -136,7 +137,7 @@ describe('transcript fold', () => {
     expect(state.stopReason).toBe('end_turn')
   })
 
-  test('a message written mid-turn waits until the agent starts its next message', () => {
+  test('a message written mid-turn waits outside the transcript until the agent starts its next message', () => {
     const steered = {
       type: 'user.message',
       content: [{ type: 'text', text: 'also this' }]
@@ -144,23 +145,24 @@ describe('transcript fold', () => {
     const waiting = fold([
       { type: 'user.message', content: [{ type: 'text', text: 'go' }] },
       { type: 'session.status_running' },
-      chunk('on it'),
-      steered
+      chunk('on it', 'm1'),
+      steered,
+      chunk(' still', 'm1')
     ])
     const taken = fold([
       { type: 'user.message', content: [{ type: 'text', text: 'go' }] },
       { type: 'session.status_running' },
-      chunk('on it'),
+      chunk('on it', 'm1'),
       steered,
-      chunk('and that too')
+      chunk(' still', 'm1'),
+      toolCall('t1', 'Read', {}),
+      chunk('and that too', 'm2')
     ])
 
-    expect(waiting.items.map((item) => item.kind === 'user' && item.pending)).toEqual([
-      false,
-      false,
-      true
-    ])
-    expect(taken.items.some((item) => item.kind === 'user' && item.pending)).toBe(false)
+    expect(textsOf(visibleItems(waiting))).toEqual(['go', 'on it still'])
+    expect(textsOf(waitingMessages(waiting))).toEqual(['also this'])
+    expect(textsOf(visibleItems(taken))).toEqual(['go', 'on it still', 'also this', 'and that too'])
+    expect(waitingMessages(taken)).toEqual([])
   })
 
   test('a new harness conversation empties the transcript without losing the log', () => {

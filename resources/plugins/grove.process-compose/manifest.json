@@ -1,0 +1,75 @@
+{
+  "id": "grove.process-compose",
+  "name": "Process Compose",
+  "version": "1.0.0",
+  "description": "Run the worktree's process-compose file and watch every process live.",
+  "entry": "dist/extension.js",
+  "engines": { "grove": "^0.1.0" },
+  "permissions": ["workspace.read", "terminal.exec"],
+  "activation": [
+    "onPane:processCompose",
+    "onView:processCompose",
+    "onCommand:processCompose.up",
+    "onCommand:processCompose.down",
+    "onCommand:processCompose.restart",
+    "onCommand:processCompose.openFile"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "id": "processCompose.up",
+        "title": "Process Compose: Start All",
+        "group": "Process Compose",
+        "keywords": "process compose up run start services"
+      },
+      {
+        "id": "processCompose.down",
+        "title": "Process Compose: Stop All",
+        "group": "Process Compose",
+        "keywords": "process compose down stop kill"
+      },
+      {
+        "id": "processCompose.restart",
+        "title": "Process Compose: Restart All",
+        "group": "Process Compose",
+        "keywords": "process compose restart"
+      },
+      {
+        "id": "processCompose.open",
+        "title": "Process Compose: Open",
+        "group": "Process Compose",
+        "keywords": "process compose view launcher"
+      },
+      {
+        "id": "processCompose.openFile",
+        "title": "Process Compose: Open Config File",
+        "group": "Process Compose"
+      }
+    ],
+    "sidebar": [
+      {
+        "id": "processCompose",
+        "label": "Process Compose",
+        "icon": "vscode-icons:file-type-procfile",
+        "order": 60,
+        "command": "processCompose.open"
+      }
+    ],
+    "panes": [
+      {
+        "id": "processCompose",
+        "title": "Processes",
+        "page": "dist/pages/main.html",
+        "panel": { "title": "Processes", "order": 30 }
+      }
+    ],
+    "views": [
+      {
+        "id": "processCompose",
+        "label": "Processes",
+        "order": 60,
+        "tree": { "kind": "leaf", "paneTypeId": "processCompose" }
+      }
+    ]
+  }
+}

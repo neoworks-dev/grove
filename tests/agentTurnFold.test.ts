@@ -75,6 +75,34 @@ describe('foldTurn', () => {
     ])
   })
 
+  test('keeps an answer split around a call that is part of it, in full', () => {
+    const isLocations = (call: ToolItem): boolean => call.name === 'show_locations'
+    const rows = toTranscriptRows([
+      agentMessage('let me look'),
+      toolCall('Read'),
+      agentMessage('found it: the first half'),
+      toolCall('show_locations'),
+      agentMessage('and the second half')
+    ])
+    const fold = foldTurn(rows, () => false, isLocations)
+
+    const keptText = fold.kept.map((row) => (row.kind === 'item' && row.item.kind === 'agent' ? row.item.text : ''))
+    expect(keptText).toEqual(['found it: the first half', 'and the second half'])
+    expect(foldedMessages(fold.hidden).map((item) => item.kind === 'agent' && item.text)).toEqual(['let me look'])
+  })
+
+  test('stops the answer at the last real work before it', () => {
+    const isLocations = (call: ToolItem): boolean => call.name === 'show_locations'
+    const rows = toTranscriptRows([
+      agentMessage('interim note'),
+      toolCall('Read'),
+      agentMessage('the answer')
+    ])
+    const fold = foldTurn(rows, () => false, isLocations)
+
+    expect(fold.kept).toHaveLength(1)
+  })
+
   test('folds the calls that trail the answer into the same summary', () => {
     const rows = toTranscriptRows([
       toolCall('Bash'),

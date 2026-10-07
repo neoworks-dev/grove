@@ -116,3 +116,29 @@ describe('fileViewers contributions', () => {
     expect(validateManifest(withViewer({ page: '/etc/index.html' })).ok).toBe(false)
   })
 })
+
+describe('page panes', () => {
+  const withPane = (overrides: Record<string, unknown>): unknown => ({
+    ...valid,
+    contributes: { panes: [{ id: 'processes', title: 'Processes', ...overrides }] }
+  })
+
+  it('accepts a declarative pane and a pane with a page inside the plugin', () => {
+    expect(validateManifest(withPane({})).ok).toBe(true)
+    expect(validateManifest(withPane({ page: 'pages/main.html' })).ok).toBe(true)
+  })
+
+  it('rejects a page outside the plugin directory', () => {
+    expect(validateManifest(withPane({ page: '../x/main.html' })).ok).toBe(false)
+    expect(validateManifest(withPane({ page: '/main.html' })).ok).toBe(false)
+    expect(validateManifest(withPane({ page: '' })).ok).toBe(false)
+  })
+})
+
+it('accepts every built-in plugin manifest', async () => {
+  const root = `${import.meta.dir}/../resources/plugins`
+  for (const dir of await Array.fromAsync(new Bun.Glob('*/manifest.json').scan(root))) {
+    const result = validateManifest(await Bun.file(`${root}/${dir}`).json())
+    expect({ dir, errors: result.ok ? [] : result.errors }).toEqual({ dir, errors: [] })
+  }
+})

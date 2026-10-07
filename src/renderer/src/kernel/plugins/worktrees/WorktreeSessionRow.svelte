@@ -28,7 +28,12 @@
   const running = $derived(session.status === 'running')
   // A call parked on an approval leaves the turn running, and waiting on you
   // is the more useful thing to say. The flag is live; the listing is polled.
-  const waiting = $derived(attention === 'needs_you' || session.pendingApprovals.length > 0)
+  // A held agent message waits on you the same way.
+  const waiting = $derived(
+    attention === 'needs_you' ||
+      session.pendingApprovals.length > 0 ||
+      session.heldMessages.length > 0
+  )
 
   /** The session's name, falling back to its model for one that has none. */
   const title = $derived.by(() => {

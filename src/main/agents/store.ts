@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto'
 import { appendFile, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { AGENT_ID_LABEL, newAgentId } from './identity'
+import { pendingHeldMessages } from './heldMessages'
 import { firstPromptText, isDefaultTitle, lastMessagePreview, titleFromPrompt } from './sessionSummary'
 import type {
   EventBody,
@@ -228,6 +229,11 @@ export class SessionStore {
     return lastMessagePreview(this.events.get(sessionId) ?? [])
   }
 
+  /** The ids of held agent messages the user has not decided on, read off the log in memory. */
+  heldMessagesOf(sessionId: string): string[] {
+    return pendingHeldMessages(this.events.get(sessionId) ?? []).map((held) => held.heldId)
+  }
+
   /** The session's events as already loaded, without waiting; empty for an unknown id. */
   peekEvents(sessionId: string): readonly SessionEvent[] {
     return this.events.get(sessionId) ?? []
@@ -244,7 +250,8 @@ export class SessionStore {
     session: StoredSession,
     live: boolean,
     runtime: RuntimeState,
-    preview: SessionPreview | null
+    preview: SessionPreview | null,
+    heldMessages: string[]
   ): SessionMeta {
     return {
       id: session.id,
@@ -264,6 +271,7 @@ export class SessionStore {
       status: runtime.status,
       stopReason: runtime.stopReason,
       pendingApprovals: runtime.pendingApprovals,
+      heldMessages,
       lastSeq: session.lastSeq,
       live,
       started: hasStarted(session),
@@ -277,13 +285,14 @@ export class SessionStore {
     live: boolean,
     runtime: RuntimeState,
     messageCount: number,
-    preview: SessionPreview | null
+    preview: SessionPreview | null,
+    heldMessages: string[]
   ): SessionSnapshot {
     let used = 0
     if (session.contextUsed !== undefined) used = session.contextUsed
     const window = session.contextWindow
     return {
-      ...SessionStore.metaOf(session, live, runtime, preview),
+      ...SessionStore.metaOf(session, live, runtime, preview, heldMessages),
       messageCount,
       usage: session.usage,
       cost: session.cost,

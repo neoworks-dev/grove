@@ -53,6 +53,7 @@
     ClientEventBody,
     CodeLocation,
     ConfirmationResult,
+    HeldMessageDecision,
     LocationState,
     SessionMeta,
     SessionNote,
@@ -61,6 +62,7 @@
   } from '../../../../lib/agents/types'
   import { saveNotes as saveSessionNotes } from '../../../../lib/agents/api'
   import AgentApproval from './AgentApproval.svelte'
+  import AgentHeldMessage from './AgentHeldMessage.svelte'
   import AgentComposer from './AgentComposer.svelte'
   import AgentBackgroundCommands from './AgentBackgroundCommands.svelte'
   import AgentNotes from './AgentNotes.svelte'
@@ -411,6 +413,12 @@
   function unqueue(messageId: string): void {
     if (!activeId) return
     void agentSessions.send(activeId, [{ type: 'user.unqueue', messageId }])
+  }
+
+  /** Answer an agent message held off this session; the wake gate in main carries it out. */
+  function decideHeld(heldId: string, decision: HeldMessageDecision): void {
+    if (!activeId) return
+    void agentSessions.send(activeId, [{ type: 'user.decide_held_message', heldId, decision }])
   }
 
   /** Save the notes list; it comes back through the stream like any change. */
@@ -1018,6 +1026,11 @@
 
     {#if !overviewOpen}
       <div class="relative shrink-0 p-2">
+        {#if live}
+          {#each live.transcript.held as held (held.heldId)}
+            <AgentHeldMessage {held} onDecide={(decision) => decideHeld(held.heldId, decision)} />
+          {/each}
+        {/if}
         {#if postReviews.length > 0}
           <!-- Post-approve reviews: the writes are already on disk, so nothing is
              blocked on these. Opening one shows its diff in the editor. -->

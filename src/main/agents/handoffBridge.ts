@@ -79,7 +79,7 @@ export class AgentHandoffBridge {
     if (!parent) return
 
     const from = await this.options.roster.signatureOf(sessionId)
-    await this.options.roster.deliver(parentSessionId, from, text).catch(() => {})
+    await this.options.roster.deliver(parentSessionId, from, text, sessionId).catch(() => {})
     // Disposal follows the report, never precedes it: an agent removed before
     // its answer reached the parent would have worked for nothing.
     if (session.labels[DISPOSE_LABEL] === 'whenDone') {

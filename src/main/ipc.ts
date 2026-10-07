@@ -66,6 +66,7 @@ import { AgentService } from './agents/service'
 import { AgentReviewBridge } from './agents/reviewBridge'
 import { AgentHandoffBridge } from './agents/handoffBridge'
 import { AgentRoster } from './agents/roster'
+import { WakeGate, catalogPricing } from './agents/wakeGate'
 import { EditStepRecorder, promptAt, stepsRef } from './agents/editSteps'
 import { PromptBlame } from './promptBlame'
 import type { AgentWorktrees } from './agents/tools/worktreeTools'
@@ -260,9 +261,18 @@ const agents = new AgentService({
 // No run outlives the app, so a turn the last one quit in the middle of is over.
 void agents.settleInterruptedTurns()
 
+// An agent's message to a session asleep past its prompt cache waits for the
+// user rather than waking it to re-read its whole context.
+const wakeGate = new WakeGate({
+  agents,
+  store: sessionStore,
+  pricing: catalogPricing,
+  log: (line) => console.warn(line)
+})
+
 // Addresses the sessions in a worktree, delivers between them, and starts new
 // ones: what grove's inter-agent tools are built on.
-const agentRoster = new AgentRoster({ agents, harnesses })
+const agentRoster = new AgentRoster({ agents, harnesses, gate: wakeGate })
 
 // The worktrees agents can list, create and spawn into.
 const agentWorktrees: AgentWorktrees = {
@@ -862,6 +872,7 @@ const mainServices = {
     // A spawned agent reports back when it finishes a turn, whether or not
     // anyone is looking at either pane.
     ctx.effect(() => agentHandoffBridge.watch(), 'agents:handoff-bridge')
+    ctx.effect(() => wakeGate.watch(), 'agents:wake-gate')
 
     // Edits are recorded as they happen, whether or not a replay is open.
     ctx.effect(() => editSteps.watch(), 'agents:edit-steps')

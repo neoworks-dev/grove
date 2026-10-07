@@ -113,6 +113,14 @@ export type ClientEventBody =
   | { type: 'user.unqueue'; messageId: string }
   | { type: 'user.branch'; fromSeq: number }
   | { type: 'user.shell'; command: string; share?: boolean }
+  /**
+   * An agent's message to a session idle long enough that waking it re-reads
+   * its whole context uncached, held for the user to decide on. Recorded only;
+   * the wake gate (src/main/agents/wakeGate.ts) holds and releases it.
+   */
+  | ({ type: 'app.held_message' } & HeldMessage)
+  /** The user's answer to a held message. */
+  | { type: 'user.decide_held_message'; heldId: string; decision: HeldMessageDecision }
 
 /**
  * What a harness reported, stored exactly as switchboard (`@neoworks/harness`)
@@ -357,6 +365,26 @@ export interface QueuedMessage {
   attachments?: ImageBlock[]
 }
 
+/** An agent's message held back from a long-idle session until the user decides. */
+export interface HeldMessage {
+  heldId: string
+  /** The sender's signature, "title (id)". */
+  from: string
+  /** The sender's session, told how the user decided; null when grove sent it. */
+  fromSessionId: string | null
+  text: string
+  /** When the session's last turn ended: its prompt cache has been cold since. */
+  idleSince: string
+  /** The context waking it would re-read. */
+  contextTokens: number
+  /** What re-reading that context costs in dollars, when the model's price is known. */
+  wakeCost: number | null
+  /** Whether the harness offers `/compact`, to shrink the context before it is read. */
+  canCompact: boolean
+}
+
+export type HeldMessageDecision = 'send' | 'reject' | 'compact_then_send'
+
 /** The last message in a session, for a listing to show under its name. */
 export interface SessionPreview {
   from: 'user' | 'agent'
@@ -393,6 +421,8 @@ export interface SessionMeta {
   status: SessionStatus
   stopReason?: IdleReason
   pendingApprovals: string[]
+  /** Agent messages held until the user decides whether to wake the session for them. */
+  heldMessages: string[]
   lastSeq: number
   live: boolean
   /**

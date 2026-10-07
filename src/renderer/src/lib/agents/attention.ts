@@ -3,7 +3,8 @@
 // to tell.
 //
 // Waiting on you mostly happens mid-turn: a call parked on an approval arrives
-// as a tool use marked `ask` while the turn is still running.
+// as a tool use marked `ask` while the turn is still running. The other case
+// is an agent's message held off a long-idle session until you decide on it.
 
 import type { SessionEvent } from './types'
 
@@ -11,7 +12,7 @@ export type SessionAttention = 'done' | 'needs_you' | 'failed'
 
 /** The attention an event asks for, or null when it asks for none. */
 export function attentionOf(event: SessionEvent): SessionAttention | null {
-  if (isApprovalRequest(event)) {
+  if (isApprovalRequest(event) || event.type === 'app.held_message') {
     return 'needs_you'
   }
   if (event.type === 'session.status_terminated') {
@@ -49,6 +50,17 @@ export function foldAttention(
   if (isApprovalRequest(event)) {
     parked.add(event.request.toolCall.toolCallId)
     return 'needs_you'
+  }
+  if (event.type === 'app.held_message') {
+    parked.add(event.heldId)
+    return 'needs_you'
+  }
+  if (event.type === 'user.decide_held_message') {
+    parked.delete(event.heldId)
+    if (flag === 'needs_you' && parked.size === 0) {
+      return undefined
+    }
+    return flag
   }
   const settled = settledApproval(event)
   if (settled !== null) {

@@ -141,6 +141,8 @@ export function lastAgentLineFor(sessionId: string): string {
 /** Badge colour for a session row. */
 export function sessionStatusColor(session: SessionMeta): string {
   if (session.pendingApprovals.length > 0) return agentStatusColor.requires_action
+  // A held agent message waits on the user just as an approval does.
+  if (session.heldMessages.length > 0) return agentStatusColor.requires_action
   if (session.status === 'running') return agentStatusColor.running
   if (session.stopReason === 'error') return agentStatusColor.error
   return agentStatusColor.idle

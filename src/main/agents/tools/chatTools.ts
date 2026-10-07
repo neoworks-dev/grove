@@ -45,9 +45,11 @@ export function chatTools(options: ChatToolOptions): GroveTool[] {
       "Post a message on this worktree's shared channel, which the user and every other agent " +
       'working here can read. Put an agent id in "to" (the id `list_agents` reports, not its ' +
       "title) and the message is delivered into that agent's conversation as well, interrupting " +
-      'what it is doing; leave "to" out to address the room. An id reaches an agent in another ' +
-      "worktree too, and the message is then posted on that worktree's channel as well. Use this " +
-      'to hand work over, ask for a result, or report one back — not for routine progress.',
+      'what it is doing; leave "to" out to address the room. An agent idle for over an hour is ' +
+      'not woken: the message is held until the user decides, and you are told how they did. ' +
+      "An id reaches an agent in another worktree too, and the message is then posted on that " +
+      "worktree's channel as well. Use this to hand work over, ask for a result, or report one " +
+      'back — not for routine progress.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -80,7 +82,8 @@ export function chatTools(options: ChatToolOptions): GroveTool[] {
         return { content: 'That is you; the message was posted on the channel only.' }
       }
 
-      await options.roster.deliver(target.peer.sessionId, from, text)
+      const outcome = await options.roster.deliver(target.peer.sessionId, from, text, context.sessionId)
+      if (outcome.kind === 'held') return { content: heldNotice(signatureOf(target.peer), outcome.idleSince) }
       return { content: `Delivered to ${signatureOf(target.peer)}.` }
     }
   }
@@ -246,4 +249,16 @@ function stateOf(peer: AgentPeer): string {
   if (peer.waiting) return 'held on a permission request'
   if (peer.status === 'running') return 'working'
   return peer.status
+}
+
+/**
+ * What the sender is told when its message was held: that it has not arrived,
+ * why, and that it hears back, so it neither waits on an answer nor resends.
+ */
+function heldNotice(recipient: string, idleSince: string): string {
+  return (
+    `Held, not delivered: ${recipient} has been idle since ${idleSince}, and waking it would ` +
+    're-read its whole context. The user decides whether to send it; you will be told what they ' +
+    'decide. Do not send it again, and do not wait on an answer from it.'
+  )
 }

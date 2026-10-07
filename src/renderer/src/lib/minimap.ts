@@ -154,6 +154,69 @@ export function clampCursorLine(
 }
 
 /**
+ * The visual selection as nvim reports it: the kind, and the anchor and cursor
+ * ends as 1-based line and 1-based byte column, in either order.
+ */
+export interface MinimapSelection {
+  kind: 'char' | 'line' | 'block'
+  anchor: [number, number]
+  cursor: [number, number]
+  // The `Visual` highlight's background, when the colour scheme sets one.
+  color?: string
+}
+
+/**
+ * One line's stretch of a selection in map columns. `toCol` null means the
+ * selection runs on past the line's end, so the band reaches the map's edge.
+ */
+export interface SelectionSpan {
+  line: number
+  fromCol: number
+  toCol: number | null
+}
+
+/** Splits a visual selection into one span per selected line, top to bottom. */
+export function selectionSpans(selection: MinimapSelection): SelectionSpan[] {
+  let start = selection.anchor
+  let end = selection.cursor
+  if (end[0] < start[0] || (end[0] === start[0] && end[1] < start[1])) {
+    start = selection.cursor
+    end = selection.anchor
+  }
+  const spans: SelectionSpan[] = []
+  for (let line = start[0]; line <= end[0]; line++) {
+    spans.push(spanForLine(selection, line, start, end))
+  }
+  return spans
+}
+
+/** The columns one line of a selection covers, given its ordered ends. */
+function spanForLine(
+  selection: MinimapSelection,
+  line: number,
+  start: [number, number],
+  end: [number, number]
+): SelectionSpan {
+  if (selection.kind === 'line') {
+    return { line, fromCol: 0, toCol: null }
+  }
+  if (selection.kind === 'block') {
+    const left = Math.min(selection.anchor[1], selection.cursor[1])
+    const right = Math.max(selection.anchor[1], selection.cursor[1])
+    return { line, fromCol: left - 1, toCol: right }
+  }
+  let fromCol = 0
+  if (line === start[0]) {
+    fromCol = start[1] - 1
+  }
+  let toCol: number | null = null
+  if (line === end[0]) {
+    toCol = end[1]
+  }
+  return { line, fromCol, toCol }
+}
+
+/**
  * One round-trip for the minimap. The window view always, plus the row layout
  * in diff mode; buffer text and colours only when the buffer or its content
  * changed (changedtick is per-buffer, so the buffer number is part of the gate).
@@ -162,6 +225,9 @@ export function clampCursorLine(
  * terminal, quickfix list or float, the one it came from: a `:terminal` split
  * above the file must not turn the file's minimap into the terminal's output.
  * Its id comes back as `win`, for scrolling that window from the map.
+ *
+ * While that window is in visual or select mode, `selection` carries the
+ * selection: it only exists in the current window, so other windows have none.
  *
  * Colours come from whatever is colouring the buffer on screen: treesitter's
  * captures when its highlighter is running — every language tree, so injected
@@ -195,6 +261,26 @@ local function minimap_window()
 end
 
 local win = minimap_window()
+
+-- Read before nvim_win_call: the selection belongs to the current window only.
+local SELECTION_KINDS = {
+  v = 'char', V = 'line', ['\\22'] = 'block',
+  s = 'char', S = 'line', ['\\19'] = 'block',
+}
+local selection = nil
+local selection_kind = SELECTION_KINDS[vim.fn.mode()]
+if selection_kind and win == vim.api.nvim_get_current_win() then
+  local anchor = vim.fn.getpos('v')
+  local cursor = vim.fn.getpos('.')
+  selection = {
+    kind = selection_kind,
+    anchor = { anchor[2], anchor[3] },
+    cursor = { cursor[2], cursor[3] },
+  }
+  local visual = vim.api.nvim_get_hl(0, { name = 'Visual', link = false })
+  if visual.bg then selection.color = string.format('#%06x', visual.bg) end
+end
+
 return vim.api.nvim_win_call(win, function()
 local buf = vim.api.nvim_get_current_buf()
 local total = vim.api.nvim_buf_line_count(buf)
@@ -324,7 +410,8 @@ local out = {
   bufnr = buf,
   total = total,
   topline = vim.fn.line('w0'),
-  botline = vim.fn.line('w$')
+  botline = vim.fn.line('w$'),
+  selection = selection
 }
 local rows = display_rows()
 if rows then

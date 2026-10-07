@@ -1,12 +1,10 @@
 // Prompt blame in the editor: the cursor line an agent wrote shows the prompt
-// that wrote it beside its commit, and <leader>gp opens that conversation.
-// nvim says which line the cursor rests on; this asks main and answers back.
+// that wrote it beside its commit, and <leader>gb adds it to the blame popup.
+// nvim says which line it means; this asks main and answers back.
 
 import type { Context } from '@neoworks/extension-system'
 import { store } from '../../../lib/store.svelte'
-import { openPrompt } from '../../../lib/agents/promptBlame'
-import { blameLabel } from '../../../lib/agents/blameLabel'
-import { dialogs } from '../../../lib/dialogs.svelte'
+import { blameLabel, blamePopupHeading, blamePopupLines } from '../../../lib/agents/blameLabel'
 import type { LineBlame } from '../../../../../shared/agents'
 
 /** The cursor line nvim reports, as its Lua sends it. */
@@ -28,7 +26,7 @@ export const promptBlame = {
           const context = contextOf(event.args)
           if (!context) return
           if (event.method === 'grove_line_blame') void showLineBlame(event.id, context)
-          if (event.method === 'grove_open_line_prompt') void openLinePrompt(context)
+          if (event.method === 'grove_line_blame_popup') void extendBlamePopup(event.id, context)
         }),
       'nvim:prompt-blame'
     )
@@ -70,12 +68,17 @@ async function showLineBlame(nvimId: string, context: BlameContext): Promise<voi
     .catch(() => {})
 }
 
-/** Opens the conversation that wrote the cursor line. */
-async function openLinePrompt(context: BlameContext): Promise<void> {
+/**
+ * Finishes the blame popup for the cursor line: the prompt that wrote it, if
+ * an agent did, and the heading nvim uses when gitsigns opened no popup.
+ */
+async function extendBlamePopup(nvimId: string, context: BlameContext): Promise<void> {
   const result = await blame(context)
-  if (!result || !result.prompt) {
-    dialogs.notify({ level: 'info', message: 'No agent prompt wrote this line.' })
-    return
-  }
-  await openPrompt(result.prompt)
+  if (!result) return
+  await window.workbench.nvim
+    .request(nvimId, 'nvim_exec_lua', [
+      'grove_extend_blame_popup(...)',
+      [context.buf, context.line, blamePopupHeading(result), blamePopupLines(result)]
+    ])
+    .catch(() => {})
 }

@@ -16,9 +16,15 @@ import {
   type StoredAttribution
 } from '../src/main/promptBlame'
 import { PROMPT_NOTES_REF, readNote, withProblems } from '../src/main/promptNotes'
-import { blameLabel, promptHeadline } from '../src/renderer/src/lib/agents/blameLabel'
+import {
+  blameLabel,
+  blamePopupHeading,
+  blamePopupLines,
+  promptHeadline
+} from '../src/renderer/src/lib/agents/blameLabel'
 import { sectionHolding } from '../src/renderer/src/lib/agents/sectionHolding'
 import type { AgentEditStep } from '../src/shared/agents'
+import type { EditRationale } from '../src/main/agents/editRationale'
 
 const cleanups: string[] = []
 
@@ -45,12 +51,13 @@ async function scratchRepo(): Promise<string> {
   return dir
 }
 
-/** Makes `write` as an agent step of session "s1", recorded with its prompt. */
+/** Makes `write` as an agent step of session "s1", recorded with its prompt and, if given, the agent's reasons. */
 async function agentEdit(
   blame: PromptBlame,
   repo: string,
   write: () => Promise<void>,
-  prompt: string
+  prompt: string,
+  rationale: EditRationale | null = null
 ): Promise<void> {
   const before = await captureTree(repo)
   await write()
@@ -71,7 +78,8 @@ async function agentEdit(
     repo,
     { id: 's1', title: 'Add the second constant', harness: 'claude' },
     step,
-    { from: 'You', prompt }
+    { from: 'You', prompt },
+    rationale
   )
 }
 
@@ -162,6 +170,24 @@ describe('blaming a line to its prompt', () => {
     const fresh = new PromptBlame({ directory, sessionExists: () => true, sharingNotes: () => false })
     const result = await fresh.blameLine(repo, 'app.ts', 2, 'const second = 2')
     expect(result.prompt?.prompt).toBe('add a second constant')
+  })
+
+  test("the agent's explanation and reasoning are kept with the line", async () => {
+    const { repo, blame } = await setup()
+    await agentEdit(
+      blame,
+      repo,
+      () => writeFile(join(repo, 'app.ts'), 'const first = 1\nconst second = 2\nconst third = 3\n'),
+      'add a third constant',
+      { explanation: 'The parser reads three values.', reasoning: 'The parser expects a third value.' }
+    )
+    const result = await blame.blameLine(repo, 'app.ts', 3, 'const third = 3')
+    expect(result.prompt?.explanation).toBe('The parser reads three values.')
+    expect(result.prompt?.reasoning).toBe('The parser expects a third value.')
+
+    const older = await blame.blameLine(repo, 'app.ts', 2, 'const second = 2')
+    expect(older.prompt?.explanation).toBe('')
+    expect(older.prompt?.reasoning).toBe('')
   })
 })
 
@@ -347,6 +373,8 @@ describe('how a blamed line reads', () => {
     from: 'You',
     prompt: 'add a second constant\nand explain it',
     at: '2026-01-01T00:00:00Z',
+    explanation: '',
+    reasoning: '',
     sessionExists: true
   }
 
@@ -365,8 +393,35 @@ describe('how a blamed line reads', () => {
     )
   })
 
+  test("the agent's explanation, when it gave one, reads instead of the prompt", () => {
+    const explained = { ...prompt, explanation: 'Holds the second value the parser needs.' }
+    expect(blameLabel({ commit: null, prompt: explained })).toBe(
+      '✦ Holds the second value the parser needs.  ·  uncommitted'
+    )
+  })
+
   test('a long prompt is cut to fit', () => {
     expect(promptHeadline('x'.repeat(80), 10)).toBe('xxxxxxxxx…')
+  })
+
+  test('the blame popup gets the explanation, then the prompt', () => {
+    const now = Date.parse('2026-01-01T05:00:00Z')
+    const explained = { ...prompt, explanation: 'Holds the second value the parser needs.' }
+    expect(blamePopupLines({ commit: null, prompt: explained }, now)).toEqual([
+      ['✦ claude · Constants (5h ago)', 'Title'],
+      ['Holds the second value the parser needs.', 'NormalFloat'],
+      ['', ''],
+      ['Prompt from You:', 'Label'],
+      ['add a second constant', 'Comment'],
+      ['and explain it', 'Comment']
+    ])
+    expect(blamePopupLines({ commit: null, prompt: null })).toEqual([])
+  })
+
+  test('the popup nvim opens itself is headed by the commit, or says there is none', () => {
+    const commit = { sha: 'abcdef0123456789', author: 'Ada', time: 0, summary: 'consts' }
+    expect(blamePopupHeading({ commit, prompt: null })).toBe('abcdef01 Ada: consts')
+    expect(blamePopupHeading({ commit: null, prompt })).toBe('Not committed yet')
   })
 })
 

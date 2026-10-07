@@ -20,6 +20,32 @@ function agentMessage(text: string): TranscriptItem {
   }
 }
 
+function agentThought(thinking: string): TranscriptItem {
+  nextEventId += 1
+  return { kind: 'agent', seq: nextEventId, eventId: `e${nextEventId}`, text: '', thinking, streaming: false }
+}
+
+function locationsCard(): TranscriptItem {
+  nextEventId += 1
+  return {
+    kind: 'surface',
+    seq: nextEventId,
+    eventId: `e${nextEventId}`,
+    surfaceId: `locations:${nextEventId}`,
+    view: { kind: 'locations', locations: [] }
+  } as unknown as TranscriptItem
+}
+
+/** What a folded turn keeps of the agent's rows: prose, or the thought when there is none. */
+function keptAgentText(rows: ReturnType<typeof toTranscriptRows>): string[] {
+  const texts: string[] = []
+  for (const row of rows) {
+    if (row.kind !== 'item' || row.item.kind !== 'agent') continue
+    texts.push(row.item.text || row.item.thinking)
+  }
+  return texts
+}
+
 function toolCall(name: string, status: ToolStatus = 'ok'): TranscriptItem {
   nextEventId += 1
   return {
@@ -101,6 +127,41 @@ describe('foldTurn', () => {
     const fold = foldTurn(rows, () => false, isLocations)
 
     expect(fold.kept).toHaveLength(1)
+  })
+
+  test('keeps a thought that leads into a card of the answer, the card drawn as a surface', () => {
+    const rows = toTranscriptRows([
+      toolCall('Read'),
+      agentThought('the summary, written as reasoning'),
+      locationsCard(),
+      agentMessage('the card lists three places')
+    ])
+    const fold = foldTurn(rows)
+
+    expect(keptAgentText(fold.kept)).toEqual(['the summary, written as reasoning', 'the card lists three places'])
+    expect(foldedCalls(fold.hidden).map((call) => call.name)).toEqual(['Read'])
+  })
+
+  test('still folds a thought that leads into no card', () => {
+    const rows = toTranscriptRows([
+      toolCall('Read'),
+      agentThought('so the answer is'),
+      agentMessage('the answer')
+    ])
+
+    expect(keptAgentText(foldTurn(rows).kept)).toEqual(['the answer'])
+  })
+
+  test('folds a thought between the card and the rest of the answer, keeping both halves', () => {
+    const rows = toTranscriptRows([
+      toolCall('Read'),
+      agentMessage('first half'),
+      locationsCard(),
+      agentThought('now explain the card'),
+      agentMessage('second half')
+    ])
+
+    expect(keptAgentText(foldTurn(rows).kept)).toEqual(['first half', 'second half'])
   })
 
   test('folds the calls that trail the answer into the same summary', () => {

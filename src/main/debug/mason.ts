@@ -4,7 +4,7 @@
 // with a `categories` list per package; the ones tagged "DAP" are the adapters
 // it can install. Reading that file is how Grove knows what exists without a
 // list of its own. Installing goes through the editor's own nvim profile, run
-// headless (see GROVE_MASON_INSTALL in init.lua), so the package lands where
+// headless (see GROVE_MASON_INSTALL in lua/grove/provision.lua), so the package lands where
 // the editor's other Mason tools are.
 
 import { spawn } from 'node:child_process'

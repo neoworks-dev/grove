@@ -272,14 +272,20 @@
           }}
         >
           <span class="w-3 shrink-0 text-2xs text-dim">{optionIndex + 1}.</span>
-          <span
-            class="shrink-0 font-medium"
-            class:text-default={isPicked(active, option.label) || cursor === optionIndex}
-            class:text-muted={!isPicked(active, option.label) && cursor !== optionIndex}
-          >
-            {option.label}
+          <!-- The description wraps under the label: it is what the choice
+               means, and a narrow pane would truncate it to nothing. -->
+          <span class="flex min-w-0 flex-1 flex-col gap-0.5">
+            <span
+              class="font-medium"
+              class:text-default={isPicked(active, option.label) || cursor === optionIndex}
+              class:text-muted={!isPicked(active, option.label) && cursor !== optionIndex}
+            >
+              {option.label}
+            </span>
+            {#if option.description}
+              <span class="break-words text-dim">{option.description}</span>
+            {/if}
           </span>
-          <span class="min-w-0 flex-1 truncate text-dim">{option.description}</span>
           {#if isPicked(active, option.label)}
             <span class="shrink-0 self-center text-green">
               <Check width="11" height="11" weight="bold" />

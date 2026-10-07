@@ -7,8 +7,42 @@ import {
   runsForRows,
   rowForLine,
   lineForRow,
+  selectionSpans,
   LINE_PITCH
 } from '../src/renderer/src/lib/minimap'
+
+describe('selectionSpans', () => {
+  test('charwise: first and last lines are partial, middle lines run to the edge', () => {
+    const spans = selectionSpans({ kind: 'char', anchor: [5, 3], cursor: [3, 7] })
+    expect(spans).toEqual([
+      { line: 3, fromCol: 6, toCol: null },
+      { line: 4, fromCol: 0, toCol: null },
+      { line: 5, fromCol: 0, toCol: 3 }
+    ])
+  })
+
+  test('charwise on one line covers anchor to cursor inclusive', () => {
+    const spans = selectionSpans({ kind: 'char', anchor: [2, 9], cursor: [2, 4] })
+    expect(spans).toEqual([{ line: 2, fromCol: 3, toCol: 9 }])
+  })
+
+  test('linewise covers whole lines', () => {
+    const spans = selectionSpans({ kind: 'line', anchor: [1, 5], cursor: [2, 1] })
+    expect(spans).toEqual([
+      { line: 1, fromCol: 0, toCol: null },
+      { line: 2, fromCol: 0, toCol: null }
+    ])
+  })
+
+  test('blockwise uses the same columns on every line', () => {
+    const spans = selectionSpans({ kind: 'block', anchor: [4, 8], cursor: [2, 2] })
+    expect(spans).toEqual([
+      { line: 2, fromCol: 1, toCol: 8 },
+      { line: 3, fromCol: 1, toCol: 8 },
+      { line: 4, fromCol: 1, toCol: 8 }
+    ])
+  })
+})
 
 describe('buildLineRuns', () => {
   test('one run per non-whitespace chunk, columns from line start', () => {

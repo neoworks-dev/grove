@@ -18,11 +18,13 @@
     runsForRows,
     rowForLine,
     lineForRow,
+    selectionSpans,
     MINIMAP_RESTORE_VIEW_LUA,
     MINIMAP_VIEW_LUA,
     type LineRun,
     type ColorSpan,
     type DisplayRows,
+    type MinimapSelection,
     type MinimapGeometry
   } from '../lib/minimap'
   import type { ThemePalette } from '../lib/themes'
@@ -61,6 +63,8 @@
   let savedView: Record<string, number> = {}
   // The nvim window the map stands for; 0 until the first refresh names it.
   let viewWindow = 0
+  // The visual selection in that window; null outside visual/select mode.
+  let selection: MinimapSelection | null = null
   let lastTick = -1
   let lastBuf = -1
 
@@ -80,6 +84,7 @@
     topline: number
     botline: number
     rows?: DisplayRows
+    selection?: MinimapSelection
     lines?: string[]
     spans?: ColorSpan[][]
   }
@@ -107,6 +112,10 @@
       botline = result.botline
       savedView = result.view
       viewWindow = result.win
+      selection = null
+      if (result.selection) {
+        selection = result.selection
+      }
       if (result.lines) {
         baseRuns = buildLineRuns(result.lines, theme.palette.textFaint)
         colorRuns = result.spans ? buildColoredRuns(result.spans) : []
@@ -190,6 +199,7 @@
     ctx.globalAlpha = 1
     const geo = geometry()
     drawDiffBackground(ctx, geo)
+    drawSelection(ctx, geo)
     if (rows) {
       drawRuns(ctx, runsForRows(baseRuns, rows, theme.palette.borderStrong), geo)
       drawRuns(ctx, runsForRows(colorRuns, rows, null), geo)
@@ -224,6 +234,30 @@
         continue
       }
       ctx.fillRect(0, y, canvasWidth, LINE_PITCH * marker.count)
+    }
+    ctx.globalAlpha = 1
+  }
+
+  /**
+   * Paints the visual selection as a band behind the text, a full line tall so
+   * even a few selected characters stay visible at map scale.
+   */
+  function drawSelection(ctx: CanvasRenderingContext2D, geo: MinimapGeometry): void {
+    if (!selection) return
+    let color = theme.palette.primary
+    if (selection.color) {
+      color = selection.color
+    }
+    ctx.fillStyle = color
+    ctx.globalAlpha = 0.6
+    for (const span of selectionSpans(selection)) {
+      const y = (rowOf(span.line) - 1) * LINE_PITCH - geo.mapScrollTop
+      const fromX = span.fromCol * COL_WIDTH
+      let toX = canvasWidth
+      if (span.toCol !== null) {
+        toX = Math.max(fromX + 1, span.toCol * COL_WIDTH)
+      }
+      ctx.fillRect(fromX, y, toX - fromX, LINE_PITCH)
     }
     ctx.globalAlpha = 1
   }

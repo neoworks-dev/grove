@@ -19,6 +19,7 @@ import type {
   GithubIssueType,
   GithubMilestone,
   GithubMilestoneDefinition,
+  GithubMilestoneDraft,
   GithubProjectRef,
   GithubDashboard,
   GithubEventKind,
@@ -423,7 +424,7 @@ export function relationshipFields(capabilities: GithubCapabilities): string {
  * only when the probe said so. `issueType` exists on issues alone.
  */
 export function optionalFields(capabilities: GithubCapabilities, onIssue: boolean): string {
-  const selections = ['milestone { number title state dueOn }']
+  const selections = ['milestone { number title state dueOn description }']
   if (capabilities.projects) {
     selections.push('projectItems(first: 10) { nodes { project { number title url } } }')
   }
@@ -1223,24 +1224,48 @@ export async function fetchMentionables(repoPath: string): Promise<GithubActor[]
  * repository rather than from the loaded items, so a milestone nothing is filed
  * against yet can still be picked.
  */
-export async function fetchMilestones(repoPath: string): Promise<GithubMilestoneDefinition[]> {
+/** Creates an open milestone, and returns it as the pickers list one. */
+export async function createMilestone(
+  repoPath: string,
+  draft: GithubMilestoneDraft
+): Promise<GithubMilestoneDefinition> {
   const repo = await repoRef(repoPath)
-  const raw = await runGh(repoPath, [
-    'api',
-    `repos/${repo.nameWithOwner}/milestones?state=all&per_page=${MAX_ITEMS}`
-  ])
-  const parsed = parseJson<
-    {
-      number: number
-      title: string
-      state: string
-      due_on: string | null
-      description: string | null
-      open_issues: number
-      closed_issues: number
-    }[]
-  >(raw)
-  return parsed.map((entry) => ({
+  const raw = await runGh(repoPath, createMilestoneArgs(repo.nameWithOwner, draft))
+  return toMilestoneDefinition(parseJson<RestMilestone>(raw))
+}
+
+/**
+ * The `gh api` call that creates a milestone. A description or due date left
+ * empty is not sent at all. GitHub keeps only the date of `due_on`, moved into
+ * its own time zone first, so midnight UTC lands on the day before; noon UTC
+ * stays on the day in every zone GitHub could use.
+ */
+export function createMilestoneArgs(nameWithOwner: string, draft: GithubMilestoneDraft): string[] {
+  const args = ['api', '--method', 'POST', `repos/${nameWithOwner}/milestones`]
+  args.push('-f', `title=${draft.title.trim()}`)
+  if (draft.description.trim().length > 0) {
+    args.push('-f', `description=${draft.description.trim()}`)
+  }
+  if (draft.dueOn !== null) {
+    args.push('-f', `due_on=${draft.dueOn}T12:00:00Z`)
+  }
+  return args
+}
+
+/** A milestone as GitHub's REST API returns it. */
+interface RestMilestone {
+  number: number
+  title: string
+  state: string
+  due_on: string | null
+  description: string | null
+  open_issues: number
+  closed_issues: number
+}
+
+/** A REST milestone as the pickers list it. */
+function toMilestoneDefinition(entry: RestMilestone): GithubMilestoneDefinition {
+  return {
     number: entry.number,
     title: entry.title,
     state: entry.state,
@@ -1248,7 +1273,16 @@ export async function fetchMilestones(repoPath: string): Promise<GithubMilestone
     description: entry.description || '',
     openIssues: entry.open_issues,
     closedIssues: entry.closed_issues
-  }))
+  }
+}
+
+export async function fetchMilestones(repoPath: string): Promise<GithubMilestoneDefinition[]> {
+  const repo = await repoRef(repoPath)
+  const raw = await runGh(repoPath, [
+    'api',
+    `repos/${repo.nameWithOwner}/milestones?state=all&per_page=${MAX_ITEMS}`
+  ])
+  return parseJson<RestMilestone[]>(raw).map(toMilestoneDefinition)
 }
 
 /**

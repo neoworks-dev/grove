@@ -25,6 +25,7 @@
   import GithubLabelPicker from './GithubLabelPicker.svelte'
   import GithubMenu from './GithubMenu.svelte'
   import GithubIssueFieldSection from './GithubIssueFieldSection.svelte'
+  import GithubMilestoneForm from './GithubMilestoneForm.svelte'
   import GithubStateIcon from './GithubStateIcon.svelte'
   import { branchNameFor } from './branches'
   import { assigneeLogins, issueTypeColour } from './filter'
@@ -149,6 +150,9 @@
     if (optionId === undefined) return null
     return optionId
   }
+
+  /** The new-milestone form is open under the Milestone heading. */
+  let creatingMilestone = $state(false)
 </script>
 
 {#snippet actionRow(label: string, icon: Snippet, run: () => void, danger: boolean)}
@@ -320,15 +324,31 @@
               {#if github.milestones.length === 0}
                 <p class="px-1.5 py-1 text-2xs text-dim">This repository has no milestones.</p>
               {/if}
+              <button
+                class="mt-1 rounded px-1.5 py-1 text-left text-2xs text-dim hover:bg-hover hover:text-default"
+                onclick={() => {
+                  close()
+                  creatingMilestone = true
+                }}
+              >
+                New milestone…
+              </button>
             </div>
           </FloatingScrollbar>
         {/snippet}
       </GithubMenu>
     </div>
-    {#if detail.milestone}
+    {#if creatingMilestone}
+      <GithubMilestoneForm onclose={() => (creatingMilestone = false)} />
+    {:else if detail.milestone}
       <p class="truncate text-dim" title={detail.milestone.title}>{detail.milestone.title}</p>
       {#if dueLabel(detail.milestone.dueOn)}
         <p class="text-[9px] text-dim">{dueLabel(detail.milestone.dueOn)}</p>
+      {/if}
+      {#if detail.milestone.description}
+        <p class="line-clamp-3 text-dim" title={detail.milestone.description}>
+          {detail.milestone.description}
+        </p>
       {/if}
     {:else}
       <p class="text-dim">None yet</p>

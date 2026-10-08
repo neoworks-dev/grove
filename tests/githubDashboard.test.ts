@@ -7,6 +7,7 @@ import { describe, it, expect } from 'bun:test'
 import {
   adminHint,
   createIssueArgs,
+  createMilestoneArgs,
   dashboardQuery,
   itemActionArgs,
   isRateLimited,
@@ -542,5 +543,23 @@ describe('excerptOf', () => {
 
   it('stays absent when the description was not asked for', () => {
     expect(excerptOf(undefined)).toBeUndefined()
+  })
+})
+
+describe('createMilestoneArgs', () => {
+  it('sends the title alone when nothing else is filled in', () => {
+    expect(
+      createMilestoneArgs('o/r', { title: ' Board v1 ', description: ' ', dueOn: null })
+    ).toEqual(['api', '--method', 'POST', 'repos/o/r/milestones', '-f', 'title=Board v1'])
+  })
+
+  it('sends the description and the due day as noon UTC, which GitHub keeps on that day', () => {
+    const args = createMilestoneArgs('o/r', {
+      title: 'Board v1',
+      description: 'The first board',
+      dueOn: '2026-10-31'
+    })
+    expect(args).toContain('description=The first board')
+    expect(args).toContain('due_on=2026-10-31T12:00:00Z')
   })
 })

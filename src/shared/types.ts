@@ -474,9 +474,19 @@ export interface GithubMilestone {
   state: string
   /** ISO timestamp the milestone is due, or null when it has no date. */
   dueOn: string | null
+  /** What the milestone is for; empty or absent when it says nothing. */
+  description?: string | null
 }
 
 /** A milestone as the repository defines it, for the pickers that offer them. */
+/** A milestone to create: a title, and optionally what it is for and when it is due. */
+export interface GithubMilestoneDraft {
+  title: string
+  description: string
+  /** The due day as `YYYY-MM-DD`, or null for none. */
+  dueOn: string | null
+}
+
 export interface GithubMilestoneDefinition extends GithubMilestone {
   description: string
   openIssues: number

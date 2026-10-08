@@ -55,6 +55,7 @@ import type {
   GithubIssueField,
   GithubIssueItem,
   GithubMilestoneDefinition,
+  GithubMilestoneDraft,
   GithubIssueDraft,
   GithubItem,
   GithubCloseReason,
@@ -1331,6 +1332,26 @@ export async function loadLabels(): Promise<void> {
  * Load the repository's milestones once. A failure leaves the picker empty and
  * says so there, rather than taking down the rail it sits in.
  */
+/**
+ * Creates a milestone and puts the open item on it, the way GitHub's own
+ * picker does when a typed title matches nothing.
+ */
+export async function createMilestoneAndApply(draft: GithubMilestoneDraft): Promise<void> {
+  if (draft.title.trim().length === 0) return
+  github.busy = true
+  let created: GithubMilestoneDefinition
+  try {
+    created = await window.workbench.github.createMilestone($state.snapshot(draft))
+  } catch (err) {
+    dialogs.notify({ level: 'error', message: (err as Error).message })
+    return
+  } finally {
+    github.busy = false
+  }
+  github.milestones = [...github.milestones, created]
+  await applyMilestone(created.title)
+}
+
 export async function loadMilestones(): Promise<void> {
   await loadReference('milestones', async () => {
     github.milestones = await window.workbench.github.milestones()

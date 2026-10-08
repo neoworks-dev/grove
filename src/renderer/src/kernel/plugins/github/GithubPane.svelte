@@ -12,6 +12,7 @@
   } from './store.svelte'
   import GithubItemRow from './GithubItemRow.svelte'
   import GithubBoard from './GithubBoard.svelte'
+  import GithubSplitHandle from './GithubSplitHandle.svelte'
   import GithubThread from './GithubThread.svelte'
   import GithubCompose from './GithubCompose.svelte'
   import ArrowClockwiseIcon from 'phosphor-svelte/lib/ArrowClockwiseIcon'
@@ -40,6 +41,12 @@
     'no:label  no:assignee  no:milestone  no:type  no:project',
     'Put - in front to exclude, and "quotes" around names with spaces.'
   ].join('\n')
+
+  /** The list's share of the pane beside the thread, for each way issues are shown. */
+  interface SplitShares {
+    list: number
+    board: number
+  }
 
   let width = $state(0)
   const narrow = $derived(width > 0 && width < NARROW_PX)
@@ -81,14 +88,41 @@
   // on a narrow pane it takes the whole width, and the list steps aside.
   const detailColumnShown = $derived(github.composing || github.selection !== null)
 
-  // The list keeps a fixed share of a wide pane, and the whole of a narrow one.
-  // The board wants the room: all of it, or most of it beside an open thread.
+  // The list keeps a share of a wide pane that the handle between it and the
+  // thread sets, and the whole of a narrow one. The board keeps a share of its
+  // own, since it wants more room, and takes the whole pane with no thread open.
+  const SPLIT_KEY = 'grove.github.split'
+  const DEFAULT_SHARES: SplitShares = { list: 0.4, board: 0.55 }
+  let shares = $state<SplitShares>(loadShares())
+  const splitKind = $derived<keyof SplitShares>(github.boardShown ? 'board' : 'list')
+
   const listWidth = $derived.by(() => {
     if (narrow) return '100%'
-    if (!github.boardShown) return '40%'
-    if (detailColumnShown) return '55%'
-    return '100%'
+    if (github.boardShown && !detailColumnShown) return '100%'
+    return `${shares[splitKind] * 100}%`
   })
+
+  /** The stored split for the list and the board, falling back to the defaults. */
+  function loadShares(): SplitShares {
+    try {
+      const raw = localStorage.getItem(SPLIT_KEY)
+      if (raw === null) return { ...DEFAULT_SHARES }
+      return { ...DEFAULT_SHARES, ...(JSON.parse(raw) as Partial<SplitShares>) }
+    } catch {
+      return { ...DEFAULT_SHARES }
+    }
+  }
+
+  /** Moves the split for whatever is showing, keeping it when `persist` says so. */
+  function setShare(share: number, persist: boolean): void {
+    shares = { ...shares, [splitKind]: share }
+    if (!persist) return
+    try {
+      localStorage.setItem(SPLIT_KEY, JSON.stringify(shares))
+    } catch {
+      // Unavailable storage only costs remembering it.
+    }
+  }
 
   // Beside the list the thread column is always there, empty until something
   // is picked; beside the board it only opens with an issue in it.
@@ -162,7 +196,16 @@
 
   <div class="flex min-h-0 flex-1">
     {#if !narrow || !detailColumnShown}
-      <div class="flex min-h-0 min-w-0 shrink-0 flex-col" style:width={listWidth}>
+      <div class="relative flex min-h-0 min-w-0 shrink-0 flex-col" style:width={listWidth}>
+        {#if !narrow && detailColumnVisible}
+          <GithubSplitHandle
+            share={shares[splitKind]}
+            paneWidth={width}
+            onresize={(share) => setShare(share, false)}
+            oncommit={(share) => setShare(share, true)}
+            onreset={() => setShare(DEFAULT_SHARES[splitKind], true)}
+          />
+        {/if}
         {#if github.checked.length > 0}
           <GithubSelectionBar />
         {/if}

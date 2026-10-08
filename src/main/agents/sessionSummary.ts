@@ -11,6 +11,9 @@ const TITLE_MAX_CHARS = 48
 /** Longest preview kept; the row truncates further to fit. */
 const PREVIEW_MAX_CHARS = 240
 
+/** The name grove gives a session nobody has named, and a cleared one goes back to. */
+export const UNNAMED_TITLE = 'Session'
+
 // The names grove gives a session nobody has named: `Session`, `Session 3`.
 const DEFAULT_TITLE = /^Session( \d+)?$/
 
@@ -57,9 +60,13 @@ export function lastMessagePreview(events: readonly SessionEvent[]): SessionPrev
   return null
 }
 
-/** The text of the first prompt in the log, or null before there is one. */
+/**
+ * The text of the first prompt in the current conversation, or null before there
+ * is one. A clear (`session_changed`) starts a new conversation, so only what was
+ * asked after the last one counts.
+ */
 export function firstPromptText(events: readonly SessionEvent[]): string | null {
-  for (const event of events) {
+  for (const event of events.slice(conversationStart(events))) {
     if (event.type !== 'user.message') {
       continue
     }
@@ -69,6 +76,16 @@ export function firstPromptText(events: readonly SessionEvent[]): string | null 
     }
   }
   return null
+}
+
+/** Where the current conversation starts in the log: just after the last clear, or at the top. */
+function conversationStart(events: readonly SessionEvent[]): number {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    if (events[index].type === 'session_changed') {
+      return index + 1
+    }
+  }
+  return 0
 }
 
 /** A preview of `text` on one line without markdown markers, or null when there is nothing to show. */

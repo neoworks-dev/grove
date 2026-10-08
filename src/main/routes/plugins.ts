@@ -2,8 +2,9 @@
 
 import type { Context } from '@neoworks/extension-system'
 import { route } from '../kernel/route'
-import type { IpcMainInvokeEvent } from 'electron'
+import { app, type IpcMainInvokeEvent } from 'electron'
 import { registerPluginProtocol } from '../plugins/protocol'
+import { watchBuiltinBuilds } from '../plugins/devReload'
 import type { PermissionDecision as PluginPermissionDecision } from '../api/broker'
 import type { PluginPermission } from '../../shared/plugins'
 
@@ -17,6 +18,16 @@ export const pluginsRoutes = {
     // Builtin and user plugins load before a repository is open; project
     // plugins join when one is.
     void ctx.plugins.registry.loadAll(null)
+    // `bun run dev` rebuilds built-in plugins as their sources change.
+    if (!app.isPackaged) {
+      ctx.effect(
+        () =>
+          watchBuiltinBuilds(ctx.plugins.registry, (pluginId) =>
+            ctx.workbench.send('event:plugin-rebuilt', pluginId)
+          ),
+        'plugins:dev-rebuild'
+      )
+    }
     route(ctx, 'plugins:list', () => ctx.plugins.list())
     route(ctx, 'plugins:trust', async (_e: IpcMainInvokeEvent, pluginId: string) => {
       const record = ctx.plugins.registry.get(pluginId)

@@ -17,11 +17,12 @@
   import type { FileViewerProps } from '../lib/fileViewers.svelte'
   import type { FileViewerMessage } from '../../../shared/plugins'
   import { currentPageTheme, replayPageKey } from './pageFrame'
+  import { pluginHost } from './host.svelte'
 
   let { worktreeId, path, src, options }: FileViewerProps = $props()
 
   const plugin = $derived(options as PluginViewerOptions)
-  const pageUrl = $derived(`grove-plugin://${plugin.pluginId}/${plugin.page}`)
+  const pageUrl = $derived(pluginHost.bundleUrl(plugin.pluginId, plugin.page))
 
   let frameEl = $state<HTMLIFrameElement>()
   // Set once the page has said it is listening; nothing is sent before then.

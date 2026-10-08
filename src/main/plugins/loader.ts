@@ -23,7 +23,8 @@ export interface PluginRecord {
   errors: string[]
 }
 
-function builtinRoot(): string {
+/** Where the built-in plugins live: the app's resources, or the repo's in development. */
+export function builtinRoot(): string {
   if (app.isPackaged) return join(process.resourcesPath, 'plugins')
   return join(app.getAppPath(), 'resources', 'plugins')
 }

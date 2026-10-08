@@ -9,9 +9,10 @@
   import PaneControls from '../components/PaneControls.svelte'
   import { pluginHost, type PageInstanceConnection } from './host.svelte'
   import { currentPageTheme, replayPageKey, PAGE_CONTROLS_INSET } from './pageFrame'
+  import { keymap } from '../lib/keymap.svelte'
   import type { PanePageMessage } from '../../../shared/plugins'
 
-  let { paneTypeId }: { paneTypeId: string } = $props()
+  let { paneTypeId, leafId }: { paneTypeId: string; leafId?: string } = $props()
 
   const pageUrl = $derived(pluginHost.pagePaneUrl(paneTypeId))
   // A page can't render Grove's pane controls itself, so they are drawn here,
@@ -36,6 +37,17 @@
     }
     window.addEventListener('message', listener)
     return () => window.removeEventListener('message', listener)
+  })
+
+  // The page's keys live in the frame's document: pane navigation landing here
+  // has to focus the frame, not the leaf around it, or the page hears nothing.
+  $effect(() => {
+    if (!leafId) return
+    return keymap.registerPaneFocus(leafId, () => {
+      if (!frameEl) return false
+      frameEl.focus()
+      return true
+    })
   })
 
   // Follow Grove's theme while the page is open.

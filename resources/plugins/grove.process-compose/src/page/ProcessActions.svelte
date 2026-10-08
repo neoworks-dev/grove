@@ -7,6 +7,7 @@
   import IconAction from './IconAction.svelte'
   import { projectState } from './project.svelte'
   import { isLive } from './status'
+  import { KEY_HINTS } from './keys'
 
   let { process }: { process: ProcessView } = $props()
 </script>
@@ -14,19 +15,19 @@
 {#if isLive(process.status)}
   <IconAction
     icon={ArrowClockwiseIcon}
-    title="Restart {process.name}"
+    title="Restart {process.name} ({KEY_HINTS.restart})"
     onclick={() => projectState.send({ type: 'restart', name: process.name })}
   />
   <IconAction
     icon={StopIcon}
-    title="Stop {process.name}"
+    title="Stop {process.name} ({KEY_HINTS.stop})"
     tone="danger"
     onclick={() => projectState.send({ type: 'stop', name: process.name })}
   />
 {:else}
   <IconAction
     icon={PlayIcon}
-    title="Start {process.name}"
+    title="Start {process.name} ({KEY_HINTS.start})"
     onclick={() => projectState.send({ type: 'start', name: process.name })}
   />
 {/if}

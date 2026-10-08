@@ -34,6 +34,8 @@ export type PluginPermission =
   | 'services.manage' // start/stop dev services
   | 'debug.all' // arbitrary lua/JS execution; only registered under GROVE_DEBUG
   | 'browser.provide' // hand a browser tab to a worktree's agents (Kit, Chrome)
+  | 'clipboard.write' // put text on the system clipboard
+  | 'clipboard.read' // read text from the system clipboard
 
 export const PLUGIN_PERMISSIONS: PluginPermission[] = [
   'workspace.read',
@@ -56,7 +58,9 @@ export const PLUGIN_PERMISSIONS: PluginPermission[] = [
   'services.read',
   'services.manage',
   'debug.all',
-  'browser.provide'
+  'browser.provide',
+  'clipboard.write',
+  'clipboard.read'
 ]
 
 export type PermissionRisk = 'read' | 'write' | 'danger'
@@ -179,6 +183,16 @@ export const PERMISSION_META: Record<PluginPermission, PermissionMeta> = {
     description:
       'Hand a tab in this browser to a worktree’s agents, which then navigate, read and act in it, and open tabs for them',
     risk: 'write'
+  },
+  'clipboard.write': {
+    label: 'Write the clipboard',
+    description: 'Put text on your clipboard, replacing whatever you copied last',
+    risk: 'write'
+  },
+  'clipboard.read': {
+    label: 'Read the clipboard',
+    description: 'Read whatever you last copied, in any app — passwords and tokens included',
+    risk: 'danger'
   }
 }
 

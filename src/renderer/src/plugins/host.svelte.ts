@@ -27,6 +27,7 @@ import DeclarativeSurface from '../components/DeclarativeSurface.svelte'
 import DeclarativeStatusItem from '../components/DeclarativeStatusItem.svelte'
 import type { PluginViewerOptions } from './PluginFileViewer.svelte'
 import PluginPagePane from './PluginPagePane.svelte'
+import { createTerminalNoticeGrouper } from './terminalNotices'
 
 export interface PluginRecordShape {
   id: string
@@ -130,6 +131,9 @@ class PluginHost {
   // Bumped when a plugin calls panes.update(id) so surfaces re-render.
   paneVersions = $state<Record<string, number>>({})
   statusItems = $state<Record<string, HostStatusItem>>({})
+  // How many times each plugin was rebuilt and reloaded (development only).
+  // Part of its page and worker URLs, so a reload never gets a cached file.
+  buildGenerations = $state<Record<string, number>>({})
 
   private instances = new Map<string, PluginInstance>()
   // paneTypeId/commandId → owning plugin id.
@@ -162,7 +166,27 @@ class PluginHost {
   pagePaneUrl(paneTypeId: string): string | null {
     const page = this.pagePanes.get(paneTypeId)
     if (!page) return null
-    return `grove-plugin://${page.pluginId}/${page.page}`
+    return this.bundleUrl(page.pluginId, page.page)
+  }
+
+  /** A file from a plugin's bundle, marked with its build so a rebuilt plugin's frames reload. */
+  bundleUrl(pluginId: string, file: string): string {
+    const generation = this.buildGenerations[pluginId]
+    if (!generation) return `grove-plugin://${pluginId}/${file}`
+    return `grove-plugin://${pluginId}/${file}?build=${generation}`
+  }
+
+  /**
+   * Restarts a plugin whose bundle was rebuilt (development only): its worker
+   * starts over on the new code, and its open pages reload through their URLs.
+   */
+  private async reloadPlugin(pluginId: string): Promise<void> {
+    const instance = this.instances.get(pluginId)
+    if (!instance) return
+    this.buildGenerations[pluginId] = (this.buildGenerations[pluginId] ?? 0) + 1
+    await this.disposeInstance(instance)
+    this.instances.delete(pluginId)
+    this.registerInstance(instance.record)
   }
 
   /**
@@ -236,14 +260,18 @@ class PluginHost {
     window.workbench.on('event:app-pairing', (payload) => void this.onAppPairingRequest(payload))
     window.workbench.on('event:api-open-file', (payload) => this.onApiOpenFile(payload))
     // Visibility mitigation for terminal.exec: the user always learns when an
-    // API client opens a terminal.
+    // API client opens a terminal, once per burst rather than per terminal.
+    const noticeTerminal = createTerminalNoticeGrouper((message) =>
+      dialogs.notify({ level: 'info', message })
+    )
     window.workbench.on('event:api-terminal-created', (payload) => {
       const { clientName } = payload as { clientName: string }
-      dialogs.notify({ level: 'info', message: `${clientName} opened a terminal` })
+      noticeTerminal(clientName)
     })
     window.workbench.on('event:plugins-changed', (payload) =>
       this.applyRecords(payload as PluginRecordShape[])
     )
+    window.workbench.on('event:plugin-rebuilt', (payload) => void this.reloadPlugin(payload as string))
     // The selected worktree lives here, not in main's event hub, so the host
     // delivers its change itself to the plugins that subscribed.
     $effect.root(() => {
@@ -474,7 +502,7 @@ class PluginHost {
         worker.postMessage({
           kind: 'init',
           pluginId: instance.record.id,
-          entryUrl: `grove-plugin://${instance.record.id}/${instance.record.manifest.entry}`,
+          entryUrl: this.bundleUrl(instance.record.id, instance.record.manifest.entry),
           apiVersion: GROVE_API_VERSION
         })
 

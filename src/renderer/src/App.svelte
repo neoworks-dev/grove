@@ -31,6 +31,7 @@
   import { initIcons } from './lib/icons'
   import { initThemes } from './lib/themes'
   import { overlays } from './lib/overlays.svelte'
+  import { paneDrag } from './lib/paneDrag.svelte'
 
   // Panes, views, menus, keybindings, commands and status bar items are all
   // contributed by the core plugins the kernel mounts (kernel/boot.ts). This
@@ -137,6 +138,7 @@
     void loadInstalledExtensions()
     const stopKeyDispatch = startGlobalKeyDispatch()
     const stopWindowFocus = keymap.watchWindowFocus()
+    const stopAltWatch = paneDrag.watchAltKey()
     const unsubscribeKeys = [
       keyDispatch.subscribe(KeyPriority.hardKey, handleCommandPaletteKey),
       keyDispatch.subscribe(KeyPriority.overlay, handleOverlayOwnership),
@@ -166,6 +168,7 @@
       for (const unsubscribe of unsubscribeKeys) unsubscribe()
       stopKeyDispatch()
       stopWindowFocus()
+      stopAltWatch()
       stopPaneZoom()
       stopWorktreeStatus()
     }

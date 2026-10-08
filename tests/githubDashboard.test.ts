@@ -17,6 +17,8 @@ import {
   optionalFields,
   rateLimitMessage,
   relationshipFields,
+  responseBody,
+  capabilitiesFromSchema,
   scopeHint,
   graphqlFailure,
   grantedScopes,
@@ -488,5 +490,40 @@ describe('branch pulls off GitHub', () => {
     } finally {
       rmSync(repoPath, { recursive: true, force: true })
     }
+  })
+})
+
+describe('capabilitiesFromSchema', () => {
+  const ISSUE = ['issueType', 'subIssuesSummary', 'linkedBranches', 'title']
+
+  it('reads the newer selections off the fields the schema has', () => {
+    const capabilities = capabilitiesFromSchema(ISSUE, ['issueFields'], ['repo'])
+    expect(capabilities).toEqual({
+      projects: false,
+      issueTypes: true,
+      subIssues: true,
+      linkedBranches: true,
+      issueFields: true
+    })
+  })
+
+  it('leaves out what an older schema does not have', () => {
+    const capabilities = capabilitiesFromSchema(['title'], [], ['repo'])
+    expect(capabilities.issueTypes).toBe(false)
+    expect(capabilities.issueFields).toBe(false)
+  })
+
+  it('reads projects off the scopes, and leaves them open when the token lists none', () => {
+    expect(capabilitiesFromSchema(ISSUE, [], ['repo', 'read:project']).projects).toBe(true)
+    expect(capabilitiesFromSchema(ISSUE, [], ['project']).projects).toBe(true)
+    expect(capabilitiesFromSchema(ISSUE, [], null).projects).toBeNull()
+  })
+})
+
+describe('responseBody', () => {
+  it('drops the status line and headers of an --include response', () => {
+    const response = 'HTTP/2.0 200 OK\r\nX-Oauth-Scopes: repo\r\n\r\n{"data":{}}'
+    expect(responseBody(response)).toBe('{"data":{}}')
+    expect(grantedScopes(response)).toEqual(['repo'])
   })
 })

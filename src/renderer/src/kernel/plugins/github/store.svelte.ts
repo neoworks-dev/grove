@@ -1647,6 +1647,26 @@ export async function applyMilestone(title: string | null): Promise<void> {
 }
 
 /**
+ * Sets one of the organisation's issue fields on the open issue, or clears it
+ * when `optionId` is null, then reloads the thread and the list behind it.
+ */
+export async function applyIssueField(fieldId: string, optionId: string | null): Promise<void> {
+  const selection = github.selection
+  const detail = github.detail
+  if (!selection || !detail || detail.kind !== 'issue') return
+  github.busy = true
+  try {
+    await window.workbench.github.setIssueField(detail.id, fieldId, optionId)
+    await loadDetail(selection, { silent: true })
+    void refreshDashboard(github.stateFilter, { silent: true })
+  } catch (err) {
+    dialogs.notify({ level: 'error', message: (err as Error).message })
+  } finally {
+    github.busy = false
+  }
+}
+
+/**
  * Load the people a mention can name, once per session. A failure leaves
  * completion offering only the thread's own participants rather than breaking
  * the box it is attached to.

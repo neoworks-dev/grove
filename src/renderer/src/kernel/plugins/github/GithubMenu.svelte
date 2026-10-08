@@ -27,9 +27,44 @@
 
   let open = $state(false)
   let root = $state<HTMLElement | null>(null)
+  // Where the panel goes, in window coordinates. It is positioned against the
+  // window rather than inside the bar, so a bar that clips its overflow, or a
+  // column drawn after it, cannot hide it.
+  let position = $state<{ top: number; left: number | null; right: number | null }>({
+    top: 0,
+    left: null,
+    right: null
+  })
 
   function close(): void {
     open = false
+  }
+
+  /** Opens the panel under the trigger, or closes it. */
+  function toggle(): void {
+    if (open) {
+      close()
+      return
+    }
+    if (root) position = panelPosition(root.getBoundingClientRect())
+    open = true
+  }
+
+  /** The panel's place under a trigger, its left or right edge lined up with the trigger's. */
+  function panelPosition(trigger: DOMRect): {
+    top: number
+    left: number | null
+    right: number | null
+  } {
+    const top = trigger.bottom + 4
+    if (align === 'right') return { top, left: null, right: window.innerWidth - trigger.right }
+    return { top, left: trigger.left, right: null }
+  }
+
+  /** A CSS length for an edge, or `auto` when the panel is not anchored to it. */
+  function edge(value: number | null): string {
+    if (value === null) return 'auto'
+    return `${value}px`
   }
 
   // Pointerdown rather than click: a click that lands on another trigger should
@@ -60,7 +95,7 @@
     {disabled}
     aria-expanded={open}
     aria-haspopup="menu"
-    onclick={() => (open = !open)}
+    onclick={toggle}
   >
     {#if icon}
       {@render icon()}
@@ -74,9 +109,10 @@
 
   {#if open}
     <div
-      class="absolute top-full z-20 mt-1 w-56 rounded-md border border-line-strong bg-elevated p-1.5 shadow-lg"
-      class:left-0={align === 'left'}
-      class:right-0={align === 'right'}
+      class="fixed z-50 w-56 rounded-md border border-line-strong bg-elevated p-1.5 shadow-lg"
+      style:top="{position.top}px"
+      style:left={edge(position.left)}
+      style:right={edge(position.right)}
       role="menu"
       tabindex="-1"
     >

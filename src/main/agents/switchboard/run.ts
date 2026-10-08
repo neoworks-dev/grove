@@ -40,6 +40,7 @@ import { toolNameOf } from '../acpLog'
 import { CALL_TOOL, dispatchedCall } from '../tools/toolSearchTools'
 import { ASK_USER } from '../tools/questionTools'
 import { groveToolName, type BoundServer, type ToolBinding } from './mcpServer'
+import { overlayMcpServer } from './overlay'
 import type { SwitchboardHost } from './host'
 import { TerminalRelay } from './terminalRelay'
 
@@ -193,10 +194,13 @@ export class SwitchboardRun implements HarnessRun {
   // ── Setting up ──────────────────────────────────────────────────
 
   private async sessionInit(bound: BoundServer): Promise<SessionInit> {
+    const mcpServers = [bound.server]
+    const overlay = await overlayMcpServer()
+    if (overlay) mcpServers.push(overlay)
     const init: SessionInit = {
       harness: this.profile.harness,
       cwd: this.options.workspaceRoot,
-      mcpServers: [bound.server],
+      mcpServers,
       options: this.withPinnedPrompt(this.profile.sessionOptions(this.options)),
       onPermission: (request) => this.answerPermission(request),
       onQuestion: (request) => this.answerQuestion(request),

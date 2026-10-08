@@ -24,6 +24,7 @@
   import GithubLabelPill from './GithubLabelPill.svelte'
   import GithubLabelPicker from './GithubLabelPicker.svelte'
   import GithubMenu from './GithubMenu.svelte'
+  import GithubIssueFieldSection from './GithubIssueFieldSection.svelte'
   import GithubStateIcon from './GithubStateIcon.svelte'
   import { branchNameFor } from './branches'
   import { assigneeLogins, issueTypeColour } from './filter'
@@ -140,6 +141,14 @@
     if (!progress || progress.total === 0) return null
     return `${progress.completed} of ${progress.total} done`
   })
+
+  /** The open issue's option for a field, or null when it is not set. */
+  function fieldValueOf(fieldId: string): string | null {
+    if (!detail.fieldValues) return null
+    const optionId = detail.fieldValues[fieldId]
+    if (optionId === undefined) return null
+    return optionId
+  }
 </script>
 
 {#snippet actionRow(label: string, icon: Snippet, run: () => void, danger: boolean)}
@@ -241,6 +250,12 @@
       <p class="text-dim">No one</p>
     {/if}
   </section>
+
+  {#if detail.kind === 'issue'}
+    {#each github.issueFields as field (field.id)}
+      <GithubIssueFieldSection {field} optionId={fieldValueOf(field.id)} />
+    {/each}
+  {/if}
 
   {#if github.capabilities.issueTypes && detail.kind === 'issue'}
     <section class="flex flex-col gap-1.5">

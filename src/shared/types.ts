@@ -686,6 +686,8 @@ export type GithubTimelineEntry =
   | { type: 'event'; at: string; event: GithubTimelineEvent }
 
 export interface GithubItemDetail extends GithubItemShared {
+  /** Issues only: single-select field values, option id by field id. Absent when the query could not ask. */
+  fieldValues?: Record<string, string>
   kind: GithubItemKind
   /** The GraphQL node id, which the subscription mutation is addressed to. */
   id: string

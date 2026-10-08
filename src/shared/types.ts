@@ -30,6 +30,11 @@ export interface BranchPosition {
    * nothing to have merged.
    */
   mergedLocally: boolean
+  /**
+   * Lines and files the branch changes against where it left the base, its
+   * commits and uncommitted work together. Absent when that could not be read.
+   */
+  changes?: { added: number; removed: number; files: number }
 }
 
 // The pull request most recently opened from a branch, as a worktree row shows it.

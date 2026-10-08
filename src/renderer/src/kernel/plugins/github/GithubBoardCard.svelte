@@ -1,10 +1,14 @@
 <script lang="ts">
-  // One issue on the board: number, title, labels and assignees, and what an
-  // agent working on it is doing. Dragging it onto another column sets the
-  // board's field; clicking it opens the issue's thread.
+  // One issue on the board: number, title, labels and assignees, and below
+  // them a card of its own for the agent working on it: the session, what it is
+  // doing, and what its branch changes so far. Dragging the issue onto another
+  // column sets the board's field; clicking it opens the issue's thread, and
+  // clicking the agent's card opens the session.
   import GithubAvatar from './GithubAvatar.svelte'
   import GithubLabelPill from './GithubLabelPill.svelte'
-  import { issueAgentBadge, prefetchItem } from './store.svelte'
+  import { issueAgent, openIssueAgent, prefetchItem } from './store.svelte'
+  import { ageLabel } from '../../../lib/time'
+  import { store } from '../../../lib/store.svelte'
   import type { SessionBadge } from '../../../lib/agents/sessions.svelte'
   import type { GithubIssueItem } from '../../../../../shared/types'
 
@@ -25,14 +29,40 @@
     idle: 'idle'
   }
 
-  const AGENT_DOTS: Record<SessionBadge, string> = {
-    running: 'bg-violet',
-    requires_action: 'bg-amber',
-    error: 'bg-red',
-    idle: 'bg-dim'
+  const AGENT_TEXT: Record<SessionBadge, string> = {
+    running: 'text-violet',
+    requires_action: 'text-amber',
+    error: 'text-red',
+    idle: 'text-dim'
   }
 
-  const agent = $derived(issueAgentBadge(issue.number))
+  const agent = $derived(issueAgent(issue.number))
+
+  /** The session's title without the "Issue #12: " it was started with, which the card already says. */
+  const sessionTitle = $derived.by(() => {
+    if (!agent) return ''
+    return agent.session.title.replace(/^Issue #\d+:\s*/, '')
+  })
+
+  /** What the agent's branch changes against its base, once there is something. */
+  const changes = $derived.by(() => {
+    if (!agent) return null
+    const position = store.branchPositions[agent.worktree.id]
+    if (!position || !position.changes || position.changes.files === 0) return null
+    return position.changes
+  })
+
+  /** Opens the agent's session rather than the issue under it. */
+  function openAgent(event: Event): void {
+    event.stopPropagation()
+    if (agent) openIssueAgent(agent)
+  }
+
+  function onAgentKey(event: KeyboardEvent): void {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    event.preventDefault()
+    openAgent(event)
+  }
 
   /** Hands the issue's number to the drop, which looks the issue up again. */
   function startDrag(event: DragEvent): void {
@@ -80,20 +110,49 @@
     <p class="line-clamp-3 text-2xs text-dim">{issue.excerpt}</p>
   {/if}
 
-  {#if issue.labels.length > 0 || agent}
+  {#if issue.labels.length > 0}
     <div class="flex flex-wrap items-center gap-1">
       {#each issue.labels as label (label.name)}
         <GithubLabelPill {label} />
       {/each}
-      {#if agent}
-        <span
-          class="ml-auto flex items-center gap-1 text-2xs text-muted"
-          title="Agent: {AGENT_LABELS[agent]}"
-        >
-          <span class="size-1.5 rounded-full {AGENT_DOTS[agent]}"></span>
-          {AGENT_LABELS[agent]}
-        </span>
-      {/if}
+    </div>
+  {/if}
+
+  {#if agent}
+    <div
+      class="flex flex-col gap-1 rounded-md bg-raised px-2 py-1.5"
+      role="button"
+      tabindex="0"
+      title="Open the agent session in {agent.worktree.name}"
+      onclick={openAgent}
+      onkeydown={onAgentKey}
+    >
+      <span class="truncate text-xs text-default">{sessionTitle}</span>
+      <span class="flex items-center gap-1.5 text-2xs text-dim">
+        {#if agent.badge === 'running'}
+          <span class="flex items-center gap-0.5" aria-label="working">
+            {#each [0, 1, 2] as dot (dot)}
+              <span
+                class="size-1 animate-pulse rounded-full bg-amber"
+                style:animation-delay="{dot * 200}ms"
+              ></span>
+            {/each}
+          </span>
+        {:else if agent.badge !== 'idle'}
+          <span class={AGENT_TEXT[agent.badge]}>{AGENT_LABELS[agent.badge]}</span>
+          <span>·</span>
+        {/if}
+        <span>{ageLabel(agent.session.updatedAt)}</span>
+        {#if changes}
+          <span>·</span>
+          <span>
+            {changes.files}
+            {#if changes.files === 1}file{:else}files{/if}
+          </span>
+          <span class="text-green">+{changes.added}</span>
+          <span class="text-red">-{changes.removed}</span>
+        {/if}
+      </span>
     </div>
   {/if}
 </div>

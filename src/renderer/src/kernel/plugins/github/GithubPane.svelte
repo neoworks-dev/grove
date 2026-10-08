@@ -12,6 +12,8 @@
   } from './store.svelte'
   import GithubItemRow from './GithubItemRow.svelte'
   import GithubBoard from './GithubBoard.svelte'
+  import GithubViewTabs from './GithubViewTabs.svelte'
+  import { boardColumns, optionColour } from './board'
   import GithubSplitHandle from './GithubSplitHandle.svelte'
   import GithubThread from './GithubThread.svelte'
   import GithubCompose from './GithubCompose.svelte'
@@ -23,7 +25,12 @@
   import GithubSearchBox from './GithubSearchBox.svelte'
   import { ageLabel, partitionPinned } from './filter'
   import { DEFAULT_QUERY, setStateQualifier } from './search'
-  import type { GithubItem, GithubItemKind, GithubStateFilter } from '../../../../../shared/types'
+  import type {
+    GithubIssueItem,
+    GithubItem,
+    GithubItemKind,
+    GithubStateFilter
+  } from '../../../../../shared/types'
   import PaneControls from '../../../components/PaneControls.svelte'
   import RowAction from '../gitChanges/RowAction.svelte'
 
@@ -53,6 +60,13 @@
   const items = $derived(github.items)
   // Pinned issues head the list under their own heading, as they do on GitHub.
   const sections = $derived(partitionPinned(items))
+  // A list grouped by an issue field shows the board's columns as sections,
+  // including the empty ones, so the grouping reads the same in both layouts.
+  const listGroups = $derived.by(() => {
+    if (github.tab !== 'issue' || github.view !== 'list' || !github.listField) return null
+    const issues = items.filter((item): item is GithubIssueItem => item.kind === 'issue')
+    return boardColumns(issues, github.listField)
+  })
   // An empty list under the query it started with is "nothing here", not "your
   // search found nothing" — `is:open` is not something the user typed.
   const narrowed = $derived(github.query.trim() !== DEFAULT_QUERY && github.query.trim().length > 0)
@@ -265,6 +279,9 @@
           <PaneControls />
         </div>
 
+        {#if github.tab === 'issue'}
+          <GithubViewTabs />
+        {/if}
         <GithubFilterBar {setStateFilter} />
 
         {#if github.boardShown && github.boardField}
@@ -272,7 +289,21 @@
         {:else}
           <FloatingScrollbar class="min-h-0 flex-1">
             <div>
-              {#if sections.pinned.length > 0}
+              {#if listGroups}
+                {#each listGroups as group (group.name)}
+                  <h3
+                    class="flex items-center gap-1.5 border-b border-line px-3 pb-1 pt-2 text-2xs font-semibold text-muted"
+                  >
+                    <span class="size-2 rounded-full" style:background={optionColour(group.color)}
+                    ></span>
+                    {group.name}
+                    <span class="font-mono font-normal text-dim">{group.issues.length}</span>
+                  </h3>
+                  {#each group.issues as item (item.number)}
+                    {@render itemRow(item)}
+                  {/each}
+                {/each}
+              {:else if sections.pinned.length > 0}
                 <h3
                   class="flex items-center gap-1 border-b border-line px-3 pb-1 pt-2 text-2xs font-semibold uppercase tracking-caps text-dim"
                 >
@@ -284,9 +315,11 @@
                 {/each}
                 <div class="h-2 border-b border-line"></div>
               {/if}
-              {#each sections.rest as item (item.kind + item.number)}
-                {@render itemRow(item)}
-              {/each}
+              {#if !listGroups}
+                {#each sections.rest as item (item.kind + item.number)}
+                  {@render itemRow(item)}
+                {/each}
+              {/if}
 
               {#if items.length === 0}
                 <p class="px-3 py-4 text-xs text-dim">

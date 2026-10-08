@@ -24,6 +24,14 @@ import { startSessionWithTask } from '../../../lib/agents/newSession'
 import { agentSessions, badgeOf, type SessionBadge } from '../../../lib/agents/sessions.svelte'
 import { resolveBoardField, withFieldValue } from './board'
 import { loadDashboardSnapshot, saveDashboardSnapshot } from './dashboardSnapshot'
+import {
+  createView,
+  loadViews,
+  storeViews,
+  type IssueLayout,
+  type SavedView,
+  type ViewState
+} from './views'
 import { diffAgainstBase, redrawDiffAgainstBase, showPrBaseOnly } from './prDiff'
 import { registerDiffRestore } from '../../../lib/nvim/diffTabs'
 import { buildPrFileTree, nextUnreadFile } from './prFileTree'
@@ -109,10 +117,14 @@ class GithubStore {
 
   tab = $state<GithubItemKind>('pull')
 
-  /** Issues as a list, or as a board in columns by an issue field. */
-  view = $state<'list' | 'board'>('list')
+  /** Issues as a list, as a board in columns by an issue field, or on a calendar. */
+  view = $state<IssueLayout>('list')
   /** The issue field the board groups by; null until one is picked, which means the first. */
   boardFieldId = $state<string | null>(null)
+  /** The issue field the list is grouped by, or null for one ungrouped list. */
+  listFieldId = $state<string | null>(null)
+  /** The views saved for the open repository, oldest first. */
+  savedViews = $state<SavedView[]>([])
 
   /**
    * The whole filter, in GitHub's own syntax. The menus write into this and
@@ -327,6 +339,26 @@ class GithubStore {
     if (this.tab !== 'issue') return false
     if (this.view !== 'board') return false
     return this.boardField !== null
+  }
+
+  /** What the issue list shows, in the terms a view is saved in. */
+  get viewState(): ViewState {
+    return { query: this.query, layout: this.view, fieldId: this.layoutFieldId }
+  }
+
+  /** The field the current layout uses: the board's always, the list's only when grouped. */
+  get layoutFieldId(): string | null {
+    if (this.view === 'list') return this.listField ? this.listField.id : null
+    const field = this.boardField
+    if (!field) return null
+    return field.id
+  }
+
+  /** The field the list is grouped by, while it still exists. */
+  get listField(): GithubIssueField | null {
+    const field = this.issueFields.find((candidate) => candidate.id === this.listFieldId)
+    if (!field) return null
+    return field
   }
 
   get counts(): { pull: number; issue: number } {
@@ -1508,6 +1540,42 @@ function replaceIssue(next: GithubIssueItem): void {
     return issue
   })
   github.dashboard = { ...dashboard, issues }
+}
+
+/** Reads the open repository's saved views; none when no repository is open. */
+export function loadSavedViews(): void {
+  if (!store.repo) {
+    github.savedViews = []
+    return
+  }
+  github.savedViews = loadViews(store.repo.path)
+}
+
+/** Saves what the issue list shows as a view under a name. */
+export function saveCurrentView(name: string): void {
+  if (!store.repo || name.trim().length === 0) return
+  const views = [...github.savedViews, createView(name, github.viewState)]
+  github.savedViews = views
+  storeViews(store.repo.path, views)
+}
+
+/** Deletes a saved view. */
+export function deleteView(id: string): void {
+  if (!store.repo) return
+  const views = github.savedViews.filter((view) => view.id !== id)
+  github.savedViews = views
+  storeViews(store.repo.path, views)
+}
+
+/** Shows the issue list the way a view describes: its query, layout and field. */
+export function applyView(view: ViewState): void {
+  github.query = view.query
+  github.view = view.layout
+  if (view.layout === 'list') {
+    github.listFieldId = view.fieldId
+    return
+  }
+  github.boardFieldId = view.fieldId
 }
 
 /** Switches to a worktree an issue already has. */

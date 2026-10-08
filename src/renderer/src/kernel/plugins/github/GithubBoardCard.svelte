@@ -4,7 +4,7 @@
   // board's field; clicking it opens the issue's thread.
   import GithubAvatar from './GithubAvatar.svelte'
   import GithubLabelPill from './GithubLabelPill.svelte'
-  import { issueAgentBadge } from './store.svelte'
+  import { issueAgentBadge, prefetchItem } from './store.svelte'
   import type { SessionBadge } from '../../../lib/agents/sessions.svelte'
   import type { GithubIssueItem } from '../../../../../shared/types'
 
@@ -60,6 +60,7 @@
   aria-current={selected}
   ondragstart={startDrag}
   onclick={onopen}
+  onmouseenter={() => prefetchItem('issue', issue.number)}
   onkeydown={onKey}
 >
   <div class="flex items-center gap-1.5 text-2xs text-dim">

@@ -5,6 +5,7 @@
 // time) and detail responses carry a token, so a slow reply for an item the user
 // has already navigated away from is dropped instead of overwriting the view.
 
+import { untrack } from 'svelte'
 import { dialogs } from '../../../lib/dialogs.svelte'
 import type { DialogOptions } from '../../../lib/dialogs.svelte'
 import {
@@ -22,6 +23,7 @@ import { issuePrompt } from './issuePrompt'
 import { startSessionWithTask } from '../../../lib/agents/newSession'
 import { agentSessions, badgeOf, type SessionBadge } from '../../../lib/agents/sessions.svelte'
 import { resolveBoardField, withFieldValue } from './board'
+import { loadDashboardSnapshot, saveDashboardSnapshot } from './dashboardSnapshot'
 import { diffAgainstBase, redrawDiffAgainstBase, showPrBaseOnly } from './prDiff'
 import { registerDiffRestore } from '../../../lib/nvim/diffTabs'
 import { buildPrFileTree, nextUnreadFile } from './prFileTree'
@@ -373,6 +375,9 @@ export async function refreshDashboard(
     github.loading = true
     clearRefusals(referenceLoads)
   }
+  // Runs before the first await, so inside the pane's effect; untracked, or the
+  // list it reads would re-run that effect with every load.
+  untrack(() => restoreSnapshot(state))
   try {
     const status = await window.workbench.github.status()
     github.status = status
@@ -381,13 +386,63 @@ export async function refreshDashboard(
       github.error = status.error
       return
     }
-    github.dashboard = await window.workbench.github.dashboard({ state, limit: PAGE_SIZE })
+    const dashboard = await window.workbench.github.dashboard({ state, limit: PAGE_SIZE })
+    github.dashboard = dashboard
     github.error = null
+    rememberSnapshot(state, dashboard)
+    void prefetchThreads(github.items.slice(0, PREFETCH_COUNT))
   } catch (err) {
     github.error = (err as Error).message
   } finally {
     github.loading = false
     githubInternals.listInFlight = false
+  }
+}
+
+// Only the open list is kept and put back: it is what the pane opens on, and a
+// closed or all list shown as the opening view would be the wrong list.
+
+/** Puts the last open list for this repository up while the first fetch runs. */
+function restoreSnapshot(state: GithubStateFilter): void {
+  if (github.dashboard || state !== 'open' || !store.repo) return
+  github.dashboard = loadDashboardSnapshot(store.repo.path)
+}
+
+/** Keeps the open list for the next time the pane opens on this repository. */
+function rememberSnapshot(state: GithubStateFilter, dashboard: GithubDashboard): void {
+  if (state !== 'open' || !store.repo) return
+  saveDashboardSnapshot(store.repo.path, dashboard)
+}
+
+/** How many threads from the top of the list are fetched before they are opened. */
+const PREFETCH_COUNT = 8
+
+// Threads being fetched ahead of a click, so a hover and the list's own
+// prefetch do not ask for the same one twice.
+const prefetching = new Set<string>()
+
+/** Fetches the threads of the given items one after another, skipping any already here. */
+async function prefetchThreads(items: GithubItem[]): Promise<void> {
+  for (const item of items) {
+    await prefetchItem(item.kind, item.number)
+  }
+}
+
+/**
+ * Fetches an item's thread into the cache without showing it, so opening it is
+ * immediate. A failure is left for the click to meet and report.
+ */
+export async function prefetchItem(kind: GithubItemKind, number: number): Promise<void> {
+  const key = detailKey({ kind, number })
+  if (github.details[key] || prefetching.has(key)) return
+  prefetching.add(key)
+  try {
+    const detail = await window.workbench.github.item(kind, number)
+    github.details = { ...github.details, [key]: detail }
+  } catch {
+    // Opening it fetches again and says what went wrong.
+  } finally {
+    prefetching.delete(key)
   }
 }
 

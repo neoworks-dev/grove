@@ -308,6 +308,8 @@ export interface WorkbenchApi {
     item: (kind: GithubItemKind, number: number) => Promise<GithubItemDetail>
     labels: () => Promise<GithubLabelDefinition[]>
     milestones: () => Promise<GithubMilestoneDefinition[]>
+    /** Sets a single-select issue field on an issue, by node ids; a null option clears it. */
+    setIssueField: (issueId: string, fieldId: string, optionId: string | null) => Promise<void>
     changeMilestone: (kind: GithubItemKind, number: number, title: string | null) => Promise<void>
     mentionables: () => Promise<GithubActor[]>
     setSubscription: (nodeId: string, subscribed: boolean) => Promise<void>

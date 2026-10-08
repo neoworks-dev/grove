@@ -152,4 +152,39 @@
   <span class="ml-auto shrink-0 text-2xs text-dim">
     {github.items.length} shown
   </span>
+
+  {#if github.tab === 'issue' && github.issueFields.length > 0}
+    <div class="flex shrink-0 overflow-hidden rounded-md border border-line">
+      <button
+        class="px-1.5 py-0.5 text-2xs hover:bg-hover"
+        class:bg-hover={github.view === 'list'}
+        class:text-default={github.view === 'list'}
+        class:text-dim={github.view !== 'list'}
+        onclick={() => (github.view = 'list')}
+      >
+        List
+      </button>
+      <button
+        class="px-1.5 py-0.5 text-2xs hover:bg-hover"
+        class:bg-hover={github.view === 'board'}
+        class:text-default={github.view === 'board'}
+        class:text-dim={github.view !== 'board'}
+        onclick={() => (github.view = 'board')}
+      >
+        Board
+      </button>
+    </div>
+    {#if github.view === 'board' && github.boardField}
+      <select
+        class="shrink-0 rounded-md border border-line bg-input px-1 py-0.5 text-2xs text-dim outline-none"
+        title="Group the board by"
+        value={github.boardField.id}
+        onchange={(event) => (github.boardFieldId = event.currentTarget.value)}
+      >
+        {#each github.issueFields as field (field.id)}
+          <option value={field.id}>{field.name}</option>
+        {/each}
+      </select>
+    {/if}
+  {/if}
 </div>

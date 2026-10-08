@@ -158,6 +158,15 @@ export const githubRoutes = {
 
     route(
       ctx,
+      'github:setIssueField',
+      (_e, issueId: string, fieldId: string, optionId: string | null) => {
+        const { repoPath } = ctx.workbench.requireRepo()
+        return dashboard.setIssueField(repoPath, issueId, fieldId, optionId)
+      }
+    )
+
+    route(
+      ctx,
       'github:changeMilestone',
       (_e, kind: GithubItemKind, number: number, title: string | null) => {
         const { repoPath } = ctx.workbench.requireRepo()

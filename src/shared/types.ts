@@ -514,6 +514,8 @@ export interface GithubCapabilities {
   linkedBranches: boolean
   /** Subscribing and unsubscribing, which needs the `notifications` token scope. */
   notifications: boolean
+  /** The organisation's issue fields (Priority, Status, …), which only org repositories have. */
+  issueFields: boolean
 }
 
 /** A pointer to another issue, as a relationship carries one. */
@@ -560,9 +562,29 @@ interface GithubItemShared {
   projects?: GithubProjectRef[]
 }
 
+/** One of a single-select issue field's options. */
+export interface GithubIssueFieldOption {
+  id: string
+  name: string
+  /** GitHub's colour name: GRAY, BLUE, GREEN, YELLOW, ORANGE, RED, PINK or PURPLE. */
+  color: string
+}
+
+/** A single-select issue field the organisation defines, like Priority. */
+export interface GithubIssueField {
+  id: string
+  name: string
+  /** In the order the organisation ranks them. */
+  options: GithubIssueFieldOption[]
+}
+
 export interface GithubIssueItem extends GithubItemShared {
   kind: 'issue'
   commentCount: number
+  /** The issue's GraphQL node id, which mutations take. */
+  id?: string
+  /** Single-select field values, option id by field id. Absent when the query could not ask. */
+  fieldValues?: Record<string, string>
 }
 
 export interface GithubPullItem extends GithubItemShared {
@@ -594,6 +616,8 @@ export interface GithubDashboard {
   pulls: GithubPullItem[]
   /** What this token could be asked for, so the UI hides what is not there. */
   capabilities: GithubCapabilities
+  /** The single-select issue fields issues can be grouped by; empty without `issueFields`. */
+  issueFields: GithubIssueField[]
   /** Epoch ms of the fetch, for the "updated Xs ago" hint. */
   fetchedAt: number
 }

@@ -11,6 +11,7 @@
     toggleChecked
   } from './store.svelte'
   import GithubItemRow from './GithubItemRow.svelte'
+  import GithubBoard from './GithubBoard.svelte'
   import GithubThread from './GithubThread.svelte'
   import GithubCompose from './GithubCompose.svelte'
   import ArrowClockwiseIcon from 'phosphor-svelte/lib/ArrowClockwiseIcon'
@@ -62,12 +63,6 @@
 
   $effect(() => startAutoRefresh())
 
-  // The list keeps a fixed share of a wide pane, and the whole of a narrow one.
-  const listWidth = $derived.by(() => {
-    if (narrow) return '100%'
-    return '40%'
-  })
-
   function switchTab(kind: GithubItemKind): void {
     github.tab = kind
     // Numbers are per kind, so a selection does not survive the switch.
@@ -85,6 +80,27 @@
   // The right-hand column carries either the composer or the selected thread;
   // on a narrow pane it takes the whole width, and the list steps aside.
   const detailColumnShown = $derived(github.composing || github.selection !== null)
+
+  // The list keeps a fixed share of a wide pane, and the whole of a narrow one.
+  // The board wants the room: all of it, or most of it beside an open thread.
+  const listWidth = $derived.by(() => {
+    if (narrow) return '100%'
+    if (!github.boardShown) return '40%'
+    if (detailColumnShown) return '55%'
+    return '100%'
+  })
+
+  // Beside the list the thread column is always there, empty until something
+  // is picked; beside the board it only opens with an issue in it.
+  const detailColumnVisible = $derived.by(() => {
+    if (detailColumnShown) return true
+    if (narrow) return false
+    return !github.boardShown
+  })
+
+  // A narrow pane has no list beside the thread to go back to, and the board
+  // has no empty thread column to leave open, so both get a way out.
+  const closeRowShown = $derived(detailColumnShown && (narrow || github.boardShown))
 
   function startCompose(): void {
     github.composing = true
@@ -207,51 +223,61 @@
 
         <GithubFilterBar {setStateFilter} />
 
-        <FloatingScrollbar class="min-h-0 flex-1">
-          <div>
-            {#if sections.pinned.length > 0}
-              <h3
-                class="flex items-center gap-1 border-b border-line px-3 pb-1 pt-2 text-2xs font-semibold uppercase tracking-caps text-dim"
-              >
-                <PushPinIcon size={10} />
-                Pinned
-              </h3>
-              {#each sections.pinned as item (item.kind + item.number)}
+        {#if github.boardShown && github.boardField}
+          <GithubBoard field={github.boardField} onopen={(number) => openItem('issue', number)} />
+        {:else}
+          <FloatingScrollbar class="min-h-0 flex-1">
+            <div>
+              {#if sections.pinned.length > 0}
+                <h3
+                  class="flex items-center gap-1 border-b border-line px-3 pb-1 pt-2 text-2xs font-semibold uppercase tracking-caps text-dim"
+                >
+                  <PushPinIcon size={10} />
+                  Pinned
+                </h3>
+                {#each sections.pinned as item (item.kind + item.number)}
+                  {@render itemRow(item)}
+                {/each}
+                <div class="h-2 border-b border-line"></div>
+              {/if}
+              {#each sections.rest as item (item.kind + item.number)}
                 {@render itemRow(item)}
               {/each}
-              <div class="h-2 border-b border-line"></div>
-            {/if}
-            {#each sections.rest as item (item.kind + item.number)}
-              {@render itemRow(item)}
-            {/each}
 
-            {#if items.length === 0}
-              <p class="px-3 py-4 text-xs text-dim">
-                {#if github.loading}
-                  Loading…
-                {:else if narrowed}
-                  Nothing matches <span class="font-mono">{github.query}</span>.
-                {:else}
-                  Nothing here.
-                {/if}
-              </p>
-            {/if}
-          </div>
-        </FloatingScrollbar>
+              {#if items.length === 0}
+                <p class="px-3 py-4 text-xs text-dim">
+                  {#if github.loading}
+                    Loading…
+                  {:else if narrowed}
+                    Nothing matches <span class="font-mono">{github.query}</span>.
+                  {:else}
+                    Nothing here.
+                  {/if}
+                </p>
+              {/if}
+            </div>
+          </FloatingScrollbar>
+        {/if}
       </div>
     {/if}
 
-    {#if !narrow || detailColumnShown}
+    {#if detailColumnVisible}
       <div class="flex min-h-0 min-w-0 flex-1 flex-col border-line" class:border-l={!narrow}>
-        {#if narrow && detailColumnShown}
+        {#if closeRowShown}
           <div class="flex items-center border-b border-line pr-2">
             <button
               class="flex-1 px-3 py-1.5 text-left text-2xs text-dim hover:bg-hover"
               onclick={backToList}
             >
-              ← Back to list
+              {#if github.boardShown}
+                ← Back to board
+              {:else}
+                ← Back to list
+              {/if}
             </button>
-            <PaneControls />
+            {#if narrow}
+              <PaneControls />
+            {/if}
           </div>
         {/if}
         <div class="min-h-0 flex-1">

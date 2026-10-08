@@ -24,6 +24,8 @@ import type {
   GithubEventKind,
   GithubIssueDraft,
   GithubIssueItem,
+  GithubIssueField,
+  GithubIssueFieldOption,
   GithubItemAction,
   GithubLabelChange,
   GithubCloseReason,
@@ -183,7 +185,8 @@ const NO_CAPABILITIES: GithubCapabilities = {
   issueTypes: false,
   subIssues: false,
   linkedBranches: false,
-  notifications: false
+  notifications: false,
+  issueFields: false
 }
 
 /**
@@ -278,6 +281,12 @@ async function probeCapabilities(
         owner,
         name,
         'issues(first: 1) { nodes { linkedBranches(first: 1) { totalCount } } }'
+      ),
+      issueFields: await probeSelection(
+        repoPath,
+        owner,
+        name,
+        'issueFields(first: 1) { totalCount }'
       )
     }
     capabilityCache.set(repoPath, capabilities)
@@ -372,8 +381,21 @@ export function optionalFields(capabilities: GithubCapabilities, onIssue: boolea
   if (capabilities.issueTypes && onIssue) {
     selections.push('issueType { name color }')
   }
+  if (capabilities.issueFields && onIssue) {
+    selections.push(ISSUE_FIELD_VALUES)
+  }
   return selections.join('\n        ')
 }
+
+// How many issue fields are read, of the organisation's definitions and of one
+// issue's values. GitHub caps an organisation at 25 fields.
+const MAX_ISSUE_FIELDS = 25
+
+/** An issue's single-select values; the other field kinds are not read yet. */
+const ISSUE_FIELD_VALUES = `issueFieldValues(first: ${MAX_ISSUE_FIELDS}) { nodes { ... on IssueFieldSingleSelectValue { optionId field { ... on IssueFieldSingleSelect { id } } } } }`
+
+/** The repository's single-select issue field definitions, for grouping by. */
+const ISSUE_FIELD_DEFINITIONS = `issueFields(first: ${MAX_ISSUE_FIELDS}) { nodes { ... on IssueFieldSingleSelect { id name options { id name color } } } }`
 
 // GraphQL enums cannot be passed as gh `-F` variables, so the state sets are
 // inlined into the query text. They come from this fixed map, never user input.
@@ -389,6 +411,12 @@ const PULL_STATES: Record<GithubStateFilter, string> = {
   all: '[OPEN, CLOSED, MERGED]'
 }
 
+/** The field definitions selection, or nothing when the repository has no issue fields to ask about. */
+function issueFieldDefinitions(capabilities: GithubCapabilities): string {
+  if (!capabilities.issueFields) return ''
+  return ISSUE_FIELD_DEFINITIONS
+}
+
 /** The one query behind a dashboard refresh: viewer, issues and pulls at once. */
 export function dashboardQuery(
   filter: GithubStateFilter,
@@ -400,9 +428,10 @@ query($owner: String!, $name: String!, $limit: Int!) {
   repository(owner: $owner, name: $name) {
     nameWithOwner
     url
+    ${issueFieldDefinitions(capabilities)}
     issues(first: $limit, states: ${ISSUE_STATES[filter]}, orderBy: {field: UPDATED_AT, direction: DESC}) {
       nodes {
-        number title url state createdAt updatedAt isPinned
+        id number title url state createdAt updatedAt isPinned
         author { login }
         comments { totalCount }
         labels(first: 10) { nodes { name color } }
@@ -435,9 +464,20 @@ interface GraphqlOptionalNode {
   milestone?: GithubMilestone | null
   issueType?: GithubIssueType | null
   projectItems?: { nodes: { project: GithubProjectRef | null }[] }
+  /** Values of other field kinds come back as empty objects: the fragment only matches single-selects. */
+  issueFieldValues?: { nodes: { optionId?: string; field?: { id?: string } }[] }
+}
+
+/** A field definition as the repository lists it; non-single-select fields come back empty. */
+interface GraphqlIssueField {
+  id?: string
+  name?: string
+  options?: GithubIssueFieldOption[]
 }
 
 interface GraphqlItemNode extends GraphqlOptionalNode {
+  /** Selected on issues only. */
+  id?: string
   number: number
   title: string
   url: string
@@ -468,6 +508,7 @@ interface DashboardResponse {
     repository: {
       nameWithOwner: string
       url: string
+      issueFields?: { nodes: GraphqlIssueField[] }
       issues: { nodes: GraphqlItemNode[] }
       pullRequests: { nodes: GraphqlPullNode[] }
     } | null
@@ -493,7 +534,32 @@ function optionalMetadata(node: GraphqlOptionalNode): Partial<GithubIssueItem> {
       .map((entry) => entry.project)
       .filter((project): project is GithubProjectRef => project !== null)
   }
+  if (node.issueFieldValues) {
+    metadata.fieldValues = toFieldValues(node.issueFieldValues.nodes)
+  }
   return metadata
+}
+
+/** An issue's single-select values as option id by field id. */
+function toFieldValues(
+  nodes: { optionId?: string; field?: { id?: string } }[]
+): Record<string, string> {
+  const values: Record<string, string> = {}
+  for (const node of nodes) {
+    if (!node.optionId || !node.field || !node.field.id) continue
+    values[node.field.id] = node.optionId
+  }
+  return values
+}
+
+/** The single-select field definitions, leaving out the kinds the fragment did not match. */
+export function toIssueFields(nodes: GraphqlIssueField[]): GithubIssueField[] {
+  const fields: GithubIssueField[] = []
+  for (const node of nodes) {
+    if (!node.id || !node.name || !node.options) continue
+    fields.push({ id: node.id, name: node.name, options: node.options })
+  }
+  return fields
 }
 
 function toIssueItem(node: GraphqlItemNode): GithubIssueItem {
@@ -510,7 +576,8 @@ function toIssueItem(node: GraphqlItemNode): GithubIssueItem {
     commentCount: node.comments.totalCount,
     labels: node.labels.nodes,
     assignees: node.assignees.nodes.map(toActor),
-    isPinned: node.isPinned === true
+    isPinned: node.isPinned === true,
+    id: node.id
   }
 }
 
@@ -601,6 +668,14 @@ export async function fetchBranchPulls(repoPath: string): Promise<Record<string,
   return pulls
 }
 
+/** The field definitions a dashboard response carried; none when it did not ask. */
+function dashboardIssueFields(
+  connection: { nodes: GraphqlIssueField[] } | undefined
+): GithubIssueField[] {
+  if (!connection) return []
+  return toIssueFields(connection.nodes)
+}
+
 /** Issues and pull requests for the repository, most recently updated first. */
 export async function fetchDashboard(
   repoPath: string,
@@ -631,6 +706,7 @@ export async function fetchDashboard(
     issues: repository.issues.nodes.map(toIssueItem),
     pulls: repository.pullRequests.nodes.map(toPullItem),
     capabilities,
+    issueFields: dashboardIssueFields(repository.issueFields),
     fetchedAt: Date.now()
   }
 }
@@ -1137,6 +1213,34 @@ mutation($id: ID!, $state: SubscriptionState!) {
     subscribable { viewerSubscription }
   }
 }`.trim()
+
+const SET_ISSUE_FIELD = `
+mutation($issueId: ID!, $fieldId: ID!, $optionId: ID!) {
+  setIssueFieldValue(input: { issueId: $issueId, issueFields: [{ fieldId: $fieldId, singleSelectOptionId: $optionId }] }) {
+    issue { number }
+  }
+}`.trim()
+
+const CLEAR_ISSUE_FIELD = `
+mutation($issueId: ID!, $fieldId: ID!) {
+  deleteIssueFieldValue(input: { issueId: $issueId, fieldId: $fieldId }) {
+    issue { number }
+  }
+}`.trim()
+
+/** Sets a single-select issue field to one of its options, or clears it when `optionId` is null. */
+export async function setIssueField(
+  repoPath: string,
+  issueId: string,
+  fieldId: string,
+  optionId: string | null
+): Promise<void> {
+  if (optionId === null) {
+    await graphql(repoPath, CLEAR_ISSUE_FIELD, { issueId, fieldId })
+    return
+  }
+  await graphql(repoPath, SET_ISSUE_FIELD, { issueId, fieldId, optionId })
+}
 
 /**
  * gh reports a missing scope as a wall of GraphQL error text naming every scope

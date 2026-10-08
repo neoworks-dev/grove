@@ -11,6 +11,7 @@ import WorktreeChatPane from './WorktreeChatPane.svelte'
 import WalkthroughBar from './WalkthroughBar.svelte'
 import { walkthrough } from '../../../lib/agents/walkthrough.svelte'
 import { initHarnessIcons } from '../../../lib/agents/harnessIcons'
+import { receiveRambles } from '../../../lib/agents/ramble'
 import { repoOpen } from '../guards'
 import { registerCoreShowHandlers, reportPaneTypes } from './screen.svelte'
 
@@ -24,6 +25,9 @@ export const agents = {
     // What agents can put in front of the user, and the panes they can ask for.
     ctx.effect(() => registerCoreShowHandlers(), 'agents:show-handlers')
     ctx.effect(() => reportPaneTypes(), 'agents:pane-types')
+
+    // What the user says to the desktop overlay while Grove has focus.
+    ctx.effect(() => receiveRambles(), 'agents:rambles')
 
     ctx.effect(
       () =>

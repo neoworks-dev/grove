@@ -268,6 +268,10 @@ const workbench = {
     uploadBlob: (sessionId: string, bytes: Uint8Array, mediaType: string, filename?: string) =>
       ipcRenderer.invoke('agents:uploadBlob', sessionId, bytes, mediaType, filename)
   },
+  // Rambles from the desktop overlay arrive as `event:ramble`; this says where each one went.
+  ramble: {
+    receipt: (id: number, receipt: unknown) => ipcRenderer.invoke('ramble:receipt', id, receipt)
+  },
   fs: {
     watch: (worktreeIds: string[]) => ipcRenderer.invoke('fs:watch', worktreeIds)
   },

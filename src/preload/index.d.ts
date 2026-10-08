@@ -8,6 +8,7 @@ import type {
   InlayHint
 } from 'vscode-languageserver-types'
 import type { BrowserConnectorStatus, ChromiumBrowserId } from '../shared/browserHost'
+import type { RambleReceipt } from '../shared/ramble'
 import type {
   DebugAdapterInfo,
   DebugBreakpoint,
@@ -450,6 +451,10 @@ export interface WorkbenchApi {
       mediaType: string,
       filename?: string
     ) => Promise<BlobDescriptor>
+  }
+  ramble: {
+    /** Tells the main process where a ramble from the overlay went. */
+    receipt: (id: number, receipt: RambleReceipt) => Promise<void>
   }
   fs: {
     watch: (worktreeIds: string[]) => Promise<void>

@@ -28,6 +28,7 @@ import { secretsRoutes } from './secrets'
 import { settingsRoutes } from './settings'
 import { miscRoutes } from './misc'
 import { debugRoutes } from './debug'
+import { rambleRoutes } from './ramble'
 import { switchboardHarnesses } from '../agents/switchboard/harnesses'
 import { debugAdapterPlugins } from '../debug/adapters'
 
@@ -59,6 +60,7 @@ export const routePlugins = [
   settingsRoutes,
   miscRoutes,
   debugRoutes,
+  rambleRoutes,
   // Debug adapters, one plugin each, registered into the adapter registry.
   ...debugAdapterPlugins,
   // Agent harnesses. Each registers itself into the harness registry and can be

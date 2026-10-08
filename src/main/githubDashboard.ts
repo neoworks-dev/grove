@@ -146,6 +146,19 @@ async function githubRepoOf(repoPath: string): Promise<GithubRepoRef | null> {
   }
 }
 
+// When gh last answered that it is installed and logged in. `gh auth status`
+// asks GitHub, which took most of a second in front of every refresh; a
+// success is trusted for this long, a failure is never remembered.
+let ghReadyAt = 0
+const GH_READY_TTL_MS = 10 * 60_000
+
+/** Checks gh is installed and logged in, at most once per `GH_READY_TTL_MS` once it has been. */
+async function ghReady(repoPath: string): Promise<void> {
+  if (Date.now() - ghReadyAt < GH_READY_TTL_MS) return
+  await ensureGhReady(repoPath)
+  ghReadyAt = Date.now()
+}
+
 /**
  * Whether the dashboard can run here: gh present, authenticated, and the path
  * backed by a GitHub repository. Failures are reported, not thrown — the pane
@@ -153,7 +166,7 @@ async function githubRepoOf(repoPath: string): Promise<GithubRepoRef | null> {
  */
 export async function fetchStatus(repoPath: string): Promise<GithubStatus> {
   try {
-    await ensureGhReady(repoPath)
+    await ghReady(repoPath)
   } catch (error) {
     const message = (error as Error).message
     return {
@@ -238,64 +251,100 @@ query($owner: String!, $name: String!) {
 }
 
 /**
- * What the queries may select here. Probed rather than assumed: `projectItems`
- * needs the `read:project` scope and `issueType` is not in every schema, and
- * either one, asked for without being allowed, fails the whole document and
- * takes the pane down with it.
- *
- * The probes run one after another rather than together. They happen once per
- * repository per session and nothing is waiting on them, so there is nothing to
- * win by firing four requests at once — and firing four at once is the shape of
- * traffic GitHub's secondary limiter exists to refuse.
+ * What the queries may select here, probed once per repository per session.
+ * Probed rather than assumed: `projectItems` needs the `read:project` scope and
+ * `issueType` is not in every schema, and either one, asked for without being
+ * allowed, fails the whole document and takes the pane down with it.
  */
-export async function fetchCapabilities(repoPath: string): Promise<GithubCapabilities> {
-  const probed = await probeCapabilities(repoPath)
-  return { ...probed, notifications: await canChangeSubscriptions(repoPath) }
-}
-
-/** The selections the queries may make, probed once per repository per session. */
 async function probeCapabilities(
   repoPath: string
 ): Promise<Omit<GithubCapabilities, 'notifications'>> {
   const cached = capabilityCache.get(repoPath)
   if (cached) return cached
-  const repo = await repoRef(repoPath)
-  const [owner, name] = repo.nameWithOwner.split('/')
   try {
-    const capabilities: Omit<GithubCapabilities, 'notifications'> = {
-      projects: await probeSelection(repoPath, owner, name, 'projectsV2(first: 1) { totalCount }'),
-      issueTypes: await probeSelection(
-        repoPath,
-        owner,
-        name,
-        'issues(first: 1) { nodes { issueType { name } } }'
-      ),
-      subIssues: await probeSelection(
-        repoPath,
-        owner,
-        name,
-        'issues(first: 1) { nodes { subIssuesSummary { total } } }'
-      ),
-      linkedBranches: await probeSelection(
-        repoPath,
-        owner,
-        name,
-        'issues(first: 1) { nodes { linkedBranches(first: 1) { totalCount } } }'
-      ),
-      issueFields: await probeSelection(
-        repoPath,
-        owner,
-        name,
-        'issueFields(first: 1) { totalCount }'
-      )
+    const response = await runGh(repoPath, [
+      'api',
+      '--include',
+      'graphql',
+      '-f',
+      `query=${SCHEMA_QUERY}`
+    ])
+    const scopes = grantedScopes(response)
+    if (scopes !== null && scopes.includes('notifications')) notificationsScopeGranted = true
+    const schema = parseJson<SchemaResponse>(responseBody(response))
+    const capabilities = capabilitiesFromSchema(
+      fieldNames(schema.data.issue),
+      fieldNames(schema.data.repository),
+      scopes
+    )
+    if (capabilities.projects === null) {
+      capabilities.projects = await probeProjects(repoPath)
     }
-    capabilityCache.set(repoPath, capabilities)
-    return capabilities
-  } catch {
+    const settled = { ...capabilities, projects: capabilities.projects }
+    capabilityCache.set(repoPath, settled)
+    return settled
+  } catch (error) {
+    if (isRateLimited(error as Error)) throw error
     // Nothing is cached, so the next refresh asks again. The list still loads;
     // it just loads without the metadata nobody could confirm was there.
     return NO_CAPABILITIES
   }
+}
+
+// Which of the newer fields the schema has, and the token's scopes, in one
+// request: a probe per selection cost a round trip each, run one after another.
+const SCHEMA_QUERY =
+  'query { issue: __type(name: "Issue") { fields { name } } repository: __type(name: "Repository") { fields { name } } }'
+
+interface SchemaResponse {
+  data: {
+    issue: { fields: { name: string }[] } | null
+    repository: { fields: { name: string }[] } | null
+  }
+}
+
+/** The field names of a type the schema query returned; none when the type is missing. */
+function fieldNames(type: { fields: { name: string }[] } | null): string[] {
+  if (!type) return []
+  return type.fields.map((field) => field.name)
+}
+
+/** The body of a `gh api --include` response, after its status line and headers. */
+export function responseBody(response: string): string {
+  const headerEnd = response.search(/\r?\n\r?\n/)
+  if (headerEnd < 0) return response
+  return response.slice(headerEnd).trim()
+}
+
+/**
+ * What the queries may select, from the fields the schema has and the token's
+ * scopes. Projects need the `read:project` scope rather than a field, and a
+ * token that reports no scopes cannot say, so `projects` is null for the
+ * caller to probe.
+ */
+export function capabilitiesFromSchema(
+  issueFields: string[],
+  repositoryFields: string[],
+  scopes: string[] | null
+): Omit<GithubCapabilities, 'notifications' | 'projects'> & { projects: boolean | null } {
+  let projects: boolean | null = null
+  if (scopes !== null) {
+    projects = scopes.includes('read:project') || scopes.includes('project')
+  }
+  return {
+    projects,
+    issueTypes: issueFields.includes('issueType'),
+    subIssues: issueFields.includes('subIssuesSummary'),
+    linkedBranches: issueFields.includes('linkedBranches'),
+    issueFields: repositoryFields.includes('issueFields')
+  }
+}
+
+/** Whether boards can be read, for a token whose scopes the header does not list. */
+async function probeProjects(repoPath: string): Promise<boolean> {
+  const repo = await repoRef(repoPath)
+  const [owner, name] = repo.nameWithOwner.split('/')
+  return probeSelection(repoPath, owner, name, 'projectsV2(first: 1) { totalCount }')
 }
 
 /**
@@ -682,9 +731,13 @@ export async function fetchDashboard(
   options: { state: GithubStateFilter; limit: number }
 ): Promise<GithubDashboard> {
   const repo = await repoRef(repoPath)
-  const capabilities = await fetchCapabilities(repoPath)
+  const probed = await probeCapabilities(repoPath)
   const [owner, name] = repo.nameWithOwner.split('/')
   const limit = Math.max(1, Math.min(options.limit, MAX_ITEMS))
+  // Whether subscriptions can change shapes nothing in the query, so it is
+  // asked beside it rather than in front of it.
+  const notifications = canChangeSubscriptions(repoPath)
+  const query = dashboardQuery(options.state, { ...probed, notifications: false })
   const raw = await runGh(repoPath, [
     'api',
     'graphql',
@@ -695,8 +748,9 @@ export async function fetchDashboard(
     '-F',
     `limit=${limit}`,
     '-f',
-    `query=${dashboardQuery(options.state, capabilities)}`
+    `query=${query}`
   ])
+  const capabilities = { ...probed, notifications: await notifications }
   const payload = parseJson<DashboardResponse>(raw)
   const repository = payload.data.repository
   if (!repository) throw new Error(`GitHub returned no repository for ${repo.nameWithOwner}`)
@@ -1043,7 +1097,9 @@ export async function fetchItem(
   number: number
 ): Promise<GithubItemDetail> {
   const repo = await repoRef(repoPath)
-  const capabilities = await fetchCapabilities(repoPath)
+  // The thread's query shapes nothing by the notifications scope, so opening an
+  // issue does not wait on checking it.
+  const capabilities = { ...(await probeCapabilities(repoPath)), notifications: false }
   const [owner, name] = repo.nameWithOwner.split('/')
   const raw = await runGh(repoPath, [
     'api',

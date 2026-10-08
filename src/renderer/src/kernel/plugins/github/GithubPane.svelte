@@ -289,9 +289,9 @@
 
         {#if github.boardShown && github.boardField}
           <GithubBoard field={github.boardField} onopen={(number) => openItem('issue', number)} />
-        {:else if github.calendarShown && github.calendarField}
+        {:else if github.calendarShown && github.calendarRange}
           <GithubCalendar
-            field={github.calendarField}
+            range={github.calendarRange}
             onopen={(number) => openItem('issue', number)}
           />
         {:else}

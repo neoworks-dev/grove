@@ -131,7 +131,7 @@
 
   <!-- How the issues are grouped, part of what a view saves; at the row's end,
        where Linear keeps its display options. -->
-  {#if github.calendarShown && github.calendarField}
+  {#if github.calendarShown && github.calendarField && github.calendarRange?.end === null}
     <select
       class="shrink-0 rounded-md border border-line bg-input px-1 py-0.5 text-2xs text-dim outline-none"
       title="Place the issues by"

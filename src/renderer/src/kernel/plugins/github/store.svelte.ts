@@ -23,7 +23,13 @@ import { issuePrompt } from './issuePrompt'
 import { startSessionWithTask } from '../../../lib/agents/newSession'
 import { agentSessions, badgeOf, type SessionBadge } from '../../../lib/agents/sessions.svelte'
 import { resolveBoardField, withFieldValue } from './board'
-import { monthOf, withDateValue, type CalendarMonth } from './calendar'
+import {
+  calendarRange,
+  monthOf,
+  withDateValues,
+  type CalendarMonth,
+  type CalendarRange
+} from './calendar'
 import { loadDashboardSnapshot, saveDashboardSnapshot } from './dashboardSnapshot'
 import {
   createView,
@@ -347,12 +353,16 @@ class GithubStore {
     return this.dashboard.issueDateFields
   }
 
-  /** The date field the calendar places issues by: the chosen one while it exists, else the first. */
+  /** The date fields the calendar places issues by: a start and end pair, or one chosen field. */
+  get calendarRange(): CalendarRange | null {
+    return calendarRange(this.dateFields, this.calendarFieldId)
+  }
+
+  /** The date field the calendar starts its bars at, which is the one a view saves. */
   get calendarField(): GithubIssueDateField | null {
-    const chosen = this.dateFields.find((field) => field.id === this.calendarFieldId)
-    if (chosen) return chosen
-    if (this.dateFields.length === 0) return null
-    return this.dateFields[0]
+    const range = this.calendarRange
+    if (!range) return null
+    return range.start
   }
 
   /** Whether the calendar is what the pane shows: issues, a date field, and calendar view. */
@@ -1645,20 +1655,54 @@ export function applyView(view: ViewState): void {
 }
 
 /**
- * Moves an issue to a day on the calendar, setting its date field on GitHub,
- * or takes the date off when `date` is null. The issue moves at once and moves
- * back if GitHub refuses.
+ * Writes an issue's date fields from the calendar, keyed by field id, a null
+ * day clearing its field. The issue moves at once and moves back if GitHub refuses.
  */
-export async function moveIssueToDay(issue: GithubIssueItem, date: string | null): Promise<void> {
-  const field = github.calendarField
-  if (!field || !issue.id) return
-  replaceIssue(withDateValue(issue, field.id, date))
+export async function setIssueDates(
+  issue: GithubIssueItem,
+  dates: Record<string, string | null>
+): Promise<void> {
+  if (!issue.id) return
+  replaceIssue(withDateValues(issue, dates))
   try {
-    await window.workbench.github.setIssueDate(issue.id, field.id, date)
+    await window.workbench.github.setIssueDates(issue.id, dates)
+    patchCachedDates(issue.number, dates)
   } catch (err) {
     replaceIssue(issue)
     dialogs.notify({ level: 'error', message: (err as Error).message })
   }
+}
+
+/**
+ * Writes changed dates into an issue's cached thread, and the open one, so its
+ * sidebar does not show the days from before until it is fetched again.
+ */
+function patchCachedDates(number: number, dates: Record<string, string | null>): void {
+  const key = detailKey({ kind: 'issue', number })
+  const cached = github.details[key]
+  if (cached) {
+    github.details = { ...github.details, [key]: withDetailDates(cached, dates) }
+  }
+  const open = github.detail
+  if (open && open.kind === 'issue' && open.number === number) {
+    github.detail = withDetailDates(open, dates)
+  }
+}
+
+/** A thread with each of the given date fields set, or cleared where the day is null. */
+function withDetailDates(
+  detail: GithubItemDetail,
+  dates: Record<string, string | null>
+): GithubItemDetail {
+  const dateValues: Record<string, string> = { ...detail.dateValues }
+  for (const [fieldId, date] of Object.entries(dates)) {
+    if (date === null) {
+      delete dateValues[fieldId]
+      continue
+    }
+    dateValues[fieldId] = date
+  }
+  return { ...detail, dateValues }
 }
 
 /** Switches to a worktree an issue already has. */
@@ -1810,6 +1854,26 @@ export async function applyIssueField(fieldId: string, optionId: string | null):
   github.busy = true
   try {
     await window.workbench.github.setIssueField(detail.id, fieldId, optionId)
+    await loadDetail(selection, { silent: true })
+    void refreshDashboard(github.stateFilter, { silent: true })
+  } catch (err) {
+    dialogs.notify({ level: 'error', message: (err as Error).message })
+  } finally {
+    github.busy = false
+  }
+}
+
+/**
+ * Sets one of the organisation's date fields on the open issue, or clears it
+ * when `date` is null, then reloads the thread and the list behind it.
+ */
+export async function applyIssueDate(fieldId: string, date: string | null): Promise<void> {
+  const selection = github.selection
+  const detail = github.detail
+  if (!selection || !detail || detail.kind !== 'issue') return
+  github.busy = true
+  try {
+    await window.workbench.github.setIssueDates(detail.id, { [fieldId]: date })
     await loadDetail(selection, { silent: true })
     void refreshDashboard(github.stateFilter, { silent: true })
   } catch (err) {

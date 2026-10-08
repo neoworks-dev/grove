@@ -309,8 +309,8 @@ export interface WorkbenchApi {
     item: (kind: GithubItemKind, number: number) => Promise<GithubItemDetail>
     labels: () => Promise<GithubLabelDefinition[]>
     milestones: () => Promise<GithubMilestoneDefinition[]>
-    /** Sets a date issue field on an issue to a `YYYY-MM-DD` day; null clears it. */
-    setIssueDate: (issueId: string, fieldId: string, date: string | null) => Promise<void>
+    /** Sets date issue fields on an issue, keyed by field id, to `YYYY-MM-DD` days; null clears one. */
+    setIssueDates: (issueId: string, dates: Record<string, string | null>) => Promise<void>
     /** Creates an open milestone. */
     createMilestone: (draft: GithubMilestoneDraft) => Promise<GithubMilestoneDefinition>
     /** Sets a single-select issue field on an issue, by node ids; a null option clears it. */

@@ -168,10 +168,10 @@ export const githubRoutes = {
 
     route(
       ctx,
-      'github:setIssueDate',
-      (_e, issueId: string, fieldId: string, date: string | null) => {
+      'github:setIssueDates',
+      (_e, issueId: string, dates: Record<string, string | null>) => {
         const { repoPath } = ctx.workbench.requireRepo()
-        return dashboard.setIssueDate(repoPath, issueId, fieldId, date)
+        return dashboard.setIssueDates(repoPath, issueId, dates)
       }
     )
 

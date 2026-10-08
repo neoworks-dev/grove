@@ -80,6 +80,7 @@ import { groveToolName } from './switchboard/mcpServer'
 import { rewindPoint, type RewindPoint } from './rewind'
 import { SteerBacklog } from './steerBacklog'
 import { describeRamble } from '../../shared/ramble'
+import { rambleSkill } from './switchboard/overlay'
 
 const BLOBS_DIR = 'blobs'
 
@@ -447,6 +448,24 @@ export class AgentService {
     await this.store.patch(sessionId, { title: UNNAMED_TITLE })
   }
 
+  /**
+   * The desktop-rambles skill, written out ahead of the first ramble a session
+   * gets, so the agent answers it knowing how without having to load the
+   * skill. Later rambles find it in the conversation. Empty for anything else.
+   */
+  private async rambleGuide(
+    sessionId: string,
+    event: Extract<ClientEventBody, { type: 'user.message' | 'app.message' }>,
+    seq: number
+  ): Promise<string> {
+    if (!carriesRamble(event)) return ''
+    const earlier = await this.store.eventsSince(sessionId, 0)
+    if (earlier.some((past) => past.seq < seq && carriesRamble(past))) return ''
+    const skill = await rambleSkill()
+    if (!skill) return ''
+    return `<skill name="${skill.name}">\n${skill.instructions.trim()}\n</skill>\n`
+  }
+
   /** Put a message to the agent: straight through, steered, or queued. */
   private async deliver(
     sessionId: string,
@@ -466,7 +485,8 @@ export class AgentService {
     await this.nameFromFirstPrompt(sessionId)
     await this.endClearedState(sessionId)
     const runtime = this.runtimeOrCreate(sessionId)
-    const text = withPendingShell(pending, textOf(event))
+    const guide = await this.rambleGuide(sessionId, event, stamped.seq)
+    const text = withPendingShell(pending, `${guide}${textOf(event)}`)
     const attachments = await this.attachmentsFor(sessionId, event)
     runtime.messageCount += 1
 
@@ -1387,6 +1407,11 @@ function settledCallOf(body: ServerEventBody): string | null {
   if (body.update.sessionUpdate !== 'tool_call_update') return null
   if (!body.update.status || !isSettled(body.update.status)) return null
   return body.update.toolCallId
+}
+
+function carriesRamble(event: { type: string; content?: unknown }): boolean {
+  if (event.type !== 'user.message' || !Array.isArray(event.content)) return false
+  return event.content.some((block: { type?: unknown }) => block.type === 'ramble')
 }
 
 function textOf(event: Extract<ClientEventBody, { type: 'user.message' | 'app.message' }>): string {

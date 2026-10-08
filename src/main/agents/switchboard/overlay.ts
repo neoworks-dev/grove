@@ -27,6 +27,15 @@ export async function overlayMcpServer(): Promise<McpServer | null> {
   return { type: 'http', name: OVERLAY_SERVER, url: `${OVERLAY_ORIGIN}/mcp`, headers: [] }
 }
 
+/**
+ * The overlay's skill for answering rambles, asked for afresh: a ramble just
+ * came from the overlay, so it is running even if no session has seen it yet.
+ */
+export async function rambleSkill(): Promise<GroveSkill | null> {
+  skill = await fetchSkill()
+  return skill
+}
+
 /** The overlay's skills, as of the last session started. */
 export function overlaySkills(): GroveSkill[] {
   if (skill === null) return []

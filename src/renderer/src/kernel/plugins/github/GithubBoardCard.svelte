@@ -38,6 +38,17 @@
 
   const agent = $derived(issueAgent(issue.number))
 
+  /**
+   * The card's border while an agent is on it, so a busy issue stands out on
+   * the board: amber while it works or waits on the user, red when it failed.
+   */
+  const frame = $derived.by<'active' | 'failed' | null>(() => {
+    if (!agent) return null
+    if (agent.badge === 'running' || agent.badge === 'requires_action') return 'active'
+    if (agent.badge === 'error') return 'failed'
+    return null
+  })
+
   /** The session's title without the "Issue #12: " it was started with, which the card already says. */
   const sessionTitle = $derived.by(() => {
     if (!agent) return ''
@@ -81,8 +92,10 @@
 
 <div
   class="flex cursor-pointer flex-col gap-1.5 rounded-md border bg-surface px-2 py-1.5 transition-colors duration-100 hover:bg-hover"
-  class:border-line={!selected}
-  class:border-line-strong={selected}
+  class:border-line={!selected && !frame}
+  class:border-line-strong={selected && !frame}
+  class:border-amber={frame === 'active'}
+  class:border-red={frame === 'failed'}
   class:bg-elevated={selected}
   role="button"
   tabindex="0"
@@ -120,7 +133,7 @@
 
   {#if agent}
     <div
-      class="flex flex-col gap-1 rounded-md bg-raised px-2 py-1.5"
+      class="flex flex-col gap-1 rounded-md border border-line bg-default/[0.07] px-2 py-1.5 hover:bg-default/[0.1]"
       role="button"
       tabindex="0"
       title="Open the agent session in {agent.worktree.name}"

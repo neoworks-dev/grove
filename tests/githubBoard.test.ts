@@ -10,6 +10,11 @@ import {
   resolveBoardField,
   withFieldValue
 } from '../src/renderer/src/kernel/plugins/github/board'
+import {
+  createView,
+  viewMatches,
+  type ViewState
+} from '../src/renderer/src/kernel/plugins/github/views'
 import type { GithubIssueField, GithubIssueItem } from '../src/shared/types'
 
 const PRIORITY: GithubIssueField = {
@@ -98,4 +103,32 @@ describe('optionColour', () => {
     expect(optionColour(null)).toBe(optionColour('GRAY'))
     expect(optionColour('TEAL')).toBe(optionColour('GRAY'))
   })
+})
+
+describe('viewMatches', () => {
+  const board: ViewState = { query: 'is:open label:bug', layout: 'board', fieldId: 'priority' }
+
+  it('matches the same query, layout and field, whatever the spacing', () => {
+    expect(viewMatches(board, { ...board, query: '  is:open   label:bug ' })).toBe(true)
+  })
+
+  it('tells views apart by query, layout or field', () => {
+    expect(viewMatches(board, { ...board, query: 'is:open' })).toBe(false)
+    expect(viewMatches(board, { ...board, layout: 'list' })).toBe(false)
+    expect(viewMatches(board, { ...board, fieldId: 'effort' })).toBe(false)
+  })
+})
+
+describe('createView', () => {
+  it('trims the name and gives each view its own id', () => {
+    const first = createView('  Urgent bugs ', board())
+    const second = createView('Urgent bugs', board())
+    expect(first.name).toBe('Urgent bugs')
+    expect(first.id).not.toBe(second.id)
+  })
+
+  /** A board view to save. */
+  function board(): ViewState {
+    return { query: 'is:open', layout: 'board', fieldId: 'priority' }
+  }
 })

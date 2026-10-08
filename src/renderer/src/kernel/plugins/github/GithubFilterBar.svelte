@@ -152,17 +152,4 @@
   <span class="ml-auto shrink-0 text-2xs text-dim">
     {github.items.length} shown
   </span>
-
-  {#if github.boardShown && github.boardField}
-    <select
-      class="shrink-0 rounded-md border border-line bg-input px-1 py-0.5 text-2xs text-dim outline-none"
-      title="Group the board by"
-      value={github.boardField.id}
-      onchange={(event) => (github.boardFieldId = event.currentTarget.value)}
-    >
-      {#each github.issueFields as field (field.id)}
-        <option value={field.id}>{field.name}</option>
-      {/each}
-    </select>
-  {/if}
 </div>

@@ -46,19 +46,31 @@
       close()
       return
     }
-    if (root) position = panelPosition(root.getBoundingClientRect())
+    if (root) position = panelPosition(root.getBoundingClientRect(), zoomOf(root))
     open = true
   }
 
-  /** The panel's place under a trigger, its left or right edge lined up with the trigger's. */
-  function panelPosition(trigger: DOMRect): {
-    top: number
-    left: number | null
-    right: number | null
-  } {
-    const top = trigger.bottom + 4
-    if (align === 'right') return { top, left: null, right: window.innerWidth - trigger.right }
-    return { top, left: trigger.left, right: null }
+  /**
+   * The panel's place under a trigger, its left or right edge lined up with the
+   * trigger's. A pane with a font scale is drawn with CSS zoom, which scales a
+   * fixed position set inside it too, so the window coordinates are divided by
+   * it to land where the trigger is.
+   */
+  function panelPosition(
+    trigger: DOMRect,
+    zoom: number
+  ): { top: number; left: number | null; right: number | null } {
+    const top = (trigger.bottom + 4) / zoom
+    if (align === 'right') {
+      return { top, left: null, right: (window.innerWidth - trigger.right) / zoom }
+    }
+    return { top, left: trigger.left / zoom, right: null }
+  }
+
+  /** The CSS zoom an element is drawn at: its size on screen over its size in layout. */
+  function zoomOf(element: HTMLElement): number {
+    if (element.offsetWidth === 0) return 1
+    return element.getBoundingClientRect().width / element.offsetWidth
   }
 
   /** A CSS length for an edge, or `auto` when the panel is not anchored to it. */

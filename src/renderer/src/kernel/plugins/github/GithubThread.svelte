@@ -1,7 +1,8 @@
 <script lang="ts">
-  // The open item, laid out the way GitHub lays one out: a state pill under the
-  // title, the body as the first card of a timeline, then every comment and
-  // event down a rail, with the item's metadata beside it when there is room.
+  // The open item: a state pill under the title, the body as the first card,
+  // then every comment and event in order, joined by a line that runs between
+  // the cards rather than down a gutter beside them, with the item's metadata
+  // beside it all when there is room.
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
   import { github, postComment, runAction } from './store.svelte'
   import GithubBadge from './GithubBadge.svelte'
@@ -214,10 +215,10 @@
           class:flex-col={!wide}
           style:max-width={contentWidth}
         >
-          <!-- Everything hangs off one rail, the opening body included, so the
-             thread reads as a single sequence rather than stacked blocks. -->
+          <!-- The opening body and everything after it are joined by one line,
+             so the thread reads as a single sequence rather than stacked blocks. -->
           <div class="flex min-w-0 flex-1 flex-col" style:max-width="{READING_PX}px">
-            <GithubTimelineRow last={rows.length === 0}>
+            <GithubTimelineRow first last={rows.length === 0}>
               <GithubCommentCard
                 author={detail.authorActor}
                 association={detail.authorAssociation}
@@ -228,11 +229,8 @@
             </GithubTimelineRow>
 
             {#each rows as row, index (row.id)}
-              <GithubTimelineRow last={index === rows.length - 1}>
-                {#snippet icon()}
-                  <GithubEventIcon {row} />
-                {/snippet}
-                {#if row.kind === 'comment'}
+              {#if row.kind === 'comment'}
+                <GithubTimelineRow last={index === rows.length - 1}>
                   <GithubCommentCard
                     author={row.entry.comment.author}
                     association={row.entry.comment.authorAssociation}
@@ -240,10 +238,15 @@
                     at={row.entry.comment.createdAt}
                     reviewState={row.entry.comment.reviewState}
                   />
-                {:else}
+                </GithubTimelineRow>
+              {:else}
+                <GithubTimelineRow last={index === rows.length - 1}>
+                  {#snippet icon()}
+                    <GithubEventIcon {row} />
+                  {/snippet}
                   <GithubEventRow {row} />
-                {/if}
-              </GithubTimelineRow>
+                </GithubTimelineRow>
+              {/if}
             {/each}
           </div>
 

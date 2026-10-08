@@ -25,7 +25,6 @@
   import { DEFAULT_QUERY, setStateQualifier } from './search'
   import type { GithubItem, GithubItemKind, GithubStateFilter } from '../../../../../shared/types'
   import PaneControls from '../../../components/PaneControls.svelte'
-  import PaneChromeBoundary from '../../../components/PaneChromeBoundary.svelte'
 
   // Below this the pane shows one column at a time: the list, or the thread with
   // a way back.
@@ -132,10 +131,6 @@
     return !github.boardShown
   })
 
-  // A narrow pane has no list beside the thread to go back to, and the board
-  // has no empty thread column to leave open, so both get a way out.
-  const closeRowShown = $derived(detailColumnShown && (narrow || github.boardShown))
-
   function startCompose(): void {
     github.composing = true
   }
@@ -145,14 +140,6 @@
   function openItem(kind: GithubItemKind, number: number): void {
     github.composing = false
     void selectItem({ kind, number })
-  }
-
-  function backToList(): void {
-    if (github.composing) {
-      github.composing = false
-      return
-    }
-    void selectItem(null)
   }
 
   // The repository and the age of the data have no room of their own now, so
@@ -280,10 +267,9 @@
           >
             <PlusIcon size={13} />
           </button>
-          <!-- Alone in a narrow pane, the list's header is the pane's. -->
-          {#if narrow}
-            <PaneControls />
-          {/if}
+          <!-- The pane's own close button. The thread beside the list has one
+               of its own, which only puts the thread away. -->
+          <PaneControls />
         </div>
 
         <GithubFilterBar {setStateFilter} />
@@ -328,33 +314,8 @@
 
     {#if detailColumnVisible}
       <div class="flex min-h-0 min-w-0 flex-1 flex-col border-line" class:border-l={!narrow}>
-        {#if closeRowShown}
-          <div class="flex items-center border-b border-line pr-2">
-            <button
-              class="flex-1 px-3 py-1.5 text-left text-2xs text-dim hover:bg-hover"
-              onclick={backToList}
-            >
-              {#if github.boardShown}
-                ← Back to board
-              {:else}
-                ← Back to list
-              {/if}
-            </button>
-            {#if narrow}
-              <PaneControls />
-            {/if}
-          </div>
-        {/if}
         <div class="min-h-0 flex-1">
-          <!-- The back row holds the controls in a narrow pane, so the thread's
-               own header must not take them as well. -->
-          {#if narrow}
-            <PaneChromeBoundary>
-              {@render detailColumn()}
-            </PaneChromeBoundary>
-          {:else}
-            {@render detailColumn()}
-          {/if}
+          {@render detailColumn()}
         </div>
       </div>
     {/if}

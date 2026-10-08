@@ -5,7 +5,7 @@
   import GithubLabelPicker from './GithubLabelPicker.svelte'
   import GithubMentionBox from './GithubMentionBox.svelte'
   import { github, createIssue } from './store.svelte'
-  import PaneControls from '../../../components/PaneControls.svelte'
+  import XIcon from 'phosphor-svelte/lib/XIcon'
 
   const canCreate = $derived(github.draft.title.trim().length > 0 && !github.busy)
 
@@ -29,7 +29,15 @@
     {#if github.dashboard}
       <span class="text-2xs text-dim">{github.dashboard.repo.nameWithOwner}</span>
     {/if}
-    <PaneControls />
+    <!-- Puts the composer away; the draft stays in the store for next time. -->
+    <button
+      class="shrink-0 rounded p-1 text-dim hover:bg-hover hover:text-default"
+      title="Close the new issue"
+      aria-label="Close the new issue"
+      onclick={() => (github.composing = false)}
+    >
+      <XIcon size={14} />
+    </button>
   </div>
 
   <FloatingScrollbar class="min-h-0 flex-1">

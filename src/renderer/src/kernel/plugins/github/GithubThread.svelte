@@ -4,7 +4,7 @@
   // the cards rather than down a gutter beside them, with the item's metadata
   // beside it all when there is room.
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
-  import { github, postComment, runAction } from './store.svelte'
+  import { github, postComment, runAction, selectItem } from './store.svelte'
   import GithubBadge from './GithubBadge.svelte'
   import GithubCommentCard from './GithubCommentCard.svelte'
   import GithubEventRow from './GithubEventRow.svelte'
@@ -24,7 +24,7 @@
   import { foldTimeline } from './timeline'
   import type { GithubThreadTab } from './store.svelte'
   import type { GithubItemAction } from '../../../../../shared/types'
-  import PaneControls from '../../../components/PaneControls.svelte'
+  import XIcon from 'phosphor-svelte/lib/XIcon'
 
   // Below this the metadata moves above the timeline instead of beside it.
   const SIDEBAR_PX = 620
@@ -166,7 +166,16 @@
         >
           <ArrowSquareOutIcon size={14} />
         </button>
-        <PaneControls />
+        <!-- Puts the thread away, back to the list or the board. The pane's own
+             close button is in the list's header. -->
+        <button
+          class="shrink-0 rounded p-1 text-dim hover:bg-hover hover:text-default"
+          title="Close the thread"
+          aria-label="Close the thread"
+          onclick={() => selectItem(null)}
+        >
+          <XIcon size={14} />
+        </button>
       </div>
 
       <div class="mt-1 flex flex-wrap items-center gap-2 text-2xs text-dim">

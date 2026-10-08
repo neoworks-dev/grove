@@ -418,7 +418,9 @@ function rememberSnapshot(state: GithubStateFilter, dashboard: GithubDashboard):
 const PREFETCH_COUNT = 8
 
 // Threads being fetched ahead of a click, so a hover and the list's own
-// prefetch do not ask for the same one twice.
+// prefetch do not ask for the same one twice. Bookkeeping nothing renders, so
+// it is a plain Set.
+// eslint-disable-next-line svelte/prefer-svelte-reactivity
 const prefetching = new Set<string>()
 
 /** Fetches the threads of the given items one after another, skipping any already here. */

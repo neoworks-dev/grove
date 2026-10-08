@@ -77,9 +77,7 @@ import { agentSection, section } from './agents/systemPrompt'
 import { rootInstructionsSection } from './agents/projectInstructions'
 import { groveTools } from './agents/tools'
 import { browserTools } from './agents/tools/browserTools'
-import { BrowserService } from './browser'
 import { BrowserProviderService } from './browserProviders'
-import { providerOrPane } from './agents/tools/browserBackends'
 import { BrowserHostInstaller } from './browserHostInstaller'
 import { refreshRepoWorktrees, type RepoContext } from './repoContext'
 
@@ -178,12 +176,8 @@ const sessionStore = new SessionStore(join(app.getPath('userData'), 'agent-sessi
   console.error(`[agents] ${message}`)
 )
 
-// The worktrees' browser previews, which agents drive through their tools.
-const browser = new BrowserService({
-  onActivity: (activity) => send('event:browser-activity', activity)
-})
 // Tabs browser providers (Kit, the Chrome extension) hand over through the API
-// socket; the tool prefers them to the pane.
+// socket, which agents drive through their browser tool.
 const browserProviders = new BrowserProviderService()
 // "Connect Chrome": the extension's native-messaging host, installed per browser
 // only when the user asks.
@@ -243,7 +237,7 @@ const agents = new AgentService({
       conflicts: conflictProposals,
       skills: () => aiBridge.skillList()
     }),
-    ...browserTools(providerOrPane(browserProviders, browser), {
+    ...browserTools(browserProviders, {
       helpersPath: join(app.getPath('userData'), 'browser-helpers.js')
     }),
     ...aiBridge.pluginTools()
@@ -872,7 +866,6 @@ const mainServices = {
     ctx.provide('harnesses', harnesses)
     ctx.provide('switchboard', switchboard)
     ctx.provide('agents', agents)
-    ctx.provide('browser', browser)
     ctx.provide('browserHost', browserHostInstaller)
     ctx.provide('agentReview', agentReviewBridge)
     ctx.provide('editSteps', editSteps)

@@ -1,5 +1,5 @@
-// The browser preview's tool: the DevTools protocol, unwrapped. It opens the
-// pane when it is closed and says why when it can't be, hands screenshots back
+// The browser tool: the DevTools protocol, unwrapped. It asks for a tab when
+// none serves the worktree and says why when none comes, hands screenshots back
 // as images, carries what the page logged since the last call — capped — and
 // runs scripts with the helpers file the model keeps in scope.
 
@@ -31,7 +31,7 @@ interface FakeBrowser extends AgentBrowser {
   network: BrowserNetworkEntry[]
 }
 
-/** A preview that is attached once `opens` says so, answering commands from `answer`. */
+/** A browser tab that serves the worktree once a provider `opens` it, answering commands from `answer`. */
 function fakeBrowser(
   options: { attached: boolean; opens: boolean },
   answer: (method: string, params: Record<string, unknown>) => unknown = () => ({})
@@ -42,11 +42,10 @@ function fakeBrowser(
     console: [],
     network: [],
     isAttached: () => attached,
-    waitForAttach: async () => {
+    openTab: async () => {
       attached = options.opens
       return attached
     },
-    openTab: async () => false,
     location: () => ({ url: 'http://localhost:3100/', title: 'Demo' }),
     cdp: async (_worktreeId, method, params) => {
       browser.sent.push({ method, params })
@@ -71,21 +70,19 @@ function consoleEntry(message: string, level = 'error'): BrowserConsoleEntry {
   return { level, message, source: '', at: 0 } as BrowserConsoleEntry
 }
 
-describe('reaching the preview', () => {
-  test('a call opens the Browser pane when it is not open, then runs', async () => {
-    const shown: ShowTarget[] = []
+describe('reaching the browser', () => {
+  test('a call asks for a tab when none serves the worktree, then runs', async () => {
     const browser = fakeBrowser({ attached: false, opens: true })
-    const result = await toolOf(browser).execute({ method: 'Page.reload' }, contextFor(shown))
-    expect(shown).toEqual([{ kind: 'pane', pane: 'browser' }])
+    const result = await toolOf(browser).execute({ method: 'Page.reload' }, contextFor())
     expect(browser.sent).toEqual([{ method: 'Page.reload', params: {} }])
     expect(result.isError).toBeFalsy()
   })
 
-  test('a pane that does not open is an error saying what to do', async () => {
+  test('a tab that does not open is an error saying what to do', async () => {
     const browser = fakeBrowser({ attached: false, opens: false })
     const result = await toolOf(browser).execute({ method: 'Page.reload' }, contextFor())
     expect(result.isError).toBe(true)
-    expect(result.content).toContain('Browser pane')
+    expect(result.content).toContain('Chrome extension')
     expect(browser.sent).toHaveLength(0)
   })
 

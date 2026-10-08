@@ -2,7 +2,7 @@
 // (leaf + zone) as the pointer moves, so the overlay can preview the landing
 // spot; on release it commits the move through the layout store.
 //
-// Frames (plugin pages, file viewers, the browser's webview) are separate
+// Frames (plugin pages, file viewers) are separate
 // documents: pointer events over them never reach this one, so neither the
 // leaf's Alt+pointerdown nor the drag's pointermove would fire there. While Alt
 // is held or a drag runs, the root carries `data-pane-drag` and CSS makes every

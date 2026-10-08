@@ -1,8 +1,7 @@
 // Browser providers behind the browser tool (#353, #357): a fake provider (Kit,
 // or Chrome's extension through its host) pairs over the real API socket,
 // provides and withdraws tabs, answers browser.cdp and browser.open, and sends
-// CDP events up; the tool drives it, and falls back to the Browser pane when
-// no provided tab serves the worktree.
+// CDP events up; the tool drives it.
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'fs/promises'
@@ -12,7 +11,6 @@ import { join } from 'path'
 import type { BrowserCdpParams, BrowserOpenParams } from '../sdk/src/protocol'
 import { FrameDecoder, encodeFrame } from '../sdk/src/frames'
 import type { GroveTool, GroveToolContext } from '../src/main/agents/harness'
-import { providerOrPane, type PaneBrowser } from '../src/main/agents/tools/browserBackends'
 import { browserTools } from '../src/main/agents/tools/browserTools'
 import type { PermissionBroker } from '../src/main/api/broker'
 import { ApiDispatcher } from '../src/main/api/dispatcher'
@@ -144,34 +142,9 @@ async function until(condition: () => boolean): Promise<void> {
   }
 }
 
-interface FakePane extends PaneBrowser {
-  sent: string[]
-}
-
-/** A Browser pane that attaches when shown if `opens`, answering every command with `{}`. */
-function fakePane(opens: boolean): FakePane {
-  let attached = false
-  const pane: FakePane = {
-    sent: [],
-    isAttached: () => attached,
-    waitForAttach: async () => {
-      attached = opens
-      return attached
-    },
-    location: () => ({ url: 'http://pane/', title: 'Pane' }),
-    cdp: async (_worktreeId, method) => {
-      pane.sent.push(method)
-      return {}
-    },
-    consoleLog: () => [],
-    networkLog: () => []
-  }
-  return pane
-}
-
-/** The browser tool over Kit and the given pane. */
-function toolOver(pane: PaneBrowser): GroveTool {
-  return browserTools(providerOrPane(kit, pane), { helpersPath: join(directory, 'browser-helpers.js') })[0]
+/** The browser tool over Kit. */
+function toolOver(): GroveTool {
+  return browserTools(kit, { helpersPath: join(directory, 'browser-helpers.js') })[0]
 }
 
 /** A tool context for the worktree that records what it was asked to show. */
@@ -215,7 +188,7 @@ maybe('a Kit providing tabs', () => {
   test('a disconnected Kit stops serving, and its unanswered command fails', async () => {
     const fake = await connectKit(() => new Promise(() => {}))
     await provide(fake)
-    const result = toolOver(fakePane(false)).execute({ method: 'Page.reload' }, contextFor())
+    const result = toolOver().execute({ method: 'Page.reload' }, contextFor())
     await until(() => fake.cdpCalls.length === 1)
     fake.socket.destroy()
     const reply = await result
@@ -230,9 +203,8 @@ maybe('the tool over a Kit tab', () => {
   test('a command goes down Kit’s connection and its result comes back', async () => {
     const fake = await connectKit(() => ({ result: { type: 'number', value: 42 } }))
     await provide(fake)
-    const pane = fakePane(true)
     const shown: ShowTarget[] = []
-    const reply = await toolOver(pane).execute(
+    const reply = await toolOver().execute(
       { method: 'Runtime.evaluate', params: { expression: '6 * 7', returnByValue: true } },
       contextFor(shown)
     )
@@ -241,7 +213,6 @@ maybe('the tool over a Kit tab', () => {
     ])
     expect(reply.content).toStartWith('{"result":{"type":"number","value":42}}')
     expect(reply.content).toContain('Now at http://localhost:3100/ (“Demo”)')
-    expect(pane.sent).toEqual([])
     expect(shown).toEqual([])
   })
 
@@ -250,7 +221,7 @@ maybe('the tool over a Kit tab', () => {
       throw Object.assign(new Error(`'${call.method}' wasn't found`), { code: -32601 })
     })
     await provide(fake)
-    const reply = await toolOver(fakePane(true)).execute({ method: 'Nope.method' }, contextFor())
+    const reply = await toolOver().execute({ method: 'Nope.method' }, contextFor())
     expect(reply.isError).toBe(true)
     expect(reply.content).toContain("'Nope.method' wasn't found")
   })
@@ -258,7 +229,7 @@ maybe('the tool over a Kit tab', () => {
   test('a navigation moves where the tab is, and so does a frame navigating', async () => {
     const fake = await connectKit()
     await provide(fake)
-    const tool = toolOver(fakePane(true))
+    const tool = toolOver()
     const reply = await tool.execute({ method: 'Page.navigate', params: { url: 'http://localhost:3100/about' } }, contextFor())
     expect(reply.content).toContain('Now at http://localhost:3100/about.')
     fake.endpoint.event('browser.cdpEvent', {
@@ -290,7 +261,7 @@ maybe('the tool over a Kit tab', () => {
     for (const event of events) fake.endpoint.event('browser.cdpEvent', { worktreeId: WORKTREE, ...event })
     await until(() => kit.networkLog(WORKTREE).length === 3)
 
-    const tool = toolOver(fakePane(true))
+    const tool = toolOver()
     const first = await tool.execute({ method: 'Page.reload' }, contextFor())
     expect(first.content).toContain('- error: Uncaught ReferenceError: missingFunction (http://localhost:3100/app.js:12)')
     expect(first.content).toContain('- error: TypeError: x is undefined')
@@ -335,7 +306,7 @@ maybe('the tool over a Kit tab', () => {
   })
 })
 
-maybe('opening a tab and falling back to the pane', () => {
+maybe('opening a tab', () => {
   test('with a Kit connected and nothing serving the worktree, Kit is asked to open a tab', async () => {
     const fake = await connectKit(
       () => ({ result: { type: 'string', value: 'complete' } }),
@@ -344,40 +315,26 @@ maybe('opening a tab and falling back to the pane', () => {
         return null
       }
     )
-    const pane = fakePane(true)
     const shown: ShowTarget[] = []
-    const reply = await toolOver(pane).execute({ method: 'Runtime.evaluate', params: { expression: 'document.readyState' } }, contextFor(shown))
+    const reply = await toolOver().execute({ method: 'Runtime.evaluate', params: { expression: 'document.readyState' } }, contextFor(shown))
     expect(fake.openCalls).toEqual([{ worktreeId: WORKTREE }])
     expect(fake.cdpCalls.map((call) => call.method)).toEqual(['Runtime.evaluate'])
     expect(reply.content).toContain('"complete"')
     expect(shown).toEqual([])
-    expect(pane.sent).toEqual([])
   })
 
-  test('without a Kit, the tool opens the Browser pane and drives it', async () => {
-    const pane = fakePane(true)
-    const shown: ShowTarget[] = []
-    const reply = await toolOver(pane).execute({ method: 'Page.reload' }, contextFor(shown))
-    expect(shown).toEqual([{ kind: 'pane', pane: 'browser' }])
-    expect(pane.sent).toEqual(['Page.reload'])
-    expect(reply.content).toContain('Now at http://pane/')
-  })
-
-  test('when Kit cannot open a tab, the tool falls back to the pane', async () => {
+  test('when Kit cannot open a tab, the agent is told to ask for one', async () => {
     const fake = await connectKit()
-    const pane = fakePane(true)
-    const shown: ShowTarget[] = []
-    await toolOver(pane).execute({ method: 'Page.reload' }, contextFor(shown))
+    const reply = await toolOver().execute({ method: 'Page.reload' }, contextFor())
     expect(fake.openCalls).toHaveLength(1)
-    expect(shown).toEqual([{ kind: 'pane', pane: 'browser' }])
-    expect(pane.sent).toEqual(['Page.reload'])
-  })
-
-  test('with neither, the agent is told to ask for a tab from Kit or Chrome, or the pane', async () => {
-    const reply = await toolOver(fakePane(false)).execute({ method: 'Page.reload' }, contextFor())
     expect(reply.isError).toBe(true)
     expect(reply.content).toContain('hand a tab to this worktree from Kit or from Grove’s Chrome extension')
-    expect(reply.content).toContain('Browser pane')
+  })
+
+  test('without a Kit, the agent is told to ask for a tab from Kit or Chrome', async () => {
+    const reply = await toolOver().execute({ method: 'Page.reload' }, contextFor())
+    expect(reply.isError).toBe(true)
+    expect(reply.content).toContain('hand a tab to this worktree from Kit or from Grove’s Chrome extension')
   })
 
   test('when the newest provider cannot open a tab, the one before it is asked', async () => {
@@ -389,23 +346,11 @@ maybe('opening a tab and falling back to the pane', () => {
       }
     )
     const kitWithoutWindow = await connectKit()
-    const pane = fakePane(true)
     const shown: ShowTarget[] = []
-    const reply = await toolOver(pane).execute({ method: 'Runtime.evaluate' }, contextFor(shown))
+    const reply = await toolOver().execute({ method: 'Runtime.evaluate' }, contextFor(shown))
     expect(kitWithoutWindow.openCalls).toHaveLength(1)
     expect(chrome.openCalls).toHaveLength(1)
     expect(reply.content).toStartWith('{"from":"chrome"}')
     expect(shown).toEqual([])
-    expect(pane.sent).toEqual([])
-  })
-
-  test('a Kit tab wins over an open pane', async () => {
-    const pane = fakePane(true)
-    await pane.waitForAttach(WORKTREE, 0)
-    const fake = await connectKit(() => ({ from: 'kit' }))
-    await provide(fake)
-    const reply = await toolOver(pane).execute({ method: 'Runtime.evaluate' }, contextFor())
-    expect(reply.content).toStartWith('{"from":"kit"}')
-    expect(pane.sent).toEqual([])
   })
 })

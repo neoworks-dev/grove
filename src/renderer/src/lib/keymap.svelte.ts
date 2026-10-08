@@ -339,7 +339,7 @@ class Keymap {
     const active = document.activeElement
     this.focusBeforeBlur = null
     if (!(active instanceof HTMLElement)) return
-    if (active === document.body || active.tagName === 'IFRAME' || active.tagName === 'WEBVIEW') {
+    if (active === document.body || active.tagName === 'IFRAME') {
       return
     }
     this.focusBeforeBlur = active

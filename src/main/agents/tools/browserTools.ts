@@ -3,8 +3,8 @@
 // Every session gets this: the browser belongs to the worktree, not to one
 // agent, so whichever agent is working on the frontend can look at what it
 // built and use it. The calls land in a page the user is looking at — a tab
-// handed to the worktree from Kit or Chrome, or else the Browser pane — and they watch the
-// clicks and the typing happen.
+// handed to the worktree from Kit or Chrome — and they watch the clicks and
+// the typing happen.
 //
 // The tool is the DevTools protocol, unwrapped. Models know CDP far better
 // than any set of wrappers grove could write, and a wrapper only gets in the
@@ -24,7 +24,6 @@ import { stringOrNothing } from './toolInput'
 /** What the tool needs of the browser service, keyed by worktree. */
 export interface AgentBrowser {
   isAttached(worktreeId: string): boolean
-  waitForAttach(worktreeId: string, timeoutMs: number): Promise<boolean>
   /**
    * Asks a connected browser provider to open a tab for the worktree; true
    * once one serves it, false when there is none or none did.
@@ -37,8 +36,6 @@ export interface AgentBrowser {
   networkLog(worktreeId: string): BrowserNetworkEntry[]
 }
 
-// How long to wait for the pane to open and hand its page over.
-const ATTACH_TIMEOUT_MS = 8000
 // How long to wait for a connected provider to open a tab and provide it.
 const PROVIDER_OPEN_TIMEOUT_MS = 5000
 // Characters of a command's result returned before it is cut.
@@ -103,10 +100,9 @@ export interface BrowserToolOptions {
 }
 
 const NOT_OPEN =
-  'No browser serves this worktree: no browser tab is handed to it, and the Browser pane is not ' +
-  'open and could not be opened (the user is not looking at this conversation, or has another ' +
-  'worktree selected). Ask the user to hand a tab to this worktree from Kit or from Grove’s ' +
-  'Chrome extension, or to open the Browser pane, then try again.'
+  'No browser serves this worktree: no browser tab is handed to it, and no connected browser ' +
+  'opened one. Ask the user to hand a tab to this worktree from Kit or from Grove’s Chrome ' +
+  'extension, then try again.'
 
 /** The last log entries a session has been told about, so each reply carries only what is new. */
 interface SeenEvents {
@@ -125,13 +121,11 @@ function browserTool(browser: AgentBrowser, options: BrowserToolOptions): GroveT
     name: 'browser',
     summary: 'Drive the worktree’s browser with DevTools protocol commands',
     promptGuidelines: [
-      'For frontend work, check what you built in the Browser preview rather than assuming it renders'
+      'For frontend work, check what you built in the browser rather than assuming it renders'
     ],
     description:
       'Send one Chrome DevTools Protocol command to the worktree’s browser: a tab the user handed ' +
-      'to the worktree from Kit or Chrome when there is one, else the Browser pane, the worktree’s ' +
-      'preview of its dev server. When neither is open, a connected browser is asked for a tab, ' +
-      'else the pane is opened. ' +
+      'to the worktree from Kit or Chrome. When none is, a connected browser is asked for a tab. ' +
       'The user watches it happen. ' +
       'Any domain works: Page.navigate, Runtime.evaluate (returnByValue: true for a plain value), ' +
       'Input.dispatchMouseEvent, Input.insertText, Input.dispatchKeyEvent, DOM.*, ' +
@@ -178,6 +172,9 @@ function browserTool(browser: AgentBrowser, options: BrowserToolOptions): GroveT
       } catch (error) {
         result = { content: (error as Error).message, isError: true }
       }
+      // The tab can go while the command runs, its provider disconnecting; then
+      // there is nothing left to report about it.
+      if (!browser.isAttached(worktreeId)) return result
       const events = newEvents(browser, worktreeId, seenBy(seen, context.sessionId))
       const parts = [result.content, events, whereNow(browser, worktreeId)].filter((part) => part.length > 0)
       return { ...result, content: parts.join('\n\n') }
@@ -186,17 +183,14 @@ function browserTool(browser: AgentBrowser, options: BrowserToolOptions): GroveT
 }
 
 /**
- * The worktree's browser: the page already serving it, else a tab a connected
- * browser opens, else the Browser pane opened for it. Null when none arrived in time.
+ * The worktree's browser: the tab already serving it, else one a connected
+ * browser opens. Null when none arrived in time.
  */
 async function ensureBrowser(browser: AgentBrowser, context: GroveToolContext): Promise<string | null> {
   const worktreeId = context.workspaceRoot
   if (browser.isAttached(worktreeId)) return worktreeId
   if (await browser.openTab(worktreeId, PROVIDER_OPEN_TIMEOUT_MS)) return worktreeId
-  context.show({ kind: 'pane', pane: 'browser' })
-  const attached = await browser.waitForAttach(worktreeId, ATTACH_TIMEOUT_MS)
-  if (!attached) return null
-  return worktreeId
+  return null
 }
 
 /**

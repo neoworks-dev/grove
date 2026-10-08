@@ -6,8 +6,7 @@
 // agent's browser tool sends its DevTools protocol commands down that
 // provider's connection (`browser.cdp`), and the provider sends the tab's
 // console and network events back up (`browser.cdpEvent`), which are kept here
-// per worktree the way the Electron pane's are. Every provider is treated the
-// same. The protocol is neoworks-dev/grove#353; its types are in the SDK.
+// per worktree. Every provider is treated the same. The protocol is neoworks-dev/grove#353; its types are in the SDK.
 
 import type {
   BrowserCdpEvent,

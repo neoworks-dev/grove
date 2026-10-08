@@ -1140,14 +1140,7 @@ export interface RepoInfo {
   currentBranch: string
 }
 
-/** Something an agent is doing in a worktree's browser preview, for its pane to show. */
-export interface BrowserActivity {
-  worktreeId: string
-  text: string
-  at: number
-}
-
-/** One line a preview's page logged to its console. */
+/** One line a worktree's browser tab logged to its console. */
 export interface BrowserConsoleEntry {
   level: string
   message: string
@@ -1156,7 +1149,7 @@ export interface BrowserConsoleEntry {
   at: number
 }
 
-/** One request a preview's page made. */
+/** One request a worktree's browser tab made. */
 export interface BrowserNetworkEntry {
   method: string
   url: string
@@ -1165,13 +1158,4 @@ export interface BrowserNetworkEntry {
   type: string
   error: string | null
   at: number
-}
-
-/** An element the user pointed at in a preview, to hand to an agent. */
-export interface BrowserPickedElement {
-  selector: string
-  tag: string
-  name: string
-  html: string
-  url: string
 }

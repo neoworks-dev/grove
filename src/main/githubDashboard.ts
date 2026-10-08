@@ -480,7 +480,7 @@ query($owner: String!, $name: String!, $limit: Int!) {
     ${issueFieldDefinitions(capabilities)}
     issues(first: $limit, states: ${ISSUE_STATES[filter]}, orderBy: {field: UPDATED_AT, direction: DESC}) {
       nodes {
-        id number title url state createdAt updatedAt isPinned
+        id number title url state createdAt updatedAt isPinned bodyText
         author { login }
         comments { totalCount }
         labels(first: 10) { nodes { name color } }
@@ -527,6 +527,8 @@ interface GraphqlIssueField {
 interface GraphqlItemNode extends GraphqlOptionalNode {
   /** Selected on issues only. */
   id?: string
+  /** Selected on issues in the list only, for the board's preview. */
+  bodyText?: string
   number: number
   title: string
   url: string
@@ -626,8 +628,21 @@ function toIssueItem(node: GraphqlItemNode): GithubIssueItem {
     labels: node.labels.nodes,
     assignees: node.assignees.nodes.map(toActor),
     isPinned: node.isPinned === true,
-    id: node.id
+    id: node.id,
+    excerpt: excerptOf(node.bodyText)
   }
+}
+
+// How much of a description is kept for a card's preview. The card shows two
+// or three lines; the rest would only travel to the renderer to be cut off.
+const EXCERPT_LENGTH = 240
+
+/** The start of a description, whitespace folded, for a preview; undefined when none was asked for. */
+export function excerptOf(bodyText: string | undefined): string | undefined {
+  if (bodyText === undefined) return undefined
+  const folded = bodyText.replace(/\s+/g, ' ').trim()
+  if (folded.length <= EXCERPT_LENGTH) return folded
+  return folded.slice(0, EXCERPT_LENGTH).trimEnd() + '…'
 }
 
 /** Check state of the head commit, or null when the PR has no checks. */

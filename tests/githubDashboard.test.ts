@@ -23,6 +23,7 @@ import {
   graphqlFailure,
   grantedScopes,
   toIssueFields,
+  excerptOf,
   toReviewThread,
   type ThreadNode
 } from '../src/main/githubDashboard'
@@ -525,5 +526,21 @@ describe('responseBody', () => {
     const response = 'HTTP/2.0 200 OK\r\nX-Oauth-Scopes: repo\r\n\r\n{"data":{}}'
     expect(responseBody(response)).toBe('{"data":{}}')
     expect(grantedScopes(response)).toEqual(['repo'])
+  })
+})
+
+describe('excerptOf', () => {
+  it('folds whitespace and keeps a short description whole', () => {
+    expect(excerptOf('First line.\n\n  Second   line.')).toBe('First line. Second line.')
+  })
+
+  it('cuts a long description and marks the cut', () => {
+    const excerpt = excerptOf('word '.repeat(100))
+    expect(excerpt?.length).toBeLessThanOrEqual(241)
+    expect(excerpt?.endsWith('…')).toBe(true)
+  })
+
+  it('stays absent when the description was not asked for', () => {
+    expect(excerptOf(undefined)).toBeUndefined()
   })
 })

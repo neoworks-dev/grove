@@ -49,6 +49,11 @@
   // search found nothing" — `is:open` is not something the user typed.
   const narrowed = $derived(github.query.trim() !== DEFAULT_QUERY && github.query.trim().length > 0)
   const counts = $derived(github.counts)
+  // gh found no GitHub remote for this folder. Not a failure: there is just
+  // nothing for the pane to show.
+  const notOnGithub = $derived(
+    github.status !== null && github.status.repo === null && !github.error
+  )
   const viewer = $derived.by<string | null>(() => {
     if (!github.dashboard) return null
     return github.dashboard.viewer
@@ -139,9 +144,25 @@
   {/if}
 {/snippet}
 
-<div class="flex h-full min-h-0 flex-col" bind:clientWidth={width}>
+<div class="relative flex h-full min-h-0 flex-col" bind:clientWidth={width}>
   {#if github.error}
     <p class="border-b border-line px-3 py-2 text-xs text-red">{github.error}</p>
+  {/if}
+
+  <!-- Over the empty list and thread rather than in place of them, which keeps
+       the pane's layout below in one piece. -->
+  {#if notOnGithub}
+    <div class="absolute inset-0 z-10 flex flex-col bg-canvas">
+      <div class="flex items-center justify-end border-b border-line px-2 py-1">
+        <PaneControls />
+      </div>
+      <div class="flex flex-1 flex-col items-center justify-center gap-1 px-6 text-center">
+        <p class="text-xs text-default">This folder isn't on GitHub.</p>
+        <p class="text-2xs text-dim">
+          Issues and pull requests show up here once the repository has a GitHub remote.
+        </p>
+      </div>
+    </div>
   {/if}
 
   <div class="flex min-h-0 flex-1">

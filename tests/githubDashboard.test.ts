@@ -17,6 +17,7 @@ import {
   optionalFields,
   rateLimitMessage,
   relationshipFields,
+  repoFailureStatus,
   scopeHint,
   graphqlFailure,
   grantedScopes,
@@ -458,10 +459,27 @@ describe('branch pulls off GitHub', () => {
     try {
       execFileSync('git', ['init', '-q'], { cwd: repoPath })
       expect(await fetchBranchPulls(repoPath)).toEqual({})
-      execFileSync('git', ['remote', 'add', 'origin', 'https://gitlab.com/a/b.git'], { cwd: repoPath })
+      execFileSync('git', ['remote', 'add', 'origin', 'https://gitlab.com/a/b.git'], {
+        cwd: repoPath
+      })
       expect(await fetchBranchPulls(repoPath)).toEqual({})
     } finally {
       rmSync(repoPath, { recursive: true, force: true })
     }
+  })
+})
+
+describe('repoFailureStatus', () => {
+  it('reads a folder without a GitHub remote as no repository, not as an error', () => {
+    const status = repoFailureStatus(
+      new Error('gh repo view --json nameWithOwner,url failed: no git remotes found')
+    )
+    expect(status.repo).toBeNull()
+    expect(status.error).toBeNull()
+  })
+
+  it('still reports any other failure', () => {
+    const status = repoFailureStatus(new Error('gh repo view failed: HTTP 502'))
+    expect(status.error).toContain('HTTP 502')
   })
 })

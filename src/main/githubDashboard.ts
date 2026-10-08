@@ -164,12 +164,24 @@ export async function fetchStatus(repoPath: string): Promise<GithubStatus> {
   try {
     return { installed: true, authenticated: true, repo: await repoRef(repoPath), error: null }
   } catch (error) {
-    return {
-      installed: true,
-      authenticated: true,
-      repo: null,
-      error: `No GitHub repository for this folder: ${(error as Error).message}`
-    }
+    return repoFailureStatus(error as Error)
+  }
+}
+
+/**
+ * The status when gh could not name the repository. A folder with no GitHub
+ * remote is an ordinary place to be, so it is no repository and no error; the
+ * pane says so quietly. Anything else is a failure worth showing.
+ */
+export function repoFailureStatus(error: Error): GithubStatus {
+  if (isNotOnGithub(error)) {
+    return { installed: true, authenticated: true, repo: null, error: null }
+  }
+  return {
+    installed: true,
+    authenticated: true,
+    repo: null,
+    error: `No GitHub repository for this folder: ${error.message}`
   }
 }
 

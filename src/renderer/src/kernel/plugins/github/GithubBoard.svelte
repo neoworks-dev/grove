@@ -69,7 +69,7 @@
 <div class="flex min-h-0 flex-1 gap-2 overflow-x-auto p-2">
   {#each columns as column (keyOf(column))}
     <section
-      class="flex min-h-0 w-64 shrink-0 flex-col rounded-lg border"
+      class="flex min-h-0 w-64 shrink-0 flex-col rounded-lg border bg-canvas"
       class:border-line={dropTarget !== keyOf(column)}
       class:border-line-strong={dropTarget === keyOf(column)}
       class:bg-hover={dropTarget === keyOf(column)}

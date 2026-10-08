@@ -40,7 +40,7 @@ import { toolNameOf } from '../acpLog'
 import { CALL_TOOL, dispatchedCall } from '../tools/toolSearchTools'
 import { ASK_USER } from '../tools/questionTools'
 import { groveToolName, type BoundServer, type ToolBinding } from './mcpServer'
-import { overlayMcpServer } from './overlay'
+import { overlayMcpServer, overlayRunsUnasked } from './overlay'
 import type { SwitchboardHost } from './host'
 import { TerminalRelay } from './terminalRelay'
 
@@ -454,11 +454,13 @@ export class SwitchboardRun implements HarnessRun {
 
   /**
    * Answer a harness asking before a tool call. grove's own tools hold their
-   * calls themselves, so the harness is let through on those.
+   * calls themselves, so the harness is let through on those, and the desktop
+   * overlay's tools only show things on the screen.
    */
   private async answerPermission(request: RequestPermissionRequest): Promise<PermissionReply> {
     const name = toolNameOf(request.toolCall)
     if (name && groveToolName(name)) return 'once'
+    if (name && overlayRunsUnasked(name, request.toolCall.rawInput)) return 'once'
     const decision = await this.options.confirm(request)
     return this.replyTo(decision)
   }

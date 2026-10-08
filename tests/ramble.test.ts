@@ -5,6 +5,7 @@
 import { describe, expect, test } from 'bun:test'
 import { describeRamble, saidText, type RambleCapture } from '../src/shared/ramble'
 import { rambleDuration, rambleSegments } from '../src/renderer/src/lib/agents/rambleCard'
+import { overlayRunsUnasked } from '../src/main/agents/switchboard/overlay'
 
 const KITTY = { kind: 'window', class: 'kitty', title: '~/grove' } as const
 
@@ -58,6 +59,16 @@ describe('rambleSegments', () => {
     expect(circle.kind === 'event' && circle.detail).toBe(
       'circled window class:kitty "~/grove" at 10,20 on DP-2 (10,20 300x40)'
     )
+  })
+})
+
+describe('overlayRunsUnasked', () => {
+  test("lets the overlay's tools through, but not typing that presses Return", () => {
+    expect(overlayRunsUnasked('mcp__overlay__point', { target: 'class:kitty' })).toBe(true)
+    expect(overlayRunsUnasked('mcp__overlay__type_text', { text: 'ls' })).toBe(true)
+    expect(overlayRunsUnasked('mcp__overlay__type_text', { text: 'ls', enter: true })).toBe(false)
+    expect(overlayRunsUnasked('mcp__overlay__more_tools', { args: { enter: true } })).toBe(false)
+    expect(overlayRunsUnasked('mcp__other__point', {})).toBe(false)
   })
 })
 

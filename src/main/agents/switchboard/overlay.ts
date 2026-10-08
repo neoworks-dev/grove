@@ -12,6 +12,7 @@ const OVERLAY_ORIGIN = 'http://127.0.0.1:7831'
 /** What the overlay answers on its root, so another server on the port isn't mistaken for it. */
 const OVERLAY_BANNER = 'neoworks overlay'
 const PROBE_TIMEOUT_MS = 300
+const OVERLAY_SERVER = 'overlay'
 
 /** The overlay's skill as last fetched; null while the overlay isn't running. */
 let skill: GroveSkill | null = null
@@ -23,13 +24,33 @@ export async function overlayMcpServer(): Promise<McpServer | null> {
     return null
   }
   skill = await fetchSkill()
-  return { type: 'http', name: 'overlay', url: `${OVERLAY_ORIGIN}/mcp`, headers: [] }
+  return { type: 'http', name: OVERLAY_SERVER, url: `${OVERLAY_ORIGIN}/mcp`, headers: [] }
 }
 
 /** The overlay's skills, as of the last session started. */
 export function overlaySkills(): GroveSkill[] {
   if (skill === null) return []
   return [skill]
+}
+
+/**
+ * Whether a call to `name` can run without asking: the overlay's tools only
+ * show things on the screen, so asking would stop a walkthrough at every
+ * step. Typing that ends with Return can run a command, so that still asks.
+ */
+export function overlayRunsUnasked(name: string, input: unknown): boolean {
+  if (!name.startsWith(`mcp__${OVERLAY_SERVER}__`)) return false
+  return !pressesEnter(input)
+}
+
+/** A `type_text` call that ends with Return, directly or through `more_tools`. */
+function pressesEnter(input: unknown): boolean {
+  if (input === null || typeof input !== 'object') return false
+  const fields = input as Record<string, unknown>
+  if (fields.enter === true) return true
+  const nested = fields.args
+  if (nested === null || typeof nested !== 'object') return false
+  return (nested as Record<string, unknown>).enter === true
 }
 
 async function overlayRunning(): Promise<boolean> {

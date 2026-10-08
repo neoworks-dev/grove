@@ -153,9 +153,10 @@
       onkeydown={onAgentKey}
     >
       <span class="truncate text-xs text-default">{sessionTitle}</span>
-      <span class="flex items-center gap-1.5 text-2xs text-dim">
+      <!-- One line that never wraps: on a narrow column the time gives way first. -->
+      <span class="flex items-center gap-1 overflow-hidden whitespace-nowrap text-2xs text-dim">
         {#if agent.badge === 'running'}
-          <span class="flex items-center gap-0.5" aria-label="working">
+          <span class="flex shrink-0 items-center gap-0.5" aria-label="working">
             {#each [0, 1, 2] as dot (dot)}
               <span
                 class="size-1 animate-pulse rounded-full bg-amber"
@@ -163,19 +164,20 @@
               ></span>
             {/each}
           </span>
+          <span class="shrink-0">·</span>
         {:else if agent.badge !== 'idle'}
-          <span class={AGENT_TEXT[agent.badge]}>{AGENT_LABELS[agent.badge]}</span>
-          <span>·</span>
+          <span class="shrink-0 {AGENT_TEXT[agent.badge]}">{AGENT_LABELS[agent.badge]}</span>
+          <span class="shrink-0">·</span>
         {/if}
-        <span>{ageLabel(agent.session.updatedAt)}</span>
+        <span class="min-w-0 truncate">{ageLabel(agent.session.updatedAt)}</span>
         {#if changes}
-          <span>·</span>
-          <span>
+          <span class="shrink-0">·</span>
+          <span class="shrink-0">
             {changes.files}
             {#if changes.files === 1}file{:else}files{/if}
           </span>
-          <span class="text-green">+{changes.added}</span>
-          <span class="text-red">-{changes.removed}</span>
+          <span class="shrink-0 text-green">+{changes.added}</span>
+          <span class="shrink-0 text-red">-{changes.removed}</span>
         {/if}
       </span>
     </div>

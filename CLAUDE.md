@@ -6,35 +6,33 @@ No trailers, ever: no `Co-Authored-By` on a commit, no "Generated with Claude Co
 
 ## Writing
 
-Commits, issues and pull requests carry only what matters. Say the thing, explain what a reader won't see for themselves, stop. No restating the diff, no summarising what you just said, no section that exists because the format seemed to want one.
+Commits and issues carry only what matters. Say the thing, explain what a reader won't see for themselves, stop. No restating the diff, no summarising what you just said, no section that exists because the format seemed to want one.
 
-## Issues and branches
+## How we work
 
-Work lives in GitHub issues on `neoworks-dev/grove`, not in a file in the repo.
+One agent at a time, with me giving feedback as it goes. Keep each step small enough for me to read in one sitting, and stop to show me rather than piling up work I then have to catch up on.
 
-Write to GitHub as the bot: issues, comments, PRs and their edits, labels and `gh pr ready` go through `gh bot` (`gh bot issue comment 12 --body …`), so they show as `neoworks-bot[bot]`, not as me. Plain `gh` is for reading only. The bot as author already says a model wrote it, so no "written by Claude" line in the text. If `gh bot` fails, say so rather than falling back to plain `gh`. It lives in `~/Documents/neoworks/gh-bot`, and `bun run qa` uses it on its own.
+`main` is what I've reviewed and what I run Grove from. It stays checked out in the repo root: never switch branches there.
 
-Before starting on anything, check whether it is already half-built: `git branch -a` and `gh pr list` for the feature, and read what is on the branch. Sessions end mid-feature, and a branch is where that work is — starting again on `main` writes it a second time and loses whatever the first attempt learned. If a branch for it exists, continue on it.
+Straight to `main` in the root, no branch: typos, one-liners, and anything that only touches how we work rather than the app — this file, `.claude/skills/`, editor config.
 
-Anything more than a tiny change: open an issue (`gh issue create`) with the labels below, branch off `main` as `<issue-number>-<slug>` (e.g. `12-tab-strip-overflow`), then open a draft PR towards `main` straight away.
+Everything else happens on a branch off `main`, in a worktree under `.worktrees/<branch>` (`git worktree add .worktrees/<branch> -b <branch> main`). Name it `<issue-number>-<slug>` when there is an issue (`12-tab-strip-overflow`), `<slug>` when there isn't. One branch is one thing; anything found along the way gets written down as an issue and stays off the branch, unless the branch can't finish without it.
 
-A PR is a small batch: one issue, or a few that touch the same code. Anything found along the way gets its own issue and stays out of the PR, unless the PR can't finish without it. Branch off `main`; stack on another branch only when the code depends on it, and name the base in the body.
+Before starting on anything, check whether it is already half-built: `git branch` and `git worktree list` for the feature, and read what is on the branch. Sessions end mid-feature, and a branch is where that work is — starting again writes it a second time and loses whatever the first attempt learned. If a branch for it exists, continue on it.
 
-The PR body opens with its issues as a checklist, followed by the `Closes` lines:
+No pull requests unless I ask for one. Review happens here, on the diff, before the merge.
 
-```
-- [ ] #23 code theme
-- [ ] #24 indent guides
+## Issues
 
-Closes #23
-Closes #24
-```
+Issues on `neoworks-dev/grove` carry goals across sessions. A session ends and its context goes with it; an issue is the only thing that carries a goal to the next one. So:
 
-Straight to `main`, no issue and no branch: typos, one-liners, and anything that only touches how we work rather than the app — this file, `.claude/skills/`, editor config. Moving the extension-system rules into the `grove-plugins` skill was one of those.
+- Work that finishes in this session, with me here, needs no issue.
+- Work that won't finish in one session gets one, however loosely defined it still is.
+- Something concrete found along the way, that isn't what we're doing now, gets one instead of being done.
 
-No issue either when the work is still undefined — building out a surface we're feeling our way through, where the shape comes from what we find as we go. An issue describes a known outcome, and there isn't one yet; writing it up front would be a guess, and keeping it current would cost more than it tells anyone. Still branch, and still open a PR — just without a `Closes`.
+Write them as soon as the list exists, not once the work starts.
 
-The moment that exploration names something concrete, it gets an issue — and anything that won't finish in one session always does, however loosely defined it still is. A session ends and its context goes with it; an issue is the only thing that carries a goal across to the next one. Write them as soon as the list exists, not once the work starts.
+Write to GitHub as the bot: issues, comments and labels go through `gh bot` (`gh bot issue comment 12 --body …`), so they show as `neoworks-bot[bot]`, not as me. Plain `gh` is for reading only. The bot as author already says a model wrote it, so no "written by Claude" line in the text. If `gh bot` fails, say so rather than falling back to plain `gh`. It lives in `~/Documents/neoworks/gh-bot`, and `bun run qa` uses it on its own.
 
 Labels are two axes. Type is GitHub's default `bug` or `enhancement`. Area is exactly one of:
 
@@ -53,27 +51,20 @@ Two areas is fine when an issue genuinely spans them; three means split it.
 
 ## Done means verified
 
-An issue is done when its fix has been shown to work, not when the code is written. Shown means one of:
+Work is done when it has been shown to work, not when the code is written. Shown means one of:
 
 - reproduced through `bun run qa` beforehand and shown fixed afterwards, with screenshots of both;
 - a test under `tests/` that fails without the fix and passes with it.
 
 `bun test` passes on the branch either way.
 
-As soon as one issue is done, before starting the next:
+Then hand it over and stop: what changed in a sentence or two, the evidence, and the branch. When it has an issue, the evidence also goes on the issue (`bun run qa evidence --issue <n> --body … --screenshot …`) — that comment is what I read, so it's written for someone who wasn't in the session.
 
-1. Comment on the issue with `bun run qa evidence --issue <n> --body … --screenshot …`: what changed, in a sentence or two, plus the screenshots or the test's output.
-2. Label it `ready for review` (`gh bot issue edit <n> --add-label "ready for review"`). That label is how I find what's waiting on me; leave the issue open for me to close.
-3. Tick its box in the PR body and link that comment.
-4. Merge the branch into `next` and push.
+## Merging
 
-Once every box is ticked, `gh pr ready`. Don't leave a PR in draft with its work finished, and don't tick a box without evidence to show for it.
+I review the branch's diff, and it merges into `main` when I say so — never before, and never without evidence. Merge in the root with `git merge --no-ff <branch>`, so the branch stays one unit in the history; if it conflicts, resolve it in the merge commit. Push `main`. Then remove the worktree and delete the branch, and close its issue with `gh bot issue close <n>`.
 
-## `next`
-
-`next` is what I run Grove from: it stays checked out in the repo root, so verified work shows up there straight away. Never switch branches in the root. Work happens in a worktree under `.worktrees/<branch>` (`git worktree add .worktrees/<branch> <branch>`), and merges into `next` are made in the root, where they land in my running app. When a merge touches `src/main` or `src/preload`, tell me to restart. It gets merges only — never commit on it directly, and never merge anything into it without evidence. If merging into `next` conflicts, resolve the conflict in the merge commit on `next`.
-
-`main` is what I've reviewed. I merge PRs into `main` myself; after that, merge `main` back into `next`.
+Merges land in my running app; when one touches `src/main` or `src/preload`, tell me to restart.
 
 ## Validation
 

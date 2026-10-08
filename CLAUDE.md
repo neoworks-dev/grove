@@ -1,6 +1,6 @@
 ## Git
 
-Commit the worktree first if it's dirty, then write your changes. Short, to-the-point commit title; a body explaining the change when the title doesn't carry it; ask if you're unsure what to write. Always say the commit was made by you, not a human. On a feature branch, only commit what that branch is for.
+Commit the worktree first if it's dirty, then write your changes. Short, to-the-point commit title; a body explaining the change when the title doesn't carry it; ask if you're unsure what to write. On a feature branch, only commit what that branch is for.
 
 No trailers, ever: no `Co-Authored-By` on a commit, no "Generated with Claude Code" on a PR.
 
@@ -53,7 +53,7 @@ Two areas is fine when an issue genuinely spans them; three means split it.
 
 Work is done when it has been shown to work, not when the code is written. Shown means one of:
 
-- reproduced through `bun run qa` beforehand and shown fixed afterwards, with screenshots of both;
+- shown fixed through `bun run qa`, with a screenshot (and one from before, if you reproduced it);
 - a test under `tests/` that fails without the fix and passes with it.
 
 `bun test` passes on the branch either way.
@@ -72,7 +72,7 @@ Never launch or restart my instance of the app. Ask me to restart it after main-
 
 Debug through `bun run qa` rather than asking me what I see: it launches an isolated instance of its own on a virtual display and drives it by clicking, dragging and typing, and `bun run qa explore` hands that to a Claude Code instance which files what it finds. The `grove-debug` skill has the commands. Never read the UI through tmux.
 
-Reproduce a reported UI bug through the harness and confirm the mechanism before proposing a fix. Guessing from source has been wrong more often than right.
+When I tell you what's happening, that's the reproduction: take it as given and go find the cause, don't re-check what I already saw. Reach for the harness when the code doesn't make the cause clear, or a fix based on reading it didn't work — guessing from source has been wrong often enough that a second guess isn't worth it.
 
 ## Directory structure
 

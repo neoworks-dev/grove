@@ -1,6 +1,6 @@
 ---
 name: grove-debug
-description: Use Grove the way a person does — launch a session on a virtual display, click, drag, type, look at screenshots, read its state and logs, and file what you find as GitHub issues. Use whenever a UI or agent bug is reported, before proposing a fix; when exploring the app for bugs and rough edges; and whenever driving the built app through `bun run qa`.
+description: Use Grove the way a person does — launch a session on a virtual display, click, drag, type, look at screenshots, read its state and logs, and file what you find as GitHub issues. Use when the cause of a UI or agent bug isn't clear from the code, or a fix didn't work; when exploring the app for bugs and rough edges; and whenever driving the built app through `bun run qa`.
 ---
 
 # Using Grove, and finding out what is wrong with it
@@ -9,10 +9,12 @@ This is the harness for the job an end-to-end spec cannot do: sitting down with
 the app and finding out what is wrong with it. Not "does the button dispatch the
 action" — whether the thing is any good to use.
 
-It is also the debugger. When a bug is already known and the question is _why_,
-reproduce it here and confirm the mechanism before proposing a fix — guessing
-from source has been wrong more often than right. It launches an instance of its
-own; never launch or restart the user's.
+It is also the debugger, for when a bug is known and the question is _why_. When
+the user has said what happens, that is the reproduction: take it as given and
+look for the cause. Come here when the code doesn't make the cause clear, or a
+fix based on reading it didn't work — guessing from source has been wrong often
+enough that a second guess isn't worth it. It launches an instance of its own;
+never launch or restart the user's.
 
 Everything is `bun run qa <command>`. `bun run qa help` lists it.
 

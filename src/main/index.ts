@@ -70,8 +70,7 @@ function createWindow(): void {
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false,
-      webviewTag: true
+      sandbox: false
     }
   })
 
@@ -91,15 +90,6 @@ function createWindow(): void {
   mainWindow.webContents.on('did-start-navigation', (details) => {
     if (!details.isMainFrame || details.isSameDocument) return
     reapNvimSessions()
-  })
-
-  // The Browser pane's <webview> shows whatever page the user or an agent opens:
-  // it gets no preload and no Node, whatever the markup asked for.
-  mainWindow.webContents.on('will-attach-webview', (_event, webPreferences) => {
-    delete webPreferences.preload
-    webPreferences.nodeIntegration = false
-    webPreferences.contextIsolation = true
-    webPreferences.sandbox = true
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {

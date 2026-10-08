@@ -657,7 +657,7 @@
   /* Alt+drag pane relocation (lib/paneDrag.svelte.ts): frames are separate
      documents that keep pointer events to themselves, so they turn
      click-through while the gesture is armed or running. */
-  :root[data-pane-drag] :is(iframe, webview) {
+  :root[data-pane-drag] iframe {
     pointer-events: none;
   }
 

@@ -33,7 +33,6 @@ function fakePage(answer: (method: string) => unknown, title = 'Demo'): FakePage
     console: [],
     network: [],
     isAttached: () => true,
-    waitForAttach: async () => true,
     location: () => ({ url: 'http://localhost:3100/todos', title }),
     cdp: async (_worktreeId, method) => answer(method),
     consoleLog: () => [...page.console],

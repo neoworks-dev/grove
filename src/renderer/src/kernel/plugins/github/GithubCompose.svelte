@@ -6,6 +6,7 @@
   import GithubMentionBox from './GithubMentionBox.svelte'
   import { github, createIssue } from './store.svelte'
   import XIcon from 'phosphor-svelte/lib/XIcon'
+  import RowAction from '../gitChanges/RowAction.svelte'
 
   const canCreate = $derived(github.draft.title.trim().length > 0 && !github.busy)
 
@@ -30,14 +31,11 @@
       <span class="text-2xs text-dim">{github.dashboard.repo.nameWithOwner}</span>
     {/if}
     <!-- Puts the composer away; the draft stays in the store for next time. -->
-    <button
-      class="shrink-0 rounded p-1 text-dim hover:bg-hover hover:text-default"
+    <RowAction
+      icon={XIcon}
       title="Close the new issue"
-      aria-label="Close the new issue"
       onclick={() => (github.composing = false)}
-    >
-      <XIcon size={14} />
-    </button>
+    />
   </div>
 
   <FloatingScrollbar class="min-h-0 flex-1">

@@ -25,6 +25,8 @@
   import type { GithubThreadTab } from './store.svelte'
   import type { GithubItemAction } from '../../../../../shared/types'
   import XIcon from 'phosphor-svelte/lib/XIcon'
+  import type { Component } from 'svelte'
+  import RowAction from '../gitChanges/RowAction.svelte'
 
   // Below this the metadata moves above the timeline instead of beside it.
   const SIDEBAR_PX = 620
@@ -70,6 +72,13 @@
     if (!detail) return []
     return availableActions({ kind: detail.kind, state: detail.state, isDraft: detail.isDraft })
   })
+
+  const ACTION_ICONS: Record<GithubItemAction, Component<{ size?: number }>> = {
+    close: XCircleIcon,
+    reopen: ArrowCounterClockwiseIcon,
+    merge: GitMergeIcon,
+    ready: EyeIcon
+  }
 
   const actionLabels: Record<GithubItemAction, string> = {
     close: 'Close',
@@ -139,43 +148,22 @@
         </h2>
 
         {#each actions as action (action)}
-          <button
-            class="shrink-0 rounded p-1 text-dim hover:bg-hover hover:text-default disabled:opacity-50"
-            disabled={github.busy}
+          <RowAction
+            icon={ACTION_ICONS[action]}
             title={actionLabels[action]}
-            aria-label={actionLabels[action]}
+            disabled={github.busy}
             onclick={() => confirmAction(action)}
-          >
-            {#if action === 'close'}
-              <XCircleIcon size={14} />
-            {:else if action === 'reopen'}
-              <ArrowCounterClockwiseIcon size={14} />
-            {:else if action === 'merge'}
-              <GitMergeIcon size={14} />
-            {:else}
-              <EyeIcon size={14} />
-            {/if}
-          </button>
+          />
         {/each}
 
-        <button
-          class="shrink-0 rounded p-1 text-dim hover:bg-hover hover:text-default"
+        <RowAction
+          icon={ArrowSquareOutIcon}
           title="Open on GitHub"
-          aria-label="Open on GitHub"
           onclick={() => openInBrowser(detail.url)}
-        >
-          <ArrowSquareOutIcon size={14} />
-        </button>
+        />
         <!-- Puts the thread away, back to the list or the board. The pane's own
              close button is in the list's header. -->
-        <button
-          class="shrink-0 rounded p-1 text-dim hover:bg-hover hover:text-default"
-          title="Close the thread"
-          aria-label="Close the thread"
-          onclick={() => selectItem(null)}
-        >
-          <XIcon size={14} />
-        </button>
+        <RowAction icon={XIcon} title="Close the thread" onclick={() => selectItem(null)} />
       </div>
 
       <div class="mt-1 flex flex-wrap items-center gap-2 text-2xs text-dim">

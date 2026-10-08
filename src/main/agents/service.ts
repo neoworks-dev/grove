@@ -63,7 +63,7 @@ import type {
 import { toolInfoOf } from './harness'
 import { startShellCommand, type ShellResult } from './shell'
 import { completeShellLine } from './shellCompletion'
-import { firstPromptText, isDefaultTitle, titleFromPrompt } from './sessionSummary'
+import { UNNAMED_TITLE, firstPromptText, isDefaultTitle, titleFromPrompt } from './sessionSummary'
 import { resolveLoginShell } from './loginShell'
 import {
   hasStarted,
@@ -190,7 +190,7 @@ export class AgentService {
     const session = await this.store.create({
       workspaceRoot,
       harness,
-      title: options.title ?? 'Session',
+      title: options.title ?? UNNAMED_TITLE,
       provider: model.provider,
       model: model.model,
       thinkingLevel: options.thinkingLevel ?? 'off',
@@ -430,6 +430,20 @@ export class AgentService {
     if (!title) return
     await this.store.patch(sessionId, { title })
     await this.store.append(sessionId, { type: 'session.info_changed', changed: ['title'] })
+  }
+
+  /**
+   * A clear is about to start a new conversation: a name grove took from the old
+   * one's first prompt goes back to unnamed, so the next prompt names it again.
+   * A name that differs from that prompt's was chosen by someone, and stays.
+   * Read before the clear lands on the log, while the old conversation is current.
+   */
+  private async forgetPromptTitle(sessionId: string): Promise<void> {
+    const session = await this.store.require(sessionId)
+    const prompt = firstPromptText(this.store.peekEvents(sessionId))
+    if (!prompt) return
+    if (session.title !== titleFromPrompt(prompt)) return
+    await this.store.patch(sessionId, { title: UNNAMED_TITLE })
   }
 
   /** Put a message to the agent: straight through, steered, or queued. */
@@ -1060,6 +1074,7 @@ export class AgentService {
     // The harness cleared its conversation: until a message reaches the new one,
     // the session is open again (see `hasStarted`).
     if (body.type === 'session_changed') {
+      await this.forgetPromptTitle(sessionId)
       await this.store.patch(sessionId, { cleared: true })
     }
 

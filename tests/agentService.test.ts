@@ -211,6 +211,46 @@ describe('AgentService', () => {
     }
   })
 
+  test('a cleared session is named after the first prompt of its new conversation', async () => {
+    const { service, runs, cleanup } = await setup()
+    try {
+      const session = await service.createSession({ workspace: '/tmp/worktree' })
+      await service.send(session.id, [say('Fix the tab strip overflow')])
+      runs[0].finish()
+      await settle()
+
+      // The harness moved to a new, empty conversation (`/clear`).
+      runs[0].options.emit({ type: 'session_changed', sessionId: 'thread-cleared' })
+      await settle()
+      expect((await service.getSession(session.id)).title).toBe('Session')
+
+      await service.send(session.id, [say('Rename the settings pane')])
+      expect((await service.getSession(session.id)).title).toBe('Rename the settings pane')
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('a session somebody named keeps its name across a clear', async () => {
+    const { service, runs, cleanup } = await setup()
+    try {
+      const session = await service.createSession({
+        workspace: '/tmp/worktree',
+        title: 'Inline edits'
+      })
+      await service.send(session.id, [say('rewrite this')])
+      runs[0].finish()
+      await settle()
+
+      runs[0].options.emit({ type: 'session_changed', sessionId: 'thread-cleared' })
+      await settle()
+      await service.send(session.id, [say('something else')])
+      expect((await service.getSession(session.id)).title).toBe('Inline edits')
+    } finally {
+      await cleanup()
+    }
+  })
+
   test('a new session starts on the model its harness recommends', async () => {
     const { service, cleanup } = await setup()
     try {

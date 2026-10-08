@@ -40,3 +40,4 @@ export const agents: GroveApi['agents'] = host().agents
 export const terminals: GroveApi['terminals'] = host().terminals
 export const languages: GroveApi['languages'] = host().languages
 export const services: GroveApi['services'] = host().services
+export const clipboard: GroveApi['clipboard'] = host().clipboard

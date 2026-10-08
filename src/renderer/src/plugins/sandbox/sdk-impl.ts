@@ -454,6 +454,11 @@ export function buildGroveApi(rpc: RpcEndpoint, pluginId: string): GroveApi {
       }
     },
 
+    clipboard: {
+      writeText: (text) => rpc.request('main.clipboard.writeText', { text }) as Promise<void>,
+      readText: () => rpc.request('main.clipboard.readText', {}) as Promise<string>
+    },
+
     languages: {
       hover: (path, position, options) =>
         rpc.request('main.languages.hover', { path, position, ...options }) as ReturnType<

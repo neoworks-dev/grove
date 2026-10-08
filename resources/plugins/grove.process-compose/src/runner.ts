@@ -23,6 +23,12 @@ export interface ProcessState {
   spec: ProcessSpec
   status: ProcessStatus
   exitCode: number | null
+  // When the current or last run started (epoch ms).
+  startedAt: number | null
+  // Launches since the project was last started as a whole.
+  runs: number
+  // The dependency that can no longer be met, while skipped.
+  blockedBy: string | null
   output: OutputBuffer
   terminalId: string | null
   // Ends the output stream of the current run.
@@ -89,6 +95,11 @@ export class OutputBuffer {
     this.text = ''
     this.preamble = ''
   }
+
+  /** Forgets what was shown so far; a run still starting keeps waiting for its marker. */
+  discard(): void {
+    this.text = ''
+  }
 }
 
 export class ProjectRunner {
@@ -105,6 +116,9 @@ export class ProjectRunner {
         spec,
         status: spec.disabled ? 'disabled' : 'idle',
         exitCode: null,
+        startedAt: null,
+        runs: 0,
+        blockedBy: null,
         output: new OutputBuffer(),
         terminalId: null,
         cancel: null,
@@ -125,6 +139,7 @@ export class ProjectRunner {
     for (const state of this.processes.values()) {
       if (state.spec.disabled || isLive(state.status)) continue
       this.reset(state)
+      state.runs = 0
       state.status = 'waiting'
     }
     this.schedule()
@@ -192,9 +207,18 @@ export class ProjectRunner {
     if (terminalId) void grove.terminals.resize(terminalId, cols, rows).catch(() => undefined)
   }
 
+  /** Drops a process's output so far; pages are told to start over. */
+  clearOutput(name: string): void {
+    const state = this.processes.get(name)
+    if (!state) return
+    state.output.discard()
+    this.events.onOutputReset(name)
+  }
+
   private reset(state: ProcessState): void {
     state.output.clear()
     state.exitCode = null
+    state.blockedBy = null
     this.events.onOutputReset(state.spec.name)
   }
 
@@ -204,6 +228,8 @@ export class ProjectRunner {
 
   private async launch(state: ProcessState): Promise<void> {
     state.status = 'running'
+    state.startedAt = Date.now()
+    state.runs += 1
     this.events.onChange()
     let terminalId: string
     try {
@@ -266,8 +292,24 @@ export class ProjectRunner {
       if (state.status !== 'waiting') continue
       const verdict = this.dependencyVerdict(state.spec)
       if (verdict === 'ready') void this.launch(state)
-      else if (verdict === 'never') state.status = 'skipped'
+      else if (verdict === 'never') this.skip(state)
     }
+  }
+
+  /** Gives up on a process whose dependencies can no longer be met, noting which one. */
+  private skip(state: ProcessState): void {
+    state.status = 'skipped'
+    state.blockedBy = this.blockingDependency(state.spec)
+  }
+
+  /** The first dependency that can no longer be met, or null. */
+  private blockingDependency(spec: ProcessSpec): string | null {
+    for (const dependency of spec.dependsOn) {
+      const target = this.processes.get(dependency.name)
+      if (!target || target.status === 'disabled') continue
+      if (conditionMet(dependency.condition, target.status) === 'never') return dependency.name
+    }
+    return null
   }
 
   private dependencyVerdict(spec: ProcessSpec): 'ready' | 'wait' | 'never' {

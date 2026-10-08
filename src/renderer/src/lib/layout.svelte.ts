@@ -57,8 +57,8 @@ const CENTER_TYPES = ['nvim']
 // user (settings did exactly that).
 const EDITOR_TYPE = 'nvim'
 
-// Center pane type shown when the last real center pane is closed, so the
-// center never collapses to nothing.
+// Pane type shown when the last window is closed, so the tree never collapses
+// to nothing.
 const EMPTY_CENTER_TYPE = 'empty'
 
 // Share of the tree an edge pane takes when it has no preference of its own.
@@ -494,10 +494,10 @@ class LayoutStore {
   closeLeaf(leafId: string): void {
     const leaf = findLeaf(this.tree, leafId)
     if (!leaf) return
-    // Neither the tree nor the center may collapse to nothing: closing the last
-    // window, or the last center window, swaps in an empty-state placeholder
-    // instead of removing it.
-    if (this.isLastCenterLeaf(leaf) || leaves(this.tree).length <= 1) {
+    // The tree may not collapse to nothing: closing the last window swaps in
+    // an empty-state placeholder instead of removing it. The editor family
+    // can go like any other pane; opening a file splits an editor back in.
+    if (leaves(this.tree).length <= 1) {
       if (leaf.paneTypeId === EMPTY_CENTER_TYPE) return
       this.setActiveTree(replaceLeafType(this.tree, leaf.id, EMPTY_CENTER_TYPE))
       this.schedule()
@@ -509,15 +509,6 @@ class LayoutStore {
     const fallback = leaves(next)[0]
     if (keymap.activeLeafId === leafId && fallback) this.focusLeafSoon(fallback.id)
     this.schedule()
-  }
-
-  // Whether this leaf is the only window of the editor family left open.
-  private isLastCenterLeaf(leaf: LeafNode): boolean {
-    if (panes.get(leaf.paneTypeId)?.slot !== CENTER_SLOT) return false
-    const centerLeaves = leaves(this.tree).filter(
-      (entry) => panes.get(entry.paneTypeId)?.slot === CENTER_SLOT
-    )
-    return centerLeaves.length <= 1
   }
 
   closeFocused(): void {

@@ -2,7 +2,7 @@
 // streamed events (logs, service/agent status) to the renderer. This is the
 // single source of truth for the API exposed via preload.
 
-import { app, dialog, BrowserWindow } from 'electron'
+import { app, clipboard, dialog, BrowserWindow } from 'electron'
 import { dirname, join } from 'path'
 import { mkdirSync } from 'fs'
 import { homedir } from 'os'
@@ -43,6 +43,7 @@ import { ApiDispatcher } from './api/dispatcher'
 import { registerWorkspaceRoutes } from './api/routes/workspace'
 import { registerAiRoutes } from './api/routes/ai'
 import { registerStorageRoutes } from './api/routes/storage'
+import { registerClipboardRoutes } from './api/routes/clipboard'
 import { registerEventRoutes } from './api/routes/events'
 import { registerEditorRoutes } from './api/routes/editor'
 import { registerDebugRoutes } from './api/routes/debug'
@@ -515,6 +516,10 @@ registerBrowserRoutes(apiRegistry, {
 registerAiRoutes(apiRegistry, { aiBridge })
 registerStorageRoutes(apiRegistry, {
   storagePath: () => join(app.getPath('userData'), 'plugin-storage.json')
+})
+registerClipboardRoutes(apiRegistry, {
+  writeText: (text) => clipboard.writeText(text),
+  readText: () => clipboard.readText()
 })
 const editorDocs = new DocumentRegistry({
   nvim: { request: (id, method, args) => nvims.request(id, method, args) },

@@ -6,14 +6,17 @@
 
 import * as grove from '@grove/plugin-sdk'
 import { isConfigFile, parseConfig, type ComposeConfig } from './config'
-import type { ProjectView, ToPage, ToWorker } from './messages'
+import type { PanePrefs, ProjectView, ToPage, ToWorker } from './messages'
 import { ProjectRunner } from './runner'
 import { cancellation } from './token'
+import { plainText } from './plainText'
 
 const PANE_ID = 'processCompose'
 const VIEW_ID = 'processCompose'
 // Output and status are batched per animation-ish tick on their way out.
 const FLUSH_MS = 30
+const PREFS_KEY = 'panePrefs'
+const DEFAULT_PREFS: PanePrefs = { listWidth: null, wrap: false }
 
 interface WorktreeState {
   // Every process-compose file in the worktree; null until looked up.
@@ -29,6 +32,11 @@ let current: grove.WorktreeInfo | null = null
 
 export function activate(context: grove.PluginContext): void {
   const outbox = new Outbox()
+  // The pane's layout, loaded from storage before the first page asks for it.
+  let prefs: PanePrefs = { ...DEFAULT_PREFS }
+  const prefsLoaded = loadPrefs(context).then((stored) => {
+    prefs = stored
+  })
 
   context.subscriptions.push(
     grove.panes.registerPage(PANE_ID, {
@@ -136,14 +144,50 @@ export function activate(context: grove.PluginContext): void {
       case 'resize':
         state.runner?.resize(message.name, message.cols, message.rows)
         return
+      case 'clear-output':
+        state.runner?.clearOutput(message.name)
+        return
+      case 'copy-output':
+        await copyOutput(state, message.name)
+        return
+      case 'set-prefs':
+        await savePrefs(message.prefs)
+        return
     }
     outbox.state(view(state))
   }
 
-  /** The state and every process's output so far, to one page or all of them. */
+  /** Puts a process's output so far on the clipboard as plain text, and says how it went. */
+  async function copyOutput(state: WorktreeState, name: string): Promise<void> {
+    const output = state.runner?.processes.get(name)?.output.value ?? ''
+    const text = plainText(output).trimEnd()
+    if (!text) {
+      grove.ui.notify({ level: 'info', message: `${name} has no output to copy.` })
+      return
+    }
+    try {
+      await grove.clipboard.writeText(text)
+      grove.ui.notify({ level: 'info', message: `Copied ${name}'s output.` })
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error)
+      grove.ui.notify({ level: 'error', message: `Could not copy ${name}'s output: ${reason}` })
+    }
+  }
+
+  /** Stores a change to the pane's layout and tells every open page. */
+  async function savePrefs(change: Partial<PanePrefs>): Promise<void> {
+    await prefsLoaded
+    prefs = { ...prefs, ...change }
+    outbox.prefs(prefs)
+    await context.storage.set(PREFS_KEY, prefs).catch(() => undefined)
+  }
+
+  /** The state, the layout and every process's output so far, to one page or all of them. */
   async function sendEverything(instanceId?: string): Promise<void> {
     const target = await resolveCurrent()
     const state = target?.state ?? null
+    await prefsLoaded
+    outbox.prefs(prefs, instanceId)
     outbox.state(view(state), instanceId)
     for (const process of state?.runner?.processes.values() ?? []) {
       outbox.reset(process.spec.name, process.output.value, instanceId)
@@ -153,6 +197,12 @@ export function activate(context: grove.PluginContext): void {
 
 export async function deactivate(): Promise<void> {
   await Promise.all([...states.values()].map((state) => state.runner?.stopAll()))
+}
+
+/** The stored pane layout, with defaults for whatever is missing or unreadable. */
+async function loadPrefs(context: grove.PluginContext): Promise<PanePrefs> {
+  const stored = await context.storage.get<Partial<PanePrefs>>(PREFS_KEY).catch(() => undefined)
+  return { ...DEFAULT_PREFS, ...stored }
 }
 
 async function load(worktreeId: string, state: WorktreeState): Promise<void> {
@@ -193,25 +243,36 @@ function view(state: WorktreeState | null): ProjectView {
     ? [...runner.processes.values()].map((process) => ({
         spec: process.spec,
         status: process.status,
-        exitCode: process.exitCode
+        exitCode: process.exitCode,
+        startedAt: process.startedAt,
+        restarts: Math.max(0, process.runs - 1),
+        blockedBy: process.blockedBy
       }))
     : specs.map((spec) => ({
         spec,
         status: spec.disabled ? ('disabled' as const) : ('idle' as const),
-        exitCode: null
+        exitCode: null,
+        startedAt: null,
+        restarts: 0,
+        blockedBy: null
       }))
   return {
     branch: current?.branch ?? null,
     files: state?.files ?? [],
     file: state?.file ?? null,
     error: state?.error ?? null,
-    processes: processes.map(({ spec, status, exitCode }) => ({
+    processes: processes.map(({ spec, status, exitCode, startedAt, restarts, blockedBy }) => ({
       name: spec.name,
       command: spec.command,
       workingDir: spec.workingDir,
       dependsOn: spec.dependsOn,
+      environment: spec.environment,
+      disabled: spec.disabled,
       status,
-      exitCode
+      exitCode,
+      startedAt,
+      restarts,
+      blockedBy
     }))
   }
 }
@@ -245,6 +306,10 @@ class Outbox {
       this.pendingOutput.delete(name)
     }
     this.send({ type: 'output-reset', name, data }, instanceId)
+  }
+
+  prefs(prefs: PanePrefs, instanceId?: string): void {
+    this.send({ type: 'prefs', prefs }, instanceId)
   }
 
   private schedule(): void {

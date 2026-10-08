@@ -654,6 +654,13 @@
     font-family: var(--font-mono);
   }
 
+  /* Alt+drag pane relocation (lib/paneDrag.svelte.ts): frames are separate
+     documents that keep pointer events to themselves, so they turn
+     click-through while the gesture is armed or running. */
+  :root[data-pane-drag] :is(iframe, webview) {
+    pointer-events: none;
+  }
+
   /* Active-pane marker (keyboard focus model): the focused pane sits on a faint
      underglow — light pooling under its lower edge — while every other pane
      stays flat. Dimming the rest was easy to miss and made unfocused content

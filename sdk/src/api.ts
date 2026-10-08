@@ -656,6 +656,16 @@ export interface EventsApi {
   ): AsyncIterable<{ topic: string; payload: unknown; worktreeId?: string }>
 }
 
+// ── clipboard ───────────────────────────────────────────────────
+// Plain text only. Writing needs 'clipboard.write'; reading needs
+// 'clipboard.read', granted separately because the clipboard holds whatever
+// the user last copied anywhere.
+
+export interface ClipboardApi {
+  writeText(text: string): Promise<void>
+  readText(): Promise<string>
+}
+
 // ── root ────────────────────────────────────────────────────────
 
 export interface GroveApi {
@@ -675,4 +685,5 @@ export interface GroveApi {
   services: ServicesApi
   settings: SettingsApi
   events: EventsApi
+  clipboard: ClipboardApi
 }

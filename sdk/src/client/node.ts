@@ -8,6 +8,7 @@
 import { connect, type Socket } from 'net'
 import type {
   AgentsApi,
+  ClipboardApi,
   CancellationToken,
   EditorApi,
   GitApi,
@@ -74,6 +75,7 @@ export interface GroveClient {
   terminals: TerminalsApi
   languages: LanguagesApi
   services: ServicesApi
+  clipboard: ClipboardApi
   events: {
     subscribe(
       topics: string[]
@@ -226,6 +228,10 @@ function buildClient(endpoint: RpcEndpoint, socket: Socket, hello: HelloResult):
     terminals: buildTerminals(request, stream),
     languages: namespaceProxy<LanguagesApi>('languages'),
     services: buildServices(request, stream),
+    clipboard: {
+      writeText: (text) => request('clipboard.writeText', { text }) as Promise<void>,
+      readText: () => request('clipboard.readText', {}) as Promise<string>
+    },
 
     events: {
       subscribe: (topics) =>

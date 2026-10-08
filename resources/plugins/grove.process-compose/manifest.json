@@ -5,7 +5,7 @@
   "description": "Run the worktree's process-compose file and watch every process live.",
   "entry": "dist/extension.js",
   "engines": { "grove": "^0.1.0" },
-  "permissions": ["workspace.read", "terminal.exec"],
+  "permissions": ["workspace.read", "terminal.exec", "state", "clipboard.write"],
   "activation": [
     "onPane:processCompose",
     "onView:processCompose",

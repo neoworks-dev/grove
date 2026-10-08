@@ -4,6 +4,8 @@
   // doing, and what its branch changes so far. Dragging the issue onto another
   // column sets the board's field; clicking it opens the issue's thread, and
   // clicking the agent's card opens the session.
+  import BusySpark from '../../../components/BusySpark.svelte'
+  import ShimmerText from '../../../components/ShimmerText.svelte'
   import GithubAvatar from './GithubAvatar.svelte'
   import GithubLabelPill from './GithubLabelPill.svelte'
   import { issueAgent, openIssueAgent, prefetchItem } from './store.svelte'
@@ -40,7 +42,7 @@
 
   /**
    * The card's border while an agent is on it, so a busy issue stands out on
-   * the board: amber while it works or waits on the user, red when it failed.
+   * the board: grove's green while it works or waits on the user, red when it failed.
    */
   const frame = $derived.by<'active' | 'failed' | null>(() => {
     if (!agent) return null
@@ -106,7 +108,7 @@
   class="flex cursor-pointer flex-col gap-1.5 rounded-md border bg-surface px-2 py-1.5 transition-colors duration-100 hover:bg-hover"
   class:border-line={!selected && !frame}
   class:border-line-strong={selected && !frame}
-  class:border-amber={frame === 'active'}
+  class:border-green={frame === 'active'}
   class:border-red={frame === 'failed'}
   class:bg-elevated={selected}
   role="button"
@@ -156,14 +158,9 @@
       <!-- One line that never wraps: on a narrow column the time gives way first. -->
       <span class="flex items-center gap-1 overflow-hidden whitespace-nowrap text-2xs text-dim">
         {#if agent.badge === 'running'}
-          <span class="flex shrink-0 items-center gap-0.5" aria-label="working">
-            {#each [0, 1, 2] as dot (dot)}
-              <span
-                class="size-1 animate-pulse rounded-full bg-amber"
-                style:animation-delay="{dot * 200}ms"
-              ></span>
-            {/each}
-          </span>
+          <!-- The agent pane's own working mark, so a busy card reads the same as a busy session. -->
+          <span class="shrink-0 text-green"><BusySpark /></span>
+          <ShimmerText text="working" class="shrink-0" />
           <span class="shrink-0">·</span>
         {:else if agent.badge !== 'idle'}
           <span class="shrink-0 {AGENT_TEXT[agent.badge]}">{AGENT_LABELS[agent.badge]}</span>

@@ -25,6 +25,7 @@
   import { DEFAULT_QUERY, setStateQualifier } from './search'
   import type { GithubItem, GithubItemKind, GithubStateFilter } from '../../../../../shared/types'
   import PaneControls from '../../../components/PaneControls.svelte'
+  import RowAction from '../gitChanges/RowAction.svelte'
 
   // Below this the pane shows one column at a time: the list, or the thread with
   // a way back.
@@ -250,23 +251,15 @@
             title={SEARCH_HELP}
           />
 
-          <button
-            class="shrink-0 rounded p-1 text-dim hover:bg-hover hover:text-default disabled:opacity-50"
-            disabled={github.loading}
+          <!-- The same button as the pane's close beside them, so the three
+               header icons look and behave alike. -->
+          <RowAction
+            icon={ArrowClockwiseIcon}
             title={refreshTitle}
-            aria-label="Refresh"
+            disabled={github.loading}
             onclick={() => refreshDashboard(github.stateFilter)}
-          >
-            <ArrowClockwiseIcon size={13} />
-          </button>
-          <button
-            class="shrink-0 rounded p-1 text-dim hover:bg-hover hover:text-default"
-            title="New issue"
-            aria-label="New issue"
-            onclick={startCompose}
-          >
-            <PlusIcon size={13} />
-          </button>
+          />
+          <RowAction icon={PlusIcon} title="New issue" onclick={startCompose} />
           <!-- The pane's own close button. The thread beside the list has one
                of its own, which only puts the thread away. -->
           <PaneControls />

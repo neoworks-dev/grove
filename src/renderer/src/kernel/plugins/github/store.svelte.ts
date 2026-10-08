@@ -12,6 +12,7 @@ import {
   store,
   openFileAtLine,
   openFileInEditor,
+  focusAgentInPane,
   refreshWorktrees,
   selectWorktree,
   type TabDiff
@@ -22,6 +23,7 @@ import { branchNameFor, freeBranchName, isBranchForIssue } from './branches'
 import { issuePrompt } from './issuePrompt'
 import { startSessionWithTask } from '../../../lib/agents/newSession'
 import { agentSessions, badgeOf, type SessionBadge } from '../../../lib/agents/sessions.svelte'
+import type { SessionMeta } from '../../../../../shared/agents'
 import { resolveBoardField, withFieldValue } from './board'
 import {
   calendarRange,
@@ -1557,32 +1559,51 @@ export function worktreesForIssue(number: number): Worktree[] {
   return store.worktrees.filter((worktree) => isBranchForIssue(worktree.branch, number))
 }
 
+/** The agent session a card shows for an issue, with the worktree it works in. */
+export interface IssueAgent {
+  session: SessionMeta
+  badge: SessionBadge
+  worktree: Worktree
+}
+
 /**
- * What the agents working on an issue are doing, read off the sessions in its
- * worktrees: the most pressing state of any of them, or null when the issue has
- * no worktree with a session in it.
+ * The agent session to show on an issue's card, read off the sessions in its
+ * worktrees: the one in the most pressing state, the most recently active
+ * among those, or null when the issue has no worktree with a session in it.
  */
-export function issueAgentBadge(number: number): SessionBadge | null {
-  const badges: SessionBadge[] = []
+export function issueAgent(number: number): IssueAgent | null {
+  let shown: IssueAgent | null = null
   for (const worktree of worktreesForIssue(number)) {
     for (const session of agentSessions.forWorktree(worktree.path)) {
-      badges.push(badgeOf(session, agentSessions.live[session.id]))
+      const candidate = {
+        session,
+        badge: badgeOf(session, agentSessions.live[session.id]),
+        worktree
+      }
+      if (!shown || showsBefore(candidate, shown)) shown = candidate
     }
   }
-  return mostPressing(badges)
+  return shown
+}
+
+/** Whether one session belongs on the card ahead of another: more pressing, or as pressing and newer. */
+function showsBefore(candidate: IssueAgent, current: IssueAgent): boolean {
+  const candidateRank = BADGE_ORDER.indexOf(candidate.badge)
+  const currentRank = BADGE_ORDER.indexOf(current.badge)
+  if (candidateRank !== currentRank) return candidateRank < currentRank
+  return candidate.session.updatedAt > current.session.updatedAt
+}
+
+/** Shows an issue's agent session in the Agent pane, in its worktree. */
+export function openIssueAgent(agent: IssueAgent): void {
+  agentSessions.acknowledge(agent.session.id)
+  void focusAgentInPane(agent.worktree.id, agent.session.id)
+  layout.ensurePane('agent')
 }
 
 // Which state a card shows when an issue's sessions disagree: what needs the
 // user first, then what is still moving.
 const BADGE_ORDER: SessionBadge[] = ['requires_action', 'error', 'running', 'idle']
-
-/** The first of `BADGE_ORDER` among the badges, or null when there are none. */
-function mostPressing(badges: SessionBadge[]): SessionBadge | null {
-  for (const badge of BADGE_ORDER) {
-    if (badges.includes(badge)) return badge
-  }
-  return null
-}
 
 /**
  * Moves an issue to a column of the board, setting the board's field on GitHub.

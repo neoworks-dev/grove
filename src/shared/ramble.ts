@@ -91,7 +91,7 @@ export interface RambleReceipt {
 // ── as text ──────────────────────────────────────────────────────────────
 
 const HEADER =
-  '[ramble: the user talked to you while using their desktop. What they did is in brackets where it happened; positions are monitor-local px. The screenshots are attached in order. The desktop-rambles skill says how to read and answer one.]'
+  '[ramble: the user talked to you while using their desktop. What they did is in brackets where it happened; positions are monitor-local px. The screenshots are attached in order; to point at something in one, give its position in that image with shot="N". The desktop-rambles skill says how to read and answer one.]'
 
 /** The words alone, as said. */
 export function saidText(capture: RambleCapture): string {

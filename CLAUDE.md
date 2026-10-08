@@ -8,6 +8,18 @@ No trailers, ever: no `Co-Authored-By` on a commit, no "Generated with Claude Co
 
 Commits and issues carry only what matters. Say the thing, explain what a reader won't see for themselves, stop. No restating the diff, no summarising what you just said, no section that exists because the format seemed to want one.
 
+Write issues and their comments the way you'd explain it to a colleague, in complete sentences.
+
+- Start with a 2–3 sentence summary: what happened, why, and the fix.
+- Use short headings, with short paragraphs of normal prose under them.
+- Never join ideas with arrows, slashes, colons or dashes. Write "first X, then Y" instead of "X → Y", and "A and B" instead of "A / B".
+- Use at most two code identifiers per sentence. Say what each one does the first time it appears.
+- Use bullets only for genuinely separate items, and make each bullet a full sentence.
+- Use tables only for numbers or timelines.
+- Use one date format everywhere: 2026-10-07 18:28.
+- Put error messages, paths and commands in code formatting, and long logs in a collapsed `<details>` block.
+- Put side findings in a short "Out of scope" section at the end.
+
 ## How we work
 
 One agent at a time, with me giving feedback as it goes. Keep each step small enough for me to read in one sitting, and stop to show me rather than piling up work I then have to catch up on.

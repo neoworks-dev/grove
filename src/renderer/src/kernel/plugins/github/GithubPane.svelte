@@ -191,6 +191,28 @@
             Issues
             <span class="font-mono text-2xs text-dim">{counts.issue}</span>
           </button>
+          {#if github.tab === 'issue' && github.issueFields.length > 0}
+            <div class="flex shrink-0 overflow-hidden rounded-md border border-line">
+              <button
+                class="px-1.5 py-0.5 text-2xs hover:bg-hover"
+                class:bg-hover={github.view === 'list'}
+                class:text-default={github.view === 'list'}
+                class:text-dim={github.view !== 'list'}
+                onclick={() => (github.view = 'list')}
+              >
+                List
+              </button>
+              <button
+                class="px-1.5 py-0.5 text-2xs hover:bg-hover"
+                class:bg-hover={github.view === 'board'}
+                class:text-default={github.view === 'board'}
+                class:text-dim={github.view !== 'board'}
+                onclick={() => (github.view = 'board')}
+              >
+                Board
+              </button>
+            </div>
+          {/if}
 
           <GithubSearchBox
             bind:value={github.query}

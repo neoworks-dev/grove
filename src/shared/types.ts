@@ -580,6 +580,12 @@ export interface GithubIssueFieldOption {
   color: string
 }
 
+/** A date issue field the organisation defines, like Target date. */
+export interface GithubIssueDateField {
+  id: string
+  name: string
+}
+
 /** A single-select issue field the organisation defines, like Priority. */
 export interface GithubIssueField {
   id: string
@@ -597,6 +603,8 @@ export interface GithubIssueItem extends GithubItemShared {
   excerpt?: string
   /** Single-select field values, option id by field id. Absent when the query could not ask. */
   fieldValues?: Record<string, string>
+  /** Date field values, `YYYY-MM-DD` by field id. Absent when the query could not ask. */
+  dateValues?: Record<string, string>
 }
 
 export interface GithubPullItem extends GithubItemShared {
@@ -630,6 +638,8 @@ export interface GithubDashboard {
   capabilities: GithubCapabilities
   /** The single-select issue fields issues can be grouped by; empty without `issueFields`. */
   issueFields: GithubIssueField[]
+  /** The date issue fields the calendar can place issues by; empty without `issueFields`. */
+  issueDateFields: GithubIssueDateField[]
   /** Epoch ms of the fetch, for the "updated Xs ago" hint. */
   fetchedAt: number
 }
@@ -698,6 +708,8 @@ export type GithubTimelineEntry =
 export interface GithubItemDetail extends GithubItemShared {
   /** Issues only: single-select field values, option id by field id. Absent when the query could not ask. */
   fieldValues?: Record<string, string>
+  /** Issues only: date field values, `YYYY-MM-DD` by field id. */
+  dateValues?: Record<string, string>
   kind: GithubItemKind
   /** The GraphQL node id, which the subscription mutation is addressed to. */
   id: string

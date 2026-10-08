@@ -131,7 +131,18 @@
 
   <!-- How the issues are grouped, part of what a view saves; at the row's end,
        where Linear keeps its display options. -->
-  {#if github.boardShown && github.boardField}
+  {#if github.calendarShown && github.calendarField}
+    <select
+      class="shrink-0 rounded-md border border-line bg-input px-1 py-0.5 text-2xs text-dim outline-none"
+      title="Place the issues by"
+      value={github.calendarField.id}
+      onchange={(event) => (github.calendarFieldId = event.currentTarget.value)}
+    >
+      {#each github.dateFields as field (field.id)}
+        <option value={field.id}>{field.name}</option>
+      {/each}
+    </select>
+  {:else if github.boardShown && github.boardField}
     <select
       class="shrink-0 rounded-md border border-line bg-input px-1 py-0.5 text-2xs text-dim outline-none"
       title="Group the board by"

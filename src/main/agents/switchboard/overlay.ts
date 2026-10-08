@@ -45,10 +45,12 @@ export function overlaySkills(): GroveSkill[] {
 /**
  * Whether a call to `name` can run without asking: the overlay's tools only
  * show things on the screen, so asking would stop a walkthrough at every
- * step. Typing that ends with Return can run a command, so that still asks.
+ * step. Typing that ends with Return can run a command and a click can press
+ * anything in the user's apps, so those still ask.
  */
 export function overlayRunsUnasked(name: string, input: unknown): boolean {
   if (!name.startsWith(`mcp__${OVERLAY_SERVER}__`)) return false
+  if (name === `mcp__${OVERLAY_SERVER}__click`) return false
   return !pressesEnter(input)
 }
 

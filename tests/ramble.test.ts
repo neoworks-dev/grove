@@ -69,6 +69,7 @@ describe('overlayRunsUnasked', () => {
     expect(overlayRunsUnasked('mcp__overlay__type_text', { text: 'ls', enter: true })).toBe(false)
     expect(overlayRunsUnasked('mcp__overlay__more_tools', { args: { enter: true } })).toBe(false)
     expect(overlayRunsUnasked('mcp__other__point', {})).toBe(false)
+    expect(overlayRunsUnasked('mcp__overlay__click', { target: 'point:10,10@shot1' })).toBe(false)
   })
 })
 

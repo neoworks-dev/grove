@@ -20,7 +20,8 @@ import type { CodeReference } from '../../../lib/agents/codeReferences'
 import { branchNameFor, freeBranchName, isBranchForIssue } from './branches'
 import { issuePrompt } from './issuePrompt'
 import { startSessionWithTask } from '../../../lib/agents/newSession'
-import { agentSessions } from '../../../lib/agents/sessions.svelte'
+import { agentSessions, badgeOf, type SessionBadge } from '../../../lib/agents/sessions.svelte'
+import { resolveBoardField, withFieldValue } from './board'
 import { diffAgainstBase, redrawDiffAgainstBase, showPrBaseOnly } from './prDiff'
 import { registerDiffRestore } from '../../../lib/nvim/diffTabs'
 import { buildPrFileTree, nextUnreadFile } from './prFileTree'
@@ -41,6 +42,8 @@ import type {
   GithubActor,
   GithubCapabilities,
   GithubDashboard,
+  GithubIssueField,
+  GithubIssueItem,
   GithubMilestoneDefinition,
   GithubIssueDraft,
   GithubItem,
@@ -103,6 +106,11 @@ class GithubStore {
   error = $state<string | null>(null)
 
   tab = $state<GithubItemKind>('pull')
+
+  /** Issues as a list, or as a board in columns by an issue field. */
+  view = $state<'list' | 'board'>('list')
+  /** The issue field the board groups by; null until one is picked, which means the first. */
+  boardFieldId = $state<string | null>(null)
 
   /**
    * The whole filter, in GitHub's own syntax. The menus write into this and
@@ -285,7 +293,8 @@ class GithubStore {
         issueTypes: false,
         subIssues: false,
         linkedBranches: false,
-        notifications: false
+        notifications: false,
+        issueFields: false
       }
     }
     return this.dashboard.capabilities
@@ -298,6 +307,24 @@ class GithubStore {
     return search.qualifiers.some(
       (qualifier) => qualifier.key !== 'is' && qualifier.key !== 'state'
     )
+  }
+
+  /** The organisation's single-select issue fields, which the board can group by. */
+  get issueFields(): GithubIssueField[] {
+    if (!this.dashboard) return []
+    return this.dashboard.issueFields
+  }
+
+  /** The field the board groups by, or null when there is none to group by. */
+  get boardField(): GithubIssueField | null {
+    return resolveBoardField(this.issueFields, this.boardFieldId)
+  }
+
+  /** Whether the board is what the pane shows: issues, a field to group by, and board view. */
+  get boardShown(): boolean {
+    if (this.tab !== 'issue') return false
+    if (this.view !== 'board') return false
+    return this.boardField !== null
   }
 
   get counts(): { pull: number; issue: number } {
@@ -1367,6 +1394,63 @@ export async function toggleSubscription(): Promise<void> {
 /** The worktrees already on one of an issue's branches, by the `<number>-` convention. */
 export function worktreesForIssue(number: number): Worktree[] {
   return store.worktrees.filter((worktree) => isBranchForIssue(worktree.branch, number))
+}
+
+/**
+ * What the agents working on an issue are doing, read off the sessions in its
+ * worktrees: the most pressing state of any of them, or null when the issue has
+ * no worktree with a session in it.
+ */
+export function issueAgentBadge(number: number): SessionBadge | null {
+  const badges: SessionBadge[] = []
+  for (const worktree of worktreesForIssue(number)) {
+    for (const session of agentSessions.forWorktree(worktree.path)) {
+      badges.push(badgeOf(session, agentSessions.live[session.id]))
+    }
+  }
+  return mostPressing(badges)
+}
+
+// Which state a card shows when an issue's sessions disagree: what needs the
+// user first, then what is still moving.
+const BADGE_ORDER: SessionBadge[] = ['requires_action', 'error', 'running', 'idle']
+
+/** The first of `BADGE_ORDER` among the badges, or null when there are none. */
+function mostPressing(badges: SessionBadge[]): SessionBadge | null {
+  for (const badge of BADGE_ORDER) {
+    if (badges.includes(badge)) return badge
+  }
+  return null
+}
+
+/**
+ * Moves an issue to a column of the board, setting the board's field on GitHub.
+ * The card moves at once and moves back if GitHub refuses.
+ */
+export async function moveIssueOnBoard(
+  issue: GithubIssueItem,
+  optionId: string | null
+): Promise<void> {
+  const field = github.boardField
+  if (!field || !issue.id) return
+  replaceIssue(withFieldValue(issue, field.id, optionId))
+  try {
+    await window.workbench.github.setIssueField(issue.id, field.id, optionId)
+  } catch (err) {
+    replaceIssue(issue)
+    dialogs.notify({ level: 'error', message: (err as Error).message })
+  }
+}
+
+/** Puts a changed copy of an issue in the dashboard in place of the one with its number. */
+function replaceIssue(next: GithubIssueItem): void {
+  const dashboard = github.dashboard
+  if (!dashboard) return
+  const issues = dashboard.issues.map((issue) => {
+    if (issue.number === next.number) return next
+    return issue
+  })
+  github.dashboard = { ...dashboard, issues }
 }
 
 /** Switches to a worktree an issue already has. */

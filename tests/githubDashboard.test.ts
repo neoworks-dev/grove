@@ -20,6 +20,7 @@ import {
   scopeHint,
   graphqlFailure,
   grantedScopes,
+  toIssueFields,
   toReviewThread,
   type ThreadNode
 } from '../src/main/githubDashboard'
@@ -31,14 +32,16 @@ const PLAIN = {
   issueTypes: false,
   subIssues: false,
   linkedBranches: false,
-  notifications: false
+  notifications: false,
+  issueFields: false
 }
 const FULL = {
   projects: true,
   issueTypes: true,
   subIssues: true,
   linkedBranches: true,
-  notifications: true
+  notifications: true,
+  issueFields: true
 }
 
 describe('dashboardQuery', () => {
@@ -96,6 +99,26 @@ describe('optionalFields', () => {
 
   it('never asks a pull request for an issue type', () => {
     expect(optionalFields(FULL, false)).not.toContain('issueType')
+  })
+})
+
+describe('issue fields', () => {
+  it("asks for field definitions and an issue's values only when the repository has fields", () => {
+    expect(dashboardQuery('open', PLAIN)).not.toContain('issueField')
+    const query = dashboardQuery('open', FULL)
+    expect(query).toContain('issueFields(first: 25)')
+    expect(query).toContain('issueFieldValues(first: 25)')
+  })
+
+  it('never asks a pull request for field values', () => {
+    expect(optionalFields(FULL, false)).not.toContain('issueFieldValues')
+  })
+
+  it('keeps the single-select definitions and drops the kinds the fragment did not match', () => {
+    const options = [{ id: 'o1', name: 'High', color: 'RED' }]
+    expect(toIssueFields([{ id: 'f1', name: 'Priority', options }, {}, {}])).toEqual([
+      { id: 'f1', name: 'Priority', options }
+    ])
   })
 })
 
@@ -458,7 +481,9 @@ describe('branch pulls off GitHub', () => {
     try {
       execFileSync('git', ['init', '-q'], { cwd: repoPath })
       expect(await fetchBranchPulls(repoPath)).toEqual({})
-      execFileSync('git', ['remote', 'add', 'origin', 'https://gitlab.com/a/b.git'], { cwd: repoPath })
+      execFileSync('git', ['remote', 'add', 'origin', 'https://gitlab.com/a/b.git'], {
+        cwd: repoPath
+      })
       expect(await fetchBranchPulls(repoPath)).toEqual({})
     } finally {
       rmSync(repoPath, { recursive: true, force: true })

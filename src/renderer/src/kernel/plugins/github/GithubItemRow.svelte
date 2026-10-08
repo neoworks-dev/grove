@@ -23,6 +23,7 @@
     reviewTone
   } from './filter'
   import type { GithubItem } from '../../../../../shared/types'
+  import { prefetchItem } from './store.svelte'
 
   let {
     item,
@@ -76,6 +77,7 @@
   tabindex="0"
   aria-current={selected}
   onclick={onselect}
+  onmouseenter={() => prefetchItem(item.kind, item.number)}
   onkeydown={onRowKey}
 >
   <span

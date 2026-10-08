@@ -583,6 +583,8 @@ export interface GithubIssueItem extends GithubItemShared {
   commentCount: number
   /** The issue's GraphQL node id, which mutations take. */
   id?: string
+  /** The start of the description as plain text, for a card to preview; empty when there is none. */
+  excerpt?: string
   /** Single-select field values, option id by field id. Absent when the query could not ask. */
   fieldValues?: Record<string, string>
 }

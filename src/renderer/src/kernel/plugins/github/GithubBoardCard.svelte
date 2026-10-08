@@ -75,6 +75,10 @@
 
   <span class="text-xs text-default">{issue.title}</span>
 
+  {#if issue.excerpt}
+    <p class="line-clamp-3 text-2xs text-dim">{issue.excerpt}</p>
+  {/if}
+
   {#if issue.labels.length > 0 || agent}
     <div class="flex flex-wrap items-center gap-1">
       {#each issue.labels as label (label.name)}

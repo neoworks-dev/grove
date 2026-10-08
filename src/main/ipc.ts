@@ -62,6 +62,7 @@ import { PluginRegistry } from './plugins/loader'
 import { AiBridge } from './plugins/aiBridge'
 import { HarnessRegistry } from './agents/harness'
 import { SwitchboardHost } from './agents/switchboard/host'
+import { overlaySkills } from './agents/switchboard/overlay'
 import { SessionStore } from './agents/store'
 import { AgentService } from './agents/service'
 import { AgentReviewBridge } from './agents/reviewBridge'
@@ -235,7 +236,7 @@ const agents = new AgentService({
       screen: agents,
       worktrees: agentWorktrees,
       conflicts: conflictProposals,
-      skills: () => aiBridge.skillList()
+      skills: () => [...aiBridge.skillList(), ...overlaySkills()]
     }),
     ...browserTools(browserProviders, {
       helpersPath: join(app.getPath('userData'), 'browser-helpers.js')

@@ -12,6 +12,7 @@
 // reconstructs the whole conversation.
 
 import type { RequestPermissionRequest, SessionUpdate as AcpSessionUpdate } from '@neoworks/harness'
+import type { RambleCapture } from './ramble'
 import type { TreeFileChange } from './types'
 
 export type SessionStatus = 'idle' | 'running' | 'terminated'
@@ -71,7 +72,19 @@ export interface FileBlock {
   text: string
 }
 
-export type UserContentBlock = TextBlock | ImageBlock | FileBlock
+/**
+ * A ramble from the desktop overlay, kept as the overlay captured it so the
+ * transcript can show it as a card. The model reads it as text
+ * (`describeRamble`); its screenshots travel as the message's image blocks,
+ * whose refs `screenshots` lists in the capture's order.
+ */
+export interface RambleBlock {
+  type: 'ramble'
+  capture: RambleCapture
+  screenshots: string[]
+}
+
+export type UserContentBlock = TextBlock | ImageBlock | FileBlock | RambleBlock
 
 export interface ContentBlock {
   type: string

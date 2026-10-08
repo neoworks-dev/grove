@@ -11,6 +11,7 @@
 
 import type { SessionEvent, UserContentBlock } from '../../shared/agents'
 import { agentMessages, resultText, toolCalls } from './acpLog'
+import { saidText } from '../../shared/ramble'
 
 export type Speaker = 'user' | 'agent' | 'tool' | 'system'
 
@@ -121,6 +122,7 @@ function userText(content: UserContentBlock[]): string {
     .map((block) => {
       if (block.type === 'text') return block.text
       if (block.type === 'image') return '[image]'
+      if (block.type === 'ramble') return `[ramble] ${saidText(block.capture)}`
       return `[${block.path}:${block.startLine}-${block.endLine}]`
     })
     .join('\n')

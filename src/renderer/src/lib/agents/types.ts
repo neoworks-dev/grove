@@ -23,6 +23,7 @@ export type {
   EventBody,
   EventEnvelope,
   FileBlock,
+  RambleBlock,
   FileMatch,
   HeldMessage,
   HeldMessageDecision,

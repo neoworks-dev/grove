@@ -1,6 +1,7 @@
 // Rambles from the desktop overlay (neoworks/overlay). The overlay finds this
 // socket by the pid of the window the user is looking at, so a ramble goes to
-// whichever app has focus. One JSON line in, one JSON line back.
+// whichever app has focus. One JSON line in, `{capture}` (see
+// shared/ramble.ts), one JSON line back.
 //
 // The socket is the user's alone (0600, in their runtime dir), the same trust
 // as their terminal; unlike the paired API socket there is no token.
@@ -13,7 +14,13 @@ import { isAbsolute, join } from 'path'
 import { createInterface } from 'readline'
 import type { Context } from '@neoworks/extension-system'
 import { route } from '../kernel/route'
-import type { RambleDelivery, RambleImage, RambleReceipt } from '../../shared/ramble'
+import {
+  CAPTURE_VERSION,
+  type RambleCapture,
+  type RambleDelivery,
+  type RambleImage,
+  type RambleReceipt
+} from '../../shared/ramble'
 
 /** How long the window gets to hand the ramble to its agent. */
 const RECEIPT_TIMEOUT_MS = 5000
@@ -21,8 +28,7 @@ const MAX_IMAGES = 12
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024
 
 interface RambleRequest {
-  text?: unknown
-  images?: unknown
+  capture?: unknown
 }
 
 type Reply = { ok: true; app: 'grove'; sessionId: string } | { ok: false; error: string }
@@ -81,8 +87,11 @@ class Receipts {
 }
 
 async function deliver(request: RambleRequest, receipts: Receipts): Promise<Reply> {
-  if (typeof request.text !== 'string' || request.text.trim() === '') {
-    return { ok: false, error: 'text required' }
+  let capture: RambleCapture
+  try {
+    capture = captureOf(request.capture)
+  } catch (error) {
+    return { ok: false, error: messageOf(error) }
   }
   const window = targetWindow()
   if (window === null) {
@@ -90,12 +99,12 @@ async function deliver(request: RambleRequest, receipts: Receipts): Promise<Repl
   }
   let images: RambleImage[]
   try {
-    images = await readImages(request.images)
+    images = await readImages(capture.screenshots.map((shot) => shot.path))
   } catch (error) {
     return { ok: false, error: messageOf(error) }
   }
   const { id, receipt } = receipts.issue()
-  const delivery: RambleDelivery = { id, text: request.text, images }
+  const delivery: RambleDelivery = { id, capture, images }
   window.webContents.send('event:ramble', delivery)
   const answer = await receipt
   if (answer.sessionId === null) {
@@ -113,11 +122,25 @@ function targetWindow(): BrowserWindow | null {
   return all[0]
 }
 
-async function readImages(paths: unknown): Promise<RambleImage[]> {
-  if (paths === undefined) return []
-  if (!Array.isArray(paths)) throw new Error('images must be a list of paths')
+/**
+ * The capture, checked as far as grove relies on it: the version it knows,
+ * words to send, and lists where lists go. Events are shown and described as
+ * they come; one of a kind grove doesn't know shows as unknown.
+ */
+function captureOf(value: unknown): RambleCapture {
+  if (value === null || typeof value !== 'object') throw new Error('capture required')
+  const capture = value as RambleCapture
+  if (capture.version !== CAPTURE_VERSION) throw new Error(`capture version ${String(capture.version)} not supported`)
+  const lists = [capture.words, capture.events, capture.screenshots, capture.speechErrors]
+  if (!lists.every((list) => Array.isArray(list))) throw new Error('capture is malformed')
+  if (capture.words.length === 0) throw new Error('nothing was said')
+  if (capture.screenshots.length > MAX_IMAGES) throw new Error(`more than ${MAX_IMAGES} screenshots`)
+  return capture
+}
+
+async function readImages(paths: string[]): Promise<RambleImage[]> {
   const images: RambleImage[] = []
-  for (const path of paths.slice(0, MAX_IMAGES)) {
+  for (const path of paths) {
     if (typeof path !== 'string' || !isAbsolute(path) || !path.endsWith('.png')) {
       throw new Error(`not a png path: ${String(path)}`)
     }

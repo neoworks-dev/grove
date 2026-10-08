@@ -79,6 +79,7 @@ import { diffsOf, isSettled, toolNameOf } from './acpLog'
 import { groveToolName } from './switchboard/mcpServer'
 import { rewindPoint, type RewindPoint } from './rewind'
 import { SteerBacklog } from './steerBacklog'
+import { describeRamble } from '../../shared/ramble'
 
 const BLOBS_DIR = 'blobs'
 
@@ -1442,9 +1443,11 @@ function shellContext(command: string, result: ShellResult): string {
 /**
  * One content block as the model reads it. Attached file slices are tagged with
  * where they came from, so the model can cite lines without reading the file.
+ * A ramble reads as its words with what the user did in brackets.
  */
 function blockText(block: UserContentBlock): string {
   if (block.type === 'text') return block.text
+  if (block.type === 'ramble') return describeRamble(block.capture)
   if (block.type !== 'file') return ''
   const range = `${block.startLine}-${block.endLine}`
   return `<file path="${block.path}" lines="${range}">\n${block.text}\n</file>`

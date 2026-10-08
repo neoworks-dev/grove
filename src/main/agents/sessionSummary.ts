@@ -4,6 +4,7 @@
 
 import type { SessionEvent, SessionPreview } from '../../shared/agents'
 import { lastAgentMessage } from './acpLog'
+import { saidText, type RambleCapture } from '../../shared/ramble'
 
 /** Longest title taken from a prompt before it is cut at a word boundary. */
 const TITLE_MAX_CHARS = 48
@@ -101,12 +102,14 @@ function previewFrom(from: SessionPreview['from'], text: string): SessionPreview
   return { from, text: oneLine.slice(0, PREVIEW_MAX_CHARS) }
 }
 
-/** The text blocks of a message, joined. */
-function joinedText(content: readonly { type: string; text?: unknown }[]): string {
-  return content
-    .filter((block) => block.type === 'text' && typeof block.text === 'string')
-    .map((block) => block.text as string)
-    .join('\n')
+/** The text blocks of a message, joined; a ramble counts as what was said. */
+function joinedText(content: readonly { type: string; text?: unknown; capture?: unknown }[]): string {
+  const texts: string[] = []
+  for (const block of content) {
+    if (block.type === 'text' && typeof block.text === 'string') texts.push(block.text)
+    if (block.type === 'ramble') texts.push(saidText(block.capture as RambleCapture))
+  }
+  return texts.join('\n')
 }
 
 /** One line without heading, quote, list and emphasis markers, whitespace collapsed. */

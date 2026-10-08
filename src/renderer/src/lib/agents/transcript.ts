@@ -20,6 +20,7 @@ import type {
   HeldMessage,
   IdleReason,
   ImageBlock,
+  RambleBlock,
   SessionEvent,
   SessionNote,
   SessionStatus,
@@ -41,6 +42,8 @@ export interface UserItem {
   attachments: ImageBlock[]
   /** File slices sent with the message; shown as chips, not inlined in the bubble. */
   references: FileBlock[]
+  /** Rambles from the desktop overlay; shown as cards, with their screenshots. */
+  rambles: RambleBlock[]
   /**
    * Written while the agent was busy and not yet taken up: steered or queued, it
    * reaches the model with the next message the agent starts.
@@ -455,6 +458,7 @@ function applyMessage(state: TranscriptState, event: SessionEvent): void {
       text: textOf(event.content),
       attachments: event.content.filter((block): block is ImageBlock => block.type === 'image'),
       references: event.content.filter((block): block is FileBlock => block.type === 'file'),
+      rambles: event.content.filter((block): block is RambleBlock => block.type === 'ramble'),
       pending: state.status === 'running'
     })
   }
@@ -468,6 +472,7 @@ function applyMessage(state: TranscriptState, event: SessionEvent): void {
       text: commandLine(event.name, event.args),
       attachments: [],
       references: [],
+      rambles: [],
       pending: false,
       command: true
     })

@@ -35,7 +35,7 @@ export function editMessageEvents(
 ): ClientEventBody[] {
   const content: UserContentBlock[] = []
   if (text.trim()) content.push({ type: 'text', text })
-  content.push(...item.references, ...item.attachments)
+  content.push(...item.rambles, ...item.references, ...item.attachments)
   return [
     { type: 'user.branch', fromSeq: rewindTarget(state, item) },
     { type: 'user.message', content }

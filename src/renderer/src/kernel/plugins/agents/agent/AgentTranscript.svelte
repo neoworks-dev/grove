@@ -34,8 +34,14 @@
   import { foldedCalls, foldedMessages, foldTurn } from '../../../../lib/agents/turns'
   import { agentIdIn, senderOf } from '../../../../lib/agents/transcript'
   import type { ToolItem, TranscriptItem, UserItem } from '../../../../lib/agents/transcript'
-  import type { CodeLocation, LocationState, ToolInfo } from '../../../../lib/agents/types'
+  import type {
+    CodeLocation,
+    ImageBlock,
+    LocationState,
+    ToolInfo
+  } from '../../../../lib/agents/types'
   import AgentImage from './AgentImage.svelte'
+  import AgentRambleCard from './AgentRambleCard.svelte'
   import AgentMessageCards from './AgentMessageCards.svelte'
   import AgentToolCall from './AgentToolCall.svelte'
   import AgentShellRun from './AgentShellRun.svelte'
@@ -252,10 +258,16 @@
     editing = null
   }
 
-  /** Whether the draft still says something: text, or the slices and images it carries. */
+  /** Whether the draft still says something: text, or the rambles, slices and images it carries. */
   function editHasContent(item: UserItem): boolean {
     if (editDraft.trim()) return true
-    return item.references.length > 0 || item.attachments.length > 0
+    return item.rambles.length > 0 || item.references.length > 0 || item.attachments.length > 0
+  }
+
+  /** Images the message carries besides its rambles' screenshots, which their cards show. */
+  function attachmentsOutsideRambles(item: UserItem): ImageBlock[] {
+    const shown = new Set(item.rambles.flatMap((ramble) => ramble.screenshots))
+    return item.attachments.filter((attachment) => !shown.has(attachment.ref))
   }
 
   function submitEdit(item: UserItem): void {
@@ -471,6 +483,11 @@
           </button>
         {/if}
       {/if}
+      {#each item.rambles as ramble (ramble.capture.startedAt)}
+        <div class="mt-1.5">
+          <AgentRambleCard {ramble} {sessionId} />
+        </div>
+      {/each}
       {#if item.references.length > 0}
         <!-- The slice itself went to the model; the bubble only names it. -->
         <div class="mt-1.5 flex flex-wrap gap-1.5">
@@ -484,9 +501,9 @@
           {/each}
         </div>
       {/if}
-      {#if item.attachments.length > 0}
+      {#if attachmentsOutsideRambles(item).length > 0}
         <div class="mt-1.5 flex flex-wrap gap-1.5">
-          {#each item.attachments as attachment (attachment.ref)}
+          {#each attachmentsOutsideRambles(item) as attachment (attachment.ref)}
             <AgentImage src={blobUrl(sessionId, attachment.ref)} alt="attachment" />
           {/each}
         </div>

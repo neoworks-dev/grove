@@ -131,7 +131,7 @@
     <!-- One row: what it is, then what can be done to it. The state, the author
          and the diff size share the second line, which is all the chrome a
          thread needs before its own content starts. -->
-    <div class="border-b border-line px-4 py-2">
+    <div class="border-b border-line py-2 pl-4 pr-2">
       <div class="flex items-center gap-2">
         <span
           class="shrink-0 rounded-full px-1.5 py-0.5 text-2xs font-medium text-white"

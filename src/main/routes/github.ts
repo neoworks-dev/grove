@@ -166,6 +166,15 @@ export const githubRoutes = {
       }
     )
 
+    route(
+      ctx,
+      'github:setIssueDate',
+      (_e, issueId: string, fieldId: string, date: string | null) => {
+        const { repoPath } = ctx.workbench.requireRepo()
+        return dashboard.setIssueDate(repoPath, issueId, fieldId, date)
+      }
+    )
+
     route(ctx, 'github:createMilestone', (_e, draft: GithubMilestoneDraft) => {
       const { repoPath } = ctx.workbench.requireRepo()
       return dashboard.createMilestone(repoPath, draft)

@@ -13,7 +13,9 @@
   import GithubItemRow from './GithubItemRow.svelte'
   import GithubBoard from './GithubBoard.svelte'
   import GithubViewTabs from './GithubViewTabs.svelte'
+  import GithubCalendar from './GithubCalendar.svelte'
   import { boardColumns, optionColour } from './board'
+  import type { IssueLayout } from './views'
   import GithubSplitHandle from './GithubSplitHandle.svelte'
   import GithubThread from './GithubThread.svelte'
   import GithubCompose from './GithubCompose.svelte'
@@ -60,6 +62,14 @@
   const items = $derived(github.items)
   // Pinned issues head the list under their own heading, as they do on GitHub.
   const sections = $derived(partitionPinned(items))
+  // The layouts the issues can take here: a board needs a single-select field
+  // to group by, a calendar a date field to place by.
+  const layouts = $derived.by(() => {
+    const available: { id: IssueLayout; label: string }[] = [{ id: 'list', label: 'List' }]
+    if (github.issueFields.length > 0) available.push({ id: 'board', label: 'Board' })
+    if (github.dateFields.length > 0) available.push({ id: 'calendar', label: 'Calendar' })
+    return available
+  })
   // A list grouped by an issue field shows the board's columns as sections,
   // including the empty ones, so the grouping reads the same in both layouts.
   const listGroups = $derived.by(() => {
@@ -108,11 +118,11 @@
   const SPLIT_KEY = 'grove.github.split'
   const DEFAULT_SHARES: SplitShares = { list: 0.4, board: 0.55 }
   let shares = $state<SplitShares>(loadShares())
-  const splitKind = $derived<keyof SplitShares>(github.boardShown ? 'board' : 'list')
+  const splitKind = $derived<keyof SplitShares>(github.wideLayoutShown ? 'board' : 'list')
 
   const listWidth = $derived.by(() => {
     if (narrow) return '100%'
-    if (github.boardShown && !detailColumnShown) return '100%'
+    if (github.wideLayoutShown && !detailColumnShown) return '100%'
     return `${shares[splitKind] * 100}%`
   })
 
@@ -143,7 +153,7 @@
   const detailColumnVisible = $derived.by(() => {
     if (detailColumnShown) return true
     if (narrow) return false
-    return !github.boardShown
+    return !github.wideLayoutShown
   })
 
   function startCompose(): void {
@@ -236,26 +246,19 @@
             Issues
             <span class="font-mono text-2xs text-dim">{counts.issue}</span>
           </button>
-          {#if github.tab === 'issue' && github.issueFields.length > 0}
+          {#if github.tab === 'issue' && layouts.length > 1}
             <div class="flex shrink-0 overflow-hidden rounded-md border border-line">
-              <button
-                class="px-1.5 py-0.5 text-2xs hover:bg-hover"
-                class:bg-hover={github.view === 'list'}
-                class:text-default={github.view === 'list'}
-                class:text-dim={github.view !== 'list'}
-                onclick={() => (github.view = 'list')}
-              >
-                List
-              </button>
-              <button
-                class="px-1.5 py-0.5 text-2xs hover:bg-hover"
-                class:bg-hover={github.view === 'board'}
-                class:text-default={github.view === 'board'}
-                class:text-dim={github.view !== 'board'}
-                onclick={() => (github.view = 'board')}
-              >
-                Board
-              </button>
+              {#each layouts as layout (layout.id)}
+                <button
+                  class="cursor-pointer px-1.5 py-0.5 text-2xs hover:bg-hover"
+                  class:bg-hover={github.view === layout.id}
+                  class:text-default={github.view === layout.id}
+                  class:text-dim={github.view !== layout.id}
+                  onclick={() => (github.view = layout.id)}
+                >
+                  {layout.label}
+                </button>
+              {/each}
             </div>
           {/if}
 
@@ -286,6 +289,11 @@
 
         {#if github.boardShown && github.boardField}
           <GithubBoard field={github.boardField} onopen={(number) => openItem('issue', number)} />
+        {:else if github.calendarShown && github.calendarField}
+          <GithubCalendar
+            field={github.calendarField}
+            onopen={(number) => openItem('issue', number)}
+          />
         {:else}
           <FloatingScrollbar class="min-h-0 flex-1">
             <div>

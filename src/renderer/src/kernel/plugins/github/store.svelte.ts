@@ -23,6 +23,7 @@ import { issuePrompt } from './issuePrompt'
 import { startSessionWithTask } from '../../../lib/agents/newSession'
 import { agentSessions, badgeOf, type SessionBadge } from '../../../lib/agents/sessions.svelte'
 import { resolveBoardField, withFieldValue } from './board'
+import { monthOf, withDateValue, type CalendarMonth } from './calendar'
 import { loadDashboardSnapshot, saveDashboardSnapshot } from './dashboardSnapshot'
 import {
   createView,
@@ -52,6 +53,7 @@ import type {
   GithubActor,
   GithubCapabilities,
   GithubDashboard,
+  GithubIssueDateField,
   GithubIssueField,
   GithubIssueItem,
   GithubMilestoneDefinition,
@@ -124,6 +126,10 @@ class GithubStore {
   boardFieldId = $state<string | null>(null)
   /** The issue field the list is grouped by, or null for one ungrouped list. */
   listFieldId = $state<string | null>(null)
+  /** The date field the calendar places issues by; null until one is picked, which means the first. */
+  calendarFieldId = $state<string | null>(null)
+  /** The month the calendar shows. */
+  calendarMonth = $state<CalendarMonth>(monthOf(new Date()))
   /** The views saved for the open repository, oldest first. */
   savedViews = $state<SavedView[]>([])
 
@@ -335,6 +341,32 @@ class GithubStore {
     return resolveBoardField(this.issueFields, this.boardFieldId)
   }
 
+  /** The organisation's date issue fields, which the calendar places issues by. */
+  get dateFields(): GithubIssueDateField[] {
+    if (!this.dashboard || !this.dashboard.issueDateFields) return []
+    return this.dashboard.issueDateFields
+  }
+
+  /** The date field the calendar places issues by: the chosen one while it exists, else the first. */
+  get calendarField(): GithubIssueDateField | null {
+    const chosen = this.dateFields.find((field) => field.id === this.calendarFieldId)
+    if (chosen) return chosen
+    if (this.dateFields.length === 0) return null
+    return this.dateFields[0]
+  }
+
+  /** Whether the calendar is what the pane shows: issues, a date field, and calendar view. */
+  get calendarShown(): boolean {
+    if (this.tab !== 'issue') return false
+    if (this.view !== 'calendar') return false
+    return this.calendarField !== null
+  }
+
+  /** Whether a layout that wants the pane's width, the board or the calendar, is shown. */
+  get wideLayoutShown(): boolean {
+    return this.boardShown || this.calendarShown
+  }
+
   /** Whether the board is what the pane shows: issues, a field to group by, and board view. */
   get boardShown(): boolean {
     if (this.tab !== 'issue') return false
@@ -347,9 +379,18 @@ class GithubStore {
     return { query: this.query, layout: this.view, fieldId: this.layoutFieldId }
   }
 
-  /** The field the current layout uses: the board's always, the list's only when grouped. */
+  /** The field the current layout uses: the board's and calendar's always, the list's when grouped. */
   get layoutFieldId(): string | null {
-    if (this.view === 'list') return this.listField ? this.listField.id : null
+    if (this.view === 'list') {
+      const listField = this.listField
+      if (!listField) return null
+      return listField.id
+    }
+    if (this.view === 'calendar') {
+      const dateField = this.calendarField
+      if (!dateField) return null
+      return dateField.id
+    }
     const field = this.boardField
     if (!field) return null
     return field.id
@@ -1596,7 +1637,28 @@ export function applyView(view: ViewState): void {
     github.listFieldId = view.fieldId
     return
   }
+  if (view.layout === 'calendar') {
+    github.calendarFieldId = view.fieldId
+    return
+  }
   github.boardFieldId = view.fieldId
+}
+
+/**
+ * Moves an issue to a day on the calendar, setting its date field on GitHub,
+ * or takes the date off when `date` is null. The issue moves at once and moves
+ * back if GitHub refuses.
+ */
+export async function moveIssueToDay(issue: GithubIssueItem, date: string | null): Promise<void> {
+  const field = github.calendarField
+  if (!field || !issue.id) return
+  replaceIssue(withDateValue(issue, field.id, date))
+  try {
+    await window.workbench.github.setIssueDate(issue.id, field.id, date)
+  } catch (err) {
+    replaceIssue(issue)
+    dialogs.notify({ level: 'error', message: (err as Error).message })
+  }
 }
 
 /** Switches to a worktree an issue already has. */

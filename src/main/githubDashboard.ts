@@ -25,6 +25,7 @@ import type {
   GithubEventKind,
   GithubIssueDraft,
   GithubIssueItem,
+  GithubIssueDateField,
   GithubIssueField,
   GithubIssueFieldOption,
   GithubItemAction,
@@ -441,11 +442,11 @@ export function optionalFields(capabilities: GithubCapabilities, onIssue: boolea
 // issue's values. GitHub caps an organisation at 25 fields.
 const MAX_ISSUE_FIELDS = 25
 
-/** An issue's single-select values; the other field kinds are not read yet. */
-const ISSUE_FIELD_VALUES = `issueFieldValues(first: ${MAX_ISSUE_FIELDS}) { nodes { ... on IssueFieldSingleSelectValue { optionId field { ... on IssueFieldSingleSelect { id } } } } }`
+/** An issue's single-select and date values; text and number fields are not read. */
+const ISSUE_FIELD_VALUES = `issueFieldValues(first: ${MAX_ISSUE_FIELDS}) { nodes { ... on IssueFieldSingleSelectValue { optionId field { ... on IssueFieldSingleSelect { id } } } ... on IssueFieldDateValue { value field { ... on IssueFieldDate { id } } } } }`
 
-/** The repository's single-select issue field definitions, for grouping by. */
-const ISSUE_FIELD_DEFINITIONS = `issueFields(first: ${MAX_ISSUE_FIELDS}) { nodes { ... on IssueFieldSingleSelect { id name options { id name color } } } }`
+/** The repository's single-select and date field definitions, for grouping and the calendar. */
+const ISSUE_FIELD_DEFINITIONS = `issueFields(first: ${MAX_ISSUE_FIELDS}) { nodes { __typename ... on IssueFieldSingleSelect { id name options { id name color } } ... on IssueFieldDate { id name } } }`
 
 // GraphQL enums cannot be passed as gh `-F` variables, so the state sets are
 // inlined into the query text. They come from this fixed map, never user input.
@@ -514,12 +515,20 @@ interface GraphqlOptionalNode {
   milestone?: GithubMilestone | null
   issueType?: GithubIssueType | null
   projectItems?: { nodes: { project: GithubProjectRef | null }[] }
-  /** Values of other field kinds come back as empty objects: the fragment only matches single-selects. */
-  issueFieldValues?: { nodes: { optionId?: string; field?: { id?: string } }[] }
+  /** Values of the field kinds the fragments do not match come back as empty objects. */
+  issueFieldValues?: { nodes: GraphqlFieldValue[] }
 }
 
-/** A field definition as the repository lists it; non-single-select fields come back empty. */
+/** One of an issue's field values: an option for a single-select, a day for a date. */
+interface GraphqlFieldValue {
+  optionId?: string
+  value?: string
+  field?: { id?: string }
+}
+
+/** A field definition as the repository lists it; kinds the fragments do not match come back bare. */
 interface GraphqlIssueField {
+  __typename?: string
   id?: string
   name?: string
   options?: GithubIssueFieldOption[]
@@ -588,20 +597,39 @@ function optionalMetadata(node: GraphqlOptionalNode): Partial<GithubIssueItem> {
   }
   if (node.issueFieldValues) {
     metadata.fieldValues = toFieldValues(node.issueFieldValues.nodes)
+    metadata.dateValues = toDateValues(node.issueFieldValues.nodes)
   }
   return metadata
 }
 
 /** An issue's single-select values as option id by field id. */
-function toFieldValues(
-  nodes: { optionId?: string; field?: { id?: string } }[]
-): Record<string, string> {
+function toFieldValues(nodes: GraphqlFieldValue[]): Record<string, string> {
   const values: Record<string, string> = {}
   for (const node of nodes) {
     if (!node.optionId || !node.field || !node.field.id) continue
     values[node.field.id] = node.optionId
   }
   return values
+}
+
+/** An issue's date values as `YYYY-MM-DD` by field id. */
+export function toDateValues(nodes: GraphqlFieldValue[]): Record<string, string> {
+  const values: Record<string, string> = {}
+  for (const node of nodes) {
+    if (!node.value || !node.field || !node.field.id) continue
+    values[node.field.id] = node.value
+  }
+  return values
+}
+
+/** The date field definitions among the repository's fields. */
+export function toDateFields(nodes: GraphqlIssueField[]): GithubIssueDateField[] {
+  const fields: GithubIssueDateField[] = []
+  for (const node of nodes) {
+    if (node.__typename !== 'IssueFieldDate' || !node.id || !node.name) continue
+    fields.push({ id: node.id, name: node.name })
+  }
+  return fields
 }
 
 /** The single-select field definitions, leaving out the kinds the fragment did not match. */
@@ -741,6 +769,14 @@ function dashboardIssueFields(
   return toIssueFields(connection.nodes)
 }
 
+/** The date field definitions a dashboard response carried; none when it did not ask. */
+function dashboardDateFields(
+  connection: { nodes: GraphqlIssueField[] } | undefined
+): GithubIssueDateField[] {
+  if (!connection) return []
+  return toDateFields(connection.nodes)
+}
+
 /** Issues and pull requests for the repository, most recently updated first. */
 export async function fetchDashboard(
   repoPath: string,
@@ -777,6 +813,7 @@ export async function fetchDashboard(
     pulls: repository.pullRequests.nodes.map(toPullItem),
     capabilities,
     issueFields: dashboardIssueFields(repository.issueFields),
+    issueDateFields: dashboardDateFields(repository.issueFields),
     fetchedAt: Date.now()
   }
 }
@@ -1332,6 +1369,27 @@ mutation($issueId: ID!, $fieldId: ID!) {
     issue { number }
   }
 }`.trim()
+
+const SET_ISSUE_DATE = `
+mutation($issueId: ID!, $fieldId: ID!, $date: String!) {
+  setIssueFieldValue(input: { issueId: $issueId, issueFields: [{ fieldId: $fieldId, dateValue: $date }] }) {
+    issue { number }
+  }
+}`.trim()
+
+/** Sets a date issue field to a day, `YYYY-MM-DD`, or clears it when `date` is null. */
+export async function setIssueDate(
+  repoPath: string,
+  issueId: string,
+  fieldId: string,
+  date: string | null
+): Promise<void> {
+  if (date === null) {
+    await graphql(repoPath, CLEAR_ISSUE_FIELD, { issueId, fieldId })
+    return
+  }
+  await graphql(repoPath, SET_ISSUE_DATE, { issueId, fieldId, date })
+}
 
 /** Sets a single-select issue field to one of its options, or clears it when `optionId` is null. */
 export async function setIssueField(

@@ -1370,25 +1370,46 @@ mutation($issueId: ID!, $fieldId: ID!) {
   }
 }`.trim()
 
-const SET_ISSUE_DATE = `
-mutation($issueId: ID!, $fieldId: ID!, $date: String!) {
-  setIssueFieldValue(input: { issueId: $issueId, issueFields: [{ fieldId: $fieldId, dateValue: $date }] }) {
+/**
+ * Sets several date issue fields of one issue in a single mutation, the
+ * variables numbered since GraphQL takes no list of objects through `gh -f`.
+ */
+export function setIssueDatesMutation(count: number): string {
+  const variables: string[] = []
+  const fields: string[] = []
+  for (let index = 0; index < count; index++) {
+    variables.push(`$field${index}: ID!, $date${index}: String!`)
+    fields.push(`{ fieldId: $field${index}, dateValue: $date${index} }`)
+  }
+  return `mutation($issueId: ID!, ${variables.join(', ')}) {
+  setIssueFieldValue(input: { issueId: $issueId, issueFields: [${fields.join(', ')}] }) {
     issue { number }
   }
-}`.trim()
+}`
+}
 
-/** Sets a date issue field to a day, `YYYY-MM-DD`, or clears it when `date` is null. */
-export async function setIssueDate(
+/**
+ * Sets date issue fields to days, `YYYY-MM-DD`, keyed by field id; a null day
+ * clears that field. The days go in one mutation, each clearing in its own.
+ */
+export async function setIssueDates(
   repoPath: string,
   issueId: string,
-  fieldId: string,
-  date: string | null
+  dates: Record<string, string | null>
 ): Promise<void> {
-  if (date === null) {
-    await graphql(repoPath, CLEAR_ISSUE_FIELD, { issueId, fieldId })
-    return
+  const variables: Record<string, string> = { issueId }
+  let count = 0
+  for (const [fieldId, date] of Object.entries(dates)) {
+    if (date === null) continue
+    variables[`field${count}`] = fieldId
+    variables[`date${count}`] = date
+    count++
   }
-  await graphql(repoPath, SET_ISSUE_DATE, { issueId, fieldId, date })
+  if (count > 0) await graphql(repoPath, setIssueDatesMutation(count), variables)
+  for (const [fieldId, date] of Object.entries(dates)) {
+    if (date !== null) continue
+    await graphql(repoPath, CLEAR_ISSUE_FIELD, { issueId, fieldId })
+  }
 }
 
 /** Sets a single-select issue field to one of its options, or clears it when `optionId` is null. */

@@ -24,6 +24,7 @@
   import GithubLabelPill from './GithubLabelPill.svelte'
   import GithubLabelPicker from './GithubLabelPicker.svelte'
   import GithubMenu from './GithubMenu.svelte'
+  import GithubIssueDateSection from './GithubIssueDateSection.svelte'
   import GithubIssueFieldSection from './GithubIssueFieldSection.svelte'
   import GithubMilestoneForm from './GithubMilestoneForm.svelte'
   import GithubStateIcon from './GithubStateIcon.svelte'
@@ -151,6 +152,14 @@
     return optionId
   }
 
+  /** The open issue's day for a date field, or null when it is not set. */
+  function dateValueOf(fieldId: string): string | null {
+    if (!detail.dateValues) return null
+    const date = detail.dateValues[fieldId]
+    if (date === undefined) return null
+    return date
+  }
+
   /** The new-milestone form is open under the Milestone heading. */
   let creatingMilestone = $state(false)
 </script>
@@ -258,6 +267,9 @@
   {#if detail.kind === 'issue'}
     {#each github.issueFields as field (field.id)}
       <GithubIssueFieldSection {field} optionId={fieldValueOf(field.id)} />
+    {/each}
+    {#each github.dateFields as field (field.id)}
+      <GithubIssueDateSection {field} date={dateValueOf(field.id)} />
     {/each}
   {/if}
 

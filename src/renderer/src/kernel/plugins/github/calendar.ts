@@ -1,9 +1,10 @@
-// The issue calendar: a month of days, weeks starting on Monday, with each open
-// issue on the day one of the organisation's date fields (Target date, say)
-// is set to. Days are `YYYY-MM-DD` strings throughout, which is how GitHub
-// stores them, so nothing here passes through a time zone.
+// The issue calendar: a month of days, weeks starting on Monday, with each
+// issue a bar from its Start date to its Target date. Where the organisation
+// has no such pair, issues sit on the one day of a single date field instead.
+// Days are `YYYY-MM-DD` strings throughout, which is how GitHub stores them, so
+// nothing here passes through a time zone.
 
-import type { GithubIssueItem } from '../../../../../shared/types'
+import type { GithubIssueDateField, GithubIssueItem } from '../../../../../shared/types'
 
 /** One cell of the month grid. */
 export interface CalendarDay {
@@ -42,27 +43,209 @@ export function monthGrid(month: CalendarMonth): CalendarDay[][] {
   return weeks
 }
 
-/** The issues on each day for a date field, and the ones the field is not set on. */
+/** The date fields the calendar places issues by: where a bar starts, and where it ends if anywhere. */
+export interface CalendarRange {
+  start: GithubIssueDateField
+  /** Null when the organisation has no end field, and every issue is one day. */
+  end: GithubIssueDateField | null
+}
+
+/**
+ * The fields to place issues by. A start field and an end field (Target, End
+ * or Due) together make bars; without both, the chosen field alone, or the
+ * first, places each issue on one day.
+ */
+export function calendarRange(
+  fields: GithubIssueDateField[],
+  chosenId: string | null
+): CalendarRange | null {
+  const start = fields.find((field) => /start/i.test(field.name))
+  const end = fields.find((field) => field !== start && /target|end|due/i.test(field.name))
+  if (start && end) return { start, end }
+  const chosen = fields.find((field) => field.id === chosenId)
+  if (chosen) return { start: chosen, end: null }
+  if (fields.length === 0) return null
+  return { start: fields[0], end: null }
+}
+
+/** The days an issue covers, first and last inclusive; a single day has both the same. */
+export interface IssueSpan {
+  issue: GithubIssueItem
+  start: string
+  end: string
+}
+
+/**
+ * The days an issue covers. With only one of its dates set it covers that day,
+ * and an end before the start is read as the start alone. Null when neither is set.
+ */
+export function spanOf(issue: GithubIssueItem, range: CalendarRange): IssueSpan | null {
+  let start = dateOf(issue, range.start.id)
+  let end: string | null = null
+  if (range.end) end = dateOf(issue, range.end.id)
+  if (start === null) start = end
+  if (start === null) return null
+  if (end === null || end < start) end = start
+  return { issue, start, end }
+}
+
+/** The spans of the issues that have one, and the issues without. */
 export function placeIssues(
   issues: GithubIssueItem[],
-  fieldId: string
-): { byDay: Map<string, GithubIssueItem[]>; undated: GithubIssueItem[] } {
-  const byDay = new Map<string, GithubIssueItem[]>()
+  range: CalendarRange
+): { spans: IssueSpan[]; undated: GithubIssueItem[] } {
+  const spans: IssueSpan[] = []
   const undated: GithubIssueItem[] = []
   for (const issue of issues) {
-    const date = dateOf(issue, fieldId)
-    if (date === null) {
-      undated.push(issue)
+    const span = spanOf(issue, range)
+    if (span) {
+      spans.push(span)
       continue
     }
-    const day = byDay.get(date)
-    if (day) {
-      day.push(issue)
-      continue
-    }
-    byDay.set(date, [issue])
+    undated.push(issue)
   }
-  return { byDay, undated }
+  return { spans, undated }
+}
+
+/** The piece of an issue's bar that falls in one week. */
+export interface WeekBar {
+  span: IssueSpan
+  /** Weekday the piece starts and ends on, 0 for Monday. */
+  startColumn: number
+  endColumn: number
+  /** Row under the day numbers, so bars that overlap stack instead of covering each other. */
+  lane: number
+  /** Whether the issue's first and last day are in this week, which is where the bar's ends round off. */
+  startsHere: boolean
+  endsHere: boolean
+}
+
+/**
+ * The bars of a week: each span that reaches into it, cut to the week, and
+ * stacked into the first lane free on all its days. Earlier and longer bars
+ * take the upper lanes, so a bar keeps its lane across a week where it can.
+ */
+export function weekBars(spans: IssueSpan[], week: CalendarDay[]): WeekBar[] {
+  const first = week[0].date
+  const last = week[week.length - 1].date
+  const inWeek = spans.filter((span) => span.start <= last && span.end >= first)
+  inWeek.sort(compareSpans)
+  // The last column taken in each lane so far.
+  const laneEnds: number[] = []
+  const bars: WeekBar[] = []
+  for (const span of inWeek) {
+    const startColumn = columnOf(week, laterOf(span.start, first))
+    const endColumn = columnOf(week, earlierOf(span.end, last))
+    let lane = laneEnds.findIndex((end) => end < startColumn)
+    if (lane === -1) {
+      lane = laneEnds.length
+      laneEnds.push(endColumn)
+    } else {
+      laneEnds[lane] = endColumn
+    }
+    bars.push({
+      span,
+      startColumn,
+      endColumn,
+      lane,
+      startsHere: span.start >= first,
+      endsHere: span.end <= last
+    })
+  }
+  return bars
+}
+
+/** Orders spans by start, then the longer first, then by number so the order is stable. */
+function compareSpans(left: IssueSpan, right: IssueSpan): number {
+  if (left.start < right.start) return -1
+  if (left.start > right.start) return 1
+  if (left.end > right.end) return -1
+  if (left.end < right.end) return 1
+  return left.issue.number - right.issue.number
+}
+
+/** The weekday a day of the week falls on, 0 for Monday. */
+function columnOf(week: CalendarDay[], date: string): number {
+  return week.findIndex((day) => day.date === date)
+}
+
+function laterOf(left: string, right: string): string {
+  if (left > right) return left
+  return right
+}
+
+function earlierOf(left: string, right: string): string {
+  if (left < right) return left
+  return right
+}
+
+/**
+ * The dates to write when a bar is dropped on a day: it starts there and keeps
+ * its length. The end is only written where the issue has one, so moving a
+ * single-day issue does not give it an end it never had.
+ */
+export function movedDates(
+  span: IssueSpan,
+  range: CalendarRange,
+  day: string
+): Record<string, string | null> {
+  const dates: Record<string, string | null> = { [range.start.id]: day }
+  if (!range.end) return dates
+  if (dateOf(span.issue, range.end.id) === null) return dates
+  dates[range.end.id] = addDays(day, daysBetween(span.start, span.end))
+  return dates
+}
+
+/**
+ * The dates to write when one end of a bar is dragged to a day. The other end
+ * stays put, and an end dragged past it stops on its day. Both dates are
+ * written, since stretching a single-day issue is what gives it its second one.
+ */
+export function resizedDates(
+  span: IssueSpan,
+  range: CalendarRange,
+  edge: 'start' | 'end',
+  day: string
+): Record<string, string | null> {
+  let start = span.start
+  let end = span.end
+  if (edge === 'start') start = earlierOf(day, end)
+  if (edge === 'end') end = laterOf(day, start)
+  const dates: Record<string, string | null> = { [range.start.id]: start }
+  if (range.end) dates[range.end.id] = end
+  return dates
+}
+
+/** The dates to write when an issue goes to "No date": every field the calendar uses, cleared. */
+export function clearedDates(range: CalendarRange): Record<string, string | null> {
+  const dates: Record<string, string | null> = { [range.start.id]: null }
+  if (range.end) dates[range.end.id] = null
+  return dates
+}
+
+/** The issue with each of the given date fields set, or cleared where the day is null. */
+export function withDateValues(
+  issue: GithubIssueItem,
+  dates: Record<string, string | null>
+): GithubIssueItem {
+  let next = issue
+  for (const [fieldId, date] of Object.entries(dates)) {
+    next = withDateValue(next, fieldId, date)
+  }
+  return next
+}
+
+/** A day some number of days after another, or before it for a negative count. */
+export function addDays(date: string, count: number): string {
+  const moved = new Date(`${date}T00:00:00Z`)
+  moved.setUTCDate(moved.getUTCDate() + count)
+  return moved.toISOString().slice(0, 10)
+}
+
+/** How many days the second day is after the first. */
+export function daysBetween(from: string, to: string): number {
+  const milliseconds = Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)
+  return Math.round(milliseconds / 86_400_000)
 }
 
 /** The day an issue's date field is set to, or null when it is not set. */

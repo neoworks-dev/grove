@@ -126,8 +126,8 @@ const workbench = {
     item: (kind: string, number: number) => ipcRenderer.invoke('github:item', kind, number),
     labels: () => ipcRenderer.invoke('github:labels'),
     milestones: () => ipcRenderer.invoke('github:milestones'),
-    setIssueDate: (issueId: string, fieldId: string, date: string | null) =>
-      ipcRenderer.invoke('github:setIssueDate', issueId, fieldId, date),
+    setIssueDates: (issueId: string, dates: Record<string, string | null>) =>
+      ipcRenderer.invoke('github:setIssueDates', issueId, dates),
     createMilestone: (draft: unknown) => ipcRenderer.invoke('github:createMilestone', draft),
     setIssueField: (issueId: string, fieldId: string, optionId: string | null) =>
       ipcRenderer.invoke('github:setIssueField', issueId, fieldId, optionId),

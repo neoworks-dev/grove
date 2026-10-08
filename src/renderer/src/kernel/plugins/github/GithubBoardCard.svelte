@@ -55,12 +55,24 @@
     return agent.session.title.replace(/^Issue #\d+:\s*/, '')
   })
 
-  /** What the agent's branch changes against its base, once there is something. */
+  /**
+   * What the agent's branch changes against its base, once there is something.
+   * Before the main process reports that, the worktree's uncommitted lines stand in.
+   */
   const changes = $derived.by(() => {
     if (!agent) return null
     const position = store.branchPositions[agent.worktree.id]
-    if (!position || !position.changes || position.changes.files === 0) return null
-    return position.changes
+    if (position && position.changes) {
+      if (position.changes.files === 0) return null
+      return position.changes
+    }
+    const uncommitted = store.diffStats[agent.worktree.id]
+    if (!uncommitted || uncommitted.files.length === 0) return null
+    return {
+      added: uncommitted.added,
+      removed: uncommitted.removed,
+      files: uncommitted.files.length
+    }
   })
 
   /** Opens the agent's session rather than the issue under it. */

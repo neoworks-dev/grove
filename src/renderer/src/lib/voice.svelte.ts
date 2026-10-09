@@ -60,12 +60,14 @@ class VoiceDictation {
   #queue: ArrayBuffer[] = []
   #streaming = false
   #startPromise: Promise<void> = Promise.resolve()
-  #unsubscribeError: (() => void) | null = null
+  #unsubscribers: Array<() => void> = []
+  #showTranscript: ((text: string) => void) | null = null
 
-  /** Starts a dictation: opens the microphone and the stream. Failures are reported, not thrown. */
-  start(): Promise<void> {
+  /** Starts a dictation. onTranscript receives the whole text so far as it changes. Failures are reported, not thrown. */
+  start(options: { onTranscript: (text: string) => void }): Promise<void> {
     if (this.state !== 'idle') return Promise.resolve()
     this.state = 'starting'
+    this.#showTranscript = options.onTranscript
     this.#startPromise = this.beginDictation()
     return this.#startPromise
   }
@@ -97,6 +99,10 @@ class VoiceDictation {
   private async beginDictation(): Promise<void> {
     this.#queue = []
     this.#streaming = false
+    this.#unsubscribers = [
+      window.workbench.on('event:voice-error', (payload) => this.#onStreamError(payload)),
+      window.workbench.on('event:voice-transcript', (payload) => this.#receiveTranscript(payload))
+    ]
     try {
       this.#microphone = await openMicrophone((pcm) => this.#onMicrophoneChunk(pcm))
       await window.workbench.voice.start()
@@ -109,9 +115,6 @@ class VoiceDictation {
     this.#streaming = true
     for (const pcm of this.#queue) this.#sendAudio(pcm)
     this.#queue = []
-    this.#unsubscribeError = window.workbench.on('event:voice-error', (payload) => {
-      this.#onStreamError(payload)
-    })
     this.state = 'recording'
   }
 
@@ -122,6 +125,12 @@ class VoiceDictation {
 
   #sendAudio(pcm: ArrayBuffer): void {
     window.workbench.voice.audio(pcm).catch((error: unknown) => this.#abort(error))
+  }
+
+  /** Hands the whole transcript so far to the composer, which shows it in the prompt as it grows. */
+  #receiveTranscript(payload: unknown): void {
+    const { text } = payload as { text: string }
+    this.#showTranscript?.(text)
   }
 
   /** The server or connection failed mid-dictation: stop capturing and say why. */
@@ -141,8 +150,8 @@ class VoiceDictation {
   #teardownMicrophone(): void {
     this.#microphone?.stop()
     this.#microphone = null
-    this.#unsubscribeError?.()
-    this.#unsubscribeError = null
+    for (const unsubscribe of this.#unsubscribers) unsubscribe()
+    this.#unsubscribers = []
   }
 
   #report(error: unknown): void {

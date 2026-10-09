@@ -26,6 +26,7 @@ export const voiceRoutes = {
         endpoint: VOICE_STREAM_URL,
         openSocket: openWebSocket,
         language: DICTATION_LANGUAGE,
+        onTranscript: (text) => ctx.workbench.send('event:voice-transcript', { text }),
         onError: (message) => ctx.workbench.send('event:voice-error', { message })
       })
       active = stream

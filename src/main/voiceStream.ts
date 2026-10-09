@@ -39,6 +39,8 @@ export interface VoiceStreamOptions {
   endpoint: string
   language: string
   openSocket: OpenVoiceSocket
+  /** Called with the whole transcript so far each time it changes, so the text can be shown while it is being said. */
+  onTranscript?: (text: string) => void
   /** Called when the connection or server fails after the stream is open. */
   onError: (message: string) => void
 }
@@ -83,7 +85,9 @@ export function buildVoiceStreamUrl(endpoint: string, language: string): string 
     endpointing_ms: '300',
     utterance_end_ms: '1000',
     language,
-    use_conversation_engine: 'true'
+    use_conversation_engine: 'true',
+    // Without this the server holds all text until the stream closes, so nothing shows while speaking.
+    forward_interims: 'typed'
   })
   return `${endpoint}?${parameters.toString()}`
 }
@@ -183,10 +187,12 @@ export class VoiceStream {
       case 'TranscriptInterim':
       case 'TranscriptText':
         if (message.data) this.pending = message.data
+        this.publish()
         this.finishListener?.onTranscript()
         return
       case 'TranscriptEndpoint':
         this.commitPending()
+        this.publish()
         this.finishListener?.onEnd()
         return
       case 'TranscriptError':
@@ -226,6 +232,11 @@ export class VoiceStream {
 
   private sendCloseStream(): void {
     if (this.socket?.isOpen()) this.socket.send(CLOSE_STREAM_MESSAGE)
+  }
+
+  /** Reports the whole transcript so far to the caller, if it is listening. */
+  private publish(): void {
+    if (this.options.onTranscript) this.options.onTranscript(joinTranscript(this.committed, this.pending))
   }
 
   /** Turns the in-progress utterance into a committed one, as the endpoint message does. */

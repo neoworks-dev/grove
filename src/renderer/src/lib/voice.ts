@@ -35,3 +35,8 @@ export function describeVoiceError(error: unknown): string {
 function stripIpcWrapper(message: string): string {
   return message.replace(/^Error invoking remote method '[^']*': (\w+Error: )?/, '')
 }
+
+/** Replaces the text a dictation wrote at anchor, previousLength characters long, with text. */
+export function spliceDictation(draft: string, anchor: number, previousLength: number, text: string): string {
+  return draft.slice(0, anchor) + text + draft.slice(anchor + previousLength)
+}

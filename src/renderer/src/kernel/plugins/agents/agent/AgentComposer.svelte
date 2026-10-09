@@ -23,7 +23,7 @@
   import { store } from '../../../../lib/store.svelte'
   import type { ClientEventBody, FileBlock, UserContentBlock } from '../../../../lib/agents/types'
   import { voiceDictation } from '../../../../lib/voice.svelte'
-  import { isDictationSpace } from '../../../../lib/voice'
+  import { isDictationSpace, spliceDictation } from '../../../../lib/voice'
   import { SPACE_HOLD_MS, SpaceHold } from '../../../../lib/voiceHold'
   import { onDestroy, type Snippet } from 'svelte'
   import { SentDrafts } from '../../../../lib/agents/sentDrafts'
@@ -435,10 +435,28 @@
     syncCaret()
   }
 
-  /** Ends the running dictation and writes its transcript at the caret, if there is one. */
+  /** Where the live dictation sits in the draft, and how many characters it fills there. */
+  let dictationAnchor = 0
+  let dictationLength = 0
+
+  /** Shows dictated text in the draft at the dictation's anchor, replacing what was written there before. */
+  function writeDictation(text: string): void {
+    draft = spliceDictation(draft, dictationAnchor, dictationLength, text)
+    dictationLength = text.length
+    const caretAt = dictationAnchor + text.length
+    requestAnimationFrame(() => promptEl?.setSelectionRange(caretAt, caretAt))
+  }
+
+  /** Drops a dictation and the text it has written, for when focus leaves the composer. */
+  function cancelDictation(): void {
+    voiceDictation.cancel()
+    writeDictation('')
+  }
+
+  /** Ends the running dictation and puts its final transcript in place of the live text. */
   async function finishDictation(): Promise<void> {
     const transcript = await voiceDictation.stop()
-    if (transcript !== '') insertAtCaret(transcript)
+    if (transcript !== '') writeDictation(transcript)
   }
 
   /** Decides between a tap and a hold of Space. Repeats of a Space still held are dropped while it is pending or dictating. */
@@ -453,17 +471,20 @@
   /** A Space held past the hold time starts dictation, and the space it typed is taken back out. */
   function onSpaceHeld(): void {
     if (voiceDictation.state !== 'idle') return
-    removeTypedSpace()
-    void voiceDictation.start()
+    dictationAnchor = removeTypedSpace()
+    dictationLength = 0
+    void voiceDictation.start({ onTranscript: writeDictation })
   }
 
-  /** Takes back the space a held keypress typed just before the caret. */
-  function removeTypedSpace(): void {
-    if (!promptEl) return
+  /** Takes back the space a held keypress typed just before the caret, and returns where the caret is then. */
+  function removeTypedSpace(): number {
+    if (!promptEl) return draft.length
     const at = promptEl.selectionStart
-    if (at === 0 || draft[at - 1] !== ' ') return
+    if (at === 0 || draft[at - 1] !== ' ') return at
     draft = draft.slice(0, at - 1) + draft.slice(at)
-    requestAnimationFrame(() => promptEl?.setSelectionRange(at - 1, at - 1))
+    const caretAt = at - 1
+    requestAnimationFrame(() => promptEl?.setSelectionRange(caretAt, caretAt))
+    return caretAt
   }
 
   function onKey(event: KeyboardEvent): void {
@@ -804,7 +825,7 @@
       onblur={() => {
         focused = false
         spaceHold.reset()
-        voiceDictation.cancel()
+        cancelDictation()
         onFocusChange(false)
       }}
     ></textarea>

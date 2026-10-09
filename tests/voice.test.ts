@@ -3,7 +3,12 @@
 // the user.
 
 import { describe, expect, test } from 'bun:test'
-import { describeVoiceError, floatToPcm16, isDictationSpace } from '../src/renderer/src/lib/voice'
+import {
+  describeVoiceError,
+  floatToPcm16,
+  isDictationSpace,
+  spliceDictation
+} from '../src/renderer/src/lib/voice'
 
 /** A keyboard event carrying only the fields the helpers read. */
 function keyEvent(fields: Partial<KeyboardEvent>): KeyboardEvent {
@@ -72,5 +77,21 @@ describe('describeVoiceError', () => {
 
   test('falls back to a generic message for anything else', () => {
     expect(describeVoiceError({ code: 42 })).toBe('Voice dictation failed.')
+  })
+})
+
+describe('spliceDictation', () => {
+  test('writes dictated text at the anchor, after what is before it', () => {
+    expect(spliceDictation('use the  rest', 8, 0, 'new helper')).toBe('use the new helper rest')
+  })
+
+  test('replaces the text a previous update wrote, so live text grows in place', () => {
+    const first = spliceDictation('ask: ', 5, 0, 'use the')
+    const second = spliceDictation(first, 5, 'use the'.length, 'use the new helper')
+    expect(second).toBe('ask: use the new helper')
+  })
+
+  test('an empty update removes the dictated text', () => {
+    expect(spliceDictation('ask: use the new', 5, 'use the new'.length, '')).toBe('ask: ')
   })
 })

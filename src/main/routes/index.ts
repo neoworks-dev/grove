@@ -25,6 +25,7 @@ import { pluginsRoutes } from './plugins'
 import { actionsRoutes } from './actions'
 import { endpointRoutes } from './endpoints'
 import { secretsRoutes } from './secrets'
+import { voiceRoutes } from './voice'
 import { settingsRoutes } from './settings'
 import { miscRoutes } from './misc'
 import { debugRoutes } from './debug'
@@ -56,6 +57,7 @@ export const routePlugins = [
   actionsRoutes,
   endpointRoutes,
   secretsRoutes,
+  voiceRoutes,
   settingsRoutes,
   miscRoutes,
   debugRoutes,

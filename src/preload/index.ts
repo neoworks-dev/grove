@@ -480,6 +480,13 @@ const workbench = {
     set: (name: string, value: string) => ipcRenderer.invoke('secrets:set', name, value),
     clear: (name: string) => ipcRenderer.invoke('secrets:clear', name)
   },
+  // Push-to-talk dictation through the claude.ai sign-in. Audio goes towards main;
+  // transcript text comes back as events and as the result of stop.
+  voice: {
+    start: () => ipcRenderer.invoke('voice:start'),
+    audio: (chunk: ArrayBuffer) => ipcRenderer.invoke('voice:audio', new Uint8Array(chunk)),
+    stop: (): Promise<string> => ipcRenderer.invoke('voice:stop')
+  },
   settings: {
     read: () => ipcRenderer.invoke('settings:read'),
     set: (key: string, value: unknown, scope: 'user' | 'project') =>

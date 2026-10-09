@@ -107,6 +107,7 @@ describe('VoiceStream connection', () => {
     expect(url.origin + url.pathname).toBe('wss://example.test/voice')
     expect(url.searchParams.get('encoding')).toBe('linear16')
     expect(url.searchParams.get('sample_rate')).toBe('16000')
+    expect(url.searchParams.get('forward_interims')).toBe('typed')
     expect(requests[0].headers.Authorization).toBe('Bearer token-123')
   })
 
@@ -248,6 +249,31 @@ describe('VoiceStream errors', () => {
     expect(errors).toEqual([])
   })
 })
+describe('VoiceStream live transcript', () => {
+  test('reports the whole text so far as each frame arrives', async () => {
+    const updates: string[] = []
+    const socket = new FakeVoiceSocket()
+    const { open } = openerFor(socket)
+    const stream = new VoiceStream({
+      accessToken: 'token',
+      endpoint: 'wss://example.test/voice',
+      language: 'en',
+      openSocket: open,
+      onTranscript: (text) => updates.push(text),
+      onError: () => {}
+    })
+    await stream.connect()
+
+    socket.deliver({ type: 'TranscriptText', data: 'use the' })
+    socket.deliver({ type: 'TranscriptText', data: 'use the new' })
+    socket.deliver({ type: 'TranscriptEndpoint' })
+    socket.deliver({ type: 'TranscriptText', data: 'helper' })
+    stream.close()
+
+    expect(updates).toEqual(['use the', 'use the new', 'use the new', 'use the new helper'])
+  })
+})
+
 
 describe('joinTranscript', () => {
   test('joins committed utterances and the one in progress with single spaces', () => {

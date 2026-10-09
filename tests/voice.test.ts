@@ -1,9 +1,9 @@
-// The pure half of push-to-talk dictation: which key events start and end it, how
-// float samples become the 16-bit PCM the endpoint reads, and how an IPC failure is
-// worded for the user.
+// The pure half of dictation: which key is the dictation key, how float samples
+// become the 16-bit PCM the endpoint reads, and how an IPC failure is worded for
+// the user.
 
 import { describe, expect, test } from 'bun:test'
-import { describeVoiceError, floatToPcm16, isPushToTalkPress, isPushToTalkRelease } from '../src/renderer/src/lib/voice'
+import { describeVoiceError, floatToPcm16, isDictationSpace } from '../src/renderer/src/lib/voice'
 
 /** A keyboard event carrying only the fields the helpers read. */
 function keyEvent(fields: Partial<KeyboardEvent>): KeyboardEvent {
@@ -18,33 +18,18 @@ function keyEvent(fields: Partial<KeyboardEvent>): KeyboardEvent {
   } as KeyboardEvent
 }
 
-describe('isPushToTalkPress', () => {
-  test('Ctrl+Space starts a dictation', () => {
-    expect(isPushToTalkPress(keyEvent({ key: ' ', ctrlKey: true }))).toBe(true)
+describe('isDictationSpace', () => {
+  test('a bare Space is the dictation key', () => {
+    expect(isDictationSpace(keyEvent({ key: ' ' }))).toBe(true)
   })
 
-  test('a plain Space types a space instead', () => {
-    expect(isPushToTalkPress(keyEvent({ key: ' ' }))).toBe(false)
+  test('Space with a modifier is a shortcut, not dictation', () => {
+    expect(isDictationSpace(keyEvent({ key: ' ', ctrlKey: true }))).toBe(false)
+    expect(isDictationSpace(keyEvent({ key: ' ', shiftKey: true }))).toBe(false)
   })
 
-  test('auto-repeat of the chord does not start a second dictation', () => {
-    expect(isPushToTalkPress(keyEvent({ key: ' ', ctrlKey: true, repeat: true }))).toBe(false)
-  })
-
-  test('other modifiers on top of the chord are not the push-to-talk key', () => {
-    expect(isPushToTalkPress(keyEvent({ key: ' ', ctrlKey: true, altKey: true }))).toBe(false)
-    expect(isPushToTalkPress(keyEvent({ key: ' ', ctrlKey: true, metaKey: true }))).toBe(false)
-  })
-})
-
-describe('isPushToTalkRelease', () => {
-  test('releasing Space or Control ends the dictation', () => {
-    expect(isPushToTalkRelease(keyEvent({ key: ' ' }))).toBe(true)
-    expect(isPushToTalkRelease(keyEvent({ key: 'Control' }))).toBe(true)
-  })
-
-  test('releasing any other key leaves the dictation running', () => {
-    expect(isPushToTalkRelease(keyEvent({ key: 'a' }))).toBe(false)
+  test('other keys are not the dictation key', () => {
+    expect(isDictationSpace(keyEvent({ key: 'a' }))).toBe(false)
   })
 })
 

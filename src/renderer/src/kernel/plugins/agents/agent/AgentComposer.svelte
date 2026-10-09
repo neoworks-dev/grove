@@ -23,7 +23,8 @@
   import { store } from '../../../../lib/store.svelte'
   import type { ClientEventBody, FileBlock, UserContentBlock } from '../../../../lib/agents/types'
   import { voiceDictation } from '../../../../lib/voice.svelte'
-  import { isPushToTalkPress, isPushToTalkRelease } from '../../../../lib/voice'
+  import { isDictationSpace } from '../../../../lib/voice'
+  import { SPACE_HOLD_MS, SpaceHold } from '../../../../lib/voiceHold'
   import { onDestroy, type Snippet } from 'svelte'
   import { SentDrafts } from '../../../../lib/agents/sentDrafts'
   import ArrowCounterClockwise from 'phosphor-svelte/lib/ArrowCounterClockwise'
@@ -426,9 +427,11 @@
     return [{ type: 'user.message', content, deliverAs: 'steer' }]
   }
 
-  /** Releasing the push-to-talk key ends the dictation and puts the transcript at the caret. */
+  const spaceHold = new SpaceHold(onSpaceHeld, SPACE_HOLD_MS)
+
+  /** Releasing a held Space ends the dictation and puts the transcript at the caret. A tap was just a space. */
   function onKeyUp(event: KeyboardEvent): void {
-    if (isPushToTalkRelease(event) && voiceDictation.state !== 'idle') void finishDictation()
+    if (event.key === ' ' && spaceHold.release()) void finishDictation()
     syncCaret()
   }
 
@@ -438,11 +441,35 @@
     if (transcript !== '') insertAtCaret(transcript)
   }
 
+  /** Decides between a tap and a hold of Space. Repeats of a Space still held are dropped while it is pending or dictating. */
+  function onDictationSpace(event: KeyboardEvent): void {
+    if (event.repeat) {
+      if (spaceHold.isActive()) event.preventDefault()
+      return
+    }
+    spaceHold.press()
+  }
+
+  /** A Space held past the hold time starts dictation, and the space it typed is taken back out. */
+  function onSpaceHeld(): void {
+    if (voiceDictation.state !== 'idle') return
+    removeTypedSpace()
+    void voiceDictation.start()
+  }
+
+  /** Takes back the space a held keypress typed just before the caret. */
+  function removeTypedSpace(): void {
+    if (!promptEl) return
+    const at = promptEl.selectionStart
+    if (at === 0 || draft[at - 1] !== ' ') return
+    draft = draft.slice(0, at - 1) + draft.slice(at)
+    requestAnimationFrame(() => promptEl?.setSelectionRange(at - 1, at - 1))
+  }
+
   function onKey(event: KeyboardEvent): void {
     onKeystroke?.()
-    if (isPushToTalkPress(event)) {
-      event.preventDefault()
-      void voiceDictation.start()
+    if (isDictationSpace(event) && shell === null && !menuOpen) {
+      onDictationSpace(event)
       return
     }
     if (event.key === 'Tab' && event.shiftKey) {
@@ -754,7 +781,9 @@
       class:font-mono={shell !== null}
       class:font-medium={shell !== null}
       spellcheck={shell === null}
-      placeholder={running
+      placeholder={voiceDictation.state !== 'idle'
+        ? 'Listening… release Space to insert'
+        : running
         ? 'Steer the running agent…  ( Enter send · Esc interrupt )'
         : `Prompt…  ( / commands · @ files · ! shell · ↑↓ history · ← sessions · Enter send${placeholderHint} )`}
       onkeydown={onKey}
@@ -774,13 +803,11 @@
       }}
       onblur={() => {
         focused = false
+        spaceHold.reset()
         voiceDictation.cancel()
         onFocusChange(false)
       }}
     ></textarea>
-    {#if voiceDictation.state !== 'idle'}
-      <span class="pointer-events-none absolute right-2 top-1.5 text-xs text-dim">● listening</span>
-    {/if}
 
     <!-- The text again, painted over the (transparent) textarea so `@file`
          mentions read as one token and a `!` command reads as shell. Everything

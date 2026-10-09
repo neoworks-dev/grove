@@ -22,6 +22,9 @@
   import { selectionRef } from '../../../../lib/inlineEditRef'
   import { store } from '../../../../lib/store.svelte'
   import type { ClientEventBody, FileBlock, UserContentBlock } from '../../../../lib/agents/types'
+  import { voiceDictation } from '../../../../lib/voice.svelte'
+  import { isDictationSpace, spliceDictation } from '../../../../lib/voice'
+  import { SPACE_HOLD_MS, SpaceHold } from '../../../../lib/voiceHold'
   import { onDestroy, type Snippet } from 'svelte'
   import { SentDrafts } from '../../../../lib/agents/sentDrafts'
   import ArrowCounterClockwise from 'phosphor-svelte/lib/ArrowCounterClockwise'
@@ -424,8 +427,72 @@
     return [{ type: 'user.message', content, deliverAs: 'steer' }]
   }
 
+  const spaceHold = new SpaceHold(onSpaceHeld, SPACE_HOLD_MS)
+
+  /** Releasing a held Space ends the dictation and puts the transcript at the caret. A tap was just a space. */
+  function onKeyUp(event: KeyboardEvent): void {
+    if (event.key === ' ' && spaceHold.release()) void finishDictation()
+    syncCaret()
+  }
+
+  /** Where the live dictation sits in the draft, and how many characters it fills there. */
+  let dictationAnchor = 0
+  let dictationLength = 0
+
+  /** Shows dictated text in the draft at the dictation's anchor, replacing what was written there before. */
+  function writeDictation(text: string): void {
+    draft = spliceDictation(draft, dictationAnchor, dictationLength, text)
+    dictationLength = text.length
+    const caretAt = dictationAnchor + text.length
+    requestAnimationFrame(() => promptEl?.setSelectionRange(caretAt, caretAt))
+  }
+
+  /** Drops a dictation and the text it has written, for when focus leaves the composer. */
+  function cancelDictation(): void {
+    voiceDictation.cancel()
+    writeDictation('')
+  }
+
+  /** Ends the running dictation and puts its final transcript in place of the live text. */
+  async function finishDictation(): Promise<void> {
+    const transcript = await voiceDictation.stop()
+    if (transcript !== '') writeDictation(transcript)
+  }
+
+  /** Decides between a tap and a hold of Space. Repeats of a Space still held are dropped while it is pending or dictating. */
+  function onDictationSpace(event: KeyboardEvent): void {
+    if (event.repeat) {
+      if (spaceHold.isActive()) event.preventDefault()
+      return
+    }
+    spaceHold.press()
+  }
+
+  /** A Space held past the hold time starts dictation, and the space it typed is taken back out. */
+  function onSpaceHeld(): void {
+    if (voiceDictation.state !== 'idle') return
+    dictationAnchor = removeTypedSpace()
+    dictationLength = 0
+    void voiceDictation.start({ onTranscript: writeDictation })
+  }
+
+  /** Takes back the space a held keypress typed just before the caret, and returns where the caret is then. */
+  function removeTypedSpace(): number {
+    if (!promptEl) return draft.length
+    const at = promptEl.selectionStart
+    if (at === 0 || draft[at - 1] !== ' ') return at
+    draft = draft.slice(0, at - 1) + draft.slice(at)
+    const caretAt = at - 1
+    requestAnimationFrame(() => promptEl?.setSelectionRange(caretAt, caretAt))
+    return caretAt
+  }
+
   function onKey(event: KeyboardEvent): void {
     onKeystroke?.()
+    if (isDictationSpace(event) && shell === null && !menuOpen) {
+      onDictationSpace(event)
+      return
+    }
     if (event.key === 'Tab' && event.shiftKey) {
       event.preventDefault()
       onCycleMode?.()
@@ -735,11 +802,13 @@
       class:font-mono={shell !== null}
       class:font-medium={shell !== null}
       spellcheck={shell === null}
-      placeholder={running
+      placeholder={voiceDictation.state !== 'idle'
+        ? 'Listening… release Space to insert'
+        : running
         ? 'Steer the running agent…  ( Enter send · Esc interrupt )'
         : `Prompt…  ( / commands · @ files · ! shell · ↑↓ history · ← sessions · Enter send${placeholderHint} )`}
       onkeydown={onKey}
-      onkeyup={syncCaret}
+      onkeyup={onKeyUp}
       onclick={syncCaret}
       oninput={() => {
         completionRequested = false
@@ -755,6 +824,8 @@
       }}
       onblur={() => {
         focused = false
+        spaceHold.reset()
+        cancelDictation()
         onFocusChange(false)
       }}
     ></textarea>

@@ -22,6 +22,8 @@
   import { selectionRef } from '../../../../lib/inlineEditRef'
   import { store } from '../../../../lib/store.svelte'
   import type { ClientEventBody, FileBlock, UserContentBlock } from '../../../../lib/agents/types'
+  import { voiceDictation } from '../../../../lib/voice.svelte'
+  import { isPushToTalkPress, isPushToTalkRelease } from '../../../../lib/voice'
   import { onDestroy, type Snippet } from 'svelte'
   import { SentDrafts } from '../../../../lib/agents/sentDrafts'
   import ArrowCounterClockwise from 'phosphor-svelte/lib/ArrowCounterClockwise'
@@ -424,8 +426,25 @@
     return [{ type: 'user.message', content, deliverAs: 'steer' }]
   }
 
+  /** Releasing the push-to-talk key ends the dictation and puts the transcript at the caret. */
+  function onKeyUp(event: KeyboardEvent): void {
+    if (isPushToTalkRelease(event) && voiceDictation.state !== 'idle') void finishDictation()
+    syncCaret()
+  }
+
+  /** Ends the running dictation and writes its transcript at the caret, if there is one. */
+  async function finishDictation(): Promise<void> {
+    const transcript = await voiceDictation.stop()
+    if (transcript !== '') insertAtCaret(transcript)
+  }
+
   function onKey(event: KeyboardEvent): void {
     onKeystroke?.()
+    if (isPushToTalkPress(event)) {
+      event.preventDefault()
+      void voiceDictation.start()
+      return
+    }
     if (event.key === 'Tab' && event.shiftKey) {
       event.preventDefault()
       onCycleMode?.()
@@ -739,7 +758,7 @@
         ? 'Steer the running agent…  ( Enter send · Esc interrupt )'
         : `Prompt…  ( / commands · @ files · ! shell · ↑↓ history · ← sessions · Enter send${placeholderHint} )`}
       onkeydown={onKey}
-      onkeyup={syncCaret}
+      onkeyup={onKeyUp}
       onclick={syncCaret}
       oninput={() => {
         completionRequested = false
@@ -755,9 +774,13 @@
       }}
       onblur={() => {
         focused = false
+        voiceDictation.cancel()
         onFocusChange(false)
       }}
     ></textarea>
+    {#if voiceDictation.state !== 'idle'}
+      <span class="pointer-events-none absolute right-2 top-1.5 text-xs text-dim">● listening</span>
+    {/if}
 
     <!-- The text again, painted over the (transparent) textarea so `@file`
          mentions read as one token and a `!` command reads as shell. Everything

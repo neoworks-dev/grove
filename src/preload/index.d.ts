@@ -685,6 +685,11 @@ export interface WorkbenchApi {
     set: (name: string, value: string) => Promise<void>
     clear: (name: string) => Promise<void>
   }
+  voice: {
+    start: () => Promise<void>
+    audio: (chunk: ArrayBuffer) => Promise<void>
+    stop: () => Promise<string>
+  }
   settings: {
     read: () => Promise<SettingsSnapshotShape>
     set: (key: string, value: unknown, scope: 'user' | 'project') => Promise<SettingsSnapshotShape>

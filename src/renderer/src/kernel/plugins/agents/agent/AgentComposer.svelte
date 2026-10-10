@@ -85,6 +85,7 @@
     onTakeBack,
     onRestoreInterrupted,
     hasWaiting = false,
+    onShortcutHelp,
     header
   }: {
     sessionId: string
@@ -137,6 +138,8 @@
     onRestoreInterrupted?: () => boolean
     /** Messages are waiting for the agent to take them up: Ctrl+Enter has something to send. */
     hasWaiting?: boolean
+    /** `?` typed into an empty draft: show the keyboard shortcuts instead of typing it. */
+    onShortcutHelp?: () => void
     /** Drawn flush on top of the prompt box, as its top section: the notes list. */
     header?: Snippet
   } = $props()
@@ -643,6 +646,11 @@
     if (event.key === 'Escape') {
       event.preventDefault()
       onEscape()
+      return
+    }
+    if (event.key === '?' && draft.length === 0 && onShortcutHelp) {
+      event.preventDefault()
+      onShortcutHelp()
       return
     }
     if (event.key === 'Enter' && !event.shiftKey) {

@@ -8,6 +8,7 @@
   import { commands } from '../lib/commands.svelte'
   import { store } from '../lib/store.svelte'
   import { matchesQuery } from '../lib/overlays.svelte'
+  import { tick } from 'svelte'
   import {
     resolveDefaultBindings,
     readCustomBindings,
@@ -46,7 +47,8 @@
     readOverrideMap(settings.projectValues['keybindings.overrides'])
   )
 
-  const rows = $derived.by<Row[]>(() => {
+  // Every binding, unfiltered: a clash with a row the filter hides is still a clash.
+  const allRows = $derived.by<Row[]>(() => {
     const byId = new Map(keymap.bindings.map((binding) => [binding.id, binding]))
     const resolved = resolveDefaultBindings(keymap.bindings, userOverrides, projectOverrides)
     const defaults: Row[] = resolved.map((entry) => {
@@ -77,12 +79,16 @@
       custom: entry.binding,
       customScope: entry.source === 'custom-project' ? 'project' : 'user'
     }))
-    return [...defaults, ...customs]
-      .filter((row) =>
-        matchesQuery(`${row.description} ${row.id} ${row.keys} ${row.group}`, filter)
-      )
-      .sort((a, b) => a.group.localeCompare(b.group) || a.description.localeCompare(b.description))
+    return [...defaults, ...customs].sort(
+      (a, b) => a.group.localeCompare(b.group) || a.description.localeCompare(b.description)
+    )
   })
+
+  const rows = $derived(
+    allRows.filter((row) =>
+      matchesQuery(`${row.description} ${row.id} ${row.keys} ${row.group}`, filter)
+    )
+  )
 
   interface Group {
     name: string
@@ -104,20 +110,59 @@
     return result
   })
 
-  const conflictIds = $derived.by<Set<string>>(() => {
+  // Each binding's id, mapped to the bindings it clashes with.
+  const conflictsById = $derived.by<Map<string, Row[]>>(() => {
     const entries: ConflictEntry[] = []
-    for (const row of rows) {
+    for (const row of allRows) {
       if (row.unbound || !row.keys) continue
       const sequence = parseSequence(row.keys)
       if (sequence) entries.push({ id: row.id, context: row.context, sequence })
     }
-    const ids = new Set<string>()
-    for (const conflict of findConflicts(entries)) {
-      ids.add(conflict.firstId)
-      ids.add(conflict.secondId)
+    const rowsById = new Map(allRows.map((row) => [row.id, row]))
+    const conflicts = new Map<string, Row[]>()
+    for (const conflict of findConflicts(entries, (context) => keymap.paneTypeOf(context))) {
+      addConflict(conflicts, conflict.firstId, rowsById.get(conflict.secondId))
+      addConflict(conflicts, conflict.secondId, rowsById.get(conflict.firstId))
     }
-    return ids
+    return conflicts
   })
+
+  /** Records that the binding `id` clashes with `other`. */
+  function addConflict(conflicts: Map<string, Row[]>, id: string, other: Row | undefined): void {
+    if (!other) return
+    const existing = conflicts.get(id)
+    if (existing) {
+      existing.push(other)
+      return
+    }
+    conflicts.set(id, [other])
+  }
+
+  /** The bindings that clash with `id`, empty when none do. */
+  function conflictsOf(id: string): Row[] {
+    const others = conflictsById.get(id)
+    if (others === undefined) return []
+    return others
+  }
+
+  // The row a conflict link jumped to, lit up for a moment so the eye finds it.
+  let highlightedId = $state<string | null>(null)
+  let highlightTimer: ReturnType<typeof setTimeout> | null = null
+
+  /** Scrolls to a binding's row, clearing the filter first if it hides the row. */
+  async function jumpToBinding(id: string): Promise<void> {
+    if (!rows.some((row) => row.id === id)) {
+      filter = ''
+      await tick()
+    }
+    const target = document.querySelector(`[data-binding-id="${CSS.escape(id)}"]`)
+    target?.scrollIntoView({ block: 'center' })
+    highlightedId = id
+    if (highlightTimer) clearTimeout(highlightTimer)
+    highlightTimer = setTimeout(() => {
+      highlightedId = null
+    }, 1500)
+  }
 
   // Default bindings carry no label; only where a binding came from otherwise.
   const sourceLabels: Record<BindingSource, string> = {
@@ -369,7 +414,10 @@
       </p>
       {#each group.rows as row (row.id)}
         <div
-          class="group/row flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-1 text-xs hover:bg-hover/40 focus-within:bg-hover/40"
+          class="group/row flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-1 text-xs transition-colors hover:bg-hover/40 focus-within:bg-hover/40"
+          class:ring-1={highlightedId === row.id}
+          class:ring-accent={highlightedId === row.id}
+          data-binding-id={row.id}
         >
           <div class="flex min-w-0 flex-1 basis-32 items-center gap-1.5">
             <span class="truncate text-muted" title={row.description}>{row.description}</span>
@@ -381,11 +429,6 @@
             {#if sourceLabels[row.source]}
               <span class="shrink-0 rounded border border-line px-1 text-2xs text-dim"
                 >{sourceLabels[row.source]}</span
-              >
-            {/if}
-            {#if conflictIds.has(row.id)}
-              <span class="shrink-0 text-2xs text-amber" title="Conflicts with another binding"
-                >⚠ conflict</span
               >
             {/if}
           </div>
@@ -411,6 +454,17 @@
               onchange={(next) => void rebind(row, next)}
             />
           </div>
+          {#each conflictsOf(row.id) as other (other.id)}
+            <p class="basis-full text-2xs text-amber">
+              ⚠ Also bound to
+              <button
+                class="underline decoration-dotted underline-offset-2 hover:text-default"
+                title="Jump to {other.description}"
+                onclick={() => void jumpToBinding(other.id)}
+                >{other.group || 'General'}: {other.description}</button
+              >
+            </p>
+          {/each}
         </div>
       {/each}
     {/each}

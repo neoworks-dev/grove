@@ -6,6 +6,7 @@ import {
   stepFromEvent,
   sequenceStartsWith,
   findConflicts,
+  mostSpecific,
   stepMatchesSequence,
   stepLabel,
   firesWhileTyping,
@@ -153,9 +154,52 @@ describe('findConflicts', () => {
     expect(conflicts[0].kind).toBe('shadow')
   })
 
-  it('ignores different contexts and leader/non-leader differences', () => {
-    expect(findConflicts([entry('a', 'leader x', 'tree'), entry('b', 'leader x', 'global')])).toHaveLength(0)
+  it('ignores leader/non-leader differences', () => {
     expect(findConflicts([entry('a', 'leader x'), entry('b', 'x')])).toHaveLength(0)
+  })
+
+  // A global binding is live in every pane, so it clashes with any pane's own.
+  it('reports a global binding against a pane binding on the same keys', () => {
+    const conflicts = findConflicts([entry('harpoon', 'ctrl+t'), entry('todo', 'ctrl+t', 'leaf-5')])
+    expect(conflicts).toHaveLength(1)
+    expect(conflicts[0].kind).toBe('duplicate')
+  })
+
+  it('reports a pane binding against one for its pane type', () => {
+    const paneTypeOf = (context: string) => (context === 'leaf-5' ? 'agent' : null)
+    const conflicts = findConflicts(
+      [entry('pane', 'ctrl+t', 'leaf-5'), entry('type', 'ctrl+t', 'agent')],
+      paneTypeOf
+    )
+    expect(conflicts).toHaveLength(1)
+  })
+
+  it('ignores bindings for panes that are never focused together', () => {
+    const paneTypeOf = (context: string) => (context === 'leaf-5' ? 'agent' : null)
+    expect(findConflicts([entry('a', 'ctrl+t', 'editor'), entry('b', 'ctrl+t', 'tree')])).toHaveLength(0)
+    expect(
+      findConflicts([entry('a', 'ctrl+t', 'leaf-5'), entry('b', 'ctrl+t', 'editor')], paneTypeOf)
+    ).toHaveLength(0)
+  })
+})
+
+describe('mostSpecific', () => {
+  const global = { id: 'global', context: 'global' }
+  const byType = { id: 'type', context: 'agent' }
+  const byPane = { id: 'pane', context: 'leaf-5' }
+
+  it('prefers the focused pane, then its type, then global, whatever the order', () => {
+    expect(mostSpecific([global, byType, byPane], 'leaf-5', 'agent')?.id).toBe('pane')
+    expect(mostSpecific([global, byType], 'leaf-5', 'agent')?.id).toBe('type')
+    expect(mostSpecific([global], 'leaf-5', 'agent')?.id).toBe('global')
+  })
+
+  it('treats a binding with no context as global', () => {
+    expect(mostSpecific([{ id: 'bare' }, byPane], 'leaf-5', 'agent')?.id).toBe('pane')
+  })
+
+  it('keeps list order between equally specific bindings', () => {
+    expect(mostSpecific([global, { id: 'second', context: 'global' }], null, null)?.id).toBe('global')
   })
 })
 

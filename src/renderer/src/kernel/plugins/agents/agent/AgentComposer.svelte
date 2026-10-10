@@ -982,7 +982,7 @@
   {#if historySearch}
     <!-- The search shows in the composer itself, flush on top of the match it found. -->
     <div
-      class="flex items-center gap-2 rounded-t-md border border-b-0 border-line-strong bg-elevated px-2 py-1 font-mono text-2xs text-dim"
+      class="flex items-center gap-2 border border-b-0 border-line-strong bg-elevated px-2 py-1 font-mono text-2xs text-dim"
       data-testid="history-search"
     >
       <span class="shrink-0">reverse search:</span>

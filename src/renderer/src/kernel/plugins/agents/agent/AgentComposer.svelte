@@ -65,6 +65,7 @@
     onLeaveDown,
     onTakeBack,
     onRestoreInterrupted,
+    hasWaiting = false,
     header
   }: {
     sessionId: string
@@ -115,6 +116,8 @@
      * and takes the conversation back before it. True when it took the key.
      */
     onRestoreInterrupted?: () => boolean
+    /** Messages are waiting for the agent to take them up: Ctrl+Enter has something to send. */
+    hasWaiting?: boolean
     /** Drawn flush on top of the prompt box, as its top section: the notes list. */
     header?: Snippet
   } = $props()
@@ -711,6 +714,43 @@
     })
   }
 
+  /**
+   * Ctrl+Enter: sends now. Idle, that is an ordinary send. While the agent works it
+   * stops the turn and sends the waiting messages together with the draft as the
+   * next message; the stop rides in the same batch as the draft, so it can never
+   * overtake it.
+   */
+  export function sendNow(): void {
+    if (!running) {
+      submit()
+      return
+    }
+    const submission = parseSubmission(draft)
+    const carried = carriedBlocks()
+    if (submission === null && carried.length === 0) {
+      if (hasWaiting) onInterruptAndSend([])
+      return
+    }
+    if (submission !== null && submission.kind !== 'message') {
+      submit()
+      return
+    }
+    onInterruptAndSend(eventsFor(submission, carried))
+  }
+
+  /** Sends the events, if any, and stops the turn right behind them; then clears the composer as a send does. */
+  function onInterruptAndSend(events: ClientEventBody[]): void {
+    onSend([...events, { type: 'user.interrupt' }])
+    if (events.length > 0) {
+      forgetAttachments(attachments)
+      draft = ''
+      attachments = []
+      references = []
+      historyIndex = -1
+      suggestions = []
+    }
+  }
+
   /** Whether the caret sits on the draft's last line, where ArrowDown has nowhere left to go. */
   function caretOnLastLine(): boolean {
     if (!promptEl) return false
@@ -947,7 +987,7 @@
       placeholder={voiceDictation.state !== 'idle'
         ? 'Listening… release Space to insert'
         : running
-        ? 'Steer the running agent…  ( Enter send · Esc interrupt )'
+        ? 'Steer the running agent…  ( Enter send · Ctrl+Enter send now · Esc interrupt )'
         : `Prompt…  ( / commands · @ files · ! shell · ↑↓ history · ← sessions · Enter send${placeholderHint} )`}
       onkeydown={onKey}
       onkeyup={onKeyUp}

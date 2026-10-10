@@ -1123,11 +1123,17 @@ export class AgentService {
     await this.persistResumeKey(sessionId)
 
     const untaken = runtime.steers.take()
-    if (stopReason === 'aborted' && untaken.length > 0) {
-      const text = untaken.map((message) => message.text).join('\n\n')
-      const attachments = untaken.flatMap((message) => message.attachments)
-      await this.startTurn(sessionId, text, attachments)
-      return
+    if (stopReason === 'aborted') {
+      // Whatever was waiting for the agent goes out as one message, the steers it
+      // never took up and the messages queued behind the turn alike.
+      const handedOn = [...untaken, ...runtime.queued]
+      if (handedOn.length > 0) {
+        runtime.queued = []
+        const text = handedOn.map((message) => message.text).join('\n\n')
+        const attachments = handedOn.flatMap(attachmentsOf)
+        await this.startTurn(sessionId, text, attachments)
+        return
+      }
     }
 
     const next = runtime.queued[0]
@@ -1523,4 +1529,10 @@ function scorePath(path: string, needle: string): number {
 }
 
 /** Thinking levels every harness understands, in order. */
+/** The images a waiting message carries, none when it has no attachments. */
+function attachmentsOf(message: { attachments?: ImageBlock[] }): ImageBlock[] {
+  if (message.attachments === undefined) return []
+  return message.attachments
+}
+
 export const THINKING_LEVELS: ThinkingLevel[] = ['off', 'low', 'medium', 'high', 'xhigh', 'max']

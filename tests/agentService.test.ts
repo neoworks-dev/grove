@@ -345,6 +345,29 @@ describe('AgentService', () => {
     }
   })
 
+  test('a message sent with an interrupt goes out with everything waiting, as one message', async () => {
+    const { service, runs, cleanup } = await setup()
+    try {
+      const session = await service.createSession({ workspace: '/tmp/worktree' })
+      await service.send(session.id, [say('first')])
+      await service.send(session.id, [{ ...say('urgent'), deliverAs: 'steer' }])
+      await service.send(session.id, [{ ...say('later'), deliverAs: 'followUp' }])
+
+      await service.send(session.id, [
+        { ...say('and this'), deliverAs: 'steer' },
+        { type: 'user.interrupt' }
+      ])
+      runs[0].options.emit({ type: 'session.status_idle', stopReason: 'aborted' })
+      await settle()
+
+      expect(runs[0].interrupted).toBe(1)
+      expect(runs[0].prompts).toEqual(['first', 'urgent\n\nand this\n\nlater'])
+      expect(service.queueOf(session.id)).toEqual([])
+    } finally {
+      await cleanup()
+    }
+  })
+
   test('a steer hands its images to the running turn', async () => {
     const { service, runs, cleanup } = await setup()
     try {

@@ -17,14 +17,15 @@
   let {
     notes,
     tasks,
-    onSave
+    onSave,
+    open = $bindable(true)
   }: {
     notes: SessionNote[]
     tasks: AgentTask[]
     onSave: (notes: SessionNote[]) => void
+    open?: boolean
   } = $props()
 
-  let open = $state(true)
   let adding = $state(false)
   let draft = $state('')
   let editingId = $state<string | null>(null)

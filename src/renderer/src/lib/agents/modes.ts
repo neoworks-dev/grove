@@ -25,12 +25,30 @@ export const MODE_DESCRIPTIONS: Record<AgentMode, string> = {
   bypass: 'Nothing is asked. Every call runs, including shell commands.'
 }
 
-/** The order shift+tab steps through, least permissive first. */
+/** The order the picker lists the modes in, least permissive first. */
 export const MODE_ORDER: AgentMode[] = ['default', 'plan', 'acceptEdits', 'bypass']
 
+/**
+ * Modes shift+tab never lands on. Plan stays in the picker, but stepping
+ * through to bypass should not pass over it by accident.
+ */
+const MODES_SKIPPED_BY_CYCLE: AgentMode[] = ['plan']
+
+/**
+ * The mode shift+tab moves a session to from `current`.
+ *
+ * Walks the picker order forward, skipping the modes the cycle leaves out, so
+ * a session already in plan mode still moves on to the next mode that is cycled.
+ */
 export function nextMode(current: AgentMode): AgentMode {
-  const index = MODE_ORDER.indexOf(current)
-  return MODE_ORDER[(index + 1) % MODE_ORDER.length]
+  let index = MODE_ORDER.indexOf(current)
+  for (let step = 0; step < MODE_ORDER.length; step += 1) {
+    index = (index + 1) % MODE_ORDER.length
+    if (!MODES_SKIPPED_BY_CYCLE.includes(MODE_ORDER[index])) {
+      return MODE_ORDER[index]
+    }
+  }
+  return current
 }
 
 /**

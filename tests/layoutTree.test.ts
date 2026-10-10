@@ -255,6 +255,22 @@ describe('sanitize', () => {
     expect(sidebar.paneState).toBeUndefined()
   })
 
+  it('reopens a retired Checkpoints sidebar view as Source Control', () => {
+    const tree = sanitize({
+      kind: 'split',
+      id: 's',
+      direction: 'row',
+      children: [
+        { kind: 'leaf', id: 'a', paneTypeId: 'checkpoints', sizePx: 256 },
+        { kind: 'leaf', id: 'b', paneTypeId: 'nvim' }
+      ],
+      sizes: [0.2, 0.8]
+    }) as SplitNode
+    const [sidebar] = leaves(tree)
+    expect(sidebar.paneTypeId).toBe('changes')
+    expect(sidebar.sizePx).toBe(256)
+  })
+
   it('drops malformed nodes and renormalizes sizes', () => {
     const tree = sanitize({
       kind: 'split',

@@ -199,6 +199,7 @@ export class AgentService {
       provider: model.provider,
       model: model.model,
       thinkingLevel: options.thinkingLevel ?? 'off',
+      fastMode: options.fastMode,
       activeTools: options.activeTools ?? null,
       permissionMode: options.permissionMode,
       groveMode: options.groveMode,
@@ -988,6 +989,8 @@ export class AgentService {
       provider: session.provider || null,
       model: session.model || null,
       thinkingLevel: session.thinkingLevel,
+      fastMode: session.fastMode,
+      fastModeReported: (enabled) => void this.syncFastMode(sessionId, enabled),
       activeTools: session.activeTools,
       permissionMode: session.permissionMode,
       groveMode: session.groveMode,
@@ -1160,12 +1163,35 @@ export class AgentService {
     if (changes.thinkingLevel && run.setThinkingLevel) {
       await run.setThinkingLevel(changes.thinkingLevel).catch(() => {})
     }
+    if (changes.fastMode !== undefined && run.setFastMode) {
+      await run
+        .setFastMode(changes.fastMode)
+        .catch((cause: Error) => this.refuseFastMode(sessionId, cause))
+    }
     // Only plan mode needs the harness told: it withholds tools, which grove's
     // approval layer cannot do on its own. The permissive modes are answered
     // here, so the harness keeps asking and grove keeps logging the calls.
     if (changes.permissionMode && run.setPermissionMode) {
       await run.setPermissionMode(changes.permissionMode).catch(() => {})
     }
+  }
+
+  /** Follows the harness when it switches fast mode itself, so what the UI shows is what is running. */
+  private async syncFastMode(sessionId: string, enabled: boolean): Promise<void> {
+    const session = await this.store.get(sessionId)
+    if (!session || session.fastMode === enabled) return
+    await this.store.patch(sessionId, { fastMode: enabled })
+    await this.store.append(sessionId, { type: 'session.info_changed', changed: ['fastMode'] })
+  }
+
+  /** Puts fast mode back off after the harness could not turn it on, and says why in the conversation. */
+  private async refuseFastMode(sessionId: string, cause: Error): Promise<void> {
+    await this.store.patch(sessionId, { fastMode: false })
+    await this.store.append(sessionId, { type: 'session.info_changed', changed: ['fastMode'] })
+    await this.absorb(sessionId, {
+      type: 'session.notice',
+      message: `Fast mode was not turned on: ${cause.message}`
+    })
   }
 
   private async stopRun(sessionId: string): Promise<void> {

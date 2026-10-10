@@ -531,6 +531,11 @@
     void agentSessions.send(activeId, [{ type: 'user.decide_held_message', heldId, decision }])
   }
 
+  // The session's harness has a fast mode to switch.
+  const currentHarnessHasFastMode = $derived(
+    catalog.harnesses.find((entry) => entry.id === harness)?.capabilities.fastMode === true
+  )
+
   // The session's harness can take its conversation back, so a sent message can
   // be edited and the conversation rerun from it.
   const rewinds = $derived(
@@ -694,6 +699,12 @@
     void agentSessions.update(activeId, { thinkingLevel })
   }
 
+  /** Turns fast mode on or off for this session; it is never remembered for the next one, since it costs more. */
+  function pickFastMode(fastMode: boolean): void {
+    if (!activeId) return
+    void agentSessions.update(activeId, { fastMode })
+  }
+
   // ── Cycling from the keyboard ───────────────────────────────────
   //
   // Both step through their list in place, so the setting can be changed while
@@ -716,6 +727,12 @@
    */
   function backgroundShell(): void {
     if (activeId) shellOutputs.background(activeId)
+  }
+
+  /** Alt+O: switches fast mode, where the harness has one. */
+  function toggleFastMode(): void {
+    if (!snapshot) return
+    pickFastMode(!snapshot.fastMode)
   }
 
   function cycleThinking(): void {
@@ -1026,6 +1043,15 @@
         group: 'Agent',
         description: 'Cycle reasoning effort',
         run: cycleThinking
+      },
+      {
+        id: `agent.toggleFastMode:${leafId}`,
+        keys: 'alt+o',
+        context: leafId,
+        group: 'Agent',
+        description: 'Switch fast mode (costs more)',
+        when: () => currentHarnessHasFastMode,
+        run: toggleFastMode
       },
       {
         id: `agent.toggleNotes:${leafId}`,
@@ -1379,6 +1405,7 @@
               provider={snapshot.provider}
               model={snapshot.model}
               thinking={snapshot.thinkingLevel}
+              fastMode={snapshot.fastMode}
               {mode}
               {running}
               models={catalog.models}
@@ -1392,6 +1419,7 @@
               onRequestKey={requestCredential}
               onAddEndpoint={() => (addingEndpoint = true)}
               onPickThinking={pickThinking}
+              onPickFastMode={pickFastMode}
               onPickMode={pickMode}
               onSetReview={setReviewSetting}
               onInterrupt={interrupt}

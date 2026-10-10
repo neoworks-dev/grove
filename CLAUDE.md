@@ -71,10 +71,11 @@ Two areas is fine when an issue genuinely spans them; three means split it.
 
 ## Done means verified
 
-Work is done when it has been shown to work, not when the code is written. Shown means one of:
+Work is done when it has been shown to work in the app, not when the code is written. Every change goes through `bun run qa` twice: once before, showing the bug or the missing feature, and once after, showing it work, each with a screenshot. The only exception is when I've said it is already tested and working.
 
-- shown fixed through `bun run qa`, with a screenshot (and one from before, if you reproduced it);
-- a test under `tests/` that fails without the fix and passes with it.
+A test under `tests/` that fails without the change and passes with it comes on top of that, not instead of it. A test that only exercises a helper, or reads the source text, says nothing about whether the key, button or menu works.
+
+This holds for every agent, and most for subagents on smaller models, where it breaks most easily. An agent that hasn't run the harness hasn't finished, whatever its tests say, so give every subagent this rule in its prompt.
 
 `bun test` passes on the branch either way.
 

@@ -89,12 +89,6 @@
     layout.ensurePane('worktree-chat')
   }
 
-  // Reveal the checkpoints timeline in the sidebar for this worktree.
-  function openCheckpoints(worktree: Worktree): void {
-    selectWorktree(worktree.id)
-    layout.ensurePane('checkpoints')
-  }
-
   /** Selects the worktree and opens the Logs pane, where its setup output streams. */
   function openSetupLog(worktree: Worktree, event: MouseEvent): void {
     event.stopPropagation()
@@ -328,10 +322,6 @@
       openChat(worktree)
       return true
     }
-    if (key === 't') {
-      openCheckpoints(worktree)
-      return true
-    }
     if (key === 'm') {
       mergeSource = worktree
       return true
@@ -512,17 +502,6 @@
             }}
           >
             ✉
-          </button>
-          <button
-            class="text-dim hover:text-default group-hover/worktree:block"
-            class:hidden={!cursor}
-            title="Checkpoints (t)"
-            onclick={(event) => {
-              event.stopPropagation()
-              openCheckpoints(worktree)
-            }}
-          >
-            ⟲
           </button>
           <button
             class="text-dim hover:text-violet group-hover/worktree:block"

@@ -7,7 +7,7 @@
 
 import { test, expect } from './fixtures/groveApp'
 
-const RAIL = ['Explorer', 'Worktrees', 'Git Changes', 'Checkpoints', 'Extensions']
+const RAIL = ['Explorer', 'Worktrees', 'Git Changes', 'Extensions']
 
 test('the rail offers every core view', async ({ grove }) => {
   for (const view of RAIL) {

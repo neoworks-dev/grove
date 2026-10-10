@@ -207,7 +207,7 @@
     if (!replay) return
     const picked = await dialogs.confirm({
       title: `Roll the worktree back to ${positionName(position)}?`,
-      body: 'Uncommitted changes are checkpointed first, so this can be undone from Checkpoints.',
+      body: 'Uncommitted changes are checkpointed first, so this can be undone from the Checkpoints section of Source Control.',
       actions: [
         { id: 'roll-back', label: 'Roll back', kind: 'danger' },
         { id: 'cancel', label: 'Cancel' }

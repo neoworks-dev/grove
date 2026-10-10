@@ -2,7 +2,8 @@
   // The source-control view for the selected worktree, laid out the way GitLens
   // and VS Code lay theirs: the branch and how it stands against its upstream,
   // the commit box, then collapsible sections — staged, unstaged as a tree or a
-  // list, the branch's commits, branches, tags and stashes, and a compare of
+  // list, the branch's commits, branches, tags, stashes and the safety snapshots Grove
+  // took before rewriting files, and a compare of
   // any two refs. Clicking a file opens it with its hunks painted by the review
   // overlay; the ship-it chain lives in the footer.
   //
@@ -22,6 +23,7 @@
   import { inlineEdit } from '../../../lib/inlineEdit.svelte'
   import { settings } from '../../../lib/settings.svelte'
   import CommitBox from './CommitBox.svelte'
+  import CheckpointsSection from './CheckpointsSection.svelte'
   import CommitsSection from './CommitsSection.svelte'
   import CompareSection from './CompareSection.svelte'
   import SearchSection from './SearchSection.svelte'
@@ -261,6 +263,7 @@
           onChanged={load}
         />
         <StashesSection {worktreeId} hasChanges={files.length > 0} {refreshKey} onChanged={load} />
+        <CheckpointsSection {worktreeId} {refreshKey} onChanged={load} />
         <SearchSection {worktreeId} />
         <CompareSection {worktreeId} {worktreePath} {refreshKey} />
       {/if}

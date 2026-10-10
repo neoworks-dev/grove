@@ -505,9 +505,11 @@ function mergeSameDirection(
 // Built-in pane types that no longer exist, and what a stored leaf of one opens
 // as instead. Unlike a plugin's pane, these will never register again, so the
 // placeholder they would otherwise get is a dead window. The Agents sidebar view
-// became the Worktrees one, which lists each worktree's sessions too.
+// became the Worktrees one, which lists each worktree's sessions too. The
+// Checkpoints view became a section of the Source Control one.
 const RETIRED_PANE_TYPES: Record<string, string> = {
-  agents: 'worktrees'
+  agents: 'worktrees',
+  checkpoints: 'changes'
 }
 
 // Validate a deserialized tree. Malformed nodes are dropped; leaves with

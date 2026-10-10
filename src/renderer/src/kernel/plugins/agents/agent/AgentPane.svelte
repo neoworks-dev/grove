@@ -210,7 +210,11 @@
   let overviewOpen = $state(false)
   let expandedTools = $state<Record<string, boolean>>({})
   let transcriptViewport = $state<HTMLDivElement>()
-  let composer = $state<{ focus: () => boolean; restorePrompt: (text: string) => void }>()
+  let composer = $state<{
+    focus: () => boolean
+    restorePrompt: (text: string) => void
+    searchHistory: () => void
+  }>()
   let backgroundList = $state<{ focus: () => boolean }>()
   // The approval or question card standing in for the composer, while one is up.
   let promptCard = $state<{ focus: () => void }>()
@@ -1034,6 +1038,15 @@
         group: 'Agent',
         description: 'Show or hide the to-do list',
         run: toggleNotes
+      },
+      {
+        id: `agent.searchHistory:${leafId}`,
+        keys: 'ctrl+r',
+        context: leafId,
+        group: 'Agent',
+        description: 'Search the prompt history',
+        when: () => composer !== undefined && shownApproval === undefined,
+        run: () => composer?.searchHistory()
       },
       {
         id: `agent.overview:${leafId}`,

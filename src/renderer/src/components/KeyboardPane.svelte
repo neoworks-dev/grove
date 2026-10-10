@@ -15,7 +15,12 @@
     readOverrideMap,
     type BindingSource
   } from '../lib/bindingResolution'
-  import { parseSequence, findConflicts, type ConflictEntry } from '../lib/keySequence'
+  import {
+    parseSequence,
+    findConflicts,
+    searchableKeys,
+    type ConflictEntry
+  } from '../lib/keySequence'
   import KeybindCapture from './controls/KeybindCapture.svelte'
   import type { CustomBinding, KeybindAction } from '../../../shared/actions'
   import type { SettingScope } from '../../../shared/settings'
@@ -86,7 +91,10 @@
 
   const rows = $derived(
     allRows.filter((row) =>
-      matchesQuery(`${row.description} ${row.id} ${row.keys} ${row.group}`, filter)
+      matchesQuery(
+        `${row.description} ${row.id} ${searchableKeys(row.keys)} ${row.group} ${contextLabel(row.context)}`,
+        filter
+      )
     )
   )
 
@@ -109,6 +117,16 @@
     }
     return result
   })
+
+  /**
+   * A binding context as a person reads it: a pane's own bindings are
+   * registered under its id (`leaf-5`), which says nothing, so show its type.
+   */
+  function contextLabel(context: string): string {
+    const paneType = keymap.paneTypeOf(context)
+    if (paneType === null) return context
+    return paneType
+  }
 
   // Each binding's id, mapped to the bindings it clashes with.
   const conflictsById = $derived.by<Map<string, Row[]>>(() => {
@@ -422,8 +440,10 @@
           <div class="flex min-w-0 flex-1 basis-32 items-center gap-1.5">
             <span class="truncate text-muted" title={row.description}>{row.description}</span>
             {#if row.context !== 'global'}
-              <span class="shrink-0 font-mono text-2xs text-faint" title="Only active in {row.context}"
-                >{row.context}</span
+              <span
+                class="shrink-0 font-mono text-2xs text-faint"
+                title="Only active in the {contextLabel(row.context)} pane"
+                >{contextLabel(row.context)}</span
               >
             {/if}
             {#if sourceLabels[row.source]}

@@ -7,6 +7,7 @@ import {
   sequenceStartsWith,
   findConflicts,
   mostSpecific,
+  searchableKeys,
   stepMatchesSequence,
   stepLabel,
   firesWhileTyping,
@@ -180,6 +181,26 @@ describe('findConflicts', () => {
     expect(
       findConflicts([entry('a', 'ctrl+t', 'leaf-5'), entry('b', 'ctrl+t', 'editor')], paneTypeOf)
     ).toHaveLength(0)
+  })
+})
+
+// The shortcuts search runs over every form, so 'ctrl+h' finds a binding stored
+// as '<Ctrl-H>' and the other way round.
+describe('searchableKeys', () => {
+  it('adds the plain form to a canonical sequence', () => {
+    expect(searchableKeys('<Ctrl-H>')).toContain('ctrl+h')
+  })
+
+  it('adds the canonical form to a plain one', () => {
+    expect(searchableKeys('ctrl+tab')).toContain('<Ctrl-Tab>')
+  })
+
+  it('spells out the leader', () => {
+    expect(searchableKeys('<Leader> A')).toContain('leader A')
+  })
+
+  it('leaves unparseable text as it is', () => {
+    expect(searchableKeys('a–z')).toBe('a–z')
   })
 })
 

@@ -45,6 +45,7 @@ test('Escape closes the picker and returns to the prompt', async ({ grove }) => 
   await page.getByRole('button', { name: 'New session' }).click()
   await runCommand(page, '/model')
   await expect(page.getByTestId('composer-picker')).toBeVisible()
+  await expect(page.getByTestId('composer-picker')).toContainText('re-reads the whole conversation')
 
   await page.keyboard.press('Escape')
   await expect(page.getByTestId('composer-picker')).toBeHidden()

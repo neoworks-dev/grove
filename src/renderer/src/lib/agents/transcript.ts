@@ -185,6 +185,8 @@ export interface TranscriptState {
   /** Every item ever created, in seq order — including branches not currently in play. */
   items: TranscriptItem[]
   parentOf: Map<number, number>
+  /** When each event happened, by seq, as the log recorded it (ISO 8601). */
+  createdAt: Map<number, string>
   /** The seq the conversation continues from; 0 is the root. */
   head: number
   activeSeqs: Set<number>
@@ -211,6 +213,7 @@ export function createTranscript(): TranscriptState {
   return {
     items: [],
     parentOf: new Map(),
+    createdAt: new Map(),
     head: ROOT,
     activeSeqs: new Set(),
     status: 'idle',
@@ -370,6 +373,7 @@ export function applyEvent(state: TranscriptState, event: SessionEvent): void {
   }
 
   state.parentOf.set(event.seq, state.head)
+  state.createdAt.set(event.seq, event.createdAt)
   state.head = event.seq
   state.activeSeqs.add(event.seq)
 

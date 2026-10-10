@@ -473,6 +473,14 @@
     send(editMessageEvents(live.transcript, item, text))
   }
 
+  /** Whether the to-do list above the composer is expanded. */
+  let notesOpen = $state(true)
+
+  /** Ctrl+T: shows or hides the to-do list, whether or not the composer has focus. */
+  function toggleNotes(): void {
+    notesOpen = !notesOpen
+  }
+
   /** Save the notes list; it comes back through the stream like any change. */
   function saveNotes(notes: SessionNote[]): void {
     if (!activeId) return
@@ -882,6 +890,14 @@
         run: cycleThinking
       },
       {
+        id: `agent.toggleNotes:${leafId}`,
+        keys: 'ctrl+t',
+        context: leafId,
+        group: 'Agent',
+        description: 'Show or hide the to-do list',
+        run: toggleNotes
+      },
+      {
         id: `agent.overview:${leafId}`,
         keys: 'left',
         context: leafId,
@@ -1253,6 +1269,11 @@
 <!-- The notes list, drawn as the top of the composer rather than a card of its own. -->
 {#snippet notesHeader()}
   {#if live}
-    <AgentNotes notes={live.transcript.notes} tasks={live.transcript.tasks} onSave={saveNotes} />
+    <AgentNotes
+      notes={live.transcript.notes}
+      tasks={live.transcript.tasks}
+      onSave={saveNotes}
+      bind:open={notesOpen}
+    />
   {/if}
 {/snippet}

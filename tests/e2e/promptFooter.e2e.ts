@@ -46,8 +46,11 @@ test('Enter opens the selected item, Escape closes it and returns to the prompt,
   await page.keyboard.press('Enter')
   await expect(page.getByTestId('agent-mode-trigger')).toHaveAttribute('aria-expanded', 'true')
 
+  // Escape closes the menu and stays on its item; a second Escape goes back to the prompt.
   await page.keyboard.press('Escape')
   await expect(page.getByTestId('agent-mode-trigger')).toHaveAttribute('aria-expanded', 'false')
+  await expect(page.getByTestId('agent-mode-trigger')).toBeFocused()
+  await page.keyboard.press('Escape')
   await expect(prompt(page)).toBeFocused()
 
   await page.keyboard.press('ArrowDown')
@@ -66,4 +69,34 @@ test('Shift+Tab still cycles the mode while an item is selected', async ({ grove
 
   await page.keyboard.press('Shift+Tab')
   await expect(trigger).not.toHaveText(before)
+})
+
+test('a menu opened from the keyboard takes focus, arrows walk its rows, Enter picks and Escape returns to the item', async ({
+  grove
+}) => {
+  const page = grove.page
+  await page.getByRole('button', { name: 'New session' }).click()
+  await prompt(page).click()
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('ArrowRight')
+  await page.keyboard.press('ArrowRight')
+  const trigger = page.getByTestId('agent-mode-trigger')
+  await expect(trigger).toBeFocused()
+
+  await page.keyboard.press('Enter')
+  const options = page.getByTestId('agent-mode-option')
+  await expect(options.first()).toBeFocused()
+
+  await page.keyboard.press('ArrowDown')
+  await expect(options.nth(1)).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(trigger).toHaveAttribute('aria-expanded', 'false')
+  await expect(trigger).toBeFocused()
+  await expect(trigger).toContainText('Plan')
+
+  await page.keyboard.press('Enter')
+  await expect(options.first()).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(trigger).toHaveAttribute('aria-expanded', 'false')
+  await expect(trigger).toBeFocused()
 })

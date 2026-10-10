@@ -71,8 +71,10 @@
     FOOTER_OWN_KEYS,
     focusFirstFooterItem,
     focusedFooterItem,
+    focusedFooterMenu,
     openFooterMenuTrigger,
-    stepFooterItem
+    stepFooterItem,
+    stepFooterMenuItem
   } from '../../../../lib/agents/footerFocus'
   import { keyDispatch, KeyPriority } from '../../../../lib/keyDispatch'
   import type {
@@ -903,12 +905,42 @@
   }
 
   /**
+   * The keys of a menu opened from an item under the prompt, while the keyboard is in
+   * it: up and down walk the rows, Escape closes it and returns to the item. Enter is
+   * left to the focused row, which is a button.
+   */
+  function onFooterMenuKey(event: KeyboardEvent): boolean {
+    if (!footerEl) return false
+    const menu = focusedFooterMenu(footerEl)
+    if (!menu) return false
+    if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return false
+    let action: (() => void) | undefined
+    if (event.key === 'ArrowDown') action = () => stepFooterMenuItem(menu, 1)
+    if (event.key === 'ArrowUp') action = () => stepFooterMenuItem(menu, -1)
+    if (event.key === 'Escape') action = closeFooterMenu
+    if (!action) return false
+    event.preventDefault()
+    event.stopPropagation()
+    action()
+    return true
+  }
+
+  /** Closes the menu the keyboard is in and puts the keyboard back on the item that opened it. */
+  function closeFooterMenu(): void {
+    if (!footerEl) return
+    const trigger = openFooterMenuTrigger(footerEl)
+    trigger?.click()
+    trigger?.focus()
+  }
+
+  /**
    * The keys of the items under the prompt while one has the keyboard. Enter is left
    * to the item, which opens itself; keys the footer has no use for, Shift+Tab among
    * them, fall through to the pane's own bindings.
    */
   function onFooterKey(event: KeyboardEvent): boolean {
     if (!footerEl) return false
+    if (onFooterMenuKey(event)) return true
     const item = focusedFooterItem(footerEl)
     if (!item) return false
     if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return false

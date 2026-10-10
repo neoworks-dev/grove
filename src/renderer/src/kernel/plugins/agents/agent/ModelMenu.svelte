@@ -245,12 +245,13 @@
 {/snippet}
 
 <div
-  class="absolute left-0 z-30 flex w-80 flex-col rounded-md border border-line bg-elevated shadow-lg"
+  class="[&_button:focus-visible]:bg-hover [&_input:focus-visible]:border-accent [&_button:focus-visible]:outline-none absolute left-0 z-30 flex w-80 flex-col rounded-md border border-line bg-elevated shadow-lg"
   class:bottom-full={!below}
   class:mb-1={!below}
   class:top-full={below}
   class:mt-1={below}
   bind:this={root}
+  data-footer-menu
   use:keepInside={boundary}
   onmouseleave={() => (flyout = null)}
 >

@@ -914,6 +914,9 @@
     const menu = focusedFooterMenu(footerEl)
     if (!menu) return false
     if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return false
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      return leaveMenuSideways(event, event.key === 'ArrowRight' ? 1 : -1)
+    }
     let action: (() => void) | undefined
     if (event.key === 'ArrowDown') action = () => stepFooterMenuItem(menu, 1)
     if (event.key === 'ArrowUp') action = () => stepFooterMenuItem(menu, -1)
@@ -922,6 +925,19 @@
     event.preventDefault()
     event.stopPropagation()
     action()
+    return true
+  }
+
+  /**
+   * Left and right from a menu row close the menu and go on to the neighbouring item,
+   * so they never reach the overview binding. In the search field they stay cursor keys.
+   */
+  function leaveMenuSideways(event: KeyboardEvent, direction: 1 | -1): boolean {
+    if (event.target instanceof HTMLInputElement) return true
+    event.preventDefault()
+    event.stopPropagation()
+    closeFooterMenu()
+    stepFooter(direction)
     return true
   }
 

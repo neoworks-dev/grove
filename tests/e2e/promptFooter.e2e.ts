@@ -100,3 +100,22 @@ test('a menu opened from the keyboard takes focus, arrows walk its rows, Enter p
   await expect(trigger).toHaveAttribute('aria-expanded', 'false')
   await expect(trigger).toBeFocused()
 })
+
+test('Left and right from an open menu move to the neighbouring item and never open the overview', async ({
+  grove
+}) => {
+  const page = grove.page
+  await page.getByRole('button', { name: 'New session' }).click()
+  await prompt(page).click()
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('ArrowRight')
+  await page.keyboard.press('ArrowRight')
+  const trigger = page.getByTestId('agent-mode-trigger')
+  await page.keyboard.press('Enter')
+  await expect(page.getByTestId('agent-mode-option').first()).toBeFocused()
+
+  await page.keyboard.press('ArrowLeft')
+  await expect(trigger).toHaveAttribute('aria-expanded', 'false')
+  await expect(page.locator('[data-footer-item]').nth(1)).toBeFocused()
+  await expect(page.getByText('no sessions')).toHaveCount(0)
+})

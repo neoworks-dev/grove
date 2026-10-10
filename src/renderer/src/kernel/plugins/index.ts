@@ -6,7 +6,6 @@ import { worktrees } from './worktrees'
 import { gitChanges } from './gitChanges'
 import { gitGraph } from './gitGraph'
 import { agents } from './agents'
-import { checkpoints } from './checkpoints'
 import { replay } from './replay'
 import { promptBlame } from './promptBlame'
 import { extensionsView } from './extensions'
@@ -32,7 +31,6 @@ export const corePlugins = [
   gitChanges,
   gitGraph,
   agents,
-  checkpoints,
   replay,
   promptBlame,
   extensionsView,

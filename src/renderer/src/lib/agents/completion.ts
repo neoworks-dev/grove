@@ -7,7 +7,7 @@
  */
 
 // `shell` completes a word of a `!` draft, answered by the user's own shell.
-export type CompletionKind = 'command' | 'file' | 'shell'
+export type CompletionKind = 'command' | 'file' | 'shell' | 'emoji'
 
 export interface Completion {
   kind: CompletionKind
@@ -29,7 +29,7 @@ export function activeCompletion(text: string, caret: number, requested = false)
   if (shell) {
     return shellWordAt(text, caret, shell, requested)
   }
-  return commandAt(text, caret) ?? fileAt(text, caret)
+  return commandAt(text, caret) ?? fileAt(text, caret) ?? emojiAt(text, caret)
 }
 
 /**
@@ -86,6 +86,65 @@ function fileAt(text: string, caret: number): Completion | null {
     return null
   }
   return { kind: 'file', query, start, end: caret }
+}
+
+/** A `:name` that opens a word and has two or more characters typed, so `http://` and `10:30` stay alone. */
+function emojiAt(text: string, caret: number): Completion | null {
+  const start = text.slice(0, caret).search(/\S*$/)
+  if (text[start] !== ':') {
+    return null
+  }
+
+  const query = text.slice(start + 1, caret)
+  if (!/^[\w+-]{2,}$/.test(query)) {
+    return null
+  }
+  return { kind: 'emoji', query, start, end: caret }
+}
+
+/** The session label an agent's address lives on; mirrors `AGENT_ID_LABEL` in the main process. */
+const AGENT_ID_LABEL = 'grove.agentId'
+
+export interface MentionableSession {
+  id: string
+  title: string
+  live: boolean
+  labels: Record<string, string>
+}
+
+export interface SessionMention {
+  /** What other agents address the session as: the text a mention writes. */
+  agentId: string
+  title: string
+}
+
+/**
+ * The live sessions an `@` query can mean, other than the one being written in.
+ *
+ * Only a query that opens with a letter asks for sessions, so `@./`, `@src/` and `@~` stay file
+ * searches. A session matches by the start of its agent id or any part of its title.
+ */
+export function sessionMentions(
+  sessions: MentionableSession[],
+  currentSessionId: string,
+  query: string
+): SessionMention[] {
+  if (!/^[a-z]/i.test(query)) {
+    return []
+  }
+
+  const needle = query.toLowerCase()
+  const mentions: SessionMention[] = []
+  for (const session of sessions) {
+    if (!session.live || session.id === currentSessionId) {
+      continue
+    }
+    const agentId = session.labels[AGENT_ID_LABEL] || session.id.slice(0, 8)
+    if (agentId.startsWith(needle) || session.title.toLowerCase().includes(needle)) {
+      mentions.push({ agentId, title: session.title })
+    }
+  }
+  return mentions
 }
 
 export interface DraftSegment {
@@ -169,6 +228,9 @@ function completionText(kind: CompletionKind, value: string): string {
   }
   if (kind === 'file') {
     return `@${value} `
+  }
+  if (kind === 'emoji') {
+    return value
   }
   if (value.endsWith('/')) {
     return value

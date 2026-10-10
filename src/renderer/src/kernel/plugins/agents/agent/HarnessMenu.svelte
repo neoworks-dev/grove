@@ -30,12 +30,13 @@
 </script>
 
 <div
-  class="absolute left-0 z-30 w-64 rounded-md border border-line bg-elevated py-1 shadow-lg"
+  class="[&_button:focus-visible]:bg-hover [&_input:focus-visible]:border-accent [&_button:focus-visible]:outline-none absolute left-0 z-30 w-64 rounded-md border border-line bg-elevated py-1 shadow-lg"
   class:bottom-full={!below}
   class:mb-1={!below}
   class:top-full={below}
   class:mt-1={below}
   role="menu"
+  data-footer-menu
   use:keepInside={boundary}
 >
   {#each harnesses as entry (entry.id)}

@@ -9,6 +9,8 @@
   // state (see lib/agents/modes.ts) rather than stored here.
 
   import Icon from '@iconify/svelte'
+  import { tick } from 'svelte'
+  import { focusedFooterMenu, focusOpenFooterMenu } from '../../../../lib/agents/footerFocus'
   import StopIcon from 'phosphor-svelte/lib/StopIcon'
   import { MODE_DESCRIPTIONS, MODE_LABELS, type AgentMode } from '../../../../lib/agents/modes'
   import { findRoute } from '../../../../lib/agents/modelSelection'
@@ -92,12 +94,25 @@
   const current = $derived(harnesses.find((entry) => entry.id === harness))
   const capabilities = $derived(current?.capabilities)
 
+  // A menu opened from the keyboard takes the keyboard with it, so its rows can be
+  // walked with the arrow keys; the footer key handler in AgentPane does the walking.
+  $effect(() => {
+    if (openMenu === null) return
+    void tick().then(() => {
+      if (controlsRow) focusOpenFooterMenu(controlsRow)
+    })
+  })
+
   function toggle(menu: Menu): void {
     openMenu = openMenu === menu ? null : menu
   }
 
+  /** Closes the open menu; when the keyboard was inside it, the keyboard goes back to its trigger. */
   function close(): void {
+    const trigger = controlsRow?.querySelector<HTMLElement>('[aria-expanded="true"]')
+    const keyboardInMenu = controlsRow ? focusedFooterMenu(controlsRow) !== null : false
     openMenu = null
+    if (keyboardInMenu) trigger?.focus()
   }
 
   const reviewLabel = $derived(reviewMode === 'post' ? 'review after' : 'review first')
@@ -261,7 +276,8 @@
     </button>
     {#if openMenu === 'mode'}
       <div
-        class="absolute bottom-full left-0 z-30 mb-1 w-64 rounded-md border border-line bg-elevated py-1 shadow-lg"
+        data-footer-menu
+        class="absolute bottom-full left-0 z-30 mb-1 w-64 [&_button:focus-visible]:bg-hover [&_input:focus-visible]:border-accent [&_button:focus-visible]:outline-none rounded-md border border-line bg-elevated py-1 shadow-lg"
         use:keepInside={controlsRow}
       >
         {#each MODES as candidate (candidate)}
@@ -301,7 +317,8 @@
     </button>
     {#if openMenu === 'review'}
       <div
-        class="absolute bottom-full left-0 z-30 mb-1 w-56 rounded-md border border-line bg-elevated py-1 shadow-lg"
+        data-footer-menu
+        class="absolute bottom-full left-0 z-30 mb-1 w-56 [&_button:focus-visible]:bg-hover [&_input:focus-visible]:border-accent [&_button:focus-visible]:outline-none rounded-md border border-line bg-elevated py-1 shadow-lg"
         use:keepInside={controlsRow}
       >
         <div class="px-2 py-1 text-2xs text-dim">Review changes</div>
@@ -341,7 +358,8 @@
     </button>
     {#if openMenu === 'thinking'}
       <div
-        class="absolute bottom-full right-0 z-30 mb-1 w-40 rounded-md border border-line bg-elevated py-1 shadow-lg"
+        data-footer-menu
+        class="absolute bottom-full right-0 z-30 mb-1 w-40 [&_button:focus-visible]:bg-hover [&_input:focus-visible]:border-accent [&_button:focus-visible]:outline-none rounded-md border border-line bg-elevated py-1 shadow-lg"
       >
         {#each THINKING_LEVELS as level (level)}
           <button

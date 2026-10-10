@@ -94,6 +94,7 @@
   import AgentNotes from './AgentNotes.svelte'
   import AgentQuestion from './AgentQuestion.svelte'
   import AgentControls from './AgentControls.svelte'
+  import AgentHints from './AgentHints.svelte'
   import AgentEditedFiles from './AgentEditedFiles.svelte'
   import AgentOverview from './AgentOverview.svelte'
   import AgentQueue from './AgentQueue.svelte'
@@ -1445,6 +1446,18 @@
                 onPickMode={pickMode}
                 onSetReview={setReviewSetting}
                 onInterrupt={interrupt}
+              />
+            {/if}
+
+            {#if snapshot && activeId && !shownApproval}
+              <AgentHints
+                sessionId={activeId}
+                {mode}
+                {running}
+                {commandRunning}
+                contextRatio={snapshot.context.ratio}
+                cycleModeKeys={keymap.keysFor(`agent.cycleMode:${leafId}`)}
+                backgroundKeys={keymap.keysFor(`agent.backgroundShell:${leafId}`)}
               />
             {/if}
           </div>

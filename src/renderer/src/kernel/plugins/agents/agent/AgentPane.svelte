@@ -88,7 +88,7 @@
   import AgentSessionTabs from './AgentSessionTabs.svelte'
   import AgentTranscript from './AgentTranscript.svelte'
   import AgentWorkingBar from './AgentWorkingBar.svelte'
-  import RewindMenu from './RewindMenu.svelte'
+  import AgentRewind from './AgentRewind.svelte'
   import CredentialPrompt from './CredentialPrompt.svelte'
   import EndpointEditor from './EndpointEditor.svelte'
   import PaneControls from '../../../../components/PaneControls.svelte'
@@ -488,21 +488,30 @@
 
   // ── Rewind ──────────────────────────────────────────────────────
 
+  // Whether the transcript is showing the rewind list in its place.
   let rewindMenuOpen = $state(false)
 
-  // The prompts the rewind menu offers, oldest first.
+  // The prompts rewind offers, oldest first.
   const promptsToRewindTo = $derived.by(() => {
     if (!live) return []
     return rewindPrompts(live.transcript)
   })
 
-  /** Opens the rewind menu: the prompts sent in this session and what going back to one restores. */
+  /** Switches the pane into rewind: the prompts sent in this session and what going back to one restores. */
   function openRewindMenu(): void {
     if (!activeId || subagent || overviewOpen) return
     rewindMenuOpen = true
   }
 
-  /** Closes the rewind menu and hands the keyboard back to the composer. */
+  // Another session's prompts are not these ones.
+  $effect(() => {
+    void activeId
+    untrack(() => {
+      rewindMenuOpen = false
+    })
+  })
+
+  /** Leaves rewind for the conversation and hands the keyboard back to the composer. */
   function closeRewindMenu(): void {
     rewindMenuOpen = false
     focusComposerNextFrame()
@@ -1085,6 +1094,16 @@
     {#if overviewOpen}
       <!-- The fleet replaces the conversation: picking one is what returns. -->
       <AgentOverview activeSessionId={activeId} onOpen={openFromOverview} onClose={closeOverview} />
+    {:else if rewindMenuOpen && activeId && live}
+      <!-- The rewind list stands in for the transcript, in the pane itself. -->
+      <AgentRewind
+        sessionId={activeId}
+        prompts={promptsToRewindTo}
+        harnessRewinds={rewinds}
+        {running}
+        onRestore={rewindTo}
+        onClose={closeRewindMenu}
+      />
     {:else if activeId && live}
       <AgentTranscript
         sessionId={activeId}
@@ -1319,17 +1338,6 @@
     {/if}
   {/if}
 </div>
-
-{#if rewindMenuOpen && activeId}
-  <RewindMenu
-    sessionId={activeId}
-    prompts={promptsToRewindTo}
-    harnessRewinds={rewinds}
-    {running}
-    onRestore={rewindTo}
-    onClose={closeRewindMenu}
-  />
-{/if}
 
 {#if addingEndpoint}
   <EndpointEditor onClose={closeEndpointEditor} />

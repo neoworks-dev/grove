@@ -95,6 +95,8 @@
   import AgentQuestion from './AgentQuestion.svelte'
   import AgentControls from './AgentControls.svelte'
   import AgentHints from './AgentHints.svelte'
+  import AgentSubagentPanel from './AgentSubagentPanel.svelte'
+  import type { PanelRow } from '../../../../lib/agents/subagentPanel'
   import AgentEditedFiles from './AgentEditedFiles.svelte'
   import AgentOverview from './AgentOverview.svelte'
   import AgentQueue from './AgentQueue.svelte'
@@ -219,7 +221,11 @@
   let overviewOpen = $state(false)
   let expandedTools = $state<Record<string, boolean>>({})
   let transcriptViewport = $state<HTMLDivElement>()
-  let composer = $state<{ focus: () => boolean; restorePrompt: (text: string) => void }>()
+  let composer = $state<{
+    focus: () => boolean
+    restorePrompt: (text: string) => void
+    insertAtCaret: (text: string) => void
+  }>()
   // What sits under the prompt: the background tasks and the controls row.
   let footerEl = $state<HTMLDivElement>()
   // The approval or question card standing in for the composer, while one is up.
@@ -857,6 +863,40 @@
     focusComposer()
   }
 
+  /** Shows an agent's conversation from the panel, and keeps the keyboard in the panel for the next move. */
+  function openFromPanel(sessionId: string): void {
+    selectSession(sessionId)
+    requestAnimationFrame(() => focusFooter())
+  }
+
+  /** Types into the prompt from the footer, which is how a footer key with nothing to do on a row falls back. */
+  function typeIntoPrompt(text: string): void {
+    composer?.insertAtCaret(text)
+  }
+
+  /**
+   * Stops an agent the session is running. One the harness ran inside a tool call has no
+   * run of its own, so the turn that started it is what stops, and everything it was
+   * running with it.
+   */
+  function stopAgent(row: PanelRow): void {
+    if (!activeId) return
+    let target = row.sessionId
+    if (row.harnessRun) target = rootSessionId()
+    void agentSessions.send(target, [{ type: 'user.interrupt' }])
+  }
+
+  /** The session the user started that the session on screen belongs to. */
+  function rootSessionId(): string {
+    let current = activeMeta
+    while (current) {
+      const parentId = parentIdOf(current)
+      if (!parentId) return current.id
+      current = sessionList.find((session) => session.id === parentId)
+    }
+    return activeId as string
+  }
+
   /** Left and right move between the items under the prompt. */
   function stepFooter(direction: 1 | -1): void {
     if (footerEl) stepFooterItem(footerEl, direction)
@@ -877,7 +917,7 @@
     if (event.key === 'ArrowRight') action = () => stepFooter(1)
     if (event.key === 'ArrowLeft') action = () => stepFooter(-1)
     // Nothing lies below the footer, so down stays where it is rather than reaching the page.
-    if (event.key === 'ArrowDown') action = () => {}
+    if (event.key === 'ArrowDown' && !handlesOwnKeys) action = () => {}
     if (event.key === 'ArrowUp' && !handlesOwnKeys) action = leaveFooter
     if (event.key === 'Escape' && !handlesOwnKeys) action = leaveFooter
     if (!action) return false
@@ -1388,6 +1428,10 @@
               </button>
             {/if}
           </div>
+          <!-- The agents of this family stay reachable from the one being looked at. -->
+          <div bind:this={footerEl}>
+            {@render agentPanel()}
+          </div>
         {:else}
           <!-- Kept mounted while an approval or question stands in for it, so the
                draft being written survives the card. -->
@@ -1413,6 +1457,10 @@
           {/if}
 
           <div bind:this={footerEl}>
+            {#if !shownApproval}
+              {@render agentPanel()}
+            {/if}
+
             {#if activeId && live && !shownApproval}
               <AgentBackgroundCommands
                 sessionId={activeId}
@@ -1478,6 +1526,18 @@
     onClose={closeCredentialPrompt}
   />
 {/if}
+
+<!-- The session and the agents it is running, under the prompt. -->
+{#snippet agentPanel()}
+  <AgentSubagentPanel
+    sessions={sessionList}
+    {activeId}
+    onOpen={openFromPanel}
+    onStop={stopAgent}
+    onLeave={focusComposer}
+    onTypeIntoPrompt={typeIntoPrompt}
+  />
+{/snippet}
 
 <!-- The notes list, drawn as the top of the composer rather than a card of its own. -->
 {#snippet notesHeader()}

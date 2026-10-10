@@ -93,6 +93,7 @@
   import AgentTranscript from './AgentTranscript.svelte'
   import AgentWorkingBar from './AgentWorkingBar.svelte'
   import AgentRewind from './AgentRewind.svelte'
+  import AgentTranscriptViewer from './AgentTranscriptViewer.svelte'
   import CredentialPrompt from './CredentialPrompt.svelte'
   import EndpointEditor from './EndpointEditor.svelte'
   import PaneControls from '../../../../components/PaneControls.svelte'
@@ -569,6 +570,7 @@
   /** Switches the pane into rewind: the prompts sent in this session and what going back to one restores. */
   function openRewindMenu(): void {
     if (!activeId || subagent || overviewOpen) return
+    transcriptViewerOpen = false
     rewindMenuOpen = true
   }
 
@@ -577,8 +579,40 @@
     void activeId
     untrack(() => {
       rewindMenuOpen = false
+      transcriptViewerOpen = false
     })
   })
+
+  // ── Transcript viewer ───────────────────────────────────────────
+
+  // Whether the detailed transcript is showing in place of the conversation.
+  let transcriptViewerOpen = $state(false)
+  let transcriptViewer = $state<{ focus: () => boolean }>()
+
+  // What the viewer shows: the visible items with their times, on the session's model.
+  const viewerSource = $derived.by(() => {
+    if (!live) return { items: [], createdAt: new Map<number, string>(), model: '' }
+    let model = ''
+    if (snapshot) model = snapshot.model
+    return { items, createdAt: live.transcript.createdAt, model }
+  })
+
+  /** Ctrl+O: switches between the conversation and its detailed transcript. */
+  function toggleTranscriptViewer(): void {
+    if (transcriptViewerOpen) {
+      closeTranscriptViewer()
+      return
+    }
+    if (!activeId || !live || overviewOpen) return
+    rewindMenuOpen = false
+    transcriptViewerOpen = true
+  }
+
+  /** Leaves the viewer for the conversation and hands the keyboard back to the composer. */
+  function closeTranscriptViewer(): void {
+    transcriptViewerOpen = false
+    focusComposerNextFrame()
+  }
 
   /** Leaves rewind for the conversation and hands the keyboard back to the composer. */
   function closeRewindMenu(): void {
@@ -855,6 +889,7 @@
   /** Focuses the card the agent is waiting on, else the composer; false if neither can take it. */
   function focusPromptTarget(): boolean {
     if (overviewOpen) return false
+    if (transcriptViewerOpen && transcriptViewer) return transcriptViewer.focus()
     if (promptCard) {
       promptCard.focus()
       return true
@@ -1060,6 +1095,14 @@
         run: () => composer?.searchHistory()
       },
       {
+        id: `agent.transcriptViewer:${leafId}`,
+        keys: 'ctrl+o',
+        context: leafId,
+        group: 'Agent',
+        description: 'Show the detailed transcript',
+        run: toggleTranscriptViewer
+      },
+      {
         id: `agent.overview:${leafId}`,
         keys: 'left',
         context: leafId,
@@ -1181,6 +1224,14 @@
     {#if overviewOpen}
       <!-- The fleet replaces the conversation: picking one is what returns. -->
       <AgentOverview activeSessionId={activeId} onOpen={openFromOverview} onClose={closeOverview} />
+    {:else if transcriptViewerOpen && activeId && live}
+      <!-- The detailed transcript stands in for the conversation, in the pane itself. -->
+      <AgentTranscriptViewer
+        bind:this={transcriptViewer}
+        source={viewerSource}
+        toggleKeys={keymap.keysFor(`agent.transcriptViewer:${leafId}`)}
+        onClose={closeTranscriptViewer}
+      />
     {:else if rewindMenuOpen && activeId && live}
       <!-- The rewind list stands in for the transcript, in the pane itself. -->
       <AgentRewind

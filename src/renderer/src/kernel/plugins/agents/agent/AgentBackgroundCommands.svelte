@@ -136,6 +136,7 @@
 {#if commands.length > 0}
   <div
     bind:this={rootEl}
+    data-footer-item="own-keys"
     class="mt-1.5 rounded-md border border-line bg-elevated text-2xs text-muted outline-none focus:border-accent"
     tabindex="-1"
     role="listbox"

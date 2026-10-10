@@ -6,6 +6,7 @@ import {
   agentIdOf,
   liveAgentIds,
   parentIdOf,
+  runningBackgroundSessions,
   sessionByAgentId,
   sessionFamilies,
   subagentOf,
@@ -167,5 +168,28 @@ describe('an agent a harness ran inside a tool call', () => {
     ]
 
     expect(shape(sessions)).toEqual([['parent@0', 'child@1']])
+  })
+})
+
+describe('runningBackgroundSessions', () => {
+  test('keeps only running sessions an agent spawned', () => {
+    const userStarted = { ...session('root'), status: 'running' as const }
+    const spawnedRunning = {
+      ...session('child', { 'grove.parent': 'root' }),
+      status: 'running' as const
+    }
+    const spawnedIdle = { ...session('idle', { 'grove.parent': 'root' }), status: 'idle' as const }
+    const spawnedRunningTwo = {
+      ...session('child2', { 'grove.parent': 'root' }),
+      status: 'running' as const
+    }
+
+    const found = runningBackgroundSessions([userStarted, spawnedRunning, spawnedIdle, spawnedRunningTwo])
+
+    expect(found.map((entry) => entry.id)).toEqual(['child', 'child2'])
+  })
+
+  test('is empty when nothing is running in the background', () => {
+    expect(runningBackgroundSessions([session('root'), session('child', { 'grove.parent': 'root' })])).toEqual([])
   })
 })

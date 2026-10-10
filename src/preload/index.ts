@@ -188,6 +188,13 @@ const workbench = {
     restore: (sessionId: string, tree: string) =>
       ipcRenderer.invoke('replay:restore', sessionId, tree)
   },
+  rewind: {
+    snapshots: (sessionId: string) => ipcRenderer.invoke('rewind:snapshots', sessionId),
+    changes: (sessionId: string, promptSeq: number) =>
+      ipcRenderer.invoke('rewind:changes', sessionId, promptSeq),
+    restoreCode: (sessionId: string, promptSeq: number) =>
+      ipcRenderer.invoke('rewind:restoreCode', sessionId, promptSeq)
+  },
   blame: {
     line: (worktreeId: string, path: string, line: number, text: string) =>
       ipcRenderer.invoke('blame:line', worktreeId, path, line, text),

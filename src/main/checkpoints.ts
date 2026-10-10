@@ -38,6 +38,12 @@ const EXEMPT_TRIGGERS: ReadonlySet<CheckpointTrigger> = new Set([
 // (e.g. a user message immediately followed by a turn-end) coalesce.
 const MIN_SNAPSHOT_INTERVAL_MS = 750
 
+// Prompt snapshots are one per user message, are recorded even when nothing changed
+// (each prompt must find its own), and are capped apart from the other triggers so
+// a long session neither crowds them out nor is crowded out by them.
+const PROMPT_TRIGGER: CheckpointTrigger = 'prompt-sent'
+const PROMPT_CAP = 200
+
 function gitFor(worktreePath: string): SimpleGit {
   return simpleGit({ baseDir: worktreePath })
 }
@@ -202,6 +208,31 @@ export interface SnapshotContext {
   agent?: string
   chatId?: string
   note?: string
+  sessionId?: string
+  promptSeq?: number
+}
+
+/** The snapshot taken when a session's prompt was sent, or null when there is none. */
+export function promptSnapshot(
+  list: readonly CheckpointMeta[],
+  sessionId: string,
+  promptSeq: number
+): CheckpointMeta | null {
+  for (let index = list.length - 1; index >= 0; index--) {
+    const meta = list[index]
+    if (meta.trigger !== PROMPT_TRIGGER) continue
+    if (meta.sessionId !== sessionId || meta.promptSeq !== promptSeq) continue
+    return meta
+  }
+  return null
+}
+
+/** Every prompt snapshot a session has, oldest first. */
+export function promptSnapshotsOf(
+  list: readonly CheckpointMeta[],
+  sessionId: string
+): CheckpointMeta[] {
+  return list.filter((meta) => meta.trigger === PROMPT_TRIGGER && meta.sessionId === sessionId)
 }
 
 export class CheckpointManager {
@@ -249,9 +280,11 @@ export class CheckpointManager {
     ctx: SnapshotContext
   ): Promise<CheckpointMeta | null> {
     const now = Date.now()
-    const isSafety = EXEMPT_TRIGGERS.has(trigger)
+    const isPrompt = trigger === PROMPT_TRIGGER
+    const isSafety = EXEMPT_TRIGGERS.has(trigger) || isPrompt
     const last = this.lastSnapshotAt.get(worktreePath) ?? 0
-    // Safety checkpoints (pre-restore/merge/rebase/reset) must never be debounced away.
+    // Safety checkpoints (pre-restore/merge/rebase/reset) and prompt snapshots must
+    // never be debounced away.
     if (!isSafety && now - last < MIN_SNAPSHOT_INTERVAL_MS) return null
 
     const git = gitFor(worktreePath)
@@ -289,12 +322,15 @@ export class CheckpointManager {
       trigger,
       agent: ctx.agent,
       chatId: ctx.chatId,
-      note: ctx.note
+      note: ctx.note,
+      sessionId: ctx.sessionId,
+      promptSeq: ctx.promptSeq
     }
     list.push(meta)
     this.metadata.set(worktreePath, list)
     this.lastSnapshotAt.set(worktreePath, now)
     await this.prune(worktreePath, DEFAULT_CAP)
+    await this.pruneTrigger(worktreePath, PROMPT_TRIGGER, PROMPT_CAP)
     this.events.onChange?.(this.all())
     return meta
   }
@@ -363,14 +399,14 @@ export class CheckpointManager {
   // Evict oldest non-safety checkpoints beyond the cap, deleting their refs.
   async prune(worktreePath: string, cap: number): Promise<void> {
     const list = this.metadata.get(worktreePath) ?? []
-    const evictable = list.filter((m) => !EXEMPT_TRIGGERS.has(m.trigger))
+    const evictable = list.filter((m) => !EXEMPT_TRIGGERS.has(m.trigger) && m.trigger !== PROMPT_TRIGGER)
     let overflow = evictable.length - cap
     if (overflow <= 0) return
 
     const git = gitFor(worktreePath)
     const kept: CheckpointMeta[] = []
     for (const meta of list) {
-      if (overflow > 0 && !EXEMPT_TRIGGERS.has(meta.trigger)) {
+      if (overflow > 0 && !EXEMPT_TRIGGERS.has(meta.trigger) && meta.trigger !== PROMPT_TRIGGER) {
         overflow -= 1
         await git.raw(['update-ref', '-d', `${refPrefix(worktreePath)}/${meta.n}`]).catch(() => {})
         continue
@@ -378,5 +414,26 @@ export class CheckpointManager {
       kept.push(meta)
     }
     this.metadata.set(worktreePath, kept)
+  }
+
+  /** Evicts the oldest checkpoints of one trigger beyond `cap`, deleting their refs. */
+  private async pruneTrigger(
+    worktreePath: string,
+    trigger: CheckpointTrigger,
+    cap: number
+  ): Promise<void> {
+    const list = this.metadata.get(worktreePath) ?? []
+    const ofTrigger = list.filter((meta) => meta.trigger === trigger)
+    const evicted = new Set(ofTrigger.slice(0, Math.max(0, ofTrigger.length - cap)))
+    if (evicted.size === 0) return
+
+    const git = gitFor(worktreePath)
+    for (const meta of evicted) {
+      await git.raw(['update-ref', '-d', `${refPrefix(worktreePath)}/${meta.n}`]).catch(() => {})
+    }
+    this.metadata.set(
+      worktreePath,
+      list.filter((meta) => !evicted.has(meta))
+    )
   }
 }

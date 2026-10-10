@@ -45,6 +45,11 @@ export function subagentSessions(sessions: SessionMeta[]): Map<string, string> {
   return byToolUseId
 }
 
+/** The sessions an agent spawned that are still running, which "Stop all" interrupts. */
+export function runningBackgroundSessions(sessions: SessionMeta[]): SessionMeta[] {
+  return sessions.filter((session) => parentIdOf(session) !== null && session.status === 'running')
+}
+
 /** The id other agents address this session by. */
 export function agentIdOf(session: SessionMeta): string {
   return session.labels[AGENT_ID_LABEL] || session.id.slice(0, 8)

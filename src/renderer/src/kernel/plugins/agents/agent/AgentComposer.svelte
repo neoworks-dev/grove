@@ -33,6 +33,16 @@
   import { isStashKey, PromptStash } from '../../../../lib/agents/promptStash'
   import { DoubleEscape, escapeAction } from '../../../../lib/agents/doubleEscape'
   import { openRewindMenu } from '../../../../lib/agents/rewindMenu'
+  import {
+    appendToQuery,
+    currentHistoryMatch,
+    historyMatches,
+    isQueryCharacter,
+    olderMatch,
+    startHistorySearch,
+    trimQuery,
+    type HistorySearch
+  } from '../../../../lib/agents/historySearch'
   import { keyDispatch, KeyPriority } from '../../../../lib/keyDispatch'
   import ArrowCounterClockwise from 'phosphor-svelte/lib/ArrowCounterClockwise'
   import ImageMarkup from './ImageMarkup.svelte'
@@ -153,6 +163,14 @@
     sessionId
     historyIndex = -1
     clearedDrafts = []
+  })
+
+  // Ctrl+R's reverse search over `history`, while one is under way. The draft shows
+  // the match as it is found; the draft from before is kept in the search.
+  let historySearch = $state<HistorySearch | null>(null)
+  const searchMatchCount = $derived.by(() => {
+    if (historySearch === null) return 0
+    return historyMatches(history, historySearch.query).length
   })
 
   // Set by Tab in a shell draft, which asks for completions of a word not yet
@@ -585,6 +603,7 @@
 
   function onKey(event: KeyboardEvent): void {
     onKeystroke?.()
+    if (historySearch !== null && onSearchKey(event)) return
     if (isDictationSpace(event) && shell === null && !menuOpen) {
       onDictationSpace(event)
       return
@@ -683,6 +702,75 @@
     references = []
     historyIndex = -1
     suggestions = []
+  }
+
+  /** Ctrl+R: begins a reverse search over the sent prompts, or steps a search under way to the next older match. */
+  export function searchHistory(): void {
+    if (historySearch === null) {
+      historySearch = startHistorySearch(draft)
+      historyIndex = -1
+      return
+    }
+    historySearch = olderMatch(history, historySearch)
+    showSearchMatch()
+  }
+
+  /** Shows the search's match as the draft, or the draft from before while nothing matches. */
+  function showSearchMatch(): void {
+    if (historySearch === null) return
+    const match = currentHistoryMatch(history, historySearch)
+    if (match === null) {
+      draft = historySearch.original
+      return
+    }
+    draft = match
+  }
+
+  /**
+   * Keys while searching. Typing and Backspace edit the query; Tab and Escape keep
+   * the match for editing, Enter sends it and Ctrl+C puts the old draft back. Any
+   * other key keeps the match and then does what it normally does. Says whether
+   * the key was used up.
+   */
+  function onSearchKey(event: KeyboardEvent): boolean {
+    if (['Shift', 'Control', 'Alt', 'Meta'].includes(event.key)) return true
+    if (event.ctrlKey && event.key.toLowerCase() === 'c') {
+      event.preventDefault()
+      cancelSearch()
+      return true
+    }
+    if (event.key === 'Escape' || event.key === 'Tab') {
+      event.preventDefault()
+      historySearch = null
+      return true
+    }
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault()
+      historySearch = null
+      submit()
+      return true
+    }
+    if (event.key === 'Backspace' && historySearch !== null) {
+      event.preventDefault()
+      historySearch = trimQuery(historySearch)
+      showSearchMatch()
+      return true
+    }
+    if (isQueryCharacter(event) && historySearch !== null) {
+      event.preventDefault()
+      historySearch = appendToQuery(historySearch, event.key)
+      showSearchMatch()
+      return true
+    }
+    historySearch = null
+    return false
+  }
+
+  /** Ends the search and puts back the draft it began with. */
+  function cancelSearch(): void {
+    if (historySearch === null) return
+    draft = historySearch.original
+    historySearch = null
   }
 
   /** Moves a waiting message back into the draft; says whether there was one. */
@@ -966,6 +1054,23 @@
     {@render header()}
   {/if}
 
+  {#if historySearch}
+    <!-- The search shows in the composer itself, flush on top of the match it found. -->
+    <div
+      class="flex items-center gap-2 border border-b-0 border-line-strong bg-elevated px-2 py-1 font-mono text-2xs text-dim"
+      data-testid="history-search"
+    >
+      <span class="shrink-0">reverse search:</span>
+      <span class="max-w-[60%] shrink-0 truncate text-default">{historySearch.query}</span>
+      {#if historySearch.query !== '' && searchMatchCount === 0}
+        <span class="shrink-0 text-red">no match</span>
+      {:else if searchMatchCount > 0}
+        <span class="shrink-0">{Math.min(historySearch.skipped + 1, searchMatchCount)}/{searchMatchCount}</span>
+      {/if}
+      <span class="min-w-0 flex-1 truncate text-right">Ctrl+R older · Tab keep · Enter send · Ctrl+C cancel</span>
+    </div>
+  {/if}
+
   <!-- A `!` draft switches the box to shell: monospace in a heavier weight, and an
        amber frame that says whether the model will see the output. Both copies of
        the text take the same font classes so they stay in register. The textarea
@@ -973,7 +1078,7 @@
        the painted copy doesn't and the caret would drift off the text. -->
   <div
     class="relative mb-2 rounded-md border bg-elevated"
-    class:rounded-t-none={header !== undefined}
+    class:rounded-t-none={header !== undefined || historySearch !== null}
     class:border-line-strong={!shell}
     class:border-amber={shell !== null}
   >
@@ -1006,6 +1111,7 @@
       }}
       onblur={() => {
         focused = false
+        historySearch = null
         spaceHold.reset()
         cancelDictation()
         onFocusChange(false)

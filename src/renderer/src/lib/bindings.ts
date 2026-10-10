@@ -109,7 +109,8 @@ export function registerCoreBindings(): () => void {
     },
     {
       id: 'leader.agent',
-      keys: '<Leader> a',
+      // Not <Leader> a: harpoon pins the current file with that in the editor.
+      keys: '<Leader> A',
       context: 'global',
       group: 'Focus',
       description: 'Open agent panel',

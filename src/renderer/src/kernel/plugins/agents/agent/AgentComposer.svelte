@@ -635,15 +635,29 @@
   function takeBack(): boolean {
     const text = onTakeBack?.() ?? null
     if (text === null) return false
+    restorePrompt(text)
+    return true
+  }
+
+  /**
+   * Puts a sent prompt back as the draft, with the images and slices it was sent
+   * with when the composer still has them, and leaves the caret at its end.
+   */
+  export function restorePrompt(text: string): void {
     const kept = sentDrafts.take(sessionId, text)
     if (kept === null) {
       draft = text
-      return true
+    } else {
+      draft = kept.draft
+      attachments = kept.attachments
+      references = kept.references
     }
-    draft = kept.draft
-    attachments = kept.attachments
-    references = kept.references
-    return true
+    historyIndex = -1
+    requestAnimationFrame(() => {
+      if (!promptEl) return
+      promptEl.focus()
+      promptEl.setSelectionRange(draft.length, draft.length)
+    })
   }
 
   /** Whether the caret sits on the draft's last line, where ArrowDown has nowhere left to go. */

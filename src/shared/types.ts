@@ -302,6 +302,9 @@ export interface WorktreeChatMessage {
 export type CheckpointTrigger =
   | 'agent-turn-end'
   | 'user-message'
+  // Taken as a prompt is sent to an agent session, so the worktree can be put back
+  // the way it was then. Carries `sessionId` and `promptSeq`.
+  | 'prompt-sent'
   | 'pre-restore'
   | 'pre-merge'
   | 'pre-rebase'
@@ -324,6 +327,10 @@ export interface CheckpointMeta {
   agent?: string
   chatId?: string
   note?: string
+  /** For a `prompt-sent` snapshot: the agent session the prompt was sent in. */
+  sessionId?: string
+  /** For a `prompt-sent` snapshot: the seq of the prompt's `user.message` event. */
+  promptSeq?: number
 }
 
 /** One file that differs between two trees (two checkpoints, or two agent steps). */

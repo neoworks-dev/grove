@@ -8,11 +8,12 @@ import type { CheckpointMeta, CheckpointTrigger } from '../../../../../shared/ty
  * Snapshots taken for the agent pane's rewind menu, one per prompt. They have
  * their own place to be restored from, so they stay out of this list.
  */
-export const HIDDEN_TRIGGERS: readonly CheckpointTrigger[] = ['user-message']
+export const HIDDEN_TRIGGERS: readonly CheckpointTrigger[] = ['prompt-sent', 'user-message']
 
 const TRIGGER_LABELS: Record<CheckpointTrigger, string> = {
   'agent-turn-end': 'After agent turn',
   'user-message': 'Before prompt',
+  'prompt-sent': 'Your prompt',
   'pre-restore': 'Before restore',
   'pre-merge': 'Before merge',
   'pre-rebase': 'Before rebase',

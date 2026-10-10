@@ -247,6 +247,12 @@ const agents = new AgentService({
     await editSteps.forget(session).catch(() => {})
     await agentHandoffBridge.reportClosed(session)
   },
+  promptSent: async (session, promptSeq) => {
+    await checkpoints.snapshot(session.workspaceRoot, 'prompt-sent', {
+      sessionId: session.id,
+      promptSeq
+    })
+  },
   publish: (event) => send('event:agent-event', event),
   publishShellOutput: (update) => send('event:agent-shell-output', update),
   defaultHarness: () => settings.get<string>('workbench.agentHarness'),

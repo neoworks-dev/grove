@@ -735,6 +735,15 @@ export interface HarnessCatalog {
   default: { provider: string; model: string } | null
 }
 
+// ── Rewind ──────────────────────────────────────────────────────
+
+/** The worktree as it stood when one prompt was sent, as a tree object. */
+export interface RewindSnapshot {
+  /** The seq of the prompt's `user.message` event. */
+  promptSeq: number
+  tree: string
+}
+
 // ── Replay ──────────────────────────────────────────────────────
 
 /**

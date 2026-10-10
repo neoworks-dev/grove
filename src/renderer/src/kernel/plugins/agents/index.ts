@@ -11,12 +11,13 @@ import WorktreeChatPane from './WorktreeChatPane.svelte'
 import WalkthroughBar from './WalkthroughBar.svelte'
 import { walkthrough } from '../../../lib/agents/walkthrough.svelte'
 import { initHarnessIcons } from '../../../lib/agents/harnessIcons'
+import { openRewindMenu } from '../../../lib/agents/rewindMenu'
 import { repoOpen } from '../guards'
 import { registerCoreShowHandlers, reportPaneTypes } from './screen.svelte'
 
 export const agents = {
   name: 'core/agents',
-  inject: ['panes', 'panel', 'editor', 'keymap'],
+  inject: ['panes', 'panel', 'editor', 'keymap', 'commands'],
 
   apply(ctx: Context): void {
     initHarnessIcons()
@@ -74,6 +75,20 @@ export const agents = {
           order: 15
         }),
       'panel:agent-shell'
+    )
+
+    ctx.effect(
+      () =>
+        ctx.commands.register({
+          id: 'agents.rewind',
+          title: 'Rewind',
+          group: 'Agents',
+          keywords: 'rewind restore undo prompt conversation code checkpoint snapshot back',
+          run: () => {
+            openRewindMenu()
+          }
+        }),
+      'command:agents.rewind'
     )
 
     // A walkthrough plays in the editor: its bar rides over the buffer, and

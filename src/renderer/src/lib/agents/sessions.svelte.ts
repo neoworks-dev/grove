@@ -403,18 +403,21 @@ class AgentSessions {
    * Events are snapshotted first: anything assembled out of `$state` (composer
    * attachments, an editor selection) arrives as a Svelte proxy, and Electron's
    * IPC cannot clone one — it fails the whole send with "An object could not be
-   * cloned".
+   * cloned". Says whether the main process accepted them; a refusal is left in the
+   * session's error.
    */
-  async send(sessionId: string, events: ClientEventBody[]): Promise<void> {
+  async send(sessionId: string, events: ClientEventBody[]): Promise<boolean> {
     const session = this.live[sessionId]
     try {
       await sendEvents(sessionId, $state.snapshot(events) as ClientEventBody[])
       if (session) session.error = ''
       // A queued follow-up shows up in the snapshot, never on the stream.
       await this.refreshSnapshot(sessionId)
+      return true
     } catch (cause) {
       if (session) session.error = messageOf(cause)
       else this.serverError = messageOf(cause)
+      return false
     }
   }
 

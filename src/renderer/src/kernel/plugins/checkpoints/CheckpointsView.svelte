@@ -18,6 +18,7 @@
   const triggerLabel: Record<CheckpointMeta['trigger'], string> = {
     'agent-turn-end': 'agent turn',
     'user-message': 'your message',
+    'prompt-sent': 'your prompt',
     'pre-restore': 'before restore',
     'pre-merge': 'before merge',
     'pre-rebase': 'before rebase',

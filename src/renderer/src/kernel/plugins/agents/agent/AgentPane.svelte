@@ -94,6 +94,8 @@
   import AgentWorkingBar from './AgentWorkingBar.svelte'
   import AgentRewind from './AgentRewind.svelte'
   import AgentTranscriptViewer from './AgentTranscriptViewer.svelte'
+  import AgentShortcutHelp from './AgentShortcutHelp.svelte'
+  import { COMPOSER_SHORTCUTS, paneShortcutRows } from '../../../../lib/agents/shortcutHelp'
   import CredentialPrompt from './CredentialPrompt.svelte'
   import EndpointEditor from './EndpointEditor.svelte'
   import PaneControls from '../../../../components/PaneControls.svelte'
@@ -571,6 +573,7 @@
   function openRewindMenu(): void {
     if (!activeId || subagent || overviewOpen) return
     transcriptViewerOpen = false
+    shortcutHelpOpen = false
     rewindMenuOpen = true
   }
 
@@ -580,6 +583,7 @@
     untrack(() => {
       rewindMenuOpen = false
       transcriptViewerOpen = false
+      shortcutHelpOpen = false
     })
   })
 
@@ -605,12 +609,39 @@
     }
     if (!activeId || !live || overviewOpen) return
     rewindMenuOpen = false
+    shortcutHelpOpen = false
     transcriptViewerOpen = true
   }
 
   /** Leaves the viewer for the conversation and hands the keyboard back to the composer. */
   function closeTranscriptViewer(): void {
     transcriptViewerOpen = false
+    focusComposerNextFrame()
+  }
+
+  // ── Shortcut help ───────────────────────────────────────────────
+
+  // Whether the keyboard shortcuts are showing in place of the conversation.
+  let shortcutHelpOpen = $state(false)
+
+  // The pane's bindings as they stand now, so a rebound key shows the key it answers to.
+  const shortcutRows = $derived(paneShortcutRows(keymap.effective, leafId))
+
+  /** `?` in an empty prompt: shows the shortcuts, or puts them away when they are showing. */
+  function toggleShortcutHelp(): void {
+    if (shortcutHelpOpen) {
+      closeShortcutHelp()
+      return
+    }
+    if (!activeId || overviewOpen) return
+    rewindMenuOpen = false
+    transcriptViewerOpen = false
+    shortcutHelpOpen = true
+  }
+
+  /** Leaves the help for the conversation and hands the keyboard back to the composer. */
+  function closeShortcutHelp(): void {
+    shortcutHelpOpen = false
     focusComposerNextFrame()
   }
 
@@ -1232,6 +1263,13 @@
         toggleKeys={keymap.keysFor(`agent.transcriptViewer:${leafId}`)}
         onClose={closeTranscriptViewer}
       />
+    {:else if shortcutHelpOpen && activeId && live}
+      <!-- The shortcuts stand in for the transcript, in the pane itself. -->
+      <AgentShortcutHelp
+        paneRows={shortcutRows}
+        composerRows={COMPOSER_SHORTCUTS}
+        onClose={closeShortcutHelp}
+      />
     {:else if rewindMenuOpen && activeId && live}
       <!-- The rewind list stands in for the transcript, in the pane itself. -->
       <AgentRewind
@@ -1433,6 +1471,7 @@
               onTakeBack={takeBackWaiting}
               onRestoreInterrupted={onComposerUp}
               hasWaiting={queued.length + steered.length > 0}
+              onShortcutHelp={toggleShortcutHelp}
               header={live ? notesHeader : undefined}
             />
           {/if}

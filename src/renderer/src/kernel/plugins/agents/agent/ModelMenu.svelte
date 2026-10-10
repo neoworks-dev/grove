@@ -32,6 +32,7 @@
     switchCostWarning,
     boundary,
     below = false,
+    inline = false,
     acceptsTypedId = true,
     onPick,
     onRequestKey,
@@ -47,6 +48,8 @@
     boundary?: HTMLElement
     /** Open under the control instead of above it, when there is no room above. */
     below?: boolean
+    /** Fill the space it is put in, instead of floating from the control it opens from. */
+    inline?: boolean
     /**
      * Whether an id typed into the search can be run as is. Off where the pick
      * is stored as a setting that only keeps models the harness lists.
@@ -157,6 +160,8 @@
    * inside cannot clip it; the row only contributes where it sits.
    */
   function showEndpoints(entry: ModelEntry, rowElement: HTMLElement): void {
+    // Filling the composer's width leaves no room beside the menu for a flyout.
+    if (inline) return
     if (entry.routes.length < 2) {
       flyout = null
       return
@@ -245,11 +250,17 @@
 {/snippet}
 
 <div
-  class="absolute left-0 z-30 flex w-80 flex-col rounded-md border border-line bg-elevated shadow-lg"
-  class:bottom-full={!below}
-  class:mb-1={!below}
-  class:top-full={below}
-  class:mt-1={below}
+  class="flex flex-col rounded-md border border-line bg-elevated shadow-lg [&_button:focus-visible]:bg-hover [&_button:focus-visible]:outline-none"
+  class:relative={inline}
+  class:absolute={!inline}
+  class:left-0={!inline}
+  class:z-30={!inline}
+  class:w-80={!inline}
+  class:w-full={inline}
+  class:bottom-full={!below && !inline}
+  class:mb-1={!below && !inline}
+  class:top-full={below && !inline}
+  class:mt-1={below && !inline}
   bind:this={root}
   use:keepInside={boundary}
   onmouseleave={() => (flyout = null)}
@@ -278,7 +289,7 @@
     />
   </div>
 
-  <FloatingScrollbar class="max-h-96" onscroll={() => (flyout = null)}>
+  <FloatingScrollbar class={inline ? 'max-h-64' : 'max-h-96'} onscroll={() => (flyout = null)}>
     <div class="py-1">
       {#each account as entry (entry.key)}
         {@render row(entry)}

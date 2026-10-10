@@ -131,6 +131,8 @@ async function start(args: string[]): Promise<void> {
     console.log('a session is already running — "qa stop" first, or "qa probe" to see it')
     return
   }
+  // The app of the last session is gone, but its display may not be.
+  stopSessionDisplay(readSessionFile())
   const packaged = packagedExecutable(args)
   if (args.includes('--fresh')) await resetProfile()
   if (args.includes('--build')) build()
@@ -157,7 +159,14 @@ async function start(args: string[]): Promise<void> {
   if (!args.includes('--no-viewer')) watching = openViewer(virtual)
 
   const port = await freePort()
-  const appPid = launchApp(profile, virtual.display, port, packaged)
+  let appPid: number
+  try {
+    appPid = launchApp(profile, virtual.display, port, packaged)
+  } catch (error) {
+    closeViewers(virtual.display)
+    virtual.stop()
+    throw error
+  }
   const session: Session = {
     display: virtual.display,
     displayPid: virtual.pid,
@@ -183,30 +192,40 @@ async function start(args: string[]): Promise<void> {
 
 /** Take the session down: the app, everything it spawned, and the display. */
 async function stop(): Promise<void> {
-  const session = readSession()
   const profile = profileAt(TEST_ROOT)
 
   const killed = killProfileProcesses(profile)
-  if (session) {
-    closeViewers(session.display)
-    stopVirtualDisplay(session.display, session.displayPid)
-  }
+  // Read without checking the app: a session whose app crashed still holds a display.
+  stopSessionDisplay(readSessionFile())
   await rm(paths.session, { force: true })
 
   console.log(`stopped ${killed} of the test profile's processes`)
 }
 
-function readSession(): Session | null {
+/** Close the viewer on a session's display and stop its X server. */
+function stopSessionDisplay(session: Session | null): void {
+  if (!session) return
+  closeViewers(session.display)
+  stopVirtualDisplay(session.display, session.displayPid)
+}
+
+/** The session file as written, whether or not its app is still running. */
+function readSessionFile(): Session | null {
   try {
-    const session: Session = JSON.parse(readFileSync(paths.session, 'utf8'))
-    // A session file outliving its app is the common case: the machine slept,
-    // the app crashed, someone killed it. Report it as gone rather than time out
-    // against a port nothing is listening on.
-    if (!isRunning(session.appPid)) return null
-    return session
+    return JSON.parse(readFileSync(paths.session, 'utf8'))
   } catch {
     return null
   }
+}
+
+function readSession(): Session | null {
+  const session = readSessionFile()
+  if (!session) return null
+  // A session file outliving its app is the common case: the machine slept,
+  // the app crashed, someone killed it. Report it as gone rather than time out
+  // against a port nothing is listening on.
+  if (!isRunning(session.appPid)) return null
+  return session
 }
 
 function requireSession(): Session {

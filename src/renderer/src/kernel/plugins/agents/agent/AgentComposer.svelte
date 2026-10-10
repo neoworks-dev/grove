@@ -28,7 +28,16 @@
   import { voiceDictation } from '../../../../lib/voice.svelte'
   import { isDictationSpace, spliceDictation } from '../../../../lib/voice'
   import { SPACE_HOLD_MS, SpaceHold } from '../../../../lib/voiceHold'
-  import { onDestroy, type Snippet } from 'svelte'
+  import { onDestroy, tick, type Snippet } from 'svelte'
+  import { settings } from '../../../../lib/settings.svelte'
+  import {
+    createVimState,
+    handleVimKey,
+    placeVimCursor,
+    vimSelection,
+    type VimMode,
+    type VimState
+  } from '../../../../lib/agents/composerVim'
   import { SentDrafts } from '../../../../lib/agents/sentDrafts'
   import { isStashKey, PromptStash } from '../../../../lib/agents/promptStash'
   import { DoubleEscape, escapeAction } from '../../../../lib/agents/doubleEscape'
@@ -172,6 +181,14 @@
     if (historySearch === null) return 0
     return historyMatches(history, historySearch.query).length
   })
+
+  // Vim keys in the draft, when the setting is on. The engine's state is plain,
+  // since it is only read when a key arrives; what the badge shows is kept apart.
+  const vimEnabled = $derived(settings.get<boolean>('workbench.agentVimMode') === true)
+  let vim: VimState = createVimState('')
+  let vimMode = $state<VimMode>('insert')
+  let vimPending = $state('')
+  const vimBadge = $derived(`${vimMode.toUpperCase()} ${vimPending}`.trim())
 
   // Set by Tab in a shell draft, which asks for completions of a word not yet
   // started; cleared by the next edit.
@@ -604,7 +621,7 @@
   function onKey(event: KeyboardEvent): void {
     onKeystroke?.()
     if (historySearch !== null && onSearchKey(event)) return
-    if (isDictationSpace(event) && shell === null && !menuOpen) {
+    if (isDictationSpace(event) && shell === null && !menuOpen && !vimOwnsSpace()) {
       onDictationSpace(event)
       return
     }
@@ -614,6 +631,7 @@
       return
     }
     if (menuOpen && handleMenuKey(event)) return
+    if (vimEnabled && handleVimInput(event)) return
 
     // Tab in a shell draft asks the shell what could come next.
     if (event.key === 'Tab' && shell) {
@@ -771,6 +789,62 @@
     if (historySearch === null) return
     draft = historySearch.original
     historySearch = null
+  }
+
+  /** Whether Space is a vim motion right now, rather than the key that holds to dictate. */
+  function vimOwnsSpace(): boolean {
+    return vimEnabled && vimMode !== 'insert'
+  }
+
+  /** Hands a keystroke to vim; says whether it was used up. */
+  function handleVimInput(event: KeyboardEvent): boolean {
+    vim = syncedVimState()
+    const result = handleVimKey(vim, {
+      key: event.key,
+      ctrl: event.ctrlKey,
+      alt: event.altKey,
+      meta: event.metaKey,
+      shift: event.shiftKey
+    })
+    vim = result.state
+    vimMode = vim.mode
+    vimPending = vim.pending
+    if (!result.handled) return false
+    event.preventDefault()
+    showVimState()
+    if (result.send) sendFromVim()
+    return true
+  }
+
+  /** The vim state with the draft and caret as the textarea has them now, which typing and clicks may have moved. */
+  function syncedVimState(): VimState {
+    if (!promptEl) return vim
+    const start = promptEl.selectionStart
+    if (vim.text !== draft) return placeVimCursor(vim, draft, start)
+    if (vim.mode === 'insert') return { ...vim, cursor: start }
+    const shown = vimSelection(vim)
+    if (start !== shown.start || promptEl.selectionEnd !== shown.end) {
+      return placeVimCursor(vim, draft, start)
+    }
+    return vim
+  }
+
+  /** Writes vim's text into the draft and shows its cursor or selection in the textarea. */
+  function showVimState(): void {
+    draft = vim.text
+    const selection = vimSelection(vim)
+    void tick().then(() => {
+      promptEl?.setSelectionRange(selection.start, selection.end)
+      syncCaret()
+    })
+  }
+
+  /** Enter in any vim mode: sends, and the next prompt starts in insert mode. */
+  function sendFromVim(): void {
+    submit()
+    vim = { ...createVimState(''), register: vim.register }
+    vimMode = 'insert'
+    vimPending = ''
   }
 
   /** Moves a waiting message back into the draft; says whether there was one. */
@@ -1086,6 +1160,7 @@
       bind:this={promptEl}
       bind:value={draft}
       class="no-scrollbar relative z-0 block h-20 w-full resize-none border-0 bg-transparent px-2 py-1.5 text-base leading-normal text-transparent caret-default outline-none placeholder:text-dim"
+      class:pb-5={vimEnabled}
       class:font-mono={shell !== null}
       class:font-medium={shell !== null}
       spellcheck={shell === null}
@@ -1128,6 +1203,7 @@
       bind:this={highlightEl}
       aria-hidden="true"
       class="pointer-events-none absolute inset-0 z-10 overflow-hidden whitespace-pre-wrap break-words px-2 py-1.5 text-base leading-normal text-default"
+      class:pb-5={vimEnabled}
       class:font-mono={shell !== null}
       class:font-medium={shell !== null}
     >
@@ -1138,6 +1214,18 @@
               class="rounded-sm bg-action/15 text-action">{segment.text}</span
             >{:else}{segment.text}{/if}{/each}{/if}&#8203;
     </div>
+
+    {#if vimEnabled}
+      <span
+        class="pointer-events-none absolute bottom-1 left-2 z-20 font-mono text-2xs"
+        class:text-dim={vimMode === 'insert'}
+        class:text-amber={vimMode === 'normal'}
+        class:text-violet={vimMode === 'visual'}
+        data-testid="vim-mode"
+      >
+        -- {vimBadge} --
+      </span>
+    {/if}
 
     {#if shell}
       <span

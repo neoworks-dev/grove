@@ -214,6 +214,7 @@
     focus: () => boolean
     restorePrompt: (text: string) => void
     sendNow: () => void
+    searchHistory: () => void
   }>()
   let backgroundList = $state<{ focus: () => boolean }>()
   // The approval or question card standing in for the composer, while one is up.
@@ -1048,6 +1049,15 @@
         description: 'Send now: stop the turn and send what is waiting',
         when: () => composer !== undefined && shownApproval === undefined,
         run: () => composer?.sendNow()
+      },
+      {
+        id: `agent.searchHistory:${leafId}`,
+        keys: 'ctrl+r',
+        context: leafId,
+        group: 'Agent',
+        description: 'Search the prompt history',
+        when: () => composer !== undefined && shownApproval === undefined,
+        run: () => composer?.searchHistory()
       },
       {
         id: `agent.overview:${leafId}`,

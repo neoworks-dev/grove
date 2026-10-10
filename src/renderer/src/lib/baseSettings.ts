@@ -56,6 +56,15 @@ export function registerBaseSettings(): void {
         category: 'Agents'
       },
       {
+        key: 'workbench.agentVimMode',
+        type: 'boolean',
+        default: false,
+        title: 'Vim Mode in the Prompt',
+        description:
+          'Edit the agent prompt with vim keys: Escape for normal mode, i, a and o to type, v to select, and the usual motions and edits. Enter still sends. Ctrl+G opens the prompt in the editor for anything bigger.',
+        category: 'Agents'
+      },
+      {
         key: 'workbench.reviewMode',
         type: 'enum',
         default: 'pre',

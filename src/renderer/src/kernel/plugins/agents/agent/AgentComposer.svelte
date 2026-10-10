@@ -27,6 +27,8 @@
   import { SPACE_HOLD_MS, SpaceHold } from '../../../../lib/voiceHold'
   import { onDestroy, type Snippet } from 'svelte'
   import { SentDrafts } from '../../../../lib/agents/sentDrafts'
+  import { isStashKey, PromptStash } from '../../../../lib/agents/promptStash'
+  import { keyDispatch, KeyPriority } from '../../../../lib/keyDispatch'
   import ArrowCounterClockwise from 'phosphor-svelte/lib/ArrowCounterClockwise'
   import ImageMarkup from './ImageMarkup.svelte'
   import type { Mark } from '../../../../lib/agents/imageMarkup'
@@ -395,8 +397,68 @@
     return true
   }
 
+  // Ctrl+S parks the draft here. One slot per composer: stashing again releases the old one.
+  const promptStash = new PromptStash<StashedDraft>()
+
+  interface StashedDraft extends KeptDraft {
+    caret: number
+  }
+
+  // Claimed before the keybinding tier, so no global binding takes Ctrl+S while the composer
+  // has focus. The composer types into its own textarea, so the chain stands down for it.
+  const stopStashKeys = keyDispatch.subscribe(KeyPriority.overlay, onStashKey)
+
+  /** Claims Ctrl+S typed into the prompt; every other key goes on down the chain. */
+  function onStashKey(event: KeyboardEvent): boolean {
+    if (!isStashKey(event) || document.activeElement !== promptEl) return false
+    event.preventDefault()
+    toggleStash()
+    return true
+  }
+
+  /** Ctrl+S: an empty composer brings the stash back, anything else is stashed. */
+  function toggleStash(): void {
+    if (draft === '' && attachments.length === 0) {
+      restoreStash()
+      return
+    }
+    stashDraft()
+  }
+
+  /** Parks the draft with its attachments and slices, and clears the composer. */
+  function stashDraft(): void {
+    let caret = draft.length
+    if (promptEl) {
+      caret = promptEl.selectionStart
+    }
+    const parked: StashedDraft = { draft, attachments, references: activeReferences(), caret }
+    const displaced = promptStash.put(parked)
+    if (displaced) forgetAttachments(displaced.attachments)
+    draft = ''
+    attachments = []
+    references = []
+    historyIndex = -1
+    suggestions = []
+  }
+
+  /** Brings the stashed draft back into the composer, with the caret where it was left. */
+  function restoreStash(): void {
+    const parked = promptStash.take()
+    if (parked === null) return
+    draft = parked.draft
+    attachments = parked.attachments
+    references = parked.references
+    queueMicrotask(() => {
+      promptEl?.focus()
+      promptEl?.setSelectionRange(parked.caret, parked.caret)
+    })
+  }
+
   onDestroy(() => {
+    stopStashKeys()
     for (const kept of sentDrafts.clear()) forgetAttachments(kept.attachments)
+    const parked = promptStash.take()
+    if (parked) forgetAttachments(parked.attachments)
   })
 
   /** Everything riding along with the message: attached slices, then images. */

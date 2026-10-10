@@ -23,7 +23,7 @@
     "keybindings": [
       { "id": "harpoon.add", "keys": "<Leader> a", "context": "editor", "group": "Harpoon", "description": "Pin current file", "command": "harpoon.add" },
       { "id": "harpoon.menu", "keys": "ctrl+e", "context": "editor", "group": "Harpoon", "description": "Toggle Harpoon menu", "command": "harpoon.menu" },
-      { "id": "harpoon.g1", "keys": "ctrl+h", "context": "editor", "group": "Harpoon", "description": "Go to mark 1", "command": "harpoon.goto1" },
+      { "id": "harpoon.g1", "keys": "ctrl+g", "context": "editor", "group": "Harpoon", "description": "Go to mark 1", "command": "harpoon.goto1" },
       { "id": "harpoon.g2", "keys": "ctrl+t", "context": "editor", "group": "Harpoon", "description": "Go to mark 2", "command": "harpoon.goto2" },
       { "id": "harpoon.g3", "keys": "ctrl+n", "context": "editor", "group": "Harpoon", "description": "Go to mark 3", "command": "harpoon.goto3" },
       { "id": "harpoon.g4", "keys": "ctrl+s", "context": "editor", "group": "Harpoon", "description": "Go to mark 4", "command": "harpoon.goto4" }

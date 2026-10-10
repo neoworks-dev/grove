@@ -67,6 +67,14 @@
   import { modeOf, nextMode, type AgentMode } from '../../../../lib/agents/modes'
   import { nextThinkingLevel } from '../../../../lib/agents/thinking'
   import { followsAfterScroll } from '../../../../lib/agents/scrollFollow'
+  import {
+    FOOTER_OWN_KEYS,
+    focusFirstFooterItem,
+    focusedFooterItem,
+    openFooterMenuTrigger,
+    stepFooterItem
+  } from '../../../../lib/agents/footerFocus'
+  import { keyDispatch, KeyPriority } from '../../../../lib/keyDispatch'
   import type {
     ClientEventBody,
     CodeLocation,
@@ -211,7 +219,8 @@
   let expandedTools = $state<Record<string, boolean>>({})
   let transcriptViewport = $state<HTMLDivElement>()
   let composer = $state<{ focus: () => boolean; restorePrompt: (text: string) => void }>()
-  let backgroundList = $state<{ focus: () => boolean }>()
+  // What sits under the prompt: the background tasks and the controls row.
+  let footerEl = $state<HTMLDivElement>()
   // The approval or question card standing in for the composer, while one is up.
   let promptCard = $state<{ focus: () => void }>()
   let rootEl = $state<HTMLDivElement>()
@@ -832,11 +841,52 @@
     composer?.focus()
   }
 
-  /** Moves the keyboard to the background tasks under the composer; false when there are none. */
-  function focusBackgroundList(): boolean {
-    if (!backgroundList) return false
-    return backgroundList.focus()
+  /** Moves the keyboard to the first item under the composer; false when there are none. */
+  function focusFooter(): boolean {
+    if (!footerEl) return false
+    return focusFirstFooterItem(footerEl)
   }
+
+  /**
+   * Hands the keyboard back to the prompt from an item under it, first closing the
+   * menu the item has open: that is what Escape and up mean there.
+   */
+  function leaveFooter(): void {
+    if (footerEl) openFooterMenuTrigger(footerEl)?.click()
+    focusComposer()
+  }
+
+  /** Left and right move between the items under the prompt. */
+  function stepFooter(direction: 1 | -1): void {
+    if (footerEl) stepFooterItem(footerEl, direction)
+  }
+
+  /**
+   * The keys of the items under the prompt while one has the keyboard. Enter is left
+   * to the item, which opens itself; keys the footer has no use for, Shift+Tab among
+   * them, fall through to the pane's own bindings.
+   */
+  function onFooterKey(event: KeyboardEvent): boolean {
+    if (!footerEl) return false
+    const item = focusedFooterItem(footerEl)
+    if (!item) return false
+    if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return false
+    const handlesOwnKeys = item.dataset.footerItem === FOOTER_OWN_KEYS
+    let action: (() => void) | undefined
+    if (event.key === 'ArrowRight') action = () => stepFooter(1)
+    if (event.key === 'ArrowLeft') action = () => stepFooter(-1)
+    // Nothing lies below the footer, so down stays where it is rather than reaching the page.
+    if (event.key === 'ArrowDown') action = () => {}
+    if (event.key === 'ArrowUp' && !handlesOwnKeys) action = leaveFooter
+    if (event.key === 'Escape' && !handlesOwnKeys) action = leaveFooter
+    if (!action) return false
+    event.preventDefault()
+    event.stopPropagation()
+    action()
+    return true
+  }
+
+  onMount(() => keyDispatch.subscribe(KeyPriority.menu, onFooterKey))
 
   // ── Focus ───────────────────────────────────────────────────────
   //
@@ -1354,49 +1404,50 @@
               onInterrupt={interrupt}
               onCycleMode={cycleMode}
               onBack={showOverview}
-              onLeaveDown={focusBackgroundList}
+              onLeaveDown={focusFooter}
               onTakeBack={takeBackWaiting}
               onRestoreInterrupted={onComposerUp}
               header={live ? notesHeader : undefined}
             />
           {/if}
 
-          {#if activeId && live && !shownApproval}
-            <AgentBackgroundCommands
-              bind:this={backgroundList}
-              sessionId={activeId}
-              items={live.transcript.items}
-              onLeave={focusComposer}
-            />
-          {/if}
+          <div bind:this={footerEl}>
+            {#if activeId && live && !shownApproval}
+              <AgentBackgroundCommands
+                sessionId={activeId}
+                items={live.transcript.items}
+                onLeave={focusComposer}
+              />
+            {/if}
 
-          {#if snapshot && !shownApproval}
-            <AgentControls
-              harness={snapshot.harness}
-              harnesses={catalog.harnesses}
-              started={snapshot.started}
-              groveMode={snapshot.groveMode}
-              provider={snapshot.provider}
-              model={snapshot.model}
-              thinking={snapshot.thinkingLevel}
-              {mode}
-              {running}
-              models={catalog.models}
-              {reviewMode}
-              tokensLabel={contextLabel}
-              {costLabel}
-              contextTokens={snapshot.context.usedTokens}
-              onPickHarness={pickHarness}
-              onPickGroveMode={pickGroveMode}
-              onPickModel={pickModel}
-              onRequestKey={requestCredential}
-              onAddEndpoint={() => (addingEndpoint = true)}
-              onPickThinking={pickThinking}
-              onPickMode={pickMode}
-              onSetReview={setReviewSetting}
-              onInterrupt={interrupt}
-            />
-          {/if}
+            {#if snapshot && !shownApproval}
+              <AgentControls
+                harness={snapshot.harness}
+                harnesses={catalog.harnesses}
+                started={snapshot.started}
+                groveMode={snapshot.groveMode}
+                provider={snapshot.provider}
+                model={snapshot.model}
+                thinking={snapshot.thinkingLevel}
+                {mode}
+                {running}
+                models={catalog.models}
+                {reviewMode}
+                tokensLabel={contextLabel}
+                {costLabel}
+                contextTokens={snapshot.context.usedTokens}
+                onPickHarness={pickHarness}
+                onPickGroveMode={pickGroveMode}
+                onPickModel={pickModel}
+                onRequestKey={requestCredential}
+                onAddEndpoint={() => (addingEndpoint = true)}
+                onPickThinking={pickThinking}
+                onPickMode={pickMode}
+                onSetReview={setReviewSetting}
+                onInterrupt={interrupt}
+              />
+            {/if}
+          </div>
         {/if}
       </div>
     {/if}

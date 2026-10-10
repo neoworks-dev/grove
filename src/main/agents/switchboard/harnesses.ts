@@ -29,6 +29,7 @@ export const CAPABILITIES: HarnessCapabilities = {
   interrupt: true,
   liveModelSwitch: true,
   thinking: true,
+  fastMode: false,
   steering: true,
   groveTools: true,
   groveMode: true,
@@ -91,7 +92,8 @@ export const switchboardHarnesses = {
             label: 'Claude Code',
             description: "Anthropic's Claude Code, with its own tools and your own setup.",
             icon: 'grove:claude',
-            capabilities: CAPABILITIES,
+            // Claude's harness is the one that has a fast mode to switch.
+            capabilities: { ...CAPABILITIES, fastMode: true },
             runsOn: ['claude'],
             profile: () => ({
               sessionOptions: nativeOptions,

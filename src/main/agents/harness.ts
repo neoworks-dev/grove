@@ -174,6 +174,10 @@ export interface HarnessRunOptions {
   provider: string | null
   model: string | null
   thinkingLevel: ThinkingLevel
+  /** Start with fast mode on; only a harness with the `fastMode` capability can honour it. */
+  fastMode: boolean
+  /** The harness says fast mode is now on or off, as it does when it turns it off on its own. */
+  fastModeReported?(enabled: boolean): void
   /** The tool allow-list, or null for "no allow-list". */
   activeTools: string[] | null
   /** How much the session may do without asking, as stored on it. */
@@ -292,6 +296,8 @@ export interface HarnessRun {
   interrupt(): Promise<void>
   setModel?(provider: string | null, model: string): Promise<void>
   setThinkingLevel?(level: ThinkingLevel): Promise<void>
+  /** Switch fast mode on a live run; rejects when the harness or model has none. */
+  setFastMode?(enabled: boolean): Promise<void>
   /**
    * Switch the mode on a live run.
    *

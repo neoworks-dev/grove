@@ -19,6 +19,7 @@
     shellDraft,
     type Completion
   } from '../../../../lib/agents/completion'
+  import { pickerCommandNames, pickerForCommand, type PickerKind } from '../../../../lib/agents/composerPicker'
   import { searchEmoji } from '../../../../lib/agents/emoji'
   import { agentSessions } from '../../../../lib/agents/sessions.svelte'
   import { highlightCodeSync, warmLanguage } from '../../../../lib/highlight'
@@ -86,7 +87,8 @@
     onRestoreInterrupted,
     hasWaiting = false,
     onShortcutHelp,
-    header
+    header,
+    picker
   }: {
     sessionId: string
     running: boolean
@@ -142,6 +144,11 @@
     onShortcutHelp?: () => void
     /** Drawn flush on top of the prompt box, as its top section: the notes list. */
     header?: Snippet
+    /**
+     * What `/model`, `/effort` and `/fast` open above the prompt. The pane owns the
+     * session they change; `close` shuts it and, with `refocus`, returns the keyboard here.
+     */
+    picker?: Snippet<[PickerKind, (refocus: boolean) => void]>
   } = $props()
 
   let draft = $state('')
@@ -219,7 +226,7 @@
       return
     }
     if (active.kind === 'command') {
-      suggestions = commandNames
+      suggestions = [...new Set([...commandNames, ...pickerCommandNames()])]
         .filter((name) => name.startsWith(active.query))
         .slice(0, 20)
         .map((name) => ({ value: name }))
@@ -425,8 +432,29 @@
     })
   }
 
+  /** The picker `/model`, `/effort` or `/fast` has opened above the prompt, if one is. */
+  let openPicker = $state<PickerKind | null>(null)
+
+  /** Shuts the picker; the keyboard comes back to the prompt unless the user went elsewhere. */
+  function closePicker(refocus: boolean): void {
+    openPicker = null
+    if (refocus) promptEl?.focus()
+  }
+
+  /** Opens the picker a bare `/model`, `/effort` or `/fast` asks for, clearing the draft; false for anything else. */
+  function openPickerFor(submission: ReturnType<typeof parseSubmission>): boolean {
+    if (!picker || submission?.kind !== 'command') return false
+    const kind = pickerForCommand(submission.name, submission.args)
+    if (kind === null) return false
+    draft = ''
+    suggestions = []
+    openPicker = kind
+    return true
+  }
+
   function submit(): void {
     const submission = parseSubmission(draft)
+    if (openPickerFor(submission)) return
     const carried = carriedBlocks()
     if (!submission && carried.length === 0) return
 
@@ -1046,6 +1074,10 @@
 </script>
 
 <div class="relative" {hidden}>
+  {#if openPicker && picker}
+    {@render picker(openPicker, closePicker)}
+  {/if}
+
   {#if menuOpen}
     <!-- Completions float above the composer. -->
     <div

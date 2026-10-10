@@ -34,6 +34,7 @@ export interface StoredSession {
   provider: string
   model: string
   thinkingLevel: ThinkingLevel
+  fastMode: boolean
   activeTools: string[] | null
   autoApproveTools: string[]
   permissionMode: AgentMode
@@ -71,6 +72,7 @@ export interface CreateRecordOptions {
   provider: string
   model: string
   thinkingLevel: ThinkingLevel
+  fastMode?: boolean
   activeTools: string[] | null
   permissionMode?: AgentMode
   groveMode?: boolean
@@ -161,6 +163,7 @@ export class SessionStore {
       provider: options.provider,
       model: options.model,
       thinkingLevel: options.thinkingLevel,
+      fastMode: options.fastMode === true,
       activeTools: options.activeTools,
       autoApproveTools: [],
       permissionMode: options.permissionMode ?? 'default',
@@ -276,6 +279,7 @@ export class SessionStore {
       provider: session.provider,
       model: session.model,
       thinkingLevel: session.thinkingLevel,
+      fastMode: session.fastMode,
       activeTools: session.activeTools,
       autoApproveTools: session.autoApproveTools,
       permissionMode: session.permissionMode,
@@ -422,7 +426,8 @@ export function parseSession(text: string): StoredSession {
   const parsed = {
     ...session,
     permissionMode: session.permissionMode ?? 'default',
-    groveMode: session.groveMode === true
+    groveMode: session.groveMode === true,
+    fastMode: session.fastMode === true
   }
   if (parsed.harness === GROVE_HARNESS) return fromGroveHarness(parsed)
   return parsed

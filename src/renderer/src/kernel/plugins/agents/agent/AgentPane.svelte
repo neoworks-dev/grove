@@ -85,6 +85,8 @@
   import AgentBackgroundCommands from './AgentBackgroundCommands.svelte'
   import AgentNotes from './AgentNotes.svelte'
   import AgentQuestion from './AgentQuestion.svelte'
+  import ComposerPicker from './ComposerPicker.svelte'
+  import type { PickerKind } from '../../../../lib/agents/composerPicker'
   import AgentControls from './AgentControls.svelte'
   import AgentEditedFiles from './AgentEditedFiles.svelte'
   import AgentOverview from './AgentOverview.svelte'
@@ -540,6 +542,11 @@
     void agentSessions.send(activeId, [{ type: 'user.decide_held_message', heldId, decision }])
   }
 
+  // The session's harness has a fast mode to switch.
+  const currentHarnessHasFastMode = $derived(
+    catalog.harnesses.find((entry) => entry.id === harness)?.capabilities.fastMode === true
+  )
+
   // The session's harness can take its conversation back, so a sent message can
   // be edited and the conversation rerun from it.
   const rewinds = $derived(
@@ -765,6 +772,12 @@
     void agentSessions.update(activeId, { thinkingLevel })
   }
 
+  /** Turns fast mode on or off for this session; it is never remembered for the next one, since it uses up limits faster. */
+  function pickFastMode(fastMode: boolean): void {
+    if (!activeId) return
+    void agentSessions.update(activeId, { fastMode })
+  }
+
   // ── Cycling from the keyboard ───────────────────────────────────
   //
   // Both step through their list in place, so the setting can be changed while
@@ -787,6 +800,12 @@
    */
   function backgroundShell(): void {
     if (activeId) shellOutputs.background(activeId)
+  }
+
+  /** Alt+O: switches fast mode, where the harness has one. */
+  function toggleFastMode(): void {
+    if (!snapshot) return
+    pickFastMode(!snapshot.fastMode)
   }
 
   function cycleThinking(): void {
@@ -1098,6 +1117,15 @@
         group: 'Agent',
         description: 'Cycle reasoning effort',
         run: cycleThinking
+      },
+      {
+        id: `agent.toggleFastMode:${leafId}`,
+        keys: 'alt+o',
+        context: leafId,
+        group: 'Agent',
+        description: 'Switch fast mode (uses limits faster)',
+        when: () => currentHarnessHasFastMode,
+        run: toggleFastMode
       },
       {
         id: `agent.toggleNotes:${leafId}`,
@@ -1473,6 +1501,7 @@
               hasWaiting={queued.length + steered.length > 0}
               onShortcutHelp={toggleShortcutHelp}
               header={live ? notesHeader : undefined}
+              {picker}
             />
           {/if}
 
@@ -1494,19 +1523,16 @@
               provider={snapshot.provider}
               model={snapshot.model}
               thinking={snapshot.thinkingLevel}
+              fastMode={snapshot.fastMode}
               {mode}
               {running}
               models={catalog.models}
               {reviewMode}
               tokensLabel={contextLabel}
               {costLabel}
-              contextTokens={snapshot.context.usedTokens}
               onPickHarness={pickHarness}
               onPickGroveMode={pickGroveMode}
-              onPickModel={pickModel}
-              onRequestKey={requestCredential}
-              onAddEndpoint={() => (addingEndpoint = true)}
-              onPickThinking={pickThinking}
+              onPickFastMode={pickFastMode}
               onPickMode={pickMode}
               onSetReview={setReviewSetting}
               onInterrupt={interrupt}
@@ -1517,6 +1543,29 @@
     {/if}
   {/if}
 </div>
+
+{#snippet picker(kind: PickerKind, close: (refocus: boolean) => void)}
+  {#if snapshot}
+    <ComposerPicker
+      {kind}
+      models={catalog.models}
+      provider={snapshot.provider}
+      model={snapshot.model}
+      thinking={snapshot.thinkingLevel}
+      fastMode={snapshot.fastMode}
+      contextTokens={snapshot.context.usedTokens}
+      supportsThinking={catalog.harnesses.find((entry) => entry.id === snapshot.harness)
+        ?.capabilities.thinking !== false}
+      supportsFastMode={currentHarnessHasFastMode}
+      onPickModel={pickModel}
+      onRequestKey={requestCredential}
+      onAddEndpoint={() => (addingEndpoint = true)}
+      onPickThinking={pickThinking}
+      onPickFastMode={pickFastMode}
+      onClose={close}
+    />
+  {/if}
+{/snippet}
 
 {#if addingEndpoint}
   <EndpointEditor onClose={closeEndpointEditor} />

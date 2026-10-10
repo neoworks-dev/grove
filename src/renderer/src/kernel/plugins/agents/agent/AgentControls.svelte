@@ -1,21 +1,21 @@
 <script lang="ts">
   // The status line under the composer: which harness runs the session and
-  // whether in grove mode, what model it will use, how hard it will think, how freely it may act, and when
-  // its changes get reviewed. The selects wrap onto a second row as the pane
-  // narrows rather than squeezing.
+  // whether in grove mode, how freely it may act, when its changes get reviewed,
+  // and, as plain text, the model and effort it runs with. Those two are changed
+  // from the composer with `/model` and `/effort`. The controls wrap onto a second
+  // row as the pane narrows rather than squeezing.
   //
-  // Harness, grove mode, provider, model and thinking level are session state in the main
-  // process, so picking one updates the session. Mode is derived from the same
-  // state (see lib/agents/modes.ts) rather than stored here.
+  // Harness and grove mode are session state in the main process, so picking one
+  // updates the session. Mode is derived from the same state (see
+  // lib/agents/modes.ts) rather than stored here.
 
   import Icon from '@iconify/svelte'
   import StopIcon from 'phosphor-svelte/lib/StopIcon'
   import { MODE_DESCRIPTIONS, MODE_LABELS, type AgentMode } from '../../../../lib/agents/modes'
   import { findRoute } from '../../../../lib/agents/modelSelection'
-  import ModelMenu from './ModelMenu.svelte'
   import HarnessMenu from './HarnessMenu.svelte'
   import { keepInside } from '../../../../lib/popoverFit'
-  import { THINKING_LABELS, THINKING_LEVELS } from '../../../../lib/agents/thinking'
+  import { FAST_MODE_WARNING } from '../../../../lib/agents/composerPicker'
   import { GROVE_MODE_DESCRIPTION } from '../../../../lib/agents/newSession'
   import type { HarnessInfo, ModelEntry, ThinkingLevel } from '../../../../lib/agents/types'
 
@@ -27,19 +27,16 @@
     provider,
     model,
     thinking,
+    fastMode,
     mode,
     running,
     models,
     reviewMode,
     tokensLabel,
     costLabel,
-    contextTokens,
     onPickHarness,
     onPickGroveMode,
-    onPickModel,
-    onRequestKey,
-    onAddEndpoint,
-    onPickThinking,
+    onPickFastMode,
     onPickMode,
     onSetReview,
     onInterrupt
@@ -53,6 +50,8 @@
     provider: string
     model: string
     thinking: ThinkingLevel
+    /** Whether the harness answers in fast mode. */
+    fastMode: boolean
     mode: AgentMode
     running: boolean
     models: ModelEntry[]
@@ -60,16 +59,9 @@
     tokensLabel: string
     /** What the session has cost so far, empty when the harness reports none. */
     costLabel: string
-    /** Context the session has already built up, which a model switch re-reads. */
-    contextTokens: number
     onPickHarness: (harness: string) => void
     onPickGroveMode: (groveMode: boolean) => void
-    onPickModel: (provider: string, model: string) => void
-    /** Ask the user for the key a route needs before it can be taken. */
-    onRequestKey: (request: { provider: string; variables: string[] }) => void
-    /** Open the editor for an endpoint of the user's own. */
-    onAddEndpoint: () => void
-    onPickThinking: (level: ThinkingLevel) => void
+    onPickFastMode: (fastMode: boolean) => void
     onPickMode: (mode: AgentMode) => void
     onSetReview: (key: string, value: string | boolean) => void
     onInterrupt: () => void
@@ -82,7 +74,7 @@
     { value: 'post', label: 'After writing' }
   ]
 
-  type Menu = 'harness' | 'model' | 'thinking' | 'mode' | 'review'
+  type Menu = 'harness' | 'mode' | 'review'
   let openMenu = $state<Menu | null>(null)
 
   // The row the menus open from; each is kept inside it, so a control that
@@ -102,24 +94,6 @@
 
   const reviewLabel = $derived(reviewMode === 'post' ? 'review after' : 'review first')
 
-  /**
-   * What a model switch costs.
-   *
-   * The new model has none of this conversation cached, so the first turn after
-   * a switch re-reads all of it at the full input rate — on a long session that
-   * is real money, and it is not obvious from a picker that looks like every
-   * other dropdown in the status line.
-   */
-  const switchCostWarning = $derived.by(() => {
-    if (contextTokens <= 0) return ''
-    return `Switching re-reads this conversation (~${formatTokens(contextTokens)} tokens) at full price: the new model has none of it cached.`
-  })
-
-  function formatTokens(tokens: number): string {
-    if (tokens < 1000) return String(tokens)
-    return `${(tokens / 1000).toFixed(1)}k`
-  }
-
   /** The model and route the session is on, when the harness still lists them. */
   const selected = $derived(findRoute(models, { provider, model }))
 
@@ -128,6 +102,11 @@
    * route is a detail of how it is reached, not something worth a slot in the
    * status line.
    */
+  const modelTitle = $derived.by(() => {
+    if (provider) return `${provider} · ${model}`
+    return model
+  })
+
   const modelLabel = $derived.by(() => {
     if (selected) return selected.entry.label
     return model
@@ -209,39 +188,6 @@
     {/if}
   </div>
 
-  <!-- Model -->
-  <div class="relative z-20">
-    <button
-      class="flex items-center gap-1.5 rounded border border-line px-2 py-1 hover:bg-hover"
-      title={provider ? `${provider} · ${model}` : model}
-      onclick={() => toggle('model')}
-    >
-      <span class="max-w-[12rem] truncate font-medium text-default">{modelLabel}</span>
-      <span class="text-dim">▾</span>
-    </button>
-    {#if openMenu === 'model'}
-      <ModelMenu
-        {models}
-        {provider}
-        {model}
-        {switchCostWarning}
-        boundary={controlsRow}
-        onPick={(pickedProvider, pickedModel) => {
-          onPickModel(pickedProvider, pickedModel)
-          close()
-        }}
-        onRequestKey={(request) => {
-          onRequestKey(request)
-          close()
-        }}
-        onAddEndpoint={() => {
-          onAddEndpoint()
-          close()
-        }}
-      />
-    {/if}
-  </div>
-
   <!-- Mode -->
   <div class="relative z-20">
     <button
@@ -319,36 +265,31 @@
     <span class="font-mono text-dim" title="Session cost so far">{costLabel}</span>
   {/if}
 
-  <!-- Thinking: hidden for a harness that has no thinking levels. -->
-  <div class="relative z-20 ml-auto" class:hidden={capabilities?.thinking === false}>
-    <button
-      class="flex items-center gap-1 rounded border border-line px-2 py-1 hover:bg-hover"
-      title="Reasoning effort (ctrl+tab)"
-      onclick={() => toggle('thinking')}
-    >
-      <span class="font-medium text-default">{THINKING_LABELS[thinking]}</span>
-      <span class="text-dim">▾</span>
-    </button>
-    {#if openMenu === 'thinking'}
-      <div
-        class="absolute bottom-full right-0 z-30 mb-1 w-40 rounded-md border border-line bg-elevated py-1 shadow-lg"
-      >
-        {#each THINKING_LEVELS as level (level)}
-          <button
-            class="flex w-full items-center px-2 py-1 text-left hover:bg-hover {level === thinking
-              ? 'text-default'
-              : 'text-dim'}"
-            onclick={() => {
-              onPickThinking(level)
-              close()
-            }}
-          >
-            {THINKING_LABELS[level]}
-          </button>
-        {/each}
-      </div>
+  <!-- Model and effort are shown, not chosen here: /model and /effort pick them from
+       a list above the prompt. -->
+  <span
+    class="ml-auto min-w-0 truncate text-dim"
+    data-testid="agent-model-state"
+    title={modelTitle}
+  >
+    <span class="font-medium text-default">{modelLabel}</span>
+    {#if capabilities?.thinking !== false}
+      <span> · {thinking}</span>
     {/if}
-  </div>
+  </span>
+
+  <!-- Fast mode is flagged for as long as it is on, because every turn in it uses up limits faster. -->
+  {#if fastMode}
+    <button
+      class="flex items-center gap-1 rounded border border-amber/50 bg-amber-soft px-2 py-1 text-amber hover:bg-hover"
+      data-testid="fast-mode-chip"
+      title={`${FAST_MODE_WARNING} Click to turn it off (alt+o).`}
+      onclick={() => onPickFastMode(false)}
+    >
+      <span class="font-medium">Fast</span>
+      <span>uses limits faster</span>
+    </button>
+  {/if}
 
   {#if running && capabilities?.interrupt !== false}
     <button

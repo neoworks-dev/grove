@@ -39,6 +39,7 @@ import type {
 import { toolNameOf } from '../acpLog'
 import { CALL_TOOL, dispatchedCall } from '../tools/toolSearchTools'
 import { ASK_USER } from '../tools/questionTools'
+import { reportedFastMode, requestFastMode, type ConfigurableSession } from './fastMode'
 import { groveToolName, type BoundServer, type ToolBinding } from './mcpServer'
 import type { SwitchboardHost } from './host'
 import { TerminalRelay } from './terminalRelay'
@@ -133,6 +134,19 @@ export class SwitchboardRun implements HarnessRun {
     }
     session.onEvent((event) => this.handle(event))
     this.session = session
+    if (this.options.fastMode) await this.startInFastMode()
+  }
+
+  /** Switches fast mode on for a session that was saved with it on; says in the transcript when it cannot. */
+  private async startInFastMode(): Promise<void> {
+    try {
+      await this.setFastMode(true)
+    } catch (cause) {
+      this.options.emit({
+        type: 'session.notice',
+        message: `Fast mode was not turned on: ${messageOf(cause)}`
+      })
+    }
   }
 
   prompt(text: string, attachments: PromptAttachment[] = []): Promise<void> {
@@ -174,6 +188,11 @@ export class SwitchboardRun implements HarnessRun {
     const effort = effortOf(level)
     if (!effort) return
     await this.requireSession().setEffort(effort)
+  }
+
+  async setFastMode(enabled: boolean): Promise<void> {
+    const session = this.requireSession() as unknown as ConfigurableSession
+    await requestFastMode(session, enabled)
   }
 
   async setPermissionMode(mode: AgentMode): Promise<void> {
@@ -332,6 +351,7 @@ export class SwitchboardRun implements HarnessRun {
   private absorbUpdate(update: SessionUpdate): void {
     // The context fill arrives again on the `usage` event that follows.
     if (update.sessionUpdate === 'usage_update') return
+    if (update.sessionUpdate === 'config_option_update') this.noteFastMode(update.configOptions)
     let logged: SessionUpdate | null = update
     if (update.sessionUpdate === 'tool_call' || update.sessionUpdate === 'tool_call_update') {
       const unwrapped = this.unwrapped(update)
@@ -346,6 +366,13 @@ export class SwitchboardRun implements HarnessRun {
       return
     }
     this.options.emit({ type: 'update', update: stored })
+  }
+
+  /** Tells the session when the harness reports fast mode on or off. */
+  private noteFastMode(configOptions: { id: string; currentValue?: unknown }[]): void {
+    const enabled = reportedFastMode(configOptions)
+    if (enabled === null) return
+    this.options.fastModeReported?.(enabled)
   }
 
   /**

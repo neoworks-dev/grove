@@ -415,6 +415,8 @@ export interface SessionMeta {
   provider: string
   model: string
   thinkingLevel: ThinkingLevel
+  /** Whether the harness answers in fast mode: quicker, at a higher price per token. */
+  fastMode: boolean
   activeTools: string[] | null
   autoApproveTools: string[]
   /** How much this session may do without asking. */
@@ -462,6 +464,7 @@ export interface CreateSessionOptions {
   provider?: string
   model?: string
   thinkingLevel?: ThinkingLevel
+  fastMode?: boolean
   activeTools?: string[]
   permissionMode?: AgentMode
   groveMode?: boolean
@@ -475,6 +478,7 @@ export interface SessionUpdate {
   provider?: string
   model?: string
   thinkingLevel?: ThinkingLevel
+  fastMode?: boolean
   activeTools?: string[] | null
   autoApproveTools?: string[]
   permissionMode?: AgentMode
@@ -688,6 +692,8 @@ export interface HarnessCapabilities {
   liveModelSwitch: boolean
   /** Thinking levels are honoured. */
   thinking: boolean
+  /** Fast mode can be switched on: quicker answers at a higher price per token. */
+  fastMode: boolean
   /** Messages can be queued while a turn is running. */
   steering: boolean
   /** grove's own tools (review, chat, onboarding) can be injected. */

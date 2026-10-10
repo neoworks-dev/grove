@@ -1,7 +1,7 @@
 <script lang="ts">
-  // The rewind menu: the prompts sent in this session, and what going back to one
-  // of them puts back. Plain on purpose; the agent pane's menus get a design pass
-  // of their own.
+  // Rewind, in place of the transcript: the prompts sent in this session, and what
+  // going back to one of them puts back. Plain on purpose; the agent pane's menus
+  // get a design pass of their own.
 
   import Button from '@neoworks-dev/ui/Button'
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
@@ -95,11 +95,23 @@
     selectedSeq = newestFirst[next].seq
   }
 
-  /** Arrow keys move through the prompts, Escape backs out. */
+  let optionsEl = $state<HTMLDivElement>()
+
+  /** Moves the keyboard to the first choice that is open, so Enter then carries it out. */
+  function focusFirstChoice(): void {
+    optionsEl?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus()
+  }
+
+  /** Arrow keys move through the prompts, Enter steps into the choices, Escape backs out. */
   function onKeydown(event: KeyboardEvent): void {
     if (event.key === 'Escape') {
       event.preventDefault()
       onClose()
+      return
+    }
+    if (event.key === 'Enter' && event.target === event.currentTarget) {
+      event.preventDefault()
+      focusFirstChoice()
       return
     }
     if (event.key === 'ArrowDown') {
@@ -113,7 +125,7 @@
     }
   }
 
-  /** Carries out a choice for the chosen prompt, and closes the menu when it worked. */
+  /** Carries out a choice for the chosen prompt, and returns to the conversation when it worked. */
   async function choose(choice: RewindChoice): Promise<void> {
     if (!selected || busy) return
     busy = true
@@ -127,7 +139,7 @@
     error = problem
   }
 
-  /** Puts keyboard focus in the menu, so its keys work as it opens. */
+  /** Puts keyboard focus in the pane, so its keys work as it opens. */
   function takeFocus(element: HTMLElement): void {
     element.focus()
   }
@@ -139,103 +151,100 @@
   const hiddenFiles = $derived(Math.max(0, changedFileCount - MAX_FILES_LISTED))
 </script>
 
+<!-- Replaces the transcript: the composer stays under it, and Esc or "Never mind" brings the conversation back. -->
 <div
-  class="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-  role="presentation"
-  onpointerdown={(event) => {
-    if (event.target === event.currentTarget) onClose()
-  }}
+  class="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-3 py-2 outline-none"
+  role="application"
+  aria-label="Rewind"
+  tabindex="-1"
+  use:takeFocus
+  onkeydown={onKeydown}
 >
-  <div
-    class="w-[30rem] max-w-[92vw] rounded-md border border-line bg-elevated p-3 shadow-lg outline-none"
-    role="dialog"
-    aria-label="Rewind"
-    tabindex="-1"
-    use:takeFocus
-    onkeydown={onKeydown}
-  >
-    <div class="text-xs font-medium text-default">Rewind to a prompt</div>
-    <p class="mt-1 text-2xs text-dim">
-      Pick the prompt to go back to. Newest first; arrow keys to move, Esc to close.
-    </p>
+  <div class="text-xs font-medium text-default">Rewind to a prompt</div>
+  <p class="text-2xs text-dim">
+    Pick the prompt to go back to. Up and down to move, Enter to choose, Esc to leave.
+  </p>
 
-    {#if newestFirst.length === 0}
-      <p class="mt-2 text-2xs text-dim">No prompts have been sent in this session yet.</p>
-    {:else}
-      <div class="mt-2 overflow-hidden rounded border border-line">
-        <FloatingScrollbar class="max-h-44">
-          {#each newestFirst as prompt (prompt.seq)}
-            <button
-              class="block w-full truncate px-2 py-1.5 text-left text-xs {prompt.seq === selectedSeq
-                ? 'bg-action text-action-fg'
-                : 'text-muted hover:bg-hover'}"
-              onclick={() => (selectedSeq = prompt.seq)}
-            >
-              {firstLine(prompt)}
-            </button>
-          {/each}
-        </FloatingScrollbar>
-      </div>
-    {/if}
-
-    {#if selected}
-      <div class="mt-3 flex flex-col gap-2" data-testid="rewind-options">
-        {#if availability.code && changes}
-          <p
-            class="rounded border border-amber/30 bg-amber-soft px-2 py-1.5 text-2xs text-amber"
-            data-testid="rewind-warning"
+  {#if newestFirst.length === 0}
+    <p class="text-2xs text-dim">No prompts have been sent in this session yet.</p>
+  {:else}
+    <div class="shrink-0 overflow-hidden rounded border border-line">
+      <FloatingScrollbar class="max-h-44">
+        {#each newestFirst as prompt (prompt.seq)}
+          <button
+            class="block w-full truncate px-2 py-1.5 text-left text-xs {prompt.seq === selectedSeq
+              ? 'bg-action text-action-fg'
+              : 'text-muted hover:bg-hover'}"
+            tabindex="-1"
+            onclick={() => (selectedSeq = prompt.seq)}
           >
-            {RESTORE_CODE_WARNING}
-          </p>
-          <div class="text-2xs text-dim" data-testid="rewind-files">
-            <div>
-              {changes.length} file{changes.length === 1 ? '' : 's'} would change:
-            </div>
-            {#each listedFiles as file (file.path)}
-              <div class="truncate font-mono text-default">{file.path}</div>
-            {/each}
-            {#if hiddenFiles > 0}
-              <div>and {hiddenFiles} more</div>
-            {/if}
+            {firstLine(prompt)}
+          </button>
+        {/each}
+      </FloatingScrollbar>
+    </div>
+  {/if}
+
+  {#if selected}
+    <div bind:this={optionsEl} class="flex flex-col gap-2" data-testid="rewind-options">
+      {#if availability.code && changes}
+        <p
+          class="rounded border border-amber/30 bg-amber-soft px-2 py-1.5 text-2xs text-amber"
+          data-testid="rewind-warning"
+        >
+          {RESTORE_CODE_WARNING}
+        </p>
+        <div class="text-2xs text-dim" data-testid="rewind-files">
+          <div>
+            {changes.length} file{changes.length === 1 ? '' : 's'} would change:
           </div>
-        {/if}
-
-        <div class="flex flex-wrap gap-2">
-          <Button
-            size="sm"
-            disabled={busy || !availability.both}
-            onclick={() => void choose('both')}
-          >
-            Restore code and conversation
-          </Button>
-          <Button
-            size="sm"
-            disabled={busy || !availability.conversation}
-            onclick={() => void choose('conversation')}
-          >
-            Restore conversation
-          </Button>
-          <Button
-            size="sm"
-            disabled={busy || !availability.code}
-            onclick={() => void choose('code')}
-          >
-            Restore code
-          </Button>
-          <Button size="sm" variant="ghost" onclick={onClose}>Never mind</Button>
+          {#each listedFiles as file (file.path)}
+            <div class="truncate font-mono text-default">{file.path}</div>
+          {/each}
+          {#if hiddenFiles > 0}
+            <div>and {hiddenFiles} more</div>
+          {/if}
         </div>
+      {/if}
 
-        {#if availability.conversationReason}
-          <p class="text-2xs text-dim">Conversation: {availability.conversationReason}</p>
-        {/if}
-        {#if availability.codeReason}
-          <p class="text-2xs text-dim">Code: {availability.codeReason}</p>
-        {/if}
+      <div class="flex flex-col items-stretch gap-1.5">
+        <Button
+          size="sm"
+          full
+          disabled={busy || !availability.both}
+          onclick={() => void choose('both')}
+        >
+          Restore code and conversation
+        </Button>
+        <Button
+          size="sm"
+          full
+          disabled={busy || !availability.conversation}
+          onclick={() => void choose('conversation')}
+        >
+          Restore conversation
+        </Button>
+        <Button
+          size="sm"
+          full
+          disabled={busy || !availability.code}
+          onclick={() => void choose('code')}
+        >
+          Restore code
+        </Button>
+        <Button size="sm" full variant="ghost" onclick={onClose}>Never mind</Button>
       </div>
-    {/if}
 
-    {#if error}
-      <p class="mt-2 text-2xs text-red">{error}</p>
-    {/if}
-  </div>
+      {#if availability.conversationReason}
+        <p class="text-2xs text-dim">Conversation: {availability.conversationReason}</p>
+      {/if}
+      {#if availability.codeReason}
+        <p class="text-2xs text-dim">Code: {availability.codeReason}</p>
+      {/if}
+    </div>
+  {/if}
+
+  {#if error}
+    <p class="text-2xs text-red">{error}</p>
+  {/if}
 </div>

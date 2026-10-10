@@ -62,6 +62,7 @@
     onBack,
     onLeaveDown,
     onTakeBack,
+    onRestoreInterrupted,
     header
   }: {
     sessionId: string
@@ -107,6 +108,11 @@
      * a message not yet taken up is the one most likely to want rewording.
      */
     onTakeBack?: () => string | null
+    /**
+     * Up on an empty draft right after an interrupt: puts the interrupted prompt back
+     * and takes the conversation back before it. True when it took the key.
+     */
+    onRestoreInterrupted?: () => boolean
     /** Drawn flush on top of the prompt box, as its top section: the notes list. */
     header?: Snippet
   } = $props()
@@ -607,6 +613,16 @@
       attachments.length === 0 &&
       historyIndex < 0 &&
       takeBack()
+    ) {
+      event.preventDefault()
+      return
+    }
+    if (
+      event.key === 'ArrowUp' &&
+      draft.length === 0 &&
+      attachments.length === 0 &&
+      historyIndex < 0 &&
+      onRestoreInterrupted?.() === true
     ) {
       event.preventDefault()
       return

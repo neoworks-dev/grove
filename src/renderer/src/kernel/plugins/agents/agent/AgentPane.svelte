@@ -59,6 +59,10 @@
     rewindPrompts,
     type RewindChoice
   } from '../../../../lib/agents/rewind'
+  import {
+    interruptedPrompt,
+    interruptRestoreAction
+  } from '../../../../lib/agents/interruptRestore'
   import { registerRewindMenuOpener } from '../../../../lib/agents/rewindMenu'
   import { modeOf, nextMode, type AgentMode } from '../../../../lib/agents/modes'
   import { nextThinkingLevel } from '../../../../lib/agents/thinking'
@@ -441,7 +445,66 @@
 
   function interrupt(): void {
     if (!activeId) return
+    if (running) stopRequested = true
     void agentSessions.send(activeId, [{ type: 'user.interrupt' }])
+  }
+
+  // ── Up after an interrupt ───────────────────────────────────────
+
+  // The user asked to stop the turn in flight, and it has not ended yet.
+  let stopRequested = $state(false)
+  // Up was pressed before the stop landed: the prompt comes back once the turn ends.
+  let restoreWhenStopped = $state(false)
+  // The turn whose prompt came back, so up pressed again does not go further back.
+  let restoredTurn = 0
+
+  // A turn that has ended is no longer waiting to be stopped.
+  $effect(() => {
+    if (!running) stopRequested = false
+  })
+
+  $effect(() => {
+    if (running || !restoreWhenStopped) return
+    restoreWhenStopped = false
+    untrack(() => void restoreInterruptedPrompt())
+  })
+
+  /**
+   * Up on an empty composer: after an interrupt, brings the interrupted prompt back
+   * into the composer and takes the conversation back to before it. A stop that has
+   * not landed yet is waited for. False when the key has nothing to do with an
+   * interrupt, so the composer steps through history instead.
+   */
+  function onComposerUp(): boolean {
+    if (!live) return false
+    const action = interruptRestoreAction(live.transcript, {
+      harnessRewinds: rewinds,
+      stopRequested,
+      restoredTurn
+    })
+    if (action.kind === 'none') return false
+    if (action.kind === 'wait') {
+      restoreWhenStopped = true
+      return true
+    }
+    void rewindInterruptedPrompt(action.prompt)
+    return true
+  }
+
+  /** Carries out the restore once the interrupted turn has ended. */
+  async function restoreInterruptedPrompt(): Promise<void> {
+    if (!live) return
+    const prompt = interruptedPrompt(live.transcript, restoredTurn)
+    if (prompt === null) return
+    await rewindInterruptedPrompt(prompt)
+  }
+
+  /** Takes the conversation back to before the interrupted prompt and puts the prompt in the composer. */
+  async function rewindInterruptedPrompt(prompt: UserItem): Promise<void> {
+    if (!live) return
+    const turn = live.transcript.turnStartSeq
+    const problem = await rewindTo('conversation', prompt)
+    if (problem === null) restoredTurn = turn
   }
 
   /**
@@ -1293,6 +1356,7 @@
               onBack={showOverview}
               onLeaveDown={focusBackgroundList}
               onTakeBack={takeBackWaiting}
+              onRestoreInterrupted={onComposerUp}
               header={live ? notesHeader : undefined}
             />
           {/if}

@@ -20,12 +20,14 @@ async function main(): Promise<void> {
     )
   }
 
+  let code = 1
   try {
-    const code = await runPlaywright(playwrightArgs, virtual)
-    process.exit(code)
+    code = await runPlaywright(playwrightArgs, virtual)
   } finally {
+    // Before exiting: process.exit skips a pending finally, and the server outlives us.
     virtual?.stop()
   }
+  process.exit(code)
 }
 
 /** Run the suite, pointed at `virtual` when there is one. */

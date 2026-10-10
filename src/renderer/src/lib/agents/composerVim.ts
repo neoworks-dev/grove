@@ -6,7 +6,7 @@
  * the state is now and whether the key was used up. Insert mode leaves typing to
  * the textarea, so the caller hands in the draft and caret as they stand before
  * every key. Counts, registers other than the unnamed one, marks, macros and `.`
- * are left out; Ctrl+G opens the prompt in the editor for anything bigger.
+ * are left out.
  */
 
 export type VimMode = 'normal' | 'insert' | 'visual'

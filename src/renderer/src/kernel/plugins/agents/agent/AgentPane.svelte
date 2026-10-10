@@ -93,6 +93,8 @@
   import AgentTranscript from './AgentTranscript.svelte'
   import AgentWorkingBar from './AgentWorkingBar.svelte'
   import AgentRewind from './AgentRewind.svelte'
+  import AgentShortcutHelp from './AgentShortcutHelp.svelte'
+  import { COMPOSER_SHORTCUTS, paneShortcutRows } from '../../../../lib/agents/shortcutHelp'
   import CredentialPrompt from './CredentialPrompt.svelte'
   import EndpointEditor from './EndpointEditor.svelte'
   import PaneControls from '../../../../components/PaneControls.svelte'
@@ -563,6 +565,7 @@
   /** Switches the pane into rewind: the prompts sent in this session and what going back to one restores. */
   function openRewindMenu(): void {
     if (!activeId || subagent || overviewOpen) return
+    shortcutHelpOpen = false
     rewindMenuOpen = true
   }
 
@@ -571,8 +574,34 @@
     void activeId
     untrack(() => {
       rewindMenuOpen = false
+      shortcutHelpOpen = false
     })
   })
+
+  // ── Shortcut help ───────────────────────────────────────────────
+
+  // Whether the keyboard shortcuts are showing in place of the conversation.
+  let shortcutHelpOpen = $state(false)
+
+  // The pane's bindings as they stand now, so a rebound key shows the key it answers to.
+  const shortcutRows = $derived(paneShortcutRows(keymap.effective, leafId))
+
+  /** `?` in an empty prompt: shows the shortcuts, or puts them away when they are showing. */
+  function toggleShortcutHelp(): void {
+    if (shortcutHelpOpen) {
+      closeShortcutHelp()
+      return
+    }
+    if (!activeId || overviewOpen) return
+    rewindMenuOpen = false
+    shortcutHelpOpen = true
+  }
+
+  /** Leaves the help for the conversation and hands the keyboard back to the composer. */
+  function closeShortcutHelp(): void {
+    shortcutHelpOpen = false
+    focusComposerNextFrame()
+  }
 
   /** Leaves rewind for the conversation and hands the keyboard back to the composer. */
   function closeRewindMenu(): void {
@@ -1157,6 +1186,13 @@
     {#if overviewOpen}
       <!-- The fleet replaces the conversation: picking one is what returns. -->
       <AgentOverview activeSessionId={activeId} onOpen={openFromOverview} onClose={closeOverview} />
+    {:else if shortcutHelpOpen && activeId && live}
+      <!-- The shortcuts stand in for the transcript, in the pane itself. -->
+      <AgentShortcutHelp
+        paneRows={shortcutRows}
+        composerRows={COMPOSER_SHORTCUTS}
+        onClose={closeShortcutHelp}
+      />
     {:else if rewindMenuOpen && activeId && live}
       <!-- The rewind list stands in for the transcript, in the pane itself. -->
       <AgentRewind
@@ -1357,6 +1393,7 @@
               onLeaveDown={focusBackgroundList}
               onTakeBack={takeBackWaiting}
               onRestoreInterrupted={onComposerUp}
+              onShortcutHelp={toggleShortcutHelp}
               header={live ? notesHeader : undefined}
             />
           {/if}

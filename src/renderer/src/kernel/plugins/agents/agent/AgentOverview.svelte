@@ -20,7 +20,12 @@
     sessionsFor,
     sessionStatusColor
   } from '../../../../lib/worktreeStatus'
-  import { agentIdOf, sessionFamilies, type SessionRow } from '../../../../lib/agents/sessionTree'
+  import {
+    agentIdOf,
+    runningBackgroundSessions,
+    sessionFamilies,
+    type SessionRow
+  } from '../../../../lib/agents/sessionTree'
   import BusySpark from '../../../../components/BusySpark.svelte'
   import Kbd from '../../../../components/Kbd.svelte'
   import type { SessionMeta } from '../../../../lib/agents/types'
@@ -87,6 +92,17 @@
     selected = (selected + step + rows.length) % rows.length
   }
 
+  const runningBackground = $derived(
+    runningBackgroundSessions(groups.flatMap((group) => group.sessions.map((row) => row.session)))
+  )
+
+  /** Interrupts every running background agent, as Stop does for one agent in the pane. */
+  async function stopAllBackground(): Promise<void> {
+    await Promise.all(
+      runningBackground.map((session) => agentSessions.send(session.id, [{ type: 'user.interrupt' }]))
+    )
+  }
+
   function openSelected(): void {
     const row = rows[selected]
     if (!row) return
@@ -149,7 +165,16 @@
   onkeydown={onKey}
 >
   <!-- The list says what it is; only the way out of it needs saying. -->
-  <div class="flex items-center justify-end gap-1 px-3 py-1.5 text-2xs text-dim">
+  <div class="flex items-center justify-end gap-2 px-3 py-1.5 text-2xs text-dim">
+    {#if runningBackground.length > 0}
+      <button
+        class="rounded px-1.5 py-0.5 text-red hover:bg-hover"
+        title="Stop every running background agent"
+        onclick={stopAllBackground}
+      >
+        Stop all ({runningBackground.length})
+      </button>
+    {/if}
     <Kbd>↵</Kbd> open · <Kbd>esc</Kbd> back
   </div>
 

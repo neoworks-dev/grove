@@ -85,6 +85,8 @@
   import AgentBackgroundCommands from './AgentBackgroundCommands.svelte'
   import AgentNotes from './AgentNotes.svelte'
   import AgentQuestion from './AgentQuestion.svelte'
+  import ComposerPicker from './ComposerPicker.svelte'
+  import type { PickerKind } from '../../../../lib/agents/composerPicker'
   import AgentControls from './AgentControls.svelte'
   import AgentEditedFiles from './AgentEditedFiles.svelte'
   import AgentOverview from './AgentOverview.svelte'
@@ -1384,6 +1386,7 @@
               onTakeBack={takeBackWaiting}
               onRestoreInterrupted={onComposerUp}
               header={live ? notesHeader : undefined}
+              {picker}
             />
           {/if}
 
@@ -1412,13 +1415,8 @@
               {reviewMode}
               tokensLabel={contextLabel}
               {costLabel}
-              contextTokens={snapshot.context.usedTokens}
               onPickHarness={pickHarness}
               onPickGroveMode={pickGroveMode}
-              onPickModel={pickModel}
-              onRequestKey={requestCredential}
-              onAddEndpoint={() => (addingEndpoint = true)}
-              onPickThinking={pickThinking}
               onPickFastMode={pickFastMode}
               onPickMode={pickMode}
               onSetReview={setReviewSetting}
@@ -1430,6 +1428,29 @@
     {/if}
   {/if}
 </div>
+
+{#snippet picker(kind: PickerKind, close: (refocus: boolean) => void)}
+  {#if snapshot}
+    <ComposerPicker
+      {kind}
+      models={catalog.models}
+      provider={snapshot.provider}
+      model={snapshot.model}
+      thinking={snapshot.thinkingLevel}
+      fastMode={snapshot.fastMode}
+      contextTokens={snapshot.context.usedTokens}
+      supportsThinking={catalog.harnesses.find((entry) => entry.id === snapshot.harness)
+        ?.capabilities.thinking !== false}
+      supportsFastMode={currentHarnessHasFastMode}
+      onPickModel={pickModel}
+      onRequestKey={requestCredential}
+      onAddEndpoint={() => (addingEndpoint = true)}
+      onPickThinking={pickThinking}
+      onPickFastMode={pickFastMode}
+      onClose={close}
+    />
+  {/if}
+{/snippet}
 
 {#if addingEndpoint}
   <EndpointEditor onClose={closeEndpointEditor} />

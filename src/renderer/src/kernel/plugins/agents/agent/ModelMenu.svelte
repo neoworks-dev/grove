@@ -250,7 +250,7 @@
 {/snippet}
 
 <div
-  class="flex flex-col rounded-md border border-line bg-elevated shadow-lg [&_button:focus-visible]:bg-hover [&_button:focus-visible]:outline-none"
+  class="flex flex-col rounded-md border border-line bg-elevated shadow-lg [&_button:focus-visible]:bg-hover [&_input:focus-visible]:border-accent [&_button:focus-visible]:outline-none"
   class:relative={inline}
   class:absolute={!inline}
   class:left-0={!inline}
@@ -262,6 +262,7 @@
   class:top-full={below && !inline}
   class:mt-1={below && !inline}
   bind:this={root}
+  data-footer-menu
   use:keepInside={boundary}
   onmouseleave={() => (flyout = null)}
 >

@@ -67,6 +67,16 @@
   import { modeOf, nextMode, type AgentMode } from '../../../../lib/agents/modes'
   import { nextThinkingLevel } from '../../../../lib/agents/thinking'
   import { followsAfterScroll } from '../../../../lib/agents/scrollFollow'
+  import {
+    FOOTER_OWN_KEYS,
+    focusFirstFooterItem,
+    focusedFooterItem,
+    focusedFooterMenu,
+    openFooterMenuTrigger,
+    stepFooterItem,
+    stepFooterMenuItem
+  } from '../../../../lib/agents/footerFocus'
+  import { keyDispatch, KeyPriority } from '../../../../lib/keyDispatch'
   import type {
     ClientEventBody,
     CodeLocation,
@@ -88,6 +98,9 @@
   import ComposerPicker from './ComposerPicker.svelte'
   import type { PickerKind } from '../../../../lib/agents/composerPicker'
   import AgentControls from './AgentControls.svelte'
+  import AgentHints from './AgentHints.svelte'
+  import AgentSubagentPanel from './AgentSubagentPanel.svelte'
+  import type { PanelRow } from '../../../../lib/agents/subagentPanel'
   import AgentEditedFiles from './AgentEditedFiles.svelte'
   import AgentOverview from './AgentOverview.svelte'
   import AgentQueue from './AgentQueue.svelte'
@@ -220,8 +233,10 @@
     restorePrompt: (text: string) => void
     sendNow: () => void
     searchHistory: () => void
+    insertAtCaret: (text: string) => void
   }>()
-  let backgroundList = $state<{ focus: () => boolean }>()
+  // What sits under the prompt: the background tasks and the controls row.
+  let footerEl = $state<HTMLDivElement>()
   // The approval or question card standing in for the composer, while one is up.
   let promptCard = $state<{ focus: () => void }>()
   let rootEl = $state<HTMLDivElement>()
@@ -922,11 +937,132 @@
     composer?.focus()
   }
 
-  /** Moves the keyboard to the background tasks under the composer; false when there are none. */
-  function focusBackgroundList(): boolean {
-    if (!backgroundList) return false
-    return backgroundList.focus()
+  /** Moves the keyboard to the first item under the composer; false when there are none. */
+  function focusFooter(): boolean {
+    if (!footerEl) return false
+    return focusFirstFooterItem(footerEl)
   }
+
+  /**
+   * Hands the keyboard back to the prompt from an item under it, first closing the
+   * menu the item has open: that is what Escape and up mean there.
+   */
+  function leaveFooter(): void {
+    if (footerEl) openFooterMenuTrigger(footerEl)?.click()
+    focusComposer()
+  }
+
+  /** Shows an agent's conversation from the panel, and keeps the keyboard in the panel for the next move. */
+  function openFromPanel(sessionId: string): void {
+    selectSession(sessionId)
+    requestAnimationFrame(() => focusFooter())
+  }
+
+  /** Types into the prompt from the footer, which is how a footer key with nothing to do on a row falls back. */
+  function typeIntoPrompt(text: string): void {
+    composer?.insertAtCaret(text)
+  }
+
+  /**
+   * Stops an agent the session is running. One the harness ran inside a tool call has no
+   * run of its own, so the turn that started it is what stops, and everything it was
+   * running with it.
+   */
+  function stopAgent(row: PanelRow): void {
+    if (!activeId) return
+    let target = row.sessionId
+    if (row.harnessRun) target = rootSessionId()
+    void agentSessions.send(target, [{ type: 'user.interrupt' }])
+  }
+
+  /** The session the user started that the session on screen belongs to. */
+  function rootSessionId(): string {
+    let current = activeMeta
+    while (current) {
+      const parentId = parentIdOf(current)
+      if (!parentId) return current.id
+      current = sessionList.find((session) => session.id === parentId)
+    }
+    return activeId as string
+  }
+
+  /** Left and right move between the items under the prompt. */
+  function stepFooter(direction: 1 | -1): void {
+    if (footerEl) stepFooterItem(footerEl, direction)
+  }
+
+  /**
+   * The keys of a menu opened from an item under the prompt, while the keyboard is in
+   * it: up and down walk the rows, Escape closes it and returns to the item. Enter is
+   * left to the focused row, which is a button.
+   */
+  function onFooterMenuKey(event: KeyboardEvent): boolean {
+    if (!footerEl) return false
+    const menu = focusedFooterMenu(footerEl)
+    if (!menu) return false
+    if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return false
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      return leaveMenuSideways(event, event.key === 'ArrowRight' ? 1 : -1)
+    }
+    let action: (() => void) | undefined
+    if (event.key === 'ArrowDown') action = () => stepFooterMenuItem(menu, 1)
+    if (event.key === 'ArrowUp') action = () => stepFooterMenuItem(menu, -1)
+    if (event.key === 'Escape') action = closeFooterMenu
+    if (!action) return false
+    event.preventDefault()
+    event.stopPropagation()
+    action()
+    return true
+  }
+
+  /**
+   * Left and right from a menu row close the menu and go on to the neighbouring item,
+   * so they never reach the overview binding. In the search field they stay cursor keys.
+   */
+  function leaveMenuSideways(event: KeyboardEvent, direction: 1 | -1): boolean {
+    if (event.target instanceof HTMLInputElement) return true
+    event.preventDefault()
+    event.stopPropagation()
+    closeFooterMenu()
+    stepFooter(direction)
+    return true
+  }
+
+  /** Closes the menu the keyboard is in and puts the keyboard back on the item that opened it. */
+  function closeFooterMenu(): void {
+    if (!footerEl) return
+    const trigger = openFooterMenuTrigger(footerEl)
+    trigger?.click()
+    trigger?.focus()
+  }
+
+  /**
+   * The keys of the items under the prompt while one has the keyboard. Enter is left
+   * to the item, which opens itself; keys the footer has no use for, Shift+Tab among
+   * them, fall through to the pane's own bindings.
+   */
+  function onFooterKey(event: KeyboardEvent): boolean {
+    if (!footerEl) return false
+    if (onFooterMenuKey(event)) return true
+    const item = focusedFooterItem(footerEl)
+    if (!item) return false
+    if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return false
+    const handlesOwnKeys = item.dataset.footerItem === FOOTER_OWN_KEYS
+    let action: (() => void) | undefined
+    if (event.key === 'ArrowRight') action = () => stepFooter(1)
+    if (event.key === 'ArrowLeft') action = () => stepFooter(-1)
+    // Nothing lies below the footer, so down stays where it is rather than reaching the page.
+    if (event.key === 'ArrowDown' && !handlesOwnKeys) action = () => {}
+    if (event.key === 'ArrowUp' && !handlesOwnKeys) action = leaveFooter
+    if (event.key === 'Escape' && !handlesOwnKeys) action = leaveFooter
+    if (!action) return false
+    event.preventDefault()
+    event.stopPropagation()
+    action()
+    return true
+  }
+
+  onMount(() => keyDispatch.subscribe(KeyPriority.menu, onFooterKey))
 
   // ── Focus ───────────────────────────────────────────────────────
   //
@@ -1478,6 +1614,10 @@
               </button>
             {/if}
           </div>
+          <!-- The agents of this family stay reachable from the one being looked at. -->
+          <div bind:this={footerEl}>
+            {@render agentPanel()}
+          </div>
         {:else}
           <!-- Kept mounted while an approval or question stands in for it, so the
                draft being written survives the card. -->
@@ -1495,7 +1635,7 @@
               onInterrupt={interrupt}
               onCycleMode={cycleMode}
               onBack={showOverview}
-              onLeaveDown={focusBackgroundList}
+              onLeaveDown={focusFooter}
               onTakeBack={takeBackWaiting}
               onRestoreInterrupted={onComposerUp}
               hasWaiting={queued.length + steered.length > 0}
@@ -1505,39 +1645,56 @@
             />
           {/if}
 
-          {#if activeId && live && !shownApproval}
-            <AgentBackgroundCommands
-              bind:this={backgroundList}
-              sessionId={activeId}
-              items={live.transcript.items}
-              onLeave={focusComposer}
-            />
-          {/if}
+          <div bind:this={footerEl}>
+            {#if !shownApproval}
+              {@render agentPanel()}
+            {/if}
 
-          {#if snapshot && !shownApproval}
-            <AgentControls
-              harness={snapshot.harness}
-              harnesses={catalog.harnesses}
-              started={snapshot.started}
-              groveMode={snapshot.groveMode}
-              provider={snapshot.provider}
-              model={snapshot.model}
-              thinking={snapshot.thinkingLevel}
-              fastMode={snapshot.fastMode}
-              {mode}
-              {running}
-              models={catalog.models}
-              {reviewMode}
-              tokensLabel={contextLabel}
-              {costLabel}
-              onPickHarness={pickHarness}
-              onPickGroveMode={pickGroveMode}
-              onPickFastMode={pickFastMode}
-              onPickMode={pickMode}
-              onSetReview={setReviewSetting}
-              onInterrupt={interrupt}
-            />
-          {/if}
+            {#if activeId && live && !shownApproval}
+              <AgentBackgroundCommands
+                sessionId={activeId}
+                items={live.transcript.items}
+                onLeave={focusComposer}
+              />
+            {/if}
+
+            {#if snapshot && !shownApproval}
+              <AgentControls
+                harness={snapshot.harness}
+                harnesses={catalog.harnesses}
+                started={snapshot.started}
+                groveMode={snapshot.groveMode}
+                provider={snapshot.provider}
+                model={snapshot.model}
+                thinking={snapshot.thinkingLevel}
+                fastMode={snapshot.fastMode}
+                {mode}
+                {running}
+                models={catalog.models}
+                {reviewMode}
+                tokensLabel={contextLabel}
+                {costLabel}
+                onPickHarness={pickHarness}
+                onPickGroveMode={pickGroveMode}
+                onPickFastMode={pickFastMode}
+                onPickMode={pickMode}
+                onSetReview={setReviewSetting}
+                onInterrupt={interrupt}
+              />
+            {/if}
+
+            {#if snapshot && activeId && !shownApproval}
+              <AgentHints
+                sessionId={activeId}
+                {mode}
+                {running}
+                {commandRunning}
+                contextRatio={snapshot.context.ratio}
+                cycleModeKeys={keymap.keysFor(`agent.cycleMode:${leafId}`)}
+                backgroundKeys={keymap.keysFor(`agent.backgroundShell:${leafId}`)}
+              />
+            {/if}
+          </div>
         {/if}
       </div>
     {/if}
@@ -1578,6 +1735,18 @@
     onClose={closeCredentialPrompt}
   />
 {/if}
+
+<!-- The session and the agents it is running, under the prompt. -->
+{#snippet agentPanel()}
+  <AgentSubagentPanel
+    sessions={sessionList}
+    {activeId}
+    onOpen={openFromPanel}
+    onStop={stopAgent}
+    onLeave={focusComposer}
+    onTypeIntoPrompt={typeIntoPrompt}
+  />
+{/snippet}
 
 <!-- The notes list, drawn as the top of the composer rather than a card of its own. -->
 {#snippet notesHeader()}

@@ -348,7 +348,7 @@
   }
 
   /** Writes text into the draft at the caret and leaves the caret after it. */
-  function insertAtCaret(text: string): void {
+  export function insertAtCaret(text: string): void {
     const at = promptEl ? promptEl.selectionStart : draft.length
     draft = draft.slice(0, at) + text + draft.slice(at)
     requestAnimationFrame(() => {

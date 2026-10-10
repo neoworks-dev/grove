@@ -31,6 +31,8 @@
   import { onDestroy, type Snippet } from 'svelte'
   import { SentDrafts } from '../../../../lib/agents/sentDrafts'
   import { isStashKey, PromptStash } from '../../../../lib/agents/promptStash'
+  import { DoubleEscape, escapeAction } from '../../../../lib/agents/doubleEscape'
+  import { openRewindMenu } from '../../../../lib/agents/rewindMenu'
   import { keyDispatch, KeyPriority } from '../../../../lib/keyDispatch'
   import ArrowCounterClockwise from 'phosphor-svelte/lib/ArrowCounterClockwise'
   import ImageMarkup from './ImageMarkup.svelte'
@@ -138,9 +140,16 @@
   // being written. Reset on a session change, since the history is another one's.
   let historyIndex = $state(-1)
 
+  // Drafts cleared with Escape Escape. They sit after the transcript's history so
+  // up brings the newest one back, and go once something is sent.
+  let clearedDrafts = $state<string[]>([])
+  const promptHistory = $derived([...history, ...clearedDrafts])
+  const doubleEscape = new DoubleEscape()
+
   $effect(() => {
     sessionId
     historyIndex = -1
+    clearedDrafts = []
   })
 
   // Set by Tab in a shell draft, which asks for completions of a word not yet
@@ -390,6 +399,7 @@
     references = []
     historyIndex = -1
     suggestions = []
+    clearedDrafts = []
   }
 
   // Messages sent while the agent is busy wait before it reads them, and until
@@ -590,11 +600,9 @@
       return
     }
 
-    // Escape stops the turn in flight without leaving the composer, so the draft
-    // being typed survives the interrupt.
-    if (event.key === 'Escape' && running) {
+    if (event.key === 'Escape') {
       event.preventDefault()
-      onInterrupt()
+      onEscape()
       return
     }
     if (event.key === 'Enter' && !event.shiftKey) {
@@ -627,7 +635,7 @@
       event.preventDefault()
       return
     }
-    if (event.key === 'ArrowUp' && draft.length === 0 && history.length > 0) {
+    if (event.key === 'ArrowUp' && draft.length === 0 && promptHistory.length > 0) {
       event.preventDefault()
       stepHistory(-1)
       return
@@ -645,6 +653,33 @@
     if (event.key === 'ArrowDown' && caretOnLastLine() && onLeaveDown?.()) {
       event.preventDefault()
     }
+  }
+
+  /**
+   * Escape stops the turn in flight without leaving the composer, so the draft being
+   * typed survives the interrupt. Pressed twice it clears the draft, or with none
+   * opens the rewind view.
+   */
+  function onEscape(): void {
+    const action = escapeAction({
+      running,
+      hasDraft: draft !== '' || attachments.length > 0,
+      doublePress: doubleEscape.press(Date.now())
+    })
+    if (action === 'interrupt') onInterrupt()
+    if (action === 'clear') clearDraftIntoHistory()
+    if (action === 'rewind') openRewindMenu()
+  }
+
+  /** Empties the composer, keeping the text where up can bring it back. */
+  function clearDraftIntoHistory(): void {
+    if (draft !== '') clearedDrafts = [...clearedDrafts, draft]
+    forgetAttachments(attachments)
+    draft = ''
+    attachments = []
+    references = []
+    historyIndex = -1
+    suggestions = []
   }
 
   /** Moves a waiting message back into the draft; says whether there was one. */
@@ -708,14 +743,14 @@
   }
 
   function stepHistory(direction: number): void {
-    const next = historyIndex === -1 ? history.length - 1 : historyIndex + direction
-    if (next < 0 || next >= history.length) {
+    const next = historyIndex === -1 ? promptHistory.length - 1 : historyIndex + direction
+    if (next < 0 || next >= promptHistory.length) {
       historyIndex = -1
       draft = ''
       return
     }
     historyIndex = next
-    draft = history[next]
+    draft = promptHistory[next]
   }
 
   // ── Attachments ─────────────────────────────────────────────────

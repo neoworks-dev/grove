@@ -74,15 +74,23 @@ describe('modeOf', () => {
 })
 
 describe('nextMode', () => {
-  test('steps through every mode and comes back round', () => {
+  test('steps through the modes and comes back round, never landing on plan', () => {
     const seen: AgentMode[] = []
     let mode: AgentMode = 'default'
-    for (let step = 0; step < MODE_ORDER.length; step += 1) {
+    for (let step = 0; step < 3; step += 1) {
       seen.push(mode)
       mode = nextMode(mode)
     }
-    expect(seen).toEqual(MODE_ORDER)
+    expect(seen).toEqual(['default', 'acceptEdits', 'bypass'])
     expect(mode).toBe('default')
+  })
+
+  test('from plan, moves on to the next non-plan mode', () => {
+    expect(nextMode('plan')).toBe('acceptEdits')
+  })
+
+  test('plan is still a mode the picker offers', () => {
+    expect(MODE_ORDER).toContain('plan')
   })
 })
 

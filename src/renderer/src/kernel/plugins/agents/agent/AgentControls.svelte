@@ -122,7 +122,7 @@
 
   /** Why fast mode is flagged wherever it is offered: it is quicker, and it is paid for. */
   const FAST_MODE_WARNING =
-    'Fast mode answers quicker, and costs noticeably more per token. It stays on for this session until you turn it off.'
+    'Fast mode answers quicker, and uses up your usage limits faster. It stays on for this session until you turn it off.'
 
   function formatTokens(tokens: number): string {
     if (tokens < 1000) return String(tokens)
@@ -380,7 +380,7 @@
     {/if}
   </div>
 
-  <!-- Fast mode is flagged for as long as it is on, because every turn in it costs more. -->
+  <!-- Fast mode is flagged for as long as it is on, because every turn in it uses up limits faster. -->
   {#if fastMode}
     <button
       class="flex items-center gap-1 rounded border border-amber/50 bg-amber-soft px-2 py-1 text-amber hover:bg-hover"
@@ -389,7 +389,7 @@
       onclick={() => onPickFastMode(false)}
     >
       <span class="font-medium">Fast</span>
-      <span>costs more</span>
+      <span>uses limits faster</span>
     </button>
   {/if}
 

@@ -699,7 +699,7 @@
     void agentSessions.update(activeId, { thinkingLevel })
   }
 
-  /** Turns fast mode on or off for this session; it is never remembered for the next one, since it costs more. */
+  /** Turns fast mode on or off for this session; it is never remembered for the next one, since it uses up limits faster. */
   function pickFastMode(fastMode: boolean): void {
     if (!activeId) return
     void agentSessions.update(activeId, { fastMode })
@@ -1049,7 +1049,7 @@
         keys: 'alt+o',
         context: leafId,
         group: 'Agent',
-        description: 'Switch fast mode (costs more)',
+        description: 'Switch fast mode (uses limits faster)',
         when: () => currentHarnessHasFastMode,
         run: toggleFastMode
       },

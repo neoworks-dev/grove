@@ -210,7 +210,11 @@
   let overviewOpen = $state(false)
   let expandedTools = $state<Record<string, boolean>>({})
   let transcriptViewport = $state<HTMLDivElement>()
-  let composer = $state<{ focus: () => boolean; restorePrompt: (text: string) => void }>()
+  let composer = $state<{
+    focus: () => boolean
+    restorePrompt: (text: string) => void
+    sendNow: () => void
+  }>()
   let backgroundList = $state<{ focus: () => boolean }>()
   // The approval or question card standing in for the composer, while one is up.
   let promptCard = $state<{ focus: () => void }>()
@@ -417,6 +421,7 @@
 
   function send(events: ClientEventBody[]): void {
     if (!activeId) return
+    if (running && events.some((event) => event.type === 'user.interrupt')) stopRequested = true
     void agentSessions.send(activeId, events)
     stickToBottom = true
   }
@@ -1036,6 +1041,15 @@
         run: toggleNotes
       },
       {
+        id: `agent.sendNow:${leafId}`,
+        keys: 'ctrl+enter',
+        context: leafId,
+        group: 'Agent',
+        description: 'Send now: stop the turn and send what is waiting',
+        when: () => composer !== undefined && shownApproval === undefined,
+        run: () => composer?.sendNow()
+      },
+      {
         id: `agent.overview:${leafId}`,
         keys: 'left',
         context: leafId,
@@ -1357,6 +1371,7 @@
               onLeaveDown={focusBackgroundList}
               onTakeBack={takeBackWaiting}
               onRestoreInterrupted={onComposerUp}
+              hasWaiting={queued.length + steered.length > 0}
               header={live ? notesHeader : undefined}
             />
           {/if}

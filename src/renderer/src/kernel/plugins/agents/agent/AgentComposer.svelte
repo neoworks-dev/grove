@@ -427,12 +427,11 @@
 
   /** Parks the draft with its attachments and slices, and clears the composer. */
   function stashDraft(): void {
-    const parked: StashedDraft = {
-      draft,
-      attachments,
-      references: activeReferences(),
-      caret: promptEl?.selectionStart ?? draft.length
+    let caret = draft.length
+    if (promptEl) {
+      caret = promptEl.selectionStart
     }
+    const parked: StashedDraft = { draft, attachments, references: activeReferences(), caret }
     const displaced = promptStash.put(parked)
     if (displaced) forgetAttachments(displaced.attachments)
     draft = ''
@@ -868,8 +867,8 @@
       placeholder={voiceDictation.state !== 'idle'
         ? 'Listening… release Space to insert'
         : running
-          ? 'Steer the running agent…  ( Enter send · Esc interrupt )'
-          : `Prompt…  ( / commands · @ files · ! shell · ↑↓ history · ← sessions · Enter send${placeholderHint} )`}
+        ? 'Steer the running agent…  ( Enter send · Esc interrupt )'
+        : `Prompt…  ( / commands · @ files · ! shell · ↑↓ history · ← sessions · Enter send${placeholderHint} )`}
       onkeydown={onKey}
       onkeyup={onKeyUp}
       onclick={syncCaret}

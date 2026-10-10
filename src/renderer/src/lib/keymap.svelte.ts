@@ -56,6 +56,7 @@ import {
   stepLabel,
   isModifierKey,
   firesWhileTyping,
+  mostSpecific,
   type KeyStep,
   type ParsedSequence
 } from './keySequence'
@@ -201,6 +202,19 @@ class Keymap {
 
   get activePaneType(): string | null {
     return this.activePaneTypeState
+  }
+
+  /** The type of a registered pane, or null when the id names no pane. */
+  paneTypeOf(paneId: string): string | null {
+    const type = this.paneTypes.get(paneId)
+    if (type === undefined) return null
+    return type
+  }
+
+  /** Of the bindings whose keys are exactly `length` steps, the one that fits the focused pane best. */
+  private exactMatch(matches: ResolvedBinding[], length: number): ResolvedBinding | undefined {
+    const exact = matches.filter((binding) => binding.sequence.steps.length === length)
+    return mostSpecific(exact, this.activePane, this.activePaneType)
   }
 
   /**
@@ -568,7 +582,7 @@ class Keymap {
     if (!firesWhileTyping(step) && !this.eligible()) return false
     const matches = this.matching([step], false)
     if (matches.length === 0) return false
-    const exact = matches.find((binding) => binding.sequence.steps.length === 1)
+    const exact = this.exactMatch(matches, 1)
     if (exact) {
       void exact.run()
       return true
@@ -585,7 +599,7 @@ class Keymap {
 
     const next = [...this.pendingSteps, stepFromEvent(event)]
     const matches = this.matching(next, this.pendingLeader)
-    const exact = matches.find((binding) => binding.sequence.steps.length === next.length)
+    const exact = this.exactMatch(matches, next.length)
     if (exact) {
       this.cancelPending()
       void exact.run()

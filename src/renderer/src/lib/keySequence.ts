@@ -338,19 +338,81 @@ export interface SequenceConflict {
   kind: 'duplicate' | 'shadow'
 }
 
-export function findConflicts(entries: ConflictEntry[]): SequenceConflict[] {
+/** The pane type a binding context names when the context is a pane id, or null. */
+export type PaneTypeOf = (context: string) => string | null
+
+/**
+ * Whether two binding contexts can be live at the same time: the same context,
+ * either of them global, or a pane id beside the type of that pane.
+ */
+export function contextsOverlap(first: string, second: string, paneTypeOf: PaneTypeOf): boolean {
+  if (first === second) return true
+  if (first === 'global' || second === 'global') return true
+  if (paneTypeOf(first) === second) return true
+  return paneTypeOf(second) === first
+}
+
+/**
+ * How closely a binding context fits the focused pane: the pane's own id beats
+ * its pane type, which beats global. -1 when the context doesn't apply at all.
+ */
+export function contextSpecificity(
+  context: string,
+  activePane: string | null,
+  activePaneType: string | null
+): number {
+  if (activePane !== null && context === activePane) return 2
+  if (activePaneType !== null && context === activePaneType) return 1
+  if (context === 'global') return 0
+  return -1
+}
+
+/**
+ * The binding whose context fits the focused pane most closely, so a pane's own
+ * key wins over a global one bound to the same keys. Ties keep list order.
+ */
+export function mostSpecific<Binding extends { context?: string }>(
+  bindings: Binding[],
+  activePane: string | null,
+  activePaneType: string | null
+): Binding | undefined {
+  let best: Binding | undefined
+  let bestScore = -1
+  for (const binding of bindings) {
+    const score = contextSpecificity(binding.context || 'global', activePane, activePaneType)
+    if (score > bestScore) {
+      best = binding
+      bestScore = score
+    }
+  }
+  return best
+}
+
+/**
+ * Every pair of bindings that can be live at once and claim the same keys, or
+ * where one's keys start the other's. `paneTypeOf` lets a pane's own bindings
+ * be compared with the bindings for its pane type.
+ */
+export function findConflicts(
+  entries: ConflictEntry[],
+  paneTypeOf: PaneTypeOf = () => null
+): SequenceConflict[] {
   const conflicts: SequenceConflict[] = []
   for (let i = 0; i < entries.length; i++) {
     for (let j = i + 1; j < entries.length; j++) {
-      const conflict = compareEntries(entries[i], entries[j])
+      const conflict = compareEntries(entries[i], entries[j], paneTypeOf)
       if (conflict) conflicts.push(conflict)
     }
   }
   return conflicts
 }
 
-function compareEntries(a: ConflictEntry, b: ConflictEntry): SequenceConflict | null {
-  if (a.context !== b.context) return null
+function compareEntries(
+  a: ConflictEntry,
+  b: ConflictEntry,
+  paneTypeOf: PaneTypeOf
+): SequenceConflict | null {
+  if (!contextsOverlap(a.context, b.context, paneTypeOf)) return null
   if (a.sequence.leader !== b.sequence.leader) return null
   const sameLength = a.sequence.steps.length === b.sequence.steps.length
   const [shorter, longer] = a.sequence.steps.length <= b.sequence.steps.length ? [a, b] : [b, a]

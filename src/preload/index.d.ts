@@ -123,6 +123,7 @@ import type {
   SessionSnapshot,
   SessionUpdate,
   SessionReplay,
+  RewindSnapshot,
   LineBlame,
   CommitPrompt
 } from '../shared/agents'
@@ -371,6 +372,14 @@ export interface WorkbenchApi {
     restore: (
       sessionId: string,
       tree: string
+    ) => Promise<{ restoredTree: string; preRestore: CheckpointMeta | null }>
+  }
+  rewind: {
+    snapshots: (sessionId: string) => Promise<RewindSnapshot[]>
+    changes: (sessionId: string, promptSeq: number) => Promise<TreeFileChange[]>
+    restoreCode: (
+      sessionId: string,
+      promptSeq: number
     ) => Promise<{ restoredTree: string; preRestore: CheckpointMeta | null }>
   }
   blame: {

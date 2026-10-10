@@ -52,6 +52,14 @@
   import { followStep } from '../../../../lib/agents/follow'
   import { questionsOf } from '../../../../lib/agents/questions'
   import { canEditMessage, editMessageEvents } from '../../../../lib/agents/editMessage'
+  import {
+    restoresCode,
+    restoresConversation,
+    rewindConversationEvents,
+    rewindPrompts,
+    type RewindChoice
+  } from '../../../../lib/agents/rewind'
+  import { registerRewindMenuOpener } from '../../../../lib/agents/rewindMenu'
   import { modeOf, nextMode, type AgentMode } from '../../../../lib/agents/modes'
   import { nextThinkingLevel } from '../../../../lib/agents/thinking'
   import { followsAfterScroll } from '../../../../lib/agents/scrollFollow'
@@ -80,6 +88,7 @@
   import AgentSessionTabs from './AgentSessionTabs.svelte'
   import AgentTranscript from './AgentTranscript.svelte'
   import AgentWorkingBar from './AgentWorkingBar.svelte'
+  import AgentRewind from './AgentRewind.svelte'
   import CredentialPrompt from './CredentialPrompt.svelte'
   import EndpointEditor from './EndpointEditor.svelte'
   import PaneControls from '../../../../components/PaneControls.svelte'
@@ -197,7 +206,7 @@
   let overviewOpen = $state(false)
   let expandedTools = $state<Record<string, boolean>>({})
   let transcriptViewport = $state<HTMLDivElement>()
-  let composer = $state<{ focus: () => boolean }>()
+  let composer = $state<{ focus: () => boolean; restorePrompt: (text: string) => void }>()
   let backgroundList = $state<{ focus: () => boolean }>()
   // The approval or question card standing in for the composer, while one is up.
   let promptCard = $state<{ focus: () => void }>()
@@ -236,7 +245,11 @@
     const unwatch = agentSessions.watch()
     void catalog.load()
     disposeBindings = registerBindings()
-    return unwatch
+    const unregisterRewind = registerRewindMenuOpener(openRewindMenu)
+    return () => {
+      unwatch()
+      unregisterRewind()
+    }
   })
 
   onDestroy(() => {
@@ -412,9 +425,9 @@
     input?: unknown
   ): Promise<void> {
     if (!activeId) return Promise.resolve()
-    return agentSessions.send(activeId, [
-      { type: 'user.tool_confirmation', toolUseId, result, reason, input }
-    ])
+    return agentSessions
+      .send(activeId, [{ type: 'user.tool_confirmation', toolUseId, result, reason, input }])
+      .then(() => undefined)
   }
 
   /** Let the asking call run, with the user's answers written into its input. */
@@ -471,6 +484,68 @@
   function editMessage(item: UserItem, text: string): void {
     if (!live) return
     send(editMessageEvents(live.transcript, item, text))
+  }
+
+  // ── Rewind ──────────────────────────────────────────────────────
+
+  // Whether the transcript is showing the rewind list in its place.
+  let rewindMenuOpen = $state(false)
+
+  // The prompts rewind offers, oldest first.
+  const promptsToRewindTo = $derived.by(() => {
+    if (!live) return []
+    return rewindPrompts(live.transcript)
+  })
+
+  /** Switches the pane into rewind: the prompts sent in this session and what going back to one restores. */
+  function openRewindMenu(): void {
+    if (!activeId || subagent || overviewOpen) return
+    rewindMenuOpen = true
+  }
+
+  // Another session's prompts are not these ones.
+  $effect(() => {
+    void activeId
+    untrack(() => {
+      rewindMenuOpen = false
+    })
+  })
+
+  /** Leaves rewind for the conversation and hands the keyboard back to the composer. */
+  function closeRewindMenu(): void {
+    rewindMenuOpen = false
+    focusComposerNextFrame()
+  }
+
+  /** What the main process said when it refused a rewind. */
+  function refusalOf(sessionId: string): string {
+    const said = agentSessions.live[sessionId]?.error
+    if (said) return said
+    return 'The conversation could not be taken back.'
+  }
+
+  /**
+   * Puts a session back to one of its prompts. The conversation goes first, since
+   * that is what the main process can refuse; the worktree is only touched once it
+   * has gone. Resolves to what went wrong, or null when it all worked.
+   */
+  async function rewindTo(choice: RewindChoice, prompt: UserItem): Promise<string | null> {
+    if (!activeId || !live) return 'There is no session to rewind.'
+    const sessionId = activeId
+    if (restoresConversation(choice)) {
+      const events = rewindConversationEvents(live.transcript, prompt)
+      const accepted = await agentSessions.send(sessionId, events)
+      if (!accepted) return refusalOf(sessionId)
+    }
+    if (restoresCode(choice)) {
+      try {
+        await window.workbench.rewind.restoreCode(sessionId, prompt.seq)
+      } catch (cause) {
+        return (cause as Error).message
+      }
+    }
+    if (restoresConversation(choice)) composer?.restorePrompt(prompt.text)
+    return null
   }
 
   /** Whether the to-do list above the composer is expanded. */
@@ -1019,6 +1094,16 @@
     {#if overviewOpen}
       <!-- The fleet replaces the conversation: picking one is what returns. -->
       <AgentOverview activeSessionId={activeId} onOpen={openFromOverview} onClose={closeOverview} />
+    {:else if rewindMenuOpen && activeId && live}
+      <!-- The rewind list stands in for the transcript, in the pane itself. -->
+      <AgentRewind
+        sessionId={activeId}
+        prompts={promptsToRewindTo}
+        harnessRewinds={rewinds}
+        {running}
+        onRestore={rewindTo}
+        onClose={closeRewindMenu}
+      />
     {:else if activeId && live}
       <AgentTranscript
         sessionId={activeId}

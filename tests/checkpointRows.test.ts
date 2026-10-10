@@ -27,6 +27,7 @@ describe('git pane checkpoints list', () => {
     ])
     expect(listed.map((checkpoint) => checkpoint.n)).toEqual([3, 1])
     expect(HIDDEN_TRIGGERS).toContain('user-message')
+    expect(HIDDEN_TRIGGERS).toContain('prompt-sent')
   })
 
   it('lists newest first and leaves the input alone', () => {

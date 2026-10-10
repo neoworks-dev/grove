@@ -43,7 +43,7 @@ export function editMessageEvents(
 }
 
 /** The event the message hung from, which the conversation continues from; 0 for its start. */
-function rewindTarget(state: TranscriptState, item: UserItem): number {
+export function rewindTarget(state: TranscriptState, item: UserItem): number {
   const parent = state.parentOf.get(item.seq)
   if (parent === undefined) return 0
   return parent

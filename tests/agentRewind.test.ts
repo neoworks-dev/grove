@@ -10,7 +10,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ClientEventBody, ServerEventBody, SessionEvent } from '../src/shared/agents'
-import { AgentService } from '../src/main/agents/service'
+import { AgentService, type AgentServiceOptions } from '../src/main/agents/service'
 import { HarnessRegistry, type HarnessRunOptions } from '../src/main/agents/harness'
 import { rewindPoint } from '../src/main/agents/rewind'
 import { SessionStore } from '../src/main/agents/store'
@@ -223,7 +223,7 @@ interface Fixture {
 }
 
 /** A service over a harness that can rewind (`fake`) and one that cannot (`plain`). */
-async function setup(): Promise<Fixture> {
+async function setup(options: Partial<AgentServiceOptions> = {}): Promise<Fixture> {
   const root = await mkdtemp(join(tmpdir(), 'grove-agent-rewind-'))
   const store = new SessionStore(root)
   const harnesses = new HarnessRegistry()
@@ -261,7 +261,8 @@ async function setup(): Promise<Fixture> {
     harnesses,
     tools: () => [],
     publish: () => {},
-    defaultHarness: () => 'fake'
+    defaultHarness: () => 'fake',
+    ...options
   })
   return { service, store, runs, cleanup: () => rm(root, { recursive: true, force: true }) }
 }
@@ -287,6 +288,52 @@ async function turn(
   run.emit({ type: 'session.status_idle', stopReason: 'end_turn' })
   await new Promise((resolve) => setTimeout(resolve, 5))
 }
+
+describe('AgentService prompt snapshots', () => {
+  test('a user prompt is snapshotted once it is on the log and before the agent starts', async () => {
+    const snapshots: { sessionId: string; promptSeq: number; runsStarted: number }[] = []
+    let fixture: Fixture | undefined
+    fixture = await setup({
+      promptSent: (session, promptSeq) => {
+        snapshots.push({
+          sessionId: session.id,
+          promptSeq,
+          runsStarted: fixture ? fixture.runs.length : 0
+        })
+        return Promise.resolve()
+      }
+    })
+    try {
+      const session = await fixture.service.createSession({ workspace: '/tmp/worktree' })
+      await turn(fixture, session.id, 'first', 'm1')
+      await fixture.service.send(session.id, [
+        { type: 'app.message', label: 'Note', text: 'not a prompt' }
+      ])
+      const sent = fixture.store
+        .peekEvents(session.id)
+        .filter((event) => event.type === 'user.message')
+      expect(snapshots).toHaveLength(1)
+      expect(snapshots[0]).toEqual({
+        sessionId: session.id,
+        promptSeq: sent[0].seq,
+        runsStarted: 0
+      })
+    } finally {
+      await fixture.cleanup()
+    }
+  })
+
+  test('a snapshot that fails does not stop the prompt', async () => {
+    const fixture = await setup({ promptSent: () => Promise.reject(new Error('no git')) })
+    try {
+      const session = await fixture.service.createSession({ workspace: '/tmp/worktree' })
+      await turn(fixture, session.id, 'first', 'm1')
+      expect(fixture.runs[0].prompts).toEqual(['first'])
+    } finally {
+      await fixture.cleanup()
+    }
+  })
+})
 
 describe('AgentService rewind', () => {
   test('the next run opens the conversation cut after the last kept agent message', async () => {

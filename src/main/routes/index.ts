@@ -19,6 +19,7 @@ import { nvimRoutes } from './nvim'
 import { stateRoutes } from './state'
 import { agentRoutes } from './agents'
 import { replayRoutes } from './replay'
+import { rewindRoutes } from './rewind'
 import { blameRoutes } from './blame'
 import { browserHostRoutes } from './browserHost'
 import { pluginsRoutes } from './plugins'
@@ -51,6 +52,7 @@ export const routePlugins = [
   stateRoutes,
   agentRoutes,
   replayRoutes,
+  rewindRoutes,
   blameRoutes,
   browserHostRoutes,
   pluginsRoutes,

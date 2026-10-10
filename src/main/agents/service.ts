@@ -115,6 +115,11 @@ export interface AgentServiceOptions {
    * it to report back — hears about the removal here.
    */
   sessionRemoved?: (session: StoredSession) => Promise<void>
+  /**
+   * Called as a user's prompt lands on the log, before the agent reads it: records
+   * the session's worktree as it stands, so it can be put back to this moment.
+   */
+  promptSent?: (session: StoredSession, promptSeq: number) => Promise<void>
   /** Push an event to the renderer. */
   publish(event: SessionEvent): void
   /** Push what a running command printed to the renderer; off the log. */
@@ -462,6 +467,7 @@ export class AgentService {
     // ends the wait for everything run before it.
     const pending = await this.pendingShellContext(sessionId)
     const stamped = await this.store.append(sessionId, event)
+    await this.recordPromptSent(sessionId, stamped.seq, event)
     await this.nameFromFirstPrompt(sessionId)
     await this.endClearedState(sessionId)
     const runtime = this.runtimeOrCreate(sessionId)
@@ -488,6 +494,25 @@ export class AgentService {
       return
     }
     runtime.queued = [...runtime.queued, { id: stamped.id, text, deliverAs, attachments }]
+  }
+
+  /**
+   * Has the worktree snapshotted for a prompt the user typed, ahead of the turn it
+   * starts. A snapshot that fails costs the prompt its code restore, never the send.
+   */
+  private async recordPromptSent(
+    sessionId: string,
+    promptSeq: number,
+    event: Extract<ClientEventBody, { type: 'user.message' | 'app.message' }>
+  ): Promise<void> {
+    if (event.type !== 'user.message' || !this.options.promptSent) return
+    try {
+      await this.options.promptSent(await this.store.require(sessionId), promptSeq)
+    } catch (cause) {
+      console.warn(
+        `could not snapshot the worktree for prompt ${promptSeq}: ${(cause as Error).message}`
+      )
+    }
   }
 
   /** A message reached a cleared conversation, which therefore holds something again. */

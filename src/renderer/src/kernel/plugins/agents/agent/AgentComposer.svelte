@@ -63,6 +63,7 @@
     onLeaveDown,
     onTakeBack,
     onRestoreInterrupted,
+    onShortcutHelp,
     header
   }: {
     sessionId: string
@@ -113,6 +114,8 @@
      * and takes the conversation back before it. True when it took the key.
      */
     onRestoreInterrupted?: () => boolean
+    /** `?` typed into an empty draft: show the keyboard shortcuts instead of typing it. */
+    onShortcutHelp?: () => void
     /** Drawn flush on top of the prompt box, as its top section: the notes list. */
     header?: Snippet
   } = $props()
@@ -595,6 +598,11 @@
     if (event.key === 'Escape' && running) {
       event.preventDefault()
       onInterrupt()
+      return
+    }
+    if (event.key === '?' && draft.length === 0 && onShortcutHelp) {
+      event.preventDefault()
+      onShortcutHelp()
       return
     }
     if (event.key === 'Enter' && !event.shiftKey) {

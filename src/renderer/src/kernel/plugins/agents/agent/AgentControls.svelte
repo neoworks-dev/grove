@@ -27,6 +27,7 @@
     provider,
     model,
     thinking,
+    fastMode,
     mode,
     running,
     models,
@@ -40,6 +41,7 @@
     onRequestKey,
     onAddEndpoint,
     onPickThinking,
+    onPickFastMode,
     onPickMode,
     onSetReview,
     onInterrupt
@@ -53,6 +55,8 @@
     provider: string
     model: string
     thinking: ThinkingLevel
+    /** Whether the harness answers in fast mode. */
+    fastMode: boolean
     mode: AgentMode
     running: boolean
     models: ModelEntry[]
@@ -70,6 +74,7 @@
     /** Open the editor for an endpoint of the user's own. */
     onAddEndpoint: () => void
     onPickThinking: (level: ThinkingLevel) => void
+    onPickFastMode: (fastMode: boolean) => void
     onPickMode: (mode: AgentMode) => void
     onSetReview: (key: string, value: string | boolean) => void
     onInterrupt: () => void
@@ -114,6 +119,10 @@
     if (contextTokens <= 0) return ''
     return `Switching re-reads this conversation (~${formatTokens(contextTokens)} tokens) at full price: the new model has none of it cached.`
   })
+
+  /** Why fast mode is flagged wherever it is offered: it is quicker, and it is paid for. */
+  const FAST_MODE_WARNING =
+    'Fast mode answers quicker, and costs noticeably more per token. It stays on for this session until you turn it off.'
 
   function formatTokens(tokens: number): string {
     if (tokens < 1000) return String(tokens)
@@ -331,7 +340,7 @@
     </button>
     {#if openMenu === 'thinking'}
       <div
-        class="absolute bottom-full right-0 z-30 mb-1 w-40 rounded-md border border-line bg-elevated py-1 shadow-lg"
+        class="absolute bottom-full right-0 z-30 mb-1 w-56 rounded-md border border-line bg-elevated py-1 shadow-lg"
       >
         {#each THINKING_LEVELS as level (level)}
           <button
@@ -346,9 +355,43 @@
             {THINKING_LABELS[level]}
           </button>
         {/each}
+        {#if capabilities?.fastMode}
+          <div class="mt-1 border-t border-line pt-1">
+            <button
+              class="flex w-full flex-col items-start gap-0.5 px-2 py-1.5 text-left hover:bg-hover"
+              data-testid="fast-mode-option"
+              aria-pressed={fastMode}
+              onclick={() => {
+                onPickFastMode(!fastMode)
+                close()
+              }}
+            >
+              <span class="flex w-full items-center gap-1.5">
+                <span class="font-medium text-amber">Fast mode</span>
+                {#if fastMode}
+                  <span class="ml-auto text-dim">✓ on</span>
+                {/if}
+              </span>
+              <span class="leading-snug text-dim">{FAST_MODE_WARNING}</span>
+            </button>
+          </div>
+        {/if}
       </div>
     {/if}
   </div>
+
+  <!-- Fast mode is flagged for as long as it is on, because every turn in it costs more. -->
+  {#if fastMode}
+    <button
+      class="flex items-center gap-1 rounded border border-amber/50 bg-amber-soft px-2 py-1 text-amber hover:bg-hover"
+      data-testid="fast-mode-chip"
+      title={`${FAST_MODE_WARNING} Click to turn it off (alt+o).`}
+      onclick={() => onPickFastMode(false)}
+    >
+      <span class="font-medium">Fast</span>
+      <span>costs more</span>
+    </button>
+  {/if}
 
   {#if running && capabilities?.interrupt !== false}
     <button

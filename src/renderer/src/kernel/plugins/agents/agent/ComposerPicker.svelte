@@ -55,10 +55,11 @@
 
   let root = $state<HTMLDivElement>()
 
-  /** What a model switch costs: the new model has none of this conversation cached. */
+  /** What a model switch costs: the new model has none of this conversation cached, so the next turn re-reads it. */
   const switchCostWarning = $derived.by(() => {
-    if (contextTokens <= 0) return ''
-    return `Switching re-reads this conversation (~${formatTokens(contextTokens)} tokens) at full price: the new model has none of it cached.`
+    const note = 'Switching model re-reads the whole conversation, which costs more on the next turn.'
+    if (contextTokens <= 0) return note
+    return `${note} That is about ${formatTokens(contextTokens)} tokens now.`
   })
 
   /** A token count as the status line writes it. */

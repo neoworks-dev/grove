@@ -260,6 +260,30 @@ export function formatSequence(parsed: ParsedSequence): string {
   return `<Leader> ${steps}`
 }
 
+/**
+ * Keys in every form someone might search for them: as written, canonical
+ * (`<Ctrl-H>`) and plain (`ctrl+h`), so a search finds a binding however its
+ * keys happen to be stored.
+ */
+export function searchableKeys(text: string): string {
+  const parsed = parseSequence(text)
+  if (!parsed) return text
+  const plainSteps = parsed.steps.map(plainStep)
+  if (parsed.leader) plainSteps.unshift('leader')
+  return `${text} ${formatSequence(parsed)} ${plainSteps.join(' ')}`
+}
+
+/** A step written the way bindings declare it by hand: `ctrl+shift+h`. */
+function plainStep(step: KeyStep): string {
+  const parts: string[] = []
+  if (step.ctrl) parts.push('ctrl')
+  if (step.alt) parts.push('alt')
+  if (step.shift) parts.push('shift')
+  if (step.meta) parts.push('meta')
+  parts.push(step.key)
+  return parts.join('+')
+}
+
 // Round-trip a hand-written sequence into canonical form; null when invalid.
 export function normalizeSequence(text: string): string | null {
   const parsed = parseSequence(text)

@@ -46,7 +46,15 @@ Write them as soon as the list exists, not once the work starts.
 
 Write to GitHub as the bot: issues, comments and labels go through `gh bot` (`gh bot issue comment 12 --body …`), so they show as `neoworks-bot[bot]`, not as me. Plain `gh` is for reading only. The bot as author already says a model wrote it, so no "written by Claude" line in the text. If `gh bot` fails, say so rather than falling back to plain `gh`. It lives in `~/Documents/neoworks/gh-bot`, and `bun run qa` uses it on its own.
 
-Labels are two axes. Type is GitHub's default `bug` or `enhancement`. Area is exactly one of:
+Every issue gets a type, a priority, an effort and an area. Type, priority and effort are GitHub's own issue type and the organization's issue fields, never labels.
+
+- **Type** — `Bug` something is broken, `Feature` something new, `Task` everything else.
+- **Priority** — `Urgent` drop everything, `High` next up, `Medium` normal, `Low` nice to have.
+- **Effort** — `Low` an hour or two, `Medium` about a day, `High` several days or needs splitting.
+
+`gh bot` sets all three at once, by name: `gh bot issue create --type Bug --priority High --effort Low --label area:editor …`, and `gh bot issue edit 12 --priority Urgent` to change them later.
+
+Area is a label, exactly one of:
 
 - `area:editor` — nvim surface: buffers, rendering, bundled config
 - `area:agents` — agent runtime, chat pane, composer, review flow

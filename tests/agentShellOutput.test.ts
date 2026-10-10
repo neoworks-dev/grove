@@ -241,16 +241,37 @@ describe('commands in the background', () => {
     expect((await told()).text).toBe('$ sleep 0.3; echo done\ndone')
   })
 
-  test('a backgrounded command is not stopped by the timeout it started with', async () => {
+  test('a backgrounded command without a timeout of its own runs on', async () => {
     const { hub } = recordingHub()
     const { context, told } = notifyingContext(hub)
 
-    const call = shellTool().execute({ command: 'sleep 1.5; echo survived', timeout: 1 }, context)
+    const call = shellTool().execute({ command: 'sleep 1.5; echo survived' }, context)
     await Bun.sleep(50)
     hub.background('s1')
     await call
 
     expect((await told()).text).toBe('$ sleep 1.5; echo survived\nsurvived')
+  })
+
+  test('a backgrounded command is stopped when its own timeout runs out', async () => {
+    const { hub } = recordingHub()
+    const { context, told } = notifyingContext(hub)
+
+    const call = shellTool().execute({ command: 'sleep 3; echo survived', timeout: 1 }, context)
+    await Bun.sleep(50)
+    hub.background('s1')
+    await call
+
+    expect((await told()).text).toBe('$ sleep 3; echo survived\n[Stopped after 1s.]')
+  })
+
+  test('run_in_background with a timeout is stopped when it runs out', async () => {
+    const { hub } = recordingHub()
+    const { context, told } = notifyingContext(hub)
+
+    await shellTool().execute({ command: 'sleep 3', timeout: 1, run_in_background: true }, context)
+
+    expect((await told()).text).toBe('$ sleep 3\n[Stopped after 1s.]')
   })
 
   test('Ctrl+B with nothing running moves nothing', () => {

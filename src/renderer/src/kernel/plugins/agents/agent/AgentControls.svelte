@@ -158,7 +158,9 @@
   <!-- Harness: which runtime drives this session, and only until it answers. -->
   <div class="relative z-20">
     <button
-      class="flex items-center gap-1 rounded border border-line px-2 py-1 hover:bg-hover disabled:cursor-default disabled:hover:bg-transparent"
+      data-footer-item
+      aria-expanded={openMenu === 'harness'}
+      class="flex items-center gap-1 rounded border border-line px-2 py-1 hover:bg-hover focus-visible:border-accent focus-visible:outline-none disabled:cursor-default disabled:hover:bg-transparent"
       title={started
         ? 'The harness is fixed once a session has started — start a new session to use another'
         : 'The agent runtime this session runs on'}
@@ -212,7 +214,9 @@
   <!-- Model -->
   <div class="relative z-20">
     <button
-      class="flex items-center gap-1.5 rounded border border-line px-2 py-1 hover:bg-hover"
+      data-footer-item
+      aria-expanded={openMenu === 'model'}
+      class="flex items-center gap-1.5 rounded border border-line px-2 py-1 hover:bg-hover focus-visible:border-accent focus-visible:outline-none"
       title={provider ? `${provider} · ${model}` : model}
       onclick={() => toggle('model')}
     >
@@ -246,7 +250,9 @@
   <div class="relative z-20">
     <button
       data-testid="agent-mode-trigger"
-      class="flex items-center gap-1 rounded border border-line px-2 py-1 hover:bg-hover"
+      data-footer-item
+      aria-expanded={openMenu === 'mode'}
+      class="flex items-center gap-1 rounded border border-line px-2 py-1 hover:bg-hover focus-visible:border-accent focus-visible:outline-none"
       title="How much the agent may do without asking (shift+tab)"
       onclick={() => toggle('mode')}
     >
@@ -284,7 +290,9 @@
   <!-- Review: when the agent's edits are reviewed, and how they are shown -->
   <div class="relative z-20">
     <button
-      class="flex items-center gap-1 rounded border border-line px-2 py-1 hover:bg-hover"
+      data-footer-item
+      aria-expanded={openMenu === 'review'}
+      class="flex items-center gap-1 rounded border border-line px-2 py-1 hover:bg-hover focus-visible:border-accent focus-visible:outline-none"
       title="How the agent's file changes are reviewed"
       onclick={() => toggle('review')}
     >
@@ -322,7 +330,9 @@
   <!-- Thinking: hidden for a harness that has no thinking levels. -->
   <div class="relative z-20 ml-auto" class:hidden={capabilities?.thinking === false}>
     <button
-      class="flex items-center gap-1 rounded border border-line px-2 py-1 hover:bg-hover"
+      data-footer-item
+      aria-expanded={openMenu === 'thinking'}
+      class="flex items-center gap-1 rounded border border-line px-2 py-1 hover:bg-hover focus-visible:border-accent focus-visible:outline-none"
       title="Reasoning effort (ctrl+tab)"
       onclick={() => toggle('thinking')}
     >
@@ -352,7 +362,8 @@
 
   {#if running && capabilities?.interrupt !== false}
     <button
-      class="flex items-center rounded border border-line px-1.5 py-1 text-red hover:bg-hover"
+      data-footer-item
+      class="flex items-center rounded border border-line px-1.5 py-1 text-red hover:bg-hover focus-visible:border-accent focus-visible:outline-none"
       title="Stop (Esc)"
       aria-label="Stop"
       onclick={onInterrupt}

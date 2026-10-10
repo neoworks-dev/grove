@@ -37,7 +37,7 @@ export function shellTool(): GroveTool {
       'Use shell for builds, tests and git, not to read, search or edit files',
       'Start dev servers, watchers and other long runs with run_in_background, then carry on; you are told when they exit'
     ],
-    description: `Run a bash command in the working directory and get its output and exit code. Long output is cut to its start and end. Times out after ${DEFAULT_TIMEOUT_SECONDS}s unless timeout says otherwise (at most ${MAX_TIMEOUT_SECONDS}s). With run_in_background the call returns at once with the process id, the command runs on without a timeout, and a message with its exit code and the end of its output arrives when it exits; stop it with kill. The user can also send a running command to the background, which returns the call the same way. Prefer read, find, grep and edit over cat, find, grep and sed.`,
+    description: `Run a bash command in the working directory and get its output and exit code. Long output is cut to its start and end. Times out after ${DEFAULT_TIMEOUT_SECONDS}s unless timeout says otherwise (at most ${MAX_TIMEOUT_SECONDS}s). With run_in_background the call returns at once with the process id, and a message with its exit code and the end of its output arrives when it exits; stop it with kill. A background command has no timeout unless timeout is given, and then the timeout counts from when the command started. The user can also send a running command to the background, which returns the call the same way and keeps any timeout it was given. Prefer read, find, grep and edit over cat, find, grep and sed.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -61,15 +61,35 @@ export function shellTool(): GroveTool {
 
     execute(input, context) {
       const command = String(input.command)
-      if (input.run_in_background === true) return runInBackground(command, context)
-      return runCommand(command, timeoutOf(input.timeout), context)
+      const requestedSeconds = requestedTimeoutOf(input.timeout)
+      if (input.run_in_background === true) return runInBackground(command, requestedSeconds, context)
+      return runCommand(command, requestedSeconds, context)
     }
   }
 }
 
-function timeoutOf(value: unknown): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_TIMEOUT_SECONDS
+/** The timeout the agent asked for in seconds, or undefined when it asked for none. */
+function requestedTimeoutOf(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
   return Math.min(Math.max(1, Math.round(value)), MAX_TIMEOUT_SECONDS)
+}
+
+/**
+ * Stop a command once `seconds` have passed since `startedAt`, so a timeout keeps
+ * its meaning when the command moves to the background. `onExpire` runs first, so
+ * the caller can record that it was the timeout that stopped the command.
+ */
+function timeoutTimer(
+  started: StartedCommand,
+  startedAt: number,
+  seconds: number,
+  onExpire: () => void
+): ReturnType<typeof setTimeout> {
+  const remainingMs = Math.max(0, startedAt + seconds * 1000 - Date.now())
+  return setTimeout(() => {
+    onExpire()
+    stop(started.child.pid)
+  }, remainingMs)
 }
 
 /** A command's process, as the helpers below follow it. */
@@ -117,10 +137,18 @@ function startCommand(
 /**
  * Run one command to its end, reporting its output live when the session can
  * show it. Sent to the background on the way, the call returns there and then
- * and the agent hears about the end in a message instead.
+ * and the agent hears about the end in a message instead. Without a timeout from
+ * the agent, a foreground command gets the default one; a backgrounded one runs on.
  */
-function runCommand(command: string, timeoutSeconds: number, context: GroveToolContext): Promise<GroveToolResult> {
+function runCommand(
+  command: string,
+  requestedSeconds: number | undefined,
+  context: GroveToolContext
+): Promise<GroveToolResult> {
   return new Promise((resolve) => {
+    let timeoutSeconds = DEFAULT_TIMEOUT_SECONDS
+    if (requestedSeconds !== undefined) timeoutSeconds = requestedSeconds
+    const startedAt = Date.now()
     let returned = false
     let timedOut = false
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -129,14 +157,18 @@ function runCommand(command: string, timeoutSeconds: number, context: GroveToolC
       if (returned) return
       returned = true
       clearTimeout(timer)
+      if (requestedSeconds !== undefined) {
+        timer = timeoutTimer(started, startedAt, requestedSeconds, () => {
+          timedOut = true
+        })
+      }
       resolve({ content: backgroundedResult(started.child.pid, 'The user sent the command to the background') })
     }
     const started = startCommand(command, context, canNotify(context) ? sendToBackground : undefined)
 
-    timer = setTimeout(() => {
+    timer = timeoutTimer(started, startedAt, timeoutSeconds, () => {
       timedOut = true
-      stop(started.child.pid)
-    }, timeoutSeconds * 1000)
+    })
 
     started.child.on('error', (cause) => {
       clearTimeout(timer)
@@ -159,21 +191,51 @@ function runCommand(command: string, timeoutSeconds: number, context: GroveToolC
   })
 }
 
-/** Start a command and return at once; the agent is told when it exits. */
-function runInBackground(command: string, context: GroveToolContext): GroveToolResult {
+/** Start a command and return at once; the agent is told when it exits, or when its own timeout stops it. */
+function runInBackground(
+  command: string,
+  requestedSeconds: number | undefined,
+  context: GroveToolContext
+): GroveToolResult {
   if (!canNotify(context)) {
     return { content: 'This session cannot run commands in the background.', isError: true }
   }
   const started = startCommand(command, context)
+  const startedAt = Date.now()
+  let timedOut = false
+  let timer: ReturnType<typeof setTimeout> | undefined
+  if (requestedSeconds !== undefined) {
+    timer = timeoutTimer(started, startedAt, requestedSeconds, () => {
+      timedOut = true
+    })
+  }
   started.child.on('error', (cause) => {
+    clearTimeout(timer)
     started.live.end()
     notifyExit(context, command, { content: `Could not run the command: ${cause.message}`, isError: true })
   })
   started.child.on('close', (code, signal) => {
+    clearTimeout(timer)
     started.live.end()
-    notifyExit(context, command, commandResult(started.output(), code, signal, false, 0))
+    notifyExit(context, command, backgroundExitResult(started, code, signal, timedOut, requestedSeconds))
   })
   return { content: backgroundedResult(started.child.pid, 'Started in the background') }
+}
+
+/**
+ * The message for a background command that has exited. It names the agent's timeout
+ * when that is what stopped it; with no timeout, the seconds passed are never shown.
+ */
+function backgroundExitResult(
+  started: StartedCommand,
+  code: number | null,
+  signal: NodeJS.Signals | null,
+  timedOut: boolean,
+  requestedSeconds: number | undefined
+): GroveToolResult {
+  let timeoutSeconds = 0
+  if (requestedSeconds !== undefined) timeoutSeconds = requestedSeconds
+  return commandResult(started.output(), code, signal, timedOut, timeoutSeconds)
 }
 
 /** Whether the session can hear about a command after its call has returned. */

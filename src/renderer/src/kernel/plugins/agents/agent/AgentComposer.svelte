@@ -13,11 +13,14 @@
   import {
     activeCompletion,
     applyCompletion,
+    sessionMentions,
     draftSegments,
     parseSubmission,
     shellDraft,
     type Completion
   } from '../../../../lib/agents/completion'
+  import { searchEmoji } from '../../../../lib/agents/emoji'
+  import { agentSessions } from '../../../../lib/agents/sessions.svelte'
   import { highlightCodeSync, warmLanguage } from '../../../../lib/highlight'
   import { selectionRef } from '../../../../lib/inlineEditRef'
   import { store } from '../../../../lib/store.svelte'
@@ -165,6 +168,14 @@
       suggestionIndex = 0
       return
     }
+    if (active.kind === 'emoji') {
+      suggestions = searchEmoji(active.query).map((entry) => ({
+        value: entry.emoji,
+        description: `:${entry.name}:`
+      }))
+      suggestionIndex = 0
+      return
+    }
     void loadRemoteSuggestions(active)
   })
 
@@ -185,13 +196,17 @@
     }
   }
 
-  /** Asks the main process for `@` file matches or the shell's completions of a `!` word. */
+  /** `@` matches (other live sessions, then files) or the shell's completions of a `!` word. */
   async function fetchSuggestions(active: Completion): Promise<Suggestion[]> {
     if (active.kind === 'shell') {
       return completeShell(sessionId, active.line ?? '')
     }
+    const mentions = sessionMentions(agentSessions.list, sessionId, active.query).map((mention) => ({
+      value: mention.agentId,
+      description: mention.title
+    }))
     const matches = await searchFiles(sessionId, active.query)
-    return matches.map((match) => ({ value: match.path }))
+    return [...mentions, ...matches.map((match) => ({ value: match.path }))]
   }
 
   function syncCaret(): void {

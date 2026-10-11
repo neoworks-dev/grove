@@ -30,6 +30,11 @@ export interface BranchPosition {
    * nothing to have merged.
    */
   mergedLocally: boolean
+  /**
+   * Lines and files the branch changes against where it left the base, its
+   * commits and uncommitted work together. Absent when that could not be read.
+   */
+  changes?: { added: number; removed: number; files: number }
 }
 
 // The pull request most recently opened from a branch, as a worktree row shows it.
@@ -481,9 +486,19 @@ export interface GithubMilestone {
   state: string
   /** ISO timestamp the milestone is due, or null when it has no date. */
   dueOn: string | null
+  /** What the milestone is for; empty or absent when it says nothing. */
+  description?: string | null
 }
 
 /** A milestone as the repository defines it, for the pickers that offer them. */
+/** A milestone to create: a title, and optionally what it is for and when it is due. */
+export interface GithubMilestoneDraft {
+  title: string
+  description: string
+  /** The due day as `YYYY-MM-DD`, or null for none. */
+  dueOn: string | null
+}
+
 export interface GithubMilestoneDefinition extends GithubMilestone {
   description: string
   openIssues: number
@@ -521,6 +536,8 @@ export interface GithubCapabilities {
   linkedBranches: boolean
   /** Subscribing and unsubscribing, which needs the `notifications` token scope. */
   notifications: boolean
+  /** The organisation's issue fields (Priority, Status, …), which only org repositories have. */
+  issueFields: boolean
 }
 
 /** A pointer to another issue, as a relationship carries one. */
@@ -567,9 +584,39 @@ interface GithubItemShared {
   projects?: GithubProjectRef[]
 }
 
+/** One of a single-select issue field's options. */
+export interface GithubIssueFieldOption {
+  id: string
+  name: string
+  /** GitHub's colour name: GRAY, BLUE, GREEN, YELLOW, ORANGE, RED, PINK or PURPLE. */
+  color: string
+}
+
+/** A date issue field the organisation defines, like Target date. */
+export interface GithubIssueDateField {
+  id: string
+  name: string
+}
+
+/** A single-select issue field the organisation defines, like Priority. */
+export interface GithubIssueField {
+  id: string
+  name: string
+  /** In the order the organisation ranks them. */
+  options: GithubIssueFieldOption[]
+}
+
 export interface GithubIssueItem extends GithubItemShared {
   kind: 'issue'
   commentCount: number
+  /** The issue's GraphQL node id, which mutations take. */
+  id?: string
+  /** The start of the description as plain text, for a card to preview; empty when there is none. */
+  excerpt?: string
+  /** Single-select field values, option id by field id. Absent when the query could not ask. */
+  fieldValues?: Record<string, string>
+  /** Date field values, `YYYY-MM-DD` by field id. Absent when the query could not ask. */
+  dateValues?: Record<string, string>
 }
 
 export interface GithubPullItem extends GithubItemShared {
@@ -601,6 +648,10 @@ export interface GithubDashboard {
   pulls: GithubPullItem[]
   /** What this token could be asked for, so the UI hides what is not there. */
   capabilities: GithubCapabilities
+  /** The single-select issue fields issues can be grouped by; empty without `issueFields`. */
+  issueFields: GithubIssueField[]
+  /** The date issue fields the calendar can place issues by; empty without `issueFields`. */
+  issueDateFields: GithubIssueDateField[]
   /** Epoch ms of the fetch, for the "updated Xs ago" hint. */
   fetchedAt: number
 }
@@ -667,6 +718,10 @@ export type GithubTimelineEntry =
   | { type: 'event'; at: string; event: GithubTimelineEvent }
 
 export interface GithubItemDetail extends GithubItemShared {
+  /** Issues only: single-select field values, option id by field id. Absent when the query could not ask. */
+  fieldValues?: Record<string, string>
+  /** Issues only: date field values, `YYYY-MM-DD` by field id. */
+  dateValues?: Record<string, string>
   kind: GithubItemKind
   /** The GraphQL node id, which the subscription mutation is addressed to. */
   id: string

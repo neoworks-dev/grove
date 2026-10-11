@@ -1,9 +1,10 @@
 <script lang="ts">
-  // The open item, laid out the way GitHub lays one out: a state pill under the
-  // title, the body as the first card of a timeline, then every comment and
-  // event down a rail, with the item's metadata beside it when there is room.
+  // The open item: a state pill under the title, the body as the first card,
+  // then every comment and event in order, joined by a line that runs between
+  // the cards rather than down a gutter beside them, with the item's metadata
+  // beside it all when there is room.
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
-  import { github, postComment, runAction } from './store.svelte'
+  import { github, postComment, runAction, selectItem } from './store.svelte'
   import GithubBadge from './GithubBadge.svelte'
   import GithubCommentCard from './GithubCommentCard.svelte'
   import GithubEventRow from './GithubEventRow.svelte'
@@ -23,7 +24,9 @@
   import { foldTimeline } from './timeline'
   import type { GithubThreadTab } from './store.svelte'
   import type { GithubItemAction } from '../../../../../shared/types'
-  import PaneControls from '../../../components/PaneControls.svelte'
+  import XIcon from 'phosphor-svelte/lib/XIcon'
+  import type { Component } from 'svelte'
+  import RowAction from '../gitChanges/RowAction.svelte'
 
   // Below this the metadata moves above the timeline instead of beside it.
   const SIDEBAR_PX = 620
@@ -69,6 +72,13 @@
     if (!detail) return []
     return availableActions({ kind: detail.kind, state: detail.state, isDraft: detail.isDraft })
   })
+
+  const ACTION_ICONS: Record<GithubItemAction, Component<{ size?: number }>> = {
+    close: XCircleIcon,
+    reopen: ArrowCounterClockwiseIcon,
+    merge: GitMergeIcon,
+    ready: EyeIcon
+  }
 
   const actionLabels: Record<GithubItemAction, string> = {
     close: 'Close',
@@ -121,7 +131,7 @@
     <!-- One row: what it is, then what can be done to it. The state, the author
          and the diff size share the second line, which is all the chrome a
          thread needs before its own content starts. -->
-    <div class="border-b border-line px-4 py-2">
+    <div class="border-b border-line py-2 pl-4 pr-2">
       <div class="flex items-center gap-2">
         <span
           class="shrink-0 rounded-full px-1.5 py-0.5 text-2xs font-medium text-white"
@@ -138,34 +148,22 @@
         </h2>
 
         {#each actions as action (action)}
-          <button
-            class="shrink-0 rounded p-1 text-dim hover:bg-hover hover:text-default disabled:opacity-50"
-            disabled={github.busy}
+          <RowAction
+            icon={ACTION_ICONS[action]}
             title={actionLabels[action]}
-            aria-label={actionLabels[action]}
+            disabled={github.busy}
             onclick={() => confirmAction(action)}
-          >
-            {#if action === 'close'}
-              <XCircleIcon size={14} />
-            {:else if action === 'reopen'}
-              <ArrowCounterClockwiseIcon size={14} />
-            {:else if action === 'merge'}
-              <GitMergeIcon size={14} />
-            {:else}
-              <EyeIcon size={14} />
-            {/if}
-          </button>
+          />
         {/each}
 
-        <button
-          class="shrink-0 rounded p-1 text-dim hover:bg-hover hover:text-default"
+        <RowAction
+          icon={ArrowSquareOutIcon}
           title="Open on GitHub"
-          aria-label="Open on GitHub"
           onclick={() => openInBrowser(detail.url)}
-        >
-          <ArrowSquareOutIcon size={14} />
-        </button>
-        <PaneControls />
+        />
+        <!-- Puts the thread away, back to the list or the board. The pane's own
+             close button is in the list's header. -->
+        <RowAction icon={XIcon} title="Close the thread" onclick={() => selectItem(null)} />
       </div>
 
       <div class="mt-1 flex flex-wrap items-center gap-2 text-2xs text-dim">
@@ -214,10 +212,10 @@
           class:flex-col={!wide}
           style:max-width={contentWidth}
         >
-          <!-- Everything hangs off one rail, the opening body included, so the
-             thread reads as a single sequence rather than stacked blocks. -->
+          <!-- The opening body and everything after it are joined by one line,
+             so the thread reads as a single sequence rather than stacked blocks. -->
           <div class="flex min-w-0 flex-1 flex-col" style:max-width="{READING_PX}px">
-            <GithubTimelineRow last={rows.length === 0}>
+            <GithubTimelineRow first last={rows.length === 0}>
               <GithubCommentCard
                 author={detail.authorActor}
                 association={detail.authorAssociation}
@@ -228,11 +226,8 @@
             </GithubTimelineRow>
 
             {#each rows as row, index (row.id)}
-              <GithubTimelineRow last={index === rows.length - 1}>
-                {#snippet icon()}
-                  <GithubEventIcon {row} />
-                {/snippet}
-                {#if row.kind === 'comment'}
+              {#if row.kind === 'comment'}
+                <GithubTimelineRow last={index === rows.length - 1}>
                   <GithubCommentCard
                     author={row.entry.comment.author}
                     association={row.entry.comment.authorAssociation}
@@ -240,10 +235,15 @@
                     at={row.entry.comment.createdAt}
                     reviewState={row.entry.comment.reviewState}
                   />
-                {:else}
+                </GithubTimelineRow>
+              {:else}
+                <GithubTimelineRow last={index === rows.length - 1}>
+                  {#snippet icon()}
+                    <GithubEventIcon {row} />
+                  {/snippet}
                   <GithubEventRow {row} />
-                {/if}
-              </GithubTimelineRow>
+                </GithubTimelineRow>
+              {/if}
             {/each}
           </div>
 

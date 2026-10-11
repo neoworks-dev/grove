@@ -11,6 +11,12 @@
     toggleChecked
   } from './store.svelte'
   import GithubItemRow from './GithubItemRow.svelte'
+  import GithubBoard from './GithubBoard.svelte'
+  import GithubViewTabs from './GithubViewTabs.svelte'
+  import GithubCalendar from './GithubCalendar.svelte'
+  import { boardColumns, optionColour } from './board'
+  import type { IssueLayout } from './views'
+  import GithubSplitHandle from './GithubSplitHandle.svelte'
   import GithubThread from './GithubThread.svelte'
   import GithubCompose from './GithubCompose.svelte'
   import ArrowClockwiseIcon from 'phosphor-svelte/lib/ArrowClockwiseIcon'
@@ -21,9 +27,14 @@
   import GithubSearchBox from './GithubSearchBox.svelte'
   import { ageLabel, partitionPinned } from './filter'
   import { DEFAULT_QUERY, setStateQualifier } from './search'
-  import type { GithubItem, GithubItemKind, GithubStateFilter } from '../../../../../shared/types'
+  import type {
+    GithubIssueItem,
+    GithubItem,
+    GithubItemKind,
+    GithubStateFilter
+  } from '../../../../../shared/types'
   import PaneControls from '../../../components/PaneControls.svelte'
-  import PaneChromeBoundary from '../../../components/PaneChromeBoundary.svelte'
+  import RowAction from '../gitChanges/RowAction.svelte'
 
   // Below this the pane shows one column at a time: the list, or the thread with
   // a way back.
@@ -40,11 +51,32 @@
     'Put - in front to exclude, and "quotes" around names with spaces.'
   ].join('\n')
 
+  /** The list's share of the pane beside the thread, for each way issues are shown. */
+  interface SplitShares {
+    list: number
+    board: number
+  }
+
   let width = $state(0)
   const narrow = $derived(width > 0 && width < NARROW_PX)
   const items = $derived(github.items)
   // Pinned issues head the list under their own heading, as they do on GitHub.
   const sections = $derived(partitionPinned(items))
+  // The layouts the issues can take here: a board needs a single-select field
+  // to group by, a calendar a date field to place by.
+  const layouts = $derived.by(() => {
+    const available: { id: IssueLayout; label: string }[] = [{ id: 'list', label: 'List' }]
+    if (github.issueFields.length > 0) available.push({ id: 'board', label: 'Board' })
+    if (github.dateFields.length > 0) available.push({ id: 'calendar', label: 'Calendar' })
+    return available
+  })
+  // A list grouped by an issue field shows the board's columns as sections,
+  // including the empty ones, so the grouping reads the same in both layouts.
+  const listGroups = $derived.by(() => {
+    if (github.tab !== 'issue' || github.view !== 'list' || !github.listField) return null
+    const issues = items.filter((item): item is GithubIssueItem => item.kind === 'issue')
+    return boardColumns(issues, github.listField)
+  })
   // An empty list under the query it started with is "nothing here", not "your
   // search found nothing" — `is:open` is not something the user typed.
   const narrowed = $derived(github.query.trim() !== DEFAULT_QUERY && github.query.trim().length > 0)
@@ -61,12 +93,6 @@
   })
 
   $effect(() => startAutoRefresh())
-
-  // The list keeps a fixed share of a wide pane, and the whole of a narrow one.
-  const listWidth = $derived.by(() => {
-    if (narrow) return '100%'
-    return '40%'
-  })
 
   function switchTab(kind: GithubItemKind): void {
     github.tab = kind
@@ -86,6 +112,50 @@
   // on a narrow pane it takes the whole width, and the list steps aside.
   const detailColumnShown = $derived(github.composing || github.selection !== null)
 
+  // The list keeps a share of a wide pane that the handle between it and the
+  // thread sets, and the whole of a narrow one. The board keeps a share of its
+  // own, since it wants more room, and takes the whole pane with no thread open.
+  const SPLIT_KEY = 'grove.github.split'
+  const DEFAULT_SHARES: SplitShares = { list: 0.4, board: 0.55 }
+  let shares = $state<SplitShares>(loadShares())
+  const splitKind = $derived<keyof SplitShares>(github.wideLayoutShown ? 'board' : 'list')
+
+  const listWidth = $derived.by(() => {
+    if (narrow) return '100%'
+    if (github.wideLayoutShown && !detailColumnShown) return '100%'
+    return `${shares[splitKind] * 100}%`
+  })
+
+  /** The stored split for the list and the board, falling back to the defaults. */
+  function loadShares(): SplitShares {
+    try {
+      const raw = localStorage.getItem(SPLIT_KEY)
+      if (raw === null) return { ...DEFAULT_SHARES }
+      return { ...DEFAULT_SHARES, ...(JSON.parse(raw) as Partial<SplitShares>) }
+    } catch {
+      return { ...DEFAULT_SHARES }
+    }
+  }
+
+  /** Moves the split for whatever is showing, keeping it when `persist` says so. */
+  function setShare(share: number, persist: boolean): void {
+    shares = { ...shares, [splitKind]: share }
+    if (!persist) return
+    try {
+      localStorage.setItem(SPLIT_KEY, JSON.stringify(shares))
+    } catch {
+      // Unavailable storage only costs remembering it.
+    }
+  }
+
+  // Beside the list the thread column is always there, empty until something
+  // is picked; beside the board it only opens with an issue in it.
+  const detailColumnVisible = $derived.by(() => {
+    if (detailColumnShown) return true
+    if (narrow) return false
+    return !github.wideLayoutShown
+  })
+
   function startCompose(): void {
     github.composing = true
   }
@@ -95,14 +165,6 @@
   function openItem(kind: GithubItemKind, number: number): void {
     github.composing = false
     void selectItem({ kind, number })
-  }
-
-  function backToList(): void {
-    if (github.composing) {
-      github.composing = false
-      return
-    }
-    void selectItem(null)
   }
 
   // The repository and the age of the data have no room of their own now, so
@@ -146,7 +208,16 @@
 
   <div class="flex min-h-0 flex-1">
     {#if !narrow || !detailColumnShown}
-      <div class="flex min-h-0 min-w-0 shrink-0 flex-col" style:width={listWidth}>
+      <div class="relative flex min-h-0 min-w-0 shrink-0 flex-col" style:width={listWidth}>
+        {#if !narrow && detailColumnVisible}
+          <GithubSplitHandle
+            share={shares[splitKind]}
+            paneWidth={width}
+            onresize={(share) => setShare(share, false)}
+            oncommit={(share) => setShare(share, true)}
+            onreset={() => setShare(DEFAULT_SHARES[splitKind], true)}
+          />
+        {/if}
         {#if github.checked.length > 0}
           <GithubSelectionBar />
         {/if}
@@ -175,6 +246,21 @@
             Issues
             <span class="font-mono text-2xs text-dim">{counts.issue}</span>
           </button>
+          {#if github.tab === 'issue' && layouts.length > 1}
+            <div class="flex shrink-0 overflow-hidden rounded-md border border-line">
+              {#each layouts as layout (layout.id)}
+                <button
+                  class="cursor-pointer px-1.5 py-0.5 text-2xs hover:bg-hover"
+                  class:bg-hover={github.view === layout.id}
+                  class:text-default={github.view === layout.id}
+                  class:text-dim={github.view !== layout.id}
+                  onclick={() => (github.view = layout.id)}
+                >
+                  {layout.label}
+                </button>
+              {/each}
+            </div>
+          {/if}
 
           <GithubSearchBox
             bind:value={github.query}
@@ -182,88 +268,88 @@
             title={SEARCH_HELP}
           />
 
-          <button
-            class="shrink-0 rounded p-1 text-dim hover:bg-hover hover:text-default disabled:opacity-50"
-            disabled={github.loading}
+          <!-- The same button as the pane's close beside them, so the three
+               header icons look and behave alike. -->
+          <RowAction
+            icon={ArrowClockwiseIcon}
             title={refreshTitle}
-            aria-label="Refresh"
+            disabled={github.loading}
             onclick={() => refreshDashboard(github.stateFilter)}
-          >
-            <ArrowClockwiseIcon size={13} />
-          </button>
-          <button
-            class="shrink-0 rounded p-1 text-dim hover:bg-hover hover:text-default"
-            title="New issue"
-            aria-label="New issue"
-            onclick={startCompose}
-          >
-            <PlusIcon size={13} />
-          </button>
-          <!-- Alone in a narrow pane, the list's header is the pane's. -->
-          {#if narrow}
-            <PaneControls />
-          {/if}
+          />
+          <RowAction icon={PlusIcon} title="New issue" onclick={startCompose} />
+          <!-- The pane's own close button. The thread beside the list has one
+               of its own, which only puts the thread away. -->
+          <PaneControls />
         </div>
 
+        {#if github.tab === 'issue'}
+          <GithubViewTabs />
+        {/if}
         <GithubFilterBar {setStateFilter} />
 
-        <FloatingScrollbar class="min-h-0 flex-1">
-          <div>
-            {#if sections.pinned.length > 0}
-              <h3
-                class="flex items-center gap-1 border-b border-line px-3 pb-1 pt-2 text-2xs font-semibold uppercase tracking-caps text-dim"
-              >
-                <PushPinIcon size={10} />
-                Pinned
-              </h3>
-              {#each sections.pinned as item (item.kind + item.number)}
-                {@render itemRow(item)}
-              {/each}
-              <div class="h-2 border-b border-line"></div>
-            {/if}
-            {#each sections.rest as item (item.kind + item.number)}
-              {@render itemRow(item)}
-            {/each}
+        {#if github.boardShown && github.boardField}
+          <GithubBoard field={github.boardField} onopen={(number) => openItem('issue', number)} />
+        {:else if github.calendarShown && github.calendarRange}
+          <GithubCalendar
+            range={github.calendarRange}
+            onopen={(number) => openItem('issue', number)}
+          />
+        {:else}
+          <FloatingScrollbar class="min-h-0 flex-1">
+            <div>
+              {#if listGroups}
+                {#each listGroups as group (group.name)}
+                  <h3
+                    class="flex items-center gap-1.5 border-b border-line px-3 pb-1 pt-2 text-2xs font-semibold text-muted"
+                  >
+                    <span class="size-2 rounded-full" style:background={optionColour(group.color)}
+                    ></span>
+                    {group.name}
+                    <span class="font-mono font-normal text-dim">{group.issues.length}</span>
+                  </h3>
+                  {#each group.issues as item (item.number)}
+                    {@render itemRow(item)}
+                  {/each}
+                {/each}
+              {:else if sections.pinned.length > 0}
+                <h3
+                  class="flex items-center gap-1 border-b border-line px-3 pb-1 pt-2 text-2xs font-semibold uppercase tracking-caps text-dim"
+                >
+                  <PushPinIcon size={10} />
+                  Pinned
+                </h3>
+                {#each sections.pinned as item (item.kind + item.number)}
+                  {@render itemRow(item)}
+                {/each}
+                <div class="h-2 border-b border-line"></div>
+              {/if}
+              {#if !listGroups}
+                {#each sections.rest as item (item.kind + item.number)}
+                  {@render itemRow(item)}
+                {/each}
+              {/if}
 
-            {#if items.length === 0}
-              <p class="px-3 py-4 text-xs text-dim">
-                {#if github.loading}
-                  Loading…
-                {:else if narrowed}
-                  Nothing matches <span class="font-mono">{github.query}</span>.
-                {:else}
-                  Nothing here.
-                {/if}
-              </p>
-            {/if}
-          </div>
-        </FloatingScrollbar>
+              {#if items.length === 0}
+                <p class="px-3 py-4 text-xs text-dim">
+                  {#if github.loading}
+                    Loading…
+                  {:else if narrowed}
+                    Nothing matches <span class="font-mono">{github.query}</span>.
+                  {:else}
+                    Nothing here.
+                  {/if}
+                </p>
+              {/if}
+            </div>
+          </FloatingScrollbar>
+        {/if}
       </div>
     {/if}
 
-    {#if !narrow || detailColumnShown}
+    {#if detailColumnVisible}
       <div class="flex min-h-0 min-w-0 flex-1 flex-col border-line" class:border-l={!narrow}>
-        {#if narrow && detailColumnShown}
-          <div class="flex items-center border-b border-line pr-2">
-            <button
-              class="flex-1 px-3 py-1.5 text-left text-2xs text-dim hover:bg-hover"
-              onclick={backToList}
-            >
-              ← Back to list
-            </button>
-            <PaneControls />
-          </div>
-        {/if}
         <div class="min-h-0 flex-1">
-          <!-- The back row holds the controls in a narrow pane, so the thread's
-               own header must not take them as well. -->
-          {#if narrow}
-            <PaneChromeBoundary>
-              {@render detailColumn()}
-            </PaneChromeBoundary>
-          {:else}
-            {@render detailColumn()}
-          {/if}
+          {@render detailColumn()}
         </div>
       </div>
     {/if}

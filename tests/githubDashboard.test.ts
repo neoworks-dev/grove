@@ -7,6 +7,7 @@ import { describe, it, expect } from 'bun:test'
 import {
   adminHint,
   createIssueArgs,
+  createMilestoneArgs,
   dashboardQuery,
   itemActionArgs,
   isRateLimited,
@@ -17,9 +18,13 @@ import {
   optionalFields,
   rateLimitMessage,
   relationshipFields,
+  responseBody,
+  capabilitiesFromSchema,
   scopeHint,
   graphqlFailure,
   grantedScopes,
+  toIssueFields,
+  excerptOf,
   toReviewThread,
   type ThreadNode
 } from '../src/main/githubDashboard'
@@ -31,14 +36,16 @@ const PLAIN = {
   issueTypes: false,
   subIssues: false,
   linkedBranches: false,
-  notifications: false
+  notifications: false,
+  issueFields: false
 }
 const FULL = {
   projects: true,
   issueTypes: true,
   subIssues: true,
   linkedBranches: true,
-  notifications: true
+  notifications: true,
+  issueFields: true
 }
 
 describe('dashboardQuery', () => {
@@ -96,6 +103,26 @@ describe('optionalFields', () => {
 
   it('never asks a pull request for an issue type', () => {
     expect(optionalFields(FULL, false)).not.toContain('issueType')
+  })
+})
+
+describe('issue fields', () => {
+  it("asks for field definitions and an issue's values only when the repository has fields", () => {
+    expect(dashboardQuery('open', PLAIN)).not.toContain('issueField')
+    const query = dashboardQuery('open', FULL)
+    expect(query).toContain('issueFields(first: 25)')
+    expect(query).toContain('issueFieldValues(first: 25)')
+  })
+
+  it('never asks a pull request for field values', () => {
+    expect(optionalFields(FULL, false)).not.toContain('issueFieldValues')
+  })
+
+  it('keeps the single-select definitions and drops the kinds the fragment did not match', () => {
+    const options = [{ id: 'o1', name: 'High', color: 'RED' }]
+    expect(toIssueFields([{ id: 'f1', name: 'Priority', options }, {}, {}])).toEqual([
+      { id: 'f1', name: 'Priority', options }
+    ])
   })
 })
 
@@ -458,10 +485,81 @@ describe('branch pulls off GitHub', () => {
     try {
       execFileSync('git', ['init', '-q'], { cwd: repoPath })
       expect(await fetchBranchPulls(repoPath)).toEqual({})
-      execFileSync('git', ['remote', 'add', 'origin', 'https://gitlab.com/a/b.git'], { cwd: repoPath })
+      execFileSync('git', ['remote', 'add', 'origin', 'https://gitlab.com/a/b.git'], {
+        cwd: repoPath
+      })
       expect(await fetchBranchPulls(repoPath)).toEqual({})
     } finally {
       rmSync(repoPath, { recursive: true, force: true })
     }
+  })
+})
+
+describe('capabilitiesFromSchema', () => {
+  const ISSUE = ['issueType', 'subIssuesSummary', 'linkedBranches', 'title']
+
+  it('reads the newer selections off the fields the schema has', () => {
+    const capabilities = capabilitiesFromSchema(ISSUE, ['issueFields'], ['repo'])
+    expect(capabilities).toEqual({
+      projects: false,
+      issueTypes: true,
+      subIssues: true,
+      linkedBranches: true,
+      issueFields: true
+    })
+  })
+
+  it('leaves out what an older schema does not have', () => {
+    const capabilities = capabilitiesFromSchema(['title'], [], ['repo'])
+    expect(capabilities.issueTypes).toBe(false)
+    expect(capabilities.issueFields).toBe(false)
+  })
+
+  it('reads projects off the scopes, and leaves them open when the token lists none', () => {
+    expect(capabilitiesFromSchema(ISSUE, [], ['repo', 'read:project']).projects).toBe(true)
+    expect(capabilitiesFromSchema(ISSUE, [], ['project']).projects).toBe(true)
+    expect(capabilitiesFromSchema(ISSUE, [], null).projects).toBeNull()
+  })
+})
+
+describe('responseBody', () => {
+  it('drops the status line and headers of an --include response', () => {
+    const response = 'HTTP/2.0 200 OK\r\nX-Oauth-Scopes: repo\r\n\r\n{"data":{}}'
+    expect(responseBody(response)).toBe('{"data":{}}')
+    expect(grantedScopes(response)).toEqual(['repo'])
+  })
+})
+
+describe('excerptOf', () => {
+  it('folds whitespace and keeps a short description whole', () => {
+    expect(excerptOf('First line.\n\n  Second   line.')).toBe('First line. Second line.')
+  })
+
+  it('cuts a long description and marks the cut', () => {
+    const excerpt = excerptOf('word '.repeat(100))
+    expect(excerpt?.length).toBeLessThanOrEqual(241)
+    expect(excerpt?.endsWith('…')).toBe(true)
+  })
+
+  it('stays absent when the description was not asked for', () => {
+    expect(excerptOf(undefined)).toBeUndefined()
+  })
+})
+
+describe('createMilestoneArgs', () => {
+  it('sends the title alone when nothing else is filled in', () => {
+    expect(
+      createMilestoneArgs('o/r', { title: ' Board v1 ', description: ' ', dueOn: null })
+    ).toEqual(['api', '--method', 'POST', 'repos/o/r/milestones', '-f', 'title=Board v1'])
+  })
+
+  it('sends the description and the due day as noon UTC, which GitHub keeps on that day', () => {
+    const args = createMilestoneArgs('o/r', {
+      title: 'Board v1',
+      description: 'The first board',
+      dueOn: '2026-10-31'
+    })
+    expect(args).toContain('description=The first board')
+    expect(args).toContain('due_on=2026-10-31T12:00:00Z')
   })
 })

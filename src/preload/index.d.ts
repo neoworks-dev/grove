@@ -68,6 +68,7 @@ import type {
   GithubItemCommand,
   GithubLabelDefinition,
   GithubMilestoneDefinition,
+  GithubMilestoneDraft,
   GithubIssueDraft,
   GithubCreatedIssue,
   GithubLabelChange,
@@ -309,6 +310,12 @@ export interface WorkbenchApi {
     item: (kind: GithubItemKind, number: number) => Promise<GithubItemDetail>
     labels: () => Promise<GithubLabelDefinition[]>
     milestones: () => Promise<GithubMilestoneDefinition[]>
+    /** Sets date issue fields on an issue, keyed by field id, to `YYYY-MM-DD` days; null clears one. */
+    setIssueDates: (issueId: string, dates: Record<string, string | null>) => Promise<void>
+    /** Creates an open milestone. */
+    createMilestone: (draft: GithubMilestoneDraft) => Promise<GithubMilestoneDefinition>
+    /** Sets a single-select issue field on an issue, by node ids; a null option clears it. */
+    setIssueField: (issueId: string, fieldId: string, optionId: string | null) => Promise<void>
     changeMilestone: (kind: GithubItemKind, number: number, title: string | null) => Promise<void>
     mentionables: () => Promise<GithubActor[]>
     setSubscription: (nodeId: string, subscribed: boolean) => Promise<void>

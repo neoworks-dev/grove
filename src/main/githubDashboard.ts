@@ -19,11 +19,15 @@ import type {
   GithubIssueType,
   GithubMilestone,
   GithubMilestoneDefinition,
+  GithubMilestoneDraft,
   GithubProjectRef,
   GithubDashboard,
   GithubEventKind,
   GithubIssueDraft,
   GithubIssueItem,
+  GithubIssueDateField,
+  GithubIssueField,
+  GithubIssueFieldOption,
   GithubItemAction,
   GithubLabelChange,
   GithubCloseReason,
@@ -144,6 +148,19 @@ async function githubRepoOf(repoPath: string): Promise<GithubRepoRef | null> {
   }
 }
 
+// When gh last answered that it is installed and logged in. `gh auth status`
+// asks GitHub, which took most of a second in front of every refresh; a
+// success is trusted for this long, a failure is never remembered.
+let ghReadyAt = 0
+const GH_READY_TTL_MS = 10 * 60_000
+
+/** Checks gh is installed and logged in, at most once per `GH_READY_TTL_MS` once it has been. */
+async function ghReady(repoPath: string): Promise<void> {
+  if (Date.now() - ghReadyAt < GH_READY_TTL_MS) return
+  await ensureGhReady(repoPath)
+  ghReadyAt = Date.now()
+}
+
 /**
  * Whether the dashboard can run here: gh present, authenticated, and the path
  * backed by a GitHub repository. Failures are reported, not thrown — the pane
@@ -151,7 +168,7 @@ async function githubRepoOf(repoPath: string): Promise<GithubRepoRef | null> {
  */
 export async function fetchStatus(repoPath: string): Promise<GithubStatus> {
   try {
-    await ensureGhReady(repoPath)
+    await ghReady(repoPath)
   } catch (error) {
     const message = (error as Error).message
     return {
@@ -183,7 +200,8 @@ const NO_CAPABILITIES: GithubCapabilities = {
   issueTypes: false,
   subIssues: false,
   linkedBranches: false,
-  notifications: false
+  notifications: false,
+  issueFields: false
 }
 
 /**
@@ -235,58 +253,100 @@ query($owner: String!, $name: String!) {
 }
 
 /**
- * What the queries may select here. Probed rather than assumed: `projectItems`
- * needs the `read:project` scope and `issueType` is not in every schema, and
- * either one, asked for without being allowed, fails the whole document and
- * takes the pane down with it.
- *
- * The probes run one after another rather than together. They happen once per
- * repository per session and nothing is waiting on them, so there is nothing to
- * win by firing four requests at once — and firing four at once is the shape of
- * traffic GitHub's secondary limiter exists to refuse.
+ * What the queries may select here, probed once per repository per session.
+ * Probed rather than assumed: `projectItems` needs the `read:project` scope and
+ * `issueType` is not in every schema, and either one, asked for without being
+ * allowed, fails the whole document and takes the pane down with it.
  */
-export async function fetchCapabilities(repoPath: string): Promise<GithubCapabilities> {
-  const probed = await probeCapabilities(repoPath)
-  return { ...probed, notifications: await canChangeSubscriptions(repoPath) }
-}
-
-/** The selections the queries may make, probed once per repository per session. */
 async function probeCapabilities(
   repoPath: string
 ): Promise<Omit<GithubCapabilities, 'notifications'>> {
   const cached = capabilityCache.get(repoPath)
   if (cached) return cached
-  const repo = await repoRef(repoPath)
-  const [owner, name] = repo.nameWithOwner.split('/')
   try {
-    const capabilities: Omit<GithubCapabilities, 'notifications'> = {
-      projects: await probeSelection(repoPath, owner, name, 'projectsV2(first: 1) { totalCount }'),
-      issueTypes: await probeSelection(
-        repoPath,
-        owner,
-        name,
-        'issues(first: 1) { nodes { issueType { name } } }'
-      ),
-      subIssues: await probeSelection(
-        repoPath,
-        owner,
-        name,
-        'issues(first: 1) { nodes { subIssuesSummary { total } } }'
-      ),
-      linkedBranches: await probeSelection(
-        repoPath,
-        owner,
-        name,
-        'issues(first: 1) { nodes { linkedBranches(first: 1) { totalCount } } }'
-      )
+    const response = await runGh(repoPath, [
+      'api',
+      '--include',
+      'graphql',
+      '-f',
+      `query=${SCHEMA_QUERY}`
+    ])
+    const scopes = grantedScopes(response)
+    if (scopes !== null && scopes.includes('notifications')) notificationsScopeGranted = true
+    const schema = parseJson<SchemaResponse>(responseBody(response))
+    const capabilities = capabilitiesFromSchema(
+      fieldNames(schema.data.issue),
+      fieldNames(schema.data.repository),
+      scopes
+    )
+    if (capabilities.projects === null) {
+      capabilities.projects = await probeProjects(repoPath)
     }
-    capabilityCache.set(repoPath, capabilities)
-    return capabilities
-  } catch {
+    const settled = { ...capabilities, projects: capabilities.projects }
+    capabilityCache.set(repoPath, settled)
+    return settled
+  } catch (error) {
+    if (isRateLimited(error as Error)) throw error
     // Nothing is cached, so the next refresh asks again. The list still loads;
     // it just loads without the metadata nobody could confirm was there.
     return NO_CAPABILITIES
   }
+}
+
+// Which of the newer fields the schema has, and the token's scopes, in one
+// request: a probe per selection cost a round trip each, run one after another.
+const SCHEMA_QUERY =
+  'query { issue: __type(name: "Issue") { fields { name } } repository: __type(name: "Repository") { fields { name } } }'
+
+interface SchemaResponse {
+  data: {
+    issue: { fields: { name: string }[] } | null
+    repository: { fields: { name: string }[] } | null
+  }
+}
+
+/** The field names of a type the schema query returned; none when the type is missing. */
+function fieldNames(type: { fields: { name: string }[] } | null): string[] {
+  if (!type) return []
+  return type.fields.map((field) => field.name)
+}
+
+/** The body of a `gh api --include` response, after its status line and headers. */
+export function responseBody(response: string): string {
+  const headerEnd = response.search(/\r?\n\r?\n/)
+  if (headerEnd < 0) return response
+  return response.slice(headerEnd).trim()
+}
+
+/**
+ * What the queries may select, from the fields the schema has and the token's
+ * scopes. Projects need the `read:project` scope rather than a field, and a
+ * token that reports no scopes cannot say, so `projects` is null for the
+ * caller to probe.
+ */
+export function capabilitiesFromSchema(
+  issueFields: string[],
+  repositoryFields: string[],
+  scopes: string[] | null
+): Omit<GithubCapabilities, 'notifications' | 'projects'> & { projects: boolean | null } {
+  let projects: boolean | null = null
+  if (scopes !== null) {
+    projects = scopes.includes('read:project') || scopes.includes('project')
+  }
+  return {
+    projects,
+    issueTypes: issueFields.includes('issueType'),
+    subIssues: issueFields.includes('subIssuesSummary'),
+    linkedBranches: issueFields.includes('linkedBranches'),
+    issueFields: repositoryFields.includes('issueFields')
+  }
+}
+
+/** Whether boards can be read, for a token whose scopes the header does not list. */
+async function probeProjects(repoPath: string): Promise<boolean> {
+  const repo = await repoRef(repoPath)
+  const [owner, name] = repo.nameWithOwner.split('/')
+  return probeSelection(repoPath, owner, name, 'projectsV2(first: 1) { totalCount }')
 }
 
 /**
@@ -365,15 +425,28 @@ export function relationshipFields(capabilities: GithubCapabilities): string {
  * only when the probe said so. `issueType` exists on issues alone.
  */
 export function optionalFields(capabilities: GithubCapabilities, onIssue: boolean): string {
-  const selections = ['milestone { number title state dueOn }']
+  const selections = ['milestone { number title state dueOn description }']
   if (capabilities.projects) {
     selections.push('projectItems(first: 10) { nodes { project { number title url } } }')
   }
   if (capabilities.issueTypes && onIssue) {
     selections.push('issueType { name color }')
   }
+  if (capabilities.issueFields && onIssue) {
+    selections.push(ISSUE_FIELD_VALUES)
+  }
   return selections.join('\n        ')
 }
+
+// How many issue fields are read, of the organisation's definitions and of one
+// issue's values. GitHub caps an organisation at 25 fields.
+const MAX_ISSUE_FIELDS = 25
+
+/** An issue's single-select and date values; text and number fields are not read. */
+const ISSUE_FIELD_VALUES = `issueFieldValues(first: ${MAX_ISSUE_FIELDS}) { nodes { ... on IssueFieldSingleSelectValue { optionId field { ... on IssueFieldSingleSelect { id } } } ... on IssueFieldDateValue { value field { ... on IssueFieldDate { id } } } } }`
+
+/** The repository's single-select and date field definitions, for grouping and the calendar. */
+const ISSUE_FIELD_DEFINITIONS = `issueFields(first: ${MAX_ISSUE_FIELDS}) { nodes { __typename ... on IssueFieldSingleSelect { id name options { id name color } } ... on IssueFieldDate { id name } } }`
 
 // GraphQL enums cannot be passed as gh `-F` variables, so the state sets are
 // inlined into the query text. They come from this fixed map, never user input.
@@ -389,6 +462,12 @@ const PULL_STATES: Record<GithubStateFilter, string> = {
   all: '[OPEN, CLOSED, MERGED]'
 }
 
+/** The field definitions selection, or nothing when the repository has no issue fields to ask about. */
+function issueFieldDefinitions(capabilities: GithubCapabilities): string {
+  if (!capabilities.issueFields) return ''
+  return ISSUE_FIELD_DEFINITIONS
+}
+
 /** The one query behind a dashboard refresh: viewer, issues and pulls at once. */
 export function dashboardQuery(
   filter: GithubStateFilter,
@@ -400,9 +479,10 @@ query($owner: String!, $name: String!, $limit: Int!) {
   repository(owner: $owner, name: $name) {
     nameWithOwner
     url
+    ${issueFieldDefinitions(capabilities)}
     issues(first: $limit, states: ${ISSUE_STATES[filter]}, orderBy: {field: UPDATED_AT, direction: DESC}) {
       nodes {
-        number title url state createdAt updatedAt isPinned
+        id number title url state createdAt updatedAt isPinned bodyText
         author { login }
         comments { totalCount }
         labels(first: 10) { nodes { name color } }
@@ -435,9 +515,30 @@ interface GraphqlOptionalNode {
   milestone?: GithubMilestone | null
   issueType?: GithubIssueType | null
   projectItems?: { nodes: { project: GithubProjectRef | null }[] }
+  /** Values of the field kinds the fragments do not match come back as empty objects. */
+  issueFieldValues?: { nodes: GraphqlFieldValue[] }
+}
+
+/** One of an issue's field values: an option for a single-select, a day for a date. */
+interface GraphqlFieldValue {
+  optionId?: string
+  value?: string
+  field?: { id?: string }
+}
+
+/** A field definition as the repository lists it; kinds the fragments do not match come back bare. */
+interface GraphqlIssueField {
+  __typename?: string
+  id?: string
+  name?: string
+  options?: GithubIssueFieldOption[]
 }
 
 interface GraphqlItemNode extends GraphqlOptionalNode {
+  /** Selected on issues only. */
+  id?: string
+  /** Selected on issues in the list only, for the board's preview. */
+  bodyText?: string
   number: number
   title: string
   url: string
@@ -468,6 +569,7 @@ interface DashboardResponse {
     repository: {
       nameWithOwner: string
       url: string
+      issueFields?: { nodes: GraphqlIssueField[] }
       issues: { nodes: GraphqlItemNode[] }
       pullRequests: { nodes: GraphqlPullNode[] }
     } | null
@@ -493,7 +595,51 @@ function optionalMetadata(node: GraphqlOptionalNode): Partial<GithubIssueItem> {
       .map((entry) => entry.project)
       .filter((project): project is GithubProjectRef => project !== null)
   }
+  if (node.issueFieldValues) {
+    metadata.fieldValues = toFieldValues(node.issueFieldValues.nodes)
+    metadata.dateValues = toDateValues(node.issueFieldValues.nodes)
+  }
   return metadata
+}
+
+/** An issue's single-select values as option id by field id. */
+function toFieldValues(nodes: GraphqlFieldValue[]): Record<string, string> {
+  const values: Record<string, string> = {}
+  for (const node of nodes) {
+    if (!node.optionId || !node.field || !node.field.id) continue
+    values[node.field.id] = node.optionId
+  }
+  return values
+}
+
+/** An issue's date values as `YYYY-MM-DD` by field id. */
+export function toDateValues(nodes: GraphqlFieldValue[]): Record<string, string> {
+  const values: Record<string, string> = {}
+  for (const node of nodes) {
+    if (!node.value || !node.field || !node.field.id) continue
+    values[node.field.id] = node.value
+  }
+  return values
+}
+
+/** The date field definitions among the repository's fields. */
+export function toDateFields(nodes: GraphqlIssueField[]): GithubIssueDateField[] {
+  const fields: GithubIssueDateField[] = []
+  for (const node of nodes) {
+    if (node.__typename !== 'IssueFieldDate' || !node.id || !node.name) continue
+    fields.push({ id: node.id, name: node.name })
+  }
+  return fields
+}
+
+/** The single-select field definitions, leaving out the kinds the fragment did not match. */
+export function toIssueFields(nodes: GraphqlIssueField[]): GithubIssueField[] {
+  const fields: GithubIssueField[] = []
+  for (const node of nodes) {
+    if (!node.id || !node.name || !node.options) continue
+    fields.push({ id: node.id, name: node.name, options: node.options })
+  }
+  return fields
 }
 
 function toIssueItem(node: GraphqlItemNode): GithubIssueItem {
@@ -510,8 +656,22 @@ function toIssueItem(node: GraphqlItemNode): GithubIssueItem {
     commentCount: node.comments.totalCount,
     labels: node.labels.nodes,
     assignees: node.assignees.nodes.map(toActor),
-    isPinned: node.isPinned === true
+    isPinned: node.isPinned === true,
+    id: node.id,
+    excerpt: excerptOf(node.bodyText)
   }
+}
+
+// How much of a description is kept for a card's preview. The card shows two
+// or three lines; the rest would only travel to the renderer to be cut off.
+const EXCERPT_LENGTH = 240
+
+/** The start of a description, whitespace folded, for a preview; undefined when none was asked for. */
+export function excerptOf(bodyText: string | undefined): string | undefined {
+  if (bodyText === undefined) return undefined
+  const folded = bodyText.replace(/\s+/g, ' ').trim()
+  if (folded.length <= EXCERPT_LENGTH) return folded
+  return folded.slice(0, EXCERPT_LENGTH).trimEnd() + '…'
 }
 
 /** Check state of the head commit, or null when the PR has no checks. */
@@ -601,15 +761,35 @@ export async function fetchBranchPulls(repoPath: string): Promise<Record<string,
   return pulls
 }
 
+/** The field definitions a dashboard response carried; none when it did not ask. */
+function dashboardIssueFields(
+  connection: { nodes: GraphqlIssueField[] } | undefined
+): GithubIssueField[] {
+  if (!connection) return []
+  return toIssueFields(connection.nodes)
+}
+
+/** The date field definitions a dashboard response carried; none when it did not ask. */
+function dashboardDateFields(
+  connection: { nodes: GraphqlIssueField[] } | undefined
+): GithubIssueDateField[] {
+  if (!connection) return []
+  return toDateFields(connection.nodes)
+}
+
 /** Issues and pull requests for the repository, most recently updated first. */
 export async function fetchDashboard(
   repoPath: string,
   options: { state: GithubStateFilter; limit: number }
 ): Promise<GithubDashboard> {
   const repo = await repoRef(repoPath)
-  const capabilities = await fetchCapabilities(repoPath)
+  const probed = await probeCapabilities(repoPath)
   const [owner, name] = repo.nameWithOwner.split('/')
   const limit = Math.max(1, Math.min(options.limit, MAX_ITEMS))
+  // Whether subscriptions can change shapes nothing in the query, so it is
+  // asked beside it rather than in front of it.
+  const notifications = canChangeSubscriptions(repoPath)
+  const query = dashboardQuery(options.state, { ...probed, notifications: false })
   const raw = await runGh(repoPath, [
     'api',
     'graphql',
@@ -620,8 +800,9 @@ export async function fetchDashboard(
     '-F',
     `limit=${limit}`,
     '-f',
-    `query=${dashboardQuery(options.state, capabilities)}`
+    `query=${query}`
   ])
+  const capabilities = { ...probed, notifications: await notifications }
   const payload = parseJson<DashboardResponse>(raw)
   const repository = payload.data.repository
   if (!repository) throw new Error(`GitHub returned no repository for ${repo.nameWithOwner}`)
@@ -631,6 +812,8 @@ export async function fetchDashboard(
     issues: repository.issues.nodes.map(toIssueItem),
     pulls: repository.pullRequests.nodes.map(toPullItem),
     capabilities,
+    issueFields: dashboardIssueFields(repository.issueFields),
+    issueDateFields: dashboardDateFields(repository.issueFields),
     fetchedAt: Date.now()
   }
 }
@@ -967,7 +1150,9 @@ export async function fetchItem(
   number: number
 ): Promise<GithubItemDetail> {
   const repo = await repoRef(repoPath)
-  const capabilities = await fetchCapabilities(repoPath)
+  // The thread's query shapes nothing by the notifications scope, so opening an
+  // issue does not wait on checking it.
+  const capabilities = { ...(await probeCapabilities(repoPath)), notifications: false }
   const [owner, name] = repo.nameWithOwner.split('/')
   const raw = await runGh(repoPath, [
     'api',
@@ -1076,24 +1261,48 @@ export async function fetchMentionables(repoPath: string): Promise<GithubActor[]
  * repository rather than from the loaded items, so a milestone nothing is filed
  * against yet can still be picked.
  */
-export async function fetchMilestones(repoPath: string): Promise<GithubMilestoneDefinition[]> {
+/** Creates an open milestone, and returns it as the pickers list one. */
+export async function createMilestone(
+  repoPath: string,
+  draft: GithubMilestoneDraft
+): Promise<GithubMilestoneDefinition> {
   const repo = await repoRef(repoPath)
-  const raw = await runGh(repoPath, [
-    'api',
-    `repos/${repo.nameWithOwner}/milestones?state=all&per_page=${MAX_ITEMS}`
-  ])
-  const parsed = parseJson<
-    {
-      number: number
-      title: string
-      state: string
-      due_on: string | null
-      description: string | null
-      open_issues: number
-      closed_issues: number
-    }[]
-  >(raw)
-  return parsed.map((entry) => ({
+  const raw = await runGh(repoPath, createMilestoneArgs(repo.nameWithOwner, draft))
+  return toMilestoneDefinition(parseJson<RestMilestone>(raw))
+}
+
+/**
+ * The `gh api` call that creates a milestone. A description or due date left
+ * empty is not sent at all. GitHub keeps only the date of `due_on`, moved into
+ * its own time zone first, so midnight UTC lands on the day before; noon UTC
+ * stays on the day in every zone GitHub could use.
+ */
+export function createMilestoneArgs(nameWithOwner: string, draft: GithubMilestoneDraft): string[] {
+  const args = ['api', '--method', 'POST', `repos/${nameWithOwner}/milestones`]
+  args.push('-f', `title=${draft.title.trim()}`)
+  if (draft.description.trim().length > 0) {
+    args.push('-f', `description=${draft.description.trim()}`)
+  }
+  if (draft.dueOn !== null) {
+    args.push('-f', `due_on=${draft.dueOn}T12:00:00Z`)
+  }
+  return args
+}
+
+/** A milestone as GitHub's REST API returns it. */
+interface RestMilestone {
+  number: number
+  title: string
+  state: string
+  due_on: string | null
+  description: string | null
+  open_issues: number
+  closed_issues: number
+}
+
+/** A REST milestone as the pickers list it. */
+function toMilestoneDefinition(entry: RestMilestone): GithubMilestoneDefinition {
+  return {
     number: entry.number,
     title: entry.title,
     state: entry.state,
@@ -1101,7 +1310,16 @@ export async function fetchMilestones(repoPath: string): Promise<GithubMilestone
     description: entry.description || '',
     openIssues: entry.open_issues,
     closedIssues: entry.closed_issues
-  }))
+  }
+}
+
+export async function fetchMilestones(repoPath: string): Promise<GithubMilestoneDefinition[]> {
+  const repo = await repoRef(repoPath)
+  const raw = await runGh(repoPath, [
+    'api',
+    `repos/${repo.nameWithOwner}/milestones?state=all&per_page=${MAX_ITEMS}`
+  ])
+  return parseJson<RestMilestone[]>(raw).map(toMilestoneDefinition)
 }
 
 /**
@@ -1137,6 +1355,76 @@ mutation($id: ID!, $state: SubscriptionState!) {
     subscribable { viewerSubscription }
   }
 }`.trim()
+
+const SET_ISSUE_FIELD = `
+mutation($issueId: ID!, $fieldId: ID!, $optionId: ID!) {
+  setIssueFieldValue(input: { issueId: $issueId, issueFields: [{ fieldId: $fieldId, singleSelectOptionId: $optionId }] }) {
+    issue { number }
+  }
+}`.trim()
+
+const CLEAR_ISSUE_FIELD = `
+mutation($issueId: ID!, $fieldId: ID!) {
+  deleteIssueFieldValue(input: { issueId: $issueId, fieldId: $fieldId }) {
+    issue { number }
+  }
+}`.trim()
+
+/**
+ * Sets several date issue fields of one issue in a single mutation, the
+ * variables numbered since GraphQL takes no list of objects through `gh -f`.
+ */
+export function setIssueDatesMutation(count: number): string {
+  const variables: string[] = []
+  const fields: string[] = []
+  for (let index = 0; index < count; index++) {
+    variables.push(`$field${index}: ID!, $date${index}: String!`)
+    fields.push(`{ fieldId: $field${index}, dateValue: $date${index} }`)
+  }
+  return `mutation($issueId: ID!, ${variables.join(', ')}) {
+  setIssueFieldValue(input: { issueId: $issueId, issueFields: [${fields.join(', ')}] }) {
+    issue { number }
+  }
+}`
+}
+
+/**
+ * Sets date issue fields to days, `YYYY-MM-DD`, keyed by field id; a null day
+ * clears that field. The days go in one mutation, each clearing in its own.
+ */
+export async function setIssueDates(
+  repoPath: string,
+  issueId: string,
+  dates: Record<string, string | null>
+): Promise<void> {
+  const variables: Record<string, string> = { issueId }
+  let count = 0
+  for (const [fieldId, date] of Object.entries(dates)) {
+    if (date === null) continue
+    variables[`field${count}`] = fieldId
+    variables[`date${count}`] = date
+    count++
+  }
+  if (count > 0) await graphql(repoPath, setIssueDatesMutation(count), variables)
+  for (const [fieldId, date] of Object.entries(dates)) {
+    if (date !== null) continue
+    await graphql(repoPath, CLEAR_ISSUE_FIELD, { issueId, fieldId })
+  }
+}
+
+/** Sets a single-select issue field to one of its options, or clears it when `optionId` is null. */
+export async function setIssueField(
+  repoPath: string,
+  issueId: string,
+  fieldId: string,
+  optionId: string | null
+): Promise<void> {
+  if (optionId === null) {
+    await graphql(repoPath, CLEAR_ISSUE_FIELD, { issueId, fieldId })
+    return
+  }
+  await graphql(repoPath, SET_ISSUE_FIELD, { issueId, fieldId, optionId })
+}
 
 /**
  * gh reports a missing scope as a wall of GraphQL error text naming every scope

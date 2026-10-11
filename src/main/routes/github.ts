@@ -18,6 +18,7 @@ import type {
   GithubItemAction,
   GithubItemCommand,
   GithubLabelChange,
+  GithubMilestoneDraft,
   GithubCloseReason,
   GithubAssigneeChange,
   GithubItemKind,
@@ -154,6 +155,29 @@ export const githubRoutes = {
     route(ctx, 'github:milestones', () => {
       const { repoPath } = ctx.workbench.requireRepo()
       return dashboard.fetchMilestones(repoPath)
+    })
+
+    route(
+      ctx,
+      'github:setIssueField',
+      (_e, issueId: string, fieldId: string, optionId: string | null) => {
+        const { repoPath } = ctx.workbench.requireRepo()
+        return dashboard.setIssueField(repoPath, issueId, fieldId, optionId)
+      }
+    )
+
+    route(
+      ctx,
+      'github:setIssueDates',
+      (_e, issueId: string, dates: Record<string, string | null>) => {
+        const { repoPath } = ctx.workbench.requireRepo()
+        return dashboard.setIssueDates(repoPath, issueId, dates)
+      }
+    )
+
+    route(ctx, 'github:createMilestone', (_e, draft: GithubMilestoneDraft) => {
+      const { repoPath } = ctx.workbench.requireRepo()
+      return dashboard.createMilestone(repoPath, draft)
     })
 
     route(

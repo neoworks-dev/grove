@@ -5,12 +5,14 @@
 // time) and detail responses carry a token, so a slow reply for an item the user
 // has already navigated away from is dropped instead of overwriting the view.
 
+import { untrack } from 'svelte'
 import { dialogs } from '../../../lib/dialogs.svelte'
 import type { DialogOptions } from '../../../lib/dialogs.svelte'
 import {
   store,
   openFileAtLine,
   openFileInEditor,
+  focusAgentInPane,
   refreshWorktrees,
   selectWorktree,
   type TabDiff
@@ -20,7 +22,25 @@ import type { CodeReference } from '../../../lib/agents/codeReferences'
 import { branchNameFor, freeBranchName, isBranchForIssue } from './branches'
 import { issuePrompt } from './issuePrompt'
 import { startSessionWithTask } from '../../../lib/agents/newSession'
-import { agentSessions } from '../../../lib/agents/sessions.svelte'
+import { agentSessions, badgeOf, type SessionBadge } from '../../../lib/agents/sessions.svelte'
+import type { SessionMeta } from '../../../../../shared/agents'
+import { resolveBoardField, withFieldValue } from './board'
+import {
+  calendarRange,
+  monthOf,
+  withDateValues,
+  type CalendarMonth,
+  type CalendarRange
+} from './calendar'
+import { loadDashboardSnapshot, saveDashboardSnapshot } from './dashboardSnapshot'
+import {
+  createView,
+  loadViews,
+  storeViews,
+  type IssueLayout,
+  type SavedView,
+  type ViewState
+} from './views'
 import { diffAgainstBase, redrawDiffAgainstBase, showPrBaseOnly } from './prDiff'
 import { registerDiffRestore } from '../../../lib/nvim/diffTabs'
 import { buildPrFileTree, nextUnreadFile } from './prFileTree'
@@ -41,7 +61,11 @@ import type {
   GithubActor,
   GithubCapabilities,
   GithubDashboard,
+  GithubIssueDateField,
+  GithubIssueField,
+  GithubIssueItem,
   GithubMilestoneDefinition,
+  GithubMilestoneDraft,
   GithubIssueDraft,
   GithubItem,
   GithubCloseReason,
@@ -103,6 +127,19 @@ class GithubStore {
   error = $state<string | null>(null)
 
   tab = $state<GithubItemKind>('pull')
+
+  /** Issues as a list, as a board in columns by an issue field, or on a calendar. */
+  view = $state<IssueLayout>('list')
+  /** The issue field the board groups by; null until one is picked, which means the first. */
+  boardFieldId = $state<string | null>(null)
+  /** The issue field the list is grouped by, or null for one ungrouped list. */
+  listFieldId = $state<string | null>(null)
+  /** The date field the calendar places issues by; null until one is picked, which means the first. */
+  calendarFieldId = $state<string | null>(null)
+  /** The month the calendar shows. */
+  calendarMonth = $state<CalendarMonth>(monthOf(new Date()))
+  /** The views saved for the open repository, oldest first. */
+  savedViews = $state<SavedView[]>([])
 
   /**
    * The whole filter, in GitHub's own syntax. The menus write into this and
@@ -285,7 +322,8 @@ class GithubStore {
         issueTypes: false,
         subIssues: false,
         linkedBranches: false,
-        notifications: false
+        notifications: false,
+        issueFields: false
       }
     }
     return this.dashboard.capabilities
@@ -298,6 +336,83 @@ class GithubStore {
     return search.qualifiers.some(
       (qualifier) => qualifier.key !== 'is' && qualifier.key !== 'state'
     )
+  }
+
+  /** The organisation's single-select issue fields, which the board can group by. */
+  get issueFields(): GithubIssueField[] {
+    if (!this.dashboard) return []
+    return this.dashboard.issueFields
+  }
+
+  /** The field the board groups by, or null when there is none to group by. */
+  get boardField(): GithubIssueField | null {
+    return resolveBoardField(this.issueFields, this.boardFieldId)
+  }
+
+  /** The organisation's date issue fields, which the calendar places issues by. */
+  get dateFields(): GithubIssueDateField[] {
+    if (!this.dashboard || !this.dashboard.issueDateFields) return []
+    return this.dashboard.issueDateFields
+  }
+
+  /** The date fields the calendar places issues by: a start and end pair, or one chosen field. */
+  get calendarRange(): CalendarRange | null {
+    return calendarRange(this.dateFields, this.calendarFieldId)
+  }
+
+  /** The date field the calendar starts its bars at, which is the one a view saves. */
+  get calendarField(): GithubIssueDateField | null {
+    const range = this.calendarRange
+    if (!range) return null
+    return range.start
+  }
+
+  /** Whether the calendar is what the pane shows: issues, a date field, and calendar view. */
+  get calendarShown(): boolean {
+    if (this.tab !== 'issue') return false
+    if (this.view !== 'calendar') return false
+    return this.calendarField !== null
+  }
+
+  /** Whether a layout that wants the pane's width, the board or the calendar, is shown. */
+  get wideLayoutShown(): boolean {
+    return this.boardShown || this.calendarShown
+  }
+
+  /** Whether the board is what the pane shows: issues, a field to group by, and board view. */
+  get boardShown(): boolean {
+    if (this.tab !== 'issue') return false
+    if (this.view !== 'board') return false
+    return this.boardField !== null
+  }
+
+  /** What the issue list shows, in the terms a view is saved in. */
+  get viewState(): ViewState {
+    return { query: this.query, layout: this.view, fieldId: this.layoutFieldId }
+  }
+
+  /** The field the current layout uses: the board's and calendar's always, the list's when grouped. */
+  get layoutFieldId(): string | null {
+    if (this.view === 'list') {
+      const listField = this.listField
+      if (!listField) return null
+      return listField.id
+    }
+    if (this.view === 'calendar') {
+      const dateField = this.calendarField
+      if (!dateField) return null
+      return dateField.id
+    }
+    const field = this.boardField
+    if (!field) return null
+    return field.id
+  }
+
+  /** The field the list is grouped by, while it still exists. */
+  get listField(): GithubIssueField | null {
+    const field = this.issueFields.find((candidate) => candidate.id === this.listFieldId)
+    if (!field) return null
+    return field
   }
 
   get counts(): { pull: number; issue: number } {
@@ -346,6 +461,9 @@ export async function refreshDashboard(
     github.loading = true
     clearRefusals(referenceLoads)
   }
+  // Runs before the first await, so inside the pane's effect; untracked, or the
+  // list it reads would re-run that effect with every load.
+  untrack(() => restoreSnapshot(state))
   try {
     const status = await window.workbench.github.status()
     github.status = status
@@ -354,13 +472,65 @@ export async function refreshDashboard(
       github.error = status.error
       return
     }
-    github.dashboard = await window.workbench.github.dashboard({ state, limit: PAGE_SIZE })
+    const dashboard = await window.workbench.github.dashboard({ state, limit: PAGE_SIZE })
+    github.dashboard = dashboard
     github.error = null
+    rememberSnapshot(state, dashboard)
+    void prefetchThreads(github.items.slice(0, PREFETCH_COUNT))
   } catch (err) {
     github.error = (err as Error).message
   } finally {
     github.loading = false
     githubInternals.listInFlight = false
+  }
+}
+
+// Only the open list is kept and put back: it is what the pane opens on, and a
+// closed or all list shown as the opening view would be the wrong list.
+
+/** Puts the last open list for this repository up while the first fetch runs. */
+function restoreSnapshot(state: GithubStateFilter): void {
+  if (github.dashboard || state !== 'open' || !store.repo) return
+  github.dashboard = loadDashboardSnapshot(store.repo.path)
+}
+
+/** Keeps the open list for the next time the pane opens on this repository. */
+function rememberSnapshot(state: GithubStateFilter, dashboard: GithubDashboard): void {
+  if (state !== 'open' || !store.repo) return
+  saveDashboardSnapshot(store.repo.path, dashboard)
+}
+
+/** How many threads from the top of the list are fetched before they are opened. */
+const PREFETCH_COUNT = 8
+
+// Threads being fetched ahead of a click, so a hover and the list's own
+// prefetch do not ask for the same one twice. Bookkeeping nothing renders, so
+// it is a plain Set.
+// eslint-disable-next-line svelte/prefer-svelte-reactivity
+const prefetching = new Set<string>()
+
+/** Fetches the threads of the given items one after another, skipping any already here. */
+async function prefetchThreads(items: GithubItem[]): Promise<void> {
+  for (const item of items) {
+    await prefetchItem(item.kind, item.number)
+  }
+}
+
+/**
+ * Fetches an item's thread into the cache without showing it, so opening it is
+ * immediate. A failure is left for the click to meet and report.
+ */
+export async function prefetchItem(kind: GithubItemKind, number: number): Promise<void> {
+  const key = detailKey({ kind, number })
+  if (github.details[key] || prefetching.has(key)) return
+  prefetching.add(key)
+  try {
+    const detail = await window.workbench.github.item(kind, number)
+    github.details = { ...github.details, [key]: detail }
+  } catch {
+    // Opening it fetches again and says what went wrong.
+  } finally {
+    prefetching.delete(key)
   }
 }
 
@@ -1215,6 +1385,26 @@ export async function loadLabels(): Promise<void> {
  * Load the repository's milestones once. A failure leaves the picker empty and
  * says so there, rather than taking down the rail it sits in.
  */
+/**
+ * Creates a milestone and puts the open item on it, the way GitHub's own
+ * picker does when a typed title matches nothing.
+ */
+export async function createMilestoneAndApply(draft: GithubMilestoneDraft): Promise<void> {
+  if (draft.title.trim().length === 0) return
+  github.busy = true
+  let created: GithubMilestoneDefinition
+  try {
+    created = await window.workbench.github.createMilestone($state.snapshot(draft))
+  } catch (err) {
+    dialogs.notify({ level: 'error', message: (err as Error).message })
+    return
+  } finally {
+    github.busy = false
+  }
+  github.milestones = [...github.milestones, created]
+  await applyMilestone(created.title)
+}
+
 export async function loadMilestones(): Promise<void> {
   await loadReference('milestones', async () => {
     github.milestones = await window.workbench.github.milestones()
@@ -1369,6 +1559,173 @@ export function worktreesForIssue(number: number): Worktree[] {
   return store.worktrees.filter((worktree) => isBranchForIssue(worktree.branch, number))
 }
 
+/** The agent session a card shows for an issue, with the worktree it works in. */
+export interface IssueAgent {
+  session: SessionMeta
+  badge: SessionBadge
+  worktree: Worktree
+}
+
+/**
+ * The agent session to show on an issue's card, read off the sessions in its
+ * worktrees: the one in the most pressing state, the most recently active
+ * among those, or null when the issue has no worktree with a session in it.
+ */
+export function issueAgent(number: number): IssueAgent | null {
+  let shown: IssueAgent | null = null
+  for (const worktree of worktreesForIssue(number)) {
+    for (const session of agentSessions.forWorktree(worktree.path)) {
+      const candidate = {
+        session,
+        badge: badgeOf(session, agentSessions.live[session.id]),
+        worktree
+      }
+      if (!shown || showsBefore(candidate, shown)) shown = candidate
+    }
+  }
+  return shown
+}
+
+/** Whether one session belongs on the card ahead of another: more pressing, or as pressing and newer. */
+function showsBefore(candidate: IssueAgent, current: IssueAgent): boolean {
+  const candidateRank = BADGE_ORDER.indexOf(candidate.badge)
+  const currentRank = BADGE_ORDER.indexOf(current.badge)
+  if (candidateRank !== currentRank) return candidateRank < currentRank
+  return candidate.session.updatedAt > current.session.updatedAt
+}
+
+/** Shows an issue's agent session in the Agent pane, in its worktree. */
+export function openIssueAgent(agent: IssueAgent): void {
+  agentSessions.acknowledge(agent.session.id)
+  void focusAgentInPane(agent.worktree.id, agent.session.id)
+  layout.ensurePane('agent')
+}
+
+// Which state a card shows when an issue's sessions disagree: what needs the
+// user first, then what is still moving.
+const BADGE_ORDER: SessionBadge[] = ['requires_action', 'error', 'running', 'idle']
+
+/**
+ * Moves an issue to a column of the board, setting the board's field on GitHub.
+ * The card moves at once and moves back if GitHub refuses.
+ */
+export async function moveIssueOnBoard(
+  issue: GithubIssueItem,
+  optionId: string | null
+): Promise<void> {
+  const field = github.boardField
+  if (!field || !issue.id) return
+  replaceIssue(withFieldValue(issue, field.id, optionId))
+  try {
+    await window.workbench.github.setIssueField(issue.id, field.id, optionId)
+  } catch (err) {
+    replaceIssue(issue)
+    dialogs.notify({ level: 'error', message: (err as Error).message })
+  }
+}
+
+/** Puts a changed copy of an issue in the dashboard in place of the one with its number. */
+function replaceIssue(next: GithubIssueItem): void {
+  const dashboard = github.dashboard
+  if (!dashboard) return
+  const issues = dashboard.issues.map((issue) => {
+    if (issue.number === next.number) return next
+    return issue
+  })
+  github.dashboard = { ...dashboard, issues }
+}
+
+/** Reads the open repository's saved views; none when no repository is open. */
+export function loadSavedViews(): void {
+  if (!store.repo) {
+    github.savedViews = []
+    return
+  }
+  github.savedViews = loadViews(store.repo.path)
+}
+
+/** Saves what the issue list shows as a view under a name. */
+export function saveCurrentView(name: string): void {
+  if (!store.repo || name.trim().length === 0) return
+  const views = [...github.savedViews, createView(name, github.viewState)]
+  github.savedViews = views
+  storeViews(store.repo.path, views)
+}
+
+/** Deletes a saved view. */
+export function deleteView(id: string): void {
+  if (!store.repo) return
+  const views = github.savedViews.filter((view) => view.id !== id)
+  github.savedViews = views
+  storeViews(store.repo.path, views)
+}
+
+/** Shows the issue list the way a view describes: its query, layout and field. */
+export function applyView(view: ViewState): void {
+  github.query = view.query
+  github.view = view.layout
+  if (view.layout === 'list') {
+    github.listFieldId = view.fieldId
+    return
+  }
+  if (view.layout === 'calendar') {
+    github.calendarFieldId = view.fieldId
+    return
+  }
+  github.boardFieldId = view.fieldId
+}
+
+/**
+ * Writes an issue's date fields from the calendar, keyed by field id, a null
+ * day clearing its field. The issue moves at once and moves back if GitHub refuses.
+ */
+export async function setIssueDates(
+  issue: GithubIssueItem,
+  dates: Record<string, string | null>
+): Promise<void> {
+  if (!issue.id) return
+  replaceIssue(withDateValues(issue, dates))
+  try {
+    await window.workbench.github.setIssueDates(issue.id, dates)
+    patchCachedDates(issue.number, dates)
+  } catch (err) {
+    replaceIssue(issue)
+    dialogs.notify({ level: 'error', message: (err as Error).message })
+  }
+}
+
+/**
+ * Writes changed dates into an issue's cached thread, and the open one, so its
+ * sidebar does not show the days from before until it is fetched again.
+ */
+function patchCachedDates(number: number, dates: Record<string, string | null>): void {
+  const key = detailKey({ kind: 'issue', number })
+  const cached = github.details[key]
+  if (cached) {
+    github.details = { ...github.details, [key]: withDetailDates(cached, dates) }
+  }
+  const open = github.detail
+  if (open && open.kind === 'issue' && open.number === number) {
+    github.detail = withDetailDates(open, dates)
+  }
+}
+
+/** A thread with each of the given date fields set, or cleared where the day is null. */
+function withDetailDates(
+  detail: GithubItemDetail,
+  dates: Record<string, string | null>
+): GithubItemDetail {
+  const dateValues: Record<string, string> = { ...detail.dateValues }
+  for (const [fieldId, date] of Object.entries(dates)) {
+    if (date === null) {
+      delete dateValues[fieldId]
+      continue
+    }
+    dateValues[fieldId] = date
+  }
+  return { ...detail, dateValues }
+}
+
 /** Switches to a worktree an issue already has. */
 export async function switchToWorktree(worktree: Worktree): Promise<void> {
   await selectWorktree(worktree.id)
@@ -1498,6 +1855,46 @@ export async function applyMilestone(title: string | null): Promise<void> {
   github.busy = true
   try {
     await window.workbench.github.changeMilestone(selection.kind, selection.number, title)
+    await loadDetail(selection, { silent: true })
+    void refreshDashboard(github.stateFilter, { silent: true })
+  } catch (err) {
+    dialogs.notify({ level: 'error', message: (err as Error).message })
+  } finally {
+    github.busy = false
+  }
+}
+
+/**
+ * Sets one of the organisation's issue fields on the open issue, or clears it
+ * when `optionId` is null, then reloads the thread and the list behind it.
+ */
+export async function applyIssueField(fieldId: string, optionId: string | null): Promise<void> {
+  const selection = github.selection
+  const detail = github.detail
+  if (!selection || !detail || detail.kind !== 'issue') return
+  github.busy = true
+  try {
+    await window.workbench.github.setIssueField(detail.id, fieldId, optionId)
+    await loadDetail(selection, { silent: true })
+    void refreshDashboard(github.stateFilter, { silent: true })
+  } catch (err) {
+    dialogs.notify({ level: 'error', message: (err as Error).message })
+  } finally {
+    github.busy = false
+  }
+}
+
+/**
+ * Sets one of the organisation's date fields on the open issue, or clears it
+ * when `date` is null, then reloads the thread and the list behind it.
+ */
+export async function applyIssueDate(fieldId: string, date: string | null): Promise<void> {
+  const selection = github.selection
+  const detail = github.detail
+  if (!selection || !detail || detail.kind !== 'issue') return
+  github.busy = true
+  try {
+    await window.workbench.github.setIssueDates(detail.id, { [fieldId]: date })
     await loadDetail(selection, { silent: true })
     void refreshDashboard(github.stateFilter, { silent: true })
   } catch (err) {

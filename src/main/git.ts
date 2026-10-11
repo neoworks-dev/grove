@@ -320,6 +320,25 @@ export async function aheadBehind(
   }
 }
 
+/**
+ * What a worktree changes against where its branch left the base: its commits
+ * and what is not committed yet together, as the branch would merge. Null when
+ * the base does not resolve.
+ */
+export async function branchChanges(
+  worktreePath: string,
+  baseRef: string
+): Promise<{ added: number; removed: number; files: number } | null> {
+  let mergeBase: string
+  try {
+    mergeBase = (await gitFor(worktreePath).raw(['merge-base', baseRef, 'HEAD'])).trim()
+  } catch {
+    return null
+  }
+  const stats = await diffStats(worktreePath, mergeBase)
+  return { added: stats.added, removed: stats.removed, files: stats.files.length }
+}
+
 /** Commits `ref` has that the worktree's HEAD does not; 0 until the ref exists. */
 export async function commitsBehind(worktreePath: string, ref: string): Promise<number> {
   try {
@@ -632,7 +651,12 @@ export async function changesSince(worktreePath: string, commit: string): Promis
 /** Untracked files that are not ignored, relative to the worktree. */
 export async function untrackedFiles(worktreePath: string): Promise<string[]> {
   try {
-    const output = await gitFor(worktreePath).raw(['ls-files', '--others', '--exclude-standard', '-z'])
+    const output = await gitFor(worktreePath).raw([
+      'ls-files',
+      '--others',
+      '--exclude-standard',
+      '-z'
+    ])
     return output.split('\0').filter((path) => path.length > 0)
   } catch {
     return []
@@ -849,14 +873,14 @@ async function untrackedAddedLines(worktreePath: string, relPath: string): Promi
   }
 }
 
-// Aggregate added/removed line counts for a worktree vs HEAD: tracked changes
-// (staged + unstaged together via `diff HEAD`) plus untracked files. Binary
-// files count as 0 lines in the totals.
-export async function diffStats(worktreePath: string): Promise<DiffStats> {
+// Aggregate added/removed line counts for a worktree vs a commit, HEAD unless
+// given: tracked changes (staged + unstaged together via `diff <commit>`) plus
+// untracked files. Binary files count as 0 lines in the totals.
+export async function diffStats(worktreePath: string, against = 'HEAD'): Promise<DiffStats> {
   const git = gitFor(worktreePath)
 
   const tracked = await git
-    .raw(['diff', 'HEAD', '--numstat'])
+    .raw(['diff', against, '--numstat'])
     .then(parseNumstat)
     .catch(() => [] as DiffFileStat[])
 

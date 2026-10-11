@@ -28,7 +28,9 @@ async function branchPositions(
     let mergedLocally = false
     if (position.ahead === 0)
       mergedLocally = await git.branchHasMoved(worktree.path, worktree.branch)
+    const changes = await git.branchChanges(worktree.path, base)
     positions[worktree.id] = { base, ...position, mergedLocally }
+    if (changes) positions[worktree.id].changes = changes
   }
   return positions
 }

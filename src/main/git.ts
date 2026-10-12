@@ -99,6 +99,25 @@ export function parseWorktreePorcelain(output: string): Array<{
 }
 
 /**
+ * Where a worktree's git metadata lives: its own git directory, which holds its
+ * HEAD, and the common one, which holds the refs every worktree shares. The two
+ * are the same for the main worktree.
+ */
+export async function gitDirectories(
+  worktreePath: string
+): Promise<{ gitDir: string; commonDir: string } | null> {
+  const output = await gitFor(worktreePath).raw([
+    'rev-parse',
+    '--path-format=absolute',
+    '--git-dir',
+    '--git-common-dir'
+  ])
+  const [gitDir, commonDir] = output.trim().split('\n')
+  if (!gitDir || !commonDir) return null
+  return { gitDir, commonDir }
+}
+
+/**
  * The directories git ignores in a worktree, relative to it. Only the topmost
  * one is listed: git collapses a directory with nothing tracked in it.
  */

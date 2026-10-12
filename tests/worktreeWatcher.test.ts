@@ -104,4 +104,62 @@ describe('WorktreeWatcher', () => {
     expect(paths.filter((path) => path.startsWith('runs'))).toEqual([])
     expect(paths.filter((path) => path.startsWith(`checkpoints${sep}`))).toEqual([])
   })
+
+  /** A repo with one commit, so it has a branch and a HEAD to move. */
+  async function committedRepo(): Promise<string> {
+    const path = await mkdtemp(join(tmpdir(), 'grove-watcher-'))
+    const git = simpleGit({ baseDir: path })
+    await git.init()
+    await git.addConfig('user.email', 'test@grove.invalid')
+    await git.addConfig('user.name', 'Grove Test')
+    await writeFile(join(path, 'README.md'), 'hello\n')
+    await git.add('README.md')
+    await git.commit('initial')
+    return path
+  }
+
+  /** Resolves once `count` git changes have been reported, or rejects after a while. */
+  function gitChanges(reports: string[], count: number): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const started = Date.now()
+      const poll = (): void => {
+        if (reports.length >= count) return resolve()
+        if (Date.now() - started > 3000) return reject(new Error('no git change reported'))
+        setTimeout(poll, 20)
+      }
+      poll()
+    })
+  }
+
+  it('reports a commit made outside the app, which the file watch never sees', async () => {
+    repo = await committedRepo()
+    const reports: string[] = []
+    watcher = new WorktreeWatcher(
+      () => {},
+      (worktreeId) => reports.push(worktreeId)
+    )
+    watcher.setWatched([repo])
+    await Bun.sleep(300)
+
+    await simpleGit({ baseDir: repo }).raw(['commit', '--allow-empty', '-m', 'from a terminal'])
+    await gitChanges(reports, 1)
+    expect(reports[0]).toBe(repo)
+  })
+
+  it('reports a branch made in a linked worktree, whose refs live in the main repository', async () => {
+    repo = await committedRepo()
+    const linked = join(repo, '.worktrees', 'feature')
+    await simpleGit({ baseDir: repo }).raw(['worktree', 'add', linked, '-b', 'feature'])
+    const reports: string[] = []
+    watcher = new WorktreeWatcher(
+      () => {},
+      (worktreeId) => reports.push(worktreeId)
+    )
+    watcher.setWatched([linked])
+    await Bun.sleep(300)
+
+    await simpleGit({ baseDir: linked }).raw(['branch', 'another'])
+    await gitChanges(reports, 1)
+    expect(reports[0]).toBe(linked)
+  })
 })

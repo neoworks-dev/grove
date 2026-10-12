@@ -124,6 +124,10 @@ const watcher = new WorktreeWatcher((change) => {
   // as a batch. Directory events carry no content to review.
   if (change.type === 'addDir' || change.type === 'unlinkDir') return
   review.noteWrite(change.worktreeId, change.relPath)
+}, (worktreeId) => {
+  // HEAD or a ref moved, from Grove or from outside it: the git views reload.
+  send('event:git-change', { worktreeId })
+  gitStatusVersions.bump(worktreeId)
 })
 
 // Review is watcher-keyed: the watcher says which files changed, and a

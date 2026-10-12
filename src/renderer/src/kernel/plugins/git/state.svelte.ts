@@ -35,6 +35,7 @@ class GitState {
   #stopTracking: (() => void) | null = null
   // Only the newest reload may write, so a slow one cannot land over a fresher one.
   #latestReload = 0
+  #reloadTimer: ReturnType<typeof setTimeout> | null = null
 
   /** Re-reads everything for the selected worktree, then bumps the revision. */
   async reload(): Promise<void> {
@@ -93,9 +94,17 @@ class GitState {
     }
   }
 
-  /** Reloads at once on a worktree or branch switch, and once a burst of file changes settles. */
+  /**
+   * Reloads at once on a worktree or branch switch, and once a burst of file
+   * changes or of git metadata changes settles. The latter is how a commit or
+   * checkout made outside Grove, from a terminal or an agent, gets here.
+   */
   #track(): () => void {
-    return $effect.root(() => {
+    const stopGitEvents = window.workbench.on('event:git-change', (payload) => {
+      const { worktreeId } = payload as { worktreeId: string }
+      if (worktreeId === store.selectedWorktreeId) this.#scheduleReload()
+    })
+    const stopEffects = $effect.root(() => {
       $effect(() => {
         void store.selectedWorktreeId
         void store.selectedWorktree?.branch
@@ -109,10 +118,30 @@ class GitState {
           first = false
           return
         }
-        const timer = setTimeout(() => void this.reload(), RELOAD_DELAY_MS)
-        return () => clearTimeout(timer)
+        this.#scheduleReload()
       })
     })
+    return () => {
+      stopGitEvents()
+      stopEffects()
+      this.#cancelScheduledReload()
+    }
+  }
+
+  /** Reloads once things have been quiet for a moment, restarting the wait on every call. */
+  #scheduleReload(): void {
+    this.#cancelScheduledReload()
+    this.#reloadTimer = setTimeout(() => {
+      this.#reloadTimer = null
+      void this.reload()
+    }, RELOAD_DELAY_MS)
+  }
+
+  /** Drops a reload that is waiting to run. */
+  #cancelScheduledReload(): void {
+    if (this.#reloadTimer === null) return
+    clearTimeout(this.#reloadTimer)
+    this.#reloadTimer = null
   }
 
   /** Empties the state when no worktree is selected. */

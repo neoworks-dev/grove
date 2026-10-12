@@ -2,14 +2,26 @@
 // the renderer can refresh the file tree, reload open files, and auto-open diffs.
 // Watches a dynamic set of worktrees (the selected one plus any running agents).
 //
+// `.git` is not part of the file watch, so each worktree's git metadata gets a
+// small watch of its own: HEAD and the refs, which is where a commit, checkout,
+// branch, tag, stash, fetch or merge made outside Grove shows. The index is left
+// out on purpose: reading status can rewrite it, and a reload that triggers
+// itself would never settle. This one uses fs.watch rather than chokidar: git
+// moves a ref by renaming a lock file over it, which chokidar reports nothing for.
+
+// The files in a git directory whose change means HEAD or the refs moved. Git
+// writes each through a `.lock` beside it, so those count too.
+const GIT_METADATA_FILES = ['HEAD', 'MERGE_HEAD', 'packed-refs']
+//
 // What git ignores is not watched. chokidar holds an inotify watch per file, so
 // following a gitignored dataset or build output costs hundreds of thousands of
 // watches — past the system limit — and a run writing into it floods the app
 // with events nobody reviews.
 
 import chokidar, { type FSWatcher } from 'chokidar'
-import { basename, relative, sep } from 'path'
-import { ignoredDirectories, isIgnoredByGit } from './git'
+import { watch, type FSWatcher as NodeWatcher } from 'fs'
+import { basename, join, relative, sep } from 'path'
+import { gitDirectories, ignoredDirectories, isIgnoredByGit } from './git'
 
 export interface FsChange {
   worktreeId: string
@@ -23,6 +35,8 @@ const IGNORED_DIRECTORIES = ['.git', 'node_modules', '.workbench', '.worktrees',
 /** One watched worktree: its watcher once started, and what git ignores in it. */
 interface WatchedWorktree {
   watcher: FSWatcher | null
+  /** The watches on the worktree's HEAD and refs, once started. */
+  gitWatchers: NodeWatcher[]
   /** Directories, relative to the worktree, that git ignores; everything below one is ignored too. */
   gitIgnored: Set<string>
   closed: boolean
@@ -62,7 +76,10 @@ export class WorktreeWatcher {
   // worktreeId (== path) -> watch
   private watched = new Map<string, WatchedWorktree>()
 
-  constructor(private onChange: (change: FsChange) => void) {}
+  constructor(
+    private onChange: (change: FsChange) => void,
+    private onGitChange: (worktreeId: string) => void = () => {}
+  ) {}
 
   // Reconcile the watched set to exactly these worktree paths.
   setWatched(worktreePaths: string[]): void {
@@ -82,12 +99,35 @@ export class WorktreeWatcher {
   private add(worktreePath: string): void {
     const entry: WatchedWorktree = {
       watcher: null,
+      gitWatchers: [],
       gitIgnored: new Set(),
       closed: false,
       reportedError: false
     }
     this.watched.set(worktreePath, entry)
     void this.start(worktreePath, entry)
+    void this.startGitWatch(worktreePath, entry)
+  }
+
+  /** Watches the worktree's HEAD and refs, reporting any change to them. */
+  private async startGitWatch(worktreePath: string, entry: WatchedWorktree): Promise<void> {
+    const directories = await gitDirectories(worktreePath).catch(() => null)
+    if (entry.closed || !directories) return
+    const report = (): void => this.onGitChange(worktreePath)
+    const onError = (error: unknown): void => this.reportError(worktreePath, entry, error)
+
+    const metadataDirectories = new Set([directories.gitDir, directories.commonDir])
+    for (const directory of metadataDirectories) {
+      const watcher = watch(directory, (_event, filename) => {
+        if (filename && isGitMetadataFile(filename)) report()
+      })
+      watcher.on('error', onError)
+      entry.gitWatchers.push(watcher)
+    }
+
+    const refsWatcher = watch(join(directories.commonDir, 'refs'), { recursive: true }, report)
+    refsWatcher.on('error', onError)
+    entry.gitWatchers.push(refsWatcher)
   }
 
   private async start(worktreePath: string, entry: WatchedWorktree): Promise<void> {
@@ -149,12 +189,14 @@ export class WorktreeWatcher {
   private close(entry: WatchedWorktree): void {
     entry.closed = true
     if (entry.watcher) void entry.watcher.close()
+    closeGitWatchers(entry)
   }
 
   async closeAll(): Promise<void> {
     for (const entry of this.watched.values()) {
       entry.closed = true
       if (entry.watcher) await entry.watcher.close()
+      closeGitWatchers(entry)
     }
     this.watched.clear()
   }
@@ -167,4 +209,17 @@ async function readGitIgnored(worktreePath: string): Promise<Set<string>> {
   } catch {
     return new Set()
   }
+}
+
+/** Whether a file in a git directory is HEAD, MERGE_HEAD or packed-refs, or the lock git writes one through. */
+function isGitMetadataFile(filename: string): boolean {
+  let name = filename
+  if (name.endsWith('.lock')) name = name.slice(0, -'.lock'.length)
+  return GIT_METADATA_FILES.includes(name)
+}
+
+/** Stops a worktree's watches on its git metadata. */
+function closeGitWatchers(entry: WatchedWorktree): void {
+  for (const watcher of entry.gitWatchers) watcher.close()
+  entry.gitWatchers = []
 }

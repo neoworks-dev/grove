@@ -17,7 +17,8 @@
   import { store } from '../../../../lib/store.svelte'
   import { openRevisionDiff, openWorkingTreeDiff } from '../../../../lib/nvim/revisionDiff'
   import { compareTarget, compareRefs } from './compareTarget.svelte'
-  import type { DiffFile, RefComparison, RefList } from '../../../../../../shared/types'
+  import { gitState } from '../state.svelte'
+  import type { DiffFile, RefComparison } from '../../../../../../shared/types'
 
   let {
     worktreeId,
@@ -32,7 +33,7 @@
   // The head picker's value for the working tree; git has no name for it.
   const WORKING_TREE = ''
 
-  let refs = $state<RefList>({ local: [], remote: [], tags: [] })
+  const refs = $derived(gitState.refs)
   let result = $state<RefComparison | null>(null)
   let open = $state(false)
   let sectionElement = $state<HTMLDivElement>()
@@ -52,15 +53,6 @@
     if (!target || target.head === null) return 'the working tree'
     return target.head
   })
-
-  /** Re-reads the refs the pickers offer. */
-  async function loadRefs(): Promise<void> {
-    try {
-      refs = await window.workbench.git.refs(worktreeId)
-    } catch (err) {
-      store.setError((err as Error).message)
-    }
-  }
 
   /** Runs the comparison the section is pointed at. */
   async function compare(): Promise<void> {
@@ -143,12 +135,6 @@
     if (!target || target.head === null) return WORKING_TREE
     return target.head
   }
-
-  $effect(() => {
-    void worktreeId
-    void refreshKey
-    void loadRefs()
-  })
 
   $effect(() => {
     void compareTarget.current

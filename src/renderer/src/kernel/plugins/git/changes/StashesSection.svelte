@@ -9,44 +9,26 @@
   import CommitRow from './CommitRow.svelte'
   import GitSection from './GitSection.svelte'
   import RowAction from '../../../../components/RowAction.svelte'
-  import { store } from '../../../../lib/store.svelte'
+  import { gitState } from '../state.svelte'
   import { applyStash, dropStash, stashChanges } from './refActions'
-  import type { StashEntry } from '../../../../../../shared/types'
 
   let {
     worktreeId,
     hasChanges,
-    refreshKey,
     onChanged
   }: {
     worktreeId: string
     hasChanges: boolean
-    refreshKey: number
     onChanged: () => void
   } = $props()
 
-  let stashes = $state<StashEntry[]>([])
+  const stashes = $derived(gitState.stashes)
   let open = $state(false)
-
-  /** Re-reads the stash list. */
-  async function load(): Promise<void> {
-    try {
-      stashes = await window.workbench.git.stashes(worktreeId)
-    } catch (err) {
-      store.setError((err as Error).message)
-    }
-  }
 
   /** Runs a stash action and reloads the view when it changed anything. */
   async function run(action: () => Promise<boolean>): Promise<void> {
     if (await action()) onChanged()
   }
-
-  $effect(() => {
-    void worktreeId
-    void refreshKey
-    void load()
-  })
 </script>
 
 <GitSection title="Stashes" count={stashes.length} bind:open>

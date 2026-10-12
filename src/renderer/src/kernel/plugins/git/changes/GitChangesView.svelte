@@ -22,6 +22,7 @@
   import { store } from '../../../../lib/store.svelte'
   import { inlineEdit } from '../../../../lib/inlineEdit.svelte'
   import { settings } from '../../../../lib/settings.svelte'
+  import { gitState } from '../state.svelte'
   import CommitBox from './CommitBox.svelte'
   import CheckpointsSection from './CheckpointsSection.svelte'
   import CommitsSection from './CommitsSection.svelte'
@@ -36,19 +37,19 @@
   import RowAction from '../../../../components/RowAction.svelte'
   import ShipItBar from './ShipItBar.svelte'
   import { LAYOUT_SETTING, type ChangesLayout } from './changeTree'
-  import type { BranchStatus, DiffFile, MergeState } from '../../../../../../shared/types'
+  import type { BranchStatus, DiffFile } from '../../../../../../shared/types'
   import PaneControls from '../../../../components/PaneControls.svelte'
 
-  let allFiles = $state<DiffFile[]>([])
-  let merge = $state<MergeState>({ inProgress: false, files: [] })
-  let branchStatus = $state<BranchStatus | null>(null)
-  let loading = $state(false)
   let selectedKey = $state<string | null>(null)
   let commitSubject = $state('')
   let commitDescription = $state('')
-  // Bumped after every load, so expanded file rows re-read their hunks.
-  let refreshKey = $state(0)
 
+  const allFiles = $derived(gitState.files)
+  const merge = $derived(gitState.merge)
+  const branchStatus = $derived(gitState.branchStatus)
+  const loading = $derived(gitState.loading)
+  // Bumped after every reload, so expanded file rows re-read their hunks.
+  const refreshKey = $derived(gitState.revision)
   const worktreeId = $derived(store.selectedWorktreeId)
   const worktreePath = $derived(store.selectedWorktree?.path)
   const layout = $derived(settings.get<ChangesLayout>(LAYOUT_SETTING))
@@ -67,35 +68,9 @@
     return ''
   })
 
-  /** Re-reads the changes, the merge state and the branch for the selected worktree. */
+  /** Re-reads the shared git state, which every git view shows. */
   async function load(): Promise<void> {
-    const id = store.selectedWorktreeId
-    if (!id) {
-      allFiles = []
-      merge = { inProgress: false, files: [] }
-      branchStatus = null
-      return
-    }
-    loading = true
-    try {
-      const [changed, mergeState, status] = await Promise.all([
-        window.workbench.git.changedFiles(id),
-        window.workbench.git.mergeState(id),
-        window.workbench.git.branchStatus(id)
-      ])
-      allFiles = changed
-      inlineEdit.settleWorkingTreeReview(
-        id,
-        changed.map((file) => file.path)
-      )
-      merge = mergeState
-      branchStatus = status
-      refreshKey += 1
-    } catch (err) {
-      store.setError((err as Error).message)
-    } finally {
-      loading = false
-    }
+    await gitState.reload()
   }
 
   /** Opens a file with its uncommitted hunks painted by the review overlay. */
@@ -143,12 +118,8 @@
     return `${status.ahead} ahead, ${status.behind} behind ${status.upstream}`
   }
 
-  // Reload on worktree switch and whenever the fs watcher reports a change.
-  $effect(() => {
-    void store.selectedWorktreeId
-    void store.fsVersion[store.selectedWorktreeId ?? '']
-    void load()
-  })
+  // The shared state follows the worktree and its files while this is open.
+  $effect(() => gitState.follow())
 
   // An agent-touched file (fs watcher) is auto-selected for review context.
   $effect(() => {
@@ -259,10 +230,9 @@
           {worktreeId}
           {worktreePath}
           currentBranch={branchName}
-          {refreshKey}
           onChanged={load}
         />
-        <StashesSection {worktreeId} hasChanges={files.length > 0} {refreshKey} onChanged={load} />
+        <StashesSection {worktreeId} hasChanges={files.length > 0} onChanged={load} />
         <CheckpointsSection {worktreeId} {refreshKey} onChanged={load} />
         <SearchSection {worktreeId} />
         <CompareSection {worktreeId} {worktreePath} {refreshKey} />

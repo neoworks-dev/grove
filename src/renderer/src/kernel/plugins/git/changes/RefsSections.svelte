@@ -5,42 +5,24 @@
   import BranchRow from './BranchRow.svelte'
   import GitSection from './GitSection.svelte'
   import TagRow from './TagRow.svelte'
-  import { store } from '../../../../lib/store.svelte'
-  import type { RefList } from '../../../../../../shared/types'
+  import { gitState } from '../state.svelte'
 
   let {
     worktreeId,
     worktreePath,
     currentBranch,
-    refreshKey,
     onChanged
   }: {
     worktreeId: string
     worktreePath: string
     currentBranch: string
-    refreshKey: number
     onChanged: () => void
   } = $props()
 
-  let refs = $state<RefList>({ local: [], remote: [], tags: [] })
+  const refs = $derived(gitState.refs)
   let branchesOpen = $state(true)
   let remotesOpen = $state(false)
   let tagsOpen = $state(false)
-
-  /** Re-reads every branch and tag. */
-  async function load(): Promise<void> {
-    try {
-      refs = await window.workbench.git.refs(worktreeId)
-    } catch (err) {
-      store.setError((err as Error).message)
-    }
-  }
-
-  $effect(() => {
-    void worktreeId
-    void refreshKey
-    void load()
-  })
 </script>
 
 <GitSection title="Branches" count={refs.local.length} bind:open={branchesOpen}>

@@ -21,6 +21,7 @@
   import { layoutGraph } from './graphLayout'
   import { labelsBySha } from './refLabels'
   import { compareRefs } from '../changes/compareTarget.svelte'
+  import { gitState } from '../state.svelte'
   import { copyText, rebaseCurrentOnto } from '../changes/refActions'
   import type { RefMenuContext } from '../changes/refMenus'
   import {
@@ -29,7 +30,7 @@
     resetToCommit,
     revertCommit
   } from './commitActions'
-  import type { CommitSummary, RefList, ResetMode } from '../../../../../../shared/types'
+  import type { CommitSummary, ResetMode } from '../../../../../../shared/types'
   import PaneControls from '../../../../components/PaneControls.svelte'
 
   let {
@@ -53,15 +54,13 @@
   const MAX_GRAPH_WIDTH = 180
   // Wide enough for the column's heading however few lanes there are.
   const MIN_GRAPH_WIDTH = 48
-  // Changes on disk arrive in bursts; the graph reloads once they settle.
-  const RELOAD_DELAY_MS = 300
   // How many more pages selecting an unloaded parent will read to find it.
   const SEEK_PAGES = 10
 
   let commits = $state<CommitSummary[]>([])
   let head = $state<string | null>(null)
   let hasMore = $state(false)
-  let refs = $state<RefList>({ local: [], remote: [], tags: [] })
+  const refs = $derived(gitState.refs)
   let selectedSha = $state<string | null>(null)
   let branchFormOpen = $state(false)
   let loadingMore = $state(false)
@@ -98,7 +97,7 @@
     worktreeId: worktreeId ?? '',
     worktreePath: worktree?.path ?? '',
     currentBranch,
-    onChanged: () => void load()
+    onChanged: () => void gitState.reload()
   })
 
   /** The details panel's width as last dragged in this pane, or the default. */
@@ -114,7 +113,7 @@
     updateState({ detailsWidth: width })
   }
 
-  /** Re-reads the refs and as much history as was already loaded. */
+  /** Re-reads as much history as was already loaded. */
   async function load(): Promise<void> {
     const id = store.selectedWorktreeId
     if (!id) return
@@ -122,15 +121,11 @@
     let shown = PAGE_SIZE
     if (!switched) shown = untrack(() => Math.max(PAGE_SIZE, commits.length))
     try {
-      const [page, refList] = await Promise.all([
-        window.workbench.git.graph(id, 0, shown),
-        window.workbench.git.refs(id)
-      ])
+      const page = await window.workbench.git.graph(id, 0, shown)
       if (id !== store.selectedWorktreeId) return
       commits = page.commits
       head = page.head
       hasMore = page.hasMore
-      refs = refList
       loadedWorktreeId = id
       if (switched) resetView()
     } catch (err) {
@@ -229,7 +224,7 @@
     fetching = true
     try {
       await window.workbench.git.fetch(worktreeId)
-      await load()
+      await gitState.reload()
     } catch (err) {
       store.setError((err as Error).message)
     } finally {
@@ -246,7 +241,7 @@
 
   /** Runs a commit action and reloads when it changed anything. */
   async function run(action: () => Promise<boolean>): Promise<void> {
-    if (await action()) await load()
+    if (await action()) await gitState.reload()
   }
 
   /** Points the source-control view's compare section at a commit. */
@@ -309,14 +304,13 @@
     return `${commit.shortSha} · ${commit.authorName} · ${date}\n\n${commit.subject}`
   }
 
-  // Reload when the worktree, its branch or anything on disk changes — once
-  // things settle, not on every event of a burst.
+  // The shared state follows the worktree and its files while this is open,
+  // and the history is read again whenever it reloads.
+  $effect(() => gitState.follow())
+
   $effect(() => {
-    void store.selectedWorktreeId
-    void store.selectedWorktree?.branch
-    void store.fsVersion[store.selectedWorktreeId ?? '']
-    const timer = setTimeout(() => void load(), RELOAD_DELAY_MS)
-    return () => clearTimeout(timer)
+    void gitState.revision
+    untrack(() => void load())
   })
 </script>
 
@@ -335,7 +329,7 @@
       disabled={fetching}
       onclick={fetchRemotes}
     />
-    <RowAction icon={ArrowClockwiseIcon} title="Refresh" onclick={() => void load()} />
+    <RowAction icon={ArrowClockwiseIcon} title="Refresh" onclick={() => void gitState.reload()} />
     <PaneControls />
   </div>
 
@@ -431,7 +425,7 @@
           commit={selected}
           bind:branchFormOpen
           onSelectSha={(sha) => void selectSha(sha)}
-          onChanged={() => void load()}
+          onChanged={() => void gitState.reload()}
           onClose={() => (selectedSha = null)}
         />
       </EdgePanel>

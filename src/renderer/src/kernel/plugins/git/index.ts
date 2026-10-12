@@ -1,13 +1,14 @@
-// Git: everything about the repository in one plugin — Source Control in the
-// sidebar, and the Git pane in the center with the commit graph and the GitHub
-// issues and pull requests behind its remote as tabs. One plugin so they read
-// one git state rather than each keeping its own copy that drifts from the
-// others.
+// Git: everything about the repository in one pane. Its Repository tab is laid
+// out around the commit graph — refs down the left, the graph with the working
+// tree as its top row, and the selected row's changes or details beside it —
+// and its GitHub tab holds the issues and pull requests behind the remote. One
+// plugin so they all read one git state rather than each keeping its own copy
+// that drifts from the others.
 
-import GitBranchIcon from 'phosphor-svelte/lib/GitBranchIcon'
+import GitDiffIcon from 'phosphor-svelte/lib/GitDiffIcon'
 import type { Context } from '@neoworks/extension-system'
 import GitPane from './GitPane.svelte'
-import { registerChanges } from './changes'
+import { registerGitSettings } from './changes'
 import { registerGithub } from './github'
 import { GIT_PANE, showGitTab, type GitTab } from './pane.svelte'
 import { repoOpen } from '../guards'
@@ -15,47 +16,67 @@ import { CENTER_SLOT } from '../../../lib/paneSlots'
 
 export const git = {
   name: 'core/git',
-  inject: ['sidebar', 'panes', 'editor', 'commands'],
+  inject: ['panes', 'editor', 'commands', 'keymap'],
 
   apply(ctx: Context): void {
-    registerChanges(ctx)
+    registerGitSettings(ctx)
     registerGithub(ctx)
     registerGitPane(ctx)
   }
 }
 
-/** Registers the Git pane, and a command for each of its tabs. */
+/** Registers the Git pane, its key, and a command for each of its tabs. */
 function registerGitPane(ctx: Context): void {
-  // A center pane: the graph and the GitHub list with a thread beside it both
-  // want the room.
+  // A center pane: the refs, the graph and the working tree side by side, and
+  // the GitHub list with a thread beside it, all want the room. It opens below
+  // the editor, across the whole center, rather than halving the editor's
+  // width, and takes the rail slot Source Control had.
   ctx.effect(
     () =>
       ctx.panes.register({
         id: GIT_PANE,
         title: 'Git',
-        icon: GitBranchIcon,
+        icon: GitDiffIcon,
         component: GitPane,
         containerClass: 'bg-surface',
         slot: CENTER_SLOT,
+        rail: { order: 3 },
+        preferredOrientation: 'column',
         minWidth: 320,
         minHeight: 160,
         keywords:
-          'git graph commit history log branches gitlens github issues pull requests pr reviews gh',
+          'git source control scm changes commit stage graph history log branches gitlens github issues pull requests pr reviews gh',
         when: repoOpen
       }),
     'pane:git'
   )
 
+  // Source Control's key, under the sidebar views' `<Leader> v`.
+  ctx.effect(
+    () =>
+      ctx.keymap.registerBindings([
+        {
+          id: 'git.show',
+          keys: '<Leader> v g',
+          context: 'global',
+          group: 'Sidebar',
+          description: 'Git',
+          run: () => showTabWhenRepoOpen('repo')
+        }
+      ]),
+    'keymap:git.show'
+  )
+
   ctx.effect(
     () =>
       ctx.commands.register({
-        id: 'git.showGraph',
-        title: 'Show Commit Graph',
+        id: 'git.showRepository',
+        title: 'Show Repository',
         group: 'Git',
-        keywords: 'git graph commit history log branches gitlens',
-        run: () => showTabWhenRepoOpen('graph')
+        keywords: 'git source control commit graph history log branches gitlens',
+        run: () => showTabWhenRepoOpen('repo')
       }),
-    'command:git.showGraph'
+    'command:git.showRepository'
   )
 
   ctx.effect(

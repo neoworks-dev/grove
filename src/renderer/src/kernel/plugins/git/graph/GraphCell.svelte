@@ -19,6 +19,11 @@
     return PALETTE[index % PALETTE.length]
   }
 
+  /** A column's x coordinate within a row's drawing. */
+  export function laneX(column: number): number {
+    return MARGIN + column * LANE_WIDTH
+  }
+
   /** The width a graph of this many columns needs. */
   export function graphWidth(columns: number): number {
     return MARGIN * 2 + Math.max(0, columns - 1) * LANE_WIDTH
@@ -49,7 +54,7 @@
 
   /** A column's x coordinate. */
   function x(column: number): number {
-    return MARGIN + column * LANE_WIDTH
+    return laneX(column)
   }
 
   /** A line from one column at `top` to another at `bottom`, bending smoothly between. */

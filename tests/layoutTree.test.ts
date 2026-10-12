@@ -255,7 +255,7 @@ describe('sanitize', () => {
     expect(sidebar.paneState).toBeUndefined()
   })
 
-  it('reopens a retired Checkpoints sidebar view as Source Control', () => {
+  it('reopens a retired Checkpoints sidebar view as the Explorer', () => {
     const tree = sanitize({
       kind: 'split',
       id: 's',
@@ -267,8 +267,24 @@ describe('sanitize', () => {
       sizes: [0.2, 0.8]
     }) as SplitNode
     const [sidebar] = leaves(tree)
-    expect(sidebar.paneTypeId).toBe('changes')
+    expect(sidebar.paneTypeId).toBe('files')
     expect(sidebar.sizePx).toBe(256)
+  })
+
+  it('reopens the retired Source Control sidebar view as the Explorer, keeping its width', () => {
+    const tree = sanitize({
+      kind: 'split',
+      id: 's',
+      direction: 'row',
+      children: [
+        { kind: 'leaf', id: 'a', paneTypeId: 'changes', sizePx: 300 },
+        { kind: 'leaf', id: 'b', paneTypeId: 'nvim' }
+      ],
+      sizes: [0.2, 0.8]
+    }) as SplitNode
+    const [sidebar] = leaves(tree)
+    expect(sidebar.paneTypeId).toBe('files')
+    expect(sidebar.sizePx).toBe(300)
   })
 
   it('reopens the retired Commit Graph and GitHub panes as the Git pane on their own tab', () => {
@@ -286,7 +302,7 @@ describe('sanitize', () => {
     expect(github.paneTypeId).toBe('git')
     expect(github.paneState).toEqual({ tab: 'github' })
     expect(graph.paneTypeId).toBe('git')
-    expect(graph.paneState).toEqual({ tab: 'graph' })
+    expect(graph.paneState).toEqual({ tab: 'repo' })
   })
 
   it('drops malformed nodes and renormalizes sizes', () => {

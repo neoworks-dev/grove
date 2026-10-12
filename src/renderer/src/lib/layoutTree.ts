@@ -506,12 +506,15 @@ function mergeSameDirection(
 // as instead. Unlike a plugin's pane, these will never register again, so the
 // placeholder they would otherwise get is a dead window. The Agents sidebar view
 // became the Worktrees one, which lists each worktree's sessions too. The
-// Checkpoints view became a section of the Source Control one. The Commit Graph
-// and GitHub panes became the tabs of the Git pane, and open on their own tab.
+// Source Control and Checkpoints sidebar views became part of the Git pane, a
+// center pane that would not fit where they sat, so they open as the Explorer.
+// The Commit Graph and GitHub panes became the Git pane's tabs, and open on
+// their own.
 const RETIRED_PANE_TYPES: Record<string, { paneTypeId: string; paneState?: Record<string, unknown> }> = {
   agents: { paneTypeId: 'worktrees' },
-  checkpoints: { paneTypeId: 'changes' },
-  'git-graph': { paneTypeId: 'git', paneState: { tab: 'graph' } },
+  changes: { paneTypeId: 'files' },
+  checkpoints: { paneTypeId: 'files' },
+  'git-graph': { paneTypeId: 'git', paneState: { tab: 'repo' } },
   github: { paneTypeId: 'git', paneState: { tab: 'github' } }
 }
 

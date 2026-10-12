@@ -1,27 +1,28 @@
 <script lang="ts">
   // The commit graph: every branch's history as lanes, labelled with the
   // branches, remote branches and tags on each commit, for the selected
-  // worktree's repository. History loads a page at a time as it is scrolled,
-  // and only the rows on screen are rendered, so a long history costs what a
-  // short one does. Selecting a commit shows it beside the graph; the row's
-  // menu acts on it, and a label's menu on its branch or tag.
+  // worktree's repository. Its top row is the working tree. History loads a
+  // page at a time as it is scrolled, and only the rows on screen are rendered,
+  // so a long history costs what a short one does. Selecting a row shows it
+  // beside the graph — a commit's details, or the working tree's changes and
+  // commit box; the row's menu acts on it, and a label's menu on its branch or
+  // tag.
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
-  import ArrowClockwiseIcon from 'phosphor-svelte/lib/ArrowClockwiseIcon'
-  import CloudArrowDownIcon from 'phosphor-svelte/lib/CloudArrowDownIcon'
   import { untrack } from 'svelte'
   import ContextMenu, { type MenuItem } from '../../../../components/ContextMenu.svelte'
   import EdgePanel from '../../../../components/EdgePanel.svelte'
-  import RowAction from '../../../../components/RowAction.svelte'
   import CommitDetails from './CommitDetails.svelte'
+  import WorkingTreePanel from '../changes/WorkingTreePanel.svelte'
+  import WorkingTreeRow from './WorkingTreeRow.svelte'
   import GraphCell, { graphWidth, laneColour } from './GraphCell.svelte'
   import RefChip from './RefChip.svelte'
   import { store } from '../../../../lib/store.svelte'
-  import { layout } from '../../../../lib/layout.svelte'
   import { relativeTime } from '../../../../lib/time'
   import { layoutGraph } from './graphLayout'
   import { labelsBySha } from './refLabels'
   import { compareRefs } from '../changes/compareTarget.svelte'
   import { gitState } from '../state.svelte'
+  import { gitPane, WORKING_TREE } from '../pane.svelte'
   import { copyText, rebaseCurrentOnto } from '../changes/refActions'
   import type { RefMenuContext } from '../changes/refMenus'
   import {
@@ -55,22 +56,26 @@
   const MIN_GRAPH_WIDTH = 48
   // How many more pages selecting an unloaded parent will read to find it.
   const SEEK_PAGES = 10
+  // Below this the selected row's panel takes the whole width instead of
+  // sitting beside the graph; closing it brings the graph back.
+  const SIDE_BY_SIDE_MIN_WIDTH = 520
 
   let commits = $state<CommitSummary[]>([])
   let head = $state<string | null>(null)
   let hasMore = $state(false)
   const refs = $derived(gitState.refs)
-  let selectedSha = $state<string | null>(null)
   let branchFormOpen = $state(false)
   let loadingMore = $state(false)
-  let fetching = $state(false)
   let viewport = $state<HTMLDivElement>()
   let scrollTop = $state(0)
   let viewportHeight = $state(0)
   let menu = $state<{ x: number; y: number; commit: CommitSummary } | null>(null)
   let loadedWorktreeId: string | null = null
   let detailsWidth = $state(initialDetailsWidth())
+  let width = $state(0)
 
+  // The working tree or a commit's sha; shared, so others can select a row.
+  const selectedSha = $derived(gitPane.selection)
   const worktreeId = $derived(store.selectedWorktreeId)
   const worktree = $derived(store.selectedWorktree)
   const currentBranch = $derived.by(() => {
@@ -84,14 +89,24 @@
   const graphColumnWidth = $derived(
     Math.min(Math.max(fullGraphWidth, MIN_GRAPH_WIDTH), MAX_GRAPH_WIDTH)
   )
-  const firstVisible = $derived(Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN))
-  const lastVisible = $derived(
-    Math.min(commits.length, Math.ceil((scrollTop + viewportHeight) / ROW_HEIGHT) + OVERSCAN)
+  // Commit rows sit below the working tree's, so their indexes are one row down.
+  const firstVisible = $derived(
+    Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - 1 - OVERSCAN)
   )
+  const lastVisible = $derived(
+    Math.min(commits.length, Math.ceil((scrollTop + viewportHeight) / ROW_HEIGHT) - 1 + OVERSCAN)
+  )
+  const headRow = $derived.by(() => {
+    const index = commits.findIndex((commit) => commit.sha === head)
+    if (index === -1) return null
+    return graph.rows[index]
+  })
   const visibleIndexes = $derived(
     Array.from({ length: Math.max(0, lastVisible - firstVisible) }, (_, offset) => firstVisible + offset)
   )
   const selected = $derived(commits.find((commit) => commit.sha === selectedSha))
+  const panelOpen = $derived(Boolean(worktreeId) && (Boolean(selected) || selectedSha === WORKING_TREE))
+  const panelOnly = $derived(panelOpen && width < SIDE_BY_SIDE_MIN_WIDTH)
   const menuContext = $derived<RefMenuContext>({
     worktreeId: worktreeId ?? '',
     worktreePath: worktree?.path ?? '',
@@ -132,9 +147,9 @@
     }
   }
 
-  /** Back to the top with nothing selected, for a freshly opened repository. */
+  /** Back to the top with the working tree selected, for a freshly opened repository. */
   function resetView(): void {
-    selectedSha = null
+    gitPane.selection = WORKING_TREE
     branchFormOpen = false
     if (viewport) viewport.scrollTop = 0
   }
@@ -160,7 +175,7 @@
   function onScroll(): void {
     if (!viewport) return
     scrollTop = viewport.scrollTop
-    const remaining = commits.length * ROW_HEIGHT - (scrollTop + viewportHeight)
+    const remaining = (commits.length + 1) * ROW_HEIGHT - (scrollTop + viewportHeight)
     if (remaining < OVERSCAN * ROW_HEIGHT) void loadMore()
   }
 
@@ -177,10 +192,10 @@
     scrollToIndex(index)
   }
 
-  /** Makes a commit the selected one. */
+  /** Makes a commit, or the working tree, the selected row. */
   function select(sha: string): void {
     if (sha !== selectedSha) branchFormOpen = false
-    selectedSha = sha
+    gitPane.selection = sha
   }
 
   /** The row index of a commit, or -1 when it is not loaded. */
@@ -188,47 +203,38 @@
     return commits.findIndex((commit) => commit.sha === sha)
   }
 
-  /** Scrolls just enough to show a row. */
+  /** Scrolls just enough to show a commit's row; -1 is the working tree's. */
   function scrollToIndex(index: number): void {
     if (!viewport) return
-    const top = index * ROW_HEIGHT
+    const top = (index + 1) * ROW_HEIGHT
     if (top < viewport.scrollTop) viewport.scrollTop = top
     else if (top + ROW_HEIGHT > viewport.scrollTop + viewportHeight) {
       viewport.scrollTop = top + ROW_HEIGHT - viewportHeight
     }
   }
 
-  /** Arrow keys walk the selection; Escape clears it. */
+  /** Arrow keys walk the selection, the working tree's row included; Escape clears it. */
   function onKeydown(event: KeyboardEvent): void {
     if (event.key === 'Escape') {
-      selectedSha = null
+      gitPane.selection = null
       return
     }
     let step = 0
     if (event.key === 'ArrowDown') step = 1
     if (event.key === 'ArrowUp') step = -1
-    if (step === 0 || commits.length === 0) return
+    if (step === 0) return
     event.preventDefault()
-    let index = 0
-    if (selectedSha !== null) index = Math.max(0, indexOf(selectedSha) + step)
-    index = Math.min(index, commits.length - 1)
-    select(commits[index].sha)
+    const index = Math.min(Math.max(-1, selectedIndex() + step), commits.length - 1)
+    if (index === -1) select(WORKING_TREE)
+    else select(commits[index].sha)
     scrollToIndex(index)
     if (index > commits.length - OVERSCAN) void loadMore()
   }
 
-  /** Fetches every remote, then reloads. */
-  async function fetchRemotes(): Promise<void> {
-    if (!worktreeId) return
-    fetching = true
-    try {
-      await window.workbench.git.fetch(worktreeId)
-      await gitState.reload()
-    } catch (err) {
-      store.setError((err as Error).message)
-    } finally {
-      fetching = false
-    }
+  /** The selected row's index: -1 for the working tree, and for nothing selected. */
+  function selectedIndex(): number {
+    if (selectedSha === null || selectedSha === WORKING_TREE) return -1
+    return indexOf(selectedSha)
   }
 
   /** Opens a commit's menu at the pointer, selecting it. */
@@ -243,9 +249,8 @@
     if (await action()) await gitState.reload()
   }
 
-  /** Points the source-control view's compare section at a commit. */
+  /** Points the compare section in the left column at a commit. */
   function compareWith(commit: CommitSummary, head: string | null): void {
-    layout.ensurePane('changes')
     compareRefs(commit.sha, head)
   }
 
@@ -313,25 +318,11 @@
   })
 </script>
 
-<div class="flex h-full min-h-0 flex-col text-xs">
-  <div class="flex h-7 shrink-0 items-center gap-2 border-b border-line px-2">
-    {#if currentBranch}
-      <span class="truncate text-muted">{currentBranch}</span>
-    {:else if head}
-      <span class="text-dim">detached at {head.slice(0, 7)}</span>
-    {/if}
-    <span class="flex-1"></span>
-    <RowAction
-      icon={CloudArrowDownIcon}
-      title="Fetch"
-      disabled={fetching}
-      onclick={fetchRemotes}
-    />
-    <RowAction icon={ArrowClockwiseIcon} title="Refresh" onclick={() => void gitState.reload()} />
-  </div>
-
+<div class="flex h-full min-h-0 flex-col overflow-hidden text-xs" bind:clientWidth={width}>
   <div class="flex min-h-0 flex-1">
-    <div class="@container flex min-w-0 flex-1 flex-col">
+    <!-- Hidden rather than unmounted while the panel takes the width, so the
+         graph keeps its scroll position and loaded history. -->
+    <div class="@container flex min-w-0 flex-1 flex-col" class:hidden={panelOnly}>
       <div
         class="flex h-6 shrink-0 items-center gap-2 border-b border-line-faint pr-2 text-2xs text-dim"
       >
@@ -346,12 +337,19 @@
         <FloatingScrollbar class="h-full" bind:viewport onscroll={onScroll}>
           <div
             class="relative outline-none"
-            style:height="{commits.length * ROW_HEIGHT}px"
+            style:height="{(commits.length + 1) * ROW_HEIGHT}px"
             role="grid"
             tabindex="0"
             aria-label="Commit graph"
             onkeydown={onKeydown}
           >
+            <WorkingTreeRow
+              height={ROW_HEIGHT}
+              graphWidth={graphColumnWidth}
+              lane={headRow}
+              selected={selectedSha === WORKING_TREE}
+              onselect={() => select(WORKING_TREE)}
+            />
             {#each visibleIndexes as index (commits[index].sha)}
               {@const commit = commits[index]}
               {@const row = graph.rows[index]}
@@ -360,7 +358,7 @@
                   'absolute inset-x-0 flex cursor-default items-center gap-2 pr-2 select-none',
                   { 'bg-raised': commit.sha === selectedSha, 'hover:bg-hover': commit.sha !== selectedSha }
                 ]}
-                style:top="{index * ROW_HEIGHT}px"
+                style:top="{(index + 1) * ROW_HEIGHT}px"
                 style:height="{ROW_HEIGHT}px"
                 role="row"
                 tabindex="-1"
@@ -410,21 +408,31 @@
       </div>
     </div>
 
-    {#if selected && worktreeId}
+    {#snippet panel(id: string)}
+      {#if selected}
+        <CommitDetails
+          worktreeId={id}
+          commit={selected}
+          bind:branchFormOpen
+          onSelectSha={(sha) => void selectSha(sha)}
+          onChanged={() => void gitState.reload()}
+          onClose={() => (gitPane.selection = null)}
+        />
+      {:else}
+        <WorkingTreePanel onClose={() => (gitPane.selection = null)} />
+      {/if}
+    {/snippet}
+
+    {#if worktreeId && panelOnly}
+      <div class="min-w-0 flex-1">{@render panel(worktreeId)}</div>
+    {:else if worktreeId && panelOpen}
       <EdgePanel
         side="left"
         bind:size={() => detailsWidth, saveDetailsWidth}
         min={DETAILS_MIN_WIDTH}
         class="border-l border-line"
       >
-        <CommitDetails
-          {worktreeId}
-          commit={selected}
-          bind:branchFormOpen
-          onSelectSha={(sha) => void selectSha(sha)}
-          onChanged={() => void gitState.reload()}
-          onClose={() => (selectedSha = null)}
-        />
+        {@render panel(worktreeId)}
       </EdgePanel>
     {/if}
   </div>

@@ -6,13 +6,14 @@ import { layout } from '../../../lib/layout.svelte'
 import { panes } from '../../../lib/panes.svelte'
 import { openWorkingTreeDiff } from '../../../lib/nvim/revisionDiff'
 import { registerShowHandler, relativeIn } from '../../../lib/agents/show'
+import { showWorkingTree } from '../git/pane.svelte'
 
 /** Registers the core show handlers; returns their unregister. */
 export function registerCoreShowHandlers(): () => void {
   const disposers = [
     registerShowHandler('diff', async (worktree, target) => {
       if (!target.path) {
-        layout.ensurePane('changes')
+        showWorkingTree()
         return
       }
       await openWorkingTreeDiff({

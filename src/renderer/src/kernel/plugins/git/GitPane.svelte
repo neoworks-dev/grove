@@ -1,10 +1,10 @@
 <script lang="ts">
-  // The Git pane: the commit graph and the GitHub dashboard behind one strip of
-  // tabs. Each tab is the pane it used to be, with its own header under the
+  // The Git pane: the repository around its commit graph, and the GitHub
+  // dashboard, behind one strip of tabs. Each tab has its own toolbar under the
   // strip; the window's controls sit on the strip, so either tab can close it.
   // The tab shown is remembered with the pane.
   import { untrack } from 'svelte'
-  import GitGraphPane from './graph/GitGraphPane.svelte'
+  import RepoView from './RepoView.svelte'
   import GithubPane from './github/GithubPane.svelte'
   import { GIT_TABS, gitPane, isGitTab } from './pane.svelte'
   import PaneControls from '../../../components/PaneControls.svelte'
@@ -47,8 +47,8 @@
   </div>
 
   <div class="min-h-0 flex-1">
-    {#if gitPane.tab === 'graph'}
-      <GitGraphPane state={paneState} {updateState} />
+    {#if gitPane.tab === 'repo'}
+      <RepoView state={paneState} {updateState} />
     {:else}
       <GithubPane />
     {/if}

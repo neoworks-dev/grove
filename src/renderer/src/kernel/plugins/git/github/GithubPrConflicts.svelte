@@ -16,7 +16,7 @@
   } from './store.svelte'
   import { untrack } from 'svelte'
   import { store, selectWorktree } from '../../../../lib/store.svelte'
-  import { layout } from '../../../../lib/layout.svelte'
+  import { showWorkingTree } from '../pane.svelte'
   import type { GithubItemDetail } from '../../../../../../shared/types'
 
   let { detail }: { detail: GithubItemDetail } = $props()
@@ -44,7 +44,7 @@
   function showConflicts(): void {
     if (!checkout?.worktreeId) return
     void selectWorktree(checkout.worktreeId)
-    layout.ensurePane('changes')
+    showWorkingTree()
   }
 
   const worktreeName = $derived(

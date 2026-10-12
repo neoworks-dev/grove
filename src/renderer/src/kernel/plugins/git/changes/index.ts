@@ -1,16 +1,13 @@
-// Git changes: the source-control view in the sidebar — branch, commit box,
-// staged and unstaged changes down to the hunk — which drives the floating hunk
-// review overlay in the editor.
+// Git changes: the working tree's changes down to the hunk, which drive the
+// floating hunk review overlay in the editor, and the sections of the Git
+// pane's left column. What is registered here is only their settings.
 
-import GitDiff from 'phosphor-svelte/lib/GitDiff'
 import type { Context } from '@neoworks/extension-system'
-import GitChangesView from './GitChangesView.svelte'
-import { repoOpen } from '../../guards'
 import { settings } from '../../../../lib/settings.svelte'
 import { LAYOUT_SETTING, SHARE_PROMPT_BLAME_SETTING } from './changeTree'
 
-/** Registers the Git settings and the Source Control view in the sidebar. */
-export function registerChanges(ctx: Context): void {
+/** Registers the Git settings. */
+export function registerGitSettings(ctx: Context): void {
   ctx.effect(
     () =>
       settings.registerSchemas({
@@ -41,19 +38,5 @@ export function registerChanges(ctx: Context): void {
         ]
       }),
     'settings:git'
-  )
-
-  ctx.effect(
-    () =>
-      ctx.sidebar.registerView({
-        id: 'changes',
-        title: 'Source Control',
-        icon: GitDiff,
-        order: 3,
-        key: 'g',
-        component: GitChangesView,
-        when: repoOpen
-      }),
-    'sidebar:changes'
   )
 }

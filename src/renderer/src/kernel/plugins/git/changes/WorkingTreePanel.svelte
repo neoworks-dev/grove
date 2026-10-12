@@ -1,37 +1,24 @@
 <script lang="ts">
-  // The source-control view for the selected worktree, laid out the way GitLens
-  // and VS Code lay theirs: the branch and how it stands against its upstream,
-  // the commit box, then collapsible sections — staged, unstaged as a tree or a
-  // list, the branch's commits, branches, tags, stashes and the safety snapshots Grove
-  // took before rewriting files, and a compare of
-  // any two refs. Clicking a file opens it with its hunks painted by the review
-  // overlay; the ship-it chain lives in the footer.
+  // The working tree, shown beside the commit graph when its top row is
+  // selected: the commit box, then the staged and unstaged changes as a tree or
+  // a list, down to the hunk. Clicking a file opens it with its hunks painted by
+  // the review overlay; the ship-it chain lives in the footer.
   //
   // A merge in progress takes over both ends: its conflicts lead the sections,
   // and the footer offers finishing or abandoning the merge instead of the
   // commit box and the ship-it chain.
-  import GitBranchIcon from 'phosphor-svelte/lib/GitBranchIcon'
-  import ArrowUpIcon from 'phosphor-svelte/lib/ArrowUpIcon'
-  import ArrowDownIcon from 'phosphor-svelte/lib/ArrowDownIcon'
-  import ArrowsClockwiseIcon from 'phosphor-svelte/lib/ArrowsClockwiseIcon'
   import TreeStructureIcon from 'phosphor-svelte/lib/TreeStructureIcon'
   import ListBulletsIcon from 'phosphor-svelte/lib/ListBulletsIcon'
   import PlusIcon from 'phosphor-svelte/lib/PlusIcon'
   import MinusIcon from 'phosphor-svelte/lib/MinusIcon'
-  import GithubLogoIcon from 'phosphor-svelte/lib/GithubLogoIcon'
+  import XIcon from 'phosphor-svelte/lib/XIcon'
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
   import { store } from '../../../../lib/store.svelte'
   import { inlineEdit } from '../../../../lib/inlineEdit.svelte'
   import { settings } from '../../../../lib/settings.svelte'
   import { gitState } from '../state.svelte'
-  import { showGitTab } from '../pane.svelte'
+  import { gitPane } from '../pane.svelte'
   import CommitBox from './CommitBox.svelte'
-  import CheckpointsSection from './CheckpointsSection.svelte'
-  import CommitsSection from './CommitsSection.svelte'
-  import CompareSection from './CompareSection.svelte'
-  import SearchSection from './SearchSection.svelte'
-  import RefsSections from './RefsSections.svelte'
-  import StashesSection from './StashesSection.svelte'
   import ChangesList, { fileKey } from './ChangesList.svelte'
   import ConflictsSection from './ConflictsSection.svelte'
   import GitSection from './GitSection.svelte'
@@ -39,33 +26,29 @@
   import RowAction from '../../../../components/RowAction.svelte'
   import ShipItBar from './ShipItBar.svelte'
   import { LAYOUT_SETTING, type ChangesLayout } from './changeTree'
-  import type { BranchStatus, DiffFile } from '../../../../../../shared/types'
-  import PaneControls from '../../../../components/PaneControls.svelte'
+  import type { DiffFile } from '../../../../../../shared/types'
+
+  let { onClose }: { onClose: () => void } = $props()
 
   let selectedKey = $state<string | null>(null)
-  let commitSubject = $state('')
-  let commitDescription = $state('')
 
-  const allFiles = $derived(gitState.files)
   const merge = $derived(gitState.merge)
-  const branchStatus = $derived(gitState.branchStatus)
   const loading = $derived(gitState.loading)
   // Bumped after every reload, so expanded file rows re-read their hunks.
   const refreshKey = $derived(gitState.revision)
   const worktreeId = $derived(store.selectedWorktreeId)
-  const worktreePath = $derived(store.selectedWorktree?.path)
   const layout = $derived(settings.get<ChangesLayout>(LAYOUT_SETTING))
 
   // An unmerged path is reported by both `diff` and `diff --staged`, so it would
   // otherwise appear twice in the list — and neither entry means anything: the
   // file is a set of conflicts, not a change to review against HEAD.
   const conflictedPaths = $derived(new Set(merge.files.map((file) => file.path)))
-  const files = $derived(allFiles.filter((file) => !conflictedPaths.has(file.path)))
+  const files = $derived(gitState.files.filter((file) => !conflictedPaths.has(file.path)))
   const stagedFiles = $derived(files.filter((file) => file.staged))
   const unstagedFiles = $derived(files.filter((file) => !file.staged))
 
   const branchName = $derived.by(() => {
-    if (branchStatus) return branchStatus.branch
+    if (gitState.branchStatus) return gitState.branchStatus.branch
     if (store.selectedWorktree) return store.selectedWorktree.branch
     return ''
   })
@@ -114,15 +97,6 @@
     void settings.set(LAYOUT_SETTING, next, 'user')
   }
 
-  /** How the branch stands against its upstream, for the header's tooltip. */
-  function upstreamTitle(status: BranchStatus): string {
-    if (!status.upstream) return 'No upstream branch'
-    return `${status.ahead} ahead, ${status.behind} behind ${status.upstream}`
-  }
-
-  // The shared state follows the worktree and its files while this is open.
-  $effect(() => gitState.follow())
-
   // An agent-touched file (fs watcher) is auto-selected for review context.
   $effect(() => {
     const requested = store.requestedDiffFile
@@ -133,42 +107,21 @@
   })
 </script>
 
-<div class="flex h-full flex-col">
-  <div class="flex items-center gap-1.5 px-3 py-2">
-    <GitBranchIcon size={12} class="shrink-0 text-dim" />
-    <span class="min-w-0 truncate font-mono text-xs text-default" title={branchName}>
-      {branchName}
+<div class="flex h-full min-h-0 flex-col text-xs">
+  <div class="flex h-7 shrink-0 items-center gap-1.5 border-b border-line px-2">
+    <span class="min-w-0 flex-1 truncate text-muted">
+      {#if merge.inProgress}
+        Merge in progress
+      {:else}
+        Uncommitted changes
+      {/if}
     </span>
-    {#if branchStatus && branchStatus.upstream}
-      <span
-        class="flex shrink-0 items-center gap-1 font-mono text-2xs text-dim"
-        title={upstreamTitle(branchStatus)}
-      >
-        {#if branchStatus.ahead > 0}
-          <span class="flex items-center"><ArrowUpIcon size={10} />{branchStatus.ahead}</span>
-        {/if}
-        {#if branchStatus.behind > 0}
-          <span class="flex items-center"><ArrowDownIcon size={10} />{branchStatus.behind}</span>
-        {/if}
-        {#if branchStatus.ahead === 0 && branchStatus.behind === 0}
-          <span>in sync</span>
-        {/if}
-      </span>
-    {:else if branchStatus}
-      <!-- Gives way before the branch name does: the name is what matters. -->
-      <span class="min-w-0 shrink-[4] truncate text-2xs text-faint" title={upstreamTitle(branchStatus)}>
-        not published
-      </span>
-    {/if}
-    <span class="flex-1"></span>
-    <RowAction icon={GithubLogoIcon} title="Open GitHub" onclick={() => showGitTab('github')} />
     {#if layout === 'tree'}
       <RowAction icon={ListBulletsIcon} title="View as list" onclick={toggleLayout} />
     {:else}
       <RowAction icon={TreeStructureIcon} title="View as tree" onclick={toggleLayout} />
     {/if}
-    <RowAction icon={ArrowsClockwiseIcon} title="Refresh" disabled={loading} onclick={load} />
-    <PaneControls />
+    <RowAction icon={XIcon} title="Close" onclick={onClose} />
   </div>
 
   {#if worktreeId && !merge.inProgress}
@@ -176,8 +129,8 @@
       {worktreeId}
       branch={branchName}
       stagedCount={stagedFiles.length}
-      bind:subject={commitSubject}
-      bind:description={commitDescription}
+      bind:subject={gitPane.commitSubject}
+      bind:description={gitPane.commitDescription}
       onCommitted={load}
     />
   {/if}
@@ -227,26 +180,12 @@
       {#if !loading && files.length === 0 && merge.files.length === 0}
         <p class="px-3 py-3 text-xs text-dim">No changes vs HEAD.</p>
       {/if}
-
-      {#if worktreeId && worktreePath}
-        <CommitsSection {worktreeId} {branchStatus} {refreshKey} onChanged={load} />
-        <RefsSections
-          {worktreeId}
-          {worktreePath}
-          currentBranch={branchName}
-          onChanged={load}
-        />
-        <StashesSection {worktreeId} hasChanges={files.length > 0} onChanged={load} />
-        <CheckpointsSection {worktreeId} {refreshKey} onChanged={load} />
-        <SearchSection {worktreeId} />
-        <CompareSection {worktreeId} {worktreePath} {refreshKey} />
-      {/if}
     </div>
   </FloatingScrollbar>
 
   {#if worktreeId && merge.inProgress}
     <MergeBar {worktreeId} unresolved={merge.files.length} onChanged={load} />
   {:else if worktreeId}
-    <ShipItBar {worktreeId} commitMessage={commitSubject} onChanged={load} />
+    <ShipItBar {worktreeId} commitMessage={gitPane.commitSubject} onChanged={load} />
   {/if}
 </div>

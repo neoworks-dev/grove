@@ -18,6 +18,7 @@ import {
   type TabDiff
 } from '../../../../lib/store.svelte'
 import { layout } from '../../../../lib/layout.svelte'
+import { showWorkingTree } from '../pane.svelte'
 import type { CodeReference } from '../../../../lib/agents/codeReferences'
 import { branchNameFor, freeBranchName, isBranchForIssue } from './branches'
 import { issuePrompt } from './issuePrompt'
@@ -1206,7 +1207,7 @@ export async function resolvePrConflicts(detail: GithubItemDetail): Promise<void
     await loadPrCheckoutState(detail.number)
 
     if (result.merge.status === 'conflict') {
-      layout.ensurePane('changes')
+      showWorkingTree()
       return
     }
     if (result.merge.status === 'up-to-date') {

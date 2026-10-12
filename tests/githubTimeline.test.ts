@@ -3,7 +3,7 @@
 // into the one line the website shows.
 
 import { describe, it, expect } from 'bun:test'
-import { foldTimeline, associationLabel } from '../src/renderer/src/kernel/plugins/github/timeline'
+import { foldTimeline, associationLabel } from '../src/renderer/src/kernel/plugins/git/github/timeline'
 import type { GithubActor, GithubTimelineEntry } from '../src/shared/types'
 
 const MOE: GithubActor = { login: 'Letsmoe', avatarUrl: 'https://avatars.example/moe' }

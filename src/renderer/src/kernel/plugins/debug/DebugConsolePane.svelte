@@ -6,7 +6,7 @@
   import TrashIcon from 'phosphor-svelte/lib/TrashIcon'
   import CaretRightIcon from 'phosphor-svelte/lib/CaretRightIcon'
   import type { DebugOutputLine } from '../../../../../shared/debug'
-  import RowAction from '../gitChanges/RowAction.svelte'
+  import RowAction from '../../../components/RowAction.svelte'
   import PaneControls from '../../../components/PaneControls.svelte'
   import VariableNode from './VariableNode.svelte'
   import { debug } from './store.svelte'

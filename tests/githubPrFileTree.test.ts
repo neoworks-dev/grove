@@ -5,7 +5,7 @@ import {
   nextUnreadFile,
   type PrFileTreeDirectory,
   type PrFileTreeNode
-} from '../src/renderer/src/kernel/plugins/github/prFileTree'
+} from '../src/renderer/src/kernel/plugins/git/github/prFileTree'
 import type { GithubPrFile } from '../src/shared/types'
 
 function file(path: string, overrides: Partial<GithubPrFile> = {}): GithubPrFile {

@@ -3,7 +3,7 @@
 // children first, the way `git log --date-order` returns them.
 
 import { describe, expect, test } from 'bun:test'
-import { layoutGraph, type GraphCommit } from '../src/renderer/src/kernel/plugins/gitGraph/graphLayout'
+import { layoutGraph, type GraphCommit } from '../src/renderer/src/kernel/plugins/git/graph/graphLayout'
 
 /** A commit with the given parents. */
 function commit(sha: string, ...parents: string[]): GraphCommit {

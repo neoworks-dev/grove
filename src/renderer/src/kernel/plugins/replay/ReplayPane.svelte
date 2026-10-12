@@ -11,7 +11,7 @@
   import XIcon from 'phosphor-svelte/lib/XIcon'
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
   import PaneControls from '../../../components/PaneControls.svelte'
-  import RowAction from '../gitChanges/RowAction.svelte'
+  import RowAction from '../../../components/RowAction.svelte'
   import ReplayFileRow from './ReplayFileRow.svelte'
   import { agentSessions } from '../../../lib/agents/sessions.svelte'
   import { store, refreshDiffStats } from '../../../lib/store.svelte'

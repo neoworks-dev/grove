@@ -5,7 +5,7 @@
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
   import Icon from '@iconify/svelte'
   import XIcon from 'phosphor-svelte/lib/XIcon'
-  import RowAction from '../gitChanges/RowAction.svelte'
+  import RowAction from '../../../components/RowAction.svelte'
   import { fileIcon } from '../../../lib/icons'
   import { openFileInEditor, store, type EditorTab } from '../../../lib/store.svelte'
 

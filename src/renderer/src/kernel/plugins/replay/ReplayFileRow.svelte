@@ -4,8 +4,8 @@
   // beside the working tree as it is now.
   import Icon from '@iconify/svelte'
   import ArrowsLeftRightIcon from 'phosphor-svelte/lib/ArrowsLeftRightIcon'
-  import RowAction from '../gitChanges/RowAction.svelte'
-  import { STATUS_COLOUR, baseName, directoryName } from '../gitChanges/changeTree'
+  import RowAction from '../../../components/RowAction.svelte'
+  import { STATUS_COLOUR, baseName, directoryName } from '../git/changes/changeTree'
   import { fileIcon } from '../../../lib/icons'
   import { store } from '../../../lib/store.svelte'
   import type { TreeFileChange } from '../../../../../shared/types'

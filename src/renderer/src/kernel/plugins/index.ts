@@ -3,8 +3,7 @@
 
 import { explorer } from './explorer'
 import { worktrees } from './worktrees'
-import { gitChanges } from './gitChanges'
-import { gitGraph } from './gitGraph'
+import { git } from './git'
 import { agents } from './agents'
 import { replay } from './replay'
 import { promptBlame } from './promptBlame'
@@ -14,7 +13,6 @@ import { mediaViewers } from './mediaViewers'
 import { diagnostics } from './diagnostics'
 import { debugging } from './debug'
 import { terminal } from './terminal'
-import { githubDashboard } from './github'
 import { logs } from './logs'
 import { settingsPanes } from './settingsPanes'
 import { designSystem } from './designSystem'
@@ -28,8 +26,7 @@ export const corePlugins = [
   statusBar,
   explorer,
   worktrees,
-  gitChanges,
-  gitGraph,
+  git,
   agents,
   replay,
   promptBlame,
@@ -39,7 +36,6 @@ export const corePlugins = [
   diagnostics,
   debugging,
   terminal,
-  githubDashboard,
   logs,
   settingsPanes,
   designSystem

@@ -8,7 +8,7 @@ import {
   freeBranchName,
   isBranchForIssue,
   slugify
-} from '../src/renderer/src/kernel/plugins/github/branches'
+} from '../src/renderer/src/kernel/plugins/git/github/branches'
 
 describe('slugify', () => {
   it('lowercases and joins words with hyphens', () => {

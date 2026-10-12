@@ -5,7 +5,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   changeRows,
   type ChangeRow
-} from '../src/renderer/src/kernel/plugins/gitChanges/changeTree'
+} from '../src/renderer/src/kernel/plugins/git/changes/changeTree'
 import type { DiffFile } from '../src/shared/types'
 
 /** A modified, unstaged file at a path. */

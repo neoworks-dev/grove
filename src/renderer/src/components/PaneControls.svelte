@@ -5,7 +5,7 @@
   // corner fallback (see paneChrome).
   import { untrack } from 'svelte'
   import XIcon from 'phosphor-svelte/lib/XIcon'
-  import RowAction from '../kernel/plugins/gitChanges/RowAction.svelte'
+  import RowAction from './RowAction.svelte'
   import { layout } from '../lib/layout.svelte'
   import { usePaneChrome } from '../lib/paneChrome.svelte'
 

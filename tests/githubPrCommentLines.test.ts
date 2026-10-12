@@ -2,7 +2,7 @@ import { describe, it, expect } from 'bun:test'
 import {
   threadVirtualLines,
   wrap
-} from '../src/renderer/src/kernel/plugins/github/prCommentLines'
+} from '../src/renderer/src/kernel/plugins/git/github/prCommentLines'
 import type { GithubReviewThread } from '../src/shared/types'
 
 function comment(body: string, login = 'octocat', pending = false) {

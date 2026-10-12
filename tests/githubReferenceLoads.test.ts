@@ -8,7 +8,7 @@ import {
   clearRefusals,
   loadOnce,
   newReferenceLoads
-} from '../src/renderer/src/kernel/plugins/github/referenceLoads'
+} from '../src/renderer/src/kernel/plugins/git/github/referenceLoads'
 
 /** A load that stays in flight until the test lets it finish. */
 function deferred(): { promise: Promise<void>; resolve: () => void } {

@@ -3,7 +3,7 @@ import {
   HIDDEN_TRIGGERS,
   triggerLabel,
   visibleCheckpoints
-} from '../src/renderer/src/kernel/plugins/gitChanges/checkpointRows'
+} from '../src/renderer/src/kernel/plugins/git/changes/checkpointRows'
 import type { CheckpointMeta, CheckpointTrigger } from '../src/shared/types'
 
 /** A snapshot with only the fields the list reads filled in. */

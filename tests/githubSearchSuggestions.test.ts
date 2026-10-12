@@ -6,7 +6,7 @@ import {
   suggestSearch,
   tokenAt,
   type SuggestionSources
-} from '../src/renderer/src/kernel/plugins/github/searchSuggestions'
+} from '../src/renderer/src/kernel/plugins/git/github/searchSuggestions'
 import type { GithubMilestoneDefinition } from '../src/shared/types'
 
 /** A label definition with a colour and a description, as the repository lists it. */

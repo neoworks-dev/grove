@@ -13,7 +13,7 @@
   import ArrowClockwiseIcon from 'phosphor-svelte/lib/ArrowClockwiseIcon'
   import StopIcon from 'phosphor-svelte/lib/StopIcon'
   import DownloadSimpleIcon from 'phosphor-svelte/lib/DownloadSimpleIcon'
-  import RowAction from '../gitChanges/RowAction.svelte'
+  import RowAction from '../../../components/RowAction.svelte'
   import { debug } from './store.svelte'
 
   // Short: the label shares a row with the stepping controls.

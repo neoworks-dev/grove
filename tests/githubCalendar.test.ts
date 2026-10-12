@@ -18,7 +18,7 @@ import {
   weekBars,
   withDateValue,
   type CalendarRange
-} from '../src/renderer/src/kernel/plugins/github/calendar'
+} from '../src/renderer/src/kernel/plugins/git/github/calendar'
 import type { GithubIssueItem } from '../src/shared/types'
 
 const RANGE: CalendarRange = {

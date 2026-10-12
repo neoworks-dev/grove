@@ -6,7 +6,7 @@
   import type { DebugEvaluation } from '../../../../../shared/debug'
   import DebugSection from './DebugSection.svelte'
   import VariableNode from './VariableNode.svelte'
-  import RowAction from '../gitChanges/RowAction.svelte'
+  import RowAction from '../../../components/RowAction.svelte'
   import { debug } from './store.svelte'
   import { messageOf } from './messages'
 

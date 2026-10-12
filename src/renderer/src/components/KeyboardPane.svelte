@@ -25,7 +25,7 @@
   import type { CustomBinding, KeybindAction } from '../../../shared/actions'
   import type { SettingScope } from '../../../shared/settings'
   import PaneControls from './PaneControls.svelte'
-  import RowAction from '../kernel/plugins/gitChanges/RowAction.svelte'
+  import RowAction from './RowAction.svelte'
   import ArrowCounterClockwiseIcon from 'phosphor-svelte/lib/ArrowCounterClockwiseIcon'
   import ProhibitIcon from 'phosphor-svelte/lib/ProhibitIcon'
   import TrashIcon from 'phosphor-svelte/lib/TrashIcon'

@@ -34,13 +34,14 @@ function rendererSources(directory: string = RENDERER): string[] {
   return found
 }
 
-/** Files that call into the sidebar service to contribute a view. */
+/** Plugin directories with a file that calls into the sidebar service to contribute a view. */
 function viewContributors(): string[] {
   const { directories } = pluginEntries()
   return directories.filter((name) => {
     if (name === 'sidebar') return false
-    const source = readFileSync(join(PLUGINS, name, 'index.ts'), 'utf8')
-    return source.includes('ctx.sidebar.registerView')
+    return rendererSources(join(PLUGINS, name))
+      .filter((path) => path.endsWith('.ts'))
+      .some((path) => readFileSync(path, 'utf8').includes('ctx.sidebar.registerView'))
   })
 }
 
@@ -55,7 +56,7 @@ describe('sidebar plugin split', () => {
       'debug',
       'explorer',
       'extensions',
-      'gitChanges',
+      'git',
       'worktrees'
     ])
 

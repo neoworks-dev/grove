@@ -8,7 +8,7 @@ import {
   applyMention,
   rankMentions,
   sameMention
-} from '../src/renderer/src/kernel/plugins/github/mentions'
+} from '../src/renderer/src/kernel/plugins/git/github/mentions'
 
 describe('activeMention', () => {
   it('opens on an @ at the start of the text', () => {

@@ -3,7 +3,7 @@
 // several lines — are what these pin.
 
 import { describe, it, expect } from 'bun:test'
-import { applyMarkdownEdit } from '../src/renderer/src/kernel/plugins/github/markdownEdits'
+import { applyMarkdownEdit } from '../src/renderer/src/kernel/plugins/git/github/markdownEdits'
 
 describe('applyMarkdownEdit: wrapping', () => {
   it('wraps the selection and leaves it selected', () => {

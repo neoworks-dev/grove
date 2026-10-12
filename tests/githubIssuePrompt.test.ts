@@ -2,7 +2,7 @@
 // thread, and nothing the repository's own instructions already say.
 
 import { describe, it, expect } from 'bun:test'
-import { issuePrompt } from '../src/renderer/src/kernel/plugins/github/issuePrompt'
+import { issuePrompt } from '../src/renderer/src/kernel/plugins/git/github/issuePrompt'
 import type { GithubItemDetail } from '../src/shared/types'
 
 /** A detail with only what the prompt reads filled in. */

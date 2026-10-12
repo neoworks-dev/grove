@@ -15,7 +15,7 @@ import {
   reviewLabel,
   stateTone,
   typesOf
-} from '../src/renderer/src/kernel/plugins/github/filter'
+} from '../src/renderer/src/kernel/plugins/git/github/filter'
 import type { GithubIssueItem, GithubPullItem } from '../src/shared/types'
 
 function issue(overrides: Partial<GithubIssueItem> = {}): GithubIssueItem {

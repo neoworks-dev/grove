@@ -14,7 +14,7 @@ import {
   stringifySearch,
   toggleQualifier,
   valuesOf
-} from '../src/renderer/src/kernel/plugins/github/search'
+} from '../src/renderer/src/kernel/plugins/git/github/search'
 import type { GithubIssueItem, GithubPullItem } from '../src/shared/types'
 
 function issue(overrides: Partial<GithubIssueItem> = {}): GithubIssueItem {

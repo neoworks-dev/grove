@@ -6,7 +6,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   githubReferences,
   parseReference
-} from '../src/renderer/src/kernel/plugins/github/references'
+} from '../src/renderer/src/kernel/plugins/git/github/references'
 
 describe('githubReferences', () => {
   test('finds bare numbers and links, in order, once each', () => {

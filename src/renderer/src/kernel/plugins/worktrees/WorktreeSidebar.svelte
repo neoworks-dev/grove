@@ -28,7 +28,7 @@
   import { ATTENTION_LABELS } from '../../../lib/agents/attention'
   import BellRingingIcon from 'phosphor-svelte/lib/BellRingingIcon'
   import PaneControls from '../../../components/PaneControls.svelte'
-  import RowAction from '../gitChanges/RowAction.svelte'
+  import RowAction from '../../../components/RowAction.svelte'
   import PlusIcon from 'phosphor-svelte/lib/PlusIcon'
   import HardDrivesIcon from 'phosphor-svelte/lib/HardDrivesIcon'
   import ArchiveIcon from 'phosphor-svelte/lib/ArchiveIcon'

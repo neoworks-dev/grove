@@ -9,12 +9,12 @@ import {
   optionOf,
   resolveBoardField,
   withFieldValue
-} from '../src/renderer/src/kernel/plugins/github/board'
+} from '../src/renderer/src/kernel/plugins/git/github/board'
 import {
   createView,
   viewMatches,
   type ViewState
-} from '../src/renderer/src/kernel/plugins/github/views'
+} from '../src/renderer/src/kernel/plugins/git/github/views'
 import type { GithubIssueField, GithubIssueItem } from '../src/shared/types'
 
 const PRIORITY: GithubIssueField = {

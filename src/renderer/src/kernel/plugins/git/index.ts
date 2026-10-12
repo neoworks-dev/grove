@@ -1,7 +1,7 @@
 // Git: everything about the repository in one pane. Its Repository tab is laid
 // out around the commit graph — refs down the left, the graph with the working
 // tree as its top row, and the selected row's changes or details beside it —
-// and its GitHub tab holds the issues and pull requests behind the remote. One
+// and its Launchpad tab holds the pull requests and issues behind the remote. One
 // plugin so they all read one git state rather than each keeping its own copy
 // that drifts from the others.
 
@@ -45,7 +45,7 @@ function registerGitPane(ctx: Context): void {
         minWidth: 320,
         minHeight: 160,
         keywords:
-          'git source control scm changes commit stage graph history log branches gitlens github issues pull requests pr reviews gh',
+          'git source control scm changes commit stage graph history log branches gitlens github launchpad issues pull requests pr reviews gh',
         when: repoOpen
       }),
     'pane:git'
@@ -83,9 +83,9 @@ function registerGitPane(ctx: Context): void {
     () =>
       ctx.commands.register({
         id: 'git.showGithub',
-        title: 'Show GitHub',
+        title: 'Show Launchpad',
         group: 'Git',
-        keywords: 'github issues pull requests pr reviews gh',
+        keywords: 'launchpad github issues pull requests pr reviews gh board calendar',
         run: () => showTabWhenRepoOpen('github')
       }),
     'command:git.showGithub'

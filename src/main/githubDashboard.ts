@@ -494,6 +494,7 @@ query($owner: String!, $name: String!, $limit: Int!) {
       nodes {
         number title url state createdAt updatedAt isDraft additions deletions
         headRefName baseRefName reviewDecision
+        reviewRequests(first: 10) { nodes { requestedReviewer { ... on User { login } } } }
         author { login }
         comments { totalCount }
         labels(first: 10) { nodes { name color } }
@@ -560,6 +561,8 @@ interface GraphqlPullNode extends GraphqlItemNode {
   headRefName: string
   baseRefName: string
   reviewDecision: string | null
+  /** A team asked to review has no login, so it comes back as an empty object. */
+  reviewRequests?: { nodes: { requestedReviewer: { login?: string } | null }[] }
   commits: { nodes: { commit: { statusCheckRollup: { state: string } | null } }[] }
 }
 
@@ -692,8 +695,21 @@ function toPullItem(node: GraphqlPullNode): GithubPullItem {
     headRefName: node.headRefName,
     baseRefName: node.baseRefName,
     reviewDecision: node.reviewDecision,
+    reviewRequested: requestedReviewers(node),
     checks: checkState(node)
   }
+}
+
+/** The people asked to review a pull request and not yet done so; teams are left out. */
+function requestedReviewers(node: Pick<GraphqlPullNode, 'reviewRequests'>): string[] {
+  if (!node.reviewRequests) return []
+  const logins: string[] = []
+  for (const request of node.reviewRequests.nodes) {
+    if (!request.requestedReviewer) continue
+    if (!request.requestedReviewer.login) continue
+    logins.push(request.requestedReviewer.login)
+  }
+  return logins
 }
 
 /** How many recent pull requests are matched against worktree branches. */

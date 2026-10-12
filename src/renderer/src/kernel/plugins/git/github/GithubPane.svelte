@@ -1,35 +1,36 @@
 <script lang="ts">
-  // The GitHub pane: pull requests and issues for the open repository, side by
-  // side with the selected item's thread. Loads on mount, then polls in the
-  // background; the poll stops with the pane.
-  import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
+  // Launchpad: every pull request and issue for the open repository in one list,
+  // grouped by what each needs, side by side with the selected item's thread.
+  // The issues can also be laid out as a board or on a calendar. Loads on
+  // mount, then polls in the background; the poll stops with the pane.
   import {
     github,
     refreshDashboard,
     selectItem,
     startAutoRefresh,
-    toggleChecked
+    loadRepoPins
   } from './store.svelte'
-  import GithubItemRow from './GithubItemRow.svelte'
+  import LaunchpadList from './LaunchpadList.svelte'
+  import { launchpadGroups, type LaunchpadGroup } from './launchpad'
+  import { store } from '../../../../lib/store.svelte'
   import GithubBoard from './GithubBoard.svelte'
   import GithubViewTabs from './GithubViewTabs.svelte'
   import GithubCalendar from './GithubCalendar.svelte'
-  import { boardColumns, optionColour } from './board'
+  import { boardColumns } from './board'
   import type { IssueLayout } from './views'
   import GithubSplitHandle from './GithubSplitHandle.svelte'
   import GithubThread from './GithubThread.svelte'
   import GithubCompose from './GithubCompose.svelte'
   import ArrowClockwiseIcon from 'phosphor-svelte/lib/ArrowClockwiseIcon'
   import PlusIcon from 'phosphor-svelte/lib/PlusIcon'
-  import PushPinIcon from 'phosphor-svelte/lib/PushPinIcon'
   import GithubSelectionBar from './GithubSelectionBar.svelte'
   import GithubFilterBar from './GithubFilterBar.svelte'
   import GithubSearchBox from './GithubSearchBox.svelte'
-  import { ageLabel, partitionPinned } from './filter'
+  import { ageLabel } from './filter'
   import { DEFAULT_QUERY, setStateQualifier } from './search'
   import type {
+    GithubIssueField,
     GithubIssueItem,
-    GithubItem,
     GithubItemKind,
     GithubStateFilter
   } from '../../../../../../shared/types'
@@ -59,8 +60,7 @@
   let width = $state(0)
   const narrow = $derived(width > 0 && width < NARROW_PX)
   const items = $derived(github.items)
-  // Pinned issues head the list under their own heading, as they do on GitHub.
-  const sections = $derived(partitionPinned(items))
+  const pins = $derived(new Set(github.pins))
   // The layouts the issues can take here: a board needs a single-select field
   // to group by, a calendar a date field to place by.
   const layouts = $derived.by(() => {
@@ -69,21 +69,35 @@
     if (github.dateFields.length > 0) available.push({ id: 'calendar', label: 'Calendar' })
     return available
   })
-  // A list grouped by an issue field shows the board's columns as sections,
+  // Pull requests by what they need, then issues by who has them. A list
+  // grouped by an issue field shows the issues in the board's columns instead,
   // including the empty ones, so the grouping reads the same in both layouts.
-  const listGroups = $derived.by(() => {
-    if (github.tab !== 'issue' || github.view !== 'list' || !github.listField) return null
-    const issues = items.filter((item): item is GithubIssueItem => item.kind === 'issue')
-    return boardColumns(issues, github.listField)
+  const groups = $derived.by(() => {
+    const listField = github.listField
+    if (!listField) return launchpadGroups(items, github.viewer, pins)
+    return launchpadGroups(items, github.viewer, pins, (issues) =>
+      fieldGroups(issues, listField)
+    )
+  })
+
+  /** The issues in a field's board columns, as Launchpad groups. */
+  function fieldGroups(issues: GithubIssueItem[], field: GithubIssueField): LaunchpadGroup[] {
+    return boardColumns(issues, field).map((column) => ({
+      id: `field:${column.name}`,
+      title: column.name,
+      items: column.issues,
+      colour: column.color
+    }))
+  }
+
+  // Pins belong to the repository, so a different one opening reads its own.
+  $effect(() => {
+    void store.repo
+    loadRepoPins()
   })
   // An empty list under the query it started with is "nothing here", not "your
   // search found nothing" — `is:open` is not something the user typed.
   const narrowed = $derived(github.query.trim() !== DEFAULT_QUERY && github.query.trim().length > 0)
-  const counts = $derived(github.counts)
-  const viewer = $derived.by<string | null>(() => {
-    if (!github.dashboard) return null
-    return github.dashboard.viewer
-  })
 
   // Load on mount and whenever the state filter changes — it is a different
   // query, not a client-side cut of what is already here.
@@ -92,13 +106,6 @@
   })
 
   $effect(() => startAutoRefresh())
-
-  function switchTab(kind: GithubItemKind): void {
-    github.tab = kind
-    // Numbers are per kind, so a selection does not survive the switch.
-    github.checked = []
-    void selectItem(null)
-  }
 
   // The dropdown is a shortcut for writing `is:` into the query, not a filter
   // beside it — there is one place a narrowing is written down.
@@ -174,23 +181,7 @@
     return `${github.dashboard.repo.nameWithOwner} — updated ${age}. Refresh`
   })
 
-  function isSelected(number: number, kind: GithubItemKind): boolean {
-    const selection = github.selection
-    if (!selection) return false
-    return selection.number === number && selection.kind === kind
-  }
 </script>
-
-{#snippet itemRow(item: GithubItem)}
-  <GithubItemRow
-    {item}
-    selected={isSelected(item.number, item.kind)}
-    checked={github.checked.includes(item.number)}
-    isViewer={item.author === viewer}
-    onselect={() => openItem(item.kind, item.number)}
-    ontoggle={() => toggleChecked(item.number)}
-  />
-{/snippet}
 
 {#snippet detailColumn()}
   {#if github.composing}
@@ -227,25 +218,7 @@
           class="flex shrink-0 items-center gap-1.5 border-b border-line px-2 py-1.5"
           class:hidden={github.checked.length > 0}
         >
-          <button
-            class="shrink-0 rounded-md px-1.5 py-0.5 text-xs hover:bg-hover"
-            class:text-default={github.tab === 'pull'}
-            class:text-dim={github.tab !== 'pull'}
-            onclick={() => switchTab('pull')}
-          >
-            PRs
-            <span class="font-mono text-2xs text-dim">{counts.pull}</span>
-          </button>
-          <button
-            class="shrink-0 rounded-md px-1.5 py-0.5 text-xs hover:bg-hover"
-            class:text-default={github.tab === 'issue'}
-            class:text-dim={github.tab !== 'issue'}
-            onclick={() => switchTab('issue')}
-          >
-            Issues
-            <span class="font-mono text-2xs text-dim">{counts.issue}</span>
-          </button>
-          {#if github.tab === 'issue' && layouts.length > 1}
+          {#if layouts.length > 1}
             <div class="flex shrink-0 overflow-hidden rounded-md border border-line">
               {#each layouts as layout (layout.id)}
                 <button
@@ -276,9 +249,7 @@
           <RowAction icon={PlusIcon} title="New issue" onclick={startCompose} />
         </div>
 
-        {#if github.tab === 'issue'}
-          <GithubViewTabs />
-        {/if}
+        <GithubViewTabs />
         <GithubFilterBar {setStateFilter} />
 
         {#if github.boardShown && github.boardField}
@@ -289,53 +260,19 @@
             onopen={(number) => openItem('issue', number)}
           />
         {:else}
-          <FloatingScrollbar class="min-h-0 flex-1">
-            <div>
-              {#if listGroups}
-                {#each listGroups as group (group.name)}
-                  <h3
-                    class="flex items-center gap-1.5 border-b border-line px-3 pb-1 pt-2 text-2xs font-semibold text-muted"
-                  >
-                    <span class="size-2 rounded-full" style:background={optionColour(group.color)}
-                    ></span>
-                    {group.name}
-                    <span class="font-mono font-normal text-dim">{group.issues.length}</span>
-                  </h3>
-                  {#each group.issues as item (item.number)}
-                    {@render itemRow(item)}
-                  {/each}
-                {/each}
-              {:else if sections.pinned.length > 0}
-                <h3
-                  class="flex items-center gap-1 border-b border-line px-3 pb-1 pt-2 text-2xs font-semibold uppercase tracking-caps text-dim"
-                >
-                  <PushPinIcon size={10} />
-                  Pinned
-                </h3>
-                {#each sections.pinned as item (item.kind + item.number)}
-                  {@render itemRow(item)}
-                {/each}
-                <div class="h-2 border-b border-line"></div>
+          {#if items.length > 0}
+            <LaunchpadList {groups} onopen={(item) => openItem(item.kind, item.number)} />
+          {:else}
+            <p class="px-3 py-4 text-xs text-dim">
+              {#if github.loading}
+                Loading…
+              {:else if narrowed}
+                Nothing matches <span class="font-mono">{github.query}</span>.
+              {:else}
+                Nothing here.
               {/if}
-              {#if !listGroups}
-                {#each sections.rest as item (item.kind + item.number)}
-                  {@render itemRow(item)}
-                {/each}
-              {/if}
-
-              {#if items.length === 0}
-                <p class="px-3 py-4 text-xs text-dim">
-                  {#if github.loading}
-                    Loading…
-                  {:else if narrowed}
-                    Nothing matches <span class="font-mono">{github.query}</span>.
-                  {:else}
-                    Nothing here.
-                  {/if}
-                </p>
-              {/if}
-            </div>
-          </FloatingScrollbar>
+            </p>
+          {/if}
         {/if}
       </div>
     {/if}

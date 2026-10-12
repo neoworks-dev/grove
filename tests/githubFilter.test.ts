@@ -8,7 +8,6 @@ import {
   issueTypeColour,
   authorsOf,
   assigneeLogins,
-  partitionPinned,
   matchesQuery,
   projectsOf,
   relativeTime,
@@ -194,19 +193,5 @@ describe('authorsOf', () => {
 describe('assigneeLogins', () => {
   it('reads the logins off the assigned actors', () => {
     expect(assigneeLogins(issue())).toEqual(['ada'])
-  })
-})
-
-describe('partitionPinned', () => {
-  it('puts pinned issues first and keeps each group in order', () => {
-    const items = [
-      issue({ number: 1 }),
-      issue({ number: 2, isPinned: true }),
-      issue({ number: 3 }),
-      issue({ number: 4, isPinned: true })
-    ]
-    const { pinned, rest } = partitionPinned(items)
-    expect(pinned.map((item) => item.number)).toEqual([2, 4])
-    expect(rest.map((item) => item.number)).toEqual([1, 3])
   })
 })

@@ -26,6 +26,7 @@ import { startSessionWithTask } from '../../../../lib/agents/newSession'
 import { agentSessions, badgeOf, type SessionBadge } from '../../../../lib/agents/sessions.svelte'
 import type { SessionMeta } from '../../../../../../shared/agents'
 import { resolveBoardField, withFieldValue } from './board'
+import { loadPins, pinKey, storePins } from './launchpad'
 import {
   calendarRange,
   monthOf,
@@ -127,7 +128,8 @@ class GithubStore {
   loading = $state(false)
   error = $state<string | null>(null)
 
-  tab = $state<GithubItemKind>('pull')
+  /** Pull requests and issues pinned to the top of Launchpad, as pin keys. */
+  pins = $state<string[]>([])
 
   /** Issues as a list, as a board in columns by an issue field, or on a calendar. */
   view = $state<IssueLayout>('list')
@@ -229,9 +231,9 @@ class GithubStore {
   prReviewBusy = $state(false)
 
   /**
-   * Numbers ticked in the list, for acting on several at once. Held per tab,
-   * because a pull request and an issue with the same number are different
-   * things and the actions that apply to them differ.
+   * Numbers ticked in the list, for acting on several at once. GitHub numbers
+   * pull requests and issues from one sequence, so a number says which item
+   * it is, and `kindOfNumber` says which kind.
    */
   checked = $state<number[]>([])
 
@@ -278,9 +280,14 @@ class GithubStore {
    */
   stateFilter: GithubStateFilter = $derived(stateFilterFor(this.search))
 
-  /** The active tab's items, after the whole query. */
+  /** Pull requests then issues, after the whole query. */
   get items(): GithubItem[] {
-    return filterItems(this.tabItems, this.search, this.viewer)
+    return filterItems(this.allItems, this.search, this.viewer)
+  }
+
+  /** The issues among the items, which the board and the calendar lay out. */
+  get issueItems(): GithubIssueItem[] {
+    return this.items.filter((item): item is GithubIssueItem => item.kind === 'issue')
   }
 
   /** The authenticated user, for `@me`. */
@@ -289,26 +296,25 @@ class GithubStore {
     return this.dashboard.viewer
   }
 
-  /** The active tab before any narrowing — what the menus offer options from. */
-  get tabItems(): GithubItem[] {
+  /** Every pull request and issue before any narrowing — what the menus offer options from. */
+  get allItems(): GithubItem[] {
     if (!this.dashboard) return []
-    if (this.tab === 'pull') return this.dashboard.pulls
-    return this.dashboard.issues
+    return [...this.dashboard.pulls, ...this.dashboard.issues]
   }
 
-  /** Every author on this tab, for the Author menu. */
+  /** Every author, for the Author menu. */
   get authorOptions(): string[] {
-    return authorsOf(this.tabItems)
+    return authorsOf(this.allItems)
   }
 
-  /** Every issue type on this tab, for the Type menu. */
+  /** Every issue type, for the Type menu. */
   get typeOptions(): string[] {
-    return typesOf(this.tabItems)
+    return typesOf(this.allItems)
   }
 
-  /** Every project board on this tab, for the Projects menu. */
+  /** Every project board, for the Projects menu. */
   get projectOptions(): string[] {
-    return projectsOf(this.tabItems)
+    return projectsOf(this.allItems)
   }
 
   /**
@@ -370,7 +376,6 @@ class GithubStore {
 
   /** Whether the calendar is what the pane shows: issues, a date field, and calendar view. */
   get calendarShown(): boolean {
-    if (this.tab !== 'issue') return false
     if (this.view !== 'calendar') return false
     return this.calendarField !== null
   }
@@ -382,7 +387,6 @@ class GithubStore {
 
   /** Whether the board is what the pane shows: issues, a field to group by, and board view. */
   get boardShown(): boolean {
-    if (this.tab !== 'issue') return false
     if (this.view !== 'board') return false
     return this.boardField !== null
   }
@@ -618,13 +622,12 @@ export async function runBulkAction(
 ): Promise<void> {
   const numbers = [...github.checked]
   if (numbers.length === 0) return
-  const kind = github.tab
   github.busy = true
   const failed: number[] = []
   try {
     for (const number of numbers) {
       try {
-        await window.workbench.github.action(kind, number, action, undefined, reason)
+        await window.workbench.github.action(kindOfNumber(number), number, action, undefined, reason)
       } catch {
         failed.push(number)
       }
@@ -641,13 +644,12 @@ export async function runBulkAction(
 export async function assignChecked(logins: string[]): Promise<void> {
   const numbers = [...github.checked]
   if (numbers.length === 0 || logins.length === 0) return
-  const kind = github.tab
   github.busy = true
   const failed: number[] = []
   try {
     for (const number of numbers) {
       try {
-        await window.workbench.github.changeAssignees(kind, number, { add: logins, remove: [] })
+        await window.workbench.github.changeAssignees(kindOfNumber(number), number, { add: logins, remove: [] })
       } catch {
         failed.push(number)
       }
@@ -684,13 +686,12 @@ export async function applyAssignees(next: string[]): Promise<void> {
 export async function addLabelsToChecked(labels: string[]): Promise<void> {
   const numbers = [...github.checked]
   if (numbers.length === 0 || labels.length === 0) return
-  const kind = github.tab
   github.busy = true
   const failed: number[] = []
   try {
     for (const number of numbers) {
       try {
-        await window.workbench.github.changeLabels(kind, number, { add: labels, remove: [] })
+        await window.workbench.github.changeLabels(kindOfNumber(number), number, { add: labels, remove: [] })
       } catch {
         failed.push(number)
       }
@@ -700,6 +701,13 @@ export async function addLabelsToChecked(labels: string[]): Promise<void> {
   }
   reportBulkOutcome('Labelled', numbers.length, failed)
   await refreshDashboard(github.stateFilter, { silent: true })
+}
+
+/** Whether a ticked number is a pull request or an issue, read off the loaded list. */
+function kindOfNumber(number: number): GithubItemKind {
+  const found = github.allItems.find((item) => item.number === number)
+  if (found) return found.kind
+  return 'issue'
 }
 
 /** One notification for a whole bulk run, naming what did not go through. */
@@ -715,14 +723,9 @@ function reportBulkOutcome(verb: string, total: number, failed: number[]): void 
   })
 }
 
-/**
- * Follow a reference from one item to another. The tab has to move with it —
- * opening a pull request while the issue list is showing would leave the thread
- * and the list disagreeing about what is selected.
- */
+/** Follow a reference from one item to another. */
 export async function openReference(kind: GithubItemKind, number: number): Promise<void> {
   github.composing = false
-  github.tab = kind
   await selectItem({ kind, number })
 }
 
@@ -1645,6 +1648,25 @@ export function loadSavedViews(): void {
   github.savedViews = loadViews(store.repo.path)
 }
 
+/** Reads the open repository's pins. */
+export function loadRepoPins(): void {
+  if (!store.repo) {
+    github.pins = []
+    return
+  }
+  github.pins = loadPins(store.repo.path)
+}
+
+/** Pins an item to the top of Launchpad, or unpins it. */
+export function togglePin(item: GithubItem): void {
+  if (!store.repo) return
+  const key = pinKey(item)
+  let next = [...github.pins, key]
+  if (github.pins.includes(key)) next = github.pins.filter((pin) => pin !== key)
+  github.pins = next
+  storePins(store.repo.path, next)
+}
+
 /** Saves what the issue list shows as a view under a name. */
 export function saveCurrentView(name: string): void {
   if (!store.repo || name.trim().length === 0) return
@@ -1935,7 +1957,6 @@ export async function createIssue(): Promise<boolean> {
     github.draft = { title: '', body: '', labels: [] }
     github.composing = false
     dialogs.notify({ level: 'info', message: `Opened #${created.number}` })
-    github.tab = 'issue'
     await refreshDashboard(github.stateFilter, { silent: true })
     await selectItem({ kind: 'issue', number: created.number })
     return true

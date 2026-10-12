@@ -153,7 +153,7 @@
         <option value={field.id}>{field.name}</option>
       {/each}
     </select>
-  {:else if github.tab === 'issue' && github.view === 'list' && github.issueFields.length > 0}
+  {:else if github.view === 'list' && github.issueFields.length > 0}
     <select
       class="shrink-0 rounded-md border border-line bg-input px-1 py-0.5 text-2xs text-dim outline-none"
       title="Group the list by"

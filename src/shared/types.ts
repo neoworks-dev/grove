@@ -629,6 +629,8 @@ export interface GithubPullItem extends GithubItemShared {
   baseRefName: string
   /** APPROVED | CHANGES_REQUESTED | REVIEW_REQUIRED, or null when unset. */
   reviewDecision: string | null
+  /** Logins asked to review who have not yet; absent in snapshots saved before it was fetched. */
+  reviewRequested?: string[]
   /** Rollup of the head commit's checks: SUCCESS | FAILURE | PENDING | …, or null. */
   checks: string | null
 }

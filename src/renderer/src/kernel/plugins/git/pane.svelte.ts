@@ -1,5 +1,5 @@
-// The Git pane: the repository laid out around its commit graph, and GitHub
-// beside it as a second tab. Which tab shows and what the graph has selected
+// The Git pane: the repository laid out around its commit graph, and Launchpad,
+// its pull requests and issues, beside it as a second tab. Which tab shows and what the graph has selected
 // are kept here rather than only in the pane, so a command, an agent or a
 // GitHub flow can open the pane on what it wants to show.
 
@@ -11,7 +11,7 @@ export type GitTab = 'repo' | 'github'
 
 export const GIT_TABS: { id: GitTab; title: string }[] = [
   { id: 'repo', title: 'Repository' },
-  { id: 'github', title: 'GitHub' }
+  { id: 'github', title: 'Launchpad' }
 ]
 
 // The graph's top row: the uncommitted work in the worktree, selected like a

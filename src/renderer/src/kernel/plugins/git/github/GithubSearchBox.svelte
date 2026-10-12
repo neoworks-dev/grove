@@ -77,7 +77,7 @@
   /** The issue types on the loaded items, once each, with their colours. */
   function issueTypesOnTab(): GithubIssueType[] {
     const types: GithubIssueType[] = []
-    for (const item of github.tabItems) {
+    for (const item of github.allItems) {
       if (!item.issueType) continue
       if (types.some((type) => type.name === item.issueType?.name)) continue
       types.push(item.issueType)

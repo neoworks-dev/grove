@@ -34,23 +34,6 @@ export function assigneeLogins(item: Pick<GithubItem, 'assignees'>): string[] {
   return item.assignees.map((assignee) => assignee.login)
 }
 
-/**
- * Issues split into the pinned ones, which GitHub keeps at the top of the list,
- * and the rest, each in the order they came in.
- */
-export function partitionPinned(items: GithubItem[]): { pinned: GithubItem[]; rest: GithubItem[] } {
-  const pinned: GithubItem[] = []
-  const rest: GithubItem[] = []
-  for (const item of items) {
-    if (item.isPinned) {
-      pinned.push(item)
-      continue
-    }
-    rest.push(item)
-  }
-  return { pinned, rest }
-}
-
 /** Every author present in a list, alphabetical — the options the menu offers. */
 export function authorsOf(items: GithubItem[]): string[] {
   return uniqueSorted(items.map((item) => item.author))

@@ -219,13 +219,19 @@
           class:hidden={github.checked.length > 0}
         >
           {#if layouts.length > 1}
-            <div class="flex shrink-0 overflow-hidden rounded-md border border-line">
+            <div
+              class="flex shrink-0 gap-0.5 rounded-md border border-line bg-canvas p-0.5 text-xs"
+              role="tablist"
+            >
               {#each layouts as layout (layout.id)}
                 <button
-                  class="cursor-pointer px-1.5 py-0.5 text-2xs hover:bg-hover"
-                  class:bg-hover={github.view === layout.id}
+                  class="cursor-pointer rounded px-2 py-px transition-colors"
+                  class:bg-input={github.view === layout.id}
                   class:text-default={github.view === layout.id}
                   class:text-dim={github.view !== layout.id}
+                  class:hover:text-default={github.view !== layout.id}
+                  role="tab"
+                  aria-selected={github.view === layout.id}
                   onclick={() => (github.view = layout.id)}
                 >
                   {layout.label}

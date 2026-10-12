@@ -107,10 +107,10 @@
         bind:value={filter}
       />
     </label>
-    <div class="flex gap-0.5 rounded-lg border border-line bg-input p-0.5 text-xs">
+    <div class="flex gap-0.5 rounded-lg border border-line bg-canvas p-0.5 text-xs">
       <button
         class="rounded-md px-2.5 py-1 transition-colors"
-        class:bg-raised={scope === 'user'}
+        class:bg-input={scope === 'user'}
         class:text-default={scope === 'user'}
         class:text-dim={scope !== 'user'}
         class:hover:text-default={scope !== 'user'}
@@ -120,7 +120,7 @@
       </button>
       <button
         class="rounded-md px-2.5 py-1 transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-        class:bg-raised={scope === 'project'}
+        class:bg-input={scope === 'project'}
         class:text-default={scope === 'project'}
         class:text-dim={scope !== 'project'}
         class:hover:text-default={scope !== 'project'}

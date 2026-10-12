@@ -18,11 +18,13 @@
   import ListBulletsIcon from 'phosphor-svelte/lib/ListBulletsIcon'
   import PlusIcon from 'phosphor-svelte/lib/PlusIcon'
   import MinusIcon from 'phosphor-svelte/lib/MinusIcon'
+  import GithubLogoIcon from 'phosphor-svelte/lib/GithubLogoIcon'
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
   import { store } from '../../../../lib/store.svelte'
   import { inlineEdit } from '../../../../lib/inlineEdit.svelte'
   import { settings } from '../../../../lib/settings.svelte'
   import { gitState } from '../state.svelte'
+  import { showGitTab } from '../pane.svelte'
   import CommitBox from './CommitBox.svelte'
   import CheckpointsSection from './CheckpointsSection.svelte'
   import CommitsSection from './CommitsSection.svelte'
@@ -153,11 +155,13 @@
         {/if}
       </span>
     {:else if branchStatus}
-      <span class="shrink-0 text-2xs text-faint" title={upstreamTitle(branchStatus)}>
+      <!-- Gives way before the branch name does: the name is what matters. -->
+      <span class="min-w-0 shrink-[4] truncate text-2xs text-faint" title={upstreamTitle(branchStatus)}>
         not published
       </span>
     {/if}
     <span class="flex-1"></span>
+    <RowAction icon={GithubLogoIcon} title="Open GitHub" onclick={() => showGitTab('github')} />
     {#if layout === 'tree'}
       <RowAction icon={ListBulletsIcon} title="View as list" onclick={toggleLayout} />
     {:else}

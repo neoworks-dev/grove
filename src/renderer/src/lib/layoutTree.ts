@@ -506,10 +506,13 @@ function mergeSameDirection(
 // as instead. Unlike a plugin's pane, these will never register again, so the
 // placeholder they would otherwise get is a dead window. The Agents sidebar view
 // became the Worktrees one, which lists each worktree's sessions too. The
-// Checkpoints view became a section of the Source Control one.
-const RETIRED_PANE_TYPES: Record<string, string> = {
-  agents: 'worktrees',
-  checkpoints: 'changes'
+// Checkpoints view became a section of the Source Control one. The Commit Graph
+// and GitHub panes became the tabs of the Git pane, and open on their own tab.
+const RETIRED_PANE_TYPES: Record<string, { paneTypeId: string; paneState?: Record<string, unknown> }> = {
+  agents: { paneTypeId: 'worktrees' },
+  checkpoints: { paneTypeId: 'changes' },
+  'git-graph': { paneTypeId: 'git', paneState: { tab: 'graph' } },
+  github: { paneTypeId: 'git', paneState: { tab: 'github' } }
 }
 
 // Validate a deserialized tree. Malformed nodes are dropped; leaves with
@@ -534,14 +537,19 @@ function sanitizeNode(value: unknown, seenIds: Set<string>): LayoutNode | null {
 
 function sanitizeLeaf(node: Record<string, unknown>, seenIds: Set<string>): LeafNode | null {
   if (typeof node.paneTypeId !== 'string' || node.paneTypeId.length === 0) return null
-  const replacement = RETIRED_PANE_TYPES[node.paneTypeId]
   const leaf: LeafNode = {
     kind: 'leaf',
     id: claimId(node.id, 'leaf', seenIds),
-    paneTypeId: replacement || node.paneTypeId
+    paneTypeId: node.paneTypeId
   }
-  // A retired pane's state belonged to a component that is gone.
-  if (replacement) return withStoredSize(leaf, node)
+  // A retired pane's state belonged to a component that is gone; its
+  // replacement starts from the state the retirement gives it, if any.
+  const replacement = RETIRED_PANE_TYPES[node.paneTypeId]
+  if (replacement) {
+    leaf.paneTypeId = replacement.paneTypeId
+    if (replacement.paneState) leaf.paneState = { ...replacement.paneState }
+    return withStoredSize(leaf, node)
+  }
   if (node.paneState && typeof node.paneState === 'object' && !Array.isArray(node.paneState)) {
     leaf.paneState = node.paneState as Record<string, unknown>
   }

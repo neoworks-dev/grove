@@ -12,8 +12,7 @@
   import GitSection from './GitSection.svelte'
   import RowAction from '../../../../components/RowAction.svelte'
   import { store } from '../../../../lib/store.svelte'
-  import { layout } from '../../../../lib/layout.svelte'
-  import { GIT_GRAPH_PANE } from '../graph'
+  import { showGitTab } from '../pane.svelte'
   import type { BranchStatus, CommitSummary } from '../../../../../../shared/types'
 
   let {
@@ -101,7 +100,7 @@
     <RowAction
       icon={GraphIcon}
       title="Open the commit graph"
-      onclick={() => layout.ensurePane(GIT_GRAPH_PANE)}
+      onclick={() => showGitTab('graph')}
     />
     <RowAction
       icon={CloudArrowDownIcon}

@@ -14,7 +14,7 @@
   import { relativeTime, reviewLabel, reviewTone } from './filter'
   import { parseReference } from './references'
   import { fetchItemByNumber, openItemByNumber, openRepoName } from './store.svelte'
-  import { layout } from '../../../../lib/layout.svelte'
+  import { showGitTab } from '../pane.svelte'
   import type { GithubActor, GithubItemDetail } from '../../../../../../shared/types'
 
   let { reference }: { reference: string } = $props()
@@ -81,7 +81,7 @@
   /** Show the thread in the GitHub pane. */
   function open(): void {
     if (!detail) return
-    layout.ensurePane('github')
+    showGitTab('github')
     void openItemByNumber(detail.number)
   }
 </script>

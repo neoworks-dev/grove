@@ -12,7 +12,7 @@ test("#425 Merge Git, Github and commit graph into a single plugin", async ({ gr
   const page = grove.page
   await qa.begin(grove.electron, page, { width: 1439, height: 899 })
 
-  await qa.pane(page, {"paneTypeId":"git-graph","close":false,"split":null,"inPaneType":null})
+  await qa.pane(page, {"paneTypeId":"git","close":false,"split":null,"inPaneType":null})
   await page.getByRole('button', { name: 'Source Control' }).click()
   await page.getByRole('textbox', { name: 'Commit message' }).click()
   await page.keyboard.type("repro: graph follows source control", { delay: 20 })

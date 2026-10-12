@@ -31,7 +31,6 @@
     revertCommit
   } from './commitActions'
   import type { CommitSummary, ResetMode } from '../../../../../../shared/types'
-  import PaneControls from '../../../../components/PaneControls.svelte'
 
   let {
     state: paneState,
@@ -316,9 +315,8 @@
 
 <div class="flex h-full min-h-0 flex-col text-xs">
   <div class="flex h-7 shrink-0 items-center gap-2 border-b border-line px-2">
-    <span class="text-muted">Commit Graph</span>
     {#if currentBranch}
-      <span class="truncate text-dim">{currentBranch}</span>
+      <span class="truncate text-muted">{currentBranch}</span>
     {:else if head}
       <span class="text-dim">detached at {head.slice(0, 7)}</span>
     {/if}
@@ -330,7 +328,6 @@
       onclick={fetchRemotes}
     />
     <RowAction icon={ArrowClockwiseIcon} title="Refresh" onclick={() => void gitState.reload()} />
-    <PaneControls />
   </div>
 
   <div class="flex min-h-0 flex-1">

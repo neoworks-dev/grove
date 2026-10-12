@@ -271,6 +271,24 @@ describe('sanitize', () => {
     expect(sidebar.sizePx).toBe(256)
   })
 
+  it('reopens the retired Commit Graph and GitHub panes as the Git pane on their own tab', () => {
+    const tree = sanitize({
+      kind: 'split',
+      id: 's',
+      direction: 'column',
+      children: [
+        { kind: 'leaf', id: 'a', paneTypeId: 'github', paneState: { scroll: 3 } },
+        { kind: 'leaf', id: 'b', paneTypeId: 'git-graph', paneState: { detailsWidth: 400 } }
+      ],
+      sizes: [0.5, 0.5]
+    }) as SplitNode
+    const [github, graph] = leaves(tree)
+    expect(github.paneTypeId).toBe('git')
+    expect(github.paneState).toEqual({ tab: 'github' })
+    expect(graph.paneTypeId).toBe('git')
+    expect(graph.paneState).toEqual({ tab: 'graph' })
+  })
+
   it('drops malformed nodes and renormalizes sizes', () => {
     const tree = sanitize({
       kind: 'split',

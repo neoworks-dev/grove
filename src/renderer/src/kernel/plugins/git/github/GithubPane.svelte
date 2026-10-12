@@ -33,7 +33,6 @@
     GithubItemKind,
     GithubStateFilter
   } from '../../../../../../shared/types'
-  import PaneControls from '../../../../components/PaneControls.svelte'
   import RowAction from '../../../../components/RowAction.svelte'
 
   // Below this the pane shows one column at a time: the list, or the thread with
@@ -268,8 +267,6 @@
             title={SEARCH_HELP}
           />
 
-          <!-- The same button as the pane's close beside them, so the three
-               header icons look and behave alike. -->
           <RowAction
             icon={ArrowClockwiseIcon}
             title={refreshTitle}
@@ -277,9 +274,6 @@
             onclick={() => refreshDashboard(github.stateFilter)}
           />
           <RowAction icon={PlusIcon} title="New issue" onclick={startCompose} />
-          <!-- The pane's own close button. The thread beside the list has one
-               of its own, which only puts the thread away. -->
-          <PaneControls />
         </div>
 
         {#if github.tab === 'issue'}

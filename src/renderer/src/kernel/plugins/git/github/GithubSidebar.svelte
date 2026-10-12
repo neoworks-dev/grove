@@ -1,6 +1,8 @@
 <script lang="ts">
-  // The item's metadata, as GitHub's right-hand rail: what it carries, with the
-  // parts Grove can change editable in place.
+  // The item's metadata, one property to a line: the name on the left, the
+  // value on the right, and a value Grove can change opens its editor when
+  // clicked. What is done to the item rather than said about it lives in the
+  // thread header's … menu.
   //
   // Type and Projects are read-only and only appear at all when the token could
   // be asked for them — see `fetchCapabilities` in githubDashboard.ts. Drawing
@@ -8,17 +10,7 @@
   // would report an absence that was never measured.
   import Checkbox from '@neoworks-dev/ui/Checkbox'
   import FloatingScrollbar from '@neoworks-dev/ui/FloatingScrollbar'
-  import BellIcon from 'phosphor-svelte/lib/BellIcon'
-  import BellSlashIcon from 'phosphor-svelte/lib/BellSlashIcon'
-  import CopyIcon from 'phosphor-svelte/lib/CopyIcon'
-  import GearIcon from 'phosphor-svelte/lib/GearIcon'
   import GitBranchIcon from 'phosphor-svelte/lib/GitBranchIcon'
-  import LockIcon from 'phosphor-svelte/lib/LockIcon'
-  import LockOpenIcon from 'phosphor-svelte/lib/LockOpenIcon'
-  import PushPinIcon from 'phosphor-svelte/lib/PushPinIcon'
-  import PushPinSlashIcon from 'phosphor-svelte/lib/PushPinSlashIcon'
-  import TrashIcon from 'phosphor-svelte/lib/TrashIcon'
-  import ArrowsLeftRightIcon from 'phosphor-svelte/lib/ArrowsLeftRightIcon'
   import WaveSpinner from '../../../../components/WaveSpinner.svelte'
   import GithubAvatar from './GithubAvatar.svelte'
   import GithubLabelPill from './GithubLabelPill.svelte'
@@ -28,6 +20,7 @@
   import GithubIssueFieldSection from './GithubIssueFieldSection.svelte'
   import GithubMilestoneForm from './GithubMilestoneForm.svelte'
   import GithubStateIcon from './GithubStateIcon.svelte'
+  import GithubPropertyRow from './GithubPropertyRow.svelte'
   import { branchNameFor } from './branches'
   import { assigneeLogins, issueTypeColour } from './filter'
   import {
@@ -35,20 +28,14 @@
     applyAssignees,
     applyLabels,
     applyMilestone,
-    cloneIssue,
-    isSubscribed,
     loadMentionables,
     loadMilestones,
     openReference,
-    runCommand,
     startWorkOnIssue,
     switchToWorktree,
-    toggleSubscription,
-    transferIssue,
     worktreesForIssue
   } from './store.svelte'
   import { store } from '../../../../lib/store.svelte'
-  import type { Snippet } from 'svelte'
   import type { GithubItemDetail, GithubItemRef } from '../../../../../../shared/types'
 
   let { detail }: { detail: GithubItemDetail } = $props()
@@ -86,12 +73,6 @@
     if (next) await applyLabels(next)
   }
 
-  // Says why the toggle is off rather than leaving a dead button to guess at.
-  const subscriptionTitle = $derived.by<string | undefined>(() => {
-    if (github.capabilities.notifications) return undefined
-    return 'Your GitHub token lacks the notifications scope'
-  })
-
   /** Assign or unassign one person, applied as soon as it is clicked. */
   async function toggleAssignee(login: string): Promise<void> {
     const current = assigneeLogins(detail)
@@ -102,10 +83,17 @@
     await applyAssignees([...current, login])
   }
 
-  /** A milestone's due date as a short line, or null when it has none. */
-  function dueLabel(dueOn: string | null): string | null {
-    if (dueOn === null) return null
-    return `Due ${new Date(dueOn).toLocaleDateString()}`
+  /** A milestone's due date and description, for the hover title of its row. */
+  function milestoneTooltip(milestone: {
+    title: string
+    dueOn: string | null
+    description?: string | null
+  }): string {
+    const lines = [milestone.title]
+    if (milestone.dueOn !== null)
+      lines.push(`Due ${new Date(milestone.dueOn).toLocaleDateString()}`)
+    if (milestone.description) lines.push(milestone.description)
+    return lines.join('\n')
   }
 
   // Relationships only exist on issues, and only when the schema has them.
@@ -124,18 +112,6 @@
   // Worktrees already on one of this issue's branches, to switch to rather than
   // cut another by accident.
   const issueWorktrees = $derived(worktreesForIssue(detail.number))
-
-  let transferTo = $state('')
-
-  /** Transfer, then close the menu it was typed into if it went through. */
-  async function transfer(close: () => void): Promise<void> {
-    const destination = transferTo.trim()
-    if (destination.length === 0) return
-    const moved = await transferIssue(destination)
-    if (!moved) return
-    transferTo = ''
-    close()
-  }
 
   /** "3 of 7 done", or null when nothing hangs off this issue. */
   const subIssueProgress = $derived.by<string | null>(() => {
@@ -164,22 +140,9 @@
   let creatingMilestone = $state(false)
 </script>
 
-{#snippet actionRow(label: string, icon: Snippet, run: () => void, danger: boolean)}
-  <button
-    class="flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left transition-colors hover:bg-hover disabled:opacity-50"
-    class:text-red={danger}
-    class:text-dim={!danger}
-    disabled={github.busy}
-    onclick={run}
-  >
-    {@render icon()}
-    {label}
-  </button>
-{/snippet}
-
 {#snippet refRow(ref: GithubItemRef)}
   <button
-    class="flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left hover:bg-hover"
+    class="flex w-full min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-left hover:bg-hover"
     onclick={() => openReference('issue', ref.number)}
   >
     <GithubStateIcon item={{ kind: 'issue', state: ref.state }} size={11} />
@@ -188,22 +151,28 @@
   </button>
 {/snippet}
 
-<div class="flex flex-col gap-4 text-2xs">
-  <section class="flex flex-col gap-1.5">
-    <div class="flex items-center justify-between">
-      <h3 class="font-medium text-default">Labels</h3>
-      <button
-        class="rounded p-0.5 text-dim hover:bg-hover hover:text-default disabled:opacity-50"
-        disabled={github.busy}
-        title={editingLabels ? 'Done' : 'Edit labels'}
-        aria-label={editingLabels ? 'Apply label changes' : 'Edit labels'}
-        onclick={() => (editingLabels ? closePicker() : openPicker())}
-      >
-        <GearIcon size={12} />
-      </button>
-    </div>
+{#snippet none()}
+  <span class="px-1 text-faint">—</span>
+{/snippet}
 
-    {#if editingLabels}
+<div class="flex flex-col gap-0.5 text-2xs">
+  <GithubPropertyRow name="Labels">
+    <button
+      class="flex min-h-6 w-full min-w-0 flex-wrap items-center gap-1 rounded px-1 py-0.5 text-left hover:bg-hover disabled:opacity-50"
+      class:bg-hover={editingLabels}
+      disabled={github.busy}
+      aria-label={editingLabels ? 'Apply label changes' : 'Edit labels'}
+      onclick={() => (editingLabels ? closePicker() : openPicker())}
+    >
+      {#each detail.labels as label (label.name)}
+        <GithubLabelPill {label} />
+      {:else}
+        <span class="text-faint">—</span>
+      {/each}
+    </button>
+  </GithubPropertyRow>
+  {#if editingLabels}
+    <div class="flex flex-col gap-1.5 pb-1.5">
       <GithubLabelPicker
         selected={chosen}
         disabled={github.busy}
@@ -216,338 +185,246 @@
       >
         {github.busy ? 'Saving…' : 'Apply'}
       </button>
-    {:else if detail.labels.length > 0}
-      <div class="flex flex-wrap gap-1">
-        {#each detail.labels as label (label.name)}
-          <GithubLabelPill {label} />
-        {/each}
-      </div>
-    {:else}
-      <p class="text-dim">None yet</p>
-    {/if}
-  </section>
-
-  <section class="flex flex-col gap-1.5">
-    <div class="flex items-center justify-between">
-      <h3 class="font-medium text-default">Assignees</h3>
-      <GithubMenu label="Edit" align="right" disabled={github.busy}>
-        <FloatingScrollbar class="max-h-56">
-          <div class="flex flex-col">
-            {#each github.mentionables as actor (actor.login)}
-              <button
-                class="flex items-center gap-2 rounded px-1.5 py-1 text-left text-2xs text-default hover:bg-hover"
-                onclick={() => toggleAssignee(actor.login)}
-              >
-                <Checkbox size="sm" checked={assigneeLogins(detail).includes(actor.login)} />
-                <GithubAvatar {actor} size={14} />
-                <span class="truncate">{actor.login}</span>
-              </button>
-            {/each}
-            {#if github.mentionables.length === 0}
-              <p class="px-1.5 py-1 text-2xs text-dim">No assignable people.</p>
-            {/if}
-          </div>
-        </FloatingScrollbar>
-      </GithubMenu>
     </div>
-    {#if detail.assignees.length > 0}
-      <ul class="flex flex-col gap-1">
-        {#each detail.assignees as assignee (assignee.login)}
-          <li class="flex min-w-0 items-center gap-1.5 text-default">
-            <GithubAvatar actor={assignee} size={16} />
-            <span class="truncate">{assignee.login}</span>
-          </li>
-        {/each}
-      </ul>
-    {:else}
-      <p class="text-dim">No one</p>
-    {/if}
-  </section>
+  {/if}
+
+  <GithubPropertyRow name="Assignees">
+    <GithubMenu label="Change assignees" disabled={github.busy}>
+      {#snippet trigger()}
+        {#if detail.assignees.length === 1}
+          <GithubAvatar actor={detail.assignees[0]} size={16} />
+          <span class="truncate text-default">{detail.assignees[0].login}</span>
+        {:else if detail.assignees.length > 1}
+          <span class="flex items-center -space-x-1" title={assigneeLogins(detail).join(', ')}>
+            {#each detail.assignees as assignee (assignee.login)}
+              <GithubAvatar actor={assignee} size={16} />
+            {/each}
+          </span>
+        {:else}
+          <span class="text-faint">—</span>
+        {/if}
+      {/snippet}
+      <FloatingScrollbar class="max-h-56">
+        <div class="flex flex-col">
+          {#each github.mentionables as actor (actor.login)}
+            <button
+              class="flex items-center gap-2 rounded px-1.5 py-1 text-left text-2xs text-default hover:bg-hover"
+              onclick={() => toggleAssignee(actor.login)}
+            >
+              <Checkbox size="sm" checked={assigneeLogins(detail).includes(actor.login)} />
+              <GithubAvatar {actor} size={14} />
+              <span class="truncate">{actor.login}</span>
+            </button>
+          {/each}
+          {#if github.mentionables.length === 0}
+            <p class="px-1.5 py-1 text-2xs text-dim">No assignable people.</p>
+          {/if}
+        </div>
+      </FloatingScrollbar>
+    </GithubMenu>
+  </GithubPropertyRow>
 
   {#if detail.kind === 'issue'}
     {#each github.issueFields as field (field.id)}
       <GithubIssueFieldSection {field} optionId={fieldValueOf(field.id)} />
     {/each}
     {#if github.dateFields.length > 0}
-      <div class="grid grid-cols-2 gap-2">
-        {#each github.dateFields as field (field.id)}
-          <GithubIssueDateSection {field} date={dateValueOf(field.id)} />
-        {/each}
-      </div>
+      <GithubPropertyRow name="Dates">
+        <span class="flex min-w-0 items-center gap-0.5">
+          {#each github.dateFields as field, index (field.id)}
+            {#if index > 0}
+              <span class="shrink-0 text-faint">→</span>
+            {/if}
+            <GithubIssueDateSection {field} date={dateValueOf(field.id)} />
+          {/each}
+        </span>
+      </GithubPropertyRow>
     {/if}
   {/if}
 
   {#if github.capabilities.issueTypes && detail.kind === 'issue'}
-    <section class="flex flex-col gap-1.5">
-      <h3 class="font-medium text-default">Type</h3>
+    <GithubPropertyRow name="Type">
       {#if detail.issueType}
-        <div class="flex">
+        <span class="px-1">
           <GithubLabelPill
             label={{ name: detail.issueType.name, color: issueTypeColour(detail.issueType.color) }}
           />
-        </div>
+        </span>
       {:else}
-        <p class="text-dim">None yet</p>
+        {@render none()}
       {/if}
-    </section>
+    </GithubPropertyRow>
   {/if}
 
   {#if github.capabilities.projects}
-    <section class="flex flex-col gap-1.5">
-      <h3 class="font-medium text-default">Projects</h3>
+    <GithubPropertyRow name="Projects">
       {#if detail.projects && detail.projects.length > 0}
-        {#each detail.projects as project (project.number)}
-          <p class="truncate text-dim" title={project.title}>{project.title}</p>
-        {/each}
+        <span class="flex min-w-0 flex-col px-1">
+          {#each detail.projects as project (project.number)}
+            <span class="truncate text-default" title={project.title}>{project.title}</span>
+          {/each}
+        </span>
       {:else}
-        <p class="text-dim">None yet</p>
+        {@render none()}
       {/if}
-    </section>
+    </GithubPropertyRow>
   {/if}
 
-  <section class="flex flex-col gap-1.5">
-    <div class="flex items-center justify-between">
-      <h3 class="font-medium text-default">Milestone</h3>
-      <GithubMenu label="Edit" align="right" disabled={github.busy}>
-        {#snippet children(close)}
-          <FloatingScrollbar class="max-h-56">
-            <div class="flex flex-col">
+  <GithubPropertyRow name="Milestone">
+    <GithubMenu label="Change milestone" disabled={github.busy}>
+      {#snippet trigger()}
+        {#if detail.milestone}
+          <span class="truncate text-default" title={milestoneTooltip(detail.milestone)}>
+            {detail.milestone.title}
+          </span>
+        {:else}
+          <span class="text-faint">—</span>
+        {/if}
+      {/snippet}
+      {#snippet children(close)}
+        <FloatingScrollbar class="max-h-56">
+          <div class="flex flex-col">
+            <button
+              class="rounded px-1.5 py-1 text-left text-2xs text-dim hover:bg-hover"
+              onclick={() => {
+                close()
+                void applyMilestone(null)
+              }}
+            >
+              No milestone
+            </button>
+            {#each github.milestones as milestone (milestone.number)}
               <button
-                class="rounded px-1.5 py-1 text-left text-2xs text-dim hover:bg-hover"
+                class="flex flex-col rounded px-1.5 py-1 text-left text-2xs hover:bg-hover"
+                class:text-default={milestone.title === milestoneTitle}
+                class:text-dim={milestone.title !== milestoneTitle}
                 onclick={() => {
                   close()
-                  void applyMilestone(null)
+                  void applyMilestone(milestone.title)
                 }}
               >
-                No milestone
+                <span class="truncate">{milestone.title}</span>
+                {#if milestone.state === 'closed'}
+                  <span class="text-[9px] text-dim">closed</span>
+                {/if}
               </button>
-              {#each github.milestones as milestone (milestone.number)}
-                <button
-                  class="flex flex-col rounded px-1.5 py-1 text-left text-2xs hover:bg-hover"
-                  class:text-default={milestone.title === milestoneTitle}
-                  class:text-dim={milestone.title !== milestoneTitle}
-                  onclick={() => {
-                    close()
-                    void applyMilestone(milestone.title)
-                  }}
-                >
-                  <span class="truncate">{milestone.title}</span>
-                  {#if milestone.state === 'closed'}
-                    <span class="text-[9px] text-dim">closed</span>
-                  {/if}
-                </button>
-              {/each}
-              {#if github.milestones.length === 0}
-                <p class="px-1.5 py-1 text-2xs text-dim">This repository has no milestones.</p>
-              {/if}
-              <button
-                class="mt-1 rounded px-1.5 py-1 text-left text-2xs text-dim hover:bg-hover hover:text-default"
-                onclick={() => {
-                  close()
-                  creatingMilestone = true
-                }}
-              >
-                New milestone…
-              </button>
-            </div>
-          </FloatingScrollbar>
-        {/snippet}
-      </GithubMenu>
-    </div>
-    {#if creatingMilestone}
+            {/each}
+            {#if github.milestones.length === 0}
+              <p class="px-1.5 py-1 text-2xs text-dim">This repository has no milestones.</p>
+            {/if}
+            <button
+              class="mt-1 rounded px-1.5 py-1 text-left text-2xs text-dim hover:bg-hover hover:text-default"
+              onclick={() => {
+                close()
+                creatingMilestone = true
+              }}
+            >
+              New milestone…
+            </button>
+          </div>
+        </FloatingScrollbar>
+      {/snippet}
+    </GithubMenu>
+  </GithubPropertyRow>
+  {#if creatingMilestone}
+    <div class="pb-1.5">
       <GithubMilestoneForm onclose={() => (creatingMilestone = false)} />
-    {:else if detail.milestone}
-      <p class="truncate text-dim" title={detail.milestone.title}>{detail.milestone.title}</p>
-      {#if dueLabel(detail.milestone.dueOn)}
-        <p class="text-[9px] text-dim">{dueLabel(detail.milestone.dueOn)}</p>
-      {/if}
-      {#if detail.milestone.description}
-        <p class="line-clamp-3 text-dim" title={detail.milestone.description}>
-          {detail.milestone.description}
-        </p>
-      {/if}
-    {:else}
-      <p class="text-dim">None yet</p>
-    {/if}
-  </section>
+    </div>
+  {/if}
 
   {#if detail.kind === 'pull'}
-    <section class="flex flex-col gap-1.5">
-      <h3 class="font-medium text-default">Branch</h3>
-      <p class="truncate font-mono text-dim" title="{detail.headRefName} → {detail.baseRefName}">
+    <GithubPropertyRow name="Branch">
+      <span
+        class="truncate px-1 font-mono text-default"
+        title="{detail.headRefName} → {detail.baseRefName}"
+      >
         {detail.headRefName} → {detail.baseRefName}
-      </p>
-    </section>
+      </span>
+    </GithubPropertyRow>
   {/if}
 
   {#if detail.kind === 'issue'}
-    <section class="flex flex-col gap-1.5">
-      <h3 class="font-medium text-default">Development</h3>
-      {#if linkedBranches.length > 0}
+    <GithubPropertyRow name="Branch">
+      <div class="flex min-w-0 flex-1 flex-col gap-0.5 py-0.5">
         {#each linkedBranches as branch (branch)}
-          <p class="truncate font-mono text-dim" title={branch}>{branch}</p>
+          <span class="truncate px-1 font-mono text-default" title={branch}>{branch}</span>
         {/each}
-      {/if}
-      {#each issueWorktrees as worktree (worktree.id)}
-        {@const current = worktree.id === store.selectedWorktreeId}
-        <div class="flex items-center gap-1.5">
-          <GitBranchIcon size={11} class="shrink-0 text-dim" />
-          <span class="min-w-0 flex-1 truncate font-mono text-default" title={worktree.path}>
-            {worktree.name}
-          </span>
-          {#if current}
-            <span class="shrink-0 text-2xs text-dim">current</span>
+        {#each issueWorktrees as worktree (worktree.id)}
+          {@const current = worktree.id === store.selectedWorktreeId}
+          <div class="flex min-w-0 items-center gap-1.5 px-1">
+            <GitBranchIcon size={11} class="shrink-0 text-dim" />
+            <span class="min-w-0 flex-1 truncate font-mono text-default" title={worktree.path}>
+              {worktree.name}
+            </span>
+            {#if current}
+              <span class="shrink-0 text-dim">current</span>
+            {:else}
+              <button
+                class="shrink-0 rounded px-1 text-dim hover:bg-hover hover:text-default"
+                title="Switch to the worktree {worktree.name}"
+                onclick={() => switchToWorktree(worktree)}
+              >
+                Switch
+              </button>
+            {/if}
+          </div>
+        {/each}
+        <button
+          class="flex items-center gap-1.5 self-start rounded px-1 py-0.5 text-dim hover:bg-hover hover:text-default disabled:opacity-50"
+          disabled={github.busy}
+          title="Create a worktree on {branchNameFor(
+            detail.number,
+            detail.title
+          )}, optionally with an agent briefed on the issue"
+          onclick={startWorkOnIssue}
+        >
+          {#if github.workProgress}
+            <WaveSpinner count={3} />
           {:else}
-            <button
-              class="shrink-0 rounded-md border border-line px-1.5 py-0.5 text-2xs text-dim transition-colors hover:border-line-strong hover:text-default"
-              title="Switch to the worktree {worktree.name}"
-              onclick={() => switchToWorktree(worktree)}
-            >
-              Switch
-            </button>
+            <GitBranchIcon size={11} />
           {/if}
-        </div>
-      {/each}
-      <button
-        class="flex items-center gap-1.5 self-start rounded-md border border-line px-1.5 py-0.5 text-2xs text-dim transition-colors hover:border-line-strong hover:text-default disabled:opacity-50"
-        disabled={github.busy}
-        title="Create a worktree on {branchNameFor(
-          detail.number,
-          detail.title
-        )}, optionally with an agent briefed on the issue"
-        onclick={startWorkOnIssue}
-      >
-        {#if github.workProgress}
-          <WaveSpinner count={3} />
-        {:else}
-          <GitBranchIcon size={11} />
-        {/if}
-        {#if github.workProgress === 'worktree'}
-          Creating worktree…
-        {:else if github.workProgress === 'agent'}
-          Starting agent…
-        {:else}
-          Work on this
-        {/if}
-      </button>
-    </section>
+          {#if github.workProgress === 'worktree'}
+            Creating worktree…
+          {:else if github.workProgress === 'agent'}
+            Starting agent…
+          {:else}
+            Work on this
+          {/if}
+        </button>
+      </div>
+    </GithubPropertyRow>
   {/if}
 
   {#if showsRelationships}
-    <section class="flex flex-col gap-1.5">
-      <h3 class="font-medium text-default">Relationships</h3>
-      {#if detail.parent}
-        <p class="text-dim">Parent</p>
-        {@render refRow(detail.parent)}
+    <GithubPropertyRow name="Linked">
+      {#if detail.parent || subIssueProgress}
+        <div class="flex min-w-0 flex-1 flex-col py-0.5">
+          {#if detail.parent}
+            <span class="px-1 text-dim">Parent</span>
+            {@render refRow(detail.parent)}
+          {/if}
+          {#if subIssueProgress}
+            <span class="px-1 text-dim">Sub-issues · {subIssueProgress}</span>
+            {#each subIssues as child (child.number)}
+              {@render refRow(child)}
+            {/each}
+          {/if}
+        </div>
+      {:else}
+        {@render none()}
       {/if}
-      {#if subIssueProgress}
-        <p class="text-dim">Sub-issues · {subIssueProgress}</p>
-        {#each subIssues as child (child.number)}
-          {@render refRow(child)}
-        {/each}
-      {/if}
-      {#if !detail.parent && !subIssueProgress}
-        <p class="text-dim">None yet</p>
-      {/if}
-    </section>
+    </GithubPropertyRow>
   {/if}
 
-  <section class="flex flex-col gap-1.5">
-    <h3 class="font-medium text-default">Notifications</h3>
-    <button
-      class="flex items-center gap-1.5 self-start rounded-md border border-line px-1.5 py-0.5 text-2xs text-dim transition-colors hover:border-line-strong hover:text-default disabled:opacity-50"
-      disabled={github.busy || !github.capabilities.notifications}
-      title={subscriptionTitle}
-      onclick={toggleSubscription}
-    >
-      {#if isSubscribed(detail)}
-        <BellSlashIcon size={11} />
-        Unsubscribe
-      {:else}
-        <BellIcon size={11} />
-        Subscribe
-      {/if}
-    </button>
-    <p class="text-dim">
-      {#if isSubscribed(detail)}
-        You are notified about this thread.
-      {:else}
-        You are not notified about this thread.
-      {/if}
-    </p>
-    {#if !github.capabilities.notifications}
-      <!-- The state reads fine without the scope; only changing it needs one. -->
-      <p class="text-dim">Changing it needs the notifications scope your token lacks:</p>
-      <p class="select-text font-mono text-default">gh auth refresh -s notifications</p>
-    {/if}
-  </section>
-
-  <section class="flex flex-col gap-1.5">
-    <h3 class="font-medium text-default">Participants</h3>
+  <GithubPropertyRow name="People">
     {#if github.participants.length > 0}
-      <div class="flex flex-wrap gap-1">
+      <span class="flex flex-wrap gap-1 px-1">
         {#each github.participants as actor (actor.login)}
-          <GithubAvatar {actor} size={18} />
+          <span title={actor.login}><GithubAvatar {actor} size={16} /></span>
         {/each}
-      </div>
+      </span>
     {:else}
-      <p class="text-dim">No one yet</p>
+      {@render none()}
     {/if}
-  </section>
-
-  <!--
-    The last section, kept apart from the rest because these do not change what
-    the item says, they change what it is. Locking, transferring and deleting
-    each name what is about to happen before they run.
-  -->
-  <section class="flex flex-col gap-0.5 border-t border-line pt-3">
-    {#if detail.locked}
-      {@render actionRow(
-        'Unlock conversation',
-        lockOpenIcon,
-        () => void runCommand('unlock'),
-        false
-      )}
-    {:else}
-      {@render actionRow('Lock conversation', lockIcon, () => void runCommand('lock'), false)}
-    {/if}
-
-    {#if detail.kind === 'issue'}
-      {#if detail.isPinned}
-        {@render actionRow('Unpin issue', unpinIcon, () => void runCommand('unpin'), false)}
-      {:else}
-        {@render actionRow('Pin issue', pinIcon, () => void runCommand('pin'), false)}
-      {/if}
-
-      {@render actionRow('Clone issue', copyIcon, cloneIssue, false)}
-
-      <GithubMenu label="Transfer issue" icon={transferIcon} align="right" disabled={github.busy}>
-        {#snippet children(close)}
-          <input
-            class="mb-1 w-full rounded-md border border-line bg-input px-2 py-1 text-xs text-default outline-none placeholder:text-dim focus:border-line-strong"
-            placeholder="owner/repo"
-            bind:value={transferTo}
-            onkeydown={(event) => event.key === 'Enter' && transfer(close)}
-          />
-          <button
-            class="w-full rounded-md bg-action px-2 py-0.5 text-2xs text-action-fg hover:opacity-90 disabled:opacity-50"
-            disabled={github.busy || transferTo.trim().length === 0}
-            onclick={() => transfer(close)}
-          >
-            Transfer
-          </button>
-        {/snippet}
-      </GithubMenu>
-
-      {@render actionRow('Delete issue', trashIcon, () => void runCommand('delete'), true)}
-    {/if}
-  </section>
+  </GithubPropertyRow>
 </div>
-
-{#snippet lockIcon()}<LockIcon size={11} />{/snippet}
-{#snippet lockOpenIcon()}<LockOpenIcon size={11} />{/snippet}
-{#snippet pinIcon()}<PushPinIcon size={11} />{/snippet}
-{#snippet unpinIcon()}<PushPinSlashIcon size={11} />{/snippet}
-{#snippet copyIcon()}<CopyIcon size={11} />{/snippet}
-{#snippet transferIcon()}<ArrowsLeftRightIcon size={11} />{/snippet}
-{#snippet trashIcon()}<TrashIcon size={11} />{/snippet}

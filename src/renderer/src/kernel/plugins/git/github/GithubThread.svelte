@@ -11,6 +11,7 @@
   import GithubEventIcon from './GithubEventIcon.svelte'
   import GithubTimelineRow from './GithubTimelineRow.svelte'
   import GithubSidebar from './GithubSidebar.svelte'
+  import GithubThreadMenu from './GithubThreadMenu.svelte'
   import GithubMentionBox from './GithubMentionBox.svelte'
   import GithubPrFiles from './GithubPrFiles.svelte'
   import GithubPrConflicts from './GithubPrConflicts.svelte'
@@ -46,11 +47,6 @@
 
   let draft = $state('')
   let width = $state(0)
-  let composerFocused = $state(false)
-
-  // Stays open while there is something in it, so clicking away to re-read the
-  // thread does not fold a half-written comment out of sight.
-  const composerOpen = $derived(composerFocused || draft.trim().length > 0)
 
   const detail = $derived(github.detail)
   const wide = $derived(width > 0 && width >= SIDEBAR_PX)
@@ -156,6 +152,7 @@
           />
         {/each}
 
+        <GithubThreadMenu {detail} />
         <RowAction
           icon={ArrowSquareOutIcon}
           title="Open on GitHub"
@@ -253,31 +250,25 @@
         </div>
       </FloatingScrollbar>
 
-      <!-- Collapsed to a line until it is being used: an empty comment box was
-         taking a fifth of the pane away from the thread it belongs to. -->
       <div class="border-t border-line px-3 py-2">
         <div class="mx-auto w-full" style:max-width="{READING_PX}px">
           <GithubMentionBox
             bind:value={draft}
-            rows={composerOpen ? 5 : 1}
-            chrome={composerOpen}
+            rows={5}
+            chrome={true}
             disabled={github.busy}
             placeholder="Comment on #{detail.number} — @ to mention, ⌘/Ctrl+Enter to send"
-            onfocus={() => (composerFocused = true)}
-            onblur={() => (composerFocused = false)}
             onsubmit={submitComment}
           />
-          {#if composerOpen}
-            <div class="mt-2 flex justify-end">
-              <button
-                class="rounded-md bg-action px-3 py-1 text-2xs text-action-fg hover:opacity-90 disabled:opacity-50"
-                disabled={github.busy || draft.trim().length === 0}
-                onclick={submitComment}
-              >
-                {github.busy ? 'Sending…' : 'Comment'}
-              </button>
-            </div>
-          {/if}
+          <div class="mt-2 flex justify-end">
+            <button
+              class="rounded-md bg-action px-3 py-1 text-2xs text-action-fg hover:opacity-90 disabled:opacity-50"
+              disabled={github.busy || draft.trim().length === 0}
+              onclick={submitComment}
+            >
+              {github.busy ? 'Sending…' : 'Comment'}
+            </button>
+          </div>
         </div>
       </div>
     {/if}

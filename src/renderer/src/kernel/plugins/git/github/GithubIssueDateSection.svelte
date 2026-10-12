@@ -1,8 +1,8 @@
 <script lang="ts">
-  // One of the organisation's date issue fields in the thread's sidebar, Start
-  // date or Target date say: a date picker, and a way to clear it. The day is
-  // written on Enter or when the picker loses focus, not on every change: typing
-  // a date changes it once per part, and the first would already be sent.
+  // One of the organisation's date issue fields, Start date or Target date say,
+  // as a short day on the sidebar's Dates row. Clicking it opens the browser's
+  // date picker on a date input kept invisible under it; picking a day writes
+  // it, and the cross beside a set day clears it.
   import XIcon from 'phosphor-svelte/lib/XIcon'
   import { applyIssueDate, github } from './store.svelte'
   import type { GithubIssueDateField } from '../../../../../../shared/types'
@@ -16,13 +16,24 @@
     date: string | null
   } = $props()
 
+  let picker = $state<HTMLInputElement | null>(null)
+
   /** The picker's value: the day, or empty for none. */
   const pickerValue = $derived.by(() => {
     if (date === null) return ''
     return date
   })
 
-  /** Writes the picker's day, or clears the field when the picker is emptied. */
+  /** The day as the row shows it: "Oct 20", with the year only when it is not this one. */
+  const shown = $derived.by<string | null>(() => {
+    if (date === null) return null
+    const day = new Date(`${date}T00:00:00`)
+    const options: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' }
+    if (day.getFullYear() !== new Date().getFullYear()) options.year = 'numeric'
+    return day.toLocaleDateString(undefined, options)
+  })
+
+  /** Writes the picked day, or clears the field when the picker is emptied. */
   function commit(value: string): void {
     let next: string | null = value
     if (value === '') next = null
@@ -30,48 +41,51 @@
     void applyIssueDate(field.id, next)
   }
 
-  /** Opens the browser's date picker; its own calendar button is hidden to save the room. */
-  function openPicker(event: MouseEvent & { currentTarget: HTMLInputElement }): void {
+  /** Opens the browser's date picker under the day. */
+  function openPicker(): void {
+    if (!picker) return
     try {
-      event.currentTarget.showPicker()
+      picker.showPicker()
     } catch {
-      // Not allowed without a user gesture, or already open: typing still works.
+      // Already open, or refused without a user gesture: nothing to do.
     }
-  }
-
-  function onKey(event: KeyboardEvent & { currentTarget: HTMLInputElement }): void {
-    if (event.key !== 'Enter') return
-    event.preventDefault()
-    commit(event.currentTarget.value)
   }
 </script>
 
-<!-- Half a row: the sidebar puts the date fields side by side, so the name is a
-     small label, the browser's calendar button gives way to a click anywhere on
-     the input, and the clear button takes its place. -->
-<section class="flex min-w-0 flex-col gap-1">
-  <h3 class="truncate text-2xs text-dim">{field.name}</h3>
-  <div class="relative flex min-w-0">
-    <input
-      type="date"
-      class="min-w-0 flex-1 cursor-pointer rounded-md border border-line bg-input px-2 py-1 text-xs text-default outline-none focus:border-line-strong disabled:opacity-50 [&::-webkit-calendar-picker-indicator]:hidden"
-      class:pr-6={date !== null}
-      aria-label={field.name}
-      value={pickerValue}
-      onclick={openPicker}
-      onkeydown={onKey}
-      onblur={(event) => commit(event.currentTarget.value)}
-    />
-    {#if date !== null}
-      <button
-        class="absolute right-1 top-1/2 -translate-y-1/2 cursor-pointer rounded p-0.5 text-dim hover:bg-hover hover:text-default disabled:opacity-50"
-        title="Clear {field.name.toLowerCase()}"
-        aria-label="Clear {field.name.toLowerCase()}"
-        disabled={github.busy}
-        onclick={() => void applyIssueDate(field.id, null)}
-      >
-        <XIcon size={10} />
-      </button>
+<span class="group/date relative inline-flex min-w-0 items-center">
+  <button
+    class="truncate rounded px-1 py-0.5 hover:bg-hover disabled:opacity-50"
+    class:text-default={shown !== null}
+    class:text-faint={shown === null}
+    title={field.name}
+    aria-label="{field.name}: {shown === null ? 'not set' : shown}"
+    disabled={github.busy}
+    onclick={openPicker}
+  >
+    {#if shown === null}
+      {field.name}
+    {:else}
+      {shown}
     {/if}
-  </div>
-</section>
+  </button>
+  <input
+    bind:this={picker}
+    type="date"
+    class="pointer-events-none absolute inset-0 opacity-0"
+    tabindex="-1"
+    aria-hidden="true"
+    value={pickerValue}
+    onchange={(event) => commit(event.currentTarget.value)}
+  />
+  {#if date !== null}
+    <button
+      class="hidden rounded p-0.5 text-dim hover:bg-hover hover:text-default group-hover/date:block disabled:opacity-50"
+      title="Clear {field.name.toLowerCase()}"
+      aria-label="Clear {field.name.toLowerCase()}"
+      disabled={github.busy}
+      onclick={() => void applyIssueDate(field.id, null)}
+    >
+      <XIcon size={9} />
+    </button>
+  {/if}
+</span>

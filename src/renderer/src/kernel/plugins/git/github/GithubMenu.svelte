@@ -14,6 +14,7 @@
     count = 0,
     disabled = false,
     align = 'left',
+    trigger,
     children
   }: {
     label: string
@@ -22,6 +23,12 @@
     count?: number
     disabled?: boolean
     align?: 'left' | 'right'
+    /**
+     * Drawn as the whole trigger instead of the label and caret, for a menu
+     * opened by clicking the value it changes. The label is then its name for
+     * assistive technology.
+     */
+    trigger?: Snippet
     children: Snippet<[() => void]>
   } = $props()
 
@@ -99,25 +106,39 @@
   })
 </script>
 
-<div class="relative" bind:this={root}>
-  <button
-    class="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-2xs hover:bg-hover disabled:opacity-50"
-    class:text-default={count > 0 || open}
-    class:text-dim={count === 0 && !open}
-    {disabled}
-    aria-expanded={open}
-    aria-haspopup="menu"
-    onclick={toggle}
-  >
-    {#if icon}
-      {@render icon()}
-    {/if}
-    {label}
-    {#if count > 0}
-      <span class="rounded-full bg-action px-1 text-[9px] text-action-fg">{count}</span>
-    {/if}
-    <CaretDownIcon size={9} />
-  </button>
+<div class="relative min-w-0" bind:this={root}>
+  {#if trigger}
+    <button
+      class="flex w-full min-w-0 items-center gap-1 rounded px-1 py-0.5 text-left hover:bg-hover disabled:opacity-50"
+      class:bg-hover={open}
+      {disabled}
+      aria-label={label}
+      aria-expanded={open}
+      aria-haspopup="menu"
+      onclick={toggle}
+    >
+      {@render trigger()}
+    </button>
+  {:else}
+    <button
+      class="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-2xs hover:bg-hover disabled:opacity-50"
+      class:text-default={count > 0 || open}
+      class:text-dim={count === 0 && !open}
+      {disabled}
+      aria-expanded={open}
+      aria-haspopup="menu"
+      onclick={toggle}
+    >
+      {#if icon}
+        {@render icon()}
+      {/if}
+      {label}
+      {#if count > 0}
+        <span class="rounded-full bg-action px-1 text-[9px] text-action-fg">{count}</span>
+      {/if}
+      <CaretDownIcon size={9} />
+    </button>
+  {/if}
 
   {#if open}
     <div

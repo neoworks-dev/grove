@@ -142,7 +142,7 @@
       <!-- svelte-ignore a11y_autofocus -->
       <textarea
         bind:this={input}
-        class="w-full resize-y rounded border border-line bg-input px-2 py-1 text-2xs text-default outline-none"
+        class="w-full resize-y rounded-md border border-line bg-input px-2 py-1 text-xs text-default outline-none"
         rows="3"
         placeholder={thread
           ? 'Reply…'

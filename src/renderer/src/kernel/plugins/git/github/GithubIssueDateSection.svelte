@@ -30,6 +30,15 @@
     void applyIssueDate(field.id, next)
   }
 
+  /** Opens the browser's date picker; its own calendar button is hidden to save the room. */
+  function openPicker(event: MouseEvent & { currentTarget: HTMLInputElement }): void {
+    try {
+      event.currentTarget.showPicker()
+    } catch {
+      // Not allowed without a user gesture, or already open: typing still works.
+    }
+  }
+
   function onKey(event: KeyboardEvent & { currentTarget: HTMLInputElement }): void {
     if (event.key !== 'Enter') return
     event.preventDefault()
@@ -37,20 +46,25 @@
   }
 </script>
 
-<section class="flex flex-col gap-1.5">
-  <h3 class="font-medium text-default">{field.name}</h3>
-  <div class="flex items-center gap-1">
+<!-- Half a row: the sidebar puts the date fields side by side, so the name is a
+     small label, the browser's calendar button gives way to a click anywhere on
+     the input, and the clear button takes its place. -->
+<section class="flex min-w-0 flex-col gap-1">
+  <h3 class="truncate text-2xs text-dim">{field.name}</h3>
+  <div class="relative flex min-w-0">
     <input
       type="date"
-      class="min-w-0 flex-1 rounded-md border border-line bg-input px-1.5 py-0.5 text-2xs text-default outline-none focus:border-line-strong disabled:opacity-50"
+      class="min-w-0 flex-1 cursor-pointer rounded-md border border-line bg-input px-2 py-1 text-xs text-default outline-none focus:border-line-strong disabled:opacity-50 [&::-webkit-calendar-picker-indicator]:hidden"
+      class:pr-6={date !== null}
       aria-label={field.name}
       value={pickerValue}
+      onclick={openPicker}
       onkeydown={onKey}
       onblur={(event) => commit(event.currentTarget.value)}
     />
     {#if date !== null}
       <button
-        class="cursor-pointer rounded p-0.5 text-dim hover:bg-hover hover:text-default disabled:opacity-50"
+        class="absolute right-1 top-1/2 -translate-y-1/2 cursor-pointer rounded p-0.5 text-dim hover:bg-hover hover:text-default disabled:opacity-50"
         title="Clear {field.name.toLowerCase()}"
         aria-label="Clear {field.name.toLowerCase()}"
         disabled={github.busy}

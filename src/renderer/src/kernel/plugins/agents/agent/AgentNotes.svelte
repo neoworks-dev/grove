@@ -171,7 +171,7 @@
           />
           {#if editingId === note.id}
             <input
-              class="min-w-0 flex-1 rounded border border-line bg-input px-1 text-default outline-none"
+              class="min-w-0 flex-1 rounded-md border border-line bg-input px-1 text-default outline-none"
               bind:value={editDraft}
               onkeydown={onEditKey}
               onblur={finishEditing}
@@ -244,7 +244,7 @@
   {#if adding}
     <div class="px-1 pb-1">
       <input
-        class="w-full rounded border border-line bg-input px-1.5 py-0.5 text-default outline-none placeholder:text-dim focus:border-line-strong"
+        class="w-full rounded-md border border-line bg-input px-2 py-1 text-default outline-none placeholder:text-dim focus:border-line-strong"
         placeholder="Add a note — Enter to pin, Esc to close"
         bind:value={draft}
         onkeydown={onDraftKey}

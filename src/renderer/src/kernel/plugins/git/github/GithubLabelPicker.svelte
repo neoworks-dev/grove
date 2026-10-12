@@ -50,7 +50,7 @@
 <div class="flex min-h-0 flex-col gap-2">
   {#if github.labels.length > 8}
     <input
-      class="w-full rounded-md border border-line bg-input px-2 py-1 text-2xs text-default outline-none placeholder:text-dim focus:border-line-strong"
+      class="w-full rounded-md border border-line bg-input px-2 py-1 text-xs text-default outline-none placeholder:text-dim focus:border-line-strong"
       placeholder="Filter labels"
       bind:value={query}
       {disabled}

@@ -74,7 +74,7 @@
       bind:this={firstField}
       bind:value={condition}
       {onkeydown}
-      class="min-w-0 flex-1 rounded border border-line bg-input px-1.5 py-0.5 font-mono text-default outline-none focus:border-line-strong"
+      class="min-w-0 flex-1 rounded-md border border-line bg-input px-2 py-1 font-mono text-default outline-none focus:border-line-strong"
       placeholder="Stop when this is true, e.g. count > 3"
       spellcheck="false"
     />
@@ -84,7 +84,7 @@
     <input
       bind:value={hitCondition}
       {onkeydown}
-      class="min-w-0 flex-1 rounded border border-line bg-input px-1.5 py-0.5 font-mono text-default outline-none focus:border-line-strong"
+      class="min-w-0 flex-1 rounded-md border border-line bg-input px-2 py-1 font-mono text-default outline-none focus:border-line-strong"
       placeholder="Stop on this hit, e.g. 5 or >= 10"
       spellcheck="false"
     />
@@ -94,7 +94,7 @@
     <input
       bind:value={logMessage}
       {onkeydown}
-      class="min-w-0 flex-1 rounded border border-line bg-input px-1.5 py-0.5 font-mono text-default outline-none focus:border-line-strong"
+      class="min-w-0 flex-1 rounded-md border border-line bg-input px-2 py-1 font-mono text-default outline-none focus:border-line-strong"
       placeholder="Log instead of stopping: x is {'{x}'}"
       spellcheck="false"
     />

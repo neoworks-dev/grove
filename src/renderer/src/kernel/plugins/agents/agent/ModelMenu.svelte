@@ -278,7 +278,7 @@
        runtime enumerates every id it accepts, so typing one has to work. -->
   <div class="border-b border-line p-1">
     <input
-      class="w-full rounded border border-line bg-surface px-1.5 py-1 text-2xs text-default"
+      class="w-full rounded-md border border-line bg-input px-2 py-1 text-xs text-default"
       placeholder={searchPlaceholder}
       bind:value={query}
       onkeydown={(event) => {

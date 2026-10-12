@@ -77,7 +77,7 @@
   }
 </script>
 
-<div class="flex flex-col gap-1.5 px-2 pb-2">
+<div class="flex flex-col gap-1.5 p-2">
   <input
     class="w-full rounded-md border border-line bg-input px-2 py-1 text-xs text-default outline-none placeholder:text-dim focus:border-line-strong"
     placeholder="Message (Ctrl+Enter to commit)"

@@ -56,7 +56,7 @@
 
     {#if tab === 'logs'}
       <select
-        class="ml-2 rounded border border-line bg-input px-1.5 py-0.5 text-2xs"
+        class="ml-2 rounded-md border border-line bg-input px-2 py-1 text-xs"
         bind:value={sourceFilter}
       >
         <option value="all">all sources</option>

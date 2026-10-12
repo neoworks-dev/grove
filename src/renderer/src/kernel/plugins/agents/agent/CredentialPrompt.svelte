@@ -63,7 +63,7 @@
 
     {#if storable}
       <input
-        class="mt-2 w-full rounded border border-line bg-surface px-1.5 py-1 font-mono text-2xs text-default"
+        class="mt-2 w-full rounded-md border border-line bg-input px-2 py-1 font-mono text-xs text-default"
         type="password"
         placeholder={name}
         autocomplete="off"

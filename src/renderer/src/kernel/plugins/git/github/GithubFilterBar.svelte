@@ -59,7 +59,7 @@
 
 <div class="flex shrink-0 items-center gap-1 overflow-hidden border-b border-line px-2 py-1">
   <select
-    class="shrink-0 rounded-md border border-line bg-input px-1 py-0.5 text-2xs text-dim outline-none"
+    class="shrink-0 rounded-md border border-line bg-input px-1 py-1 text-xs text-dim outline-none"
     value={github.stateFilter}
     onchange={setStateFilter}
   >
@@ -90,7 +90,7 @@
 
   <GithubMenu label="Labels" count={labels.length}>
     <input
-      class="mb-1 w-full rounded-md border border-line bg-input px-2 py-0.5 text-2xs text-default outline-none placeholder:text-dim focus:border-line-strong"
+      class="mb-1 w-full rounded-md border border-line bg-input px-2 py-1 text-xs text-default outline-none placeholder:text-dim focus:border-line-strong"
       placeholder="Filter labels"
       bind:value={labelQuery}
     />

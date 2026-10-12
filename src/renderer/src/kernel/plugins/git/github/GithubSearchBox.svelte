@@ -182,7 +182,7 @@
   <input
     bind:this={field}
     bind:value
-    class="w-full rounded-md border border-line bg-input px-2 py-0.5 font-mono text-2xs text-default outline-none placeholder:font-sans placeholder:text-xs placeholder:text-dim focus:border-line-strong"
+    class="w-full rounded-md border border-line bg-input px-2 py-1 font-mono text-xs text-default outline-none placeholder:font-sans placeholder:text-xs placeholder:text-dim focus:border-line-strong"
     {placeholder}
     {title}
     spellcheck="false"

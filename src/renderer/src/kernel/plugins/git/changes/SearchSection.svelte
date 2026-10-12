@@ -92,7 +92,7 @@
   <form class="px-2 pt-1 pb-2" onsubmit={search}>
     <input
       bind:value={query}
-      class="w-full rounded-sm border border-line bg-input px-1.5 py-0.5 text-xs text-default outline-none placeholder:text-faint focus:border-line-strong"
+      class="w-full rounded-md border border-line bg-input px-2 py-1 text-xs text-default outline-none placeholder:text-faint focus:border-line-strong"
       placeholder="Message, @:author, #:sha, ?:file, ~:change"
       title={SEARCH_HELP}
       spellcheck="false"

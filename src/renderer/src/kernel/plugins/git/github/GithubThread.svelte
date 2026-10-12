@@ -247,7 +247,7 @@
             {/each}
           </div>
 
-          <aside class="shrink-0" class:w-52={wide}>
+          <aside class="shrink-0" class:w-64={wide}>
             <GithubSidebar {detail} />
           </aside>
         </div>

@@ -86,7 +86,8 @@ const neoworksDark: ThemePalette = {
   surface: '#1c1c1e',
   surfaceRaised: '#1c1c1f',
   surfaceHover: '#1f1f23',
-  surfaceInput: '#0e0e10',
+  // Inputs sit a step lighter than the pane, at the elevated surface.
+  surfaceInput: '#262628',
   border: '#29292b',
   borderStrong: '#3f3f46',
   borderFaint: 'rgba(255, 255, 255, 0.06)',

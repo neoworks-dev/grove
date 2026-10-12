@@ -179,7 +179,7 @@
   {#if submitting}
     <div class="border-b border-line px-4 py-2">
       <textarea
-        class="w-full resize-y rounded border border-line bg-input px-2 py-1 text-2xs text-default outline-none"
+        class="w-full resize-y rounded-md border border-line bg-input px-2 py-1 text-xs text-default outline-none"
         rows="3"
         placeholder="Anything to say about the pull request as a whole (optional)"
         bind:value={summary}

@@ -96,7 +96,7 @@
       <div class="w-72 rounded-md border border-line bg-elevated/95 p-1.5 shadow-lg backdrop-blur">
         <!-- svelte-ignore a11y_autofocus -->
         <textarea
-          class="w-full resize-y rounded border border-line bg-input px-1.5 py-1 text-2xs text-default outline-none"
+          class="w-full resize-y rounded-md border border-line bg-input px-2 py-1 text-xs text-default outline-none"
           rows="3"
           placeholder="What should the agent do differently?"
           bind:value={commentDraft}

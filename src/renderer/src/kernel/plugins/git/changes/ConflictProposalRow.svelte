@@ -98,7 +98,7 @@
 
   {#if editing}
     <textarea
-      class="min-h-20 w-full rounded-sm border border-line bg-input p-1 font-mono text-2xs text-default outline-none focus:border-line-strong"
+      class="min-h-20 w-full rounded-md border border-line bg-input p-1 font-mono text-xs text-default outline-none focus:border-line-strong"
       spellcheck="false"
       aria-label="Resolution"
       bind:value={draft}

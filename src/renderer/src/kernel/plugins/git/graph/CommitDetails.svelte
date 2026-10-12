@@ -154,7 +154,7 @@
             id="graph-branch-name"
             bind:this={nameInput}
             bind:value={branchName}
-            class="rounded-sm border border-line bg-input px-1.5 py-0.5 text-xs text-default outline-none focus:border-line-strong"
+            class="rounded-md border border-line bg-input px-2 py-1 text-xs text-default outline-none focus:border-line-strong"
             placeholder="branch-name"
             spellcheck="false"
             onkeydown={(event) => event.key === 'Escape' && (branchFormOpen = false)}

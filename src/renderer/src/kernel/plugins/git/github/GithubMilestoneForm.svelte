@@ -44,14 +44,14 @@
      is not itself something that takes keys. -->
 <div class="flex flex-col gap-1.5" aria-label="New milestone">
   <input
-    class="w-full rounded-md border border-line bg-input px-1.5 py-1 text-2xs text-default outline-none placeholder:text-dim focus:border-line-strong"
+    class="w-full rounded-md border border-line bg-input px-2 py-1 text-xs text-default outline-none placeholder:text-dim focus:border-line-strong"
     placeholder="Title"
     bind:value={title}
     onkeydown={onKey}
     use:focusOnMount
   />
   <textarea
-    class="w-full resize-none rounded-md border border-line bg-input px-1.5 py-1 text-2xs text-default outline-none placeholder:text-dim focus:border-line-strong"
+    class="w-full resize-none rounded-md border border-line bg-input px-2 py-1 text-xs text-default outline-none placeholder:text-dim focus:border-line-strong"
     rows="3"
     placeholder="Description (optional)"
     bind:value={description}
@@ -61,7 +61,7 @@
     Due
     <input
       type="date"
-      class="min-w-0 flex-1 rounded-md border border-line bg-input px-1.5 py-0.5 text-2xs text-default outline-none focus:border-line-strong"
+      class="min-w-0 flex-1 rounded-md border border-line bg-input px-2 py-1 text-xs text-default outline-none focus:border-line-strong"
       bind:value={dueOn}
       onkeydown={onKey}
     />

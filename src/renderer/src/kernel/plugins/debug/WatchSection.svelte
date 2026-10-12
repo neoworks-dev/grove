@@ -119,7 +119,7 @@
   {/key}
   {#if adding}
     <input
-      class="mx-2 my-0.5 w-[calc(100%-1rem)] rounded border border-line bg-input px-2 py-0.5 font-mono text-xs text-default outline-none focus:border-line-strong"
+      class="mx-2 my-0.5 w-[calc(100%-1rem)] rounded-md border border-line bg-input px-2 py-1 font-mono text-xs text-default outline-none focus:border-line-strong"
       placeholder="Expression to watch"
       bind:value={draft}
       onkeydown={onKeydown}

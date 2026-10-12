@@ -110,7 +110,7 @@
 
     {#if naming}
       <input
-        class="w-32 shrink-0 rounded-md border border-line bg-input px-1.5 py-0.5 text-2xs text-default outline-none placeholder:text-dim focus:border-line-strong"
+        class="w-32 shrink-0 rounded-md border border-line bg-input px-2 py-1 text-xs text-default outline-none placeholder:text-dim focus:border-line-strong"
         placeholder="Name this view"
         bind:value={name}
         onkeydown={onNameKey}
@@ -133,7 +133,7 @@
        where Linear keeps its display options. -->
   {#if github.calendarShown && github.calendarField && github.calendarRange?.end === null}
     <select
-      class="shrink-0 rounded-md border border-line bg-input px-1 py-0.5 text-2xs text-dim outline-none"
+      class="shrink-0 rounded-md border border-line bg-input px-1 py-1 text-xs text-dim outline-none"
       title="Place the issues by"
       value={github.calendarField.id}
       onchange={(event) => (github.calendarFieldId = event.currentTarget.value)}
@@ -144,7 +144,7 @@
     </select>
   {:else if github.boardShown && github.boardField}
     <select
-      class="shrink-0 rounded-md border border-line bg-input px-1 py-0.5 text-2xs text-dim outline-none"
+      class="shrink-0 rounded-md border border-line bg-input px-1 py-1 text-xs text-dim outline-none"
       title="Group the board by"
       value={github.boardField.id}
       onchange={(event) => (github.boardFieldId = event.currentTarget.value)}
@@ -155,7 +155,7 @@
     </select>
   {:else if github.view === 'list' && github.issueFields.length > 0}
     <select
-      class="shrink-0 rounded-md border border-line bg-input px-1 py-0.5 text-2xs text-dim outline-none"
+      class="shrink-0 rounded-md border border-line bg-input px-1 py-1 text-xs text-dim outline-none"
       title="Group the list by"
       value={listFieldValue()}
       onchange={(event) => setListField(event.currentTarget.value)}

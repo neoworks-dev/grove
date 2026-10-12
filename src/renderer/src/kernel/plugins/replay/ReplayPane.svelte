@@ -270,7 +270,7 @@
     <span class="text-2xs font-semibold tracking-caps text-dim uppercase">Replay</span>
     {#if sessions.length > 0}
       <select
-        class="min-w-0 flex-1 truncate rounded-sm border border-line bg-input px-1 py-0.5 text-2xs text-default outline-none"
+        class="min-w-0 flex-1 truncate rounded-md border border-line bg-input px-1 py-1 text-xs text-default outline-none"
         aria-label="Session"
         value={sessionId}
         onchange={pickSession}

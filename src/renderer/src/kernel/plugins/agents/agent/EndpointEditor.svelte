@@ -97,7 +97,7 @@
     <label class="mt-3 block text-2xs text-dim">
       Name
       <input
-        class="mt-0.5 w-full rounded border border-line bg-surface px-1.5 py-1 text-2xs text-default"
+        class="mt-0.5 w-full rounded-md border border-line bg-input px-2 py-1 text-xs text-default"
         placeholder="OpenRouter"
         bind:value={label}
       />
@@ -106,7 +106,7 @@
     <label class="mt-2 block text-2xs text-dim">
       Base URL
       <input
-        class="mt-0.5 w-full rounded border border-line bg-surface px-1.5 py-1 font-mono text-2xs text-default"
+        class="mt-0.5 w-full rounded-md border border-line bg-input px-2 py-1 font-mono text-xs text-default"
         placeholder="https://openrouter.ai/api/v1"
         bind:value={baseUrl}
       />
@@ -115,7 +115,7 @@
     <label class="mt-2 block text-2xs text-dim">
       Key <span class="opacity-70">— leave empty for an endpoint that needs none</span>
       <input
-        class="mt-0.5 w-full rounded border border-line bg-surface px-1.5 py-1 font-mono text-2xs text-default"
+        class="mt-0.5 w-full rounded-md border border-line bg-input px-2 py-1 font-mono text-xs text-default"
         type="password"
         autocomplete="off"
         placeholder="sk-or-…"
@@ -126,7 +126,7 @@
     <label class="mt-2 block text-2xs text-dim">
       Models <span class="opacity-70">— optional; the endpoint is asked as well</span>
       <input
-        class="mt-0.5 w-full rounded border border-line bg-surface px-1.5 py-1 font-mono text-2xs text-default"
+        class="mt-0.5 w-full rounded-md border border-line bg-input px-2 py-1 font-mono text-xs text-default"
         placeholder="moonshotai/kimi-k2, qwen/qwen3-coder"
         bind:value={models}
       />

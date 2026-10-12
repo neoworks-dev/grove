@@ -268,9 +268,13 @@
     {#each github.issueFields as field (field.id)}
       <GithubIssueFieldSection {field} optionId={fieldValueOf(field.id)} />
     {/each}
-    {#each github.dateFields as field (field.id)}
-      <GithubIssueDateSection {field} date={dateValueOf(field.id)} />
-    {/each}
+    {#if github.dateFields.length > 0}
+      <div class="grid grid-cols-2 gap-2">
+        {#each github.dateFields as field (field.id)}
+          <GithubIssueDateSection {field} date={dateValueOf(field.id)} />
+        {/each}
+      </div>
+    {/if}
   {/if}
 
   {#if github.capabilities.issueTypes && detail.kind === 'issue'}
@@ -520,7 +524,7 @@
       <GithubMenu label="Transfer issue" icon={transferIcon} align="right" disabled={github.busy}>
         {#snippet children(close)}
           <input
-            class="mb-1 w-full rounded-md border border-line bg-input px-2 py-0.5 text-2xs text-default outline-none placeholder:text-dim focus:border-line-strong"
+            class="mb-1 w-full rounded-md border border-line bg-input px-2 py-1 text-xs text-default outline-none placeholder:text-dim focus:border-line-strong"
             placeholder="owner/repo"
             bind:value={transferTo}
             onkeydown={(event) => event.key === 'Enter' && transfer(close)}

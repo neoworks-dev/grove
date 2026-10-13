@@ -16,6 +16,7 @@
   import { languageOfPath, pathLabelOf } from '../lib/agents/tools'
   import { store } from '../lib/store.svelte'
   import { untrack } from 'svelte'
+  import PaperTape from './PaperTape.svelte'
   import { rememberFocus } from '../lib/focusReturn'
 
   // 'file:<name>' resolves through the active icon pack (plugins can't call
@@ -170,151 +171,163 @@
     onclick={() => overlays.cancel()}
     onkeydown={(event) => event.key === 'Escape' && overlays.cancel()}
   >
-    <div
-      class="flex max-h-[64vh] {hasPreview
-        ? 'w-[860px]'
-        : 'w-[560px]'} max-w-[92vw] flex-col overflow-hidden rounded-lg border border-line bg-surface shadow-overlay"
-      role="dialog"
-      tabindex="-1"
-      transition:scale={{ duration: 140, start: 0.97, opacity: 0, easing: cubicOut }}
-      onclick={(event) => event.stopPropagation()}
-      onkeydown={onKeyDown}
-    >
-      <div class="flex items-center gap-2 border-b border-line px-3">
-        <input
-          bind:this={inputEl}
-          value={overlays.query}
-          oninput={(event) => overlays.setQuery(event.currentTarget.value)}
-          class="w-full bg-transparent py-3 text-sm outline-none"
-          placeholder={descriptor.placeholder}
-        />
-      </div>
+    <div class="relative">
+      <PaperTape />
+      <div
+        class="flex max-h-[64vh] {hasPreview
+          ? 'w-[860px]'
+          : 'w-[560px]'} max-w-[92vw] flex-col overflow-hidden rounded-lg border border-line bg-surface shadow-overlay"
+        role="dialog"
+        tabindex="-1"
+        transition:scale={{ duration: 140, start: 0.97, opacity: 0, easing: cubicOut }}
+        onclick={(event) => event.stopPropagation()}
+        onkeydown={onKeyDown}
+      >
+        <div class="flex items-center gap-2 border-b border-line px-3">
+          <input
+            bind:this={inputEl}
+            value={overlays.query}
+            oninput={(event) => overlays.setQuery(event.currentTarget.value)}
+            class="w-full bg-transparent py-3 text-sm outline-none"
+            placeholder={descriptor.placeholder}
+          />
+        </div>
 
-      <div class="flex min-h-0 flex-1">
-        <FloatingScrollbar
-          class="min-h-0 {hasPreview ? 'w-1/2 border-r border-line' : 'w-full'} py-1"
-          bind:viewport={listViewport}
-        >
-          <!-- Single content wrapper so the scrollbar's ResizeObserver watches
+        <div class="flex min-h-0 flex-1">
+          <FloatingScrollbar
+            class="min-h-0 {hasPreview ? 'w-1/2 border-r border-line' : 'w-full'} py-1"
+            bind:viewport={listViewport}
+          >
+            <!-- Single content wrapper so the scrollbar's ResizeObserver watches
                one child, not one per result row. -->
-          <div>
-          {#each overlays.items as item, index (item.id)}
-            {@const active = index === overlays.activeIndex}
-            {@const ItemRow = descriptor.itemComponent}
-            <button
-              data-active={active}
-              class="flex w-full items-center gap-2 px-3 py-1.5 text-left {active
-                ? 'bg-hover'
-                : ''} hover:bg-hover"
-              onmousemove={() => index !== overlays.activeIndex && overlays.focusIndex(index)}
-              onclick={() => {
-                overlays.focusIndex(index)
-                overlays.accept()
-              }}
-            >
-              {#if descriptor.multiSelect}
-                {#if overlays.selectedIds.has(item.id)}
-                  <CheckSquareIcon weight="fill" size={14} class="shrink-0 text-accent" />
-                {:else}
-                  <SquareIcon size={14} class="shrink-0 text-dim" />
-                {/if}
-              {/if}
-              {#if ItemRow}
-                <ItemRow {item} {active} />
-              {:else}
-                {#if item.icon}
-                  <Icon icon={resolveIcon(item.icon)} width="16" height="16" class="shrink-0" />
-                {/if}
-                <!-- A path leads with its file name: truncating a label cuts the
-                     end off, and the end of a path is the part being looked for. -->
-                {@const path = pathLabelOf(item.label, '')}
-                {#if path && path.directory}
-                  <span class="flex min-w-0 flex-1 items-baseline gap-1.5">
-                    <span class="shrink-0 text-xs {active ? 'text-default' : 'text-muted'}">
-                      {path.name}
-                    </span>
-                    {#if item.description}
-                      <span class="shrink-0 text-2xs text-dim">{item.description}</span>
-                    {/if}
-                    <span class="truncate text-2xs text-faint">{path.directory}</span>
-                  </span>
-                {:else}
-                  <span
-                    class="min-w-0 flex-1 truncate text-xs {active ? 'text-default' : 'text-muted'}"
-                  >
-                    {item.label}
-                    {#if item.description}
-                      <span class="text-dim">{item.description}</span>
-                    {/if}
-                  </span>
-                {/if}
-                {#if item.detail}
-                  <span class="max-w-[45%] shrink-0 truncate text-2xs text-dim">{item.detail}</span>
-                {/if}
-                {#if item.pinned}
-                  <PushPinIcon weight="fill" size={12} class="shrink-0 text-amber" />
-                {/if}
-              {/if}
-            </button>
-          {/each}
-          {#if overlays.items.length === 0}
-            <p class="px-3 py-4 text-xs text-dim">No results.</p>
-          {/if}
-          <!-- Scrolling draws more of what arrived; past what is held, there is
-               nothing to scroll to and the search wants narrowing instead. -->
-          {#if overlays.capped && !overlays.hasMore}
-            <p class="px-3 py-1.5 text-2xs text-dim">
-              More was found than is kept — narrow the search for the rest.
-            </p>
-          {/if}
-          </div>
-        </FloatingScrollbar>
-
-        {#if hasPreview}
-          <FloatingScrollbar class="min-h-0 w-1/2" bind:viewport={previewViewport}>
             <div>
-            {#if overlays.preview?.kind === 'excerpt'}
-              <!-- The excerpt scrolls; which file it is from does not. -->
-              <div
-                class="sticky top-0 z-10 truncate border-b border-line bg-surface px-3 py-1.5 font-mono text-2xs text-dim"
-              >
-                {overlays.preview.file}
-              </div>
-              <pre class="p-0 font-mono text-2xs leading-relaxed">{#each overlays.preview.lines as line, index (line.n)}<span
-                    data-highlight={line.n === overlays.preview.highlightLine}
-                    class="block border-l-2 pl-1 pr-3 {line.n === overlays.preview.highlightLine
-                      ? 'border-amber bg-amber-soft'
-                      : 'border-transparent'}"><span
-                      class="mr-3 inline-block w-8 text-right {line.n ===
-                      overlays.preview.highlightLine
-                        ? 'text-amber'
-                        : 'text-faint'}">{line.n}</span>{#if highlighted[index]}{#each highlighted[index] as token, tokenIndex (tokenIndex)}<span
-                        style:color={token.color}>{token.text}</span>{/each}{:else}<span class="text-muted"
-                      >{line.text}</span>{/if}</span>{/each}</pre>
-            {:else if overlays.preview?.kind === 'text'}
-              <pre class="whitespace-pre-wrap p-3 font-mono text-2xs text-muted">{overlays.preview.text}</pre>
-            {:else if overlays.preview?.kind === 'component'}
-              {@const PreviewComponent = overlays.preview.component}
-              <PreviewComponent {...overlays.preview.props ?? {}} />
-            {/if}
+              {#each overlays.items as item, index (item.id)}
+                {@const active = index === overlays.activeIndex}
+                {@const ItemRow = descriptor.itemComponent}
+                <button
+                  data-active={active}
+                  class="flex w-full items-center gap-2 px-3 py-1.5 text-left {active
+                    ? 'bg-hover'
+                    : ''} hover:bg-hover"
+                  onmousemove={() => index !== overlays.activeIndex && overlays.focusIndex(index)}
+                  onclick={() => {
+                    overlays.focusIndex(index)
+                    overlays.accept()
+                  }}
+                >
+                  {#if descriptor.multiSelect}
+                    {#if overlays.selectedIds.has(item.id)}
+                      <CheckSquareIcon weight="fill" size={14} class="shrink-0 text-accent" />
+                    {:else}
+                      <SquareIcon size={14} class="shrink-0 text-dim" />
+                    {/if}
+                  {/if}
+                  {#if ItemRow}
+                    <ItemRow {item} {active} />
+                  {:else}
+                    {#if item.icon}
+                      <Icon icon={resolveIcon(item.icon)} width="16" height="16" class="shrink-0" />
+                    {/if}
+                    <!-- A path leads with its file name: truncating a label cuts the
+                     end off, and the end of a path is the part being looked for. -->
+                    {@const path = pathLabelOf(item.label, '')}
+                    {#if path && path.directory}
+                      <span class="flex min-w-0 flex-1 items-baseline gap-1.5">
+                        <span class="shrink-0 text-xs {active ? 'text-default' : 'text-muted'}">
+                          {path.name}
+                        </span>
+                        {#if item.description}
+                          <span class="shrink-0 text-2xs text-dim">{item.description}</span>
+                        {/if}
+                        <span class="truncate text-2xs text-faint">{path.directory}</span>
+                      </span>
+                    {:else}
+                      <span
+                        class="min-w-0 flex-1 truncate text-xs {active
+                          ? 'text-default'
+                          : 'text-muted'}"
+                      >
+                        {item.label}
+                        {#if item.description}
+                          <span class="text-dim">{item.description}</span>
+                        {/if}
+                      </span>
+                    {/if}
+                    {#if item.detail}
+                      <span class="max-w-[45%] shrink-0 truncate text-2xs text-dim"
+                        >{item.detail}</span
+                      >
+                    {/if}
+                    {#if item.pinned}
+                      <PushPinIcon weight="fill" size={12} class="shrink-0 text-amber" />
+                    {/if}
+                  {/if}
+                </button>
+              {/each}
+              {#if overlays.items.length === 0}
+                <p class="px-3 py-4 text-xs text-dim">No results.</p>
+              {/if}
+              <!-- Scrolling draws more of what arrived; past what is held, there is
+               nothing to scroll to and the search wants narrowing instead. -->
+              {#if overlays.capped && !overlays.hasMore}
+                <p class="px-3 py-1.5 text-2xs text-dim">
+                  More was found than is kept — narrow the search for the rest.
+                </p>
+              {/if}
             </div>
           </FloatingScrollbar>
+
+          {#if hasPreview}
+            <FloatingScrollbar class="min-h-0 w-1/2" bind:viewport={previewViewport}>
+              <div>
+                {#if overlays.preview?.kind === 'excerpt'}
+                  <!-- The excerpt scrolls; which file it is from does not. -->
+                  <div
+                    class="sticky top-0 z-10 truncate border-b border-line bg-surface px-3 py-1.5 font-mono text-2xs text-dim"
+                  >
+                    {overlays.preview.file}
+                  </div>
+                  <pre
+                    class="p-0 font-mono text-2xs leading-relaxed">{#each overlays.preview.lines as line, index (line.n)}<span
+                        data-highlight={line.n === overlays.preview.highlightLine}
+                        class="block border-l-2 pl-1 pr-3 {line.n === overlays.preview.highlightLine
+                          ? 'border-amber bg-amber-soft'
+                          : 'border-transparent'}"
+                        ><span
+                          class="mr-3 inline-block w-8 text-right {line.n ===
+                          overlays.preview.highlightLine
+                            ? 'text-amber'
+                            : 'text-faint'}">{line.n}</span
+                        >{#if highlighted[index]}{#each highlighted[index] as token, tokenIndex (tokenIndex)}<span
+                              style:color={token.color}>{token.text}</span
+                            >{/each}{:else}<span class="text-muted">{line.text}</span>{/if}</span
+                      >{/each}</pre>
+                {:else if overlays.preview?.kind === 'text'}
+                  <pre class="whitespace-pre-wrap p-3 font-mono text-2xs text-muted">{overlays
+                      .preview.text}</pre>
+                {:else if overlays.preview?.kind === 'component'}
+                  {@const PreviewComponent = overlays.preview.component}
+                  <PreviewComponent {...overlays.preview.props ?? {}} />
+                {/if}
+              </div>
+            </FloatingScrollbar>
+          {/if}
+        </div>
+
+        {#if descriptor.actions && descriptor.actions.length > 0}
+          <div class="flex flex-wrap gap-1 border-t border-line px-2 py-1.5">
+            {#each descriptor.actions as action (action.key)}
+              <button
+                class="rounded-md border border-line px-2 py-1 text-2xs text-muted hover:bg-hover"
+                onclick={() => overlays.runAction(action)}
+              >
+                <span class="font-mono text-dim">{action.key}</span>
+                {action.label}
+              </button>
+            {/each}
+          </div>
         {/if}
       </div>
-
-      {#if descriptor.actions && descriptor.actions.length > 0}
-        <div class="flex flex-wrap gap-1 border-t border-line px-2 py-1.5">
-          {#each descriptor.actions as action (action.key)}
-            <button
-              class="rounded-md border border-line px-2 py-1 text-2xs text-muted hover:bg-hover"
-              onclick={() => overlays.runAction(action)}
-            >
-              <span class="font-mono text-dim">{action.key}</span>
-              {action.label}
-            </button>
-          {/each}
-        </div>
-      {/if}
     </div>
   </div>
 {/if}

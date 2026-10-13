@@ -5,6 +5,7 @@
   import { keyDispatch, KeyPriority } from '../lib/keyDispatch'
   import { untrack } from 'svelte'
   import { rememberFocus } from '../lib/focusReturn'
+  import PaperTape from './PaperTape.svelte'
 
   const active = $derived(dialogs.active)
 
@@ -55,11 +56,12 @@
     }}
   >
     <div
-      class="w-[28rem] max-w-[90vw] rounded-lg border border-line bg-elevated p-4 shadow-overlay"
+      class="relative w-[28rem] max-w-[90vw] rounded-lg border border-line bg-elevated p-4 shadow-overlay"
       role="dialog"
       aria-modal="true"
       aria-label={active.title}
     >
+      <PaperTape />
       <h2 class="text-sm font-semibold text-default">{active.title}</h2>
       <p class="mt-2 whitespace-pre-wrap text-xs text-muted">{active.body}</p>
       {#if active.detail}

@@ -19,6 +19,12 @@ describe('theme shape', () => {
     }
   })
 
+  test('only the scrapbook themes bring tape for paper overlays', () => {
+    expect(themeTokens('neoworks')['--tape']).toBeUndefined()
+    expect(themeTokens('neoworks-scrapbook')['--tape']).toContain('rgba')
+    expect(themeTokens('neoworks-scrapbook-light')['--tape']).toContain('rgba')
+  })
+
   test('the scrapbook themes are listed for the picker', () => {
     const names = availableThemes().map((theme) => theme.name)
     expect(names).toContain('neoworks-scrapbook')

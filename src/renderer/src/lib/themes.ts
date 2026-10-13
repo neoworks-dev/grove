@@ -58,6 +58,7 @@ export interface ThemeShape {
   optionRadius?: string
   popoverShadow?: string
   selectCheck?: string
+  tape?: string
 }
 
 // Mascot images by the pose Grove asks for (see mascot.ts), each a URL the page
@@ -123,7 +124,8 @@ const SHAPE_VARS: Record<keyof ThemeShape, string> = {
   popoverRadius: '--popover-radius',
   optionRadius: '--option-radius',
   popoverShadow: '--popover-shadow',
-  selectCheck: '--select-check'
+  selectCheck: '--select-check',
+  tape: '--tape'
 }
 
 // ── Neoworks base (dark) — the design-system default palette. ──────────
@@ -242,9 +244,10 @@ const scrapbookLight: ThemePalette = {
 
 /**
  * The scrapbook's shape: small paper corners and soft, wide shadows. Dark
- * backgrounds need a heavier shadow to show at all, so the strength is a parameter.
+ * backgrounds need a heavier shadow to show at all, and tape needs a colour that
+ * shows on the surface, so both are parameters.
  */
-function scrapbookShape(shadowStrength: number): ThemeShape {
+function scrapbookShape(shadowStrength: number, tape: string): ThemeShape {
   const soft = shadowStrength
   const wide = shadowStrength + 0.04
   return {
@@ -261,7 +264,8 @@ function scrapbookShape(shadowStrength: number): ThemeShape {
     popoverRadius: '3px',
     optionRadius: '2px',
     popoverShadow: `0 8px 24px rgba(0, 0, 0, ${wide})`,
-    selectCheck: 'var(--primary)'
+    selectCheck: 'var(--primary)',
+    tape
   }
 }
 
@@ -277,14 +281,14 @@ const builtins: ColorTheme[] = [
     label: 'Scrapbook (Dark)',
     scheme: 'dark',
     palette: scrapbookDark,
-    shape: scrapbookShape(0.3)
+    shape: scrapbookShape(0.3, 'rgba(255, 255, 255, 0.14)')
   },
   {
     name: 'neoworks-scrapbook-light',
     label: 'Scrapbook (Light)',
     scheme: 'light',
     palette: scrapbookLight,
-    shape: scrapbookShape(0.14)
+    shape: scrapbookShape(0.14, 'rgba(214, 190, 120, 0.7)')
   }
 ]
 

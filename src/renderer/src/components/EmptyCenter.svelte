@@ -25,7 +25,7 @@
 
 <div class="flex h-full flex-col items-center justify-center gap-4 text-dim">
   <Mascot pose="empty" class="w-40 max-w-full" />
-  <div class="text-sm">Nothing open here</div>
+  <div class="font-accent text-sm">Nothing open here</div>
   <div class="flex flex-wrap justify-center gap-2">
     {#each actions as action (action.id)}
       <button

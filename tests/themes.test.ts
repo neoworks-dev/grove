@@ -25,6 +25,12 @@ describe('theme shape', () => {
     expect(themeTokens('neoworks-scrapbook-light')['--tape']).toContain('rgba')
   })
 
+  test('only the scrapbook themes ask for the handwritten accent font', () => {
+    expect(themeTokens('neoworks')['--font-accent']).toBeUndefined()
+    expect(themeTokens('neoworks-scrapbook')['--font-accent']).toContain('Caveat')
+    expect(themeTokens('neoworks-scrapbook-light')['--font-accent-scale']).toBe('1.3')
+  })
+
   test('the scrapbook themes are listed for the picker', () => {
     const names = availableThemes().map((theme) => theme.name)
     expect(names).toContain('neoworks-scrapbook')

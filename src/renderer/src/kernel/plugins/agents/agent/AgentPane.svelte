@@ -1475,7 +1475,7 @@
     {:else}
       <div class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-3">
         <Mascot pose="no-session" class="mb-1 w-28 max-w-full" />
-        <p class="text-xs text-dim">No agent session in this worktree.</p>
+        <p class="font-accent text-xs text-dim">No agent session in this worktree.</p>
         <!-- Pick the harness before starting: switching afterwards restarts the
              conversation, since the new runtime knows nothing of the old one.
              The row wraps in a narrow pane rather than running off its sides. -->

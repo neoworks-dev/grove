@@ -59,6 +59,8 @@ export interface ThemeShape {
   popoverShadow?: string
   selectCheck?: string
   tape?: string
+  accentFont?: string
+  accentScale?: string
 }
 
 // Mascot images by the pose Grove asks for (see mascot.ts), each a URL the page
@@ -125,7 +127,9 @@ const SHAPE_VARS: Record<keyof ThemeShape, string> = {
   optionRadius: '--option-radius',
   popoverShadow: '--popover-shadow',
   selectCheck: '--select-check',
-  tape: '--tape'
+  tape: '--tape',
+  accentFont: '--font-accent',
+  accentScale: '--font-accent-scale'
 }
 
 // ── Neoworks base (dark) — the design-system default palette. ──────────
@@ -265,7 +269,9 @@ function scrapbookShape(shadowStrength: number, tape: string): ThemeShape {
     optionRadius: '2px',
     popoverShadow: `0 8px 24px rgba(0, 0, 0, ${wide})`,
     selectCheck: 'var(--primary)',
-    tape
+    tape,
+    accentFont: "'Caveat', 'Segoe Print', cursive",
+    accentScale: '1.3'
   }
 }
 

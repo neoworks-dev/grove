@@ -58,6 +58,17 @@
   src: url('./fonts/JetBrainsMonoNerdFontMono-BoldItalic.woff2') format('woff2');
 }
 
+/* ── Handwritten accent font ───────────────────────────────────────
+   Caveat (SIL Open Font License, see fonts/Caveat-LICENSE.txt). Only themes
+   that set an accent font draw with it, through .font-accent below. */
+@font-face {
+  font-family: 'Caveat';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('./fonts/Caveat-Medium.woff2') format('woff2');
+}
+
 /* ── NeoWorks DaisyUI Theme ────────────────────────────────────── */
 @plugin "daisyui/theme" {
   name: 'neoworks';
@@ -649,6 +660,14 @@
  * ═══════════════════════════════════════════════════════════════ */
 
 @layer utilities {
+
+  /* Small handwritten accents. A theme sets --font-accent and --font-accent-scale
+     (a handwriting face reads small at body size); without them the text is
+     unchanged. */
+  .font-accent {
+    font-family: var(--font-accent, inherit);
+    font-size: calc(1em * var(--font-accent-scale, 1));
+  }
   /* The bundled nerd font — overrides Tailwind's default mono stack. */
   .font-mono {
     font-family: var(--font-mono);

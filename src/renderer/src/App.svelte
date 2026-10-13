@@ -31,6 +31,7 @@
   import { initIcons } from './lib/icons'
   import { initThemes } from './lib/themes'
   import { attachMarmot } from './lib/marmot'
+  import WindowScene from './components/WindowScene.svelte'
   import { overlays } from './lib/overlays.svelte'
   import { paneDrag } from './lib/paneDrag.svelte'
 
@@ -189,7 +190,10 @@
   }
 </script>
 
-<div class="flex h-screen w-screen flex-col gap-1.5 overflow-hidden bg-canvas p-2 text-default">
+<div
+  class="relative isolate flex h-screen w-screen flex-col gap-1.5 overflow-hidden bg-canvas p-2 text-default"
+>
+  <WindowScene />
   <!-- Top bar -->
   <header class="h-7 shrink-0 px-1">
     <TopBar />

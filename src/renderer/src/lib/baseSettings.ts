@@ -34,7 +34,7 @@ export function registerBaseSettings(): void {
         default: true,
         title: 'Show the Mascot',
         description:
-          "Draw the theme's mascot in empty states, such as an empty editor or an agent pane with no session.",
+          "Draw the theme's mascot in empty states, and its landscape behind the window, if it has one.",
         category: 'Appearance'
       },
       {

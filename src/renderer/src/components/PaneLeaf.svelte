@@ -9,6 +9,9 @@
   import { layout } from '../lib/layout.svelte'
   import { paneDrag } from '../lib/paneDrag.svelte'
   import type { LeafNode } from '../lib/layoutTree'
+  import { store } from '../lib/store.svelte'
+  import { settings } from '../lib/settings.svelte'
+  import { activeLandscape } from '../lib/landscape'
 
   let { leaf }: { leaf: LeafNode } = $props()
 
@@ -26,8 +29,17 @@
   const zoomStyle = $derived(!type?.ownsFontScale && fontScale !== 1 ? `zoom: ${fontScale}` : '')
 
   // Each leaf paints its own panel background now that the center container has
-  // none; pane types that bring their own background keep it.
-  const surfaceClass = $derived(type?.containerClass ?? 'bg-surface')
+  // none; pane types that bring their own background keep it. The empty pane
+  // lets the window's landscape show through when the theme draws one.
+  const landscapeShowing = $derived(
+    activeLandscape(store.activeTheme, settings.get<boolean>('workbench.showMascot')) !== undefined
+  )
+  const surfaceClass = $derived.by(() => {
+    if (type?.id === 'empty' && landscapeShowing) {
+      return 'bg-transparent'
+    }
+    return type?.containerClass ?? 'bg-surface'
+  })
 
   // Tell the layout which window of each pane family was last focused, so the
   // next pane of that family opens beside it rather than beside whatever
@@ -66,9 +78,7 @@
     {#if !type}
       <MissingPane paneTypeId={leaf.paneTypeId} />
     {:else if !available}
-      <div class="flex flex-1 items-center justify-center text-dim">
-        Open a folder to begin.
-      </div>
+      <div class="flex flex-1 items-center justify-center text-dim">Open a folder to begin.</div>
     {:else}
       {#key leaf.paneTypeId}
         {@const Content = type.component}

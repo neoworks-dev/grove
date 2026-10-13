@@ -5,6 +5,9 @@
 // a plain object — no stylesheet changes needed. Each theme also carries a
 // matching Monaco editor theme so the code editor chrome tracks the app.
 
+import { dayScene, nightScene } from './landscape'
+import type { LandscapeScene } from './landscape'
+
 // The complete palette every theme must define. Keeping the key set identical
 // across themes means switching never leaves a stale value behind.
 export interface ThemePalette {
@@ -63,6 +66,12 @@ export interface ThemeShape {
   accentScale?: string
 }
 
+// Decoration a theme opts into for empty states: a landscape drawn behind the
+// content. It follows the mascot setting.
+export interface ThemeDecor {
+  landscape?: LandscapeScene
+}
+
 // Mascot images by the pose Grove asks for (see mascot.ts), each a URL the page
 // may load. A pose the theme leaves out is not drawn.
 export type ThemeMascot = Record<string, string>
@@ -74,6 +83,7 @@ export interface ColorTheme {
   palette: ThemePalette
   shape?: ThemeShape
   mascot?: ThemeMascot
+  decor?: ThemeDecor
 }
 
 // Maps a palette field to its CSS custom-property name.
@@ -287,14 +297,16 @@ const builtins: ColorTheme[] = [
     label: 'Scrapbook (Dark)',
     scheme: 'dark',
     palette: scrapbookDark,
-    shape: scrapbookShape(0.3, 'rgba(255, 255, 255, 0.14)')
+    shape: scrapbookShape(0.3, 'rgba(255, 255, 255, 0.14)'),
+    decor: { landscape: nightScene }
   },
   {
     name: 'neoworks-scrapbook-light',
     label: 'Scrapbook (Light)',
     scheme: 'light',
     palette: scrapbookLight,
-    shape: scrapbookShape(0.14, 'rgba(214, 190, 120, 0.7)')
+    shape: scrapbookShape(0.14, 'rgba(214, 190, 120, 0.7)'),
+    decor: { landscape: dayScene }
   }
 ]
 

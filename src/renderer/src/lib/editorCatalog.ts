@@ -5,12 +5,13 @@
 
 import { registerTheme, basePalette } from './themes'
 import type { CatalogEntry } from '../../../shared/types'
-import type { ThemePalette } from './themes'
+import type { ThemePalette, ThemeShape } from './themes'
 
 function registerCatalogTheme(entry: CatalogEntry): void {
   if (!entry.scheme) return
   const palette = { ...basePalette(entry.scheme), ...(entry.palette || {}) } as ThemePalette
-  registerTheme({ name: entry.id, label: entry.name, scheme: entry.scheme, palette })
+  const shape = entry.shape as ThemeShape | undefined
+  registerTheme({ name: entry.id, label: entry.name, scheme: entry.scheme, palette, shape })
 }
 
 // Load every enabled installed theme into the renderer registry. Safe to call

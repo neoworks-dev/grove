@@ -1134,6 +1134,7 @@ export interface CatalogEntry {
   highlightsUrl?: string
   scheme?: 'dark' | 'light' // theme
   palette?: Record<string, string> // theme partial palette overrides
+  shape?: Record<string, string> // theme corner and shadow overrides, see ThemeShape
   lsp?: { command: string; args?: string[]; languages: string[]; install?: string }
 }
 

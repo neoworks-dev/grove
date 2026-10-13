@@ -39,11 +39,33 @@ export interface ThemePalette {
   ctxPink: string
 }
 
+// The shapes a theme may set: the corner and shadow scales every component reads
+// through Tailwind, plus the knobs the design-system Button and Select expose.
+// Every field is optional. A field a theme leaves out falls back to the
+// stylesheet default, so existing themes look exactly as they did.
+export interface ThemeShape {
+  radiusSm?: string
+  radiusMd?: string
+  radiusLg?: string
+  radiusXl?: string
+  shadowSm?: string
+  shadowMd?: string
+  shadowLg?: string
+  shadowOverlay?: string
+  buttonRadius?: string
+  fieldRadius?: string
+  popoverRadius?: string
+  optionRadius?: string
+  popoverShadow?: string
+  selectCheck?: string
+}
+
 export interface ColorTheme {
   name: string
   label: string
   scheme: 'dark' | 'light'
   palette: ThemePalette
+  shape?: ThemeShape
 }
 
 // Maps a palette field to its CSS custom-property name.
@@ -77,6 +99,26 @@ const CSS_VARS: Record<keyof ThemePalette, string> = {
   ctxBlue: '--ctx-blue',
   ctxViolet: '--ctx-violet',
   ctxPink: '--ctx-pink'
+}
+
+// Maps a shape field to its CSS custom-property name. The radius and shadow
+// scales override the stylesheet's own tokens; the rest are read by the
+// design-system components with a fallback.
+const SHAPE_VARS: Record<keyof ThemeShape, string> = {
+  radiusSm: '--radius-sm',
+  radiusMd: '--radius-md',
+  radiusLg: '--radius-lg',
+  radiusXl: '--radius-xl',
+  shadowSm: '--shadow-sm',
+  shadowMd: '--shadow-md',
+  shadowLg: '--shadow-lg',
+  shadowOverlay: '--shadow-overlay',
+  buttonRadius: '--button-radius',
+  fieldRadius: '--field-radius',
+  popoverRadius: '--popover-radius',
+  optionRadius: '--option-radius',
+  popoverShadow: '--popover-shadow',
+  selectCheck: '--select-check'
 }
 
 // ── Neoworks base (dark) — the design-system default palette. ──────────
@@ -145,12 +187,100 @@ const neoworksLight: ThemePalette = {
   ctxPink: '#db2777'
 }
 
-// Only the two Neoworks design-system palettes ship by default. Every other
-// theme (Midnight, Ember, Nord, Gruvbox, Catppuccin Mocha, …) lives in the
-// extensions catalog and is registered at runtime once installed.
+// ── Neoworks scrapbook (dark) — warm charcoal with the forest-green brand. ──
+const scrapbookDark: ThemePalette = {
+  ...neoworksDark,
+  bg: '#161719',
+  bgElevated: '#202124',
+  surface: '#232427',
+  surfaceRaised: '#28292c',
+  surfaceHover: '#2f3034',
+  surfaceInput: '#18191b',
+  border: '#343539',
+  borderStrong: '#4b4c51',
+  borderFaint: 'rgba(255, 255, 255, 0.07)',
+  text: '#f3efe4',
+  textMuted: '#b6b4b0',
+  textDim: '#8b8986',
+  textFaint: '#63625f',
+  primary: '#5cbf8c',
+  primaryHover: '#6fcf9c',
+  primaryFg: '#0b1317',
+  secondaryHover: '#2f3034',
+  secondaryFg: '#f3efe4',
+  focusRing: 'rgba(243, 239, 228, 0.55)'
+}
+
+// ── Neoworks scrapbook (light) — warm paper with the forest-green brand. ──
+const scrapbookLight: ThemePalette = {
+  ...neoworksLight,
+  bg: '#f5efe4',
+  bgElevated: '#fbf6ea',
+  surface: '#fffcf5',
+  surfaceRaised: '#faf5e9',
+  surfaceHover: '#ece4d3',
+  surfaceInput: '#fffdf8',
+  border: '#d9cfba',
+  borderStrong: '#b5a98f',
+  borderFaint: 'rgba(74, 31, 26, 0.08)',
+  text: '#2a2420',
+  textMuted: '#5a4f45',
+  textDim: '#6c6154',
+  textFaint: '#7a6f61',
+  primary: '#1f5f3f',
+  primaryHover: '#184b32',
+  primaryFg: '#ffffff',
+  secondaryHover: '#ece4d3',
+  secondaryFg: '#2a2420',
+  focusRing: 'rgba(42, 36, 32, 0.5)'
+}
+
+/**
+ * The scrapbook's shape: small paper corners and soft, wide shadows. Dark
+ * backgrounds need a heavier shadow to show at all, so the strength is a parameter.
+ */
+function scrapbookShape(shadowStrength: number): ThemeShape {
+  const soft = shadowStrength
+  const wide = shadowStrength + 0.04
+  return {
+    radiusSm: '3px',
+    radiusMd: '4px',
+    radiusLg: '6px',
+    radiusXl: '8px',
+    shadowSm: `0 2px 6px rgba(0, 0, 0, ${soft})`,
+    shadowMd: `0 4px 14px rgba(0, 0, 0, ${soft})`,
+    shadowLg: `0 8px 24px rgba(0, 0, 0, ${wide})`,
+    shadowOverlay: `0 12px 32px rgba(0, 0, 0, ${wide}), 0 0 0 1px var(--border)`,
+    buttonRadius: '6px',
+    fieldRadius: '3px',
+    popoverRadius: '3px',
+    optionRadius: '2px',
+    popoverShadow: `0 8px 24px rgba(0, 0, 0, ${wide})`,
+    selectCheck: 'var(--primary)'
+  }
+}
+
+// The two Neoworks design-system palettes and their scrapbook counterparts ship
+// by default. Every other theme (Midnight, Ember, Nord, Gruvbox, Catppuccin
+// Mocha, …) lives in the extensions catalog and is registered at runtime once
+// installed.
 const builtins: ColorTheme[] = [
   { name: 'neoworks', label: 'Neoworks (Dark)', scheme: 'dark', palette: neoworksDark },
-  { name: 'neoworks-light', label: 'Neoworks Light', scheme: 'light', palette: neoworksLight }
+  { name: 'neoworks-light', label: 'Neoworks Light', scheme: 'light', palette: neoworksLight },
+  {
+    name: 'neoworks-scrapbook',
+    label: 'Scrapbook (Dark)',
+    scheme: 'dark',
+    palette: scrapbookDark,
+    shape: scrapbookShape(0.3)
+  },
+  {
+    name: 'neoworks-scrapbook-light',
+    label: 'Scrapbook (Light)',
+    scheme: 'light',
+    palette: scrapbookLight,
+    shape: scrapbookShape(0.14)
+  }
 ]
 
 const themes = new Map<string, ColorTheme>()
@@ -183,12 +313,18 @@ export function paletteFor(name: string): ThemePalette {
   return themeFor(name).palette
 }
 
-/** A theme's palette as the CSS custom properties it sets, by property name. */
+/** A theme's palette and shape as the CSS custom properties it sets, by property name. */
 export function themeTokens(name: string): Record<string, string> {
-  const palette = paletteFor(name)
+  const theme = themeFor(name)
   const tokens: Record<string, string> = {}
   for (const key of Object.keys(CSS_VARS) as (keyof ThemePalette)[]) {
-    tokens[CSS_VARS[key]] = palette[key]
+    tokens[CSS_VARS[key]] = theme.palette[key]
+  }
+  for (const key of Object.keys(SHAPE_VARS) as (keyof ThemeShape)[]) {
+    const value = theme.shape?.[key]
+    if (value !== undefined) {
+      tokens[SHAPE_VARS[key]] = value
+    }
   }
   return tokens
 }
@@ -199,8 +335,25 @@ export function basePalette(scheme: 'dark' | 'light'): ThemePalette {
   return scheme === 'light' ? neoworksLight : neoworksDark
 }
 
-// Write a theme's palette as inline CSS variables on <html> and set data-theme
-// (drives color-scheme and the [data-theme='light'] soft-accent overrides).
+/**
+ * Writes a theme's shape as inline CSS variables on <html>. A field the theme
+ * leaves out is removed rather than left over from the previous theme, so the
+ * stylesheet default applies again.
+ */
+function applyShapeVars(shape: ThemeShape | undefined): void {
+  const root = document.documentElement
+  for (const key of Object.keys(SHAPE_VARS) as (keyof ThemeShape)[]) {
+    const value = shape?.[key]
+    if (value === undefined) {
+      root.style.removeProperty(SHAPE_VARS[key])
+      continue
+    }
+    root.style.setProperty(SHAPE_VARS[key], value)
+  }
+}
+
+// Write a theme's palette and shape as inline CSS variables on <html> and set
+// data-theme (drives color-scheme and the [data-theme='light'] soft-accent overrides).
 export function applyThemeVars(name: string): void {
   const theme = themes.get(name)
   if (!theme) return
@@ -209,6 +362,7 @@ export function applyThemeVars(name: string): void {
   for (const key of Object.keys(CSS_VARS) as (keyof ThemePalette)[]) {
     root.style.setProperty(CSS_VARS[key], theme.palette[key])
   }
+  applyShapeVars(theme.shape)
   activeName = name
   localStorage.setItem('colorTheme', name)
 }

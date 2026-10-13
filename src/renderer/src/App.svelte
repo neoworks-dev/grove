@@ -30,6 +30,7 @@
   import { loadInstalledExtensions } from './lib/editorCatalog'
   import { initIcons } from './lib/icons'
   import { initThemes } from './lib/themes'
+  import { attachMarmot } from './lib/marmot'
   import { overlays } from './lib/overlays.svelte'
   import { paneDrag } from './lib/paneDrag.svelte'
 
@@ -131,6 +132,7 @@
   onMount(() => {
     // Theme/icons apply synchronously from localStorage (no flash), then get
     // re-applied from the settings provider once it loads.
+    attachMarmot()
     initThemes()
     initIcons()
     registerBaseSettings()

@@ -1135,6 +1135,7 @@ export interface CatalogEntry {
   scheme?: 'dark' | 'light' // theme
   palette?: Record<string, string> // theme partial palette overrides
   shape?: Record<string, string> // theme corner and shadow overrides, see ThemeShape
+  mascot?: Record<string, string> // theme mascot images by pose, as data: URLs
   lsp?: { command: string; args?: string[]; languages: string[]; install?: string }
 }
 

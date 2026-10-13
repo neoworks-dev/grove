@@ -60,12 +60,17 @@ export interface ThemeShape {
   selectCheck?: string
 }
 
+// Mascot images by the pose Grove asks for (see mascot.ts), each a URL the page
+// may load. A pose the theme leaves out is not drawn.
+export type ThemeMascot = Record<string, string>
+
 export interface ColorTheme {
   name: string
   label: string
   scheme: 'dark' | 'light'
   palette: ThemePalette
   shape?: ThemeShape
+  mascot?: ThemeMascot
 }
 
 // Maps a palette field to its CSS custom-property name.
@@ -297,6 +302,15 @@ export function availableThemes(): ColorTheme[] {
 export function registerTheme(theme: ColorTheme): () => void {
   themes.set(theme.name, theme)
   return () => themes.delete(theme.name)
+}
+
+/** Gives an already registered theme its mascot, leaving the rest of it as it was. */
+export function attachMascot(name: string, mascot: ThemeMascot): void {
+  const theme = themes.get(name)
+  if (!theme) {
+    return
+  }
+  themes.set(name, { ...theme, mascot })
 }
 
 export function currentThemeName(): string {

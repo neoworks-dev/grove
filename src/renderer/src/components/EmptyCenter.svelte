@@ -6,7 +6,7 @@
   import { panes } from '../lib/panes.svelte'
   import { store } from '../lib/store.svelte'
   import { CENTER_SLOT } from '../lib/paneSlots'
-  import Marmot from './Marmot.svelte'
+  import Mascot from './Mascot.svelte'
 
   let { leafId }: { leafId: string } = $props()
 
@@ -24,7 +24,7 @@
 </script>
 
 <div class="flex h-full flex-col items-center justify-center gap-4 text-dim">
-  <Marmot pose="sleeping" class="w-40 max-w-full" />
+  <Mascot pose="empty" class="w-40 max-w-full" />
   <div class="text-sm">Nothing open here</div>
   <div class="flex flex-wrap justify-center gap-2">
     {#each actions as action (action.id)}

@@ -114,7 +114,7 @@
   import CredentialPrompt from './CredentialPrompt.svelte'
   import EndpointEditor from './EndpointEditor.svelte'
   import PaneControls from '../../../../components/PaneControls.svelte'
-  import Marmot from '../../../../components/Marmot.svelte'
+  import Mascot from '../../../../components/Mascot.svelte'
 
   let { leafId }: { leafId: string } = $props()
 
@@ -1474,7 +1474,7 @@
       </AgentTranscript>
     {:else}
       <div class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-3">
-        <Marmot pose="apps/coder" class="mb-1 w-28 max-w-full" />
+        <Mascot pose="no-session" class="mb-1 w-28 max-w-full" />
         <p class="text-xs text-dim">No agent session in this worktree.</p>
         <!-- Pick the harness before starting: switching afterwards restarts the
              conversation, since the new runtime knows nothing of the old one.

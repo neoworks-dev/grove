@@ -29,6 +29,15 @@ export function registerBaseSettings(): void {
         enumValues: availableThemes().map((theme) => ({ value: theme.name, label: theme.label }))
       },
       {
+        key: 'workbench.showMascot',
+        type: 'boolean',
+        default: true,
+        title: 'Show the Mascot',
+        description:
+          "Draw the theme's mascot in empty states, such as an empty editor or an agent pane with no session.",
+        category: 'Appearance'
+      },
+      {
         key: 'workbench.iconPack',
         type: 'enum',
         default: 'material-icon-theme',

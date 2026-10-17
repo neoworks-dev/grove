@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { Component, SessionEvent, ViewItem } from "@suite/protocol/types";
-import { applyCall, noCalls, type CallFacts, type Calls } from "../plugins/agents/calls";
+import { applyCall, chainedTexts, noCalls, type CallFacts, type Calls } from "../plugins/agents/calls";
 import { chatRows, foldTurn, talliesOf, toolWord, type ChatFacts } from "../plugins/agents/chat/turns";
 
 const text = (words: string): Component => ({ type: "text", blocks: [{ type: "paragraph", spans: [{ text: words }] }] });
@@ -160,4 +160,11 @@ test("the plan item folds with the work, since the plan has its own place", () =
   const plan: ViewItem = { ref: "plan", kind: "tool", label: "Plan", state: "done", component: text("[x] one") };
   const fold = foldTurn([plan, agent("m1")], () => undefined);
   expect(fold.hidden.map((item) => item.ref)).toEqual(["plan"]);
+});
+
+test("changes to a file add up to one when each starts where the one before ended", () => {
+  expect(chainedTexts([])).toBeUndefined();
+  expect(chainedTexts([{ path: "a", oldText: "1", newText: "2" }, { path: "a", oldText: "2", newText: "3" }])).toEqual({ oldText: "1", newText: "3" });
+  expect(chainedTexts([{ path: "a", newText: "2" }])).toEqual({ oldText: "", newText: "2" });
+  expect(chainedTexts([{ path: "a", oldText: "1", newText: "2" }, { path: "a", oldText: "x", newText: "3" }])).toBeUndefined();
 });

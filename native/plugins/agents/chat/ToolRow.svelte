@@ -3,7 +3,7 @@
   // name, a command, a search). A call that changed a file shows the changed lines under it. The
   // result opens when the line is pressed.
   import { Text, View } from "@neoworks/svelte-gpui/ui";
-  import type { ViewItem } from "@suite/protocol/types";
+  import type { DiffComponent, ViewItem } from "@suite/protocol/types";
   import type { CallFacts } from "../calls";
   import { palette } from "../palette";
   import { argumentOf } from "./callRow";
@@ -39,6 +39,17 @@
     }
     return p.muted;
   });
+
+  /** Shows a change in a diff pane, from the two texts the call reported. */
+  function showDiff(diff: DiffComponent): void {
+    const path = diff.path ?? "";
+    const change = call.diffs.find((entry) => entry.path === path);
+    if (change === undefined) {
+      chat.openDiff(path);
+      return;
+    }
+    chat.openDiffBetween(path, { oldText: change.oldText === undefined ? "" : change.oldText, newText: change.newText });
+  }
 
   /** The full command of a call that ran one, for when the row is open. */
   const command = $derived.by(() => {
@@ -97,7 +108,7 @@
     {:else if diffs.length > 0}
       <View style={{ paddingLeft: 20, gap: 2 }}>
         {#each diffs as diff}
-          <DiffPreview {diff} />
+          <DiffPreview {diff} onpress={() => showDiff(diff)} />
         {/each}
       </View>
     {:else if failed}

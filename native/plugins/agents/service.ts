@@ -80,6 +80,50 @@ export interface AgentWorkspace {
   onSelectionChange(listener: () => void): () => void;
 }
 
+/** How the chat shows a file or a change in the rest of the app. */
+export interface Openers {
+  /** Shows the file at an absolute path in the editor. */
+  openFile(path: string): void;
+  /**
+   * Shows a diff in a pane: the file against HEAD, or the two texts when they are given. False
+   * when the app has no diff view, which leaves the caller to show the file instead.
+   */
+  openDiff(path: string, texts?: { oldText: string; newText: string }): boolean;
+}
+
+/** What the diff plugin offers the chat, as far as the chat uses it. */
+interface DiffOpener {
+  openFile(path: string): Promise<string | null>;
+  openTexts(name: string, oldText: string, newText: string): Promise<string | null>;
+}
+
+/** The editor and diff plugins of a context as the chat opens things in them; either may be missing. */
+export function contextOpeners(ctx: Context): Openers {
+  return {
+    openFile: (path) => {
+      const editor = ctx.get("editor");
+      if (!editor) {
+        return;
+      }
+      editor.open(path);
+    },
+    openDiff: (path, texts) => {
+      // The diff plugin declares its service on the context in its own branch; ask for it by name.
+      const diff = (ctx as unknown as { get(name: string): DiffOpener | undefined }).get("diff");
+      if (diff === undefined || diff === null) {
+        return false;
+      }
+      if (texts === undefined) {
+        void diff.openFile(path);
+        return true;
+      }
+      const name = path.split("/").filter((part) => part !== "").pop();
+      void diff.openTexts(name === undefined ? path : name, texts.oldText, texts.newText);
+      return true;
+    },
+  };
+}
+
 /** The wait before an automatic attempt: the first one after the connection was lost, then twice the one before, up to the longest. */
 export function nextRetryDelay(previousMs: number, initialMs: number, maxMs: number): number {
   if (previousMs === 0) {
@@ -103,7 +147,7 @@ interface FollowedChat {
 }
 
 export class AgentsService extends Service {
-  private context: Context;
+  private openers: Openers;
   private host: SuiteHost;
   private panes: AgentPanes;
   private workspace: AgentWorkspace;
@@ -136,9 +180,10 @@ export class AgentsService extends Service {
     panes: AgentPanes,
     workspace: AgentWorkspace,
     timing: AgentsTiming = DEFAULT_TIMING,
+    openers: Openers = contextOpeners(ctx),
   ) {
     super(ctx, "agents");
-    this.context = ctx;
+    this.openers = openers;
     this.host = host;
     this.panes = panes;
     this.workspace = workspace;
@@ -150,11 +195,18 @@ export class AgentsService extends Service {
 
   /** Shows the file at an absolute path in the editor, when an editor plugin is loaded. */
   openFile(path: string): void {
-    const editor = this.context.get("editor");
-    if (!editor) {
+    this.openers.openFile(path);
+  }
+
+  /**
+   * Shows how a file changed in a diff pane: against HEAD, or between the two texts a tool call
+   * reported when they are given. Without a diff view the file itself is shown.
+   */
+  openDiff(path: string, texts?: { oldText: string; newText: string }): void {
+    if (this.openers.openDiff(path, texts)) {
       return;
     }
-    editor.open(path);
+    this.openers.openFile(path);
   }
 
   /** How the connection to the daemon is doing. Reactive. */
@@ -313,6 +365,7 @@ export class AgentsService extends Service {
     const chat = new ChatSession(client, sessionId, (source) => this.assetSource(source), {
       agent,
       openFile: (path) => this.openFile(path),
+      openDiff: (path, texts) => this.openDiff(path, texts),
     });
     chat.start();
     return chat;
@@ -685,6 +738,7 @@ export class AgentsService extends Service {
       }
       entry.chat = new ChatSession(client, sessionId, (source) => this.assetSource(source), {
         openFile: (path) => this.openFile(path),
+        openDiff: (path, texts) => this.openDiff(path, texts),
       });
       entry.chat.start();
     }

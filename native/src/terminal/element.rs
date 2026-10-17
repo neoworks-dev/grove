@@ -13,9 +13,10 @@ use svelte_gpui::gpui::{
 
 use super::glyphs;
 use super::grid::{self, Snapshot, TextSpan, UnderlineKind};
+use super::selection::Geometry;
 use super::session::{CellPixels, GridSize};
 use super::theme::TerminalTheme;
-use super::view::{Geometry, TerminalView};
+use super::view::TerminalView;
 
 pub const FONT_FAMILY: &str = "DejaVu Sans Mono";
 
@@ -49,11 +50,17 @@ struct Painted {
     cursor: Option<CursorPaint>,
     composing: Option<(svelte_gpui::gpui::Point<Pixels>, ShapedLine)>,
     link_underline: Option<(Bounds<Pixels>, Hsla)>,
+    /// A thumb on the right edge that shows where the view is in the history while it is scrolled back.
+    scrollbar: Option<(Bounds<Pixels>, Hsla)>,
     line_height: Pixels,
     /// The pointer is a hand while Control is held over a link, else a text cursor, or an arrow
     /// for a program that listens to the mouse itself.
     pointer: CursorStyle,
 }
+
+/// How wide the scrollbar thumb is, and the least tall it gets.
+const SCROLLBAR_WIDTH: Pixels = px(5.0);
+const SCROLLBAR_MIN_HEIGHT: Pixels = px(24.0);
 
 /// The cursor and the character it covers.
 struct CursorPaint {
@@ -235,6 +242,7 @@ impl TerminalElement {
             );
             (underline, hsla(theme.foreground))
         });
+        let scrollbar = scrollbar_thumb(snapshot, &geometry, theme);
         let pointer = pointer_style(link_underline.is_some(), mouse_reported);
         Painted {
             backgrounds,
@@ -245,6 +253,7 @@ impl TerminalElement {
             cursor,
             composing,
             link_underline,
+            scrollbar,
             line_height: metrics.line_height,
             pointer,
         }
@@ -304,6 +313,9 @@ fn paint_grid(painted: &Painted, focused: bool, window: &mut Window, cx: &mut Ap
     if let Some((bounds, color)) = &painted.link_underline {
         window.paint_quad(fill(*bounds, *color));
     }
+    if let Some((bounds, color)) = &painted.scrollbar {
+        window.paint_quad(fill(*bounds, *color).corner_radii(SCROLLBAR_WIDTH / 2.0));
+    }
     if let Some((origin, line)) = &painted.composing {
         let _ = line.paint(*origin, painted.line_height, window, cx);
     }
@@ -360,6 +372,23 @@ fn paint_cursor(cursor: &CursorPaint, line_height: Pixels, focused: bool, window
             }
         }
     }
+}
+
+/// The thumb that shows where a scrolled-back view is in the history, or none at the bottom.
+fn scrollbar_thumb(snapshot: &Snapshot, geometry: &Geometry, theme: &TerminalTheme) -> Option<(Bounds<Pixels>, Hsla)> {
+    if snapshot.display_offset == 0 || snapshot.history_size == 0 {
+        return None;
+    }
+    let track_height = geometry.line_height * snapshot.rows as f32;
+    let total_lines = (snapshot.rows + snapshot.history_size) as f32;
+    let thumb_height = (track_height * (snapshot.rows as f32 / total_lines)).max(SCROLLBAR_MIN_HEIGHT);
+    let scrolled_from_top = (snapshot.history_size - snapshot.display_offset) as f32 / snapshot.history_size as f32;
+    let top = geometry.origin.y + (track_height - thumb_height) * scrolled_from_top;
+    let left =
+        geometry.origin.x + geometry.cell_width * geometry.columns as f32 + PADDING_X - SCROLLBAR_WIDTH - px(2.0);
+    let mut color = hsla(theme.foreground);
+    color.a = 0.35;
+    Some((Bounds::new(point(left, top), size(SCROLLBAR_WIDTH, thumb_height)), color))
 }
 
 /// The pointer over the terminal.

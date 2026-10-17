@@ -10,7 +10,7 @@ use crate::decorations::{Decoration, Decorations, Placed, PlacedBlock, SourceFil
 use crate::history::History;
 use crate::movement::{Motion, find_next, move_selection, vertical, word_at};
 use crate::selections::{Selection, Selections};
-use crate::syntax::{HighlightSpan, Syntax};
+use crate::syntax::{HighlightSpan, Scope, Syntax};
 use crate::vim::registers::VimMemory;
 use std::collections::HashMap;
 
@@ -109,6 +109,13 @@ impl EditorState {
     /// The highlight runs of each row in `rows`, as character columns of the row.
     pub fn highlights(&self, rows: std::ops::Range<usize>) -> Vec<Vec<HighlightSpan>> {
         self.syntax.highlights(&self.buffer, rows)
+    }
+
+    /// The named scopes (functions, classes, modules) that enclose a position, outermost first.
+    pub fn scopes_at(&self, position: Position) -> Vec<Scope> {
+        let offset = self.buffer.offset_of(position);
+        let byte = self.buffer.rope().char_to_byte(offset);
+        self.syntax.scopes_at(&self.buffer, byte)
     }
 
     /// The name of the language the text is highlighted as, if it is recognised.

@@ -9,9 +9,9 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::time::Duration;
 
-use alacritty_terminal::grid::{Dimensions, Scroll};
-use alacritty_terminal::index::{Column, Line, Point, Side};
-use alacritty_terminal::selection::{Selection, SelectionType};
+use alacritty_terminal::grid::Scroll;
+use alacritty_terminal::index::Line;
+use alacritty_terminal::selection::SelectionType;
 use alacritty_terminal::term::TermMode;
 use futures::StreamExt;
 use futures::channel::mpsc::unbounded;
@@ -27,6 +27,7 @@ use super::element::TerminalElement;
 use super::keys::encode_key;
 use super::links::{self, Link, LinkTarget};
 use super::mouse::{ReportedAction, ReportedButton, ReportedModifiers, encode_mouse, wheel_as_arrows};
+use super::selection::{Geometry, Hit, extend_selection, hit_in, select_everything, start_selection};
 use super::session::{CellPixels, GridSize, Session};
 use super::theme::TerminalTheme;
 use super::{Lookup, Terminals};
@@ -46,25 +47,6 @@ const LINES_PER_NOTCH: f32 = 3.0;
 pub struct SessionSpec {
     pub id: String,
     pub working_directory: String,
-}
-
-/// Where the last frame put the grid, which maps the pointer to cells.
-#[derive(Clone, Copy, Debug)]
-pub struct Geometry {
-    /// The top left of the first cell.
-    pub origin: svelte_gpui::gpui::Point<Pixels>,
-    pub cell_width: Pixels,
-    pub line_height: Pixels,
-    pub columns: usize,
-    pub rows: usize,
-}
-
-/// A cell of the grid under the pointer, and which half of it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Hit {
-    pub row: usize,
-    pub column: usize,
-    pub side: Side,
 }
 
 /// What the left button is doing.
@@ -291,21 +273,6 @@ impl TerminalView {
     }
 }
 
-/// The cell under a point, clamped to the grid, and which half of it the point is in.
-pub fn hit_in(geometry: &Geometry, position: svelte_gpui::gpui::Point<Pixels>) -> Hit {
-    let across = ((position.x - geometry.origin.x) / geometry.cell_width).max(0.0);
-    let down = ((position.y - geometry.origin.y) / geometry.line_height).max(0.0);
-    let column = (across.floor() as usize).min(geometry.columns - 1);
-    let row = (down.floor() as usize).min(geometry.rows - 1);
-    let side = if across.fract() < 0.5 || across as usize >= geometry.columns { Side::Left } else { Side::Right };
-    Hit { row, column, side }
-}
-
-/// The grid point of a viewport cell, given how far back the view is scrolled.
-fn grid_point(display_offset: usize, hit: Hit) -> Point {
-    Point::new(Line(hit.row as i32 - display_offset as i32), Column(hit.column))
-}
-
 impl AppElement for TerminalView {
     /// The `session` prop is `{ id, cwd }`, the `theme` prop the colours (see `theme.rs`) and
     /// `fontSize` the size of the text in pixels.
@@ -412,13 +379,7 @@ impl TerminalView {
         let Some(session) = &self.session else {
             return;
         };
-        session.with_term(|term| {
-            let top = Point::new(term.topmost_line(), Column(0));
-            let bottom = Point::new(term.bottommost_line(), term.last_column());
-            let mut selection = Selection::new(SelectionType::Simple, top, Side::Left);
-            selection.update(bottom, Side::Right);
-            term.selection = Some(selection);
-        });
+        session.with_term(select_everything);
         cx.notify();
     }
 
@@ -636,14 +597,7 @@ impl TerminalView {
             _ => SelectionType::Lines,
         };
         let extend = event.modifiers.shift;
-        session.with_term(|term| {
-            let point = grid_point(term.grid().display_offset(), hit);
-            if extend && let Some(selection) = term.selection.as_mut() {
-                selection.update(point, hit.side);
-                return;
-            }
-            term.selection = Some(Selection::new(kind, point, hit.side));
-        });
+        session.with_term(|term| start_selection(term, hit, kind, extend));
         self.drag = Some(Drag::Selecting);
         cx.notify();
     }
@@ -698,12 +652,7 @@ impl TerminalView {
         let Some(session) = &self.session else {
             return;
         };
-        session.with_term(|term| {
-            let point = grid_point(term.grid().display_offset(), hit);
-            if let Some(selection) = term.selection.as_mut() {
-                selection.update(point, hit.side);
-            }
-        });
+        session.with_term(|term| extend_selection(term, hit));
         cx.notify();
     }
 
@@ -993,39 +942,6 @@ mod tests {
 
     fn keystroke(text: &str) -> Keystroke {
         Keystroke::parse(text).expect("a keystroke")
-    }
-
-    fn geometry() -> Geometry {
-        Geometry {
-            origin: point(px(10.0), px(20.0)),
-            cell_width: px(8.0),
-            line_height: px(16.0),
-            columns: 80,
-            rows: 24,
-        }
-    }
-
-    #[test]
-    fn a_point_maps_to_its_cell_and_half() {
-        let left = hit_in(&geometry(), point(px(10.0 + 8.0 * 5.0 + 1.0), px(20.0 + 16.0 * 2.0 + 3.0)));
-        assert_eq!(left, Hit { row: 2, column: 5, side: Side::Left });
-        let right = hit_in(&geometry(), point(px(10.0 + 8.0 * 5.0 + 6.0), px(20.0)));
-        assert_eq!(right, Hit { row: 0, column: 5, side: Side::Right });
-    }
-
-    #[test]
-    fn a_point_outside_the_grid_is_clamped_to_its_edge() {
-        let before = hit_in(&geometry(), point(px(0.0), px(0.0)));
-        assert_eq!((before.row, before.column), (0, 0));
-        let after = hit_in(&geometry(), point(px(5000.0), px(5000.0)));
-        assert_eq!((after.row, after.column), (23, 79));
-    }
-
-    #[test]
-    fn a_hit_in_the_scrollback_is_a_negative_line() {
-        let hit = Hit { row: 3, column: 7, side: Side::Left };
-        assert_eq!(grid_point(5, hit), Point::new(Line(-2), Column(7)));
-        assert_eq!(grid_point(0, hit), Point::new(Line(3), Column(7)));
     }
 
     #[test]

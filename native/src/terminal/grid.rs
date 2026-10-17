@@ -82,6 +82,8 @@ pub struct Snapshot {
     pub columns: usize,
     /// How many lines the view is scrolled back from the bottom.
     pub display_offset: usize,
+    /// How many lines of history there are above the screen.
+    pub history_size: usize,
     pub backgrounds: Vec<BackgroundSpan>,
     pub spans: Vec<TextSpan>,
     pub glyphs: Vec<DrawnGlyph>,
@@ -126,6 +128,7 @@ pub fn snapshot<L: EventListener>(term: &Term<L>, theme: &TerminalTheme) -> Snap
         rows,
         columns,
         display_offset,
+        history_size: term.history_size(),
         backgrounds: builder.backgrounds,
         spans: builder.spans,
         glyphs: builder.glyphs,
@@ -502,6 +505,12 @@ mod tests {
         assert_eq!(scrolled.display_offset, 1);
         assert_eq!(scrolled.spans.iter().map(|span| span.text.as_str()).collect::<Vec<_>>(), ["one", "two"]);
         assert_eq!(scrolled.cursor, None);
+    }
+
+    #[test]
+    fn the_snapshot_knows_how_much_history_there_is() {
+        let term = terminal_with(10, 2, "one\r\ntwo\r\nthree\r\nfour");
+        assert_eq!(snapshot(&term, &TerminalTheme::default()).history_size, 2);
     }
 
     #[test]

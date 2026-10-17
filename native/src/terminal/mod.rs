@@ -22,6 +22,7 @@ mod grid;
 mod keys;
 mod links;
 mod mouse;
+mod selection;
 mod session;
 mod theme;
 mod view;

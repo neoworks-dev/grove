@@ -5,6 +5,7 @@ import type { PluginCatalog } from "../kernel/profile";
 import { editor } from "./editor";
 import { editorPosition } from "./editor-position";
 import { explorer } from "./explorer";
+import { agents } from "./agents";
 import { brokenEntry, failing } from "./failing";
 import { frame } from "./frame";
 import { header } from "./header";
@@ -45,6 +46,7 @@ export const corePlugins: PluginCatalog = {
   workspace,
   explorer,
   worktrees,
+  agents,
   "placeholder-sidebar": placeholderSidebar,
   "placeholder-panel": placeholderPanel,
   failing,

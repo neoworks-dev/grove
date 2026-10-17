@@ -15,6 +15,7 @@ import {
   removeLeaf,
   resizeGutter,
   splitLeaf,
+  updateLeafState,
   type DropZone,
   type LayoutNode,
   type SplitDirection,
@@ -108,19 +109,43 @@ export class LayoutService extends Service implements LayoutHost {
   }
 
   /**
-   * Splits the focused pane and focuses the new one. The new pane is of the configured type, or
-   * of the type that was split when none is configured, as a split of an editor is another editor.
+   * What a pane keeps about what it shows, such as the session an agent pane follows. Empty for
+   * a pane that keeps nothing or an id that names no pane. Reactive.
    */
-  splitFocused(direction: SplitDirection): void {
+  paneState(leafId: string): Record<string, unknown> {
+    const leaf = findLeaf(this.root, leafId);
+    if (!leaf || !leaf.paneState) {
+      return {};
+    }
+    return leaf.paneState;
+  }
+
+  /** Records what a pane shows, keeping the fields of `patch` over what it kept before. */
+  setPaneState(leafId: string, patch: Record<string, unknown>): void {
+    if (!findLeaf(this.rootNode, leafId)) {
+      return;
+    }
+    this.rootNode = updateLeafState(this.rootNode, leafId, patch);
+    this.changes.notify();
+  }
+
+  /**
+   * Splits the focused pane and focuses the new one. The new pane is of `paneTypeId` when one is
+   * given, else of the configured type, else of the type that was split, as a split of an editor
+   * is another editor.
+   */
+  splitFocused(direction: SplitDirection, paneTypeId?: string): void {
     const source = findLeaf(this.rootNode, this.focusedId);
     if (!source) {
       return;
     }
-    let paneTypeId = source.paneTypeId;
-    if (this.newPaneTypeId !== null) {
-      paneTypeId = this.newPaneTypeId;
+    let newPaneType = source.paneTypeId;
+    if (paneTypeId !== undefined) {
+      newPaneType = paneTypeId;
+    } else if (this.newPaneTypeId !== null) {
+      newPaneType = this.newPaneTypeId;
     }
-    const created = createLeaf(paneTypeId);
+    const created = createLeaf(newPaneType);
     this.rootNode = splitLeaf(this.rootNode, source.id, direction, created, "after");
     this.focusedId = created.id;
     this.changes.notify();

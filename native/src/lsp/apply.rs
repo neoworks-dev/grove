@@ -115,7 +115,8 @@ mod tests {
         std::fs::write(&open_path, "alpha beta\n").unwrap();
         std::fs::write(&closed_path, "one\nalpha\n").unwrap();
         let documents = SharedDocuments::new(Emitter::default());
-        let store = LspStore::with_search_directories(documents.clone(), Emitter::default(), Signals::default(), vec![]);
+        let store =
+            LspStore::with_search_directories(documents.clone(), Emitter::default(), Signals::default(), vec![]);
         let id = documents.open(&open_path.display().to_string()).unwrap().id;
 
         let uri = |path: &Path| lsp_client::uri::uri_from_path(path);

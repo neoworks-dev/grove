@@ -48,10 +48,8 @@ pub fn decorations_for(buffer: &Buffer, hints: &[Hint]) -> Vec<Decoration> {
     hints
         .iter()
         .map(|hint| {
-            let offset = buffer.offset_of_utf16_point(Utf16Point {
-                line: hint.position.line,
-                character: hint.position.character,
-            });
+            let offset = buffer
+                .offset_of_utf16_point(Utf16Point { line: hint.position.line, character: hint.position.character });
             Decoration {
                 start: buffer.position_of(offset),
                 end: None,

@@ -208,7 +208,11 @@ impl LspStore {
     }
 
     /// What the server last said is wrong in a document, where it touches a range.
-    pub fn diagnostics_at(&self, document: DocumentId, range: &lsp_client::protocol::Range) -> Vec<lsp_client::protocol::Diagnostic> {
+    pub fn diagnostics_at(
+        &self,
+        document: DocumentId,
+        range: &lsp_client::protocol::Range,
+    ) -> Vec<lsp_client::protocol::Diagnostic> {
         let state = self.state();
         let Some(tracked) = state.tracked.get(&document) else {
             return Vec::new();
@@ -802,14 +806,16 @@ mod tests {
         std::fs::create_dir_all(&tools).unwrap();
         std::fs::write(directory.join("eslint.config.mjs"), "export default []").unwrap();
         std::fs::write(directory.join("src/a.ts"), "let a = 1\n").unwrap();
-        let report = r#"[{"messages":[{"ruleId":"semi","severity":2,"message":"Missing semicolon","line":1,"column":10}]}]"#;
+        let report =
+            r#"[{"messages":[{"ruleId":"semi","severity":2,"message":"Missing semicolon","line":1,"column":10}]}]"#;
         let script = tools.join("eslint_d");
         std::fs::write(&script, format!("#!/bin/sh\ncat >/dev/null\necho '{report}'\n")).unwrap();
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
 
         let documents = SharedDocuments::new(Emitter::default());
-        let store = LspStore::with_search_directories(documents.clone(), Emitter::default(), Signals::default(), vec![tools]);
+        let store =
+            LspStore::with_search_directories(documents.clone(), Emitter::default(), Signals::default(), vec![tools]);
         let id = documents.open(&directory.join("src/a.ts").display().to_string()).unwrap().id;
         let count = |documents: &SharedDocuments| {
             documents.lock().get(id).map(|doc| doc.state.decoration_count(lint::ESLINT_SOURCE)).unwrap_or(0)

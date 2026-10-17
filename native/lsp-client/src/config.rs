@@ -47,7 +47,9 @@ pub fn all_sections(server: &str, switches: Switches) -> Value {
                 "constantValues": on, "functionTypeParameters": on, "parameterNames": on, "rangeVariableTypes": on,
             } } })
         }
-        "lua-language-server" => json!({ "Lua": { "hint": { "enable": switches.inlay_hints }, "telemetry": { "enable": false } } }),
+        "lua-language-server" => {
+            json!({ "Lua": { "hint": { "enable": switches.inlay_hints }, "telemetry": { "enable": false } } })
+        }
         _ => json!({}),
     }
 }

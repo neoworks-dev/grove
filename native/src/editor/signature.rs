@@ -10,8 +10,8 @@ use serde_json::Value;
 use svelte_gpui::gpui::{Context, Keystroke};
 
 use super::Editor;
-use super::features::FeatureSignal;
 use super::Signal;
+use super::features::FeatureSignal;
 use crate::lsp::Pending;
 
 /// A popover that is showing, or whose first answer is awaited.
@@ -115,7 +115,12 @@ impl Editor {
     }
 
     /// Takes in the server's answer, if it is the one being waited for. No signatures ends the session.
-    pub(super) fn signature_arrived(&mut self, request: u64, help: Option<(SignatureHelp, Value)>, cx: &mut Context<Self>) {
+    pub(super) fn signature_arrived(
+        &mut self,
+        request: u64,
+        help: Option<(SignatureHelp, Value)>,
+        cx: &mut Context<Self>,
+    ) {
         let Some(session) = &mut self.features.signature else {
             return;
         };

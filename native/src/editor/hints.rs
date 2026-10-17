@@ -8,7 +8,7 @@ use editor_core::decorations::Decoration;
 use editor_core::occurrences::SERVER_SOURCE;
 use editor_core::{Command, DocumentId};
 use lsp_client::highlights::{decorations_for as highlight_decorations, parse_ranges};
-use lsp_client::inlay::{self, INLAY_SOURCE, Hint};
+use lsp_client::inlay::{self, Hint, INLAY_SOURCE};
 use lsp_client::protocol::{Range, ResponseError};
 use serde_json::{Value, json};
 use svelte_gpui::gpui::Context;

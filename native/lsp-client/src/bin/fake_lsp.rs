@@ -135,7 +135,14 @@ fn place_of(params: &Value, documents: &HashMap<String, String>) -> (String, usi
 
 /// The word that touches a column of a line, as UTF-16 columns.
 fn word_at(line: &str, character: usize) -> Option<(usize, usize, String)> {
-    let units: Vec<(usize, char)> = line.chars().scan(0, |at, c| { let start = *at; *at += c.len_utf16(); Some((start, c)) }).collect();
+    let units: Vec<(usize, char)> = line
+        .chars()
+        .scan(0, |at, c| {
+            let start = *at;
+            *at += c.len_utf16();
+            Some((start, c))
+        })
+        .collect();
     let is_word = |c: char| c.is_alphanumeric() || c == '_';
     let index = units.iter().position(|(start, _)| *start >= character).unwrap_or(units.len());
     let mut from = index;
@@ -214,7 +221,8 @@ fn inlay_hints(params: &Value, documents: &HashMap<String, String>) -> Value {
     let mut hints = Vec::new();
     for (number, line) in text.split('\n').enumerate().filter(|(number, _)| (first..=last).contains(number)) {
         if let Some((_, to, _)) = word_at(line, 0) {
-            hints.push(json!({ "position": { "line": number, "character": to }, "label": ": T", "paddingLeft": false }));
+            hints
+                .push(json!({ "position": { "line": number, "character": to }, "label": ": T", "paddingLeft": false }));
         }
     }
     json!(hints)
@@ -353,14 +361,16 @@ fn hover(params: &Value, documents: &HashMap<String, String>) -> Value {
 /// Sends a request for configuration; the answer is reported to the client in the main loop.
 fn ask_for_configuration(writer: &mut impl std::io::Write) {
     let items = json!([{ "section": "fake" }, { "section": "rust-analyzer" }]);
-    let request = json!({ "jsonrpc": "2.0", "id": 9000, "method": "workspace/configuration", "params": { "items": items } });
+    let request =
+        json!({ "jsonrpc": "2.0", "id": 9000, "method": "workspace/configuration", "params": { "items": items } });
     let _ = write_message(writer, &request);
 }
 
 /// Asks to hear about changes to files ending in `.watched`.
 fn register_watchers(writer: &mut impl std::io::Write) {
     let options = json!({ "watchers": [{ "globPattern": "**/*.watched" }] });
-    let registration = json!({ "id": "watch-1", "method": "workspace/didChangeWatchedFiles", "registerOptions": options });
+    let registration =
+        json!({ "id": "watch-1", "method": "workspace/didChangeWatchedFiles", "registerOptions": options });
     let request = json!({ "jsonrpc": "2.0", "id": 9001, "method": "client/registerCapability", "params": { "registrations": [registration] } });
     let _ = write_message(writer, &request);
 }

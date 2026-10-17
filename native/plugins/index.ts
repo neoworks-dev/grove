@@ -4,7 +4,7 @@
 import type { PluginCatalog } from "../kernel/profile";
 import { editor } from "./editor";
 import { editorPosition } from "./editor-position";
-import { failing } from "./failing";
+import { brokenEntry, failing } from "./failing";
 import { frame } from "./frame";
 
 export const corePlugins: PluginCatalog = {
@@ -12,4 +12,5 @@ export const corePlugins: PluginCatalog = {
   editor,
   "editor-position": editorPosition,
   failing,
+  "broken-entry": brokenEntry,
 };

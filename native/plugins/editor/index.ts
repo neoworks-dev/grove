@@ -94,6 +94,8 @@ export const editor = {
       service.setKeymap(live.keymap);
       configure(optionsOf(live));
     });
+    // Drawn between a pane's tabs and its text; plugins such as breadcrumbs register into it.
+    ctx.slots.declare("editor.breadcrumbs", "list");
     ctx.slots.register("main", {
       id: "editor",
       key: "editor",
@@ -166,6 +168,9 @@ function registerEditCommands(ctx: Context, service: EditorService): void {
   const commands: [string, string, string][] = [
     ["edit.undo", "Undo", "undo"],
     ["edit.redo", "Redo", "redo"],
+    ["edit.cut", "Cut", "cut"],
+    ["edit.copy", "Copy", "copy"],
+    ["edit.paste", "Paste", "paste_clipboard"],
     ["edit.selectAll", "Select all", "select_all"],
   ];
   for (const [id, title, type] of commands) {

@@ -9,6 +9,7 @@
 mod highlight;
 mod injections;
 mod languages;
+mod scopes;
 
 use std::ops::Range;
 
@@ -20,6 +21,7 @@ use injections::{Injection, StaleLayer};
 
 pub use highlight::{HIGHLIGHT_NAMES, HighlightId, HighlightSpan, flatten_captures, highlight_for_capture};
 pub use languages::{LanguageDefinition, all_languages, language_for_name, language_for_path};
+pub use scopes::Scope;
 
 /// One parse: the whole file in its own language, or the stretch of it that is code in another.
 struct Layer {

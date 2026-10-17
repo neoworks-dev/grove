@@ -46,6 +46,8 @@ export class ExplorerService extends Service {
   /** What went wrong with the last edit, kept until it is dismissed. */
   private noticeText: string | null = null;
   private pendingAction: PendingAction | null = null;
+  /** The path, relative to the worktree, that the view is to expand to and select. */
+  private revealing: string | null = null;
   private staleDirectories = new Set<string>();
   private refreshTimer: ReturnType<typeof setTimeout> | undefined;
   private changes: ChangeSignal = createChangeSignal();
@@ -147,6 +149,25 @@ export class ExplorerService extends Service {
     await Promise.all([this.loadDirectory(""), this.loadGitChanges(worktreeId)]);
     this.loading = false;
     this.changes.notify();
+  }
+
+  /** Asks the view to expand the tree down to a path and select it. */
+  requestReveal(relPath: string): void {
+    this.revealing = relPath;
+    this.changes.notify();
+  }
+
+  /** The path waiting to be expanded to and selected, or null. Reactive. */
+  pendingReveal(): string | null {
+    this.changes.track();
+    return this.revealing;
+  }
+
+  /** Marks a reveal as done, so it is not made again. */
+  finishReveal(relPath: string): void {
+    if (this.revealing === relPath) {
+      this.revealing = null;
+    }
   }
 
   /** Lists a directory unless it already has been. */

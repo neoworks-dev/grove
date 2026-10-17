@@ -33,6 +33,10 @@
 //! `document_open_text { name, text }` makes one (the name's extension picks the language),
 //! `document_set_text { id, text }` replaces its text, and `document_text { id }` reads the text
 //! of any document. `document_reload { id }` reads a file's document from disk again.
+//!
+//! `document_scopes { id, row, column }` lists the named scopes (functions, classes, modules)
+//! around a place, outermost first, as `{ kind, name, start, end, startCharacter }` with positions as `{ row, column }` and
+//! `startCharacter` the start's column in UTF-16 units, which the editor element's `goto` takes.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
@@ -40,7 +44,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use editor_core::vim::types::AppRequest;
 use editor_core::{
     Command, ContentChange, Decoration, Document, DocumentId, DocumentSummary, Documents, EditorState, IndentStyle,
-    Outcome,
+    Outcome, Position,
 };
 use serde_json::{Value, json};
 use svelte_gpui::{CommandError, Commands, Emitter};
@@ -279,6 +283,7 @@ impl SharedDocuments {
         let text_reader = self.clone();
         let text_setter = self.clone();
         let reloader = self.clone();
+        let scoper = self.clone();
         commands
             .command("document_open", move |args| {
                 let path = string_argument(&args, "path")?;
@@ -304,6 +309,32 @@ impl SharedDocuments {
                 text_setter.set_detached_text(id, &text)
             })
             .command("document_reload", move |args| reloader.reload(id_argument(&args)?))
+            .command("document_scopes", move |args| scoper.scopes(&args))
+    }
+
+    /// The scopes around a place in a document, from the arguments of `document_scopes`.
+    fn scopes(&self, args: &Value) -> Result<Value, CommandError> {
+        let id = id_argument(args)?;
+        let row = number_argument(args, "row")?;
+        let column = number_argument(args, "column")?;
+        let documents = self.lock();
+        let Some(document) = documents.get(id) else {
+            return Err(no_document(id));
+        };
+        let buffer = document.state.buffer();
+        let scopes: Vec<Value> = document
+            .state
+            .scopes_at(Position { row, column })
+            .iter()
+            .map(|scope| {
+                // The editor element's `goto` counts UTF-16 units, so the start comes in those too.
+                let start = buffer.utf16_point_of(buffer.offset_of(scope.start));
+                let mut described = json!(scope);
+                described["startCharacter"] = json!(start.character);
+                described
+            })
+            .collect();
+        Ok(json!(scopes))
     }
 
     /// Replaces the text of a detached document, from the arguments of `document_set_text`.
@@ -361,6 +392,14 @@ fn string_argument(args: &Value, name: &str) -> Result<String, CommandError> {
     match args.get(name).and_then(Value::as_str) {
         Some(text) => Ok(text.to_string()),
         None => Err(CommandError::with_code("InvalidArguments", format!("this command takes a string {name}"))),
+    }
+}
+
+/// A non-negative whole number argument of a command, or the error that names what is missing.
+fn number_argument(args: &Value, name: &str) -> Result<usize, CommandError> {
+    match args.get(name).and_then(Value::as_u64) {
+        Some(number) => Ok(number as usize),
+        None => Err(CommandError::with_code("InvalidArguments", format!("this command takes a number {name}"))),
     }
 }
 
@@ -462,6 +501,21 @@ mod tests {
         assert!(!documents.options().smooth_scroll);
         assert!(documents.options().indent_guides);
         let bad = documents.configure(&json!({ "defaultIndent": { "kind": "wide" } }));
+        assert_eq!(bad.unwrap_err().code.as_deref(), Some("InvalidArguments"));
+    }
+
+    #[test]
+    fn scopes_are_listed_for_a_place_in_a_document() {
+        let documents = SharedDocuments::new(Emitter::default());
+        let id = documents.open(&file_with("scoped.rs", "mod m {\n    fn f() {\n        1\n    }\n}\n")).unwrap().id;
+        let scopes = documents.scopes(&json!({ "id": id, "row": 2, "column": 8 })).unwrap();
+        assert_eq!(scopes[0]["name"], "m");
+        assert_eq!(scopes[1]["kind"], "function");
+        assert_eq!(scopes[1]["start"], json!({ "row": 1, "column": 4 }));
+        assert_eq!(scopes[1]["startCharacter"], 4);
+        let missing = documents.scopes(&json!({ "id": 99, "row": 0, "column": 0 }));
+        assert_eq!(missing.unwrap_err().code.as_deref(), Some("NoDocument"));
+        let bad = documents.scopes(&json!({ "id": id }));
         assert_eq!(bad.unwrap_err().code.as_deref(), Some("InvalidArguments"));
     }
 

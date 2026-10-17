@@ -87,6 +87,15 @@
     nameInput?.focus();
   });
 
+  // A reveal asked for from elsewhere, such as a breadcrumb: the tree opens down to the path.
+  $effect(() => {
+    const target = explorer.pendingReveal();
+    if (target === null || !running) {
+      return;
+    }
+    untrack(() => void revealPath(target));
+  });
+
   const markedDirectories = $derived(explorer.markedDirectories(expanded));
 
   /** The colour of an entry's name: its change, or a folder's tint when something below it changed. */
@@ -120,6 +129,22 @@
   function showDirectory(relPath: string): void {
     expanded = new Set([...expanded, relPath]);
     void explorer.ensureLoaded(relPath);
+  }
+
+  /** Opens every folder above a path, selects the path and scrolls to it. */
+  async function revealPath(relPath: string): Promise<void> {
+    explorer.finishReveal(relPath);
+    for (const directory of ancestorsOf(relPath)) {
+      showDirectory(directory);
+      await explorer.ensureLoaded(directory);
+    }
+    const node = explorer.nodeAt(relPath);
+    if (node !== undefined && node.isDir) {
+      showDirectory(relPath);
+    }
+    selected = relPath;
+    await tick();
+    tree?.reveal(relPath);
   }
 
   /** The entry the tree has selected. */

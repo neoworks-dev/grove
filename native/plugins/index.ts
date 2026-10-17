@@ -4,9 +4,11 @@
 import type { PluginCatalog } from "../kernel/profile";
 import { diff } from "./diff";
 import { editor } from "./editor";
+import { editorContextMenu } from "./editor-context-menu";
 import { editorPosition } from "./editor-position";
 import { explorer } from "./explorer";
 import { agents } from "./agents";
+import { breadcrumbs } from "./breadcrumbs";
 import { brokenEntry, failing } from "./failing";
 import { frame } from "./frame";
 import { gitChanges } from "./git-changes";
@@ -16,6 +18,7 @@ import { layout } from "./layout";
 import { lsp } from "./lsp";
 import { coreMenu, menus } from "./menus";
 import { panel } from "./panel";
+import { promptBlame } from "./prompt-blame";
 import { placeholderPanel } from "./placeholders";
 import { palette } from "./palette";
 import { rails } from "./rails";
@@ -46,9 +49,12 @@ export const corePlugins: PluginCatalog = {
   panel,
   layout,
   editor,
+  breadcrumbs,
+  "editor-context-menu": editorContextMenu,
   "editor-position": editorPosition,
   diff,
   "git-gutter": gitGutter,
+  "prompt-blame": promptBlame,
   lsp,
   "git-changes": gitChanges,
   sidecar,

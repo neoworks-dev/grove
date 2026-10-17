@@ -7,6 +7,7 @@ import { editor } from "./editor";
 import { editorPosition } from "./editor-position";
 import { explorer } from "./explorer";
 import { agents } from "./agents";
+import { breadcrumbs } from "./breadcrumbs";
 import { brokenEntry, failing } from "./failing";
 import { frame } from "./frame";
 import { gitChanges } from "./git-changes";
@@ -45,6 +46,7 @@ export const corePlugins: PluginCatalog = {
   panel,
   layout,
   editor,
+  breadcrumbs,
   "editor-position": editorPosition,
   diff,
   "git-gutter": gitGutter,

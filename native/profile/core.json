@@ -15,6 +15,7 @@
   { "id": "statusbar", "plugin": "statusbar" },
   { "id": "layout", "plugin": "layout" },
   { "id": "editor", "plugin": "editor" },
+  { "id": "breadcrumbs", "plugin": "breadcrumbs" },
   { "id": "statusbar-position", "plugin": "editor-position" },
   { "id": "git-gutter", "plugin": "git-gutter" },
   { "id": "lsp", "plugin": "lsp" },

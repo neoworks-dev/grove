@@ -1,17 +1,18 @@
-//! The code editor, drawn by GPUI and placed in the app as `element("editor")`.
+//! The code editor's view, drawn by GPUI and placed in the app as `element("editor")`.
 //!
-//! The view owns the buffer, its selections and the scroll offset. `EditorElement` paints it,
-//! and this module handles what comes in: props from Svelte, keys, the wheel and the pointer.
-//! There can be any number of cursors, as in VS Code: every key acts on all of them.
+//! What an editor is, and everything that changes it, lives in the `editor_core` crate: an
+//! `EditorState` that only `Command`s change, and input layers that turn keys into commands.
+//! This view owns one of each and the things only a window has, the scroll offset and the
+//! layout of the last frame. It forwards keys and the pointer, applies the commands that come
+//! back, scrolls, reports the selections to the app and lets `EditorElement` paint.
 
-mod buffer;
-mod display;
 mod element;
-mod movement;
-mod selections;
 
 use std::path::Path;
 
+use editor_core::{
+    Buffer, Command, EditorState, InputContext, InputLayer, KeyInput, Modifiers, Outcome, Position, StandardKeymap,
+};
 use serde_json::{Value, json};
 use svelte_gpui::gpui::{
     App, Context, FocusHandle, IntoElement, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent,
@@ -19,16 +20,14 @@ use svelte_gpui::gpui::{
 };
 use svelte_gpui::{AppElement, CommandError, NativeHost};
 
-use buffer::{Buffer, Position};
 use element::{EditorElement, LINE_HEIGHT, Layout};
-use movement::{Motion, find_next, move_selection, vertical, word_at};
-use selections::{Selection, Selections};
 
 pub struct Editor {
     host: NativeHost,
     focus: FocusHandle,
-    buffer: Buffer,
-    selections: Selections,
+    state: EditorState,
+    /// Turns keys into commands: the standard keymap now, a vim layer later.
+    input: Box<dyn InputLayer>,
     /// How far the text is scrolled, in pixels from the top of the first line.
     scroll_top: Pixels,
     /// What the last frame drew; none before the first.
@@ -47,8 +46,8 @@ impl Editor {
         Editor {
             host,
             focus: cx.focus_handle(),
-            buffer: Buffer::empty(),
-            selections: Selections::single(Position::default()),
+            state: EditorState::new(Buffer::empty()),
+            input: Box::new(StandardKeymap),
             scroll_top: px(0.0),
             layout: None,
             dragging: false,
@@ -60,10 +59,9 @@ impl Editor {
     fn open(&mut self, path: &str) {
         match Buffer::open(Path::new(path)) {
             Ok(buffer) => {
-                self.buffer = buffer;
-                self.selections = Selections::single(Position::default());
+                self.state.replace_buffer(buffer);
                 self.scroll_top = px(0.0);
-                self.host.emit("opened", json!({ "path": path, "lines": self.buffer.line_count() }));
+                self.host.emit("opened", json!({ "path": path, "lines": self.state.buffer().line_count() }));
                 self.report_selections();
             }
             Err(error) => {
@@ -72,157 +70,43 @@ impl Editor {
         }
     }
 
-    /// Handles a key the editor knows; returns false for the rest, which then bubble to the app.
+    /// Applies a command to the state, then scrolls if the command asks the view to follow.
+    fn apply(&mut self, command: &Command) -> Outcome {
+        let outcome = self.state.apply(command);
+        if outcome.reveal_newest {
+            self.scroll_to_newest();
+        }
+        outcome
+    }
+
+    /// Handles a key the input layer knows; returns false for the rest, which then bubble to the app.
     fn handle_key(&mut self, keystroke: &Keystroke) -> bool {
-        let modifiers = keystroke.modifiers;
-        let key = keystroke.key.as_str();
-        if modifiers.control && modifiers.alt {
-            return self.handle_multi_cursor_key(key);
-        }
-        if modifiers.control {
-            return self.handle_control_key(key, modifiers.shift);
-        }
-        if key == "escape" {
-            return self.collapse_selections();
-        }
-        let Some(motion) = self.motion_for_key(key) else {
+        let context = InputContext { page_rows: self.rows_in_view() };
+        let Some(command) = self.input.translate(&key_input(keystroke), &context) else {
             return false;
         };
-        self.move_selections(motion, modifiers.shift);
-        true
-    }
-
-    /// The motion a plain cursor key makes.
-    fn motion_for_key(&self, key: &str) -> Option<Motion> {
-        let page = self.rows_in_view() as isize;
-        let motion = match key {
-            "left" => Motion::Left,
-            "right" => Motion::Right,
-            "up" => Motion::Vertical(-1),
-            "down" => Motion::Vertical(1),
-            "pageup" => Motion::Vertical(-page),
-            "pagedown" => Motion::Vertical(page),
-            "home" => Motion::LineStart,
-            "end" => Motion::LineEnd,
-            _ => return None,
-        };
-        Some(motion)
-    }
-
-    /// Ctrl-Alt-Up and Ctrl-Alt-Down add a cursor on the line above or below.
-    fn handle_multi_cursor_key(&mut self, key: &str) -> bool {
-        match key {
-            "up" => self.add_cursor_vertically(-1),
-            "down" => self.add_cursor_vertically(1),
-            _ => return false,
-        }
-        true
-    }
-
-    /// Ctrl with another key: the buffer's ends, selecting all, and selecting the next match.
-    fn handle_control_key(&mut self, key: &str, shift: bool) -> bool {
-        match key {
-            "home" => self.move_selections(Motion::BufferStart, shift),
-            "end" => self.move_selections(Motion::BufferEnd, shift),
-            "a" => self.select_all(),
-            "d" => self.select_next_occurrence(),
-            _ => return false,
-        }
-        true
-    }
-
-    /// Moves every selection, extending it when Shift is held.
-    fn move_selections(&mut self, motion: Motion, extend: bool) {
-        let buffer = &self.buffer;
-        self.selections.transform(|selection| move_selection(buffer, selection, motion, extend));
-        self.scroll_to_newest();
-    }
-
-    /// Adds a cursor one line above the topmost selection, or below the bottommost.
-    fn add_cursor_vertically(&mut self, direction: isize) {
-        let all = self.selections.all();
-        let edge = if direction < 0 { all[0] } else { all[all.len() - 1] };
-        let (head, goal_column) = vertical(&self.buffer, &edge, direction);
-        if head.row == edge.head.row {
-            return;
-        }
-        self.selections.add(Selection { anchor: head, head, goal_column });
-        self.scroll_to_newest();
-    }
-
-    /// Ctrl-D: selects the word at the newest cursor, or adds a selection at the next place
-    /// the newest selection's text occurs.
-    fn select_next_occurrence(&mut self) {
-        let newest = self.selections.newest();
-        if newest.is_empty() {
-            if let Some(word) = word_at(&self.buffer, newest.head) {
-                self.selections.replace_newest(word);
-            }
-            return;
-        }
-        let needle = self.buffer.text_between(newest.start(), newest.end());
-        let Some(found) = find_next(&self.buffer, &needle, newest.end()) else {
-            return;
-        };
-        self.selections.add(found);
-        self.scroll_to_newest();
-    }
-
-    /// Selects the whole buffer.
-    fn select_all(&mut self) {
-        let end = self.buffer.clamp(Position { row: usize::MAX, column: usize::MAX });
-        self.selections = Selections::single(Position::default());
-        self.selections.replace_newest(Selection::spanning(Position::default(), end));
-    }
-
-    /// Escape: back to one cursor, then to no selection. False when there is nothing to undo,
-    /// so the key reaches the app.
-    fn collapse_selections(&mut self) -> bool {
-        if self.selections.keep_only_newest() {
-            return true;
-        }
-        let newest = self.selections.newest();
-        if newest.is_empty() {
-            return false;
-        }
-        self.selections.replace_newest(Selection::cursor(newest.head));
-        true
+        let outcome = self.apply(&command);
+        outcome.changed || !command.passes_on_when_unchanged()
     }
 
     /// A press of the left button: a click places one cursor, Alt-click adds or removes one,
     /// Shift-click extends the newest selection, and a double click selects a word.
     fn press(&mut self, event: &MouseDownEvent) {
-        let Some(layout) = &self.layout else {
+        let Some(at) = self.position_at(event.position) else {
             return;
         };
-        let at = self.buffer.clamp(layout.position_for_point(event.position));
         self.dragging = true;
         if event.modifiers.shift {
-            self.extend_newest_to(at);
+            self.apply(&Command::ExtendNewestTo { at });
             return;
         }
         if event.modifiers.alt {
-            if !self.selections.remove_cursor_at(at) {
-                self.selections.add(Selection::cursor(at));
-            }
+            self.apply(&Command::ToggleCursor { at });
             return;
         }
-        self.selections = Selections::single(at);
+        self.apply(&Command::PlaceCursor { at });
         if event.click_count == 2 {
-            self.select_word_at(at);
-        }
-    }
-
-    /// Moves the newest selection's head while keeping its anchor.
-    fn extend_newest_to(&mut self, at: Position) {
-        let anchor = self.selections.newest().anchor;
-        self.selections.replace_newest(Selection::spanning(anchor, at));
-    }
-
-    /// Replaces the newest selection with the word at a position, if there is one.
-    fn select_word_at(&mut self, at: Position) {
-        if let Some(word) = word_at(&self.buffer, at) {
-            self.selections.replace_newest(word);
+            self.apply(&Command::SelectWordAt { at });
         }
     }
 
@@ -231,12 +115,17 @@ impl Editor {
         if !self.dragging || event.pressed_button != Some(MouseButton::Left) {
             return false;
         }
-        let Some(layout) = &self.layout else {
+        let Some(at) = self.position_at(event.position) else {
             return false;
         };
-        let at = self.buffer.clamp(layout.position_for_point(event.position));
-        self.extend_newest_to(at);
+        self.apply(&Command::ExtendNewestTo { at });
         true
+    }
+
+    /// The buffer position under a point in the window, or none before the first frame.
+    fn position_at(&self, point: svelte_gpui::gpui::Point<Pixels>) -> Option<Position> {
+        let layout = self.layout.as_ref()?;
+        Some(layout.position_for_point(point))
     }
 
     /// Scrolls just enough to bring the newest selection's head into view.
@@ -244,7 +133,7 @@ impl Editor {
         let Some(layout) = &self.layout else {
             return;
         };
-        let head_top = LINE_HEIGHT * self.selections.newest().head.row as f32;
+        let head_top = LINE_HEIGHT * self.state.selections().newest().head.row as f32;
         let head_bottom = head_top + LINE_HEIGHT;
         let view_height = layout.bounds.size.height;
         if head_top < self.scroll_top {
@@ -256,7 +145,7 @@ impl Editor {
 
     /// Scrolls by the wheel's delta, stopping with the last line at the top.
     fn scroll_by(&mut self, delta: Pixels) {
-        let last_line_top = LINE_HEIGHT * self.buffer.line_count().saturating_sub(1) as f32;
+        let last_line_top = LINE_HEIGHT * self.state.buffer().line_count().saturating_sub(1) as f32;
         self.scroll_top = (self.scroll_top - delta).clamp(px(0.0), last_line_top);
     }
 
@@ -270,11 +159,12 @@ impl Editor {
 
     /// Tells the app how many cursors there are and where the newest one is.
     fn report_selections(&self) {
-        let newest = self.selections.newest();
+        let selections = self.state.selections();
+        let newest = selections.newest();
         self.host.emit(
             "selections",
             json!({
-                "count": self.selections.count(),
+                "count": selections.count(),
                 "row": newest.head.row,
                 "column": newest.head.column,
                 "selected": !newest.is_empty(),
@@ -294,6 +184,15 @@ impl Editor {
     }
 }
 
+/// A GPUI keystroke as the input layers see it.
+fn key_input(keystroke: &Keystroke) -> KeyInput {
+    let modifiers = keystroke.modifiers;
+    KeyInput {
+        key: keystroke.key.clone(),
+        modifiers: Modifiers { control: modifiers.control, alt: modifiers.alt, shift: modifiers.shift },
+    }
+}
+
 impl AppElement for Editor {
     fn set_prop(&mut self, name: &str, value: Value, _cx: &mut Context<Self>) {
         if name != "path" {
@@ -302,15 +201,16 @@ impl AppElement for Editor {
         let Some(path) = value.as_str() else {
             return;
         };
-        if self.buffer.path() == Some(Path::new(path)) {
+        if self.state.buffer().path() == Some(Path::new(path)) {
             return;
         }
         self.open(path);
     }
 
-    fn call(&mut self, method: &str, _args: Value, _cx: &mut Context<Self>) -> Result<Value, CommandError> {
+    fn call(&mut self, method: &str, args: Value, _cx: &mut Context<Self>) -> Result<Value, CommandError> {
         match method {
-            "selections" => Ok(json!(self.selections.all().iter().map(selection_json).collect::<Vec<_>>())),
+            "selections" => Ok(self.selections_json()),
+            "apply" => self.apply_from_app(args),
             _ => Err(CommandError::with_code("UnknownMethod", format!("the editor has no method {method:?}"))),
         }
     }
@@ -320,8 +220,28 @@ impl AppElement for Editor {
     }
 }
 
+impl Editor {
+    /// The `apply` method: runs the command given as the first argument, as JSON, exactly as a
+    /// key would, and answers whether anything changed.
+    fn apply_from_app(&mut self, args: Value) -> Result<Value, CommandError> {
+        let Some(command_json) = args.get(0) else {
+            return Err(CommandError::with_code("InvalidCommand", "apply takes a command as its first argument"));
+        };
+        let command: Command = serde_json::from_value(command_json.clone())
+            .map_err(|error| CommandError::with_code("InvalidCommand", error.to_string()))?;
+        let outcome = self.apply(&command);
+        self.report_selections();
+        Ok(json!({ "changed": outcome.changed }))
+    }
+
+    /// Every selection as the app sees it.
+    fn selections_json(&self) -> Value {
+        json!(self.state.selections().all().iter().map(selection_json).collect::<Vec<_>>())
+    }
+}
+
 /// A selection as the app sees it.
-fn selection_json(selection: &Selection) -> Value {
+fn selection_json(selection: &editor_core::Selection) -> Value {
     json!({
         "anchor": { "row": selection.anchor.row, "column": selection.anchor.column },
         "head": { "row": selection.head.row, "column": selection.head.column },

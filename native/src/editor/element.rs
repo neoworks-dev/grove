@@ -11,9 +11,8 @@ use svelte_gpui::gpui::{
 };
 
 use super::Editor;
-use super::buffer::Position;
-use super::display::DisplayLine;
-use super::selections::Selection;
+use editor_core::display::DisplayLine;
+use editor_core::{Position, Selection};
 
 pub const FONT_FAMILY: &str = "DejaVu Sans Mono";
 pub const FONT_SIZE: Pixels = px(14.0);
@@ -136,7 +135,7 @@ impl Element for EditorElement {
         cx: &mut App,
     ) -> Frame {
         let editor = self.editor.read(cx);
-        let line_count = editor.buffer.line_count();
+        let line_count = editor.state.buffer().line_count();
         let scroll_top = editor.scroll_top;
 
         let digits = line_count.max(1).to_string().len();
@@ -148,7 +147,7 @@ impl Element for EditorElement {
         let first_row_top = bounds.top() - (scroll_top - LINE_HEIGHT * first_row as f32);
         let rows_drawn = (bounds.size.height / LINE_HEIGHT).ceil() as usize + 1;
         let end_row = (first_row + rows_drawn).min(line_count);
-        let visible_selections = editor.selections.in_rows(first_row, end_row);
+        let visible_selections = editor.state.selections().in_rows(first_row, end_row);
         let cursor_rows: HashSet<usize> = visible_selections
             .iter()
             .filter(|selection| selection.is_empty())
@@ -158,7 +157,7 @@ impl Element for EditorElement {
         let mut lines = Vec::with_capacity(end_row.saturating_sub(first_row));
         let mut rows = Vec::with_capacity(lines.capacity());
         for row in first_row..end_row {
-            let display = DisplayLine::new(&editor.buffer.line(row));
+            let display = DisplayLine::new(&editor.state.buffer().line(row));
             let is_cursor_row = cursor_rows.contains(&row);
             let number_color = if is_cursor_row { CURRENT_LINE_NUMBER } else { LINE_NUMBER };
             let number = shape(window, &(row + 1).to_string(), number_color);

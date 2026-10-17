@@ -28,6 +28,7 @@ function item(
 export const CORE_MENU_ITEMS: MenuBarItem[] = [
   item("file", "1-open", 1, "Open Folder…", "repo.open"),
   item("file", "5-close", 1, "Close Tab", "file.closeTab", "␣ b d"),
+  item("file", "9-quit", 1, "Quit", "app.quit"),
 
   item("edit", "1-history", 1, "Undo", "edit.undo"),
   item("edit", "1-history", 2, "Redo", "edit.redo"),
@@ -38,10 +39,11 @@ export const CORE_MENU_ITEMS: MenuBarItem[] = [
   item("edit", "4-find", 1, "Find", "edit.find"),
   item("edit", "4-find", 2, "Undo History", "undotree.open", "␣ s u"),
 
-  item("view", "3-panels", 0, "Toggle Bottom Panel", "panel.toggle", "␣ j"),
-  item("view", "3-panels", 1, "Toggle Logs Panel", "view.toggleLogs"),
-  item("view", "3-panels", 2, "Toggle Agent Panel", "view.toggleAgent"),
-  item("view", "3-panels", 3, "Focus Mode", "view.focusMode", "␣ z"),
+  item("view", "3-panels", 0, "Toggle Sidebar", "sidebar.toggle"),
+  item("view", "3-panels", 1, "Toggle Bottom Panel", "panel.toggle", "␣ j"),
+  item("view", "3-panels", 2, "Toggle Logs Panel", "view.toggleLogs"),
+  item("view", "3-panels", 3, "Toggle Agent Panel", "view.toggleAgent"),
+  item("view", "3-panels", 4, "Focus Mode", "view.focusMode", "␣ z"),
   item("view", "5-general", 1, "Command Palette…", "palette.open", "F1"),
   item("view", "5-general", 2, "Color Theme…", "theme.switch"),
   item("view", "5-general", 3, "Preferences", "view.preferences", "␣ ,"),
@@ -56,7 +58,7 @@ export const CORE_MENU_ITEMS: MenuBarItem[] = [
 
   item("window", "1-split", 1, "Split Right", "window.splitRight", "␣ w v"),
   item("window", "1-split", 2, "Split Down", "window.splitDown", "␣ w s"),
-  item("window", "2-close", 1, "Close Window", "window.close", "␣ w q"),
+  item("window", "2-close", 1, "Close Pane", "window.close", "␣ w q"),
 
   item("help", "1-links", 1, "Documentation", "help.documentation"),
   item("help", "1-links", 2, "neoworks.dev", "help.neoworks"),

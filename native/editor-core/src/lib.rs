@@ -19,6 +19,7 @@ pub mod indent;
 pub mod indenting;
 pub mod keymap;
 pub mod movement;
+pub mod occurrences;
 pub mod selections;
 pub mod state;
 pub mod syntax;

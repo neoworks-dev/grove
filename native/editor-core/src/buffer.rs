@@ -6,9 +6,10 @@ use std::io::{self, BufReader};
 use std::path::{Path, PathBuf};
 
 use ropey::Rope;
+use serde::{Deserialize, Serialize};
 
 /// A place in the buffer: a line, and a character within it (not a byte).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Position {
     pub row: usize,
     pub column: usize,
@@ -31,8 +32,7 @@ impl Buffer {
         Ok(Buffer { text, path: Some(path.to_path_buf()) })
     }
 
-    /// A buffer holding `text`, for tests.
-    #[cfg(test)]
+    /// A buffer holding `text`, with no file behind it.
     pub fn from_text(text: &str) -> Self {
         Buffer { text: Rope::from_str(text), path: None }
     }

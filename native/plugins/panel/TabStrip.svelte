@@ -49,6 +49,9 @@
     return result;
   });
 
+  /** The row's full width, which the scroller cannot work out from tabs that overflow it. */
+  const contentWidth = $derived(spans.length === 0 ? 0 : spans[spans.length - 1].end);
+
   const overflow = $derived(tabOverflow(spans, scrollLeft, scrollLeft + viewWidth));
 
   /** Records one tab's width when it is laid out or resized. */
@@ -110,7 +113,7 @@
 >
   <View style={{ flex: 1, minWidth: 0, height: "100%", justify: "center" }}>
     <Scroll bind:this={scroller} horizontal style={{ height: "100%" }} onscroll={trackScroll} onlayout={(layout) => (viewWidth = layout.width)}>
-      <View style={{ direction: "row", align: "center", gap: TAB_GAP, height: "100%" }}>
+      <View style={{ direction: "row", align: "center", gap: TAB_GAP, height: "100%", shrink: 0, width: contentWidth }}>
         {#each tabs as tab (tab.id)}
           {@const active = tab.id === activeId}
           <Button

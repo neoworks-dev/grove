@@ -18,10 +18,14 @@ use svelte_gpui::gpui::{
 };
 
 use super::Editor;
+use super::indent_paint::{self, GuideLine};
+use super::jump_paint::{self, JumpPaint};
+use super::options::EditorOptions;
 use super::theme::{EditorTheme, HighlightStyle};
 use super::vim_paint::{self, VimPaint};
 use editor_core::decorations::{DecorationKind, GutterMark, Placed, PlacedBlock, Placement, Tone, UnderlineKind};
 use editor_core::display::{BlockMap, BlockSlot, DisplayLine, DisplayRow, InlayText};
+use editor_core::jump::JumpSession;
 use editor_core::syntax::HighlightSpan;
 use editor_core::{EditorState, InputStatus, Position};
 
@@ -111,7 +115,7 @@ impl Layout {
     }
 
     /// The y of the top of the drawn display row at `index` (counted from the first drawn).
-    fn top_of_index(&self, index: usize) -> Pixels {
+    pub(super) fn top_of_index(&self, index: usize) -> Pixels {
         self.first_row_top + LINE_HEIGHT * index as f32
     }
 
@@ -167,6 +171,8 @@ pub struct Frame {
     selections: Vec<Bounds<Pixels>>,
     /// Behind the text: the ranges decorations colour.
     range_backgrounds: Vec<(Bounds<Pixels>, Hsla)>,
+    /// Behind the text: a line per indentation level.
+    guides: Vec<GuideLine>,
     /// Under the text: lines and squiggles decorations draw.
     decoration_underlines: Vec<DecorationUnderline>,
     gutter_marks: Vec<GutterPaint>,
@@ -176,6 +182,8 @@ pub struct Frame {
     underlines: Vec<Bounds<Pixels>>,
     /// What vim mode adds: block cursors and the command line.
     vim: VimPaint,
+    /// What a jump in progress adds: labels, and the matches they stand for.
+    jump: JumpPaint,
     /// The colours this frame is painted with.
     theme: EditorTheme,
 }
@@ -189,12 +197,14 @@ impl Frame {
             gutter_width: px(0.0),
             selections: Vec::new(),
             range_backgrounds: Vec::new(),
+            guides: Vec::new(),
             decoration_underlines: Vec::new(),
             gutter_marks: Vec::new(),
             line_ends: Vec::new(),
             cursors: Vec::new(),
             underlines: Vec::new(),
             vim: VimPaint::default(),
+            jump: JumpPaint::default(),
         }
     }
 }
@@ -244,11 +254,14 @@ impl Element for EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Frame {
+        self.editor.update(cx, |editor, cx| editor.advance_glide(window, cx));
         let editor = self.editor.read(cx);
         let scroll_top = editor.scroll_top;
         let theme = editor.theme.clone();
         let status = editor.input.status();
-        let built = editor.read(|state| build_frame(state, scroll_top, bounds, window, &theme, &status));
+        let options = editor.documents.options();
+        let jump = editor.jump.as_ref();
+        let built = editor.read(|state| build_frame(state, scroll_top, bounds, window, &theme, &status, options, jump));
         let Some((layout, frame)) = built else {
             return Frame::empty(theme);
         };
@@ -283,12 +296,14 @@ impl Element for EditorElement {
                     window.paint_quad(fill(line, theme.current_line));
                 }
             }
+            indent_paint::paint_guides(&frame.guides, theme, window);
             for (range, color) in &frame.range_backgrounds {
                 window.paint_quad(fill(*range, *color));
             }
             for selection in &frame.selections {
                 window.paint_quad(fill(*selection, theme.selection));
             }
+            jump_paint::paint_behind_text(&frame.jump, theme, window);
             vim_paint::paint_behind_text(&frame.vim, theme, focused, window);
             for mark in &frame.gutter_marks {
                 paint_gutter_mark(mark, window, cx);
@@ -321,6 +336,7 @@ impl Element for EditorElement {
             for cursor in &frame.cursors {
                 window.paint_quad(fill(*cursor, cursor_color));
             }
+            jump_paint::paint_over_text(&frame.jump, theme, window, cx);
             vim_paint::paint_command_line(&frame.vim, theme, window, cx);
         });
     }
@@ -401,6 +417,8 @@ fn build_frame(
     window: &mut Window,
     theme: &EditorTheme,
     status: &InputStatus,
+    options: EditorOptions,
+    jump: Option<&JumpSession>,
 ) -> (Layout, Frame) {
     let line_count = state.buffer().line_count();
     let digits = line_count.max(1).to_string().len();
@@ -484,18 +502,28 @@ fn build_frame(
     let (cursors, block_cursors) = vim_paint::cursor_bounds_for(&layout, visible_selections, status, character_width);
     let vim = VimPaint { block_cursors, command_line: vim_paint::command_line(&layout, status, theme, window) };
     let (range_backgrounds, decoration_underlines) = range_decorations(&layout, &decorations, theme);
+    let mut guides = Vec::new();
+    if options.indent_guides {
+        guides = indent_paint::guide_lines(state, &layout, character_width);
+    }
     let gutter_marks = gutter_marks(&layout, &decorations, theme, window);
+    let mut jump_paint = JumpPaint::default();
+    if let Some(session) = jump {
+        jump_paint = jump_paint::build(session, &layout, theme, character_width, window);
+    }
     let frame = Frame {
         rows: painted_rows,
         gutter_width,
         selections,
         range_backgrounds,
+        guides,
         decoration_underlines,
         gutter_marks,
         line_ends,
         cursors,
         underlines,
         vim,
+        jump: jump_paint,
         theme: theme.clone(),
     };
     (layout, frame)
@@ -524,7 +552,7 @@ fn range_decorations(
         }
         let spans = span_bounds(layout, placed.start, placed.end, px(0.0));
         if let Some(tone) = background {
-            let color = theme.tone(*tone).opacity(BACKGROUND_OPACITY);
+            let color = background_color(theme, *tone);
             backgrounds.extend(spans.iter().map(|span| (*span, color)));
         }
         let Some(underline) = underline else {
@@ -543,6 +571,15 @@ fn range_decorations(
         }
     }
     (backgrounds, underlines)
+}
+
+/// The colour a decoration's background is drawn in: the tone's, faded so the text stays readable.
+/// An occurrence's is the theme's own, which is already a quiet background.
+fn background_color(theme: &EditorTheme, tone: Tone) -> Hsla {
+    if tone == Tone::Occurrence {
+        return theme.tone(tone);
+    }
+    theme.tone(tone).opacity(BACKGROUND_OPACITY)
 }
 
 /// The marks gutter decorations put beside the line numbers on the rows in view.

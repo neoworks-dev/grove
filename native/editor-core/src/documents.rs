@@ -12,6 +12,7 @@ use serde::Serialize;
 
 use crate::buffer::Buffer;
 use crate::command::{Command, Outcome};
+use crate::indent::IndentStyle;
 use crate::state::EditorState;
 use crate::vim::registers::VimMemory;
 
@@ -58,6 +59,7 @@ impl Document {
             path: self.path().map(|path| path.display().to_string()),
             title: self.title(),
             dirty: self.state.is_modified(),
+            indent: self.state.buffer().indent(),
         }
     }
 }
@@ -69,6 +71,8 @@ pub struct DocumentSummary {
     pub path: Option<String>,
     pub title: String,
     pub dirty: bool,
+    /// How the file is indented, for the status bar.
+    pub indent: IndentStyle,
 }
 
 /// What applying a command to a document did.
@@ -95,6 +99,8 @@ pub struct Documents {
     /// Vim's registers and last search, which every document shares: a command works on the
     /// document's own copy of them for as long as it runs, then they are handed back.
     memory: VimMemory,
+    /// The indentation style of files whose own lines do not say.
+    default_indent: IndentStyle,
 }
 
 impl Documents {
@@ -174,8 +180,22 @@ impl Documents {
         Some(Applied { outcome, modified_changed })
     }
 
+    /// Sets the indentation style of files whose own lines do not say, for the documents that are
+    /// open and the ones opened later. Returns the documents it changed.
+    pub fn set_default_indent(&mut self, style: IndentStyle) -> Vec<DocumentId> {
+        self.default_indent = style;
+        let mut changed = Vec::new();
+        for document in &mut self.documents {
+            if document.state.apply_default_indent(style) {
+                changed.push(document.id);
+            }
+        }
+        changed
+    }
+
     /// Adds a document over a state and gives it the next id.
-    fn insert(&mut self, state: EditorState) -> DocumentId {
+    fn insert(&mut self, mut state: EditorState) -> DocumentId {
+        state.apply_default_indent(self.default_indent);
         self.next_id += 1;
         let id = self.next_id;
         self.documents.push(Document { id, state, scroll_top: 0.0, reported_modified: false });

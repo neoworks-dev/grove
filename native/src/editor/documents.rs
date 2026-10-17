@@ -17,8 +17,12 @@
 //! - `editor-mode`: `{ mode, pending, commandLine }`, the vim layer's mode and the keys it is
 //!   waiting on, for the status bar.
 //!
+//! - `document-indent`: `{ id, indent }`, when the way a file is indented changed, with the
+//!   style as `{ "kind": "tabs" }` or `{ "kind": "spaces", "width": 2 }`.
+//!
 //! Commands: `document_open { path }`, `document_close { id }`, `document_list`,
-//! `document_save { id }`, and `document_set_decorations { id, source, decorations }`, which
+//! `document_save { id }`, `editor_configure { defaultIndent, smoothScroll, indentGuides,
+//! occurrenceHighlights }` (every field optional), and `document_set_decorations { id, source, decorations }`, which
 //! replaces what one source has put on top of the text (see `editor_core::decorations` for the
 //! shape of a decoration; an empty list removes the source). The views have to be asked to
 //! redraw afterwards, which is the `refresh` method of the editor element.
@@ -27,26 +31,38 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use editor_core::vim::types::AppRequest;
-use editor_core::{Command, Decoration, Document, DocumentId, DocumentSummary, Documents, Outcome};
+use editor_core::{Command, Decoration, Document, DocumentId, DocumentSummary, Documents, IndentStyle, Outcome};
 use serde_json::{Value, json};
 use svelte_gpui::{CommandError, Commands, Emitter};
+
+use super::options::EditorOptions;
 
 /// The documents behind a lock, and the way to tell the UI about them. Cheap to clone.
 #[derive(Clone)]
 pub struct SharedDocuments {
     documents: Arc<Mutex<Documents>>,
+    options: Arc<Mutex<EditorOptions>>,
     emitter: Emitter,
 }
 
 impl SharedDocuments {
     /// An empty store whose events go out through `emitter`.
     pub fn new(emitter: Emitter) -> Self {
-        SharedDocuments { documents: Arc::new(Mutex::new(Documents::new())), emitter }
+        SharedDocuments {
+            documents: Arc::new(Mutex::new(Documents::new())),
+            options: Arc::new(Mutex::new(EditorOptions::default())),
+            emitter,
+        }
     }
 
     /// Locks the store, carrying on after a thread that held it panicked.
     pub fn lock(&self) -> MutexGuard<'_, Documents> {
         self.documents.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// What the person has switched on in the editor, as the app last said.
+    pub fn options(&self) -> EditorOptions {
+        *self.options.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// Opens a file, or finds the document that has it, and tells the UI when one was created.
@@ -94,6 +110,9 @@ impl SharedDocuments {
         if let Some(dirty) = applied.modified_changed {
             self.emitter.emit("document-dirty", json!({ "id": id, "dirty": dirty }));
         }
+        if applied.outcome.indent_changed {
+            self.emit_indent(id, &documents);
+        }
         if let Some(request) = &applied.outcome.request {
             self.emit_request(id, request, &documents);
         }
@@ -107,6 +126,32 @@ impl SharedDocuments {
     /// Sends an event to the UI that is about the editor rather than a document.
     pub fn announce(&self, event: &str, payload: Value) {
         self.emitter.emit(event, payload);
+    }
+
+    /// Tells the UI how a document is indented now.
+    fn emit_indent(&self, id: DocumentId, documents: &Documents) {
+        let Some(document) = documents.get(id) else {
+            return;
+        };
+        self.emitter.emit("document-indent", json!({ "id": id, "indent": document.state.buffer().indent() }));
+    }
+
+    /// Applies the editor settings the app sends: the indentation for files that do not say, and
+    /// the switches the views follow. A style that cannot be read is an error.
+    fn configure(&self, args: &Value) -> Result<Value, CommandError> {
+        let mut options = self.options.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        *options = options.updated_from(args);
+        drop(options);
+        let Some(style_json) = args.get("defaultIndent") else {
+            return Ok(Value::Null);
+        };
+        let style: IndentStyle = serde_json::from_value(style_json.clone())
+            .map_err(|error| CommandError::with_code("InvalidArguments", format!("bad defaultIndent: {error}")))?;
+        let mut documents = self.lock();
+        for id in documents.set_default_indent(style) {
+            self.emit_indent(id, &documents);
+        }
+        Ok(Value::Null)
     }
 
     /// Tells the UI what an ex command asks of the app: to close the tab, or open a file, which
@@ -135,6 +180,7 @@ impl SharedDocuments {
         let lister = self.clone();
         let saver = self.clone();
         let decorator = self.clone();
+        let configurer = self.clone();
         commands
             .command("document_open", move |args| {
                 let path = string_argument(&args, "path")?;
@@ -147,6 +193,7 @@ impl SharedDocuments {
             .command("document_list", move |_| Ok::<_, CommandError>(json!(lister.list())))
             .command("document_save", move |args| saver.save(id_argument(&args)?))
             .command("document_set_decorations", move |args| decorator.set_decorations(&args))
+            .command("editor_configure", move |args| configurer.configure(&args))
     }
 
     /// Replaces the decorations one source has on a document, from the arguments of
@@ -284,6 +331,19 @@ mod tests {
         assert_eq!(documents.set_decorations(&bad).unwrap_err().code.as_deref(), Some("InvalidArguments"));
         let missing = json!({ "id": 99, "source": "x", "decorations": [] });
         assert_eq!(documents.set_decorations(&missing).unwrap_err().code.as_deref(), Some("NoDocument"));
+    }
+
+    #[test]
+    fn configuring_sets_the_default_indent_and_the_switches() {
+        let documents = SharedDocuments::new(Emitter::default());
+        let id = documents.open(&file_with("configured.txt", "one\n")).unwrap().id;
+        let configuration = json!({ "defaultIndent": { "kind": "tabs" }, "smoothScroll": false });
+        documents.configure(&configuration).unwrap();
+        assert_eq!(documents.lock().get(id).unwrap().state.buffer().indent(), IndentStyle::Tabs);
+        assert!(!documents.options().smooth_scroll);
+        assert!(documents.options().indent_guides);
+        let bad = documents.configure(&json!({ "defaultIndent": { "kind": "wide" } }));
+        assert_eq!(bad.unwrap_err().code.as_deref(), Some("InvalidArguments"));
     }
 
     #[test]

@@ -6,6 +6,7 @@ use std::time::Instant;
 use crate::buffer::{Buffer, Position};
 use crate::command::Outcome;
 use crate::edit::Edit;
+use crate::indent::outdent_length;
 use crate::movement::Motion;
 use crate::selections::Selection;
 use crate::state::EditorState;
@@ -148,11 +149,6 @@ fn changed_case(operator: Operator, text: &str) -> String {
     }
 }
 
-/// What one level of indentation is in this text.
-fn indent_unit(buffer: &Buffer) -> &'static str {
-    if buffer.indents_with_tabs() { "\t" } else { "    " }
-}
-
 /// The rows a range touches.
 fn rows_of(buffer: &Buffer, covered: Covered) -> (usize, usize) {
     match covered {
@@ -220,15 +216,11 @@ fn shift_plan(buffer: &Buffer, covered: Covered, operator: Operator) -> Plan {
         let line = buffer.line(row);
         if operator == Operator::Indent {
             if !line.is_empty() {
-                edits.push(Edit::replace(line_start..line_start, indent_unit(buffer)));
+                edits.push(Edit::replace(line_start..line_start, buffer.indent().unit()));
             }
             continue;
         }
-        let removed = if line.starts_with('\t') {
-            1
-        } else {
-            line.chars().take(4).take_while(|character| *character == ' ').count()
-        };
+        let removed = outdent_length(&line, buffer.indent());
         if removed > 0 {
             edits.push(Edit::replace(line_start..line_start + removed, ""));
         }

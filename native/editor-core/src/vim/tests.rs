@@ -221,7 +221,7 @@ fn change_enters_insert_and_cw_keeps_the_space() {
     check("¦one two", "cwx<Esc>", "x two", (0, 0));
     check("¦one two three", "c2wx<Esc>", "x three", (0, 0));
     check("one ¦two", "C!<Esc>", "one !", (0, 4));
-    check("¦abc", "sx<Esc>", "xbc", (0, 0));
+    check("¦abc", "clx<Esc>", "xbc", (0, 0));
     check("a\n  ¦b\nc", "ccx<Esc>", "a\n  x\nc", (1, 2));
     check("¦a\nb", "Sx<Esc>", "x\nb", (0, 0));
 }
@@ -664,6 +664,9 @@ fn vim_commands_round_trip_through_json() {
         Command::Put { register: None, before: true, count: 3, cursor_after: false, over: None, clipboard: None },
         Command::GroupUndo { open: true },
         Command::Noop,
+        Command::StartJump {
+            then: Box::new(Command::VimMove { motion: Motion::To(at(3, 4)), count: 1, extend: false }),
+        },
     ];
     for command in commands {
         let json = serde_json::to_value(&command).unwrap();
@@ -673,4 +676,40 @@ fn vim_commands_round_trip_through_json() {
         serde_json::from_str(r#"{"type": "vim_move", "motion": {"word_forward": {"big": false}}, "count": 2}"#)
             .unwrap();
     assert!(matches!(from_svelte, Command::VimMove { count: 2, extend: false, .. }));
+}
+
+/// The command a typed key started a jump with, or none when it started no jump.
+fn jump_started_by(marked: &str, typed: &str) -> Option<Command> {
+    let mut vim = Vim::new(marked);
+    let mut started = None;
+    for key in key_list(typed) {
+        for command in vim.layer.translate(&key, &CONTEXT) {
+            if let Command::StartJump { then } = command {
+                started = Some(*then);
+            }
+        }
+    }
+    started
+}
+
+#[test]
+fn s_starts_jump_labels_that_move_the_cursor_or_extend_the_selection() {
+    let then = jump_started_by("¦one two", "s").unwrap();
+    assert_eq!(
+        then.with_jump_target(at(0, 4)),
+        Command::VimMove { motion: crate::movement::Motion::To(at(0, 4)), count: 1, extend: false }
+    );
+    let in_visual = jump_started_by("¦one two", "vs").unwrap();
+    assert!(matches!(in_visual, Command::VimMove { extend: true, .. }));
+}
+
+#[test]
+fn an_operator_takes_the_jump_as_its_motion() {
+    use crate::vim::types::Operator;
+    let then = jump_started_by("¦one two three", "ds").unwrap();
+    assert!(matches!(then, Command::Operate { operator: Operator::Delete, .. }));
+    let mut vim = Vim::new("¦one two three");
+    vim.state.apply(&then.with_jump_target(at(0, 8)));
+    assert_eq!(vim.text(), "three");
+    assert_eq!(jump_started_by("¦one two", "cs"), None);
 }

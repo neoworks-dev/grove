@@ -39,6 +39,7 @@ export async function bootKernel(options: BootOptions): Promise<Kernel> {
   return {
     context,
     slots: context.slots,
+    commands: context.commands,
     keymap: context.keymap,
     loader: context.loader,
     loaded,

@@ -51,7 +51,9 @@ export const size = {
   tabStripHeight: 32,
   windowButtonWidth: 28,
   windowButtonHeight: 24,
-  commandCenterWidth: 420,
+  commandCenterWidth: 340,
+  sidebarWidth: 240,
+  panelHeight: 200,
 } as const;
 
 /** The window itself: canvas colour, with 8 pixels around the shell and 6 between its parts. */

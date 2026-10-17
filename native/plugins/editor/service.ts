@@ -10,6 +10,19 @@
 
 import { Service, type Context } from "@neoworks/extension-system";
 import { createChangeSignal, type ChangeSignal } from "../../kernel/reactive";
+import type { Decoration } from "./decorations";
+
+export type {
+  BlockDecoration,
+  Decoration,
+  GutterDecoration,
+  GutterMark,
+  HighlightDecoration,
+  InlayDecoration,
+  LineEndDecoration,
+  TextPosition,
+  Tone,
+} from "./decorations";
 
 declare module "@neoworks/extension-system" {
   interface Context {
@@ -45,6 +58,8 @@ export interface DocumentHost {
   close(id: number): Promise<void>;
   /** Writes a document to its file. Rejects with the reason it failed. */
   save(id: number): Promise<void>;
+  /** Replaces what one source has put on top of a document's text. An empty list removes the source's. */
+  setDecorations(id: number, source: string, decorations: Decoration[]): Promise<void>;
   /** Hears of everything that happens to documents. Returns the function that stops it. */
   onEvent(handler: (event: DocumentEvent) => void): () => void;
 }
@@ -62,6 +77,8 @@ export interface PaneHost {
 /** The methods the editor element has, which a pane's view registers so commands can reach it. */
 export interface EditorViewMethods {
   apply(command: { type: string }): Promise<{ changed: boolean }>;
+  /** Draws the view again, such as after the decorations of its document changed. */
+  refresh(): Promise<void>;
 }
 
 /** An open document, as other plugins see it. */
@@ -101,6 +118,7 @@ export class EditorService extends Service {
   private answerClose: ((choice: CloseChoice) => void) | null = null;
   private messageText = "";
   private changes: ChangeSignal = createChangeSignal();
+  private documentListeners = new Set<(event: DocumentEvent) => void>();
 
   constructor(
     ctx: Context,
@@ -234,6 +252,44 @@ export class EditorService extends Service {
       throw new Error(`there is no editor to ${type} in`);
     }
     await view.apply({ type });
+  }
+
+  /**
+   * Replaces what a source has put on top of an open file's text and draws it. A source is a
+   * name such as `git.blame`; its set is replaced whole and others are left alone, and an empty
+   * list removes it. Resolves to false when the file is not open.
+   */
+  async setDecorations(path: string, source: string, decorations: Decoration[]): Promise<boolean> {
+    const info = this.bufferAt(path);
+    if (!info) {
+      return false;
+    }
+    await this.host.setDecorations(info.id, source, decorations);
+    await Promise.all([...this.viewsByLeaf.values()].map((view) => view.refresh()));
+    return true;
+  }
+
+  /** Removes everything a source has put on a file's text. */
+  clearDecorations(path: string, source: string): Promise<boolean> {
+    return this.setDecorations(path, source, []);
+  }
+
+  /** The open document that has a file, or null. */
+  bufferAt(path: string): BufferInfo | null {
+    for (const info of this.documentsById.values()) {
+      if (info.path === path) {
+        return info;
+      }
+    }
+    return null;
+  }
+
+  /** Hears of what happens to documents: opened, closed, saved, edited and the cursor moved. Returns the function that stops it. */
+  onDocumentEvent(handler: (event: DocumentEvent) => void): () => void {
+    this.documentListeners.add(handler);
+    return () => {
+      this.documentListeners.delete(handler);
+    };
   }
 
   /** Shows a document the pane already has a tab for, and gives that pane the focus. */
@@ -513,6 +569,14 @@ export class EditorService extends Service {
 
   /** Applies something the host reports about a document. */
   private handleEvent(event: DocumentEvent): void {
+    this.applyEvent(event);
+    for (const listener of [...this.documentListeners]) {
+      listener(event);
+    }
+  }
+
+  /** Brings what the service knows up to date with an event. */
+  private applyEvent(event: DocumentEvent): void {
     if (event.type === "opened") {
       this.adopt(event.summary);
       return;

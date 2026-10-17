@@ -48,6 +48,8 @@ class FakeDocumentHost implements DocumentHost {
     this.emit({ type: "saved", id });
   }
 
+  async setDecorations(): Promise<void> {}
+
   onEvent(handler: (event: DocumentEvent) => void): () => void {
     this.handlers.push(handler);
     return () => {

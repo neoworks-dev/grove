@@ -25,6 +25,7 @@ function simpleHost(): DocumentHost {
     },
     async close() {},
     async save() {},
+    async setDecorations() {},
     onEvent(_handler: (event: DocumentEvent) => void) {
       return () => {};
     },

@@ -7,6 +7,7 @@ import { editorPosition } from "./editor-position";
 import { explorer } from "./explorer";
 import { brokenEntry, failing } from "./failing";
 import { frame } from "./frame";
+import { gitGutter } from "./git-gutter";
 import { header } from "./header";
 import { layout } from "./layout";
 import { coreMenu, menus } from "./menus";
@@ -41,6 +42,7 @@ export const corePlugins: PluginCatalog = {
   layout,
   editor,
   "editor-position": editorPosition,
+  "git-gutter": gitGutter,
   sidecar,
   workspace,
   explorer,

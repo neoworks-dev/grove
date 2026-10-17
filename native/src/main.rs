@@ -16,12 +16,14 @@
 mod diff;
 mod editor;
 mod git;
+mod lsp;
 mod sidecar;
 mod suite;
 
 use std::path::PathBuf;
 
-use editor::{Editor, SharedDocuments};
+use editor::{Editor, SharedDocuments, Signals};
+use lsp::LspStore;
 use serde_json::json;
 use sidecar::{Sidecar, SidecarConfig};
 use svelte_gpui::gpui::AppContext as _;
@@ -40,13 +42,20 @@ fn main() {
     let commands = suite::register(commands);
     let documents = SharedDocuments::new(commands.emitter());
     let commands = documents.register(commands);
+    let signals = Signals::default();
+    let lsp = LspStore::new(documents.clone(), commands.emitter(), signals.clone());
+    let commands = lsp.register(commands);
     let commands = git::register(commands);
     let commands = diff::register(commands, documents.clone());
-    let elements = Elements::new().register("editor", move |_host, cx| {
+    let lsp_for_views = lsp.clone();
+    let elements = Elements::new().register("editor", move |host, cx| {
         let documents = documents.clone();
-        cx.new(|cx| Editor::new(documents, cx))
+        let lsp = lsp_for_views.clone();
+        let signals = signals.clone();
+        cx.new(|cx| Editor::new(documents, lsp, &signals, host, cx))
     });
     svelte_gpui::run(options().commands(commands).elements(elements));
+    lsp.shutdown();
     sidecar.stop();
 }
 

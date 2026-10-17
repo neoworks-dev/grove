@@ -60,6 +60,7 @@ fn occurrence_at(row: usize, column: usize, length: usize) -> Decoration {
     Decoration {
         start: Position { row, column },
         end: Some(Position { row, column: column + length }),
+        tooltip: None,
         kind: DecorationKind::Highlight { background: Some(Tone::Occurrence), underline: None },
     }
 }

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Context as RootContext, type Context } from "@neoworks/extension-system";
 import { DiffService, DIFF_PANE_TYPE } from "../plugins/diff/service";
 import { EditorService, type EditorViewMethods } from "../plugins/editor/service";
+import { languageStubs } from "./support/viewStubs";
 import { LayoutService } from "../plugins/layout/service";
 import { FakeDiffHost, FakeDocuments } from "./support/fakeDiffHost";
 import { settle } from "./support/fakeSidecar";
@@ -48,6 +49,7 @@ async function setUp(): Promise<Setup> {
 /** An editor view that records the commands it is given. */
 function recordingView(): EditorViewMethods & { commands: { type: string }[]; refreshes: number } {
   const view = {
+    ...languageStubs(),
     commands: [] as { type: string }[],
     refreshes: 0,
     async apply(command: { type: string }) {

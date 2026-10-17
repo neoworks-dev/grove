@@ -369,16 +369,17 @@ fn marked_rows(
         decorations.push(Decoration {
             start: row_start(rows.start),
             end: Some(last),
+            tooltip: None,
             kind: DecorationKind::Line { tone },
         });
         let bar = DecorationKind::Gutter { mark: crate::decorations::GutterMark::Bar, tone: Some(tone) };
-        decorations.push(Decoration { start: row_start(rows.start), end: Some(last), kind: bar });
+        decorations.push(Decoration { start: row_start(rows.start), end: Some(last), tooltip: None, kind: bar });
     }
     for (row, ranges) in words {
         for range in ranges {
             let kind = DecorationKind::Highlight { background: Some(word_tone), underline: None };
             let start = Position { row, column: range.start };
-            decorations.push(Decoration { start, end: Some(Position { row, column: range.end }), kind });
+            decorations.push(Decoration { start, end: Some(Position { row, column: range.end }), tooltip: None, kind });
         }
     }
 }
@@ -399,14 +400,14 @@ fn block_at(
     let (row, placement) =
         if slot < shown_rows { (slot, Placement::Above) } else { (shown_rows.saturating_sub(1), Placement::Below) };
     let kind = DecorationKind::Block { lines, placement, tone: Some(tone), emphasis };
-    Decoration { start: row_start(row), end: None, kind }
+    Decoration { start: row_start(row), end: None, tooltip: None, kind }
 }
 
 /// The notch that marks lines deleted before a row.
 fn deletion_notch(decorations: &mut Vec<Decoration>, row: usize, shown_rows: usize) {
     let row = row.min(shown_rows.saturating_sub(1));
     let kind = DecorationKind::Gutter { mark: crate::decorations::GutterMark::Notch, tone: Some(Tone::Deleted) };
-    decorations.push(Decoration { start: row_start(row), end: None, kind });
+    decorations.push(Decoration { start: row_start(row), end: None, tooltip: None, kind });
 }
 
 /// The block that shows a hunk's old lines above its new ones.

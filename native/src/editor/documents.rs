@@ -35,14 +35,31 @@
 //! of any document. `document_reload { id }` reads a file's document from disk again.
 
 use std::path::Path;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use editor_core::vim::types::AppRequest;
-use editor_core::{Command, Decoration, Document, DocumentId, DocumentSummary, Documents, IndentStyle, Outcome};
+use editor_core::{
+    Command, ContentChange, Decoration, Document, DocumentId, DocumentSummary, Documents, EditorState, IndentStyle,
+    Outcome,
+};
 use serde_json::{Value, json};
 use svelte_gpui::{CommandError, Commands, Emitter};
 
 use super::options::EditorOptions;
+
+/// Hears what happens to documents, to keep something else in step with them, such as a language
+/// server. Called while the documents are locked, so a call is made in the order things happened
+/// and must not lock the documents itself or wait for anything.
+pub trait DocumentObserver: Send + Sync {
+    /// A document was created for a file.
+    fn opened(&self, id: DocumentId, state: &EditorState);
+    /// The text of a document changed.
+    fn changed(&self, id: DocumentId, state: &EditorState, changes: Vec<ContentChange>);
+    /// A document was written to its file.
+    fn saved(&self, id: DocumentId, state: &EditorState);
+    /// A document was closed.
+    fn closed(&self, id: DocumentId);
+}
 
 /// The documents behind a lock, and the way to tell the UI about them. Cheap to clone.
 #[derive(Clone)]
@@ -50,6 +67,7 @@ pub struct SharedDocuments {
     documents: Arc<Mutex<Documents>>,
     options: Arc<Mutex<EditorOptions>>,
     emitter: Emitter,
+    observer: Arc<OnceLock<Arc<dyn DocumentObserver>>>,
 }
 
 impl SharedDocuments {
@@ -59,7 +77,13 @@ impl SharedDocuments {
             documents: Arc::new(Mutex::new(Documents::new())),
             options: Arc::new(Mutex::new(EditorOptions::default())),
             emitter,
+            observer: Arc::new(OnceLock::new()),
         }
+    }
+
+    /// Lets something hear what happens to documents from now on. Only the first observer is kept.
+    pub fn observe(&self, observer: Arc<dyn DocumentObserver>) {
+        let _ = self.observer.set(observer);
     }
 
     /// Locks the store, carrying on after a thread that held it panicked.
@@ -83,6 +107,9 @@ impl SharedDocuments {
             return Err(CommandError::with_code("OpenFailed", format!("{path} closed as it opened")));
         };
         if opened.created {
+            if let (Some(observer), Some(document)) = (self.observer.get(), documents.get(opened.id)) {
+                observer.opened(opened.id, &document.state);
+            }
             self.emitter.emit("document-opened", json!(summary));
         }
         Ok(summary)
@@ -90,8 +117,12 @@ impl SharedDocuments {
 
     /// Closes a document, throwing away its unsaved changes, and tells the UI.
     pub fn close(&self, id: DocumentId) -> bool {
-        let closed = self.lock().close(id);
+        let mut documents = self.lock();
+        let closed = documents.close(id);
         if closed {
+            if let Some(observer) = self.observer.get() {
+                observer.closed(id);
+            }
             self.emitter.emit("document-closed", json!({ "id": id }));
         }
         closed
@@ -139,6 +170,7 @@ impl SharedDocuments {
     pub fn apply(&self, id: DocumentId, command: &Command) -> Option<Outcome> {
         let mut documents = self.lock();
         let applied = documents.apply(id, command)?;
+        self.tell_observer(&mut documents, id, &applied.outcome);
         if applied.outcome.saved {
             self.emitter.emit("document-saved", json!({ "id": id }));
         }
@@ -162,6 +194,24 @@ impl SharedDocuments {
             self.emitter.emit("document-selections", selections.unwrap_or(Value::Null));
         }
         Some(applied.outcome)
+    }
+
+    /// Tells the observer what a command did to a document's text, and whether it saved it.
+    fn tell_observer(&self, documents: &mut Documents, id: DocumentId, outcome: &Outcome) {
+        let Some(document) = documents.get_mut(id) else {
+            return;
+        };
+        // Taken even when nobody listens, so the buffer's record of changes never piles up.
+        let changes = document.state.take_content_changes();
+        let Some(observer) = self.observer.get() else {
+            return;
+        };
+        if !changes.is_empty() {
+            observer.changed(id, &document.state, changes);
+        }
+        if outcome.saved {
+            observer.saved(id, &document.state);
+        }
     }
 
     /// Sends an event to the UI that is about the editor rather than a document.

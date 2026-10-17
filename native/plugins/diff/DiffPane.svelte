@@ -37,8 +37,11 @@
     EditorViewMethods
   >("editor");
 
-  /** The sources of the file's document this pane does not draw: the git bars, which the diff's own replace. */
-  const HIDDEN_SOURCES = ["git.changes"];
+  /**
+   * The sources of the file's document this pane does not draw: the git bars, which the diff's own
+   * replace, and the language server's squiggles, which would sit on top of the diff's colours.
+   */
+  const HIDDEN_SOURCES = ["git.changes", "lsp.diagnostics"];
 
   const view = $derived(diff.view(leafId));
   const cursorRow = $derived.by(() => {

@@ -92,7 +92,7 @@ export type DocumentEvent =
   | { type: "edited"; id: number }
   | { type: "error"; id: number; message: string }
   | { type: "selections"; id: number; row: number; column: number; count: number; selected: boolean }
-  | { type: "mode"; mode: string; pending: string; commandLine: string | null }
+  | { type: "mode"; pane: string; mode: string; pending: string; commandLine: string | null }
   | { type: "indent"; id: number; indent: IndentStyle }
   | { type: "close-request"; id: number; discard: boolean }
   | { type: "open-request"; id: number; path: string }
@@ -209,7 +209,8 @@ export class EditorService extends Service {
   private revealing: RevealRequest | null = null;
   private changes: ChangeSignal = createChangeSignal();
   private keymapName: KeymapName = "standard";
-  private vimState: VimStatus = { mode: "", pending: "", commandLine: null };
+  /** What each pane's vim layer last reported, by pane id. */
+  private vimStates = new Map<string, VimStatus>();
   private documentListeners = new Set<(event: DocumentEvent) => void>();
 
   constructor(
@@ -380,15 +381,19 @@ export class EditorService extends Service {
   setKeymap(name: string): void {
     this.keymapName = name === "vim" ? "vim" : "standard";
     if (this.keymapName === "standard") {
-      this.vimState = { mode: "", pending: "", commandLine: null };
+      this.vimStates.clear();
     }
     this.changes.notify();
   }
 
-  /** The vim layer's mode and pending keys, as the last editor to change them reported. Reactive. */
+  /** The mode and pending keys of the focused pane's vim layer, empty until that pane has reported. Reactive. */
   vimStatus(): VimStatus {
     this.changes.track();
-    return this.vimState;
+    const status = this.vimStates.get(this.panes.focusedLeafId);
+    if (status === undefined) {
+      return { mode: "", pending: "", commandLine: null };
+    }
+    return status;
   }
 
   /** Closes a document, throwing its unsaved changes away without asking, as `:q!` does. */
@@ -821,6 +826,7 @@ export class EditorService extends Service {
 
   /** A pane closed: documents only it showed move to a pane that is still there, so none is lost from view. */
   private paneClosed(leafId: string): void {
+    this.vimStates.delete(leafId);
     const closed = this.paneTabs.get(leafId);
     if (!closed) {
       return;
@@ -873,7 +879,7 @@ export class EditorService extends Service {
       return;
     }
     if (event.type === "mode") {
-      this.vimState = { mode: event.mode, pending: event.pending, commandLine: event.commandLine };
+      this.vimStates.set(event.pane, { mode: event.mode, pending: event.pending, commandLine: event.commandLine });
       this.changes.notify();
       return;
     }

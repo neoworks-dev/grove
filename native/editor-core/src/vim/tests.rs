@@ -26,6 +26,8 @@ struct Vim {
     errors: Vec<String>,
     requests: Vec<crate::vim::types::AppRequest>,
     copied: Vec<String>,
+    /// The first row of the view the keys are typed in, which scroll commands move.
+    top_row: usize,
 }
 
 impl Vim {
@@ -36,7 +38,7 @@ impl Vim {
         let mut state = EditorState::new(Buffer::from_text(&text));
         let position = state.buffer().position_of(offset);
         state.apply(&Command::PlaceCursor { at: position });
-        Vim { state, layer: VimLayer::new(), errors: Vec::new(), requests: Vec::new(), copied: Vec::new() }
+        Vim { state, layer: VimLayer::new(), errors: Vec::new(), requests: Vec::new(), copied: Vec::new(), top_row: 0 }
     }
 
     /// Adds a cursor at a position.
@@ -49,9 +51,13 @@ impl Vim {
     /// `<C-x>` and `<A-C-x>` name the others.
     fn keys(&mut self, typed: &str) -> &mut Vim {
         for key in key_list(typed) {
-            let commands = self.layer.translate(&key, &CONTEXT);
+            let context = InputContext { page_rows: CONTEXT.page_rows, top_row: self.top_row };
+            let commands = self.layer.translate(&key, &context);
             for command in commands {
                 let outcome = self.state.apply_at(&command, Instant::now());
+                if let Some(rows) = outcome.scroll_rows {
+                    self.top_row = (self.top_row as isize + rows).max(0) as usize;
+                }
                 if let Some(message) = outcome.error {
                     self.errors.push(message);
                 }
@@ -597,17 +603,38 @@ fn control_keys_the_layer_does_not_use_go_to_the_app() {
 }
 
 #[test]
-fn page_keys_move_half_and_whole_pages() {
+fn page_keys_scroll_the_view_and_bring_the_cursor() {
     let text: String = (0..40).map(|row| format!("{row}\n")).collect();
     let mut vim = Vim::new(&format!("¦{text}"));
     vim.keys("<C-d>");
-    assert_eq!(vim.heads(), vec![at(5, 0)]);
+    assert_eq!((vim.top_row, vim.heads()), (5, vec![at(5, 0)]));
     vim.keys("<C-f>");
-    assert_eq!(vim.heads(), vec![at(13, 0)]);
+    assert_eq!((vim.top_row, vim.heads()), (13, vec![at(13, 0)]));
     vim.keys("<C-b>");
-    assert_eq!(vim.heads(), vec![at(5, 0)]);
+    assert_eq!((vim.top_row, vim.heads()), (5, vec![at(14, 0)]));
     vim.keys("<C-u>");
-    assert_eq!(vim.heads(), vec![at(0, 0)]);
+    assert_eq!((vim.top_row, vim.heads()), (0, vec![at(9, 0)]));
+}
+
+#[test]
+fn ctrl_f_moves_the_view_a_page_less_two_lines_and_ctrl_b_back() {
+    let text: String = (0..60).map(|row| format!("{row}\n")).collect();
+    let mut vim = Vim::new(&format!("¦{text}"));
+    vim.keys("<C-f><C-f>");
+    assert_eq!((vim.top_row, vim.heads()), (16, vec![at(16, 0)]));
+    vim.keys("<C-b>");
+    assert_eq!((vim.top_row, vim.heads()), (8, vec![at(17, 0)]));
+    vim.keys("<C-b><C-b>");
+    assert_eq!((vim.top_row, vim.heads()), (0, vec![at(9, 0)]));
+}
+
+#[test]
+fn page_keys_extend_a_visual_selection() {
+    let text: String = (0..40).map(|row| format!("{row}\n")).collect();
+    let mut vim = Vim::new(&format!("¦{text}"));
+    vim.keys("v<C-f>");
+    let selection = vim.state.selections().newest();
+    assert_eq!((selection.anchor, selection.head), (at(0, 0), at(8, 0)));
 }
 
 #[test]

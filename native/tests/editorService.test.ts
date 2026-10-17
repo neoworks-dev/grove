@@ -359,10 +359,27 @@ describe("vim keys", () => {
   test("the mode and pending keys come from the editor, and go when the keys are standard again", async () => {
     const setup = await setUp();
     setup.editor.setKeymap("vim");
-    setup.host.emit({ type: "mode", mode: "NORMAL", pending: "2d", commandLine: null });
+    const pane = setup.layout.focusedLeafId;
+    setup.host.emit({ type: "mode", pane, mode: "NORMAL", pending: "2d", commandLine: null });
     expect(setup.editor.vimStatus()).toEqual({ mode: "NORMAL", pending: "2d", commandLine: null });
     setup.editor.setKeymap("standard");
     expect(setup.editor.vimStatus().mode).toBe("");
+  });
+
+  test("the status shows the mode of the focused pane, not of the one that changed last", async () => {
+    const setup = await setUp();
+    setup.editor.setKeymap("vim");
+    const left = setup.layout.focusedLeafId;
+    setup.layout.splitFocused("row");
+    const right = setup.layout.focusedLeafId;
+    expect(right).not.toBe(left);
+    setup.host.emit({ type: "mode", pane: left, mode: "INSERT", pending: "", commandLine: null });
+    setup.host.emit({ type: "mode", pane: right, mode: "NORMAL", pending: "", commandLine: null });
+    expect(setup.editor.vimStatus().mode).toBe("NORMAL");
+    setup.editor.focusPane(left);
+    expect(setup.editor.vimStatus().mode).toBe("INSERT");
+    setup.host.emit({ type: "mode", pane: right, mode: "VISUAL", pending: "", commandLine: null });
+    expect(setup.editor.vimStatus().mode).toBe("INSERT");
   });
 
   test(":q closes the tab and :q! closes it without asking about unsaved changes", async () => {

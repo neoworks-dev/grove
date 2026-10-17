@@ -78,6 +78,13 @@ impl Editor {
         self.occurrences_may_have_changed(cx);
     }
 
+    /// Scrolls the view down by some rows, or up when negative, for vim's page keys. The view may
+    /// go as far as the last line at its top, as it does in vim.
+    pub(super) fn scroll_by_rows(&mut self, rows: isize) {
+        let target = self.clamp_scroll(self.scroll_target() + LINE_HEIGHT * rows as f32);
+        self.scroll_to(target, px(0.0));
+    }
+
     /// Keeps a scroll offset between the top and the last row, which may sit at the top of the view.
     /// Blocks count as rows.
     fn clamp_scroll(&self, top: Pixels) -> Pixels {

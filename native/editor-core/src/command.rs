@@ -195,6 +195,8 @@ pub enum Command {
     GroupUndo { open: bool },
     /// Scrolls the view so the newest cursor's line is at the top, middle or bottom.
     ScrollTo { align: ScrollAlign },
+    /// Scrolls the view down by some rows, or up when negative, without moving the cursor (`Ctrl-F`).
+    ScrollView { rows: isize },
     /// Remembers the newest cursor's place under a letter (`m`).
     SetMark { name: char },
     /// Goes to a place remembered with `SetMark` (`'` and the backtick).
@@ -265,6 +267,7 @@ impl Command {
             | Command::ClampCursors
             | Command::GroupUndo { .. }
             | Command::ScrollTo { .. }
+            | Command::ScrollView { .. }
             | Command::SetMark { .. }
             | Command::JumpToMark { .. } => false,
             Command::Operate { operator, .. } => *operator != Operator::Yank,
@@ -295,6 +298,7 @@ impl Command {
                 | Command::ClampCursors
                 | Command::GroupUndo { .. }
                 | Command::ScrollTo { .. }
+                | Command::ScrollView { .. }
                 | Command::SetMark { .. }
                 | Command::JumpToMark { .. }
         )
@@ -320,6 +324,8 @@ pub struct Outcome {
     pub decorations_changed: bool,
     /// Where the view should scroll the newest cursor's line to.
     pub scroll: Option<ScrollAlign>,
+    /// How many rows the view should scroll down, or up when negative.
+    pub scroll_rows: Option<isize>,
     /// The command a jump runs once a place is chosen, as the command made the view start one.
     pub jump: Option<Command>,
     /// Whether the way the file is indented is different now, which the app learns for its status bar.

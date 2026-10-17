@@ -40,6 +40,10 @@ pub enum TextObject {
     Quote { quote: char },
     /// `(`, `{`, `[` and `<`, with their closing characters.
     Pair { open: char, close: char },
+    /// `t`: the element between a start tag and its end tag.
+    Tag,
+    /// `s`: a sentence.
+    Sentence,
 }
 
 /// What a visual selection covers, which decides whether an operator takes characters or lines.

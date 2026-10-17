@@ -221,6 +221,8 @@ fn object_for(character: char) -> Option<TextObject> {
         'w' => Some(TextObject::Word { big: false }),
         'W' => Some(TextObject::Word { big: true }),
         'p' => Some(TextObject::Paragraph),
+        't' => Some(TextObject::Tag),
+        's' => Some(TextObject::Sentence),
         '"' | '\'' | '`' => Some(TextObject::Quote { quote: character }),
         '(' | ')' | 'b' => pair('(', ')'),
         '{' | '}' | 'B' => pair('{', '}'),

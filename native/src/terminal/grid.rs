@@ -14,6 +14,7 @@ use alacritty_terminal::term::TermMode;
 use alacritty_terminal::term::cell::{Cell, Flags};
 use alacritty_terminal::vte::ansi::{CursorShape, Rgb};
 
+use super::glyphs;
 use super::theme::{TerminalTheme, dimmed};
 
 /// How a run is underlined.
@@ -52,6 +53,15 @@ pub struct BackgroundSpan {
     pub color: Rgb,
 }
 
+/// A box-drawing or block character the element draws itself (see `glyphs.rs`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct DrawnGlyph {
+    pub row: usize,
+    pub column: usize,
+    pub character: char,
+    pub color: Rgb,
+}
+
 /// The cursor as it is painted: where, in which shape, and the cell under it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CursorCell {
@@ -74,6 +84,7 @@ pub struct Snapshot {
     pub display_offset: usize,
     pub backgrounds: Vec<BackgroundSpan>,
     pub spans: Vec<TextSpan>,
+    pub glyphs: Vec<DrawnGlyph>,
     pub cursor: Option<CursorCell>,
     /// The selected cells as row, first column and last column, inclusive.
     pub selection: Vec<(usize, usize, usize)>,
@@ -117,6 +128,7 @@ pub fn snapshot<L: EventListener>(term: &Term<L>, theme: &TerminalTheme) -> Snap
         display_offset,
         backgrounds: builder.backgrounds,
         spans: builder.spans,
+        glyphs: builder.glyphs,
         cursor,
         selection,
         mode: content.mode,
@@ -130,6 +142,7 @@ struct SnapshotBuilder {
     default_background: Rgb,
     backgrounds: Vec<BackgroundSpan>,
     spans: Vec<TextSpan>,
+    glyphs: Vec<DrawnGlyph>,
     row: Option<usize>,
     open: Option<(TextSpan, CellStyle)>,
 }
@@ -142,6 +155,7 @@ impl SnapshotBuilder {
             default_background,
             backgrounds: Vec::new(),
             spans: Vec::new(),
+            glyphs: Vec::new(),
             row: None,
             open: None,
         }
@@ -205,6 +219,11 @@ impl SnapshotBuilder {
         }
         if blank {
             self.add_blank(column);
+            return;
+        }
+        if glyphs::is_drawn(cell.c) {
+            self.close_span();
+            self.glyphs.push(DrawnGlyph { row, column, character: cell.c, color: style.foreground });
             return;
         }
         if let Some((span, open_style)) = &mut self.open {
@@ -454,6 +473,14 @@ mod tests {
         let snapshot = snapshot(&terminal_with(20, 3, "\x1b[7mx"), &theme);
         assert_eq!(snapshot.backgrounds[0].color, theme.foreground);
         assert_eq!(snapshot.spans[0].foreground, theme.background);
+    }
+
+    #[test]
+    fn box_drawing_is_left_out_of_the_text_for_the_element_to_draw() {
+        let snapshot = snapshot(&terminal_with(20, 3, "a\u{250c}\u{2500}b"), &TerminalTheme::default());
+        assert_eq!(snapshot.spans.iter().map(|span| span.text.as_str()).collect::<Vec<_>>(), ["a", "b"]);
+        let drawn: Vec<(usize, char)> = snapshot.glyphs.iter().map(|glyph| (glyph.column, glyph.character)).collect();
+        assert_eq!(drawn, vec![(1, '\u{250c}'), (2, '\u{2500}')]);
     }
 
     #[test]

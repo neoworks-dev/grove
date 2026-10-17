@@ -20,7 +20,7 @@ export interface TerminalTheme {
 
 /** ANSI colours on a dark surface. */
 export const DARK_ANSI: string[] = [
-  "#27272a",
+  "#3f3f46",
   "#f87171",
   "#4ade80",
   "#fbbf24",

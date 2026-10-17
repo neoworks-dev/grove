@@ -11,6 +11,7 @@ use svelte_gpui::gpui::{
     fill, font, outline, point, px, relative, size,
 };
 
+use super::glyphs;
 use super::grid::{self, Snapshot, TextSpan, UnderlineKind};
 use super::session::{CellPixels, GridSize};
 use super::theme::TerminalTheme;
@@ -43,6 +44,8 @@ struct Painted {
     selection: Vec<Bounds<Pixels>>,
     selection_color: Hsla,
     text: Vec<(svelte_gpui::gpui::Point<Pixels>, ShapedLine)>,
+    /// Box-drawing and block characters, as the rectangles that draw them.
+    glyphs: Vec<(Bounds<Pixels>, Hsla)>,
     cursor: Option<CursorPaint>,
     composing: Option<(svelte_gpui::gpui::Point<Pixels>, ShapedLine)>,
     link_underline: Option<(Bounds<Pixels>, Hsla)>,
@@ -203,6 +206,7 @@ impl TerminalElement {
             .iter()
             .map(|span| (cell_origin(&geometry, span.row, span.column), shape_span(span, metrics, window)))
             .collect();
+        let glyphs = drawn_glyph_rects(snapshot, &geometry);
         let cursor = snapshot.cursor.as_ref().map(|cursor| {
             let cells = if cursor.wide { 2 } else { 1 };
             let covered_text = covered_text(cursor, theme, metrics, window);
@@ -237,6 +241,7 @@ impl TerminalElement {
             selection,
             selection_color: rgba_hsla(theme.selection),
             text,
+            glyphs,
             cursor,
             composing,
             link_underline,
@@ -293,6 +298,9 @@ fn paint_grid(painted: &Painted, focused: bool, window: &mut Window, cx: &mut Ap
     for (origin, line) in &painted.text {
         let _ = line.paint(*origin, painted.line_height, window, cx);
     }
+    for (bounds, color) in &painted.glyphs {
+        window.paint_quad(fill(*bounds, *color));
+    }
     if let Some((bounds, color)) = &painted.link_underline {
         window.paint_quad(fill(*bounds, *color));
     }
@@ -302,6 +310,26 @@ fn paint_grid(painted: &Painted, focused: bool, window: &mut Window, cx: &mut Ap
     if let Some(cursor) = &painted.cursor {
         paint_cursor(cursor, painted.line_height, focused, window, cx);
     }
+}
+
+/// The rectangles that draw the snapshot's box-drawing and block characters, in the window.
+fn drawn_glyph_rects(snapshot: &Snapshot, geometry: &Geometry) -> Vec<(Bounds<Pixels>, Hsla)> {
+    let cell_width = f32::from(geometry.cell_width);
+    let cell_height = f32::from(geometry.line_height);
+    let mut rects = Vec::new();
+    for glyph in &snapshot.glyphs {
+        let Some(parts) = glyphs::rects_for(glyph.character, cell_width, cell_height) else {
+            continue;
+        };
+        let cell = cell_origin(geometry, glyph.row, glyph.column);
+        let mut color = hsla(glyph.color);
+        for part in parts {
+            color.a = part.alpha;
+            let origin = point(cell.x + px(part.x), cell.y + px(part.y));
+            rects.push((Bounds::new(origin, size(px(part.width), px(part.height))), color));
+        }
+    }
+    rects
 }
 
 /// Paints the cursor in its shape: a block that shows the character it covers, a beam, an
@@ -398,7 +426,7 @@ fn covered_text(
     metrics: &Metrics,
     window: &mut Window,
 ) -> Option<ShapedLine> {
-    if cursor.text.trim().is_empty() {
+    if cursor.text.trim().is_empty() || cursor.text.chars().all(glyphs::is_drawn) {
         return None;
     }
     let run = text_run(cursor.text.len(), theme.background, cursor.bold, cursor.italic, None, false);

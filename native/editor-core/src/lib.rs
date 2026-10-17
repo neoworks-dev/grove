@@ -13,6 +13,7 @@ pub mod display;
 pub mod documents;
 pub mod edit;
 pub mod editing;
+pub mod guides;
 pub mod history;
 pub mod indent;
 pub mod indenting;

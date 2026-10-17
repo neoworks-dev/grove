@@ -28,6 +28,8 @@ pub enum Tone {
     Inlay,
     /// Text added after the end of a line.
     LineEnd,
+    /// Another place the word under the cursor appears, drawn as a quiet background.
+    Occurrence,
 }
 
 /// How a line under a highlighted range is drawn.

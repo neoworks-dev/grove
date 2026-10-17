@@ -64,6 +64,8 @@ pub struct ServerEntry {
     pub root: PathBuf,
     pub client: Option<Client>,
     pub state: ServerState,
+    /// The files the server registered to hear about, by the id of the registration.
+    pub watchers: Vec<(String, Vec<lsp_client::glob::Watcher>)>,
     /// The work the server reports being busy with, by progress token.
     pub progress: BTreeMap<String, String>,
     /// When the status was last sent to the UI, so progress reports do not flood it.
@@ -98,6 +100,8 @@ pub struct Tracked {
     pub version: i64,
     /// Whether the server has been sent `didOpen` and has not been closed or restarted since.
     pub open_on_server: bool,
+    /// What the server last said is wrong with the document, which code actions are asked about.
+    pub diagnostics: Vec<lsp_client::protocol::Diagnostic>,
 }
 
 /// All of it, behind one lock.

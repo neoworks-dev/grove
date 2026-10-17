@@ -96,7 +96,8 @@ export type DocumentEvent =
   | { type: "indent"; id: number; indent: IndentStyle }
   | { type: "close-request"; id: number; discard: boolean }
   | { type: "open-request"; id: number; path: string }
-  | { type: "change-request"; id: number; forward: boolean };
+  | { type: "change-request"; id: number; forward: boolean }
+  | { type: "notice"; message: string };
 
 /** The documents the Rust host keeps. A test supplies a fake. */
 export interface DocumentHost {
@@ -143,6 +144,20 @@ export interface EditorViewMethods {
   definition(): Promise<void>;
   /** Opens the completion panel at the cursor. */
   complete(): Promise<void>;
+  /** Lists where the symbol at the cursor is used. */
+  references(): Promise<void>;
+  /** Goes to the type of the symbol at the cursor. */
+  typeDefinition(): Promise<void>;
+  /** Goes to the implementations of the symbol at the cursor. */
+  implementation(): Promise<void>;
+  /** Asks for a new name for the symbol at the cursor and renames it everywhere. */
+  rename(): Promise<void>;
+  /** Lists the fixes and refactors the language server offers at the cursor. */
+  codeActions(): Promise<void>;
+  /** Shows the signature of the call the cursor is in. */
+  signature(): Promise<void>;
+  /** Formats the document. */
+  format(): Promise<void>;
   /** Puts the cursor at a line and UTF-16 column, counted from zero, and scrolls to it. */
   goto(line: number, character: number): Promise<void>;
   /**
@@ -171,7 +186,17 @@ export interface RevealRequest {
 }
 
 /** The methods of the editor element a command can call without an answer. */
-export type ViewAction = "hover" | "definition" | "complete";
+export type ViewAction =
+  | "hover"
+  | "definition"
+  | "complete"
+  | "references"
+  | "typeDefinition"
+  | "implementation"
+  | "rename"
+  | "codeActions"
+  | "signature"
+  | "format";
 
 /** An open document, as other plugins see it. */
 export interface BufferInfo {
@@ -909,7 +934,7 @@ export class EditorService extends Service {
     if (event.type === "edited") {
       return;
     }
-    if (event.type === "error") {
+    if (event.type === "error" || event.type === "notice") {
       this.setMessage(event.message);
       return;
     }

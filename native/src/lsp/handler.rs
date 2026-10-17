@@ -52,18 +52,24 @@ impl Handler for ServerHandler {
     /// Answers what servers commonly ask of a client: its settings, workspace and registrations.
     fn request(&self, method: &str, params: Value) -> Result<Value, ResponseError> {
         match method {
-            "workspace/configuration" => {
-                let sections = params["items"].as_array().map(Vec::len).unwrap_or(0);
-                Ok(Value::Array(vec![Value::Null; sections]))
-            }
+            "workspace/configuration" => Ok(self.configuration(&params)),
             "workspace/workspaceFolders" => Ok(self.workspace_folders()),
-            "window/workDoneProgress/create" | "client/registerCapability" | "client/unregisterCapability" => {
+            "client/registerCapability" => {
+                self.registered(&params);
                 Ok(Value::Null)
             }
-            "window/showMessageRequest" => Ok(Value::Null),
-            "workspace/applyEdit" => {
-                Ok(json!({ "applied": false, "failureReason": "the editor does not apply server edits yet" }))
+            "client/unregisterCapability" => {
+                self.unregistered(&params);
+                Ok(Value::Null)
             }
+            "window/workDoneProgress/create" | "window/showMessageRequest" => Ok(Value::Null),
+            "workspace/inlayHint/refresh" => {
+                if let Some(store) = self.store() {
+                    store.inner().signals().hints_stale();
+                }
+                Ok(Value::Null)
+            }
+            "workspace/applyEdit" => Ok(self.apply_edit(&params)),
             _ => Err(ResponseError { code: METHOD_NOT_FOUND, message: format!("the editor has no {method}") }),
         }
     }
@@ -82,6 +88,75 @@ impl Handler for ServerHandler {
 }
 
 impl ServerHandler {
+    /// The settings a server asked for, one answer for each section it named.
+    fn configuration(&self, params: &Value) -> Value {
+        let items = params["items"].as_array().cloned().unwrap_or_default();
+        let Some(store) = self.store() else {
+            return Value::Array(vec![Value::Null; items.len()]);
+        };
+        let name = match store.state().server(self.server) {
+            Some(entry) => entry.spec.name,
+            None => "",
+        };
+        let switches = store.settings().switches();
+        let answers = items.iter().map(|item| match item["section"].as_str() {
+            Some(section) => lsp_client::config::section(name, section, switches),
+            None => Value::Null,
+        });
+        Value::Array(answers.collect())
+    }
+
+    /// Notes the files a server registered to hear about.
+    fn registered(&self, params: &Value) {
+        let Some(store) = self.store() else {
+            return;
+        };
+        let mut state = store.state();
+        let Some(entry) = state.server_mut(self.server) else {
+            return;
+        };
+        for registration in params["registrations"].as_array().into_iter().flatten() {
+            if registration["method"] != "workspace/didChangeWatchedFiles" {
+                continue;
+            }
+            let id = registration["id"].as_str().unwrap_or_default().to_string();
+            let watchers = lsp_client::glob::parse_watchers(&registration["registerOptions"]);
+            if std::env::var_os("GROVE_LSP_TRACE").is_some() {
+                eprintln!("[lsp] {} registered {} file watchers: {:?}", entry.spec.name, watchers.len(), watchers);
+            }
+            entry.watchers.push((id, watchers));
+        }
+    }
+
+    /// Forgets the files a server no longer wants to hear about.
+    fn unregistered(&self, params: &Value) {
+        let Some(store) = self.store() else {
+            return;
+        };
+        let mut state = store.state();
+        let Some(entry) = state.server_mut(self.server) else {
+            return;
+        };
+        for unregistration in params["unregisterations"].as_array().into_iter().flatten() {
+            let id = unregistration["id"].as_str().unwrap_or_default();
+            entry.watchers.retain(|(registered, _)| registered != id);
+        }
+    }
+
+    /// Applies the edit a server asks for, and says whether it worked.
+    fn apply_edit(&self, params: &Value) -> Value {
+        let Some(store) = self.store() else {
+            return json!({ "applied": false, "failureReason": "the editor is closing" });
+        };
+        let edit = lsp_client::edits::parse_workspace_edit(&params["edit"]);
+        let applied = store.apply_workspace_edit(&edit);
+        store.inner().documents().announce("editor-notice", json!({ "message": applied.summary() }));
+        if applied.problems.is_empty() {
+            return json!({ "applied": true });
+        }
+        json!({ "applied": applied.files > 0, "failureReason": applied.problems.join("; ") })
+    }
+
     /// The workspace folder of the server, as the answer to its request for them.
     fn workspace_folders(&self) -> Value {
         let Some(store) = self.store() else {
@@ -119,6 +194,9 @@ impl LspStore {
         };
         if self.diagnostics_are_stale(document, published.version) {
             return;
+        }
+        if let Some(tracked) = self.state().tracked.get_mut(&document) {
+            tracked.diagnostics = published.diagnostics.clone();
         }
         let applied = match self.inner().documents().lock().get_mut(document) {
             Some(doc) => {

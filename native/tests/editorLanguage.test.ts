@@ -8,6 +8,8 @@ import {
   type DocumentSummary,
   type EditorViewMethods,
 } from "../plugins/editor/service";
+import { LANGUAGE_COMMANDS, LANGUAGE_KEYS } from "../plugins/editor/languageCommands";
+import { parseSequence } from "../kernel/keymap/keySequence";
 import { LayoutService } from "../plugins/layout/service";
 
 /** A host with one document per path, which is all opening needs. */
@@ -41,6 +43,13 @@ function recordingView(calls: string[]): EditorViewMethods {
     hover: async () => void calls.push("hover"),
     definition: async () => void calls.push("definition"),
     complete: async () => void calls.push("complete"),
+    references: async () => void calls.push("references"),
+    typeDefinition: async () => void calls.push("typeDefinition"),
+    implementation: async () => void calls.push("implementation"),
+    rename: async () => void calls.push("rename"),
+    codeActions: async () => void calls.push("codeActions"),
+    signature: async () => void calls.push("signature"),
+    format: async () => void calls.push("format"),
     goto: async (line, character) => void calls.push(`goto ${line}:${character}`),
   };
 }
@@ -71,6 +80,35 @@ describe("asking the language server through the focused editor", () => {
     await editor.actOnFocusedView("complete");
     expect(focused).toEqual(["hover", "definition", "complete"]);
     expect(others).toEqual([]);
+  });
+
+  test("references, rename, code actions, signature help and formatting reach the focused view too", async () => {
+    const { editor, layout } = await setUp();
+    const focused: string[] = [];
+    editor.registerView(layout.focusedLeafId, recordingView(focused));
+    for (const action of ["references", "typeDefinition", "implementation", "rename", "codeActions", "signature", "format"] as const) {
+      await editor.actOnFocusedView(action);
+    }
+    expect(focused).toEqual(["references", "typeDefinition", "implementation", "rename", "codeActions", "signature", "format"]);
+  });
+
+  test("a notice from the host is said in the status bar", async () => {
+    const root = new RootContext();
+    const host = new PathHost();
+    let listener: (event: DocumentEvent) => void = () => {};
+    host.onEvent = (handler) => {
+      listener = handler;
+      return () => {};
+    };
+    let editor!: EditorService;
+    await root.plugin({
+      name: "notice-test",
+      apply: (ctx: Context) => {
+        editor = new EditorService(ctx, host, new LayoutService(ctx, "editor", null));
+      },
+    });
+    listener({ type: "notice", message: "Renamed: 3 changes in 2 files" });
+    expect(editor.message()).toBe("Renamed: 3 changes in 2 files");
   });
 
   test("with no editor in the focused pane nothing happens and nothing throws", async () => {
@@ -114,5 +152,29 @@ describe("going to a place in another file", () => {
     await editor.reveal("/src/b.ts", 2, 2);
     editor.finishReveal(first);
     expect(editor.pendingReveal()).toEqual({ documentId: 2, line: 2, character: 2 });
+  });
+});
+
+describe("the language commands and their keys", () => {
+  test("the commands the editor's context menu lists have these ids", () => {
+    const ids = LANGUAGE_COMMANDS.map((command) => command.id);
+    for (const id of ["editor.findReferences", "editor.rename", "editor.codeAction", "editor.formatDocument"]) {
+      expect(ids).toContain(id);
+    }
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  test("every key is a sequence the keymap reads, for a command that exists, and none is bound twice", () => {
+    const ids = new Set(LANGUAGE_COMMANDS.map((command) => command.id));
+    for (const key of LANGUAGE_KEYS) {
+      expect(ids.has(key.command)).toBe(true);
+      expect(parseSequence(key.keys)).not.toBeNull();
+    }
+    const sequences = LANGUAGE_KEYS.map((key) => key.keys);
+    expect(new Set(sequences).size).toBe(sequences.length);
+    const byCommand = Object.fromEntries(LANGUAGE_KEYS.map((key) => [key.command, key.keys]));
+    expect(byCommand["editor.findReferences"]).toBe("shift+f12");
+    expect(byCommand["editor.rename"]).toBe("f2");
+    expect(byCommand["editor.codeAction"]).toBe("ctrl+.");
   });
 });

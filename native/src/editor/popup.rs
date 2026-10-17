@@ -19,7 +19,7 @@ use super::theme::{EditorTheme, mix};
 use lsp_client::protocol::Severity;
 use svelte_gpui::gpui::HighlightStyle as TextHighlight;
 
-const ROW_HEIGHT: Pixels = px(24.0);
+pub(super) const ROW_HEIGHT: Pixels = px(24.0);
 const BADGE_SIZE: Pixels = px(18.0);
 const PANEL_MIN_WIDTH: f32 = 300.0;
 const PANEL_MAX_WIDTH: f32 = 620.0;
@@ -28,9 +28,9 @@ const DOCUMENTATION_WIDTH: Pixels = px(380.0);
 const DOCUMENTATION_MAX_HEIGHT: Pixels = px(320.0);
 const HOVER_WIDTH: Pixels = px(560.0);
 const HOVER_MAX_HEIGHT: Pixels = px(360.0);
-const TEXT_SIZE: Pixels = px(13.0);
+pub(super) const TEXT_SIZE: Pixels = px(13.0);
 /// Space between a popover and the line it belongs to.
-const GAP: Pixels = px(3.0);
+pub(super) const GAP: Pixels = px(3.0);
 
 /// A popover ready to be drawn, and where its top left corner goes.
 pub struct Popover {
@@ -58,6 +58,7 @@ pub fn build(
     if let (Some(hover), true) = (&editor.hover, editor.completion.is_none()) {
         popovers.extend(hover_popover(hover, layout, theme, bounds, window, cx));
     }
+    popovers.extend(super::feature_popups::build(entity, editor, layout, theme, bounds, window, cx));
     popovers
 }
 
@@ -293,7 +294,7 @@ fn documentation_popover(
 /// Lays a popover out as wide as its content, up to its own maximum width, and as tall as the
 /// text then needs. Measuring the width first and then laying out at that width is what makes
 /// the text wrap where the box ends, so the height is not that of unwrapped lines.
-fn fit_to_content(element: &mut AnyElement, window: &mut Window, cx: &mut App) -> Size<Pixels> {
+pub(super) fn fit_to_content(element: &mut AnyElement, window: &mut Window, cx: &mut App) -> Size<Pixels> {
     let natural = element.layout_as_root(size(AvailableSpace::MaxContent, AvailableSpace::MaxContent), window, cx);
     element.layout_as_root(size(AvailableSpace::Definite(natural.width), AvailableSpace::MaxContent), window, cx)
 }
@@ -368,7 +369,12 @@ fn severity_rank(severity: Severity) -> u8 {
 
 /// Places a popover below the line it belongs to, or above it when there is not room below and
 /// there is above.
-fn place_vertically(line: Point<Pixels>, _width: Pixels, height: Pixels, bounds: Bounds<Pixels>) -> Point<Pixels> {
+pub(super) fn place_vertically(
+    line: Point<Pixels>,
+    _width: Pixels,
+    height: Pixels,
+    bounds: Bounds<Pixels>,
+) -> Point<Pixels> {
     let below = line.y + LINE_HEIGHT + GAP;
     let fits_below = below + height <= bounds.bottom();
     let above = line.y - GAP - height;
@@ -379,17 +385,17 @@ fn place_vertically(line: Point<Pixels>, _width: Pixels, height: Pixels, bounds:
 }
 
 /// The colour popovers are filled with: a little lighter than the editor's.
-fn popover_background(theme: &EditorTheme) -> Hsla {
+pub(super) fn popover_background(theme: &EditorTheme) -> Hsla {
     mix(theme.background, theme.foreground, 0.07)
 }
 
 /// The colour of a popover's border.
-fn popover_border(theme: &EditorTheme) -> Hsla {
+pub(super) fn popover_border(theme: &EditorTheme) -> Hsla {
     mix(theme.background, theme.foreground, 0.2)
 }
 
 /// Markdown as elements: paragraphs and headings wrap, code sits in blocks, lists are indented.
-fn markdown_element(blocks: &[Block], theme: &EditorTheme) -> impl IntoElement {
+pub(super) fn markdown_element(blocks: &[Block], theme: &EditorTheme) -> impl IntoElement {
     let children: Vec<AnyElement> = blocks.iter().map(|block| block_element(block, theme)).collect();
     div().flex().flex_col().gap(px(6.0)).children(children)
 }
@@ -422,7 +428,7 @@ fn block_element(block: &Block, theme: &EditorTheme) -> AnyElement {
 }
 
 /// Code in a block of its own, in the editor's font.
-fn code_block(text: &str, theme: &EditorTheme) -> impl IntoElement {
+pub(super) fn code_block(text: &str, theme: &EditorTheme) -> impl IntoElement {
     div()
         .w_full()
         .px(px(8.0))

@@ -218,6 +218,7 @@ impl EditorState {
                 Outcome::default()
             }
             Command::ReplaceRange { start, end, text } => self.replace_range(*start, *end, text, now),
+            Command::ApplyEdits { edits } => self.apply_range_edits(edits, now),
             Command::SetDecorations { source, decorations } => {
                 self.set_decorations(source, decorations);
                 Outcome { decorations_changed: true, ..Outcome::default() }

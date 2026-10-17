@@ -3,6 +3,7 @@
 // event log, which the daemon replays from the start whenever a session is followed.
 
 import type { SessionEventRecord } from "@suite/protocol/types";
+import { applyCall, noCalls, type Calls } from "./calls";
 import { NO_TOUCHES, applyTouch, type Touches } from "./files";
 import { applyPlan, type PlanList } from "./plan";
 import { applyStatusEvent, initialStatus, type SessionStatus } from "./status";
@@ -13,6 +14,7 @@ export class SessionFacts {
   plans: readonly PlanList[] = [];
   touches: Touches = NO_TOUCHES;
   agents: readonly AgentRow[] = [];
+  calls: Calls = noCalls();
   private lastSeq = 0;
 
   /**
@@ -20,7 +22,7 @@ export class SessionFacts {
    * replayed, so the fold starts over. Returns whether anything it keeps changed.
    */
   apply(record: SessionEventRecord): boolean {
-    const before = [this.status, this.plans, this.touches, this.agents];
+    const before = [this.status, this.plans, this.touches, this.agents, this.calls];
     if (record.seq <= this.lastSeq) {
       this.reset();
     }
@@ -31,7 +33,8 @@ export class SessionFacts {
     }
     this.touches = applyTouch(this.touches, record);
     this.agents = applyAgentEvent(this.agents, record);
-    const after = [this.status, this.plans, this.touches, this.agents];
+    this.calls = applyCall(this.calls, record);
+    const after = [this.status, this.plans, this.touches, this.agents, this.calls];
     return before.some((value, index) => value !== after[index]);
   }
 
@@ -41,6 +44,7 @@ export class SessionFacts {
     this.plans = [];
     this.touches = NO_TOUCHES;
     this.agents = [];
+    this.calls = noCalls();
     this.lastSeq = 0;
   }
 }

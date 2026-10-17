@@ -4,12 +4,16 @@
   import { untrack } from "svelte";
   import { window } from "@neoworks/svelte-gpui";
   import { List, Text, View } from "@neoworks/svelte-gpui/ui";
-  import type { ViewItem } from "@suite/protocol/types";
   import type { ChatSession } from "../chatSession";
   import { palette } from "../palette";
+  import ChangedFiles from "./ChangedFiles.svelte";
   import ChatItem from "./ChatItem.svelte";
   import { provideChat } from "./context";
+  import FoldRow from "./FoldRow.svelte";
+  import { chatRows, type ChatRow } from "./turns";
   import { chatView } from "./viewState";
+  import WorkingBar from "./WorkingBar.svelte";
+  import { tokensLabel } from "./workingPhrases";
 
   interface Props {
     session: ChatSession;
@@ -25,6 +29,15 @@
   provideChat(untrack(() => session));
 
   const items = $derived(chatView.visibleItems(session.items()));
+  const rows = $derived(
+    chatRows(items, {
+      fold: session.agent === undefined,
+      callOf: (ref) => session.callOf(ref),
+      running: session.running(),
+      isOpen: (key) => chatView.isOpened(key),
+    }),
+  );
+  const tokens = $derived(tokensLabel(session.status().usage?.contextUsed));
 
   let list: { scrollToIndex(index: number, options: { align: "end" }): void } | undefined = $state();
 
@@ -52,9 +65,24 @@
   </View>
 {:else}
   {#key width}
-    <List bind:this={list} {items} key={(item: ViewItem) => item.ref} stickToEnd style={{ flex: 1, minHeight: 0 }}>
-      {#snippet row(item: ViewItem)}
-        <ChatItem {item} />
+    <List bind:this={list} items={rows} key={(entry: ChatRow) => entry.key} stickToEnd style={{ flex: 1, minHeight: 0 }}>
+      {#snippet row(entry: ChatRow)}
+        {#if entry.kind === "item"}
+          <ChatItem item={entry.item} />
+        {:else if entry.kind === "turn"}
+          <FoldRow foldKey={entry.foldKey} open={entry.open} tallies={entry.tallies} messages={entry.messages} steps={entry.steps} />
+        {:else if entry.kind === "run"}
+          <FoldRow foldKey={entry.foldKey} open={entry.open} tallies={entry.tallies} />
+          {#if entry.open}
+            {#each entry.items as item (item.ref)}
+              <ChatItem {item} />
+            {/each}
+          {/if}
+        {:else if entry.kind === "files"}
+          <ChangedFiles files={entry.files} />
+        {:else}
+          <WorkingBar {tokens} />
+        {/if}
       {/snippet}
     </List>
   {/key}

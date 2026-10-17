@@ -53,6 +53,9 @@ impl Watcher {
         if self.kind & change.bit() == 0 {
             return false;
         }
+        if self.pattern.starts_with('/') {
+            return matches(&self.pattern, &path.to_string_lossy());
+        }
         let base = match &self.base {
             Some(base) => base.as_path(),
             None => root,
@@ -225,6 +228,19 @@ mod tests {
         assert!(watchers[1].wants(Path::new("/work/app/x.json"), root, FileChange::Deleted));
         assert!(!watchers[1].wants(Path::new("/work/app/x.json"), root, FileChange::Created));
         assert!(!watchers[1].wants(Path::new("/work/x.json"), root, FileChange::Deleted));
+    }
+
+    #[test]
+    fn a_pattern_that_is_an_absolute_path_is_matched_against_the_whole_path() {
+        let options = serde_json::json!({ "watchers": [
+            { "globPattern": "/work/app/**/*.rs" }, { "globPattern": "/work/app/**/Cargo.{toml,lock}" },
+        ] });
+        let watchers = parse_watchers(&options);
+        let root = Path::new("/work/app");
+        assert!(watchers[0].wants(Path::new("/work/app/src/deep/lib.rs"), root, FileChange::Created));
+        assert!(!watchers[0].wants(Path::new("/other/src/lib.rs"), root, FileChange::Created));
+        assert!(watchers[1].wants(Path::new("/work/app/member/Cargo.lock"), root, FileChange::Changed));
+        assert!(!watchers[1].wants(Path::new("/work/app/member/Cargo.json"), root, FileChange::Changed));
     }
 
     #[test]

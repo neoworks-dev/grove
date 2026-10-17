@@ -121,6 +121,9 @@ impl ServerHandler {
             }
             let id = registration["id"].as_str().unwrap_or_default().to_string();
             let watchers = lsp_client::glob::parse_watchers(&registration["registerOptions"]);
+            if std::env::var_os("GROVE_LSP_TRACE").is_some() {
+                eprintln!("[lsp] {} registered {} file watchers: {:?}", entry.spec.name, watchers.len(), watchers);
+            }
             entry.watchers.push((id, watchers));
         }
     }

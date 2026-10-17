@@ -26,16 +26,18 @@ impl Editor {
         let (Some(document), Some((first, last))) = (self.document, self.visible_text_rows()) else {
             return;
         };
-        let wanted = self.lsp.settings().inlay_hints;
-        let supported = self.lsp.capabilities(document).is_some_and(|capabilities| capabilities.inlay_hints);
-        if !wanted || !supported {
-            self.clear_hints_if_any(document, cx);
-            return;
-        }
         if let Some((covered, from, to)) = self.features.hints_range {
             if covered == document && from <= first && last <= to {
                 return;
             }
+        }
+        let wanted = self.lsp.settings().inlay_hints;
+        let supported = self.lsp.capabilities(document).is_some_and(|capabilities| capabilities.inlay_hints);
+        if !wanted || !supported {
+            self.clear_hints_if_any(document, cx);
+            // Nothing to ask for, so the frames that follow need not look again until told.
+            self.features.hints_range = Some((document, 0, usize::MAX));
+            return;
         }
         self.arm_hints_timer(cx);
     }
@@ -116,7 +118,6 @@ impl Editor {
     /// Takes the hints off the document when there are some and none are wanted.
     fn clear_hints_if_any(&mut self, document: DocumentId, cx: &mut Context<Self>) {
         let shown = self.read(|state| state.decoration_count(INLAY_SOURCE)).unwrap_or(0);
-        self.features.hints_range = None;
         if shown > 0 {
             self.set_source_decorations(document, INLAY_SOURCE, Vec::new(), cx);
         }

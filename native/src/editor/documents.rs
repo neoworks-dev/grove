@@ -16,6 +16,7 @@
 //! - `document-request`: `{ id, request: "close", discard }`, `{ id, request: "open", path }` or
 //!   `{ id, request: "change", forward }`, what a vim ex command such as `:q` or `:e`, or the
 //!   keys `]c` and `[c`, ask the app to do.
+//! - `editor-notice`: `{ message }`, something to say in the status bar, such as how a rename went.
 //! - `editor-mode`: `{ mode, pending, commandLine }`, the vim layer's mode and the keys it is
 //!   waiting on, for the status bar.
 //!

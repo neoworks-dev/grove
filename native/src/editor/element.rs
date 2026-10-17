@@ -8,11 +8,13 @@ use std::collections::HashSet;
 use svelte_gpui::gpui::{
     App, Bounds, ContentMask, Element, ElementId, ElementInputHandler, Entity, Font, GlobalElementId, Hsla,
     InspectorElementId, IntoElement, LayoutId, Pixels, ShapedLine, SharedString, Style, TextRun, Window, fill, font,
-    point, px, relative, rgb, size,
+    point, px, relative, size,
 };
 
 use super::Editor;
+use super::theme::{EditorTheme, HighlightStyle};
 use editor_core::display::DisplayLine;
+use editor_core::syntax::HighlightSpan;
 use editor_core::{EditorState, Position, Selection};
 
 pub const FONT_FAMILY: &str = "DejaVu Sans Mono";
@@ -24,13 +26,6 @@ const CURSOR_WIDTH: Pixels = px(2.0);
 /// How wide a selected line ending is drawn.
 const LINE_ENDING_WIDTH: Pixels = px(7.0);
 
-const BACKGROUND: u32 = 0x18181b;
-const CURRENT_LINE: u32 = 0x222226;
-const TEXT: u32 = 0xe4e4e7;
-const LINE_NUMBER: u32 = 0x52525b;
-const CURRENT_LINE_NUMBER: u32 = 0xa1a1aa;
-const CURSOR: u32 = 0xf97316;
-const SELECTION: u32 = 0x3b3b52;
 const UNDERLINE_HEIGHT: Pixels = px(1.5);
 
 /// What the last frame drew, kept on the editor so the pointer can be mapped to a position
@@ -91,12 +86,15 @@ pub struct Frame {
     cursors: Vec<Bounds<Pixels>>,
     /// Under the text an input method is composing.
     underlines: Vec<Bounds<Pixels>>,
+    /// The colours this frame is painted with.
+    theme: EditorTheme,
 }
 
 impl Frame {
     /// What is drawn for a view that shows no document: the background and nothing else.
-    fn empty() -> Frame {
+    fn empty(theme: EditorTheme) -> Frame {
         Frame {
+            theme,
             rows: Vec::new(),
             gutter_width: px(0.0),
             highlights: Vec::new(),
@@ -153,8 +151,9 @@ impl Element for EditorElement {
     ) -> Frame {
         let editor = self.editor.read(cx);
         let scroll_top = editor.scroll_top;
-        let Some((layout, frame)) = editor.read(|state| build_frame(state, scroll_top, bounds, window)) else {
-            return Frame::empty();
+        let theme = editor.theme.clone();
+        let Some((layout, frame)) = editor.read(|state| build_frame(state, scroll_top, bounds, window, &theme)) else {
+            return Frame::empty(theme);
         };
         self.editor.update(cx, |editor, _| editor.layout = Some(layout));
         frame
@@ -175,13 +174,14 @@ impl Element for EditorElement {
         let focused = focus.is_focused(window);
         window.handle_input(&focus, ElementInputHandler::new(bounds, self.editor.clone()), cx);
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
-            window.paint_quad(fill(bounds, color(BACKGROUND)));
+            let theme = &frame.theme;
+            window.paint_quad(fill(bounds, theme.background));
             for row in frame.rows.iter().filter(|row| row.is_cursor_row) {
                 let line = Bounds::new(point(bounds.left(), row.top), size(bounds.size.width, LINE_HEIGHT));
-                window.paint_quad(fill(line, color(CURRENT_LINE)));
+                window.paint_quad(fill(line, theme.current_line));
             }
             for highlight in &frame.highlights {
-                window.paint_quad(fill(*highlight, color(SELECTION)));
+                window.paint_quad(fill(*highlight, theme.selection));
             }
             let text_left = bounds.left() + frame.gutter_width;
             for row in &frame.rows {
@@ -189,9 +189,9 @@ impl Element for EditorElement {
                 let _ = row.text.paint(point(text_left, row.top), LINE_HEIGHT, window, cx);
             }
             for underline in &frame.underlines {
-                window.paint_quad(fill(*underline, color(TEXT)));
+                window.paint_quad(fill(*underline, theme.foreground));
             }
-            let mut cursor_color = color(CURSOR);
+            let mut cursor_color = theme.cursor;
             if !focused {
                 cursor_color.a = 0.4;
             }
@@ -202,18 +202,19 @@ impl Element for EditorElement {
     }
 }
 
-/// Shapes the rows in view and works out where the selections and cursors are drawn, for a
-/// state scrolled to `scroll_top` in a box of `bounds`. Also gives the layout the pointer is
-/// mapped through.
+/// Shapes the rows in view, coloured by their syntax, and works out where the selections and
+/// cursors are drawn, for a state scrolled to `scroll_top` in a box of `bounds`. Also gives the
+/// layout the pointer is mapped through.
 fn build_frame(
     state: &EditorState,
     scroll_top: Pixels,
     bounds: Bounds<Pixels>,
     window: &mut Window,
+    theme: &EditorTheme,
 ) -> (Layout, Frame) {
     let line_count = state.buffer().line_count();
     let digits = line_count.max(1).to_string().len();
-    let digit_width = shape(window, &"0".repeat(digits), LINE_NUMBER).width;
+    let digit_width = shape_plain(window, &"0".repeat(digits), theme.line_number).width;
     let gutter_width = digit_width + GUTTER_PADDING * 2.0;
     let text_left = bounds.left() + gutter_width;
 
@@ -228,14 +229,16 @@ fn build_frame(
         .map(|selection| selection.head.row)
         .collect();
 
+    let highlights = state.highlights(first_row..end_row);
     let mut lines = Vec::with_capacity(end_row.saturating_sub(first_row));
     let mut rows = Vec::with_capacity(lines.capacity());
     for row in first_row..end_row {
         let display = DisplayLine::new(&state.buffer().line(row));
         let is_cursor_row = cursor_rows.contains(&row);
-        let number_color = if is_cursor_row { CURRENT_LINE_NUMBER } else { LINE_NUMBER };
-        let number = shape(window, &(row + 1).to_string(), number_color);
-        let text = shape(window, &display.text, TEXT);
+        let number_color = if is_cursor_row { theme.current_line_number } else { theme.line_number };
+        let number = shape_plain(window, &(row + 1).to_string(), number_color);
+        let runs = text_runs(&display, &highlights[row - first_row], theme);
+        let text = shape_runs(window, &display.text, &runs);
         rows.push(PaintedRow {
             top: first_row_top + LINE_HEIGHT * (row - first_row) as f32,
             number_left: bounds.left() + GUTTER_PADDING + digit_width - number.width,
@@ -247,10 +250,10 @@ fn build_frame(
     }
 
     let layout = Layout { bounds, text_left, first_row, first_row_top, lines };
-    let highlights = visible_selections.iter().flat_map(|selection| selection_bounds(&layout, selection)).collect();
+    let selections = visible_selections.iter().flat_map(|selection| selection_bounds(&layout, selection)).collect();
     let underlines = state.marked_range().map(|(start, end)| underline_bounds(&layout, start, end)).unwrap_or_default();
     let cursors = visible_selections.iter().filter_map(|selection| cursor_bounds(&layout, selection.head)).collect();
-    (layout, Frame { rows, gutter_width, highlights, cursors, underlines })
+    (layout, Frame { rows, gutter_width, highlights: selections, cursors, underlines, theme: theme.clone() })
 }
 
 /// Where a cursor is drawn, or none while its row is scrolled out of view.
@@ -311,24 +314,62 @@ fn span_bounds(layout: &Layout, start: Position, end: Position, line_ending_widt
 }
 
 /// Shapes one line of text in the editor's font, in a single colour.
-fn shape(window: &mut Window, text: &str, color_value: u32) -> ShapedLine {
-    let run = TextRun {
-        len: text.len(),
-        font: editor_font(),
-        color: color(color_value),
+fn shape_plain(window: &mut Window, text: &str, color: Hsla) -> ShapedLine {
+    let plain = HighlightStyle { color, bold: false, italic: false };
+    shape_runs(window, text, &[text_run(text.len(), plain)])
+}
+
+/// Shapes one line of text in the editor's font, in the colours of its runs, which must add up
+/// to the length of the text.
+fn shape_runs(window: &mut Window, text: &str, runs: &[TextRun]) -> ShapedLine {
+    window.text_system().shape_line(SharedString::from(text.to_string()), FONT_SIZE, runs, None)
+}
+
+/// A run of `length` bytes painted in a style.
+fn text_run(length: usize, style: HighlightStyle) -> TextRun {
+    let mut run_font = editor_font();
+    if style.bold {
+        run_font = run_font.bold();
+    }
+    if style.italic {
+        run_font = run_font.italic();
+    }
+    TextRun {
+        len: length,
+        font: run_font,
+        color: style.color,
         background_color: None,
         underline: None,
         strikethrough: None,
-    };
-    window.text_system().shape_line(SharedString::from(text.to_string()), FONT_SIZE, &[run], None)
+    }
+}
+
+/// The runs a row is painted in: each highlighted stretch in its colour and the text between
+/// them in the foreground. Highlights are in columns of the buffer line, so a tab before one is
+/// already accounted for by the display line.
+fn text_runs(display: &DisplayLine, spans: &[HighlightSpan], theme: &EditorTheme) -> Vec<TextRun> {
+    let plain = HighlightStyle { color: theme.foreground, bold: false, italic: false };
+    let mut runs = Vec::with_capacity(spans.len() * 2 + 1);
+    let mut painted = 0;
+    for span in spans {
+        let start = display.offset_of(span.start_column).max(painted);
+        let end = display.offset_of(span.end_column);
+        if end <= start {
+            continue;
+        }
+        if start > painted {
+            runs.push(text_run(start - painted, plain));
+        }
+        runs.push(text_run(end - start, theme.style_of(span.id).unwrap_or(plain)));
+        painted = end;
+    }
+    if painted < display.text.len() || runs.is_empty() {
+        runs.push(text_run(display.text.len() - painted, plain));
+    }
+    runs
 }
 
 /// The editor's monospace font.
 fn editor_font() -> Font {
     font(FONT_FAMILY)
-}
-
-/// A colour from its `0xRRGGBB` value.
-fn color(value: u32) -> Hsla {
-    rgb(value).into()
 }

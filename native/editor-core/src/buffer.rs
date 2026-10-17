@@ -30,11 +30,33 @@ pub enum LineEnding {
 /// How many lines at the top of a file are read to tell whether it indents with tabs.
 const INDENT_SAMPLE_LINES: usize = 2000;
 
+/// A place in the text as a line and a byte within it, which is how tree-sitter counts.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BytePoint {
+    pub row: usize,
+    pub column: usize,
+}
+
+/// One replacement in the text, in bytes. Changes come in the order they were made, each
+/// described against the text as it was after the ones before it, which is the order a
+/// syntax tree is told about them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TextChange {
+    pub start_byte: usize,
+    pub old_end_byte: usize,
+    pub new_end_byte: usize,
+    pub start_point: BytePoint,
+    pub old_end_point: BytePoint,
+    pub new_end_point: BytePoint,
+}
+
 pub struct Buffer {
     text: Rope,
     path: Option<PathBuf>,
     line_ending: LineEnding,
     indents_with_tabs: bool,
+    /// Changes made since the syntax tree last caught up with the text.
+    pending_changes: Vec<TextChange>,
 }
 
 impl Buffer {
@@ -54,6 +76,12 @@ impl Buffer {
         Buffer::with_text(text, None)
     }
 
+    /// A buffer holding `text` that is named like `path` without having been read from it, so the
+    /// name still says what language the text is.
+    pub fn from_text_named(text: &str, path: &Path) -> Self {
+        Buffer::with_text(text, Some(path.to_path_buf()))
+    }
+
     /// Builds a buffer, remembering the line ending and indentation the text uses.
     fn with_text(text: &str, path: Option<PathBuf>) -> Self {
         let line_ending = detect_line_ending(text);
@@ -62,7 +90,7 @@ impl Buffer {
             LineEnding::Crlf => Rope::from_str(&text.replace("\r\n", "\n")),
             LineEnding::Lf => Rope::from_str(text),
         };
-        Buffer { text: rope, path, line_ending, indents_with_tabs }
+        Buffer { text: rope, path, line_ending, indents_with_tabs, pending_changes: Vec::new() }
     }
 
     /// The file the buffer was read from, if any.
@@ -165,10 +193,43 @@ impl Buffer {
         let inverse = self.inverse_of(edits);
         // Back to front, so the offsets of the edits not yet applied stay valid.
         for edit in edits.iter().rev() {
+            self.pending_changes.push(self.change_for(edit));
             self.text.remove(edit.start..edit.end);
             self.text.insert(edit.start, &edit.text);
         }
         inverse
+    }
+
+    /// Hands over the changes made since the last call, oldest first.
+    pub fn take_changes(&mut self) -> Vec<TextChange> {
+        std::mem::take(&mut self.pending_changes)
+    }
+
+    /// The text as a rope, for readers that walk it in chunks without copying it.
+    pub fn rope(&self) -> &Rope {
+        &self.text
+    }
+
+    /// Describes an edit in bytes, against the text as it is right now.
+    fn change_for(&self, edit: &crate::edit::Edit) -> TextChange {
+        let start_byte = self.text.char_to_byte(edit.start);
+        let old_end_byte = self.text.char_to_byte(edit.end);
+        let start_point = self.byte_point_of(start_byte);
+        let old_end_point = self.byte_point_of(old_end_byte);
+        TextChange {
+            start_byte,
+            old_end_byte,
+            new_end_byte: start_byte + edit.text.len(),
+            start_point,
+            old_end_point,
+            new_end_point: point_after(start_point, &edit.text),
+        }
+    }
+
+    /// The line and byte within it of a byte offset.
+    pub fn byte_point_of(&self, byte: usize) -> BytePoint {
+        let row = self.text.byte_to_line(byte);
+        BytePoint { row, column: byte - self.text.line_to_byte(row) }
     }
 
     /// The edits that put back the text `edits` replaces, in the coordinates of the text after them.
@@ -187,6 +248,15 @@ impl Buffer {
         let row = position.row.min(last_row);
         Position { row, column: position.column.min(self.line_length(row)) }
     }
+}
+
+/// Where the end of `text` lands when it is written starting at `start`.
+fn point_after(start: BytePoint, text: &str) -> BytePoint {
+    let Some(last_newline) = text.rfind('\n') else {
+        return BytePoint { row: start.row, column: start.column + text.len() };
+    };
+    let newlines = text.matches('\n').count();
+    BytePoint { row: start.row + newlines, column: text.len() - last_newline - 1 }
 }
 
 /// `\r\n` when most of the file's line breaks are one, else `\n`.

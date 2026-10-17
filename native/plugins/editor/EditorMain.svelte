@@ -8,6 +8,7 @@
   import { element, type ElementMethods } from "@neoworks/svelte-gpui";
   import { Text, View } from "@neoworks/svelte-gpui/ui";
   import TabStrip, { type TabEntry } from "../panel/TabStrip.svelte";
+  import { activeEditorTheme, type EditorTheme } from "../theme/editorTheme";
   import { colors, fontSize } from "../theme/tokens";
   import type { EditorService, EditorViewMethods } from "./service";
 
@@ -20,7 +21,7 @@
   let { service, leafId = "main" }: Props = $props();
 
   /** The editor `src/editor/mod.rs` registers. */
-  const Editor = element<{ document: number; onfocus: () => void }, EditorViewMethods>("editor");
+  const Editor = element<{ document: number; theme: EditorTheme; onfocus: () => void }, EditorViewMethods>("editor");
 
   let view = $state<ElementMethods<EditorViewMethods> | null>(null);
 
@@ -65,6 +66,7 @@
       style={{ flex: 1 }}
       key={`editor-${leafId}`}
       document={active.id}
+      theme={activeEditorTheme()}
       onfocus={() => service.focusPane(leafId)}
     />
   {:else}

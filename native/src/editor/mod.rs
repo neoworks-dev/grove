@@ -8,6 +8,7 @@
 
 mod element;
 
+use std::ops::Range;
 use std::path::Path;
 
 use editor_core::{
@@ -15,8 +16,9 @@ use editor_core::{
 };
 use serde_json::{Value, json};
 use svelte_gpui::gpui::{
-    App, Context, FocusHandle, IntoElement, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Render, ScrollWheelEvent, Subscription, Window, div, prelude::*, px,
+    App, Bounds, ClipboardItem, Context, EntityInputHandler, FocusHandle, IntoElement, KeyDownEvent, Keystroke,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, ScrollWheelEvent, Subscription,
+    UTF16Selection, Window, div, prelude::*, px,
 };
 use svelte_gpui::{AppElement, CommandError, NativeHost};
 
@@ -32,6 +34,11 @@ pub struct Editor {
     scroll_top: Pixels,
     /// What the last frame drew; none before the first.
     layout: Option<Layout>,
+    /// The last text this editor copied. The system clipboard only takes text from a window that
+    /// has focus, so where it refuses, a paste still gets this.
+    last_copied: Option<String>,
+    /// The modified state the app was last told about, so it hears of changes only.
+    reported_modified: bool,
     /// Whether the left button went down in the editor and is still held, so moving the
     /// pointer extends the newest selection.
     dragging: bool,
@@ -50,6 +57,8 @@ impl Editor {
             input: Box::new(StandardKeymap),
             scroll_top: px(0.0),
             layout: None,
+            last_copied: None,
+            reported_modified: false,
             dragging: false,
             focus_subscriptions: Vec::new(),
         }
@@ -61,6 +70,7 @@ impl Editor {
             Ok(buffer) => {
                 self.state.replace_buffer(buffer);
                 self.scroll_top = px(0.0);
+                self.reported_modified = false;
                 self.host.emit("opened", json!({ "path": path, "lines": self.state.buffer().line_count() }));
                 self.report_selections();
             }
@@ -70,17 +80,57 @@ impl Editor {
         }
     }
 
-    /// Applies a command to the state, then scrolls if the command asks the view to follow.
-    fn apply(&mut self, command: &Command) -> Outcome {
-        let outcome = self.state.apply(command);
+    /// Applies a command to the state and reacts to what it did: scrolls to follow the newest
+    /// cursor, puts copied text on the clipboard, and tells the app about selections, saving and
+    /// the modified state. A paste request is filled in from the clipboard first.
+    fn apply(&mut self, command: &Command, cx: &mut Context<Self>) -> Outcome {
+        let Some(command) = self.resolve_clipboard(command, cx) else {
+            return Outcome::default();
+        };
+        let outcome = self.state.apply(&command);
         if outcome.reveal_newest {
             self.scroll_to_newest();
         }
+        if let Some(text) = &outcome.copied {
+            cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+            self.last_copied = Some(text.clone());
+        }
+        if outcome.changed {
+            self.report_selections();
+        }
+        self.report_outcome(&outcome);
         outcome
     }
 
+    /// Swaps a request to paste for a paste of the clipboard's text, or of the editor's own last
+    /// copy when the clipboard has none, or nothing when there is neither.
+    fn resolve_clipboard(&self, command: &Command, cx: &mut Context<Self>) -> Option<Command> {
+        if *command != Command::PasteClipboard {
+            return Some(command.clone());
+        }
+        let clipboard_text = cx.read_from_clipboard().and_then(|item| item.text());
+        let text = clipboard_text.or_else(|| self.last_copied.clone())?;
+        Some(Command::Paste { text })
+    }
+
+    /// Tells the app about a save, a failed save, and a change of the modified state.
+    fn report_outcome(&mut self, outcome: &Outcome) {
+        let path = self.state.buffer().path().map(|path| path.display().to_string());
+        if outcome.saved {
+            self.host.emit("saved", json!({ "path": path }));
+        }
+        if let Some(message) = &outcome.error {
+            self.host.emit("error", json!({ "path": path, "message": message }));
+        }
+        let modified = self.state.is_modified();
+        if modified != self.reported_modified {
+            self.reported_modified = modified;
+            self.host.emit("dirty", json!({ "path": path, "modified": modified }));
+        }
+    }
+
     /// Handles a key the input layer knows; returns false for the rest, which then bubble to the app.
-    fn handle_key(&mut self, keystroke: &Keystroke) -> bool {
+    fn handle_key(&mut self, keystroke: &Keystroke, cx: &mut Context<Self>) -> bool {
         let context = InputContext { page_rows: self.rows_in_view() };
         let commands = self.input.translate(&key_input(keystroke), &context);
         if commands.is_empty() {
@@ -88,7 +138,7 @@ impl Editor {
         }
         let mut handled = false;
         for command in &commands {
-            let outcome = self.apply(command);
+            let outcome = self.apply(command, cx);
             handled = handled || outcome.changed || !command.passes_on_when_unchanged();
         }
         handled
@@ -96,34 +146,34 @@ impl Editor {
 
     /// A press of the left button: a click places one cursor, Alt-click adds or removes one,
     /// Shift-click extends the newest selection, and a double click selects a word.
-    fn press(&mut self, event: &MouseDownEvent) {
+    fn press(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) {
         let Some(at) = self.position_at(event.position) else {
             return;
         };
         self.dragging = true;
         if event.modifiers.shift {
-            self.apply(&Command::ExtendNewestTo { at });
+            self.apply(&Command::ExtendNewestTo { at }, cx);
             return;
         }
         if event.modifiers.alt {
-            self.apply(&Command::ToggleCursor { at });
+            self.apply(&Command::ToggleCursor { at }, cx);
             return;
         }
-        self.apply(&Command::PlaceCursor { at });
+        self.apply(&Command::PlaceCursor { at }, cx);
         if event.click_count == 2 {
-            self.apply(&Command::SelectWordAt { at });
+            self.apply(&Command::SelectWordAt { at }, cx);
         }
     }
 
     /// The pointer moved with the button held: the newest selection follows it.
-    fn drag(&mut self, event: &MouseMoveEvent) -> bool {
+    fn drag(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) -> bool {
         if !self.dragging || event.pressed_button != Some(MouseButton::Left) {
             return false;
         }
         let Some(at) = self.position_at(event.position) else {
             return false;
         };
-        self.apply(&Command::ExtendNewestTo { at });
+        self.apply(&Command::ExtendNewestTo { at }, cx);
         true
     }
 
@@ -212,10 +262,10 @@ impl AppElement for Editor {
         self.open(path);
     }
 
-    fn call(&mut self, method: &str, args: Value, _cx: &mut Context<Self>) -> Result<Value, CommandError> {
+    fn call(&mut self, method: &str, args: Value, cx: &mut Context<Self>) -> Result<Value, CommandError> {
         match method {
             "selections" => Ok(self.selections_json()),
-            "apply" => self.apply_from_app(args),
+            "apply" => self.apply_from_app(args, cx),
             _ => Err(CommandError::with_code("UnknownMethod", format!("the editor has no method {method:?}"))),
         }
     }
@@ -228,14 +278,14 @@ impl AppElement for Editor {
 impl Editor {
     /// The `apply` method: runs the command given as the first argument, as JSON, exactly as a
     /// key would, and answers whether anything changed.
-    fn apply_from_app(&mut self, args: Value) -> Result<Value, CommandError> {
+    fn apply_from_app(&mut self, args: Value, cx: &mut Context<Self>) -> Result<Value, CommandError> {
         let Some(command_json) = args.get(0) else {
             return Err(CommandError::with_code("InvalidCommand", "apply takes a command as its first argument"));
         };
         let command: Command = serde_json::from_value(command_json.clone())
             .map_err(|error| CommandError::with_code("InvalidCommand", error.to_string()))?;
-        let outcome = self.apply(&command);
-        self.report_selections();
+        let outcome = self.apply(&command, cx);
+        cx.notify();
         Ok(json!({ "changed": outcome.changed }))
     }
 
@@ -261,10 +311,9 @@ impl Render for Editor {
             .track_focus(&self.focus)
             .size_full()
             .on_key_down(cx.listener(|editor, event: &KeyDownEvent, _window, cx| {
-                if !editor.handle_key(&event.keystroke) {
+                if !editor.handle_key(&event.keystroke, cx) {
                     return;
                 }
-                editor.report_selections();
                 cx.notify();
                 cx.stop_propagation();
             }))
@@ -276,13 +325,12 @@ impl Render for Editor {
                 MouseButton::Left,
                 cx.listener(|editor, event: &MouseDownEvent, window, cx| {
                     window.focus(&editor.focus);
-                    editor.press(event);
-                    editor.report_selections();
+                    editor.press(event, cx);
                     cx.notify();
                 }),
             )
             .on_mouse_move(cx.listener(|editor, event: &MouseMoveEvent, _window, cx| {
-                if editor.drag(event) {
+                if editor.drag(event, cx) {
                     cx.notify();
                 }
             }))
@@ -290,9 +338,131 @@ impl Render for Editor {
                 MouseButton::Left,
                 cx.listener(|editor, _: &MouseUpEvent, _window, _cx| {
                     editor.dragging = false;
-                    editor.report_selections();
                 }),
             )
             .child(EditorElement { editor: cx.entity() })
+    }
+}
+
+/// Typed text and input method composition. Offsets here are UTF-16 units over the whole text,
+/// which is how input methods count; the core's commands use characters, so this converts.
+impl EntityInputHandler for Editor {
+    fn text_for_range(
+        &mut self,
+        range: Range<usize>,
+        adjusted: &mut Option<Range<usize>>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<String> {
+        let buffer = self.state.buffer();
+        let (start, end) = (buffer.offset_of_utf16(range.start), buffer.offset_of_utf16(range.end));
+        *adjusted = Some(buffer.utf16_of_offset(start)..buffer.utf16_of_offset(end));
+        Some(buffer.slice(start..end))
+    }
+
+    fn selected_text_range(
+        &mut self,
+        _ignore_disabled_input: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<UTF16Selection> {
+        let newest = self.state.selections().newest();
+        let buffer = self.state.buffer();
+        let anchor = buffer.utf16_of_offset(buffer.offset_of(newest.anchor));
+        let head = buffer.utf16_of_offset(buffer.offset_of(newest.head));
+        Some(UTF16Selection { range: anchor.min(head)..anchor.max(head), reversed: head < anchor })
+    }
+
+    fn marked_text_range(&self, _window: &mut Window, _cx: &mut Context<Self>) -> Option<Range<usize>> {
+        let (start, end) = self.state.marked_range()?;
+        Some(self.utf16_range(start, end))
+    }
+
+    fn unmark_text(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.apply(&Command::UnmarkText, cx);
+        cx.notify();
+    }
+
+    fn replace_text_in_range(
+        &mut self,
+        range: Option<Range<usize>>,
+        text: &str,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let command = self.command_for_replacing(range, text);
+        self.apply(&command, cx);
+        cx.notify();
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        _range: Option<Range<usize>>,
+        new_text: &str,
+        _new_selected_range: Option<Range<usize>>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.apply(&Command::SetMarkedText { text: new_text.to_string() }, cx);
+        cx.notify();
+    }
+
+    fn bounds_for_range(
+        &mut self,
+        range: Range<usize>,
+        element_bounds: Bounds<Pixels>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<Bounds<Pixels>> {
+        let buffer = self.state.buffer();
+        let position = buffer.position_of(buffer.offset_of_utf16(range.start));
+        let Some(layout) = &self.layout else {
+            return Some(element_bounds);
+        };
+        Some(element::cursor_bounds(layout, position).unwrap_or(element_bounds))
+    }
+
+    fn character_index_for_point(
+        &mut self,
+        point: Point<Pixels>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        let position = self.position_at(point)?;
+        let buffer = self.state.buffer();
+        Some(buffer.utf16_of_offset(buffer.offset_of(position)))
+    }
+}
+
+impl Editor {
+    /// The UTF-16 range between two positions.
+    fn utf16_range(&self, start: Position, end: Position) -> Range<usize> {
+        let buffer = self.state.buffer();
+        buffer.utf16_of_offset(buffer.offset_of(start))..buffer.utf16_of_offset(buffer.offset_of(end))
+    }
+
+    /// The command for an input method's request to put text over a UTF-16 range. Text that goes
+    /// where the cursors are, or over the composed text, is typed at every cursor; a range
+    /// elsewhere replaces just that range.
+    fn command_for_replacing(&self, range: Option<Range<usize>>, text: &str) -> Command {
+        let typing = Command::InsertText { text: text.to_string() };
+        let Some(range) = range else {
+            return typing;
+        };
+        let newest = self.state.selections().newest();
+        let at_selection = range == self.utf16_range(newest.start(), newest.end());
+        let at_composition = match self.state.marked_range() {
+            Some((start, end)) => range == self.utf16_range(start, end),
+            None => false,
+        };
+        if at_selection || at_composition {
+            return typing;
+        }
+        let buffer = self.state.buffer();
+        Command::ReplaceRange {
+            start: buffer.offset_of_utf16(range.start),
+            end: buffer.offset_of_utf16(range.end),
+            text: text.to_string(),
+        }
     }
 }

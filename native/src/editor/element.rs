@@ -6,8 +6,9 @@
 use std::collections::HashSet;
 
 use svelte_gpui::gpui::{
-    App, Bounds, ContentMask, Element, ElementId, Entity, Font, GlobalElementId, Hsla, InspectorElementId, IntoElement,
-    LayoutId, Pixels, ShapedLine, SharedString, Style, TextRun, Window, fill, font, point, px, relative, rgb, size,
+    App, Bounds, ContentMask, Element, ElementId, ElementInputHandler, Entity, Font, GlobalElementId, Hsla,
+    InspectorElementId, IntoElement, LayoutId, Pixels, ShapedLine, SharedString, Style, TextRun, Window, fill, font,
+    point, px, relative, rgb, size,
 };
 
 use super::Editor;
@@ -30,6 +31,7 @@ const LINE_NUMBER: u32 = 0x52525b;
 const CURRENT_LINE_NUMBER: u32 = 0xa1a1aa;
 const CURSOR: u32 = 0xf97316;
 const SELECTION: u32 = 0x3b3b52;
+const UNDERLINE_HEIGHT: Pixels = px(1.5);
 
 /// What the last frame drew, kept on the editor so the pointer can be mapped to a position
 /// and the cursor kept in view.
@@ -87,6 +89,8 @@ pub struct Frame {
     /// Behind the text: the parts of selections in view.
     highlights: Vec<Bounds<Pixels>>,
     cursors: Vec<Bounds<Pixels>>,
+    /// Under the text an input method is composing.
+    underlines: Vec<Bounds<Pixels>>,
 }
 
 impl IntoElement for EditorElement {
@@ -174,10 +178,12 @@ impl Element for EditorElement {
 
         let layout = Layout { bounds, text_left, first_row, first_row_top, lines };
         let highlights = visible_selections.iter().flat_map(|selection| selection_bounds(&layout, selection)).collect();
+        let underlines =
+            editor.state.marked_range().map(|(start, end)| underline_bounds(&layout, start, end)).unwrap_or_default();
         let cursors =
             visible_selections.iter().filter_map(|selection| cursor_bounds(&layout, selection.head)).collect();
         self.editor.update(cx, |editor, _| editor.layout = Some(layout));
-        Frame { rows, gutter_width, highlights, cursors }
+        Frame { rows, gutter_width, highlights, cursors, underlines }
     }
 
     /// Paints the background, the cursors' lines, the selections, the gutter, the text and the cursors.
@@ -191,7 +197,9 @@ impl Element for EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let focused = self.editor.read(cx).focus.is_focused(window);
+        let focus = self.editor.read(cx).focus.clone();
+        let focused = focus.is_focused(window);
+        window.handle_input(&focus, ElementInputHandler::new(bounds, self.editor.clone()), cx);
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             window.paint_quad(fill(bounds, color(BACKGROUND)));
             for row in frame.rows.iter().filter(|row| row.is_cursor_row) {
@@ -206,6 +214,9 @@ impl Element for EditorElement {
                 let _ = row.number.paint(point(row.number_left, row.top), LINE_HEIGHT, window, cx);
                 let _ = row.text.paint(point(text_left, row.top), LINE_HEIGHT, window, cx);
             }
+            for underline in &frame.underlines {
+                window.paint_quad(fill(*underline, color(TEXT)));
+            }
             let mut cursor_color = color(CURSOR);
             if !focused {
                 cursor_color.a = 0.4;
@@ -218,7 +229,7 @@ impl Element for EditorElement {
 }
 
 /// Where a cursor is drawn, or none while its row is scrolled out of view.
-fn cursor_bounds(layout: &Layout, head: Position) -> Option<Bounds<Pixels>> {
+pub(super) fn cursor_bounds(layout: &Layout, head: Position) -> Option<Bounds<Pixels>> {
     let x = x_for(layout, head)?;
     let top = layout.first_row_top + LINE_HEIGHT * (head.row - layout.first_row) as f32;
     Some(Bounds::new(point(x, top), size(CURSOR_WIDTH, LINE_HEIGHT)))
@@ -236,10 +247,25 @@ fn selection_bounds(layout: &Layout, selection: &Selection) -> Vec<Bounds<Pixels
     if selection.is_empty() {
         return Vec::new();
     }
-    let (start, end) = (selection.start(), selection.end());
+    span_bounds(layout, selection.start(), selection.end(), LINE_ENDING_WIDTH)
+}
+
+/// A thin line along the bottom of each visible row a range covers.
+fn underline_bounds(layout: &Layout, start: Position, end: Position) -> Vec<Bounds<Pixels>> {
+    let spans = span_bounds(layout, start, end, px(0.0));
+    let line_bottom = LINE_HEIGHT - UNDERLINE_HEIGHT;
+    spans
+        .iter()
+        .map(|span| Bounds::new(point(span.left(), span.top() + line_bottom), size(span.size.width, UNDERLINE_HEIGHT)))
+        .collect()
+}
+
+/// One rectangle per visible row a range covers, as tall as a line. A row the range runs past
+/// the end of is widened by `line_ending_width`.
+fn span_bounds(layout: &Layout, start: Position, end: Position, line_ending_width: Pixels) -> Vec<Bounds<Pixels>> {
     let first = start.row.max(layout.first_row);
     let last = end.row.min(layout.first_row + layout.lines.len().saturating_sub(1));
-    let mut highlights = Vec::new();
+    let mut spans = Vec::new();
     for row in first..=last {
         let start_column = if row == start.row { start.column } else { 0 };
         let runs_past_end = row != end.row;
@@ -251,12 +277,12 @@ fn selection_bounds(layout: &Layout, selection: &Selection) -> Vec<Bounds<Pixels
             continue;
         };
         if runs_past_end {
-            right += LINE_ENDING_WIDTH;
+            right += line_ending_width;
         }
         let top = layout.first_row_top + LINE_HEIGHT * (row - layout.first_row) as f32;
-        highlights.push(Bounds::new(point(left, top), size(right - left, LINE_HEIGHT)));
+        spans.push(Bounds::new(point(left, top), size(right - left, LINE_HEIGHT)));
     }
-    highlights
+    spans
 }
 
 /// Shapes one line of text in the editor's font, in a single colour.

@@ -25,11 +25,11 @@
   const fullscreenLabel = $derived(window.fullscreen ? "Exit full screen" : "Full screen");
 
   /** The look shared by the settings and window buttons. */
-  const buttonStyle = {
+  const buttonStyle = $derived({
     ...iconButton,
     width: size.windowButtonWidth,
     height: size.windowButtonHeight,
-  };
+  });
 </script>
 
 <View style={{ direction: "row", align: "center", gap: 2 }}>

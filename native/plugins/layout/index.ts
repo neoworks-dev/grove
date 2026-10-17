@@ -11,7 +11,7 @@ import { LayoutService } from "./service";
 export interface LayoutConfig {
   /** The pane type of the first pane; "editor" by default. */
   defaultPane?: string;
-  /** The pane type a split opens; "empty" by default. */
+  /** The pane type a split opens; by default, the type of the pane that was split. */
   newPane?: string;
 }
 
@@ -20,7 +20,7 @@ export const layout = {
   inject: ["slots", "commands", "keymap"],
   apply(ctx: Context, config: LayoutConfig | undefined) {
     let defaultPane = "editor";
-    let newPane = "empty";
+    let newPane: string | null = null;
     if (config && config.defaultPane !== undefined) {
       defaultPane = config.defaultPane;
     }

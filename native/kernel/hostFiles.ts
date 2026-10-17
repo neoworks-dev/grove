@@ -21,10 +21,10 @@ export const hostProfileFiles: ProfileFiles = {
     return paths.config;
   },
 
-  // The app has no way to open a folder yet, so the folder it was started in stands in for
-  // one. Once it has, this returns that folder instead.
-  async openedFolder() {
-    const paths = await files.paths();
-    return paths.cwd;
+  async writeText(path, text) {
+    const separator = path.lastIndexOf("/");
+    await files.mkdir(path.slice(0, separator), { recursive: true });
+    await files.writeText(path, text);
   },
+
 };

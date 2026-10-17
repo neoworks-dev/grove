@@ -44,6 +44,16 @@ export interface ResolvedBinding extends KeyBinding {
   sequence: ParsedSequence;
 }
 
+/** A key that can follow the keys typed so far, for a which-key hint. */
+export interface NextKey {
+  /** The keycap of the next step. */
+  key: string;
+  /** What it runs when it ends a sequence; undefined when more keys follow. */
+  description?: string;
+  /** Whether more keys follow it. */
+  continues: boolean;
+}
+
 export class KeymapService extends Service {
   static inject = ["commands"];
 
@@ -148,6 +158,34 @@ export class KeymapService extends Service {
   pendingSteps(): KeyStep[] {
     this.changes.track();
     return this.pendingState.steps;
+  }
+
+  /**
+   * The keys that can come next while a sequence is half typed, one per distinct key, in the order
+   * their bindings were registered; empty when no sequence is pending. Reactive.
+   */
+  nextKeys(): NextKey[] {
+    this.changes.track();
+    if (!this.pendingState.active) {
+      return [];
+    }
+    const prefix = this.pendingState.steps;
+    const byKey = new Map<string, NextKey>();
+    for (const binding of this.matching(prefix, this.pendingState.leader)) {
+      const step = binding.sequence.steps[prefix.length];
+      if (step === undefined) {
+        continue;
+      }
+      const key = stepLabel(step);
+      const continues = binding.sequence.steps.length > prefix.length + 1;
+      const known = byKey.get(key);
+      if (known === undefined) {
+        byKey.set(key, { key, description: continues ? undefined : binding.description, continues });
+      } else if (continues) {
+        known.continues = true;
+      }
+    }
+    return [...byKey.values()];
   }
 
   /** Drops a half-typed sequence. */

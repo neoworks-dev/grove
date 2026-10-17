@@ -35,6 +35,16 @@ describe("layerProfiles", () => {
     expect(rows[1].config).toEqual({ size: 2 });
   });
 
+  test("a row inherits what it leaves out and merges its config over the row it replaces", () => {
+    const { rows } = layerProfiles([
+      { name: "core", rows: [{ id: "a", plugin: "one", config: { size: 1, color: "red" }, disabled: true }] },
+      { name: "user", rows: [{ id: "a", config: { size: 2 } }] },
+    ]);
+    expect(rows).toEqual([
+      { id: "a", plugin: "one", config: { size: 2, color: "red" }, disabled: true, layer: "user" },
+    ]);
+  });
+
   test("a disabling row without a plugin keeps the plugin of the row it replaces", () => {
     const { rows, problems } = layerProfiles([
       { name: "core", rows: [{ id: "a", plugin: "one" }] },
@@ -46,8 +56,8 @@ describe("layerProfiles", () => {
 });
 
 describe("loadProfile", () => {
-  /** Files held in memory, with the config directory and the opened folder given. */
-  function memoryFiles(contents: Record<string, string>, folder: string | null): ProfileFiles {
+  /** Files held in memory, with the config directory given. */
+  function memoryFiles(contents: Record<string, string>): ProfileFiles {
     return {
       async readIfExists(path) {
         if (path in contents) {
@@ -58,9 +68,7 @@ describe("loadProfile", () => {
       async configDirectory() {
         return "/config";
       },
-      async openedFolder() {
-        return folder;
-      },
+      async writeText() {},
     };
   }
 
@@ -73,11 +81,10 @@ describe("loadProfile", () => {
     const files = memoryFiles(
       {
         "/config/grove/profile.json": '[{"id":"clock","disabled":true}]',
-        "/work/.grove/profile.json": '[{"id":"clock","plugin":"clock","config":{"format":"24h"}}]',
-      },
-      "/work"
+        "/work/.grove/profile.json": '[{"id":"clock","plugin":"clock","disabled":false,"config":{"format":"24h"}}]',
+      }
     );
-    const { rows, problems } = await loadProfile(coreRows, files);
+    const { rows, problems } = await loadProfile(coreRows, files, "/work");
     expect(problems).toEqual([]);
     const clock = rows.find((row) => row.id === "clock")!;
     expect(clock.layer).toBe("project");
@@ -87,16 +94,15 @@ describe("loadProfile", () => {
 
   test("skips the project layer when no folder is open", async () => {
     const files = memoryFiles(
-      { "/work/.grove/profile.json": '[{"id":"clock","disabled":true}]', "/config/grove/profile.json": "[]" },
-      null
+      { "/work/.grove/profile.json": '[{"id":"clock","disabled":true}]', "/config/grove/profile.json": "[]" }
     );
-    const { rows } = await loadProfile(coreRows, files);
+    const { rows } = await loadProfile(coreRows, files, null);
     expect(rows.find((row) => row.id === "clock")!.disabled).toBe(false);
   });
 
   test("a broken user file is a problem, and the core rows still load", async () => {
-    const files = memoryFiles({ "/config/grove/profile.json": "not json" }, null);
-    const { rows, problems } = await loadProfile(coreRows, files);
+    const files = memoryFiles({ "/config/grove/profile.json": "not json" });
+    const { rows, problems } = await loadProfile(coreRows, files, null);
     expect(rows.map((row) => row.id)).toEqual(["frame", "clock"]);
     expect(problems[0]).toContain("not valid JSON");
   });

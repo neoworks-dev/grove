@@ -34,6 +34,8 @@ const ROOT_SLOTS: [string, SlotKind][] = [
 
 export const frame = {
   name: "frame",
+  // Everything else draws into its slots, so the settings page does not offer to disable it.
+  essential: true,
   inject: ["slots", "commands"],
   apply(ctx: Context, config: FrameConfig | undefined) {
     for (const [name, kind] of ROOT_SLOTS) {

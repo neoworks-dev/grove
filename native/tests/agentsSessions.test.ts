@@ -5,6 +5,7 @@ import {
   isWithin,
   previewOf,
   sessionTitle,
+  siblingsOf,
   withChildren,
   worktreeOf,
   type WorktreePlace,
@@ -97,5 +98,22 @@ describe("what a row says", () => {
     expect(age(0, 3 * 3_600_000)).toBe("3h");
     expect(age(0, 2 * 86_400_000)).toBe("2d");
     expect(age(10, 0)).toBe("now");
+  });
+});
+
+describe("the tabs of a pane", () => {
+  test("are the sessions of its worktree, in the order the sessions view lists them", () => {
+    const groups = groupSessions(
+      [
+        sessionInfo({ id: "old", cwd: "/work/repo", lastActivity: 1 }),
+        sessionInfo({ id: "new", cwd: "/work/repo/src", lastActivity: 5 }),
+        sessionInfo({ id: "side", cwd: "/work/repo/.worktrees/feature", lastActivity: 9 }),
+      ],
+      worktrees,
+      "main",
+    );
+    expect(siblingsOf(groups, "old").map((info) => info.id)).toEqual(["new", "old"]);
+    expect(siblingsOf(groups, "side").map((info) => info.id)).toEqual(["side"]);
+    expect(siblingsOf(groups, "unknown")).toEqual([]);
   });
 });

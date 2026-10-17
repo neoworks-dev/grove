@@ -68,7 +68,7 @@
     </View>
   {:else}
     {#key sessionId}
-      <AgentSession {agents} {workspace} {changes} {chat} {focused} />
+      <AgentSession {agents} {workspace} {changes} {chat} {leafId} {focused} />
     {/key}
   {/if}
 </View>

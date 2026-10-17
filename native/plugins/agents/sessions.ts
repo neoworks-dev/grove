@@ -145,6 +145,16 @@ function compareGroups(first: SessionGroup, second: SessionGroup): number {
   return latestActivity(second) - latestActivity(first);
 }
 
+/** The sessions that work in the same worktree as this one, in the order the sessions view lists them; this one alone when it is in none. */
+export function siblingsOf(groups: readonly SessionGroup[], sessionId: string): SessionInfo[] {
+  for (const group of groups) {
+    if (group.rows.some((row) => row.info.id === sessionId)) {
+      return group.rows.map((row) => row.info);
+    }
+  }
+  return [];
+}
+
 /** The session's title on one line, else "session " and the start of its id. */
 export function sessionTitle(info: SessionInfo): string {
   const title = info.title?.trim();

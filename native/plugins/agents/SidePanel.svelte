@@ -11,7 +11,15 @@
   import { palette } from "./palette";
   import Plan from "./Plan.svelte";
 
-  let { chat, files, branch }: { chat: ChatSession; files: FilesModel; branch: string | null } = $props();
+  interface Props {
+    chat: ChatSession;
+    files: FilesModel;
+    branch: string | null;
+    /** The column takes all the room it has, instead of its own width. */
+    fill?: boolean;
+  }
+
+  let { chat, files, branch, fill = false }: Props = $props();
 
   const p = palette;
 
@@ -20,12 +28,13 @@
 
 <View
   style={{
-    width: 380,
+    width: fill ? undefined : 380,
+    flex: fill ? 1 : undefined,
     shrink: 0,
     gap: p.space.l,
     padding: p.space.m,
     background: p.surface,
-    borderLeftWidth: 1,
+    borderLeftWidth: fill ? 0 : 1,
     borderColor: p.border,
   }}
 >

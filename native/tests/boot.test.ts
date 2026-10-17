@@ -18,9 +18,6 @@ function files(userProfile: string | null): ProfileFiles {
     async configDirectory() {
       return "/config";
     },
-    async openedFolder() {
-      return "/folder";
-    },
   };
 }
 

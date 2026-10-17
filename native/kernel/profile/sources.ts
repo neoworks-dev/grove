@@ -9,8 +9,6 @@ export interface ProfileFiles {
   readIfExists(path: string): Promise<string | null>;
   /** The directory user settings live in: `$XDG_CONFIG_HOME` or `~/.config` on Linux. */
   configDirectory(): Promise<string>;
-  /** The folder the app has open, whose `.grove/profile.json` is the project layer; null when none is open. */
-  openedFolder(): Promise<string | null>;
 }
 
 /** Where a user's profile lives, under the config directory. */
@@ -24,13 +22,15 @@ export function projectProfilePath(folder: string): string {
 }
 
 /**
- * Reads the layers and stacks them. The project layer is skipped when no folder is open, and
+ * Reads the layers and stacks them. The project layer is the `folder`'s profile, skipped when
+ * no folder is open (null), and
  * a layer whose file is missing is skipped silently. A file that cannot be read or parsed
  * becomes a problem and an empty layer, so a bad file never costs the plugins below it.
  */
 export async function loadProfile(
   coreRows: ProfileRow[],
-  files: ProfileFiles
+  files: ProfileFiles,
+  folder: string | null
 ): Promise<{ rows: ResolvedRow[]; problems: string[] }> {
   const problems: string[] = [];
   const layers: ProfileLayer[] = [{ name: "core", rows: coreRows }];
@@ -39,7 +39,6 @@ export async function loadProfile(
   if (user) {
     layers.push(user);
   }
-  const folder = await files.openedFolder();
   if (folder !== null) {
     const project = await readLayer("project", projectProfilePath(folder), files, problems);
     if (project) {

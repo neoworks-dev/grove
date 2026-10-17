@@ -4,6 +4,7 @@
 
 import { getContext, setContext } from "svelte";
 import type { Context } from "@neoworks/extension-system";
+import type { CommandsService } from "./commands";
 import type { KeymapService } from "./keymap";
 import type { LoaderService } from "./profile";
 import type { SlotsService } from "./slots";
@@ -12,6 +13,7 @@ export interface Kernel {
   /** The root plugin context. Only boot code and tests use it directly. */
   context: Context;
   slots: SlotsService;
+  commands: CommandsService;
   keymap: KeymapService;
   loader: LoaderService;
   /** Resolves once every plugin in the profile has settled as active, waiting or failed. */

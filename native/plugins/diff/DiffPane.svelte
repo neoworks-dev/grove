@@ -33,9 +33,12 @@
 
   /** The editor `src/editor/mod.rs` registers. */
   const Editor = element<
-    { document: number; theme: EditorTheme; keymap: string; readonly: boolean; scrollGroup: string; onfocus: () => void },
+    { document: number; theme: EditorTheme; keymap: string; readonly: boolean; scrollGroup: string; viewId: string; hideSources: string[]; onfocus: () => void },
     EditorViewMethods
   >("editor");
+
+  /** The sources of the file's document this pane does not draw: the git bars, which the diff's own replace. */
+  const HIDDEN_SOURCES = ["git.changes"];
 
   const view = $derived(diff.view(leafId));
   const cursorRow = $derived.by(() => {
@@ -175,6 +178,8 @@
             keymap={editor.keymap()}
             readonly={true}
             scrollGroup={`diff-${leafId}`}
+            viewId={leafId}
+            hideSources={HIDDEN_SOURCES}
             onfocus={() => editor.focusPane(leafId)}
           />
         </View>
@@ -191,6 +196,8 @@
             keymap={editor.keymap()}
             readonly={!view.editable}
             scrollGroup={split ? `diff-${leafId}` : ""}
+            viewId={leafId}
+            hideSources={HIDDEN_SOURCES}
             onfocus={() => editor.focusPane(leafId)}
           />
         {/if}

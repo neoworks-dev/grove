@@ -148,6 +148,33 @@ pub struct PlacedBlock<'a> {
     pub emphasis: &'a [BlockEmphasis],
 }
 
+/// The prefix of a source that belongs to one view: `view:<view id>:<name>`. Only the view with
+/// that id shows it, so a diff's marks stay in the diff view and not in another view of the file.
+pub const VIEW_SOURCE_PREFIX: &str = "view:";
+
+/// Which sources a view shows. Sources that belong to no view are shown unless the view hides
+/// them by name; a source that belongs to a view is shown only by that view.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SourceFilter {
+    /// The id the view gives itself, or empty for a view that owns no source.
+    pub view: String,
+    /// Sources of the document this view does not draw, such as the git bars in a diff view.
+    pub hidden: Vec<String>,
+}
+
+impl SourceFilter {
+    /// Whether the view draws what a source put on the document.
+    pub fn shows(&self, source: &str) -> bool {
+        let Some(owned) = source.strip_prefix(VIEW_SOURCE_PREFIX) else {
+            return !self.hidden.iter().any(|hidden| hidden == source);
+        };
+        if self.view.is_empty() {
+            return false;
+        }
+        owned.strip_prefix(self.view.as_str()).is_some_and(|rest| rest.starts_with(':'))
+    }
+}
+
 /// Every source's decorations for one document.
 #[derive(Default)]
 pub struct Decorations {
@@ -183,7 +210,13 @@ impl Decorations {
 
     /// Every decoration, as it is placed now, in the order of the sources and then of the source's list.
     pub fn placed<'a>(&'a self, buffer: &Buffer, anchors: &Anchors) -> Vec<Placed<'a>> {
-        self.sets.values().flatten().filter_map(|pinned| place(pinned, buffer, anchors)).collect()
+        self.placed_for(buffer, anchors, &SourceFilter::default())
+    }
+
+    /// Like `placed`, with only the sources a view shows.
+    pub fn placed_for<'a>(&'a self, buffer: &Buffer, anchors: &Anchors, filter: &SourceFilter) -> Vec<Placed<'a>> {
+        let shown = self.sets.iter().filter(|(source, _)| filter.shows(source));
+        shown.flat_map(|(_, pinned)| pinned).filter_map(|pinned| place(pinned, buffer, anchors)).collect()
     }
 
     /// The decorations that touch any of `rows`: a range counts when it covers one, a point when
@@ -193,17 +226,18 @@ impl Decorations {
         rows: std::ops::Range<usize>,
         buffer: &Buffer,
         anchors: &Anchors,
+        filter: &SourceFilter,
     ) -> Vec<Placed<'a>> {
         let touches = |placed: &Placed| placed.end.row >= rows.start && placed.start.row < rows.end;
-        self.placed(buffer, anchors).into_iter().filter(touches).collect()
+        self.placed_for(buffer, anchors, filter).into_iter().filter(touches).collect()
     }
 
     /// The blocks, in the order they are laid out: by the row they go before, and where several
     /// go in one place, in the order they came.
-    pub fn blocks<'a>(&'a self, buffer: &Buffer, anchors: &Anchors) -> Vec<PlacedBlock<'a>> {
+    pub fn blocks<'a>(&'a self, buffer: &Buffer, anchors: &Anchors, filter: &SourceFilter) -> Vec<PlacedBlock<'a>> {
         let line_count = buffer.line_count();
         let mut blocks: Vec<PlacedBlock> = self
-            .placed(buffer, anchors)
+            .placed_for(buffer, anchors, filter)
             .into_iter()
             .filter_map(|placed| {
                 let DecorationKind::Block { lines, placement, tone, emphasis } = placed.kind else {
@@ -392,6 +426,39 @@ mod tests {
         state.set_decorations("lsp", &[squiggle(at(0, 0), at(0, 1)), squiggle(at(3, 0), at(3, 1))]);
         assert_eq!(state.decorations_in_rows(1..3).len(), 0);
         assert_eq!(state.decorations_in_rows(2..4).len(), 1);
+    }
+
+    #[test]
+    fn a_source_that_belongs_to_a_view_is_shown_by_that_view_alone() {
+        let diff = SourceFilter { view: "pane-1".into(), hidden: Vec::new() };
+        let other = SourceFilter { view: "pane-2".into(), hidden: Vec::new() };
+        let plain = SourceFilter::default();
+        assert!(diff.shows("view:pane-1:diff"));
+        assert!(!other.shows("view:pane-1:diff"));
+        assert!(!plain.shows("view:pane-1:diff"));
+        assert!(!SourceFilter { view: "pane-1".into(), hidden: Vec::new() }.shows("view:pane-10:diff"));
+        assert!(diff.shows("git.blame") && other.shows("git.blame") && plain.shows("git.blame"));
+    }
+
+    #[test]
+    fn a_view_can_hide_a_source_of_the_document_by_name() {
+        let filter = SourceFilter { view: String::new(), hidden: vec!["git.changes".into()] };
+        assert!(!filter.shows("git.changes"));
+        assert!(filter.shows("git.blame"));
+    }
+
+    #[test]
+    fn a_view_local_set_is_not_visible_to_another_view_of_the_same_document() {
+        let mut state = EditorState::new(Buffer::from_text("a\nb\n"));
+        state.set_decorations("view:pane-1:diff", &[squiggle(at(0, 0), at(0, 1))]);
+        state.set_decorations("git.changes", &[squiggle(at(1, 0), at(1, 1))]);
+        let diff = SourceFilter { view: "pane-1".into(), hidden: vec!["git.changes".into()] };
+        let tab = SourceFilter::default();
+        let rows = |filter: &SourceFilter| -> Vec<usize> {
+            state.decorations_in_rows_for(0..2, filter).iter().map(|placed| placed.start.row).collect()
+        };
+        assert_eq!(rows(&diff), vec![0]);
+        assert_eq!(rows(&tab), vec![1]);
     }
 
     #[test]

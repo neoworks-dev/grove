@@ -145,7 +145,7 @@ describe("the two layouts", () => {
     const inline = setup.diff.view(leafId);
     expect(inline?.leftId).toBeNull();
     expect(setup.documents.closed).toContain(split?.leftId as number);
-    expect(setup.documents.decorations.get(`${split?.leftId}/diff.${leafId}`)).toEqual([]);
+    expect(setup.documents.decorations.get(`${split?.leftId}/view:${leafId}:diff`)).toEqual([]);
   });
 
   test("toggling switches between them and the choice is what the next diff opens in", async () => {

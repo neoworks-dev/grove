@@ -33,5 +33,22 @@ export const gitChanges = {
       run: () => ctx.sidebar.open("git"),
     });
     ctx.keymap.bind({ id: "gitChanges.show", keys: "ctrl+shift+g", command: "gitChanges.show", description: "Show git changes" });
+    registerActions(ctx, service);
   },
 };
+
+/** Registers the commands that act on all the changes, for the palette. */
+function registerActions(ctx: Context, service: GitChangesService): void {
+  ctx.commands.register({ id: "gitChanges.stageAll", title: "Git: stage all changes", group: "Git", run: () => void service.stageAll() });
+  ctx.commands.register({ id: "gitChanges.unstageAll", title: "Git: unstage all changes", group: "Git", run: () => void service.unstageAll() });
+  ctx.commands.register({
+    id: "gitChanges.discardAll",
+    title: "Git: discard all unstaged changes",
+    group: "Git",
+    run: () => {
+      ctx.sidebar.open("git");
+      service.beginDiscard(service.files().unstaged);
+    },
+  });
+  ctx.commands.register({ id: "gitChanges.commit", title: "Git: commit staged changes", group: "Git", run: () => void service.commit() });
+}

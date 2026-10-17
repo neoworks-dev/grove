@@ -22,6 +22,12 @@ pub enum Signal {
     Hover { request: u64, markdown: Option<String> },
     /// Where a go-to-definition request leads.
     Targets { request: u64, targets: Vec<Target> },
+    /// The language features switches changed, so hints and the like are asked for or taken away.
+    SettingsChanged,
+    /// A server asked for the inlay hints to be asked for again.
+    HintsStale,
+    /// The answer to one of the requests around the cursor (see `features.rs`).
+    Feature(super::features::FeatureSignal),
 }
 
 /// Where a view's signals are sent from.
@@ -44,6 +50,16 @@ impl Signals {
     /// Tells every view that a document's decorations changed. Views that have gone are forgotten.
     pub fn redraw(&self, document: DocumentId) {
         self.lock().retain(|sender| sender.unbounded_send(Signal::Redraw(document)).is_ok());
+    }
+
+    /// Tells every view that the settings the language features follow changed.
+    pub fn settings_changed(&self) {
+        self.lock().retain(|sender| sender.unbounded_send(Signal::SettingsChanged).is_ok());
+    }
+
+    /// Tells every view that a server wants its inlay hints asked for again.
+    pub fn hints_stale(&self) {
+        self.lock().retain(|sender| sender.unbounded_send(Signal::HintsStale).is_ok());
     }
 
     /// Locks the list, carrying on after a thread that held it panicked.

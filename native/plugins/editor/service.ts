@@ -96,7 +96,8 @@ export type DocumentEvent =
   | { type: "indent"; id: number; indent: IndentStyle }
   | { type: "close-request"; id: number; discard: boolean }
   | { type: "open-request"; id: number; path: string }
-  | { type: "change-request"; id: number; forward: boolean };
+  | { type: "change-request"; id: number; forward: boolean }
+  | { type: "notice"; message: string };
 
 /** The documents the Rust host keeps. A test supplies a fake. */
 export interface DocumentHost {
@@ -143,8 +144,38 @@ export interface EditorViewMethods {
   definition(): Promise<void>;
   /** Opens the completion panel at the cursor. */
   complete(): Promise<void>;
+  /** Lists where the symbol at the cursor is used. */
+  references(): Promise<void>;
+  /** Goes to the type of the symbol at the cursor. */
+  typeDefinition(): Promise<void>;
+  /** Goes to the implementations of the symbol at the cursor. */
+  implementation(): Promise<void>;
+  /** Asks for a new name for the symbol at the cursor and renames it everywhere. */
+  rename(): Promise<void>;
+  /** Lists the fixes and refactors the language server offers at the cursor. */
+  codeActions(): Promise<void>;
+  /** Shows the signature of the call the cursor is in. */
+  signature(): Promise<void>;
+  /** Formats the document. */
+  format(): Promise<void>;
   /** Puts the cursor at a line and UTF-16 column, counted from zero, and scrolls to it. */
   goto(line: number, character: number): Promise<void>;
+  /**
+   * Handles a right press at a point in window coordinates: the cursor moves there unless a
+   * selection covers it. Answers whether text is selected afterwards. A view that has no menu,
+   * such as a test's stand-in, leaves it out.
+   */
+  contextClick?(x: number, y: number): Promise<{ selected: boolean }>;
+}
+
+/** A right press in an editor, where a menu of its actions is to open. */
+export interface ContextMenuRequest {
+  leafId: string;
+  /** Where the pointer is, in window coordinates. */
+  x: number;
+  y: number;
+  /** Whether text is selected, which cut and copy act on. */
+  hasSelection: boolean;
 }
 
 /** A place to put the cursor once the document that has it is shown. */
@@ -155,7 +186,17 @@ export interface RevealRequest {
 }
 
 /** The methods of the editor element a command can call without an answer. */
-export type ViewAction = "hover" | "definition" | "complete";
+export type ViewAction =
+  | "hover"
+  | "definition"
+  | "complete"
+  | "references"
+  | "typeDefinition"
+  | "implementation"
+  | "rename"
+  | "codeActions"
+  | "signature"
+  | "format";
 
 /** An open document, as other plugins see it. */
 export interface BufferInfo {
@@ -212,6 +253,7 @@ export class EditorService extends Service {
   /** What each pane's vim layer last reported, by pane id. */
   private vimStates = new Map<string, VimStatus>();
   private documentListeners = new Set<(event: DocumentEvent) => void>();
+  private contextMenuListeners = new Set<(request: ContextMenuRequest) => void>();
 
   constructor(
     ctx: Context,
@@ -557,6 +599,30 @@ export class EditorService extends Service {
     return null;
   }
 
+  /**
+   * Handles a right press in a pane's editor: the pane takes the focus, the cursor goes to the
+   * press unless a selection covers it, and whoever shows menus is told where to open one.
+   */
+  async openContextMenu(leafId: string, x: number, y: number): Promise<void> {
+    const view = this.viewsByLeaf.get(leafId);
+    if (!view || !view.contextClick) {
+      return;
+    }
+    this.panes.focus(leafId);
+    const { selected } = await view.contextClick(x, y);
+    for (const listener of [...this.contextMenuListeners]) {
+      listener({ leafId, x, y, hasSelection: selected });
+    }
+  }
+
+  /** Hears of right presses in an editor, where a menu is to open. Returns the function that stops it. */
+  onContextMenu(handler: (request: ContextMenuRequest) => void): () => void {
+    this.contextMenuListeners.add(handler);
+    return () => {
+      this.contextMenuListeners.delete(handler);
+    };
+  }
+
   /** Hears of what happens to documents: opened, closed, saved, edited and the cursor moved. Returns the function that stops it. */
   onDocumentEvent(handler: (event: DocumentEvent) => void): () => void {
     this.documentListeners.add(handler);
@@ -874,7 +940,7 @@ export class EditorService extends Service {
     if (event.type === "edited") {
       return;
     }
-    if (event.type === "error") {
+    if (event.type === "error" || event.type === "notice") {
       this.setMessage(event.message);
       return;
     }

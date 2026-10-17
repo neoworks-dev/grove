@@ -13,10 +13,21 @@
 //!   whenever one changes. `state` is `starting`, `ready`, `failed`, `exited`, `stopped` or `missing`.
 //!
 //! Commands: `lsp_status` answers the same list, and `lsp_restart { id }` starts a server again.
+//! `lsp_configure { inlayHints, formatOnSave, eslint }` (every field optional) sets what the
+//! language features do, and `lsp_files_changed { changes: [{ path, kind }] }` tells the servers
+//! that asked to hear of it that files changed on disk, `kind` being `created`, `changed` or `deleted`.
+//!
+//! Beside the servers, the store runs `prettierd` and the server's own formatter to format a file
+//! before it is saved (`format.rs`), and `eslint_d` to lint JavaScript and TypeScript (`lint.rs`).
+//! Edits a server asks for, such as a rename's, are carried out by `apply.rs`.
 //!
 //! `GROVE_NO_LSP=1` starts no server, for comparing with the editor without them.
 
+mod apply;
+mod format;
 mod handler;
+mod lint;
+mod settings;
 mod state;
 
 use std::path::Path;
@@ -34,7 +45,9 @@ use serde_json::{Value, json};
 use svelte_gpui::{CommandError, Commands, Emitter};
 
 use crate::editor::{DocumentObserver, SharedDocuments, Signals};
+pub use apply::Applied;
 use handler::ServerHandler;
+pub use settings::LspSettings;
 use state::{ServerEntry, ServerState, State, Tracked};
 
 /// How long a server is given to shut down when the app exits.
@@ -69,6 +82,8 @@ pub(crate) struct Inner {
     search_directories: Vec<std::path::PathBuf>,
     /// Whether `GROVE_NO_LSP` is set, which starts no server at all.
     disabled: bool,
+    settings: Mutex<LspSettings>,
+    lint_runs: lint::LintRuns,
     state: Mutex<State>,
 }
 
@@ -91,6 +106,8 @@ impl LspStore {
             signals,
             search_directories,
             disabled: std::env::var_os("GROVE_NO_LSP").is_some(),
+            settings: Mutex::new(LspSettings::default()),
+            lint_runs: lint::LintRuns::default(),
             state: Mutex::new(State::default()),
         };
         let store = LspStore { inner: Arc::new(inner) };
@@ -102,16 +119,126 @@ impl LspStore {
     pub fn register(&self, commands: Commands) -> Commands {
         let reader = self.clone();
         let restarter = self.clone();
-        commands.command("lsp_status", move |_| Ok::<_, CommandError>(reader.summaries())).command(
-            "lsp_restart",
-            move |args| {
+        let configurer = self.clone();
+        let watcher = self.clone();
+        commands
+            .command("lsp_status", move |_| Ok::<_, CommandError>(reader.summaries()))
+            .command("lsp_restart", move |args| {
                 let Some(id) = args.get("id").and_then(Value::as_u64) else {
                     return Err(CommandError::with_code("InvalidArguments", "this command takes a server id"));
                 };
                 restarter.restart(id);
                 Ok(Value::Null)
-            },
-        )
+            })
+            .command("lsp_configure", move |args| {
+                configurer.configure(&args);
+                Ok::<_, CommandError>(Value::Null)
+            })
+            .command("lsp_files_changed", move |args| {
+                if std::env::var_os("GROVE_LSP_TRACE").is_some() {
+                    eprintln!("[lsp] the app reports {args}");
+                }
+                watcher.files_changed(&changes_from(&args));
+                Ok::<_, CommandError>(Value::Null)
+            })
+    }
+
+    /// What the person has switched on, as the app last said.
+    pub fn settings(&self) -> LspSettings {
+        *self.inner.settings.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Applies the settings the app sends. Servers are told when what they read changed, and
+    /// the views refresh what the switches decide whether to show.
+    pub fn configure(&self, arguments: &Value) {
+        let before = self.settings();
+        let after = before.updated_from(arguments);
+        *self.inner.settings.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = after;
+        if after == before {
+            return;
+        }
+        if after.inlay_hints != before.inlay_hints {
+            self.push_configuration();
+        }
+        if after.eslint != before.eslint {
+            self.lint_all();
+        }
+        self.inner.signals.settings_changed();
+    }
+
+    /// Tells every ready server its settings again, as `workspace/didChangeConfiguration`.
+    fn push_configuration(&self) {
+        let switches = self.settings().switches();
+        let state = self.state();
+        for entry in state.servers.iter().filter(|entry| entry.state == ServerState::Ready) {
+            let Some(client) = &entry.client else {
+                continue;
+            };
+            let settings = lsp_client::config::all_sections(entry.spec.name, switches);
+            client.notify("workspace/didChangeConfiguration", json!({ "settings": settings }));
+        }
+    }
+
+    /// Tells the servers that registered for it that files changed on disk.
+    pub fn files_changed(&self, changes: &[(std::path::PathBuf, lsp_client::glob::FileChange)]) {
+        if changes.is_empty() {
+            return;
+        }
+        let state = self.state();
+        for entry in state.servers.iter().filter(|entry| entry.state == ServerState::Ready) {
+            let Some(client) = &entry.client else {
+                continue;
+            };
+            let watchers = entry.watchers.iter().flat_map(|(_, watchers)| watchers);
+            let watchers: Vec<_> = watchers.collect();
+            let events: Vec<Value> = changes
+                .iter()
+                .filter(|(path, change)| watchers.iter().any(|watcher| watcher.wants(path, &entry.root, *change)))
+                .map(|(path, change)| json!({ "uri": uri_from_path(path), "type": change.number() }))
+                .collect();
+            if !events.is_empty() {
+                if std::env::var_os("GROVE_LSP_TRACE").is_some() {
+                    eprintln!("[lsp] telling {} of {} changed files", entry.spec.name, events.len());
+                }
+                client.notify("workspace/didChangeWatchedFiles", json!({ "changes": events }));
+            }
+        }
+    }
+
+    /// Whether `GROVE_NO_LSP` keeps language features off.
+    pub(crate) fn is_disabled(&self) -> bool {
+        self.inner.disabled
+    }
+
+    /// The directories servers and tools are looked for in.
+    pub(crate) fn search_directories(&self) -> &[std::path::PathBuf] {
+        &self.inner.search_directories
+    }
+
+    /// The version of a document's text as the servers were told, which goes up with every change.
+    pub fn version_of(&self, document: DocumentId) -> Option<i64> {
+        self.state().tracked.get(&document).map(|tracked| tracked.version)
+    }
+
+    /// What the server last said is wrong in a document, where it touches a range.
+    pub fn diagnostics_at(
+        &self,
+        document: DocumentId,
+        range: &lsp_client::protocol::Range,
+    ) -> Vec<lsp_client::protocol::Diagnostic> {
+        let state = self.state();
+        let Some(tracked) = state.tracked.get(&document) else {
+            return Vec::new();
+        };
+        let touches = |diagnostic: &&lsp_client::protocol::Diagnostic| {
+            diagnostic.range.start <= range.end && range.start <= diagnostic.range.end
+        };
+        tracked.diagnostics.iter().filter(touches).cloned().collect()
+    }
+
+    /// The URI of a document that a server has open.
+    pub fn uri_of(&self, document: DocumentId) -> Option<String> {
+        self.client_for(document).map(|(_, uri)| uri)
     }
 
     /// Asks every server to shut down and waits a moment for them to. Called as the app exits.
@@ -241,6 +368,7 @@ impl LspStore {
                 root: root.to_path_buf(),
                 client: None,
                 state: ServerState::Starting,
+                watchers: Vec::new(),
                 progress: Default::default(),
                 last_emitted: Instant::now(),
             });
@@ -257,7 +385,7 @@ impl LspStore {
             self.set_state(server, ServerState::Missing(message));
             return;
         };
-        match self.spawn(&command, root, server) {
+        match self.spawn(&command, root, server, spec.name) {
             Ok(client) => {
                 if let Some(entry) = self.state().server_mut(server) {
                     entry.client = Some(client);
@@ -270,9 +398,10 @@ impl LspStore {
     }
 
     /// Starts a server process whose events come back to this store.
-    fn spawn(&self, command: &ServerCommand, root: &Path, server: u64) -> std::io::Result<Client> {
+    fn spawn(&self, command: &ServerCommand, root: &Path, server: u64, name: &str) -> std::io::Result<Client> {
         let handler = Arc::new(ServerHandler::new(Arc::downgrade(&self.inner), server));
-        Client::start(command, root, root, Value::Null, handler)
+        let options = lsp_client::config::initialization_options(name, self.settings().switches());
+        Client::start(command, root, root, options, handler)
     }
 
     /// Records a server's state without telling the UI.
@@ -292,9 +421,13 @@ impl LspStore {
                 return;
             };
             entry.state = ServerState::Ready;
+            entry.watchers.clear();
             let Some(client) = entry.client.clone() else {
                 return;
             };
+            let switches = self.settings().switches();
+            let settings = lsp_client::config::all_sections(entry.spec.name, switches);
+            client.notify("workspace/didChangeConfiguration", json!({ "settings": settings }));
             for (id, tracked) in state.tracked.iter_mut().filter(|(_, tracked)| tracked.server == server) {
                 let Some(document) = documents.get(*id) else {
                     continue;
@@ -304,6 +437,7 @@ impl LspStore {
         }
         drop(documents);
         self.emit_status();
+        self.inner.signals.hints_stale();
     }
 
     /// A server ended or failed: its documents are no longer open on it, and what it reported goes away.
@@ -365,6 +499,29 @@ impl Inner {
     }
 }
 
+/// The file changes the app reports, as `{ changes: [{ path, kind }] }` with `kind` one of
+/// `created`, `changed` and `deleted`. Entries that do not read are left out.
+fn changes_from(arguments: &Value) -> Vec<(std::path::PathBuf, lsp_client::glob::FileChange)> {
+    use lsp_client::glob::FileChange;
+    let Some(list) = arguments.get("changes").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let mut changes = Vec::new();
+    for entry in list {
+        let Some(path) = entry.get("path").and_then(Value::as_str) else {
+            continue;
+        };
+        let change = match entry.get("kind").and_then(Value::as_str) {
+            Some("created") => FileChange::Created,
+            Some("changed") => FileChange::Changed,
+            Some("deleted") => FileChange::Deleted,
+            _ => continue,
+        };
+        changes.push((std::path::PathBuf::from(path), change));
+    }
+    changes
+}
+
 /// Sends `didOpen` for a document and records that the server has it.
 fn send_open(client: &Client, tracked: &mut Tracked, state: &EditorState) {
     let buffer = state.buffer();
@@ -394,6 +551,7 @@ impl DocumentObserver for LspStore {
             server,
             version: 1,
             open_on_server: false,
+            diagnostics: Vec::new(),
         };
         let client = {
             let state = self.state();
@@ -407,6 +565,7 @@ impl DocumentObserver for LspStore {
         }
         self.state().tracked.insert(id, tracked);
         self.emit_status();
+        self.lint_soon(id, Duration::ZERO);
     }
 
     /// Sends the server what changed.
@@ -417,6 +576,7 @@ impl DocumentObserver for LspStore {
             return;
         };
         tracked.version += 1;
+        self.lint_after_typing(id);
         if !tracked.open_on_server {
             return;
         }
@@ -435,8 +595,17 @@ impl DocumentObserver for LspStore {
         }
     }
 
-    /// Tells the server the file was written, when it asked to hear.
+    /// Formats the file before it is written, when the person wants that.
+    fn before_save(&self, id: DocumentId) {
+        if self.inner.disabled {
+            return;
+        }
+        self.format_before_saving(id);
+    }
+
+    /// Tells the server the file was written, when it asked to hear, and lints it again.
     fn saved(&self, id: DocumentId, state: &EditorState) {
+        self.lint_soon(id, Duration::ZERO);
         let Some((client, uri)) = self.client_for(id) else {
             return;
         };
@@ -456,6 +625,7 @@ impl DocumentObserver for LspStore {
     fn closed(&self, id: DocumentId) {
         let client = self.client_for(id);
         self.state().tracked.remove(&id);
+        self.inner.lint_runs.forget(id);
         if let Some((client, uri)) = client {
             client.notify_document("textDocument/didClose", sync::did_close_params(&uri));
         }
@@ -582,6 +752,93 @@ mod tests {
         store.restart(server);
         wait_until("the restarted server to be ready", || state_of(&store) == "ready");
         store.shutdown();
+    }
+
+    /// What the fake server wrote to its log, one note per line.
+    fn notes(fixture: &Fixture) -> String {
+        std::fs::read_to_string(fixture.directory.join("fake-lsp.log")).unwrap_or_default()
+    }
+
+    #[test]
+    fn the_server_is_answered_from_the_settings_and_hears_of_the_files_it_asked_for() {
+        let Some(fixture) = fixture("watch", "fn main() {}\n") else {
+            return;
+        };
+        let (documents, store) = store_for(&fixture);
+        documents.open(&fixture.directory.join("src/main.rs").display().to_string()).unwrap();
+        wait_until("the configuration answer", || notes(&fixture).contains("configuration answered"));
+        let answered = notes(&fixture);
+        assert!(answered.contains("[null,{\"inlayHints\""), "{answered}");
+        assert!(answered.contains("\"typeHints\":{\"enable\":true}"), "{answered}");
+        wait_until("the configuration push", || notes(&fixture).contains("configuration pushed"));
+
+        let watched = fixture.directory.join("src/a.watched");
+        let ignored = fixture.directory.join("src/b.txt");
+        use lsp_client::glob::FileChange;
+        store.files_changed(&[(watched.clone(), FileChange::Created), (ignored, FileChange::Changed)]);
+        wait_until("the watched file to be heard of", || notes(&fixture).contains("a.watched 1"));
+        assert!(!notes(&fixture).contains("b.txt"));
+
+        store.configure(&json!({ "inlayHints": false }));
+        wait_until("the settings to be pushed", || notes(&fixture).contains("\"typeHints\":{\"enable\":false}"));
+        store.shutdown();
+    }
+
+    #[test]
+    fn saving_formats_with_the_server_when_the_project_has_no_prettier_and_can_be_switched_off() {
+        let Some(fixture) = fixture("format", "fn main() {}   \nlet x = 1;  \n") else {
+            return;
+        };
+        let (documents, store) = store_for(&fixture);
+        let path = fixture.directory.join("src/main.rs");
+        let id = documents.open(&path.display().to_string()).unwrap().id;
+        wait_until("the server to be ready", || state_of(&store) == "ready");
+        documents.apply(id, &Command::InsertText { text: "// ".into() }).unwrap();
+        let outcome = documents.apply(id, &Command::Save).unwrap();
+        assert!(outcome.saved);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "// fn main() {}\nlet x = 1;\n");
+        assert_eq!(documents.text(id).unwrap(), "// fn main() {}\nlet x = 1;\n");
+
+        store.configure(&json!({ "formatOnSave": false }));
+        documents.apply(id, &Command::PlaceCursor { at: Position { row: 0, column: 0 } }).unwrap();
+        documents.apply(id, &Command::InsertText { text: "x   \n".into() }).unwrap();
+        documents.apply(id, &Command::Save).unwrap();
+        assert!(std::fs::read_to_string(&path).unwrap().starts_with("x   \n"));
+        let formatted = store.format(id, WAIT).unwrap().unwrap();
+        assert_eq!(formatted, super::format::Formatted { formatter: "the language server", changed: true });
+        documents.apply(id, &Command::Undo).unwrap();
+        assert!(documents.text(id).unwrap().starts_with("x   \n"), "one undo takes the whole format back");
+        store.shutdown();
+    }
+
+    #[test]
+    fn eslint_findings_decorate_the_file_and_go_when_the_switch_is_turned_off() {
+        let directory = std::env::temp_dir().join(format!("grove-lsp-lint-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        let tools = directory.join("tools");
+        std::fs::create_dir_all(directory.join("src")).unwrap();
+        std::fs::create_dir_all(&tools).unwrap();
+        std::fs::write(directory.join("eslint.config.mjs"), "export default []").unwrap();
+        std::fs::write(directory.join("src/a.ts"), "let a = 1\n").unwrap();
+        let report =
+            r#"[{"messages":[{"ruleId":"semi","severity":2,"message":"Missing semicolon","line":1,"column":10}]}]"#;
+        let script = tools.join("eslint_d");
+        std::fs::write(&script, format!("#!/bin/sh\ncat >/dev/null\necho '{report}'\n")).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let documents = SharedDocuments::new(Emitter::default());
+        let store =
+            LspStore::with_search_directories(documents.clone(), Emitter::default(), Signals::default(), vec![tools]);
+        let id = documents.open(&directory.join("src/a.ts").display().to_string()).unwrap().id;
+        let count = |documents: &SharedDocuments| {
+            documents.lock().get(id).map(|doc| doc.state.decoration_count(lint::ESLINT_SOURCE)).unwrap_or(0)
+        };
+        wait_until("the lint", || count(&documents) == 2);
+        store.configure(&json!({ "eslint": false }));
+        wait_until("the lint to be taken off", || count(&documents) == 0);
+        store.configure(&json!({ "eslint": true }));
+        wait_until("the lint to come back", || count(&documents) == 2);
     }
 
     #[test]

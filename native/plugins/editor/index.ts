@@ -15,6 +15,7 @@ import OpenFile from "./OpenFile.svelte";
 import { debugDecorations, DEBUG_SOURCE } from "./debugDecorations";
 import { gpuiDocumentHost } from "./documentHost";
 import EditorIndentStatus from "./EditorIndentStatus.svelte";
+import { LANGUAGE_COMMANDS, LANGUAGE_KEYS } from "./languageCommands";
 import { EditorService, INDENT_CHOICES, indentFromSetting, indentLabel, type EditorOptions } from "./service";
 
 export const editorSettings = defineSettings({
@@ -94,6 +95,8 @@ export const editor = {
       service.setKeymap(live.keymap);
       configure(optionsOf(live));
     });
+    // Drawn between a pane's tabs and its text; plugins such as breadcrumbs register into it.
+    ctx.slots.declare("editor.breadcrumbs", "list");
     ctx.slots.register("main", {
       id: "editor",
       key: "editor",
@@ -137,28 +140,9 @@ function registerFileCommands(ctx: Context, service: EditorService): void {
 
 /** The commands that ask the language server, through the focused editor, about its cursor. */
 function registerLanguageCommands(ctx: Context, service: EditorService): void {
-  const hasView = () => service.hasFocusedView();
-  ctx.commands.register({
-    id: "editor.showHover",
-    title: "Show hover",
-    group: "Editor",
-    when: hasView,
-    run: () => void service.actOnFocusedView("hover"),
-  });
-  ctx.commands.register({
-    id: "editor.goToDefinition",
-    title: "Go to definition",
-    group: "Go",
-    when: hasView,
-    run: () => void service.actOnFocusedView("definition"),
-  });
-  ctx.commands.register({
-    id: "editor.triggerSuggest",
-    title: "Trigger completion",
-    group: "Editor",
-    when: hasView,
-    run: () => void service.actOnFocusedView("complete"),
-  });
+  for (const { id, title, group, action } of LANGUAGE_COMMANDS) {
+    ctx.commands.register({ id, title, group, when: () => service.hasFocusedView(), run: () => void service.actOnFocusedView(action) });
+  }
 }
 
 /** The commands the Edit menu names that the focused pane's editor can carry out by itself. */
@@ -166,6 +150,9 @@ function registerEditCommands(ctx: Context, service: EditorService): void {
   const commands: [string, string, string][] = [
     ["edit.undo", "Undo", "undo"],
     ["edit.redo", "Redo", "redo"],
+    ["edit.cut", "Cut", "cut"],
+    ["edit.copy", "Copy", "copy"],
+    ["edit.paste", "Paste", "paste_clipboard"],
     ["edit.selectAll", "Select all", "select_all"],
   ];
   for (const [id, title, type] of commands) {
@@ -269,8 +256,7 @@ function registerKeys(ctx: Context, service: EditorService): void {
     { id: "editor.save", keys: "ctrl+alt+s", command: "editor.save", description: "Save file" },
     { id: "editor.save.chord", keys: "ctrl+k f2", command: "editor.save", description: "Save file" },
     { id: "file.open", keys: "ctrl+o", command: "file.open", description: "Open file" },
-    { id: "editor.showHover", keys: "ctrl+k ctrl+i", command: "editor.showHover", description: "Show hover" },
-    { id: "editor.goToDefinition", keys: "f12", command: "editor.goToDefinition", description: "Go to definition" },
+    ...LANGUAGE_KEYS.map((key) => ({ id: key.command, ...key })),
     { id: "file.closeTab", keys: "ctrl+w", command: "file.closeTab", description: "Close tab" },
     { id: "go.nextTab", keys: "ctrl+tab", command: "go.nextTab", description: "Next tab" },
     { id: "go.previousTab", keys: "ctrl+shift+tab", command: "go.previousTab", description: "Previous tab" },

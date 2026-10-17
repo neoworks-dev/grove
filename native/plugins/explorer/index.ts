@@ -25,6 +25,32 @@ export const explorer = {
       group: "View",
       run: () => ctx.sidebar.open("explorer"),
     });
+    ctx.commands.register({
+      id: "explorer.reveal",
+      title: "Show the open file in the explorer",
+      group: "View",
+      keywords: "reveal locate",
+      run: (relPath: unknown) => {
+        const target = typeof relPath === "string" ? relPath : activeFileRelativePath(ctx);
+        if (target !== null) {
+          service.requestReveal(target);
+        }
+        ctx.sidebar.open("explorer");
+      },
+    });
     ctx.keymap.bind({ id: "explorer.show", keys: "ctrl+shift+e", command: "explorer.show", description: "Show explorer" });
   },
 };
+
+/** The path of the editor's active file inside the shown worktree, or null when there is none. */
+function activeFileRelativePath(ctx: Context): string | null {
+  const active = ctx.get("editor")?.active();
+  const worktree = ctx.workspace.selectedWorktree();
+  if (!active || active.path === "" || worktree === null) {
+    return null;
+  }
+  if (!active.path.startsWith(`${worktree.path}/`)) {
+    return null;
+  }
+  return active.path.slice(worktree.path.length + 1);
+}

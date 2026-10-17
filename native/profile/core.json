@@ -15,8 +15,11 @@
   { "id": "statusbar", "plugin": "statusbar" },
   { "id": "layout", "plugin": "layout" },
   { "id": "editor", "plugin": "editor" },
+  { "id": "breadcrumbs", "plugin": "breadcrumbs" },
+  { "id": "editor-context-menu", "plugin": "editor-context-menu" },
   { "id": "statusbar-position", "plugin": "editor-position" },
   { "id": "git-gutter", "plugin": "git-gutter" },
+  { "id": "prompt-blame", "plugin": "prompt-blame" },
   { "id": "lsp", "plugin": "lsp" },
   { "id": "diff", "plugin": "diff" },
   { "id": "git-changes", "plugin": "git-changes" },
@@ -25,5 +28,6 @@
   { "id": "explorer", "plugin": "explorer" },
   { "id": "worktrees", "plugin": "worktrees" },
   { "id": "agents", "plugin": "agents" },
+  { "id": "terminal", "plugin": "terminal" },
   { "id": "placeholder-panel", "plugin": "placeholder-panel" }
 ]

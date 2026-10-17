@@ -23,6 +23,7 @@ impl Editor {
         self.occurrence_generation += 1;
         let generation = self.occurrence_generation;
         self.set_occurrences(Vec::new(), cx);
+        self.clear_server_highlights(cx);
         if !self.documents.options().occurrence_highlights {
             return;
         }
@@ -36,6 +37,13 @@ impl Editor {
     /// Marks the occurrences of the word under the cursor, unless the cursor moved again meanwhile.
     fn mark_occurrences(&mut self, generation: u64, cx: &mut Context<Self>) {
         if generation != self.occurrence_generation {
+            return;
+        }
+        if self.server_highlights_available() {
+            let single_cursor = self.read(|state| state.selections().count() == 1);
+            if single_cursor == Some(true) {
+                self.request_highlights();
+            }
             return;
         }
         let Some((first_row, last_row)) = self.visible_text_rows() else {
@@ -52,6 +60,20 @@ impl Editor {
             occurrence_decorations(state.buffer(), newest.head, rows)
         });
         self.set_occurrences(decorations.unwrap_or_default(), cx);
+    }
+
+    /// Takes the server's highlights off the document, and gives up on a question about them.
+    fn clear_server_highlights(&mut self, cx: &mut Context<Self>) {
+        if let Some(pending) = self.features.highlight_pending.take() {
+            pending.cancel();
+        }
+        let Some(id) = self.document else {
+            return;
+        };
+        let marked = self.read(|state| state.decoration_count(SERVER_SOURCE)).unwrap_or(0);
+        if marked > 0 {
+            self.set_source_decorations(id, SERVER_SOURCE, Vec::new(), cx);
+        }
     }
 
     /// Replaces the marks with `decorations` and draws them, doing nothing when there were none

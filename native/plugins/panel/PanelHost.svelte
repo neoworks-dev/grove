@@ -42,7 +42,13 @@
     return { id: tabId, title: titleOf(entry.id, entry.props), icon: iconOf(entry.props) };
   }
 
-  const tabs = $derived<TabEntry[]>(kernel.slots.entries("panel.bottom").map(tabOf));
+  /** The tab entries by their `order`; those that name none keep registration order after the rest. */
+  function byOrder(entries: SlotEntry[]): SlotEntry[] {
+    const position = (entry: SlotEntry) => (entry.order === undefined ? Number.MAX_SAFE_INTEGER : entry.order);
+    return [...entries].sort((first, second) => position(first) - position(second));
+  }
+
+  const tabs = $derived<TabEntry[]>(byOrder(kernel.slots.entries("panel.bottom")).map(tabOf));
 </script>
 
 {#if panel.isOpen() && tabs.length > 0}

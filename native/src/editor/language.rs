@@ -34,7 +34,7 @@ pub struct PointerRest {
 
 impl Editor {
     /// A number for a request, so its answer can be told from the answers to older ones.
-    fn next_request_number(&mut self) -> u64 {
+    pub(super) fn next_request_number(&mut self) -> u64 {
         self.request_counter += 1;
         self.request_counter
     }
@@ -44,7 +44,9 @@ impl Editor {
     pub(super) fn track_language_features(&mut self, command: &Command, outcome: &Outcome, cx: &mut Context<Self>) {
         if outcome.text_changed {
             self.hover = None;
+            self.hints_are_stale(cx);
         }
+        self.track_signature(command, outcome, cx);
         if !self.is_typing_mode() {
             self.close_completion();
             return;
@@ -342,7 +344,7 @@ impl Editor {
 
     /// Whether typed keys go into the text: always with the standard keymap, and in vim's insert
     /// mode. Completion does not open or take keys in any other mode.
-    fn is_typing_mode(&self) -> bool {
+    pub(super) fn is_typing_mode(&self) -> bool {
         let mode = self.input.status().mode;
         mode.is_empty() || mode == "INSERT"
     }
@@ -565,6 +567,19 @@ impl Editor {
 
     /// Asks the server where the symbol at a position is defined.
     pub(super) fn go_to_definition_at(&mut self, position: Position, cx: &mut Context<Self>) {
+        self.go_to_at(position, "textDocument/definition", cx);
+    }
+
+    /// Goes to the type or the implementations of the symbol at the cursor.
+    pub(super) fn go_to_cursor_with(&mut self, method: &'static str, title: &'static str, cx: &mut Context<Self>) {
+        self.targets_title = title;
+        if let Some(head) = self.cursor() {
+            self.go_to_at(head, method, cx);
+        }
+    }
+
+    /// Asks the server where a request about the symbol at a position leads.
+    fn go_to_at(&mut self, position: Position, method: &str, cx: &mut Context<Self>) {
         let Some(document) = self.document else {
             return;
         };
@@ -580,7 +595,7 @@ impl Editor {
         if let Some(previous) = self.definition_pending.take() {
             previous.cancel();
         }
-        self.definition_pending = self.lsp.request_at(document, position, "textDocument/definition", json!({}), reply);
+        self.definition_pending = self.lsp.request_at(document, position, method, json!({}), reply);
         self.definition_request = request;
         cx.notify();
     }
@@ -592,7 +607,14 @@ impl Editor {
             return;
         }
         self.definition_pending = None;
+        let title = std::mem::replace(&mut self.targets_title, "Definitions");
+        if targets.len() > 1 {
+            let items = super::menu::location_items(&self.documents, &targets);
+            self.show_locations(title, items, cx);
+            return;
+        }
         let Some(target) = targets.first() else {
+            self.notice(&format!("No {} found", title.to_lowercase()));
             return;
         };
         let Some(path) = path_from_uri(&target.uri) else {

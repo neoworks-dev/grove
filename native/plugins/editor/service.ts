@@ -204,6 +204,11 @@ export class EditorService extends Service {
     this.panes.focus(leafId);
   }
 
+  /** Whether a pane has the focus. Reactive. */
+  isFocusedPane(leafId: string): boolean {
+    return this.panes.focusedLeafId === leafId;
+  }
+
   /** Lets commands reach a pane's editor element while it is mounted. Returns the function that lets go. */
   registerView(leafId: string, view: EditorViewMethods): () => void {
     this.viewsByLeaf.set(leafId, view);

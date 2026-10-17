@@ -259,3 +259,25 @@ fn reparsing_a_large_file_is_fast() {
     state.highlights(0..60);
     println!("highlights of the first 60 rows: {:?}", started.elapsed());
 }
+
+/// Markdown is the costliest case, with a layer for every paragraph.
+#[test]
+#[ignore]
+fn reparsing_a_large_markdown_file_is_fast() {
+    let section = "## Heading\n\nSome *emphasis* and `code` in a paragraph with a [link](http://example.com).\n\n```rust\nfn main() {}\n```\n\n- one\n- two\n\n";
+    let text = section.repeat(1000);
+    let started = Instant::now();
+    let mut state = state_named("big.md", &text);
+    println!("markdown: open and first parse of {} lines: {:?}", state.buffer().line_count(), started.elapsed());
+    state.apply(&Command::PlaceCursor { at: at(5000, 3) });
+    let mut worst = std::time::Duration::ZERO;
+    let mut total = std::time::Duration::ZERO;
+    for _ in 0..100 {
+        let started = Instant::now();
+        type_text(&mut state, "x");
+        let took = started.elapsed();
+        worst = worst.max(took);
+        total += took;
+    }
+    println!("markdown: 100 keystrokes: mean {:?}, worst {:?}", total / 100, worst);
+}

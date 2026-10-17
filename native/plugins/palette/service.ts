@@ -6,6 +6,7 @@
 
 import { Service, type Context } from "@neoworks/extension-system";
 import { createChangeSignal, type ChangeSignal } from "../../kernel/reactive";
+import type { Command } from "../../kernel/commands";
 import type { Searchable } from "./fuzzy";
 
 declare module "@neoworks/extension-system" {
@@ -114,6 +115,7 @@ export class PaletteService extends Service {
     return commands
       .list()
       .filter((command) => commands.canRun(command.id))
+      .sort(compareCommands)
       .map((command) => ({
         id: command.id,
         title: command.title,
@@ -144,4 +146,21 @@ export class PaletteService extends Service {
       pending.resolve(item);
     }
   }
+}
+
+/** Orders commands by group and then title, which is the order of the list before anything is typed. */
+function compareCommands(first: Command, second: Command): number {
+  const groupOrder = groupOf(first).localeCompare(groupOf(second));
+  if (groupOrder !== 0) {
+    return groupOrder;
+  }
+  return first.title.localeCompare(second.title);
+}
+
+/** A command's group, empty for one without. */
+function groupOf(command: Command): string {
+  if (command.group === undefined) {
+    return "";
+  }
+  return command.group;
 }

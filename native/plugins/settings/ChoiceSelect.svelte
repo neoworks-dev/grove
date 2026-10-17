@@ -5,15 +5,18 @@
 <script lang="ts">
   import { Button, Icon, Menu, Popover, Text } from "@neoworks/svelte-gpui/ui";
   import caretUpDown from "@phosphor-icons/core/regular/caret-up-down.svg";
+  import HiddenLabel from "./HiddenLabel.svelte";
   import { colors, fontSize, menuItemStyle, overlayPanel, radius } from "../theme/tokens";
 
   interface Props {
     value: string;
+    /** Names the button for the test harness (see `HiddenLabel`). */
+    label?: string;
     options: { value: string; label: string }[];
     onchange: (value: string) => void;
   }
 
-  let { value, options, onchange }: Props = $props();
+  let { value, label, options, onchange }: Props = $props();
 
   let open = $state(false);
 
@@ -58,6 +61,9 @@
     >
       <Text style={{ flex: 1, minWidth: 0, truncate: true }}>{labelOf(value)}</Text>
       <Icon svg={caretUpDown} size={12} />
+      {#if label}
+        <HiddenLabel text={label} />
+      {/if}
     </Button>
   {/snippet}
   {#snippet children({ close })}

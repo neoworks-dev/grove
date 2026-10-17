@@ -53,6 +53,17 @@
     return attempt(() => onset(text));
   }
 
+  /** What an empty text field says: that empty means no value, for fields where it does. */
+  function placeholderOf(): string | undefined {
+    if (field.type === "keybinding") {
+      return "no key";
+    }
+    if (field.type === "color") {
+      return "theme default";
+    }
+    return undefined;
+  }
+
   const hint = $derived(field.live ? "Applies at once" : "Reloads the plugin");
 </script>
 
@@ -74,15 +85,15 @@
   </View>
   <View style={{ direction: "row", align: "center", gap: 8 }}>
     {#if field.type === "boolean"}
-      <ToggleSwitch on={value === true} onchange={(on) => attempt(() => onset(on))} />
+      <ToggleSwitch on={value === true} label={`Toggle ${field.label}`} onchange={(on) => attempt(() => onset(on))} />
     {:else if field.type === "enum"}
-      <ChoiceSelect value={String(value)} options={choices} onchange={(choice) => attempt(() => onset(choice))} />
+      <ChoiceSelect value={String(value)} label={`Choose ${field.label}`} options={choices} onchange={(choice) => attempt(() => onset(choice))} />
     {:else}
       <TextControl
         value={String(value)}
         numeric={field.type === "number"}
         swatch={field.type === "color"}
-        placeholder={field.type === "keybinding" ? "none" : undefined}
+        placeholder={placeholderOf()}
         oncommit={saveText}
       />
     {/if}

@@ -21,6 +21,7 @@ function files(userProfile: string | null): ProfileFiles {
     async openedFolder() {
       return "/folder";
     },
+    async writeText() {},
   };
 }
 

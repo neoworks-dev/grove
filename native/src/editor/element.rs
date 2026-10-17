@@ -19,11 +19,13 @@ use svelte_gpui::gpui::{
 
 use super::Editor;
 use super::indent_paint::{self, GuideLine};
+use super::jump_paint::{self, JumpPaint};
 use super::options::EditorOptions;
 use super::theme::{EditorTheme, HighlightStyle};
 use super::vim_paint::{self, VimPaint};
 use editor_core::decorations::{DecorationKind, GutterMark, Placed, PlacedBlock, Placement, Tone, UnderlineKind};
 use editor_core::display::{BlockMap, BlockSlot, DisplayLine, DisplayRow, InlayText};
+use editor_core::jump::JumpSession;
 use editor_core::syntax::HighlightSpan;
 use editor_core::{EditorState, InputStatus, Position};
 
@@ -180,6 +182,8 @@ pub struct Frame {
     underlines: Vec<Bounds<Pixels>>,
     /// What vim mode adds: block cursors and the command line.
     vim: VimPaint,
+    /// What a jump in progress adds: labels, and the matches they stand for.
+    jump: JumpPaint,
     /// The colours this frame is painted with.
     theme: EditorTheme,
 }
@@ -200,6 +204,7 @@ impl Frame {
             cursors: Vec::new(),
             underlines: Vec::new(),
             vim: VimPaint::default(),
+            jump: JumpPaint::default(),
         }
     }
 }
@@ -255,7 +260,8 @@ impl Element for EditorElement {
         let theme = editor.theme.clone();
         let status = editor.input.status();
         let options = editor.documents.options();
-        let built = editor.read(|state| build_frame(state, scroll_top, bounds, window, &theme, &status, options));
+        let jump = editor.jump.as_ref();
+        let built = editor.read(|state| build_frame(state, scroll_top, bounds, window, &theme, &status, options, jump));
         let Some((layout, frame)) = built else {
             return Frame::empty(theme);
         };
@@ -297,6 +303,7 @@ impl Element for EditorElement {
             for selection in &frame.selections {
                 window.paint_quad(fill(*selection, theme.selection));
             }
+            jump_paint::paint_behind_text(&frame.jump, theme, window);
             vim_paint::paint_behind_text(&frame.vim, theme, focused, window);
             for mark in &frame.gutter_marks {
                 paint_gutter_mark(mark, window, cx);
@@ -329,6 +336,7 @@ impl Element for EditorElement {
             for cursor in &frame.cursors {
                 window.paint_quad(fill(*cursor, cursor_color));
             }
+            jump_paint::paint_over_text(&frame.jump, theme, window, cx);
             vim_paint::paint_command_line(&frame.vim, theme, window, cx);
         });
     }
@@ -410,6 +418,7 @@ fn build_frame(
     theme: &EditorTheme,
     status: &InputStatus,
     options: EditorOptions,
+    jump: Option<&JumpSession>,
 ) -> (Layout, Frame) {
     let line_count = state.buffer().line_count();
     let digits = line_count.max(1).to_string().len();
@@ -498,6 +507,10 @@ fn build_frame(
         guides = indent_paint::guide_lines(state, &layout, character_width);
     }
     let gutter_marks = gutter_marks(&layout, &decorations, theme, window);
+    let mut jump_paint = JumpPaint::default();
+    if let Some(session) = jump {
+        jump_paint = jump_paint::build(session, &layout, theme, character_width, window);
+    }
     let frame = Frame {
         rows: painted_rows,
         gutter_width,
@@ -510,6 +523,7 @@ fn build_frame(
         cursors,
         underlines,
         vim,
+        jump: jump_paint,
         theme: theme.clone(),
     };
     (layout, frame)

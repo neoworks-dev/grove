@@ -17,6 +17,7 @@ pub mod guides;
 pub mod history;
 pub mod indent;
 pub mod indenting;
+pub mod jump;
 pub mod keymap;
 pub mod movement;
 pub mod occurrences;

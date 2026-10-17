@@ -71,7 +71,7 @@ impl Editor {
     }
 
     /// The first and last buffer rows the last frame drew, or none before the first frame.
-    fn visible_text_rows(&self) -> Option<(usize, usize)> {
+    pub(super) fn visible_text_rows(&self) -> Option<(usize, usize)> {
         let layout = self.layout.as_ref()?;
         let mut rows = layout.rows.iter().filter_map(|visible| match visible {
             VisibleRow::Text(line) => Some(line.row),

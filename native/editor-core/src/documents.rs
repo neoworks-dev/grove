@@ -12,7 +12,9 @@ use serde::Serialize;
 
 use crate::buffer::Buffer;
 use crate::command::{Command, Outcome};
+use crate::indent::IndentStyle;
 use crate::state::EditorState;
+use crate::vim::registers::VimMemory;
 
 /// Names a document for as long as it stays open. Ids are never reused.
 pub type DocumentId = u64;
@@ -26,6 +28,9 @@ pub struct Document {
     pub scroll_top: f32,
     /// The modified state the app was last told about, so it hears of changes only.
     reported_modified: bool,
+    /// Text that is shown but belongs to no file, such as one side of a diff. Its buffer is named
+    /// like a file so it is highlighted as one, but it is never found by path or written.
+    detached: bool,
 }
 
 impl Document {
@@ -50,13 +55,23 @@ impl Document {
         }
     }
 
+    /// Whether the document is text that belongs to no file.
+    pub fn is_detached(&self) -> bool {
+        self.detached
+    }
+
     /// What the app is told about the document.
     pub fn summary(&self) -> DocumentSummary {
+        let mut path = self.path().map(|path| path.display().to_string());
+        if self.detached {
+            path = None;
+        }
         DocumentSummary {
             id: self.id,
-            path: self.path().map(|path| path.display().to_string()),
+            path,
             title: self.title(),
             dirty: self.state.is_modified(),
+            indent: self.state.buffer().indent(),
         }
     }
 }
@@ -68,6 +83,8 @@ pub struct DocumentSummary {
     pub path: Option<String>,
     pub title: String,
     pub dirty: bool,
+    /// How the file is indented, for the status bar.
+    pub indent: IndentStyle,
 }
 
 /// What applying a command to a document did.
@@ -91,6 +108,11 @@ pub struct Opened {
 pub struct Documents {
     next_id: DocumentId,
     documents: Vec<Document>,
+    /// Vim's registers and last search, which every document shares: a command works on the
+    /// document's own copy of them for as long as it runs, then they are handed back.
+    memory: VimMemory,
+    /// The indentation style of files whose own lines do not say.
+    default_indent: IndentStyle,
 }
 
 impl Documents {
@@ -115,10 +137,50 @@ impl Documents {
         self.insert(EditorState::new(Buffer::from_text(text)))
     }
 
+    /// Adds a document for text that belongs to no file. `name` only says what language the
+    /// text is, by its extension, and what the tab is called. Saving it fails.
+    pub fn open_detached(&mut self, text: &str, name: &Path) -> DocumentId {
+        let id = self.insert(EditorState::new(Buffer::from_text_named(text, name)));
+        if let Some(document) = self.get_mut(id) {
+            document.detached = true;
+        }
+        id
+    }
+
+    /// Replaces all the text of a document that belongs to no file, with one cursor at its
+    /// start. Says whether the document is one of those.
+    pub fn replace_detached_text(&mut self, id: DocumentId, text: &str) -> bool {
+        let Some(document) = self.get_mut(id) else {
+            return false;
+        };
+        if !document.detached {
+            return false;
+        }
+        let name = document.path().map(Path::to_path_buf).unwrap_or_default();
+        document.state.replace_buffer(Buffer::from_text_named(text, &name));
+        document.reported_modified = false;
+        true
+    }
+
+    /// Reads a document's file again, dropping its edits and history. Fails for a document
+    /// that has no file, or whose file cannot be read.
+    pub fn reload(&mut self, id: DocumentId) -> io::Result<()> {
+        let Some(document) = self.get_mut(id) else {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "this document is not open"));
+        };
+        let Some(path) = document.path().filter(|_| !document.detached).map(Path::to_path_buf) else {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "this document has no file"));
+        };
+        document.state.replace_buffer(Buffer::open(&path)?);
+        document.reported_modified = false;
+        Ok(())
+    }
+
     /// The id of the document that has a file open, if there is one.
     pub fn find_by_path(&self, path: &Path) -> Option<DocumentId> {
         let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-        self.documents.iter().find(|document| document.path() == Some(canonical.as_path())).map(Document::id)
+        let has_file = |document: &&Document| !document.detached && document.path() == Some(canonical.as_path());
+        self.documents.iter().find(has_file).map(Document::id)
     }
 
     /// A document, if it is open.
@@ -146,22 +208,56 @@ impl Documents {
     /// Applies a command to a document, and says what it did along with whether the modified
     /// state changed since the app last heard of it. None when the document is not open.
     pub fn apply(&mut self, id: DocumentId, command: &Command) -> Option<Applied> {
-        let document = self.get_mut(id)?;
+        if command == &Command::Save && self.get(id).is_some_and(Document::is_detached) {
+            let outcome = Outcome {
+                error: Some("this text belongs to no file, so there is nothing to save".into()),
+                ..Outcome::default()
+            };
+            return Some(Applied { outcome, modified_changed: None });
+        }
+        let uses_memory = command.is_vim();
+        let mut memory = std::mem::take(&mut self.memory);
+        let document = self.get_mut(id);
+        let Some(document) = document else {
+            self.memory = memory;
+            return None;
+        };
+        if uses_memory {
+            std::mem::swap(&mut document.state.memory, &mut memory);
+        }
         let outcome = document.state.apply(command);
+        if uses_memory {
+            std::mem::swap(&mut document.state.memory, &mut memory);
+        }
         let modified = document.state.is_modified();
         let mut modified_changed = None;
         if modified != document.reported_modified {
             document.reported_modified = modified;
             modified_changed = Some(modified);
         }
+        self.memory = memory;
         Some(Applied { outcome, modified_changed })
     }
 
+    /// Sets the indentation style of files whose own lines do not say, for the documents that are
+    /// open and the ones opened later. Returns the documents it changed.
+    pub fn set_default_indent(&mut self, style: IndentStyle) -> Vec<DocumentId> {
+        self.default_indent = style;
+        let mut changed = Vec::new();
+        for document in &mut self.documents {
+            if document.state.apply_default_indent(style) {
+                changed.push(document.id);
+            }
+        }
+        changed
+    }
+
     /// Adds a document over a state and gives it the next id.
-    fn insert(&mut self, state: EditorState) -> DocumentId {
+    fn insert(&mut self, mut state: EditorState) -> DocumentId {
+        state.apply_default_indent(self.default_indent);
         self.next_id += 1;
         let id = self.next_id;
-        self.documents.push(Document { id, state, scroll_top: 0.0, reported_modified: false });
+        self.documents.push(Document { id, state, scroll_top: 0.0, reported_modified: false, detached: false });
         id
     }
 }

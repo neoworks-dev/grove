@@ -6,11 +6,14 @@ import type { SessionCreateParams, SessionInfo } from "@suite/protocol/types";
 import type { Client, ConnectionState, DaemonAddress } from "@suite/sdk";
 
 /** The calls one chat pane makes for its session. */
-export type ChatClient = Pick<Client, "subscribeView" | "input" | "cancel" | "action">;
+export type ChatClient = Pick<Client, "subscribe" | "subscribeView" | "input" | "cancel" | "action">;
 
 /** The client as the plugin's service uses it: the chat calls and the session list. */
 export type SuiteClient = ChatClient &
-  Pick<Client, "state" | "sessions" | "listSessions" | "listConnectors" | "setPresence" | "close"> & {
+  Pick<
+    Client,
+    "state" | "sessions" | "focus" | "listSessions" | "listConnectors" | "setPresence" | "setContext" | "moveAgent" | "close"
+  > & {
     createSession(params: SessionCreateParams): Promise<SessionInfo>;
   };
 
@@ -18,6 +21,8 @@ export type SuiteClient = ChatClient &
 export interface SuiteConnectOptions {
   /** The name sent to the daemon in hello. */
   client: string;
+  /** How long one request may wait for the daemon's answer, its welcome included. */
+  requestTimeoutMs: number;
   /** Where the daemon is now; asked again on every reconnect. */
   address: () => Promise<DaemonAddress>;
   /** Failures nobody is waiting for. */

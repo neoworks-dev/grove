@@ -253,9 +253,17 @@ export class KeymapService extends Service {
     });
   }
 
-  /** The binding among the matches whose keys are exactly `length` steps long, if any. */
+  /**
+   * The binding among the matches whose keys are exactly `length` steps long, if any. A binding
+   * with a `when` is for a context and so beats one without, which is for everywhere.
+   */
   private exactMatch(matches: ResolvedBinding[], length: number): ResolvedBinding | undefined {
-    return matches.find((binding) => binding.sequence.steps.length === length);
+    const exact = matches.filter((binding) => binding.sequence.steps.length === length);
+    const inContext = exact.find((binding) => binding.when !== undefined);
+    if (inContext !== undefined) {
+      return inContext;
+    }
+    return exact[0];
   }
 
   /** Runs a binding's command and marks the key as taken. */

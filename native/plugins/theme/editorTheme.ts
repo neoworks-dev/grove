@@ -30,6 +30,15 @@ export interface EditorTheme {
   deleted: string;
   inlay: string;
   lineEnd: string;
+  /** The indentation guides, and the one around the cursor. */
+  indentGuide: string;
+  indentGuideActive: string;
+  /** Behind the other occurrences of the word under the cursor. */
+  occurrence: string;
+  /** The jump command's labels: their background and text, and the background of what they label. */
+  jumpLabel: string;
+  jumpLabelText: string;
+  jumpMatch: string;
   /** Styles by highlight name; a name left out takes its dotted prefix's style, else the foreground. */
   syntax: Record<string, SyntaxStyle>;
 }
@@ -133,6 +142,12 @@ export function editorThemeFor(tokens: ThemeTokens, scheme: "dark" | "light"): E
     deleted: tokens.red,
     inlay: tokens.muted,
     lineEnd: tokens.dim,
+    indentGuide: `${tokens.text}1a`,
+    indentGuideActive: `${tokens.accent}99`,
+    occurrence: `${tokens.text}1f`,
+    jumpLabel: tokens.pink,
+    jumpLabelText: tokens.inverse,
+    jumpMatch: `${tokens.blue}59`,
     syntax: scheme === "dark" ? DARK_SYNTAX : LIGHT_SYNTAX,
   };
 }

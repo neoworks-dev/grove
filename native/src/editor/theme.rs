@@ -13,7 +13,12 @@
 //!   "syntax": { "keyword": "#a78bfa", "title": { "color": "#60a5fa", "bold": true } } }
 //! ```
 //!
-//! The last nine are the colours of decorations (see `editor_core::decorations::Tone`): what
+//! `indentGuide` and `indentGuideActive` colour the guides at each indentation level and the one
+//! around the cursor, `occurrence` is the background of the other places the word under the cursor
+//! appears, and `jumpLabel`, `jumpLabelText` and `jumpMatch` colour the labels of the jump
+//! command and the text they stand for.
+//!
+//! The nine after those are the colours of decorations (see `editor_core::decorations::Tone`): what
 //! diagnostics, git changes, inlay hints and text after a line end are drawn in.
 //!
 //! Each key of `syntax` is one of `editor_core::syntax::HIGHLIGHT_NAMES`. A name the theme leaves
@@ -54,6 +59,15 @@ pub struct EditorTheme {
     pub inlay: Hsla,
     /// Text added after the end of a line.
     pub line_end: Hsla,
+    /// The indentation guides, and the one of the scope around the cursor.
+    pub indent_guide: Hsla,
+    pub indent_guide_active: Hsla,
+    /// Behind the other occurrences of the word under the cursor.
+    pub occurrence: Hsla,
+    /// A jump label's background and text, and the background of the text it labels.
+    pub jump_label: Hsla,
+    pub jump_label_text: Hsla,
+    pub jump_match: Hsla,
     /// The style of each highlight, by `HighlightId`.
     syntax: Vec<Option<HighlightStyle>>,
 }
@@ -78,6 +92,12 @@ impl Default for EditorTheme {
             deleted: hex(0xf87171ff),
             inlay: hex(0x8b8b94ff),
             line_end: hex(0x71717aff),
+            indent_guide: hex(0xe4e4e71a),
+            indent_guide_active: hex(0xa78bfa99),
+            occurrence: hex(0xe4e4e71f),
+            jump_label: hex(0xec4899ff),
+            jump_label_text: hex(0x0b0b0dff),
+            jump_match: hex(0x60a5fa59),
             syntax: vec![None; HIGHLIGHT_NAMES.len()],
         }
     }
@@ -109,6 +129,12 @@ impl EditorTheme {
             deleted: color("deleted", defaults.deleted),
             inlay: color("inlay", defaults.inlay),
             line_end: color("lineEnd", defaults.line_end),
+            indent_guide: color("indentGuide", defaults.indent_guide),
+            indent_guide_active: color("indentGuideActive", defaults.indent_guide_active),
+            occurrence: color("occurrence", defaults.occurrence),
+            jump_label: color("jumpLabel", defaults.jump_label),
+            jump_label_text: color("jumpLabelText", defaults.jump_label_text),
+            jump_match: color("jumpMatch", defaults.jump_match),
             syntax: syntax_styles(value.get("syntax")),
         }
     }
@@ -125,6 +151,10 @@ impl EditorTheme {
             Tone::Deleted => self.deleted,
             Tone::Inlay => self.inlay,
             Tone::LineEnd => self.line_end,
+            Tone::Occurrence => self.occurrence,
+            Tone::AddedWord => self.added,
+            Tone::DeletedWord => self.deleted,
+            Tone::Filler => self.hint,
         }
     }
 

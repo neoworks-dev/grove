@@ -10,26 +10,39 @@ pub mod clipboard;
 pub mod command;
 pub mod completion;
 pub mod decorations;
+pub mod diff;
 pub mod display;
 pub mod documents;
 pub mod edit;
 pub mod editing;
+pub mod guides;
 pub mod history;
+pub mod indent;
+pub mod indenting;
+pub mod jump;
 pub mod keymap;
 pub mod movement;
+pub mod occurrences;
 pub mod selections;
 pub mod snippet;
 pub mod state;
 pub mod syntax;
+pub mod vim;
 
 pub use anchor::{Anchor, AnchorId, Bias};
 pub use buffer::{Buffer, ContentChange, LineEnding, Position, Utf16Point};
 pub use command::{Command, Outcome};
 pub use completion::RangeEdit;
-pub use decorations::{Decoration, DecorationKind, GutterMark, Placement, Tone, Underline, UnderlineKind};
+pub use decorations::{
+    Decoration, DecorationKind, GutterMark, Placement, SourceFilter, Tone, Underline, UnderlineKind,
+};
 pub use documents::{Applied, Document, DocumentId, DocumentSummary, Documents, Opened};
 pub use edit::{Edit, Edits};
-pub use keymap::{InputContext, InputLayer, KeyInput, Modifiers, StandardKeymap};
+pub use indent::{IndentSource, IndentStyle};
+pub use keymap::{
+    CursorShape, InputContext, InputLayer, InputStatus, KeyInput, Modifiers, SelectionStyle, StandardKeymap,
+};
 pub use movement::Motion;
 pub use selections::{Selection, Selections};
 pub use state::EditorState;
+pub use vim::VimLayer;

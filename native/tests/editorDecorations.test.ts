@@ -10,6 +10,7 @@ import {
   type DocumentSummary,
 } from "../plugins/editor/service";
 import { LayoutService } from "../plugins/layout/service";
+import { languageStubs } from "./support/viewStubs";
 
 /** A host that records the decorations it is given, by document and source, as Rust would keep them. */
 class RecordingHost implements DocumentHost {
@@ -107,6 +108,7 @@ describe("setting decorations", () => {
     await editor.openPath("/src/a.rs");
     const events: string[] = [];
     const view = (name: string) => ({
+      ...languageStubs(),
       apply: async () => ({ changed: false }),
       refresh: async () => {
         events.push(`${name} refreshed after ${host.order.length} sets`);

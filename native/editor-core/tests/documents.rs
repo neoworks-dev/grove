@@ -144,3 +144,87 @@ fn an_untitled_document_has_no_path() {
     assert_eq!(summary.path, None);
     assert_eq!(summary.title, "Untitled");
 }
+
+#[test]
+fn vim_registers_are_shared_between_documents() {
+    use editor_core::Motion;
+    use editor_core::vim::types::{Operator, Target};
+    let mut documents = Documents::new();
+    let first = documents.open_untitled("one two");
+    let second = documents.open_untitled("other");
+    let yank_word = Command::Operate {
+        operator: Operator::Yank,
+        target: Target::Motion { motion: Motion::WordForward { big: false }, count: 1 },
+        register: None,
+    };
+    documents.apply(first, &yank_word).unwrap();
+    let put = Command::Put { register: None, before: true, count: 1, cursor_after: false, over: None, clipboard: None };
+    documents.apply(second, &put).unwrap();
+    assert_eq!(text_of(&documents, second), "one other");
+}
+
+#[test]
+fn a_new_default_indent_reaches_only_files_that_did_not_say() {
+    use editor_core::IndentStyle;
+    let plain = file_with("plain.txt", "one\ntwo\n");
+    let indented = file_with("indented.ts", "a {\n  b;\n}\n");
+    let chosen = file_with("chosen.txt", "x\n");
+    let mut documents = Documents::new();
+    let plain_id = documents.open(&plain).unwrap().id;
+    let indented_id = documents.open(&indented).unwrap().id;
+    let chosen_id = documents.open(&chosen).unwrap().id;
+    documents.apply(chosen_id, &Command::SetIndent { style: IndentStyle::Tabs }).unwrap();
+
+    let changed = documents.set_default_indent(IndentStyle::Spaces { width: 8 });
+    assert_eq!(changed, vec![plain_id]);
+    let indent_of = |documents: &Documents, id| documents.get(id).unwrap().summary().indent;
+    assert_eq!(indent_of(&documents, plain_id), IndentStyle::Spaces { width: 8 });
+    assert_eq!(indent_of(&documents, indented_id), IndentStyle::Spaces { width: 2 });
+    assert_eq!(indent_of(&documents, chosen_id), IndentStyle::Tabs);
+
+    let later = file_with("later.txt", "z\n");
+    let later_id = documents.open(&later).unwrap().id;
+    assert_eq!(indent_of(&documents, later_id), IndentStyle::Spaces { width: 8 });
+}
+
+#[test]
+fn detached_text_is_highlighted_by_its_name_but_has_no_file_to_find_or_save() {
+    let path = file_with("real.rs", "fn main() {}\n");
+    let mut documents = Documents::new();
+    let detached = documents.open_detached("fn old() {}\n", &path);
+    assert_eq!(documents.get(detached).unwrap().state.language_name(), Some("rust"));
+    let summary = documents.get(detached).unwrap().summary();
+    assert_eq!(summary.path, None);
+    assert_eq!(summary.title, "real.rs");
+    let opened = documents.open(&path).unwrap();
+    assert!(opened.created);
+    assert_ne!(opened.id, detached);
+    let saved = documents.apply(detached, &Command::Save).unwrap();
+    assert!(saved.outcome.error.is_some());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "fn main() {}\n");
+}
+
+#[test]
+fn detached_text_can_be_replaced_but_a_files_document_cannot() {
+    let path = file_with("replace.rs", "one\n");
+    let mut documents = Documents::new();
+    let detached = documents.open_detached("old\n", &path);
+    assert!(documents.replace_detached_text(detached, "new\n"));
+    assert_eq!(text_of(&documents, detached), "new\n");
+    let real = documents.open(&path).unwrap().id;
+    assert!(!documents.replace_detached_text(real, "x"));
+    assert!(!documents.replace_detached_text(99, "x"));
+}
+
+#[test]
+fn reloading_reads_the_file_again_and_forgets_the_edits() {
+    let path = file_with("reload.rs", "one\n");
+    let mut documents = Documents::new();
+    let id = documents.open(&path).unwrap().id;
+    type_text(&mut documents, id, "X");
+    std::fs::write(&path, "two\n").unwrap();
+    documents.reload(id).unwrap();
+    assert_eq!(text_of(&documents, id), "two\n");
+    assert!(!documents.get(id).unwrap().state.is_modified());
+    assert!(documents.reload(99).is_err());
+}

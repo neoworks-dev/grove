@@ -36,7 +36,7 @@ export class StdioTransport implements RouteTransport {
     this.output = output
     this.log = log
     this.endpoint = new RpcEndpoint((message) => this.writeFrame(message), 'even')
-    this.endpoint.handle('sidecar.info', async () => this.describe())
+    this.endpoint.handle('sidecar.info', () => Promise.resolve(this.describe()))
     this.endpoint.setFallbackHandler((method, params) => this.invokeRoute(method, params))
   }
 
@@ -94,7 +94,7 @@ export class StdioTransport implements RouteTransport {
     if (Array.isArray(params)) {
       args = params
     }
-    return handler(NO_CALLER, ...args)
+    return await handler(NO_CALLER, ...args)
   }
 
   /** Writes one frame; a payload that cannot be serialised is logged and dropped, not thrown into a service. */

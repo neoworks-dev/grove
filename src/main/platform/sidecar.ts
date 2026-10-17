@@ -62,11 +62,12 @@ export function createSidecarPlatform(options: SidecarPlatformOptions): Platform
     appPath: () => appPath,
     handleRoute: (channel, handler) => options.transport.handleRoute(channel, handler),
     broadcast: (channel, payload) => options.transport.broadcast(channel, payload),
-    showMessageBox: async (messageBox) => {
-      log(`[sidecar] no dialog available, answering "${messageBox.buttons[messageBox.cancelId]}": ${messageBox.title}`)
-      return messageBox.cancelId
+    showMessageBox: (messageBox) => {
+      const answer = messageBox.buttons[messageBox.cancelId]
+      log(`[sidecar] no dialog available, answering "${answer}": ${messageBox.title}`)
+      return Promise.resolve(messageBox.cancelId)
     },
-    pickDirectory: async () => null,
+    pickDirectory: () => Promise.resolve(null),
     openExternal: async (url) => {
       const error = await openWithDefaultApp(url)
       if (error) {
@@ -85,9 +86,7 @@ export function createSidecarPlatform(options: SidecarPlatformOptions): Platform
       }
     },
     windowOf: () => null,
-    evaluateInRenderer: async () => {
-      throw new Error('no renderer window is open')
-    },
+    evaluateInRenderer: () => Promise.reject(new Error('no renderer window is open')),
     handleProtocol: (scheme) => {
       log(`[sidecar] ${scheme}:// is not served by the sidecar`)
       return () => {}

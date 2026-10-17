@@ -19,7 +19,10 @@ function clipboardTools(): ClipboardTool[] {
   }
   return [
     { read: ['wl-paste', '--no-newline'], write: ['wl-copy'] },
-    { read: ['xclip', '-selection', 'clipboard', '-o'], write: ['xclip', '-selection', 'clipboard'] },
+    {
+      read: ['xclip', '-selection', 'clipboard', '-o'],
+      write: ['xclip', '-selection', 'clipboard']
+    },
     { read: ['xsel', '--clipboard', '--output'], write: ['xsel', '--clipboard', '--input'] }
   ]
 }

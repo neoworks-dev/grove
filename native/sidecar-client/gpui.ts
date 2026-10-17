@@ -18,7 +18,10 @@ export function gpuiBridge(): SidecarBridge {
 }
 
 /** The sidecar client for this app, and the `workbench` object made from it. */
-export function connectSidecar(): { client: SidecarClient; workbench: ReturnType<typeof createWorkbench> } {
+export function connectSidecar(): {
+  client: SidecarClient
+  workbench: ReturnType<typeof createWorkbench>
+} {
   const client = new SidecarClient(gpuiBridge())
   return { client, workbench: createWorkbench(client) }
 }

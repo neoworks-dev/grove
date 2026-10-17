@@ -258,10 +258,10 @@ export const workbenchChannels: Record<string, string> = {
   'browserHost.install': 'browserHost:install',
   'browserHost.remove': 'browserHost:remove',
   'browserHost.revealExtension': 'browserHost:revealExtension',
-  'openExternal': 'shell:openExternal',
-  'raiseWindow': 'window:raise',
+  openExternal: 'shell:openExternal',
+  raiseWindow: 'window:raise',
   'window.controls': 'window:controls',
   'window.minimize': 'window:minimize',
   'window.toggleFullScreen': 'window:toggleFullScreen',
-  'window.close': 'window:close',
+  'window.close': 'window:close'
 }

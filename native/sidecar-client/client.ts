@@ -58,8 +58,9 @@ export class SidecarClient {
   }
 
   /** Invokes a route like `ipcRenderer.invoke` does: the channel, then its arguments. */
-  call<Result = unknown>(channel: string, ...args: unknown[]): Promise<Result> {
-    return this.endpoint.request(channel, args) as Promise<Result>
+  async call<Result = unknown>(channel: string, ...args: unknown[]): Promise<Result> {
+    const result: unknown = await this.endpoint.request(channel, args)
+    return result as Result
   }
 
   /** Listens to an event the sidecar pushes; returns the function that stops listening. */

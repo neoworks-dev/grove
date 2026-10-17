@@ -8,6 +8,8 @@ export interface EditorMethods {
 }
 
 class EditorState {
+  /** The file the editor opens, asked of the host once and kept for later mounts of the editor. */
+  path = $state("");
   fileSummary = $state("");
   message = $state("");
   modified = $state(false);
@@ -41,16 +43,27 @@ class EditorState {
     return `${place} · ${this.cursorCount} cursors`;
   }
 
+  /** Whether an editor is mounted to take commands. */
+  hasEditor(): boolean {
+    return this.element !== null;
+  }
+
+  /** Sends the mounted editor one of its commands, such as `undo`, as its own keys would. */
+  async send(type: string): Promise<void> {
+    if (!this.element) {
+      throw new Error(`there is no editor to ${type} in`);
+    }
+    await this.element.apply({ type });
+  }
+
   /** Saves the open file through the editor's own command, as its Ctrl-S would. */
   async save(): Promise<void> {
-    if (!this.element) {
-      throw new Error("there is no editor to save from");
-    }
-    await this.element.apply({ type: "save" });
+    await this.send("save");
   }
 
   /** Forgets the editor and what it reported, for when the plugin unloads. */
   reset(): void {
+    this.path = "";
     this.fileSummary = "";
     this.message = "";
     this.modified = false;

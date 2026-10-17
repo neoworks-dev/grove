@@ -20,12 +20,15 @@
     EditorMethods
   >("editor");
 
-  let path = $state("");
   let editor = $state<EditorMethods | null>(null);
 
-  invoke<string>("initial_file").then((file) => {
-    path = file;
-  });
+  // The layout remounts this component when a split wraps or frees its pane, so the host is
+  // asked for the file once, and the editor is not drawn before it is known.
+  if (editorState.path === "") {
+    invoke<string>("initial_file").then((file) => {
+      editorState.path = file;
+    });
+  }
 
   // The element is known to the commands only while it is mounted.
   $effect(() => {
@@ -36,11 +39,12 @@
   });
 </script>
 
+{#if editorState.path !== ""}
 <Editor
   bind:this={editor}
   style={{ flex: 1 }}
   key="main"
-  {path}
+  path={editorState.path}
   onopened={(event) => {
     editorState.fileSummary = event.path;
     editorState.message = "";
@@ -60,3 +64,4 @@
     editorState.cursorCount = event.count;
   }}
 />
+{/if}

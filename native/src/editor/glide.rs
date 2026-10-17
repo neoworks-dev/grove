@@ -66,6 +66,7 @@ impl Editor {
         let now = Instant::now();
         let top = animation.value_at(now);
         self.set_scroll_top(px(top));
+        self.scroll_group_to_here(cx);
         if logging_enabled() {
             eprintln!("scroll {:>4}ms top={top:.1}", animation.elapsed_at(now).as_millis());
         }

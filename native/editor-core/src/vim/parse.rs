@@ -160,6 +160,10 @@ pub enum Simple {
     SaveAndClose,
     /// `ZQ`.
     CloseWithoutSaving,
+    /// `]c` and `[c`.
+    GotoChange {
+        forward: bool,
+    },
     Page(PageStep),
     /// Ctrl-N.
     NextMatch,
@@ -503,6 +507,7 @@ fn parse_simple(keys: &[String]) -> SimpleParse {
         "m" => parse_set_mark(keys),
         "z" => parse_scroll(keys),
         "Z" => parse_save_and_close(keys),
+        "]" | "[" => parse_goto_change(keys),
         "g" => parse_g_simple(keys),
         _ => SimpleParse::Invalid,
     }
@@ -557,6 +562,17 @@ fn parse_save_and_close(keys: &[String]) -> SimpleParse {
         "Q" => SimpleParse::Simple(Simple::CloseWithoutSaving, 2),
         _ => SimpleParse::Invalid,
     }
+}
+
+/// `]c` and `[c`.
+fn parse_goto_change(keys: &[String]) -> SimpleParse {
+    let Some(next) = keys.get(1) else {
+        return SimpleParse::Incomplete;
+    };
+    if next != "c" {
+        return SimpleParse::Invalid;
+    }
+    SimpleParse::Simple(Simple::GotoChange { forward: keys[0] == "]" }, 2)
 }
 
 /// The commands that start with `g` and are not motions or operators.

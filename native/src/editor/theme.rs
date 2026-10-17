@@ -152,6 +152,9 @@ impl EditorTheme {
             Tone::Inlay => self.inlay,
             Tone::LineEnd => self.line_end,
             Tone::Occurrence => self.occurrence,
+            Tone::AddedWord => self.added,
+            Tone::DeletedWord => self.deleted,
+            Tone::Filler => self.hint,
         }
     }
 

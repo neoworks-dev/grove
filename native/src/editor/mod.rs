@@ -30,7 +30,7 @@ use std::ops::Range;
 use editor_core::vim::types::ScrollAlign;
 use editor_core::{
     Command, DocumentId, EditorState, InputContext, InputLayer, InputStatus, KeyInput, Modifiers, Outcome, Position,
-    StandardKeymap, VimLayer,
+    SourceFilter, StandardKeymap, VimLayer,
 };
 use serde_json::{Value, json};
 use svelte_gpui::gpui::{
@@ -53,6 +53,8 @@ thread_local! {
     /// Which document each view of the window shows, so a change made in one view can redraw
     /// the others. Views live on the window's thread, so this does too.
     static VIEWS: RefCell<HashMap<EntityId, (DocumentId, WeakEntity<Editor>)>> = RefCell::new(HashMap::new());
+    /// The scroll group each view that has one is in, so scrolling one scrolls the rest of its group.
+    static SCROLL_GROUPS: RefCell<HashMap<EntityId, (String, WeakEntity<Editor>)>> = RefCell::new(HashMap::new());
 }
 
 pub struct Editor {
@@ -89,6 +91,13 @@ pub struct Editor {
     /// Redraws when focus moves, since the host caches the view and would keep the cursor
     /// as it last drew it.
     focus_subscriptions: Vec<Subscription>,
+    /// Whether the view refuses commands that change the text, as the old side of a diff does.
+    read_only: bool,
+    /// The scroll group this view is in, set by the `scrollGroup` prop; empty for none.
+    scroll_group: String,
+    /// Which decoration sources this view draws: the ones that are its own (the `viewId` prop)
+    /// and every document-wide one except those the `hideSources` prop names.
+    sources: SourceFilter,
 }
 
 impl Editor {
@@ -110,6 +119,9 @@ impl Editor {
             jump: None,
             occurrence_generation: 0,
             focus_subscriptions: Vec::new(),
+            read_only: false,
+            scroll_group: String::new(),
+            sources: SourceFilter::default(),
         }
     }
 
@@ -171,6 +183,9 @@ impl Editor {
         let Some(command) = self.resolve_clipboard(command, cx) else {
             return Outcome::default();
         };
+        if self.read_only && command.changes_text() {
+            return Outcome::default();
+        }
         let Some(outcome) = self.documents.apply(id, &command) else {
             return Outcome::default();
         };
@@ -191,7 +206,44 @@ impl Editor {
         if outcome.changed || outcome.text_changed {
             self.occurrences_may_have_changed(cx);
         }
+        self.scroll_group_to_here(cx);
         outcome
+    }
+
+    /// Puts the views in this view's scroll group at the scroll position this one has.
+    fn scroll_group_to_here(&self, cx: &mut Context<Self>) {
+        if self.scroll_group.is_empty() {
+            return;
+        }
+        let own = cx.entity_id();
+        let scroll_top = self.scroll_top;
+        let others: Vec<WeakEntity<Editor>> = SCROLL_GROUPS.with(|groups| {
+            let groups = groups.borrow();
+            let same_group = groups.iter().filter(|(view, (group, _))| *group == self.scroll_group && **view != own);
+            same_group.map(|(_, (_, weak))| weak.clone()).collect()
+        });
+        for view in others {
+            let _ = view.update(cx, |other, cx| {
+                other.set_scroll_top(scroll_top);
+                cx.notify();
+            });
+        }
+    }
+
+    /// Joins a scroll group, or leaves the one this view is in when the name is empty.
+    fn set_scroll_group(&mut self, name: &str, cx: &mut Context<Self>) {
+        self.scroll_group = name.to_string();
+        let view = cx.entity_id();
+        self.view = Some(view);
+        let weak = cx.entity().downgrade();
+        let group = name.to_string();
+        SCROLL_GROUPS.with(|groups| {
+            if group.is_empty() {
+                groups.borrow_mut().remove(&view);
+                return;
+            }
+            groups.borrow_mut().insert(view, (group, weak));
+        });
     }
 
     /// Redraws every other view of a document, since the host keeps what a view painted until
@@ -392,6 +444,7 @@ impl Drop for Editor {
             return;
         };
         let _ = VIEWS.try_with(|views| views.borrow_mut().remove(&view));
+        let _ = SCROLL_GROUPS.try_with(|groups| groups.borrow_mut().remove(&view));
     }
 }
 
@@ -430,6 +483,25 @@ impl AppElement for Editor {
     fn set_prop(&mut self, name: &str, value: Value, cx: &mut Context<Self>) {
         if name == "theme" {
             self.theme = EditorTheme::from_json(&value);
+            return;
+        }
+        if name == "readonly" {
+            self.read_only = value.as_bool().unwrap_or(false);
+            return;
+        }
+        if name == "viewId" {
+            self.sources.view = value.as_str().unwrap_or("").to_string();
+            cx.notify();
+            return;
+        }
+        if name == "hideSources" {
+            let names = value.as_array().into_iter().flatten().filter_map(Value::as_str);
+            self.sources.hidden = names.map(str::to_string).collect();
+            cx.notify();
+            return;
+        }
+        if name == "scrollGroup" {
+            self.set_scroll_group(value.as_str().unwrap_or(""), cx);
             return;
         }
         if name == "keymap" {
@@ -511,6 +583,7 @@ impl Render for Editor {
                 editor.jump = None;
                 editor.wheel_scrolled(event.delta);
                 editor.occurrences_may_have_changed(cx);
+                editor.scroll_group_to_here(cx);
                 cx.notify();
             }))
             .on_mouse_down(

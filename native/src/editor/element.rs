@@ -27,7 +27,7 @@ use editor_core::decorations::{DecorationKind, GutterMark, Placed, PlacedBlock, 
 use editor_core::display::{BlockMap, BlockSlot, DisplayLine, DisplayRow, InlayText};
 use editor_core::jump::JumpSession;
 use editor_core::syntax::HighlightSpan;
-use editor_core::{EditorState, InputStatus, Position};
+use editor_core::{EditorState, InputStatus, Position, SourceFilter};
 
 pub const FONT_FAMILY: &str = "DejaVu Sans Mono";
 pub const FONT_SIZE: Pixels = px(14.0);
@@ -55,6 +55,10 @@ const LINE_END_GAP: Pixels = px(28.0);
 const BACKGROUND_OPACITY: f32 = 0.18;
 /// How opaque a tone is behind a block's rows.
 const BLOCK_OPACITY: f32 = 0.12;
+/// How opaque the words a diff changed are behind their text, over the tint of their line.
+const WORD_OPACITY: f32 = 0.38;
+/// How opaque the filler rows of a side-by-side diff are.
+const FILLER_OPACITY: f32 = 0.07;
 
 /// What the last frame drew, kept on the editor so the pointer can be mapped to a position
 /// and the cursor kept in view.
@@ -140,8 +144,10 @@ struct PaintedRow {
     number: Option<(ShapedLine, Pixels)>,
     text: ShapedLine,
     is_cursor_row: bool,
-    /// Behind the whole row, for the rows of a block.
+    /// Behind the whole row, for the rows of a block and the lines a diff marks.
     tint: Option<Hsla>,
+    /// Behind stretches of the row's text, such as the words a diff changed in a removed line.
+    emphasis: Vec<(Bounds<Pixels>, Hsla)>,
 }
 
 /// A line under a decorated range.
@@ -261,7 +267,9 @@ impl Element for EditorElement {
         let status = editor.input.status();
         let options = editor.documents.options();
         let jump = editor.jump.as_ref();
-        let built = editor.read(|state| build_frame(state, scroll_top, bounds, window, &theme, &status, options, jump));
+        let sources = editor.sources.clone();
+        let built = editor
+            .read(|state| build_frame(state, scroll_top, bounds, window, &theme, &status, options, jump, &sources));
         let Some((layout, frame)) = built else {
             return Frame::empty(theme);
         };
@@ -291,6 +299,9 @@ impl Element for EditorElement {
                 let line = Bounds::new(point(bounds.left(), row.top), size(bounds.size.width, LINE_HEIGHT));
                 if let Some(tint) = row.tint {
                     window.paint_quad(fill(line, tint));
+                }
+                for (span, color) in &row.emphasis {
+                    window.paint_quad(fill(*span, *color));
                 }
                 if row.is_cursor_row {
                     window.paint_quad(fill(line, theme.current_line));
@@ -419,6 +430,7 @@ fn build_frame(
     status: &InputStatus,
     options: EditorOptions,
     jump: Option<&JumpSession>,
+    sources: &SourceFilter,
 ) -> (Layout, Frame) {
     let line_count = state.buffer().line_count();
     let digits = line_count.max(1).to_string().len();
@@ -426,7 +438,7 @@ fn build_frame(
     let gutter_width = digit_width + GUTTER_PADDING * 2.0;
     let text_left = bounds.left() + gutter_width;
 
-    let blocks = state.decoration_blocks();
+    let blocks = state.decoration_blocks_for(sources);
     let blocks_map = block_map(&blocks);
     let first_display_row = (scroll_top / LINE_HEIGHT).floor() as usize;
     let first_row_top = bounds.top() - (scroll_top - LINE_HEIGHT * first_display_row as f32);
@@ -443,8 +455,9 @@ fn build_frame(
         .map(|selection| selection.head.row)
         .collect();
     let syntax = state.highlights(text_rows.clone());
-    let decorations = state.decorations_in_rows(text_rows.clone());
+    let decorations = state.decorations_in_rows_for(text_rows.clone(), sources);
     let row_decorations = RowDecorations::new(&decorations);
+    let line_tints = line_tints(&decorations, theme);
 
     let mut visible_rows = Vec::with_capacity(display_rows.len());
     let mut painted_rows = Vec::with_capacity(display_rows.len());
@@ -472,20 +485,25 @@ fn build_frame(
                     number: Some((number, number_left)),
                     text: text.clone(),
                     is_cursor_row,
-                    tint: None,
+                    tint: line_tints.get(&row).copied(),
+                    emphasis: Vec::new(),
                 });
                 visible_rows.push(VisibleRow::Text(VisibleLine { row, display, shaped: text }));
             }
             DisplayRow::Block { block, line } => {
                 let placed = &blocks[block];
-                let color = theme.tone(placed.tone.unwrap_or(Tone::Inlay));
-                let text = shape_plain(window, &placed.lines[line], color);
+                let tone = placed.tone.unwrap_or(Tone::Inlay);
+                let color = theme.tone(tone);
+                let display = DisplayLine::new(&placed.lines[line]);
+                let text = shape_plain(window, &display.text, color);
+                let emphasis = block_emphasis(placed, line, &display, &text, text_left, top, theme);
                 painted_rows.push(PaintedRow {
                     top,
                     number: None,
                     text,
                     is_cursor_row: false,
-                    tint: Some(color.opacity(BLOCK_OPACITY)),
+                    tint: Some(color.opacity(block_opacity(tone))),
+                    emphasis,
                 });
                 visible_rows.push(VisibleRow::Block { row: placed.row, placement: placed.placement });
             }
@@ -527,6 +545,63 @@ fn build_frame(
         theme: theme.clone(),
     };
     (layout, frame)
+}
+
+/// How opaque a tone is as a background behind text: the words a diff changed stand out from the rest.
+fn background_opacity(tone: Tone) -> f32 {
+    match tone {
+        Tone::AddedWord | Tone::DeletedWord => WORD_OPACITY,
+        _ => BACKGROUND_OPACITY,
+    }
+}
+
+/// How opaque a tone is behind a whole row of a block: fillers are barely there.
+fn block_opacity(tone: Tone) -> f32 {
+    match tone {
+        Tone::Filler => FILLER_OPACITY,
+        _ => BLOCK_OPACITY,
+    }
+}
+
+/// The tint of each buffer row a line decoration covers, such as the lines of a diff hunk.
+fn line_tints(decorations: &[Placed], theme: &EditorTheme) -> HashMap<usize, Hsla> {
+    let mut tints = HashMap::new();
+    for placed in decorations {
+        let DecorationKind::Line { tone } = placed.kind else {
+            continue;
+        };
+        let color = theme.tone(*tone).opacity(BLOCK_OPACITY);
+        for row in placed.start.row..=placed.end.row {
+            tints.insert(row, color);
+        }
+    }
+    tints
+}
+
+/// The strongly tinted stretches of one row of a block, where its emphasis marks them.
+fn block_emphasis(
+    block: &PlacedBlock,
+    line: usize,
+    display: &DisplayLine,
+    shaped: &ShapedLine,
+    text_left: Pixels,
+    top: Pixels,
+    theme: &EditorTheme,
+) -> Vec<(Bounds<Pixels>, Hsla)> {
+    let tone = match block.tone {
+        Some(Tone::Deleted) => Tone::DeletedWord,
+        Some(Tone::Added) => Tone::AddedWord,
+        _ => return Vec::new(),
+    };
+    let color = theme.tone(tone).opacity(WORD_OPACITY);
+    let marked = block.emphasis.iter().filter(|emphasis| emphasis.line == line);
+    marked
+        .map(|emphasis| {
+            let left = text_left + shaped.x_for_index(display.range_start_offset(emphasis.start));
+            let right = text_left + shaped.x_for_index(display.range_end_offset(emphasis.end));
+            (Bounds::new(point(left, top), size(right - left, LINE_HEIGHT)), color)
+        })
+        .collect()
 }
 
 /// A buffer line laid out with the inlays on it, which must be ordered by column.
@@ -579,7 +654,7 @@ fn background_color(theme: &EditorTheme, tone: Tone) -> Hsla {
     if tone == Tone::Occurrence {
         return theme.tone(tone);
     }
-    theme.tone(tone).opacity(BACKGROUND_OPACITY)
+    theme.tone(tone).opacity(background_opacity(tone))
 }
 
 /// The marks gutter decorations put beside the line numbers on the rows in view.

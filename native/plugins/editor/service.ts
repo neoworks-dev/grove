@@ -89,12 +89,14 @@ export type DocumentEvent =
   | { type: "closed"; id: number }
   | { type: "dirty"; id: number; dirty: boolean }
   | { type: "saved"; id: number }
+  | { type: "edited"; id: number }
   | { type: "error"; id: number; message: string }
   | { type: "selections"; id: number; row: number; column: number; count: number; selected: boolean }
   | { type: "mode"; mode: string; pending: string; commandLine: string | null }
   | { type: "indent"; id: number; indent: IndentStyle }
   | { type: "close-request"; id: number; discard: boolean }
-  | { type: "open-request"; id: number; path: string };
+  | { type: "open-request"; id: number; path: string }
+  | { type: "change-request"; id: number; forward: boolean };
 
 /** The documents the Rust host keeps. A test supplies a fake. */
 export interface DocumentHost {
@@ -108,6 +110,14 @@ export interface DocumentHost {
   setDecorations(id: number, source: string, decorations: Decoration[]): Promise<void>;
   /** Tells the host what the editor's settings say. A host that has nothing to configure leaves it out. */
   configure?(options: EditorOptions): Promise<void>;
+  /** Makes a document of text that belongs to no file; `name`'s extension says what language it is. */
+  openText(name: string, text: string): Promise<DocumentSummary>;
+  /** The text of a document. */
+  text(id: number): Promise<string>;
+  /** Replaces the text of a document made by `openText`. */
+  setText(id: number, text: string): Promise<void>;
+  /** Reads a document's file from disk again, dropping its edits. */
+  reload(id: number): Promise<void>;
   /** Hears of everything that happens to documents. Returns the function that stops it. */
   onEvent(handler: (event: DocumentEvent) => void): () => void;
 }
@@ -222,6 +232,72 @@ export class EditorService extends Service {
     return summary.id;
   }
 
+  /**
+   * Opens a file as a document without showing it in any pane, for a view that draws it itself,
+   * such as a diff. Resolves to the document's id, or null when it could not be opened. Pair it
+   * with `releaseDocument`.
+   */
+  async openDocument(path: string): Promise<number | null> {
+    try {
+      const summary = await this.host.open(path);
+      this.adopt(summary);
+      return summary.id;
+    } catch (error) {
+      this.setMessage(describeError(error));
+      return null;
+    }
+  }
+
+  /** Makes a document of text that belongs to no file. Resolves to its id, or null when that failed. */
+  async openText(name: string, text: string): Promise<number | null> {
+    try {
+      const summary = await this.host.openText(name, text);
+      this.adopt(summary);
+      return summary.id;
+    } catch (error) {
+      this.setMessage(describeError(error));
+      return null;
+    }
+  }
+
+  /** The text of a document. */
+  textOf(documentId: number): Promise<string> {
+    return this.host.text(documentId);
+  }
+
+  /** Replaces the text of a document made by `openText`. */
+  setText(documentId: number, text: string): Promise<void> {
+    return this.host.setText(documentId, text);
+  }
+
+  /** Reads a document's file again, so what another program or a git command did to it shows. */
+  async reloadDocument(documentId: number): Promise<void> {
+    try {
+      await this.host.reload(documentId);
+    } catch (error) {
+      this.setMessage(describeError(error));
+    }
+  }
+
+  /**
+   * Lets go of a document `openDocument` or `openText` made once the view that drew it is done.
+   * A document no pane has a tab for is closed, unless it has unsaved changes: that one gets a
+   * tab, so the changes are not lost out of sight.
+   */
+  async releaseDocument(documentId: number): Promise<void> {
+    const info = this.documentsById.get(documentId);
+    if (!info || this.isShownElsewhere(documentId, "")) {
+      return;
+    }
+    const leafId = this.targetLeafId();
+    if (info.dirty && leafId !== null) {
+      this.showIn(leafId, documentId, false);
+      return;
+    }
+    await this.host.close(documentId);
+    this.forget(documentId);
+  }
+
   /** Every open document, in the order they were opened. Reactive. */
   buffers(): BufferInfo[] {
     this.changes.track();
@@ -332,6 +408,15 @@ export class EditorService extends Service {
     };
   }
 
+  /** Sends the focused pane's editor a command with fields, such as a cursor placed at a position. */
+  async applyToFocused(command: { type: string; [field: string]: unknown }): Promise<void> {
+    const view = this.viewsByLeaf.get(this.panes.focusedLeafId);
+    if (!view) {
+      throw new Error(`there is no editor to ${command.type} in`);
+    }
+    await view.apply(command);
+  }
+
   /** Whether the focused pane has an editor to take a command. Reactive. */
   hasFocusedView(): boolean {
     this.changes.track();
@@ -374,6 +459,15 @@ export class EditorService extends Service {
     await this.host.setDecorations(info.id, source, decorations);
     await Promise.all([...this.viewsByLeaf.values()].map((view) => view.refresh()));
     return true;
+  }
+
+  /**
+   * Like `setDecorations`, for a document that may have no file or no pane, such as one side of
+   * a diff. The views that show it are told to draw again.
+   */
+  async setDecorationsOf(documentId: number, source: string, decorations: Decoration[]): Promise<void> {
+    await this.host.setDecorations(documentId, source, decorations);
+    await Promise.all([...this.viewsByLeaf.values()].map((view) => view.refresh()));
   }
 
   /** Removes everything a source has put on a file's text. */
@@ -704,6 +798,9 @@ export class EditorService extends Service {
       this.setMessage("Saved");
       return;
     }
+    if (event.type === "edited") {
+      return;
+    }
     if (event.type === "error") {
       this.setMessage(event.message);
       return;
@@ -723,6 +820,9 @@ export class EditorService extends Service {
     }
     if (event.type === "open-request") {
       this.open(event.path);
+      return;
+    }
+    if (event.type === "change-request") {
       return;
     }
     this.cursorsById.set(event.id, { row: event.row, column: event.column, count: event.count, selected: event.selected });

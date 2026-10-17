@@ -21,6 +21,14 @@ export function gpuiDocumentHost(): DocumentHost {
     configure: async (options) => {
       await invoke("editor_configure", options);
     },
+    openText: (name, text) => invoke<DocumentSummary>("document_open_text", { name, text }),
+    text: (id) => invoke<string>("document_text", { id }),
+    setText: async (id, text) => {
+      await invoke("document_set_text", { id, text });
+    },
+    reload: async (id) => {
+      await invoke("document_reload", { id });
+    },
     onEvent: listenToDocuments,
   };
 }
@@ -32,6 +40,7 @@ function listenToDocuments(handler: (event: DocumentEvent) => void): () => void 
     listen<{ id: number }>("document-closed", (event) => handler({ type: "closed", id: event.id })),
     listen<{ id: number; dirty: boolean }>("document-dirty", (event) => handler({ type: "dirty", ...event })),
     listen<{ id: number }>("document-saved", (event) => handler({ type: "saved", id: event.id })),
+    listen<{ id: number }>("document-edited", (event) => handler({ type: "edited", id: event.id })),
     listen<{ id: number; message: string }>("document-error", (event) => handler({ type: "error", ...event })),
     listen<{ id: number; row: number; column: number; count: number; selected: boolean }>(
       "document-selections",
@@ -41,13 +50,20 @@ function listenToDocuments(handler: (event: DocumentEvent) => void): () => void 
     listen<{ mode: string; pending: string; commandLine: string | null }>("editor-mode", (event) =>
       handler({ type: "mode", ...event }),
     ),
-    listen<{ id: number; request: "close" | "open"; discard?: boolean; path?: string }>("document-request", (event) => {
-      if (event.request === "close") {
-        handler({ type: "close-request", id: event.id, discard: event.discard === true });
-        return;
-      }
-      handler({ type: "open-request", id: event.id, path: event.path ?? "" });
-    }),
+    listen<{ id: number; request: "close" | "open" | "change"; discard?: boolean; path?: string; forward?: boolean }>(
+      "document-request",
+      (event) => {
+        if (event.request === "close") {
+          handler({ type: "close-request", id: event.id, discard: event.discard === true });
+          return;
+        }
+        if (event.request === "change") {
+          handler({ type: "change-request", id: event.id, forward: event.forward === true });
+          return;
+        }
+        handler({ type: "open-request", id: event.id, path: event.path ?? "" });
+      },
+    ),
   ];
   return () => {
     for (const stop of stops) {

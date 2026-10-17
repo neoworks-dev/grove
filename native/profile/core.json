@@ -2,6 +2,12 @@
   { "id": "frame", "plugin": "frame" },
   { "id": "menus", "plugin": "menus" },
   { "id": "core-menu", "plugin": "core-menu" },
+  { "id": "theme", "plugin": "theme" },
+  { "id": "core-themes", "plugin": "core-themes" },
+  { "id": "palette", "plugin": "palette" },
+  { "id": "theme-picker", "plugin": "theme-picker" },
+  { "id": "settings-view", "plugin": "settings-view" },
+  { "id": "which-key", "plugin": "which-key" },
   { "id": "header", "plugin": "header" },
   { "id": "rails", "plugin": "rails" },
   { "id": "sidebar", "plugin": "sidebar", "config": { "open": "explorer" } },
@@ -10,6 +16,10 @@
   { "id": "layout", "plugin": "layout" },
   { "id": "editor", "plugin": "editor" },
   { "id": "statusbar-position", "plugin": "editor-position" },
+  { "id": "sidecar", "plugin": "sidecar" },
+  { "id": "workspace", "plugin": "workspace" },
+  { "id": "explorer", "plugin": "explorer" },
+  { "id": "worktrees", "plugin": "worktrees" },
   { "id": "placeholder-sidebar", "plugin": "placeholder-sidebar" },
   { "id": "placeholder-panel", "plugin": "placeholder-panel" }
 ]

@@ -5,7 +5,7 @@
 -->
 <script lang="ts">
   import { Button, Menu, Popover, Text, View } from "@neoworks/svelte-gpui/ui";
-  import { colors, fontSize, overlayPanel, radius } from "../theme/tokens";
+  import { colors, fontSize, menuItemStyle, overlayPanel, radius } from "../theme/tokens";
   import { itemsForMenu, menuRows, type MenuBarItem, type RowOptions, type TopMenu } from "../menus/menuModel";
 
   interface Props {
@@ -85,6 +85,7 @@
           width={224}
           onclose={() => close("select")}
           style={{ background: "transparent" }}
+          itemStyle={menuItemStyle()}
         />
       {/snippet}
     </Popover>

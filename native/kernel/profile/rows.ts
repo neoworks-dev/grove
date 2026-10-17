@@ -59,8 +59,9 @@ export function parseProfile(text: string, source: string): ParsedProfile {
 
 /**
  * Stacks the layers into one list of rows. A row keeps the position of the first layer that
- * had its id, and takes the contents of the last. A row with no plugin that names none to
- * inherit, or that is not disabled, is dropped with a problem.
+ * had its id. What a later layer's row leaves out it inherits from the row it replaces: the
+ * plugin, the disabled flag, and each config key it does not set (config objects merge one
+ * level deep). A row that names no plugin and replaces none is dropped with a problem.
  */
 export function layerProfiles(layers: ProfileLayer[]): { rows: ResolvedRow[]; problems: string[] } {
   const byId = new Map<string, ResolvedRow>();
@@ -80,15 +81,37 @@ export function layerProfiles(layers: ProfileLayer[]): { rows: ResolvedRow[]; pr
 
 /** One row on top of the row it replaces, or the reason it cannot be resolved. */
 function resolveRow(row: ProfileRow, replaced: ResolvedRow | undefined, layer: string): ResolvedRow | string {
-  const disabled = row.disabled === true;
   let plugin = row.plugin;
-  if (plugin === undefined && disabled && replaced) {
+  if (plugin === undefined && replaced) {
     plugin = replaced.plugin;
   }
   if (plugin === undefined) {
     return "names no plugin";
   }
-  return { id: row.id, plugin, config: row.config, disabled, layer };
+  let disabled = row.disabled;
+  if (disabled === undefined) {
+    disabled = replaced !== undefined && replaced.disabled;
+  }
+  let replacedConfig: unknown;
+  if (replaced && replaced.plugin === plugin) {
+    replacedConfig = replaced.config;
+  }
+  return { id: row.id, plugin, config: mergeConfig(replacedConfig, row.config), disabled, layer };
+}
+
+/** A later config on top of an earlier one: plain objects merge key by key, anything else replaces. */
+function mergeConfig(earlier: unknown, later: unknown): unknown {
+  if (later === undefined) {
+    return earlier;
+  }
+  if (isPlainObject(earlier) && isPlainObject(later)) {
+    return { ...earlier, ...later };
+  }
+  return later;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** Why a value cannot be a row, or null when it can. */

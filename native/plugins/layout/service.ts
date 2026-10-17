@@ -29,14 +29,23 @@ declare module "@neoworks/extension-system" {
 /** No pane may be squeezed under a readable width. */
 const MIN_PANE_PX = 120;
 
+/** Called with the new pane and the pane it was split from. */
+export type PaneSplitListener = (newLeafId: string, sourceLeafId: string) => void;
+
+/** Called with a pane that was closed. By then the focus is on a pane that is still open. */
+export type PaneClosedListener = (leafId: string) => void;
+
 export class LayoutService extends Service implements LayoutHost {
   private rootNode: LayoutNode;
   private focusedId: string;
   private collapsingId: string | null = null;
-  private newPaneTypeId: string;
+  private newPaneTypeId: string | null;
+  private splitListeners: PaneSplitListener[] = [];
+  private closedListeners: PaneClosedListener[] = [];
   private changes: ChangeSignal = createChangeSignal();
 
-  constructor(ctx: Context, defaultPaneTypeId: string, newPaneTypeId: string) {
+  /** `newPaneTypeId` is what a split opens; null opens another pane of the type that was split. */
+  constructor(ctx: Context, defaultPaneTypeId: string, newPaneTypeId: string | null) {
     super(ctx, "layout");
     const first = createLeaf(defaultPaneTypeId);
     this.rootNode = first;
@@ -72,12 +81,52 @@ export class LayoutService extends Service implements LayoutHost {
     return leaves(this.root).length;
   }
 
-  /** Splits the focused pane, putting a new pane of the configured type after it, and focuses that. */
+  /** The ids of every pane, in reading order. Reactive. */
+  leafIds(): string[] {
+    return leaves(this.root).map((leaf) => leaf.id);
+  }
+
+  /** The pane type a pane shows, or undefined for an id that names no pane. Reactive. */
+  paneTypeOf(leafId: string): string | undefined {
+    return findLeaf(this.root, leafId)?.paneTypeId;
+  }
+
+  /** Hears of every split, so a plugin can fill the new pane from the one it came from. */
+  onPaneSplit(listener: PaneSplitListener): () => void {
+    this.splitListeners.push(listener);
+    return () => {
+      this.splitListeners = this.splitListeners.filter((candidate) => candidate !== listener);
+    };
+  }
+
+  /** Hears of every pane that closes, so a plugin can let go of what it kept for it. */
+  onPaneClosed(listener: PaneClosedListener): () => void {
+    this.closedListeners.push(listener);
+    return () => {
+      this.closedListeners = this.closedListeners.filter((candidate) => candidate !== listener);
+    };
+  }
+
+  /**
+   * Splits the focused pane and focuses the new one. The new pane is of the configured type, or
+   * of the type that was split when none is configured, as a split of an editor is another editor.
+   */
   splitFocused(direction: SplitDirection): void {
-    const created = createLeaf(this.newPaneTypeId);
-    this.rootNode = splitLeaf(this.rootNode, this.focusedId, direction, created, "after");
+    const source = findLeaf(this.rootNode, this.focusedId);
+    if (!source) {
+      return;
+    }
+    let paneTypeId = source.paneTypeId;
+    if (this.newPaneTypeId !== null) {
+      paneTypeId = this.newPaneTypeId;
+    }
+    const created = createLeaf(paneTypeId);
+    this.rootNode = splitLeaf(this.rootNode, source.id, direction, created, "after");
     this.focusedId = created.id;
     this.changes.notify();
+    for (const listener of this.splitListeners) {
+      listener(created.id, source.id);
+    }
   }
 
   /** Gives a pane the focus; ids that name no pane are ignored. */
@@ -114,6 +163,9 @@ export class LayoutService extends Service implements LayoutHost {
       this.focusedId = leaves(remaining)[0].id;
     }
     this.changes.notify();
+    for (const listener of this.closedListeners) {
+      listener(leafId);
+    }
   }
 
   /** A dragged pane was dropped on another: it swaps places in the middle, or splits it at an edge. */

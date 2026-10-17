@@ -11,7 +11,7 @@ const NOT_AVAILABLE_NATIVELY = ['files.pathForFile']
 
 /** Builds the nested `workbench` object from the channel table, over the client. */
 export function createWorkbench(
-  client: SidecarClient,
+  client: Pick<SidecarClient, 'call' | 'on'>,
   channels: Record<string, string> = workbenchChannels
 ): WorkbenchApi {
   const workbench: Record<string, unknown> = {

@@ -13,7 +13,7 @@ import { createChangeSignal, type ChangeSignal } from "../../kernel/reactive";
 import type { SplitDirection } from "../layout/layoutTree";
 import type { Worktree } from "../../../src/shared/types";
 import { ChatSession } from "./chatSession";
-import { groupSessions, sessionTitle, type SessionGroup } from "./sessions";
+import { groupSessions, sessionTitle, siblingsOf, type SessionGroup } from "./sessions";
 import type { ConnectionState, DaemonAddress, SuiteClient, SuiteHost } from "./suiteClient";
 
 declare module "@neoworks/extension-system" {
@@ -147,6 +147,11 @@ export class AgentsService extends Service {
     return groupSessions(this.sessions(), this.workspace.worktrees(), selectedId);
   }
 
+  /** The sessions in the same worktree as this one, the tabs of its pane. Reactive. */
+  siblingSessions(sessionId: string): SessionInfo[] {
+    return siblingsOf(this.groups(), sessionId);
+  }
+
   /** What the daemon says about a session, or undefined for one it does not list. Reactive. */
   sessionInfo(sessionId: string): SessionInfo | undefined {
     return this.sessions().find((session) => session.id === sessionId);
@@ -278,6 +283,11 @@ export class AgentsService extends Service {
     });
     chat.start();
     return chat;
+  }
+
+  /** Makes one pane show another session, the way a tab does. */
+  showSession(leafId: string, sessionId: string): void {
+    this.panes.setPaneState(leafId, { sessionId });
   }
 
   /**

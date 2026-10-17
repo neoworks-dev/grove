@@ -240,7 +240,9 @@ impl Editor {
             }
             _ => {
                 if !modifiers.control && !modifiers.alt && !modifiers.platform {
-                    if let Some(typed) = keystroke.key_char.as_deref().filter(|typed| !typed.chars().any(char::is_control)) {
+                    if let Some(typed) =
+                        keystroke.key_char.as_deref().filter(|typed| !typed.chars().any(char::is_control))
+                    {
                         rename.insert(typed);
                     }
                 }

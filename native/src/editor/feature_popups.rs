@@ -13,8 +13,8 @@ use super::Editor;
 use super::element::{FONT_FAMILY, FONT_SIZE, LINE_HEIGHT, Layout, cursor_bounds, measure_text_width};
 use super::menu::{MENU_ROWS, Menu, MenuKind, MenuRow, Preview};
 use super::popup::{
-    GAP, Popover, ROW_HEIGHT, TEXT_SIZE, fit_to_content, markdown_element, place_vertically,
-    popover_background, popover_border,
+    GAP, Popover, ROW_HEIGHT, TEXT_SIZE, fit_to_content, markdown_element, place_vertically, popover_background,
+    popover_border,
 };
 use super::rename::RenameBox;
 use super::signature::SignatureSession;
@@ -87,7 +87,8 @@ fn signature_popover(
     let mut sections: Vec<AnyElement> = vec![header.into_any_element()];
     if let Some(documentation) = documentation {
         let parsed = markdown::parse(&documentation);
-        let body = div().text_color(mix(theme.background, theme.foreground, 0.75)).child(markdown_element(&parsed, theme));
+        let body =
+            div().text_color(mix(theme.background, theme.foreground, 0.75)).child(markdown_element(&parsed, theme));
         sections.push(body.into_any_element());
     }
     let mut element = div()
@@ -133,12 +134,13 @@ fn menu_popovers(
         MenuKind::Locations => LOCATIONS_WIDTH.min(bounds.size.width - px(40.0)),
         MenuKind::CodeActions => MENU_WIDTH.min(bounds.size.width - px(16.0)),
     };
-    let rows: Vec<AnyElement> =
-        shown.clone().map(|position| menu_row(entity, menu, position, theme, window)).collect();
+    let rows: Vec<AnyElement> = shown.clone().map(|position| menu_row(entity, menu, position, theme, window)).collect();
     let mut sections: Vec<AnyElement> = Vec::new();
     if menu.kind == MenuKind::Locations {
         let title = format!("{}  {}/{}", menu.title, menu.selected + 1, menu.rows.len());
-        sections.push(div().px(px(10.0)).py(px(4.0)).text_color(theme.hint).text_size(px(12.0)).child(title).into_any_element());
+        sections.push(
+            div().px(px(10.0)).py(px(4.0)).text_color(theme.hint).text_size(px(12.0)).child(title).into_any_element(),
+        );
     }
     sections.push(div().flex().flex_col().children(rows).into_any_element());
     if let Some(preview) = menu.selected_row().and_then(|row| row.preview.as_ref()) {
@@ -161,7 +163,8 @@ fn menu_popovers(
         .text_color(theme.foreground)
         .children(sections)
         .into_any_element();
-    let measured = element.layout_as_root(size(AvailableSpace::Definite(width), AvailableSpace::MinContent), window, cx);
+    let measured =
+        element.layout_as_root(size(AvailableSpace::Definite(width), AvailableSpace::MinContent), window, cx);
     let origin = match menu.kind {
         MenuKind::Locations => {
             let left = bounds.left() + (bounds.size.width - width) / 2.0;
@@ -179,7 +182,13 @@ fn menu_popovers(
 }
 
 /// One row of a list: its title, and after it the code of the place or the kind of action.
-fn menu_row(entity: &Entity<Editor>, menu: &Menu, position: usize, theme: &EditorTheme, window: &mut Window) -> AnyElement {
+fn menu_row(
+    entity: &Entity<Editor>,
+    menu: &Menu,
+    position: usize,
+    theme: &EditorTheme,
+    window: &mut Window,
+) -> AnyElement {
     let row: &MenuRow = &menu.rows[position];
     let selected = position == menu.selected;
     let muted = row.disabled.is_some();
@@ -238,7 +247,11 @@ fn preview_element(preview: &Preview, theme: &EditorTheme) -> impl IntoElement {
 }
 
 /// The characters of the focused line that the place covers, in the accent colour and bold.
-fn focus_highlights(text: &str, columns: (usize, usize), theme: &EditorTheme) -> Vec<(std::ops::Range<usize>, TextHighlight)> {
+fn focus_highlights(
+    text: &str,
+    columns: (usize, usize),
+    theme: &EditorTheme,
+) -> Vec<(std::ops::Range<usize>, TextHighlight)> {
     let offsets: Vec<usize> = text.char_indices().map(|(offset, _)| offset).collect();
     let Some(&start) = offsets.get(columns.0) else {
         return Vec::new();
@@ -247,7 +260,8 @@ fn focus_highlights(text: &str, columns: (usize, usize), theme: &EditorTheme) ->
     if end == start {
         return Vec::new();
     }
-    let style = TextHighlight { color: Some(theme.cursor), font_weight: Some(FontWeight::BOLD), ..TextHighlight::default() };
+    let style =
+        TextHighlight { color: Some(theme.cursor), font_weight: Some(FontWeight::BOLD), ..TextHighlight::default() };
     vec![(start..end, style)]
 }
 
@@ -265,11 +279,7 @@ fn rename_popover(
     let text_width = measure_text_width(window, &rename.text) * (FONT_SIZE / px(13.0));
     let caret = div().flex_none().w(px(1.5)).h(px(17.0)).bg(theme.cursor);
     let field = if rename.all_selected {
-        div()
-            .flex()
-            .items_center()
-            .child(div().bg(theme.selection).child(rename.text.clone()))
-            .child(caret)
+        div().flex().items_center().child(div().bg(theme.selection).child(rename.text.clone())).child(caret)
     } else {
         div().flex().items_center().child(before).child(caret).child(after)
     };

@@ -241,7 +241,8 @@ pub fn line_edits(old: &str, new: &str) -> Vec<RangeEdit> {
     let new_lines: Vec<&str> = new.split_inclusive('\n').collect();
     let prefix = old_lines.iter().zip(&new_lines).take_while(|(a, b)| a == b).count();
     let suffix_limit = old_lines.len().min(new_lines.len()) - prefix;
-    let suffix = old_lines.iter().rev().zip(new_lines.iter().rev()).take(suffix_limit).take_while(|(a, b)| a == b).count();
+    let suffix =
+        old_lines.iter().rev().zip(new_lines.iter().rev()).take(suffix_limit).take_while(|(a, b)| a == b).count();
     let old_middle = &old_lines[prefix..old_lines.len() - suffix];
     let new_middle = &new_lines[prefix..new_lines.len() - suffix];
     let hunks = if old_middle.len() > LONGEST_DIFFED_MIDDLE || new_middle.len() > LONGEST_DIFFED_MIDDLE {
@@ -439,7 +440,13 @@ mod tests {
         let old = "const   a = [1,2]\nfoo( x )\n";
         let new = "const a = [1, 2];\nfoo(x);\n";
         let at = |row, column| editor_core::Position { row, column };
-        for (cursor, expected) in [(at(0, 0), at(0, 0)), (at(0, 6), at(0, 6)), (at(0, 9), at(0, 7)), (at(1, 0), at(1, 0)), (at(1, 5), at(1, 4))] {
+        for (cursor, expected) in [
+            (at(0, 0), at(0, 0)),
+            (at(0, 6), at(0, 6)),
+            (at(0, 9), at(0, 7)),
+            (at(1, 0), at(1, 0)),
+            (at(1, 5), at(1, 4)),
+        ] {
             let mut state = EditorState::new(Buffer::from_text(old));
             state.apply(&Command::PlaceCursor { at: cursor });
             state.apply(&Command::ApplyEdits { edits: line_edits(old, new) });

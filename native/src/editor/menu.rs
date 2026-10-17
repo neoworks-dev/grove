@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use svelte_gpui::gpui::{Context, Keystroke};
 
 use super::features::FeatureSignal;
-use super::{Editor, Signal, SharedDocuments};
+use super::{Editor, SharedDocuments, Signal};
 use crate::lsp::Pending;
 
 /// How many rows a list shows at once.
@@ -309,8 +309,16 @@ impl Editor {
             .collect();
         let title = format!("{} {}", items.len(), title.to_lowercase());
         let request = self.next_request_number();
-        self.features.menu =
-            Some(Menu { kind: MenuKind::Locations, title, document, request, pending: None, rows, selected: 0, first_visible: 0 });
+        self.features.menu = Some(Menu {
+            kind: MenuKind::Locations,
+            title,
+            document,
+            request,
+            pending: None,
+            rows,
+            selected: 0,
+            first_visible: 0,
+        });
         cx.notify();
     }
 
@@ -536,10 +544,7 @@ mod tests {
     fn target(uri: &str, line: usize, from: usize, to: usize) -> Target {
         Target {
             uri: uri.to_string(),
-            range: Range {
-                start: LspPosition { line, character: from },
-                end: LspPosition { line, character: to },
-            },
+            range: Range { start: LspPosition { line, character: from }, end: LspPosition { line, character: to } },
         }
     }
 

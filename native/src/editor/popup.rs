@@ -369,7 +369,12 @@ fn severity_rank(severity: Severity) -> u8 {
 
 /// Places a popover below the line it belongs to, or above it when there is not room below and
 /// there is above.
-pub(super) fn place_vertically(line: Point<Pixels>, _width: Pixels, height: Pixels, bounds: Bounds<Pixels>) -> Point<Pixels> {
+pub(super) fn place_vertically(
+    line: Point<Pixels>,
+    _width: Pixels,
+    height: Pixels,
+    bounds: Bounds<Pixels>,
+) -> Point<Pixels> {
     let below = line.y + LINE_HEIGHT + GAP;
     let fits_below = below + height <= bounds.bottom();
     let above = line.y - GAP - height;

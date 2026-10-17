@@ -160,7 +160,8 @@ mod tests {
         });
         let help = SignatureHelp::parse(&answer).unwrap();
         assert_eq!(help.parameter_of(&help.signatures[0]), Some(0));
-        let past = json!({ "signatures": [{ "label": "f(a)", "parameters": [{ "label": "a" }] }], "activeParameter": 1 });
+        let past =
+            json!({ "signatures": [{ "label": "f(a)", "parameters": [{ "label": "a" }] }], "activeParameter": 1 });
         let help = SignatureHelp::parse(&past).unwrap();
         assert_eq!(help.parameter_of(&help.signatures[0]), None);
     }

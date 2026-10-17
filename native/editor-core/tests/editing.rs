@@ -553,7 +553,11 @@ fn edit(start: Position, end: Position, text: &str) -> editor_core::RangeEdit {
 fn several_edits_apply_at_once_as_one_undo_step_and_cursors_keep_their_place() {
     let mut state = state_with_cursors("let a = 1;\nlet b = 2;\n", &[at(1, 9), at(0, 5)]);
     state.apply(&Command::ApplyEdits {
-        edits: vec![edit(at(1, 4), at(1, 5), "bee"), edit(at(0, 4), at(0, 5), "ay"), edit(at(0, 0), at(0, 0), "// x\n")],
+        edits: vec![
+            edit(at(1, 4), at(1, 5), "bee"),
+            edit(at(0, 4), at(0, 5), "ay"),
+            edit(at(0, 0), at(0, 0), "// x\n"),
+        ],
     });
     assert_eq!(text_of(&state), "// x\nlet ay = 1;\nlet bee = 2;\n");
     assert_eq!(heads(&state), vec![at(1, 4), at(2, 11)]);

@@ -128,8 +128,11 @@ mod tests {
     #[test]
     fn resolving_adds_the_edit() {
         let mut actions = parse_actions(&json!([{ "title": "Fix", "kind": "quickfix", "data": 7 }]));
-        merge_resolved(&mut actions[0], &json!({ "title": "Fix", "data": 7, "edit": { "changes": { "file:///a.ts": [
-            { "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 0 } }, "newText": "x" }] } } }));
+        merge_resolved(
+            &mut actions[0],
+            &json!({ "title": "Fix", "data": 7, "edit": { "changes": { "file:///a.ts": [
+            { "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 0 } }, "newText": "x" }] } } }),
+        );
         assert_eq!(actions[0].edit.as_ref().unwrap().edit_count(), 1);
     }
 }

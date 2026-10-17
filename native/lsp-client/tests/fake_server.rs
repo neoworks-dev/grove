@@ -11,8 +11,8 @@ use editor_core::{Buffer, Command, EditorState, Position};
 use lsp_client::client::{Client, Handler, ServerCommand, Status};
 use lsp_client::completion::parse_items;
 use lsp_client::edits::{parse_prepare_rename, parse_text_edits, parse_workspace_edit, range_edits};
-use lsp_client::signature::{SignatureHelp, request_context};
 use lsp_client::protocol::{PublishDiagnostics, ResponseError, SyncKind, parse_targets};
+use lsp_client::signature::{SignatureHelp, request_context};
 use lsp_client::sync::{did_change_params, did_close_params, did_open_params, did_save_params};
 use lsp_client::uri::uri_from_path;
 use serde_json::{Value, json};
@@ -298,7 +298,9 @@ fn references_and_highlights_find_every_whole_word() {
     let targets = parse_targets(&references);
     assert_eq!(targets.len(), 3);
     assert_eq!((targets[2].range.start.line, targets[2].range.start.character), (1, 18));
-    let highlights = lsp_client::highlights::parse_ranges(&session.ask("textDocument/documentHighlight", session.position_params(1, 1)).unwrap());
+    let highlights = lsp_client::highlights::parse_ranges(
+        &session.ask("textDocument/documentHighlight", session.position_params(1, 1)).unwrap(),
+    );
     assert_eq!(highlights.len(), 3);
     assert!(parse_targets(&session.ask("textDocument/references", session.position_params(0, 11)).unwrap()).is_empty());
     session.client.shutdown(WAIT);
@@ -309,7 +311,9 @@ fn rename_is_prepared_and_answers_with_edits_that_apply() {
     let session = start();
     let text = "let total = 1;\nconsole.log(total);\n";
     open_document(&session, text);
-    let prepared = parse_prepare_rename(&session.ask("textDocument/prepareRename", session.position_params(0, 6)).unwrap()).unwrap();
+    let prepared =
+        parse_prepare_rename(&session.ask("textDocument/prepareRename", session.position_params(0, 6)).unwrap())
+            .unwrap();
     assert_eq!(prepared.placeholder.as_deref(), Some("total"));
     assert!(session.ask("textDocument/prepareRename", session.position_params(0, 11)).unwrap().is_null());
     let mut params = session.position_params(0, 6);

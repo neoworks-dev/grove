@@ -41,6 +41,13 @@ function recordingView(calls: string[]): EditorViewMethods {
     hover: async () => void calls.push("hover"),
     definition: async () => void calls.push("definition"),
     complete: async () => void calls.push("complete"),
+    references: async () => void calls.push("references"),
+    typeDefinition: async () => void calls.push("typeDefinition"),
+    implementation: async () => void calls.push("implementation"),
+    rename: async () => void calls.push("rename"),
+    codeActions: async () => void calls.push("codeActions"),
+    signature: async () => void calls.push("signature"),
+    format: async () => void calls.push("format"),
     goto: async (line, character) => void calls.push(`goto ${line}:${character}`),
   };
 }

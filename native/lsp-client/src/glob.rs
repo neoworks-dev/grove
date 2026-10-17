@@ -2,6 +2,91 @@
 //! number of directories, `*` and `?` within a name, `{a,b}` for alternatives and `[abc]` for
 //! a set of characters.
 
+use std::path::Path;
+
+use serde_json::Value;
+
+use crate::uri::path_from_uri;
+
+/// What happened to a file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileChange {
+    Created,
+    Changed,
+    Deleted,
+}
+
+impl FileChange {
+    /// The number the protocol gives the change.
+    pub fn number(self) -> u8 {
+        match self {
+            FileChange::Created => 1,
+            FileChange::Changed => 2,
+            FileChange::Deleted => 3,
+        }
+    }
+
+    /// The bit that stands for the change in a watcher's `kind`.
+    fn bit(self) -> u64 {
+        match self {
+            FileChange::Created => 1,
+            FileChange::Changed => 2,
+            FileChange::Deleted => 4,
+        }
+    }
+}
+
+/// A pattern a server registered to hear about changes to files matching it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Watcher {
+    /// The directory the pattern is relative to, when the server gave one.
+    pub base: Option<std::path::PathBuf>,
+    pub pattern: String,
+    /// Which changes the watcher wants, as the protocol's bits: created, changed, deleted.
+    pub kind: u64,
+}
+
+impl Watcher {
+    /// Whether a change to a file is one the watcher wants. Patterns are relative to the watcher's
+    /// base, or to the workspace root when it has none.
+    pub fn wants(&self, path: &Path, root: &Path, change: FileChange) -> bool {
+        if self.kind & change.bit() == 0 {
+            return false;
+        }
+        let base = match &self.base {
+            Some(base) => base.as_path(),
+            None => root,
+        };
+        let Ok(relative) = path.strip_prefix(base) else {
+            return false;
+        };
+        matches(&self.pattern, &relative.to_string_lossy())
+    }
+}
+
+/// The watchers in the registration options of `workspace/didChangeWatchedFiles`.
+pub fn parse_watchers(options: &Value) -> Vec<Watcher> {
+    let Some(list) = options["watchers"].as_array() else {
+        return Vec::new();
+    };
+    list.iter().filter_map(parse_watcher).collect()
+}
+
+/// One watcher, whose pattern is a glob or a glob with the folder it is relative to.
+fn parse_watcher(entry: &Value) -> Option<Watcher> {
+    let kind = entry["kind"].as_u64().unwrap_or(7);
+    let glob = &entry["globPattern"];
+    if let Some(pattern) = glob.as_str() {
+        return Some(Watcher { base: None, pattern: pattern.to_string(), kind });
+    }
+    let pattern = glob["pattern"].as_str()?.to_string();
+    let base_uri = match &glob["baseUri"] {
+        Value::String(uri) => Some(uri.as_str()),
+        other => other["uri"].as_str(),
+    };
+    Some(Watcher { base: base_uri.and_then(path_from_uri), pattern, kind })
+}
+
 /// Whether a path (with `/` separators) matches a pattern.
 pub fn matches(pattern: &str, path: &str) -> bool {
     let expanded = expand_alternatives(pattern);
@@ -124,6 +209,22 @@ mod tests {
         assert!(matches("src/*.ts", "src/a.ts"));
         assert!(matches("**/tsconfig.json", "packages/app/tsconfig.json"));
         assert!(!matches("**/tsconfig.json", "packages/app/mytsconfig.json"));
+    }
+
+    #[test]
+    fn watchers_are_read_in_both_forms_and_ask_for_the_changes_they_name() {
+        let options = serde_json::json!({ "watchers": [
+            { "globPattern": "**/*.ts" },
+            { "globPattern": { "baseUri": "file:///work/app", "pattern": "*.json" }, "kind": 4 },
+        ] });
+        let watchers = parse_watchers(&options);
+        assert_eq!(watchers.len(), 2);
+        let root = Path::new("/work");
+        assert!(watchers[0].wants(Path::new("/work/src/a.ts"), root, FileChange::Changed));
+        assert!(!watchers[0].wants(Path::new("/elsewhere/a.ts"), root, FileChange::Changed));
+        assert!(watchers[1].wants(Path::new("/work/app/x.json"), root, FileChange::Deleted));
+        assert!(!watchers[1].wants(Path::new("/work/app/x.json"), root, FileChange::Created));
+        assert!(!watchers[1].wants(Path::new("/work/x.json"), root, FileChange::Deleted));
     }
 
     #[test]

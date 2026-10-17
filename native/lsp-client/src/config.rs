@@ -61,6 +61,7 @@ pub fn initialization_options(server: &str, switches: Switches) -> Value {
     let enabled = switches.inlay_hints;
     json!({
         "preferences": {
+            "providePrefixAndSuffixTextForRename": false,
             "includeInlayParameterNameHints": hints,
             "includeInlayParameterNameHintsWhenArgumentMatchesName": false,
             "includeInlayFunctionParameterTypeHints": enabled,
@@ -78,6 +79,8 @@ fn typescript_settings(switches: Switches) -> Value {
     let hints = if switches.inlay_hints { "literals" } else { "none" };
     let enabled = switches.inlay_hints;
     json!({
+        // Rename the symbol itself in every file, not just an alias in the file that imports it.
+        "preferences": { "useAliasesForRenames": false },
         "inlayHints": {
             "parameterNames": { "enabled": hints, "suppressWhenArgumentMatchesName": true },
             "parameterTypes": { "enabled": enabled },

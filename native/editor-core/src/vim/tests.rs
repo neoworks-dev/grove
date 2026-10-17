@@ -642,3 +642,35 @@ fn escape_in_normal_mode_collapses_extra_cursors() {
     vim.keys("<Esc>");
     assert_eq!(vim.state.selections().count(), 1);
 }
+
+#[test]
+fn vim_commands_round_trip_through_json() {
+    use crate::movement::Motion;
+    use crate::vim::types::{Operator, SearchRequest, Target};
+    let commands = [
+        Command::Operate {
+            operator: Operator::Change,
+            target: Target::Motion {
+                motion: Motion::FindChar { character: 'x', forward: true, till: false, repeat: false },
+                count: 2,
+            },
+            register: Some('a'),
+        },
+        Command::VimSearch {
+            request: SearchRequest::Pattern { pattern: "foo".to_string(), forward: false },
+            count: 1,
+            extend: false,
+        },
+        Command::Put { register: None, before: true, count: 3, cursor_after: false, over: None, clipboard: None },
+        Command::GroupUndo { open: true },
+        Command::Noop,
+    ];
+    for command in commands {
+        let json = serde_json::to_value(&command).unwrap();
+        assert_eq!(serde_json::from_value::<Command>(json).unwrap(), command);
+    }
+    let from_svelte: Command =
+        serde_json::from_str(r#"{"type": "vim_move", "motion": {"word_forward": {"big": false}}, "count": 2}"#)
+            .unwrap();
+    assert!(matches!(from_svelte, Command::VimMove { count: 2, extend: false, .. }));
+}

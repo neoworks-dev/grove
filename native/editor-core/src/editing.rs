@@ -9,6 +9,7 @@ use crate::anchor::{Anchor, AnchorId, Bias};
 use crate::buffer::{Buffer, Position};
 use crate::clipboard::{copy_text, split_for_paste};
 use crate::command::Outcome;
+use crate::completion::RangeEdit;
 use crate::display::DisplayLine;
 use crate::edit::{Edit, Edits};
 use crate::history::{EditKind, Step, Transaction};
@@ -144,6 +145,22 @@ impl EditorState {
         let (start, end) = (start.min(length), end.min(length));
         let edits = Edits::new(vec![Edit::replace(start.min(end)..end.max(start), text)]);
         let changed = self.commit(edits, SelectionsAfter::CursorAfterTheEdit, EditKind::Other, now);
+        edited(changed)
+    }
+
+    /// Replaces several ranges at once, which are positions in the text as it is now, as one step
+    /// for undo. Selections keep their place in the text around the edits.
+    pub(crate) fn apply_range_edits(&mut self, edits: &[RangeEdit], now: Instant) -> Outcome {
+        let mut list: Vec<Edit> = edits
+            .iter()
+            .map(|edit| {
+                let start = self.buffer.offset_of(edit.start);
+                let end = self.buffer.offset_of(edit.end).max(start);
+                Edit::replace(start..end, edit.text.clone())
+            })
+            .collect();
+        list.sort_by_key(|edit| (edit.start, edit.end));
+        let changed = self.commit(Edits::new(list), SelectionsAfter::KeepPlaces, EditKind::Other, now);
         edited(changed)
     }
 

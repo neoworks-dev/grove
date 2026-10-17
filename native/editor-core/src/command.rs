@@ -85,6 +85,10 @@ pub enum Command {
     /// Replaces the characters `start..end` (offsets in the text) with text, and puts the
     /// newest cursor after it. This is what an input method asks for when it corrects earlier text.
     ReplaceRange { start: usize, end: usize, text: String },
+    /// Applies several replacements at once, as a language server's text edits or a formatter's
+    /// output ask for. The positions are in the text as it is now, and the whole set is one step
+    /// for undo. Cursors keep their place in the text around the edits.
+    ApplyEdits { edits: Vec<RangeEdit> },
     /// Replaces everything one source has put on top of the text (errors, blame, a diff) with
     /// `decorations`. An empty list removes the source's. Text and selections are not touched.
     SetDecorations { source: String, decorations: Vec<Decoration> },

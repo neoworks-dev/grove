@@ -224,7 +224,12 @@ export class KeymapService extends Service {
   /** Logs sequences that do not parse and pairs of bindings that shadow one another. */
   private warnAboutProblems(added: KeyBinding[]): void {
     const addedIds = new Set(added.map((binding) => binding.id));
-    const conflicts = findConflicts(this.resolvedBindings());
+    const entries = this.resolvedBindings().map((binding) => ({
+      id: binding.id,
+      sequence: binding.sequence,
+      guarded: binding.when !== undefined,
+    }));
+    const conflicts = findConflicts(entries);
     for (const conflict of conflicts) {
       if (addedIds.has(conflict.firstId) || addedIds.has(conflict.secondId)) {
         this.ctx.logger.warn(`keymap: "${conflict.firstId}" and "${conflict.secondId}" ${conflict.kind}`);

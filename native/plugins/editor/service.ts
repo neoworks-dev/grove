@@ -48,7 +48,10 @@ export type DocumentEvent =
   | { type: "dirty"; id: number; dirty: boolean }
   | { type: "saved"; id: number }
   | { type: "error"; id: number; message: string }
-  | { type: "selections"; id: number; row: number; column: number; count: number; selected: boolean };
+  | { type: "selections"; id: number; row: number; column: number; count: number; selected: boolean }
+  | { type: "mode"; mode: string; pending: string; commandLine: string | null }
+  | { type: "close-request"; id: number; discard: boolean }
+  | { type: "open-request"; id: number; path: string };
 
 /** The documents the Rust host keeps. A test supplies a fake. */
 export interface DocumentHost {
@@ -97,6 +100,17 @@ export interface CursorInfo {
   selected: boolean;
 }
 
+/** Which keys the editor understands: VS Code's, or vim's. */
+export type KeymapName = "standard" | "vim";
+
+/** What the vim layer reports: its mode, the keys it is waiting on, and the line typed after `:`. */
+export interface VimStatus {
+  /** `NORMAL`, `INSERT`, `VISUAL`, `V-LINE` or `REPLACE`; empty while the keys are the standard ones. */
+  mode: string;
+  pending: string;
+  commandLine: string | null;
+}
+
 /** What a prompt asking about unsaved changes can be answered with. */
 export type CloseChoice = "save" | "discard" | "cancel";
 
@@ -118,6 +132,8 @@ export class EditorService extends Service {
   private answerClose: ((choice: CloseChoice) => void) | null = null;
   private messageText = "";
   private changes: ChangeSignal = createChangeSignal();
+  private keymapName: KeymapName = "standard";
+  private vimState: VimStatus = { mode: "", pending: "", commandLine: null };
   private documentListeners = new Set<(event: DocumentEvent) => void>();
 
   constructor(
@@ -209,6 +225,36 @@ export class EditorService extends Service {
       return null;
     }
     return cursor;
+  }
+
+  /** Which keys the editors understand. Reactive. */
+  keymap(): KeymapName {
+    this.changes.track();
+    return this.keymapName;
+  }
+
+  /** Switches every editor between the standard keys and vim's. Anything else is the standard keys. */
+  setKeymap(name: string): void {
+    this.keymapName = name === "vim" ? "vim" : "standard";
+    if (this.keymapName === "standard") {
+      this.vimState = { mode: "", pending: "", commandLine: null };
+    }
+    this.changes.notify();
+  }
+
+  /** The vim layer's mode and pending keys, as the last editor to change them reported. Reactive. */
+  vimStatus(): VimStatus {
+    this.changes.track();
+    return this.vimState;
+  }
+
+  /** Closes a document, throwing its unsaved changes away without asking, as `:q!` does. */
+  async discard(documentId: number): Promise<void> {
+    if (!this.documentsById.has(documentId)) {
+      return;
+    }
+    await this.host.close(documentId);
+    this.forget(documentId);
   }
 
   /** The last thing worth telling the person, such as a failed save. Reactive. */
@@ -597,8 +643,30 @@ export class EditorService extends Service {
       this.setMessage(event.message);
       return;
     }
+    if (event.type === "mode") {
+      this.vimState = { mode: event.mode, pending: event.pending, commandLine: event.commandLine };
+      this.changes.notify();
+      return;
+    }
+    if (event.type === "close-request") {
+      void this.closeFromCommandLine(event.id, event.discard);
+      return;
+    }
+    if (event.type === "open-request") {
+      this.open(event.path);
+      return;
+    }
     this.cursorsById.set(event.id, { row: event.row, column: event.column, count: event.count, selected: event.selected });
     this.changes.notify();
+  }
+
+  /** What `:q` and `:q!` do: close the focused pane's tab, asking about unsaved changes unless discarding. */
+  private async closeFromCommandLine(documentId: number, discard: boolean): Promise<void> {
+    if (discard) {
+      await this.discard(documentId);
+      return;
+    }
+    await this.closeTab(this.panes.focusedLeafId, documentId);
   }
 
   /** Records whether a document has unsaved changes. */

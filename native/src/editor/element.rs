@@ -96,7 +96,13 @@ pub struct Frame {
 impl Frame {
     /// What is drawn for a view that shows no document: the background and nothing else.
     fn empty() -> Frame {
-        Frame { rows: Vec::new(), gutter_width: px(0.0), highlights: Vec::new(), cursors: Vec::new(), underlines: Vec::new() }
+        Frame {
+            rows: Vec::new(),
+            gutter_width: px(0.0),
+            highlights: Vec::new(),
+            cursors: Vec::new(),
+            underlines: Vec::new(),
+        }
     }
 }
 
@@ -199,7 +205,12 @@ impl Element for EditorElement {
 /// Shapes the rows in view and works out where the selections and cursors are drawn, for a
 /// state scrolled to `scroll_top` in a box of `bounds`. Also gives the layout the pointer is
 /// mapped through.
-fn build_frame(state: &EditorState, scroll_top: Pixels, bounds: Bounds<Pixels>, window: &mut Window) -> (Layout, Frame) {
+fn build_frame(
+    state: &EditorState,
+    scroll_top: Pixels,
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+) -> (Layout, Frame) {
     let line_count = state.buffer().line_count();
     let digits = line_count.max(1).to_string().len();
     let digit_width = shape(window, &"0".repeat(digits), LINE_NUMBER).width;

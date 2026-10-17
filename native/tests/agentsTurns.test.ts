@@ -45,7 +45,7 @@ const started = (id: string, kind: "read" | "execute" | "edit" | "other", rawInp
 });
 
 function factsOf(calls: Calls, running = false, open: string[] = []): ChatFacts {
-  return { callOf: (ref) => calls.byRef.get(ref), running, isOpen: (key) => open.includes(key) };
+  return { fold: true, callOf: (ref) => calls.byRef.get(ref), running, isOpen: (key) => open.includes(key) };
 }
 
 test("a call is followed from its start through its updates, keeping what each one carries", () => {
@@ -82,14 +82,14 @@ test("a settled turn folds its work into one summary and keeps the answer and wh
 test("the turn that is running keeps every item as it is", () => {
   const calls = callsOf([started("r", "read")]);
   const items = [user("u1"), tool("r"), agent("m1")];
-  expect(chatRows(items, factsOf(calls, true)).map((row) => row.kind)).toEqual(["item", "item", "item"]);
+  expect(chatRows(items, factsOf(calls, true)).map((row) => row.kind)).toEqual(["item", "item", "item", "working"]);
   expect(chatRows(items, factsOf(calls, false)).map((row) => row.kind)).toEqual(["item", "turn", "item"]);
 });
 
 test("only the last section is in flight while a turn runs", () => {
   const calls = callsOf([started("r", "read"), started("s", "read")]);
   const items = [user("u1"), tool("r"), agent("m1"), user("u2"), tool("s")];
-  expect(chatRows(items, factsOf(calls, true)).map((row) => row.kind)).toEqual(["item", "turn", "item", "item", "item"]);
+  expect(chatRows(items, factsOf(calls, true)).map((row) => row.kind)).toEqual(["item", "turn", "item", "item", "item", "working"]);
 });
 
 test("a turn with no answer folds nothing", () => {
@@ -123,7 +123,8 @@ test("an opened turn shows its items, with runs of settled calls folded to a lin
   const items = [user("u1"), tool("r1"), tool("r2"), agent("m1"), tool("g"), agent("m2")];
   const rows = chatRows(items, factsOf(calls, false, ["u1"]));
   expect(rows.map((row) => row.kind)).toEqual(["item", "turn", "run", "item", "item", "item"]);
-  expect(rows[2]).toMatchObject({ kind: "run", key: "run:c-r1", open: false });
+  expect(rows[2]).toMatchObject({ kind: "run", key: "run:c-r1", foldKey: "run:c-r1", open: false });
+  expect(rows[1]).toMatchObject({ kind: "turn", key: "turn:u1", foldKey: "u1", open: true });
 });
 
 test("a call's word is its tool without the server it came from, else its kind", () => {
@@ -137,4 +138,26 @@ test("a call's word is its tool without the server it came from, else its kind",
 test("tallies count calls by tool and name the files they read once", () => {
   const calls = callsOf([started("a", "read", { path: "/x/a.ts" }), started("b", "read", { file_path: "/y/a.ts" }), started("c", "read", { filePath: "b.ts" })]);
   expect(talliesOf([tool("a"), tool("b"), tool("c")], (ref) => calls.byRef.get(ref))).toEqual([{ name: "read", count: 3, files: ["a.ts", "b.ts"] }]);
+});
+
+test("a chat that does not fold shows every item as it is", () => {
+  const calls = callsOf([started("r", "read")]);
+  const items = [user("u1"), tool("r"), agent("m1")];
+  const facts = { ...factsOf(calls), fold: false };
+  expect(chatRows(items, facts).map((row) => row.kind)).toEqual(["item", "item", "item"]);
+});
+
+test("no two rows share a key, so the list can tell them apart", () => {
+  const calls = callsOf([started("r", "read"), started("e", "edit")]);
+  const items = [user("u1"), tool("r"), tool("e", "done", diff), agent("m1"), user("u2"), agent("m2")];
+  const keys = chatRows(items, factsOf(calls, true)).map((row) => row.key);
+  expect(new Set(keys).size).toBe(keys.length);
+  const settled = chatRows(items, factsOf(calls)).map((row) => row.key);
+  expect(new Set(settled).size).toBe(settled.length);
+});
+
+test("the plan item folds with the work, since the plan has its own place", () => {
+  const plan: ViewItem = { ref: "plan", kind: "tool", label: "Plan", state: "done", component: text("[x] one") };
+  const fold = foldTurn([plan, agent("m1")], () => undefined);
+  expect(fold.hidden.map((item) => item.ref)).toEqual(["plan"]);
 });

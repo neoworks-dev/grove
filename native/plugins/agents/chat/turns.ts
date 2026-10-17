@@ -31,14 +31,18 @@ export interface ChangedFile {
 export type ChatRow =
   | { kind: "item"; key: string; item: ViewItem }
   /** The line a folded turn is reduced to. */
-  | { kind: "turn"; key: string; open: boolean; tallies: Tally[]; messages: number; steps: number }
+  | { kind: "turn"; key: string; foldKey: string; open: boolean; tallies: Tally[]; messages: number; steps: number }
   /** What a folded turn changed. */
   | { kind: "files"; key: string; files: ChangedFile[] }
   /** Calls that went well, folded to a line. */
-  | { kind: "run"; key: string; open: boolean; tallies: Tally[]; items: ViewItem[] };
+  | { kind: "run"; key: string; foldKey: string; open: boolean; tallies: Tally[]; items: ViewItem[] }
+  /** The bar that says a turn is in flight, below everything else. */
+  | { kind: "working"; key: string };
 
 /** What the layout needs to know about the session. */
 export interface ChatFacts {
+  /** Whether turns fold; an agent's own chat is shown as it happened, since it has no events to fold by. */
+  fold: boolean;
   /** The calls' own facts by item ref, as the events told them. */
   callOf: (ref: string) => CallFacts | undefined;
   /** Whether a turn is running now. */
@@ -79,8 +83,12 @@ export function sectionsOf(items: readonly ViewItem[]): Section[] {
 
 /** The rows of the whole chat, in order. */
 export function chatRows(items: readonly ViewItem[], facts: ChatFacts): ChatRow[] {
-  const sections = sectionsOf(items);
   const rows: ChatRow[] = [];
+  if (!facts.fold) {
+    pushItems(rows, items);
+    return rows;
+  }
+  const sections = sectionsOf(items);
   sections.forEach((section, index) => {
     const inFlight = facts.running && index === sections.length - 1;
     if (section.header !== undefined) {
@@ -92,6 +100,9 @@ export function chatRows(items: readonly ViewItem[], facts: ChatFacts): ChatRow[
     }
     pushSettled(rows, section, facts);
   });
+  if (facts.running) {
+    rows.push({ kind: "working", key: "working" });
+  }
   return rows;
 }
 
@@ -105,7 +116,7 @@ function pushSettled(rows: ChatRow[], section: Section, facts: ChatFacts): void 
   const open = facts.isOpen(section.key);
   const tallies = talliesOf(fold.hidden, facts.callOf);
   const messages = fold.hidden.filter((item) => item.kind === "agent").length;
-  rows.push({ kind: "turn", key: section.key, open, tallies, messages, steps: fold.hidden.length });
+  rows.push({ kind: "turn", key: `turn:${section.key}`, foldKey: section.key, open, tallies, messages, steps: fold.hidden.length });
   if (open) {
     pushRuns(rows, section.body, facts);
     return;
@@ -130,7 +141,7 @@ function pushRuns(rows: ChatRow[], items: readonly ViewItem[], facts: ChatFacts)
   const flush = (): void => {
     if (run.length >= MIN_RUN) {
       const key = `run:${run[0].ref}`;
-      rows.push({ kind: "run", key, open: facts.isOpen(key), tallies: talliesOf(run, facts.callOf), items: run });
+      rows.push({ kind: "run", key, foldKey: key, open: facts.isOpen(key), tallies: talliesOf(run, facts.callOf), items: run });
     } else {
       pushItems(rows, run);
     }
@@ -161,7 +172,15 @@ function isWork(item: ViewItem, callOf: (ref: string) => CallFacts | undefined):
   if (item.kind === "agent" || item.kind === "thought") {
     return true;
   }
-  return item.kind === "tool" && item.state === "done" && callOf(item.ref) !== undefined;
+  if (item.kind !== "tool" || item.state !== "done") {
+    return false;
+  }
+  return isPlan(item) || callOf(item.ref) !== undefined;
+}
+
+/** The item the daemon keeps a plan in; the plan has its own place beside the chat, so a folded turn hides it. */
+function isPlan(item: ViewItem): boolean {
+  return item.ref === "plan" || item.ref.startsWith("plan-");
 }
 
 export interface TurnFold {

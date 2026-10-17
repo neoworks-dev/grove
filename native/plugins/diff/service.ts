@@ -5,8 +5,8 @@
 // the rows of a hunk line up. The right side is the file's own document, so it can be edited and
 // saved as in any editor. State is plain fields with a change signal, never `$state`.
 //
-// Other plugins open a diff with `ctx.diff.open({ kind: "file", path, base: "head" })`, or of two
-// texts with `ctx.diff.openTexts(...)`.
+// Other plugins open a diff with `ctx.diff.open({ path, base: "head" })`, or of two texts with
+// `ctx.diff.openTexts(...)`.
 
 import { Service, type Context } from "@neoworks/extension-system";
 import { createChangeSignal, type ChangeSignal } from "../../kernel/reactive";
@@ -16,18 +16,20 @@ import {
   baseLabel,
   fileName,
   hunkAtRow,
+  normalizeRequest,
   requestTitle,
   sameRequest,
   stepHunkRow,
   type DiffBase,
   type DiffMode,
+  type DiffOpenRequest,
   type DiffPaneState,
   type DiffRequest,
   type Hunk,
 } from "./model";
 
 export { baseLabel, fileName, hunkPosition, stepHunkRow } from "./model";
-export type { DiffBase, DiffMode, DiffRequest, Hunk } from "./model";
+export type { DiffBase, DiffMode, DiffOpenRequest, DiffRequest, Hunk } from "./model";
 
 declare module "@neoworks/extension-system" {
   interface Context {
@@ -141,7 +143,8 @@ export class DiffService extends Service {
    * Shows a diff in a pane: the pane that already shows it, else a diff pane, else a new pane
    * split off the focused one. Resolves to the pane, or null when the pane could not be made.
    */
-  async open(request: DiffRequest, mode?: DiffMode): Promise<string | null> {
+  async open(wanted: DiffOpenRequest, mode?: DiffMode): Promise<string | null> {
+    const request = normalizeRequest(wanted);
     const showing = this.paneIds().find((leafId) => this.sameAsShown(leafId, request));
     if (showing !== undefined) {
       this.panes.focus(showing);

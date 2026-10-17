@@ -37,6 +37,21 @@ export interface TextsDiffRequest {
 
 export type DiffRequest = FileDiffRequest | TextsDiffRequest;
 
+/** What `open` takes: a request, or just a file, which is compared with HEAD unless a base says otherwise. */
+export type DiffOpenRequest = DiffRequest | { path: string; base?: DiffBase };
+
+/** The request a call asked for, with a file's base filled in. */
+export function normalizeRequest(request: DiffOpenRequest): DiffRequest {
+  if ("kind" in request) {
+    return request;
+  }
+  let base: DiffBase = "head";
+  if (request.base !== undefined) {
+    base = request.base;
+  }
+  return { kind: "file", path: request.path, base };
+}
+
 /** What a pane keeps in its state: the diff it shows and how. */
 export interface DiffPaneState {
   request: DiffRequest;
@@ -131,6 +146,9 @@ export function hunkPosition(hunks: Hunk[], row: number): string {
   }
   const containing = hunkAtRow(hunks, row);
   if (containing === null) {
+    if (hunks.length === 1) {
+      return "1 change";
+    }
     return `${hunks.length} changes`;
   }
   const ordered = [...hunks].sort((first, second) => first.newStart - second.newStart);

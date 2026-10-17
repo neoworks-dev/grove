@@ -50,6 +50,24 @@ pub struct TextChange {
     pub new_end_point: BytePoint,
 }
 
+/// A place in the text as a line and a UTF-16 unit within it, which is how language servers
+/// count columns.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Utf16Point {
+    pub line: usize,
+    pub character: usize,
+}
+
+/// One replacement in the text, in the line and UTF-16 column terms of a language server. Like
+/// [`TextChange`], changes come in the order they were made and each is described against the
+/// text as it was after the ones before it, which is the order a server applies them in.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContentChange {
+    pub start: Utf16Point,
+    pub end: Utf16Point,
+    pub text: String,
+}
+
 pub struct Buffer {
     text: Rope,
     path: Option<PathBuf>,
@@ -57,6 +75,8 @@ pub struct Buffer {
     indents_with_tabs: bool,
     /// Changes made since the syntax tree last caught up with the text.
     pending_changes: Vec<TextChange>,
+    /// Changes made since whoever keeps a language server in step last took them.
+    content_changes: Vec<ContentChange>,
 }
 
 impl Buffer {
@@ -90,7 +110,14 @@ impl Buffer {
             LineEnding::Crlf => Rope::from_str(&text.replace("\r\n", "\n")),
             LineEnding::Lf => Rope::from_str(text),
         };
-        Buffer { text: rope, path, line_ending, indents_with_tabs, pending_changes: Vec::new() }
+        Buffer {
+            text: rope,
+            path,
+            line_ending,
+            indents_with_tabs,
+            pending_changes: Vec::new(),
+            content_changes: Vec::new(),
+        }
     }
 
     /// The file the buffer was read from, if any.
@@ -194,6 +221,7 @@ impl Buffer {
         // Back to front, so the offsets of the edits not yet applied stay valid.
         for edit in edits.iter().rev() {
             self.pending_changes.push(self.change_for(edit));
+            self.content_changes.push(self.content_change_for(edit));
             self.text.remove(edit.start..edit.end);
             self.text.insert(edit.start, &edit.text);
         }
@@ -203,6 +231,34 @@ impl Buffer {
     /// Hands over the changes made since the last call, oldest first.
     pub fn take_changes(&mut self) -> Vec<TextChange> {
         std::mem::take(&mut self.pending_changes)
+    }
+
+    /// Hands over the changes made since the last call, for a language server that is kept in
+    /// step with the text. Oldest first.
+    pub fn take_content_changes(&mut self) -> Vec<ContentChange> {
+        std::mem::take(&mut self.content_changes)
+    }
+
+    /// The line and UTF-16 column of a character offset.
+    pub fn utf16_point_of(&self, offset: usize) -> Utf16Point {
+        let offset = offset.min(self.length());
+        let line = self.text.char_to_line(offset);
+        let line_start = self.text.line_to_char(line);
+        let character = self.text.char_to_utf16_cu(offset) - self.text.char_to_utf16_cu(line_start);
+        Utf16Point { line, character }
+    }
+
+    /// The character offset of a line and UTF-16 column. A line past the end is the end of the
+    /// text and a column past the end of its line is the end of the line, as servers expect.
+    pub fn offset_of_utf16_point(&self, point: Utf16Point) -> usize {
+        if point.line >= self.line_count() {
+            return self.length();
+        }
+        let line_start = self.text.line_to_char(point.line);
+        let line_start_utf16 = self.text.char_to_utf16_cu(line_start);
+        let line_end_utf16 = self.text.char_to_utf16_cu(line_start + self.line_length(point.line));
+        let utf16 = (line_start_utf16 + point.character).min(line_end_utf16);
+        self.text.utf16_cu_to_char(utf16)
     }
 
     /// The text as a rope, for readers that walk it in chunks without copying it.
@@ -223,6 +279,15 @@ impl Buffer {
             start_point,
             old_end_point,
             new_end_point: point_after(start_point, &edit.text),
+        }
+    }
+
+    /// Describes an edit in a language server's terms, against the text as it is right now.
+    fn content_change_for(&self, edit: &crate::edit::Edit) -> ContentChange {
+        ContentChange {
+            start: self.utf16_point_of(edit.start),
+            end: self.utf16_point_of(edit.end),
+            text: edit.text.clone(),
         }
     }
 
@@ -286,6 +351,7 @@ fn detect_tab_indentation(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::edit::Edit;
 
     #[test]
     fn lines_drop_their_endings() {
@@ -308,6 +374,39 @@ mod tests {
         let buffer = Buffer::from_text("größe\n");
         assert_eq!(buffer.line_length(0), 5);
         assert_eq!(buffer.clamp(Position { row: 0, column: 9 }), Position { row: 0, column: 5 });
+    }
+
+    #[test]
+    fn utf16_points_count_units_of_a_line_not_characters() {
+        let buffer = Buffer::from_text("a😀b\nöx");
+        assert_eq!(buffer.utf16_point_of(2), Utf16Point { line: 0, character: 3 });
+        assert_eq!(buffer.utf16_point_of(4), Utf16Point { line: 1, character: 0 });
+        assert_eq!(buffer.utf16_point_of(6), Utf16Point { line: 1, character: 2 });
+        assert_eq!(buffer.offset_of_utf16_point(Utf16Point { line: 0, character: 3 }), 2);
+        assert_eq!(buffer.offset_of_utf16_point(Utf16Point { line: 1, character: 1 }), 5);
+    }
+
+    #[test]
+    fn utf16_points_past_the_end_land_on_the_end() {
+        let buffer = Buffer::from_text("ab\ncd");
+        assert_eq!(buffer.offset_of_utf16_point(Utf16Point { line: 0, character: 99 }), 2);
+        assert_eq!(buffer.offset_of_utf16_point(Utf16Point { line: 9, character: 0 }), 5);
+    }
+
+    #[test]
+    fn edits_are_recorded_for_a_server_in_the_order_it_applies_them() {
+        let mut buffer = Buffer::from_text("😀 one\ntwo\n");
+        let edits = Edits::new(vec![Edit::replace(2..5, "1"), Edit::replace(6..9, "2\n3")]);
+        buffer.apply_edits(&edits);
+        let changes = buffer.take_content_changes();
+        assert_eq!(changes.len(), 2);
+        // The later edit goes first so the earlier one's range is still valid.
+        assert_eq!(changes[0].start, Utf16Point { line: 1, character: 0 });
+        assert_eq!(changes[0].end, Utf16Point { line: 1, character: 3 });
+        assert_eq!(changes[0].text, "2\n3");
+        assert_eq!(changes[1].start, Utf16Point { line: 0, character: 3 });
+        assert_eq!(changes[1].end, Utf16Point { line: 0, character: 6 });
+        assert!(buffer.take_content_changes().is_empty());
     }
 
     #[test]

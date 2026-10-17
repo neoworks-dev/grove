@@ -36,7 +36,9 @@ fn parse_hint(entry: &Value) -> Option<Hint> {
     if label.is_empty() {
         return None;
     }
-    let left = if entry["paddingLeft"].as_bool().unwrap_or(false) { " " } else { "" };
+    // A type annotation hugs the name it follows, as in the code it stands for.
+    let pads_left = entry["paddingLeft"].as_bool().unwrap_or(false) && !label.starts_with(':');
+    let left = if pads_left { " " } else { "" };
     let right = if entry["paddingRight"].as_bool().unwrap_or(false) { " " } else { "" };
     Some(Hint { position, text: format!("{left}{label}{right}") })
 }
@@ -82,8 +84,12 @@ mod tests {
             { "position": { "line": 0, "character": 5 }, "label": ": number", "paddingLeft": false },
             { "position": { "line": 1, "character": 2 }, "label": [{ "value": "name" }, { "value": ":" }], "paddingRight": true },
             { "position": { "line": 2, "character": 0 }, "label": "" },
+            { "position": { "line": 3, "character": 0 }, "label": ": T", "paddingLeft": true },
+            { "position": { "line": 4, "character": 0 }, "label": "-> T", "paddingLeft": true },
         ]));
-        assert_eq!(hints.len(), 2);
+        assert_eq!(hints.len(), 4);
+        assert_eq!(hints[2].text, ": T");
+        assert_eq!(hints[3].text, " -> T");
         assert_eq!(hints[0].text, ": number");
         assert_eq!(hints[1].text, "name: ");
     }

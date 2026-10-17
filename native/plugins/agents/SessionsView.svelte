@@ -60,7 +60,7 @@
 <View style={{ flex: 1, minHeight: 0 }}>
   {#if connection.connection === "unavailable"}
     <View style={{ padding: 12, gap: 8 }}>
-      <Text style={{ fontSize: fontSize.xs, color: colors.text }}>The suite daemon is not running.</Text>
+      <Text style={{ fontSize: fontSize.xs, color: colors.text }}>Can't reach the suite daemon.</Text>
       {#if connection.message !== undefined}
         <Text style={{ fontSize: fontSize.xxs, color: colors.dim }}>{connection.message}</Text>
       {/if}

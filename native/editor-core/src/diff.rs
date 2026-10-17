@@ -366,7 +366,11 @@ fn marked_rows(
 ) {
     if !rows.is_empty() {
         let last = Position { row: rows.end - 1, column: 0 };
-        decorations.push(Decoration { start: row_start(rows.start), end: Some(last), kind: DecorationKind::Line { tone } });
+        decorations.push(Decoration {
+            start: row_start(rows.start),
+            end: Some(last),
+            kind: DecorationKind::Line { tone },
+        });
         let bar = DecorationKind::Gutter { mark: crate::decorations::GutterMark::Bar, tone: Some(tone) };
         decorations.push(Decoration { start: row_start(rows.start), end: Some(last), kind: bar });
     }
@@ -385,12 +389,15 @@ fn new_tone(hunk: &Hunk) -> Tone {
 }
 
 /// A block of `lines` before the row `slot`, or after the last row when the slot is past the end.
-fn block_at(slot: usize, shown_rows: usize, lines: Vec<String>, tone: Tone, emphasis: Vec<BlockEmphasis>) -> Decoration {
-    let (row, placement) = if slot < shown_rows {
-        (slot, Placement::Above)
-    } else {
-        (shown_rows.saturating_sub(1), Placement::Below)
-    };
+fn block_at(
+    slot: usize,
+    shown_rows: usize,
+    lines: Vec<String>,
+    tone: Tone,
+    emphasis: Vec<BlockEmphasis>,
+) -> Decoration {
+    let (row, placement) =
+        if slot < shown_rows { (slot, Placement::Above) } else { (shown_rows.saturating_sub(1), Placement::Below) };
     let kind = DecorationKind::Block { lines, placement, tone: Some(tone), emphasis };
     Decoration { start: row_start(row), end: None, kind }
 }
@@ -424,13 +431,7 @@ fn removed_block(
 }
 
 /// A hunk in an editor over the new text alone.
-fn inline_hunk(
-    decorations: &mut Vec<Decoration>,
-    hunk: &Hunk,
-    old: &[&str],
-    changes: &[LinePair],
-    shown_rows: usize,
-) {
+fn inline_hunk(decorations: &mut Vec<Decoration>, hunk: &Hunk, old: &[&str], changes: &[LinePair], shown_rows: usize) {
     removed_block(decorations, hunk, old, changes, shown_rows);
     let words = changes.iter().map(|pair| (pair.new_row, pair.new_ranges.clone()));
     marked_rows(decorations, hunk.new_lines(), new_tone(hunk), Tone::AddedWord, words);
@@ -440,12 +441,7 @@ fn inline_hunk(
 }
 
 /// A hunk in the editor over the old text, beside the new.
-fn old_hunk(
-    decorations: &mut Vec<Decoration>,
-    hunk: &Hunk,
-    changes: &[LinePair],
-    shown_rows: usize,
-) {
+fn old_hunk(decorations: &mut Vec<Decoration>, hunk: &Hunk, changes: &[LinePair], shown_rows: usize) {
     let words = changes.iter().map(|pair| (pair.old_row, pair.old_ranges.clone()));
     marked_rows(decorations, hunk.old_lines(), Tone::Deleted, Tone::DeletedWord, words);
     if hunk.new_len > hunk.old_len {
@@ -455,12 +451,7 @@ fn old_hunk(
 }
 
 /// A hunk in the editor over the new text, beside the old.
-fn new_hunk(
-    decorations: &mut Vec<Decoration>,
-    hunk: &Hunk,
-    changes: &[LinePair],
-    shown_rows: usize,
-) {
+fn new_hunk(decorations: &mut Vec<Decoration>, hunk: &Hunk, changes: &[LinePair], shown_rows: usize) {
     let words = changes.iter().map(|pair| (pair.new_row, pair.new_ranges.clone()));
     marked_rows(decorations, hunk.new_lines(), new_tone(hunk), Tone::AddedWord, words);
     if hunk.old_len > hunk.new_len {
@@ -580,7 +571,10 @@ mod tests {
 
     #[test]
     fn words_are_compared_not_characters() {
-        let (old, new) = word_changes("let greeting = format!(\"Hello, {}\", name);", "let greeting = format!(\"Hello there, {}!\", name);");
+        let (old, new) = word_changes(
+            "let greeting = format!(\"Hello, {}\", name);",
+            "let greeting = format!(\"Hello there, {}!\", name);",
+        );
         assert_eq!(old, Vec::<Range<usize>>::new());
         assert_eq!(new.len(), 2);
         assert_eq!(new[0], 29..35);
@@ -594,7 +588,8 @@ mod tests {
 
     #[test]
     fn a_renamed_identifier_is_marked_in_both_lines() {
-        let (old, new) = word_changes("fn compute_total(items: &[Item]) -> u32 {", "fn compute_sum(items: &[Item]) -> u32 {");
+        let (old, new) =
+            word_changes("fn compute_total(items: &[Item]) -> u32 {", "fn compute_sum(items: &[Item]) -> u32 {");
         assert_eq!(old, vec![3..16]);
         assert_eq!(new, vec![3..14]);
     }
@@ -666,7 +661,10 @@ mod tests {
     #[test]
     fn a_patch_marks_a_last_line_without_a_line_break() {
         let patch = hunk_patch("a", "a\nb", "a\nB", &hunk(1, 1, 1, 1));
-        assert_eq!(patch, "--- a/a\n+++ b/a\n@@ -2,1 +2,1 @@\n-b\n\\ No newline at end of file\n+B\n\\ No newline at end of file\n");
+        assert_eq!(
+            patch,
+            "--- a/a\n+++ b/a\n@@ -2,1 +2,1 @@\n-b\n\\ No newline at end of file\n+B\n\\ No newline at end of file\n"
+        );
     }
 
     #[test]

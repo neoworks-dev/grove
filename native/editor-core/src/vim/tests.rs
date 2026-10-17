@@ -445,10 +445,7 @@ fn bracket_c_asks_the_app_for_the_next_and_previous_change() {
     use crate::vim::types::AppRequest;
     let mut vim = Vim::new("¦a\nb");
     vim.keys("]c[c");
-    assert_eq!(
-        vim.requests,
-        vec![AppRequest::GotoChange { forward: true }, AppRequest::GotoChange { forward: false }]
-    );
+    assert_eq!(vim.requests, vec![AppRequest::GotoChange { forward: true }, AppRequest::GotoChange { forward: false }]);
     vim.keys("]x");
     assert_eq!(vim.requests.len(), 2);
     assert_eq!(vim.mode(), "NORMAL");

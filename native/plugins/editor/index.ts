@@ -111,6 +111,7 @@ export const editor = {
     registerEditCommands(ctx, service);
     registerKeymapCommand(ctx, service);
     registerIndentCommand(ctx, service);
+    registerJumpCommand(ctx, service);
     registerDebugCommands(ctx, service);
     registerKeys(ctx, service);
     ctx.menus.registerItems([
@@ -163,6 +164,18 @@ function registerKeymapCommand(ctx: Context, service: EditorService): void {
       const next = service.keymap() === "vim" ? "standard" : "vim";
       await ctx.settings.set(rowId, "keymap", next);
     },
+  });
+}
+
+/** The command that shows jump labels in the focused editor, for people who would rather not remember the key. */
+function registerJumpCommand(ctx: Context, service: EditorService): void {
+  ctx.commands.register({
+    id: "editor.jump",
+    title: "Jump to a place on screen with labels",
+    group: "Go",
+    keywords: "flash jump label motion easymotion",
+    when: () => service.hasFocusedView() && service.active() !== null,
+    run: () => service.sendCommand("start_jump"),
   });
 }
 

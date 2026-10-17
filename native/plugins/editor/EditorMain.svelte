@@ -5,7 +5,7 @@
   editor focuses the pane.
 -->
 <script lang="ts">
-  import { element } from "@neoworks/svelte-gpui";
+  import { element, type ElementMethods } from "@neoworks/svelte-gpui";
   import { Text, View } from "@neoworks/svelte-gpui/ui";
   import TabStrip, { type TabEntry } from "../panel/TabStrip.svelte";
   import { colors, fontSize } from "../theme/tokens";
@@ -22,7 +22,7 @@
   /** The editor `src/editor/mod.rs` registers. */
   const Editor = element<{ document: number; onfocus: () => void }, EditorViewMethods>("editor");
 
-  let view = $state<EditorViewMethods | null>(null);
+  let view = $state<ElementMethods<EditorViewMethods> | null>(null);
 
   const tabs = $derived(service.tabsIn(leafId));
   const active = $derived(service.activeIn(leafId));

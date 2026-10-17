@@ -47,7 +47,7 @@ function listenToDocuments(handler: (event: DocumentEvent) => void): () => void 
       (event) => handler({ type: "selections", ...event }),
     ),
     listen<{ id: number; indent: IndentStyle }>("document-indent", (event) => handler({ type: "indent", ...event })),
-    listen<{ mode: string; pending: string; commandLine: string | null }>("editor-mode", (event) =>
+    listen<{ pane: string; mode: string; pending: string; commandLine: string | null }>("editor-mode", (event) =>
       handler({ type: "mode", ...event }),
     ),
     listen<{ id: number; request: "close" | "open" | "change"; discard?: boolean; path?: string; forward?: boolean }>(

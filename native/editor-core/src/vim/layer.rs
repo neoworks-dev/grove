@@ -387,9 +387,7 @@ impl VimLayer {
             }
             Simple::CloseWithoutSaving => vec![Command::Request { request: AppRequest::CloseTab { discard: true } }],
             Simple::GotoChange { forward } => vec![Command::Request { request: AppRequest::GotoChange { forward } }],
-            Simple::Page(step) => {
-                vec![Command::VimMove { motion: page_motion(step, context), count: 1, extend: false }]
-            }
+            Simple::Page(step) => self.page_commands(step, context),
             Simple::NextMatch => {
                 self.mode = Mode::Visual(SelectionKind::Characters);
                 vec![Command::SelectNextMatch { add: false }]
@@ -501,6 +499,23 @@ impl VimLayer {
         self.replaying = false;
         self.last_change = Some(Change { count, ..change });
         commands
+    }
+
+    /// The commands for `Ctrl-D`, `Ctrl-U`, `Ctrl-F` and `Ctrl-B`: they scroll the view, as vim does,
+    /// and bring the cursor along.
+    fn page_commands(&mut self, step: PageStep, context: &InputContext) -> Vec<Command> {
+        let extend = self.visual_kind().is_some();
+        let top_row = context.top_row as isize;
+        let (rows, cursor) = match page_scroll(step, context) {
+            PageScroll::Together(rows) => (rows, Motion::Vertical(rows)),
+            PageScroll::CursorToTop(rows) => (rows, Motion::Line((top_row + rows).max(0) as usize)),
+            PageScroll::CursorToBottom(rows) => {
+                let bottom = (top_row + rows).max(0) + context.page_rows.max(1) as isize - 1;
+                (rows, Motion::Line(bottom as usize))
+            }
+        };
+        // The view moves first, so the cursor lands inside it and the view has no need to follow.
+        vec![Command::ScrollView { rows }, Command::VimMove { motion: cursor, count: 1, extend }]
     }
 
     /// Starts typing a command line.
@@ -668,16 +683,26 @@ fn screen_row(row: ScreenRow, offset: usize, context: &InputContext) -> usize {
     }
 }
 
-/// How far a scroll key moves the cursor.
-fn page_motion(step: PageStep, context: &InputContext) -> Motion {
+/// What a scroll key does to the view and the cursor.
+enum PageScroll {
+    /// `Ctrl-D` and `Ctrl-U`: the view scrolls by rows and the cursor goes the same distance, so it stays where it is on the screen.
+    Together(isize),
+    /// `Ctrl-F`: the view scrolls by rows and the cursor goes to its top line.
+    CursorToTop(isize),
+    /// `Ctrl-B`: the view scrolls by rows and the cursor goes to its bottom line.
+    CursorToBottom(isize),
+}
+
+/// How a scroll key moves the view and the cursor, for a view of `context.page_rows` rows.
+fn page_scroll(step: PageStep, context: &InputContext) -> PageScroll {
     let rows = context.page_rows.max(1) as isize;
     let half = (rows / 2).max(1);
     let page = (rows - 2).max(1);
     match step {
-        PageStep::HalfDown => Motion::Vertical(half),
-        PageStep::HalfUp => Motion::Vertical(-half),
-        PageStep::PageDown => Motion::Vertical(page),
-        PageStep::PageUp => Motion::Vertical(-page),
+        PageStep::HalfDown => PageScroll::Together(half),
+        PageStep::HalfUp => PageScroll::Together(-half),
+        PageStep::PageDown => PageScroll::CursorToTop(page),
+        PageStep::PageUp => PageScroll::CursorToBottom(-page),
     }
 }
 

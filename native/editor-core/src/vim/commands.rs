@@ -63,6 +63,7 @@ impl EditorState {
                 Outcome::default()
             }
             Command::ScrollTo { align } => Outcome { scroll: Some(*align), ..Outcome::default() },
+            Command::ScrollView { rows } => Outcome { scroll_rows: Some(*rows), ..Outcome::default() },
             Command::SetMark { name } => {
                 self.set_mark(*name);
                 Outcome::default()

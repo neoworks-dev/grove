@@ -22,7 +22,7 @@
 
   /** The editor `src/editor/mod.rs` registers. */
   const Editor = element<
-    { document: number; theme: EditorTheme; keymap: string; onfocus: () => void; ongoto: (event: GotoEvent) => void },
+    { document: number; pane: string; theme: EditorTheme; keymap: string; onfocus: () => void; ongoto: (event: GotoEvent) => void },
     EditorViewMethods
   >("editor");
 
@@ -86,6 +86,7 @@
       style={{ flex: 1 }}
       key={`editor-${leafId}`}
       document={active.id}
+      pane={leafId}
       theme={activeEditorTheme()}
       keymap={service.keymap()}
       onfocus={() => service.focusPane(leafId)}

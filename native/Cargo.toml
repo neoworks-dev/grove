@@ -1,0 +1,17 @@
+[package]
+name = "grove_native"
+version = "0.1.0"
+edition = "2024"
+description = "Grove on svelte-gpui: the native app and the editor it draws with GPUI."
+
+[workspace]
+members = ["editor-core"]
+
+[dependencies]
+editor-core = { path = "editor-core" }
+# Pinned to the same commit as the runtime in package.json, so the protocol matches.
+svelte_gpui_host = { git = "https://github.com/neoworks-dev/svelte-gpui", rev = "0a714498b8894ccc7e05a7274d4400994a9d230f" }
+serde_json = "1"
+
+[patch.crates-io]
+xattr = { git = "https://github.com/neoworks-dev/svelte-gpui", rev = "0a714498b8894ccc7e05a7274d4400994a9d230f" }

@@ -145,6 +145,22 @@ export interface EditorViewMethods {
   complete(): Promise<void>;
   /** Puts the cursor at a line and UTF-16 column, counted from zero, and scrolls to it. */
   goto(line: number, character: number): Promise<void>;
+  /**
+   * Handles a right press at a point in window coordinates: the cursor moves there unless a
+   * selection covers it. Answers whether text is selected afterwards. A view that has no menu,
+   * such as a test's stand-in, leaves it out.
+   */
+  contextClick?(x: number, y: number): Promise<{ selected: boolean }>;
+}
+
+/** A right press in an editor, where a menu of its actions is to open. */
+export interface ContextMenuRequest {
+  leafId: string;
+  /** Where the pointer is, in window coordinates. */
+  x: number;
+  y: number;
+  /** Whether text is selected, which cut and copy act on. */
+  hasSelection: boolean;
 }
 
 /** A place to put the cursor once the document that has it is shown. */
@@ -211,6 +227,7 @@ export class EditorService extends Service {
   private keymapName: KeymapName = "standard";
   private vimState: VimStatus = { mode: "", pending: "", commandLine: null };
   private documentListeners = new Set<(event: DocumentEvent) => void>();
+  private contextMenuListeners = new Set<(request: ContextMenuRequest) => void>();
 
   constructor(
     ctx: Context,
@@ -550,6 +567,30 @@ export class EditorService extends Service {
       }
     }
     return null;
+  }
+
+  /**
+   * Handles a right press in a pane's editor: the pane takes the focus, the cursor goes to the
+   * press unless a selection covers it, and whoever shows menus is told where to open one.
+   */
+  async openContextMenu(leafId: string, x: number, y: number): Promise<void> {
+    const view = this.viewsByLeaf.get(leafId);
+    if (!view || !view.contextClick) {
+      return;
+    }
+    this.panes.focus(leafId);
+    const { selected } = await view.contextClick(x, y);
+    for (const listener of [...this.contextMenuListeners]) {
+      listener({ leafId, x, y, hasSelection: selected });
+    }
+  }
+
+  /** Hears of right presses in an editor, where a menu is to open. Returns the function that stops it. */
+  onContextMenu(handler: (request: ContextMenuRequest) => void): () => void {
+    this.contextMenuListeners.add(handler);
+    return () => {
+      this.contextMenuListeners.delete(handler);
+    };
   }
 
   /** Hears of what happens to documents: opened, closed, saved, edited and the cursor moved. Returns the function that stops it. */

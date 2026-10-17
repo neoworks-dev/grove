@@ -7,6 +7,7 @@
 <script lang="ts">
   import { element, type ElementMethods } from "@neoworks/svelte-gpui";
   import { Text, View } from "@neoworks/svelte-gpui/ui";
+  import Slot from "../../kernel/slots/Slot.svelte";
   import TabStrip, { type TabEntry } from "../panel/TabStrip.svelte";
   import { activeEditorTheme, type EditorTheme } from "../theme/editorTheme";
   import { colors, fontSize } from "../theme/tokens";
@@ -65,6 +66,11 @@
     void view.goto(request.line, request.character);
   });
 
+  /** A right press in the editor: the cursor goes there and the context menu opens. */
+  function pressEditor(event: { windowX: number; windowY: number }): void {
+    void service.openContextMenu(leafId, event.windowX, event.windowY);
+  }
+
   /** Shows the tab with this id in this pane. */
   function selectTab(tabId: string): void {
     service.select(leafId, Number(tabId));
@@ -81,16 +87,19 @@
     <TabStrip tabs={entries} activeId={active ? String(active.id) : ""} onselect={selectTab} onclose={closeTab} />
   {/if}
   {#if active}
-    <Editor
-      bind:this={view}
-      style={{ flex: 1 }}
-      key={`editor-${leafId}`}
-      document={active.id}
-      theme={activeEditorTheme()}
-      keymap={service.keymap()}
-      onfocus={() => service.focusPane(leafId)}
-      ongoto={(event) => void service.reveal(event.path, event.line, event.character)}
-    />
+    <Slot name="editor.breadcrumbs" props={{ leafId, documentId: active.id, goto: (line: number, character: number) => void view?.goto(line, character) }} />
+    <View style={{ flex: 1, minHeight: 0 }} buttons={["right"]} ondown={pressEditor}>
+      <Editor
+        bind:this={view}
+        style={{ flex: 1 }}
+        key={`editor-${leafId}`}
+        document={active.id}
+        theme={activeEditorTheme()}
+        keymap={service.keymap()}
+        onfocus={() => service.focusPane(leafId)}
+        ongoto={(event) => void service.reveal(event.path, event.line, event.character)}
+      />
+    </View>
   {:else}
     <View style={{ flex: 1, align: "center", justify: "center", gap: 4 }}>
       <Text style={{ fontSize: fontSize.sm, color: colors.muted }}>No file open</Text>

@@ -18,6 +18,8 @@ export type SuiteClient = ChatClient &
 export interface SuiteConnectOptions {
   /** The name sent to the daemon in hello. */
   client: string;
+  /** How long one request may wait for the daemon's answer, its welcome included. */
+  requestTimeoutMs: number;
   /** Where the daemon is now; asked again on every reconnect. */
   address: () => Promise<DaemonAddress>;
   /** Failures nobody is waiting for. */

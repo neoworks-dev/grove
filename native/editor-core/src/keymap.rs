@@ -106,6 +106,9 @@ pub fn standard_command(key: &KeyInput, context: &InputContext) -> Option<Comman
     if modifiers.alt {
         return cursor_key_command(key, context);
     }
+    if key.key == "tab" && modifiers.shift {
+        return Some(Command::Outdent);
+    }
     if let Some(command) = editing_key_command(&key.key) {
         return Some(command);
     }
@@ -245,6 +248,7 @@ mod tests {
         assert_eq!(press("delete", false, false, false), Some(Command::Delete { motion: Motion::Right }));
         assert_eq!(press("enter", false, false, true), Some(Command::InsertNewline));
         assert_eq!(press("tab", false, false, false), Some(Command::InsertTab));
+        assert_eq!(press("tab", false, false, true), Some(Command::Outdent));
         assert_eq!(press("backspace", false, true, false), None);
     }
 

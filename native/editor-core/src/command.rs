@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::buffer::Position;
 use crate::decorations::Decoration;
+use crate::indent::IndentStyle;
 use crate::movement::Motion;
 use crate::vim::types::{
     AppRequest, LineRange, Operator, ScrollAlign, SearchRequest, SelectionKind, Target, TextObject,
@@ -53,6 +54,12 @@ pub enum Command {
     /// Replaces every selection with a tab, or with spaces up to the next tab stop in a file
     /// that is indented with spaces.
     InsertTab,
+    /// Adds one level of indentation to every line a selection touches.
+    Indent,
+    /// Takes one level of indentation off every line a selection touches (Shift-Tab).
+    Outdent,
+    /// Sets how this file is indented, which Tab, Enter and shifting lines follow from then on.
+    SetIndent { style: IndentStyle },
     /// Takes back the last transaction, with the cursors as they were before it.
     Undo,
     /// Does again what undo took back.
@@ -228,6 +235,8 @@ pub struct Outcome {
     pub decorations_changed: bool,
     /// Where the view should scroll the newest cursor's line to.
     pub scroll: Option<ScrollAlign>,
+    /// Whether the way the file is indented is different now, which the app learns for its status bar.
+    pub indent_changed: bool,
     /// What the app is asked to do, as the command made a `Request`.
     pub request: Option<AppRequest>,
 }

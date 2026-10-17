@@ -71,11 +71,21 @@ pub(crate) struct Inner {
 impl LspStore {
     /// A store that keeps servers told about `documents`, and reports through `emitter` and `signals`.
     pub fn new(documents: SharedDocuments, emitter: Emitter, signals: Signals) -> LspStore {
+        LspStore::with_search_directories(documents, emitter, signals, registry::search_directories())
+    }
+
+    /// Like `new`, looking for servers in the given directories only.
+    pub fn with_search_directories(
+        documents: SharedDocuments,
+        emitter: Emitter,
+        signals: Signals,
+        search_directories: Vec<std::path::PathBuf>,
+    ) -> LspStore {
         let inner = Inner {
             documents: documents.clone(),
             emitter,
             signals,
-            search_directories: registry::search_directories(),
+            search_directories,
             state: Mutex::new(State::default()),
         };
         let store = LspStore { inner: Arc::new(inner) };
@@ -438,5 +448,144 @@ impl DocumentObserver for LspStore {
         if let Some((client, uri)) = client {
             client.notify_document("textDocument/didClose", sync::did_close_params(&uri));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use editor_core::{Command, Position};
+    use std::path::PathBuf;
+
+    /// How long a test waits for a server before it gives up.
+    const WAIT: Duration = Duration::from_secs(10);
+
+    /// A directory with a Rust crate in it and a `rust-analyzer` that is the test server, or none
+    /// when the server binary was not built beside the tests.
+    struct Fixture {
+        directory: PathBuf,
+        servers: PathBuf,
+    }
+
+    fn fixture(name: &str, source: &str) -> Option<Fixture> {
+        let executable = std::env::current_exe().ok()?;
+        let fake = executable.parent()?.parent()?.join("fake_lsp");
+        if !fake.exists() {
+            eprintln!("skipping: {} is not built", fake.display());
+            return None;
+        }
+        let root = std::env::temp_dir().join(format!("grove-lsp-store-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let directory = root.join("crate");
+        let servers = root.join("servers");
+        std::fs::create_dir_all(directory.join("src")).ok()?;
+        std::fs::create_dir_all(&servers).ok()?;
+        std::fs::write(directory.join("Cargo.toml"), "[package]\nname = \"demo\"\n").ok()?;
+        std::fs::write(directory.join("src/main.rs"), source).ok()?;
+        std::os::unix::fs::symlink(&fake, servers.join("rust-analyzer")).ok()?;
+        Some(Fixture { directory, servers })
+    }
+
+    fn store_for(fixture: &Fixture) -> (SharedDocuments, LspStore) {
+        let documents = SharedDocuments::new(Emitter::default());
+        let store = LspStore::with_search_directories(
+            documents.clone(),
+            Emitter::default(),
+            Signals::default(),
+            vec![fixture.servers.clone()],
+        );
+        (documents, store)
+    }
+
+    /// Waits until `condition` holds, or fails the test.
+    fn wait_until(what: &str, mut condition: impl FnMut() -> bool) {
+        let deadline = Instant::now() + WAIT;
+        while Instant::now() < deadline {
+            if condition() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        panic!("timed out waiting for {what}");
+    }
+
+    fn state_of(store: &LspStore) -> String {
+        store.summaries()[0]["state"].as_str().unwrap_or_default().to_string()
+    }
+
+    #[test]
+    fn opening_a_file_starts_its_server_and_the_servers_findings_decorate_it() {
+        let Some(fixture) = fixture("decorate", "fn main() {}\nlet BAD = 1;\n") else {
+            return;
+        };
+        let (documents, store) = store_for(&fixture);
+        let id = documents.open(&fixture.directory.join("src/main.rs").display().to_string()).unwrap().id;
+        let decorations = |documents: &SharedDocuments| {
+            documents.lock().get(id).map(|doc| doc.state.decoration_count(DIAGNOSTICS_SOURCE)).unwrap_or(0)
+        };
+        wait_until("the diagnostic", || decorations(&documents) == 2);
+        assert_eq!(state_of(&store), "ready");
+        assert_eq!(store.summaries()[0]["name"], "rust-analyzer");
+
+        // A second BAD typed at the end reaches the server as a change, and its answer decorates it.
+        documents.apply(id, &Command::PlaceCursor { at: Position { row: 1, column: 12 } }).unwrap();
+        documents.apply(id, &Command::InsertText { text: " BAD".into() }).unwrap();
+        wait_until("the second diagnostic", || decorations(&documents) == 3);
+        store.shutdown();
+    }
+
+    #[test]
+    fn diagnostics_follow_the_text_the_server_was_told_about() {
+        let Some(fixture) = fixture("follow", "ok\nBAD\n") else {
+            return;
+        };
+        let (documents, store) = store_for(&fixture);
+        let id = documents.open(&fixture.directory.join("src/main.rs").display().to_string()).unwrap().id;
+        let squiggle_row = |documents: &SharedDocuments| {
+            let documents = documents.lock();
+            let state = &documents.get(id)?.state;
+            let placed = state.decorations_in_rows(0..10);
+            placed.iter().find(|placed| placed.tooltip.is_some()).map(|placed| placed.start.row)
+        };
+        wait_until("the diagnostic", || squiggle_row(&documents) == Some(1));
+        documents.apply(id, &Command::InsertText { text: "new line\n".into() }).unwrap();
+        wait_until("the diagnostic to move down", || squiggle_row(&documents) == Some(2));
+        store.shutdown();
+    }
+
+    #[test]
+    fn a_server_that_crashes_is_reported_and_can_be_started_again() {
+        let Some(fixture) = fixture("crash", "fine\n") else {
+            return;
+        };
+        let (documents, store) = store_for(&fixture);
+        let id = documents.open(&fixture.directory.join("src/main.rs").display().to_string()).unwrap().id;
+        wait_until("the server to be ready", || state_of(&store) == "ready");
+        documents.apply(id, &Command::InsertText { text: "CRASH".into() }).unwrap();
+        wait_until("the crash to be noticed", || state_of(&store) == "exited");
+        let message = store.summaries()[0]["message"].as_str().unwrap_or_default().to_string();
+        assert!(message.contains("crashed on purpose"), "{message}");
+
+        let server = store.summaries()[0]["id"].as_u64().unwrap();
+        documents.apply(id, &Command::Undo).unwrap();
+        store.restart(server);
+        wait_until("the restarted server to be ready", || state_of(&store) == "ready");
+        store.shutdown();
+    }
+
+    #[test]
+    fn a_file_no_server_serves_is_left_alone_and_a_missing_server_is_said_to_be_missing() {
+        let Some(fixture) = fixture("missing", "text\n") else {
+            return;
+        };
+        std::fs::write(fixture.directory.join("notes.txt"), "BAD\n").unwrap();
+        let (documents, store) = store_for(&fixture);
+        documents.open(&fixture.directory.join("notes.txt").display().to_string()).unwrap();
+        assert_eq!(store.summaries(), json!([]));
+        let empty = SharedDocuments::new(Emitter::default());
+        let nowhere = LspStore::with_search_directories(empty.clone(), Emitter::default(), Signals::default(), Vec::new());
+        empty.open(&fixture.directory.join("src/main.rs").display().to_string()).unwrap();
+        assert_eq!(state_of(&nowhere), "missing");
+        assert!(nowhere.summaries()[0]["message"].as_str().unwrap().contains("not found"));
     }
 }

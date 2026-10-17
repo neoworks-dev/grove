@@ -11,6 +11,7 @@ import { frame } from "./frame";
 import { gitGutter } from "./git-gutter";
 import { header } from "./header";
 import { layout } from "./layout";
+import { lsp } from "./lsp";
 import { coreMenu, menus } from "./menus";
 import { panel } from "./panel";
 import { placeholderPanel, placeholderSidebar } from "./placeholders";
@@ -44,6 +45,7 @@ export const corePlugins: PluginCatalog = {
   editor,
   "editor-position": editorPosition,
   "git-gutter": gitGutter,
+  lsp,
   sidecar,
   workspace,
   explorer,

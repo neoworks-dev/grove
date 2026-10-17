@@ -151,12 +151,18 @@ fn panel_row(entity: &Entity<Editor>, session: &Session, position: usize, theme:
                 .min_w_0()
                 .truncate()
                 .text_size(px(12.0))
-                .text_color(theme.line_number.opacity(1.0))
+                .text_color(detail_color(theme, selected))
                 .child(detail.clone()),
         );
     }
     row = row.on_mouse_down(MouseButton::Left, window.listener_for(entity, click));
     row.into_any_element()
+}
+
+/// The colour of a row's detail: dim, but readable on the selected row's background too.
+fn detail_color(theme: &EditorTheme, selected: bool) -> Hsla {
+    let amount = if selected { 0.75 } else { 0.5 };
+    mix(theme.background, theme.foreground, amount)
 }
 
 /// The coloured square with a letter that says what kind of item a row is.
@@ -242,7 +248,7 @@ fn documentation_popover(
         return None;
     }
     let mut element = div()
-        .w(DOCUMENTATION_WIDTH)
+        .max_w(DOCUMENTATION_WIDTH)
         .max_h(DOCUMENTATION_MAX_HEIGHT)
         .overflow_hidden()
         .p(px(10.0))
@@ -259,7 +265,7 @@ fn documentation_popover(
         .text_color(theme.foreground)
         .children(sections)
         .into_any_element();
-    let measured = element.layout_as_root(size(AvailableSpace::Definite(DOCUMENTATION_WIDTH), AvailableSpace::MinContent), window, cx);
+    let measured = element.layout_as_root(size(AvailableSpace::MaxContent, AvailableSpace::MaxContent), window, cx);
     let fits_right = panel_origin.x + panel_width + px(4.0) + measured.width <= bounds.right();
     let left = if fits_right { panel_origin.x + panel_width + px(4.0) } else { panel_origin.x - measured.width - px(4.0) };
     let top = panel_origin.y.min(bounds.bottom() - measured.height).max(bounds.top());
@@ -292,7 +298,7 @@ fn hover_popover(
         sections.push(markdown_element(&markdown::parse(markdown), theme).into_any_element());
     }
     let mut element = div()
-        .w(HOVER_WIDTH)
+        .max_w(HOVER_WIDTH)
         .max_h(HOVER_MAX_HEIGHT)
         .overflow_hidden()
         .p(px(10.0))
@@ -309,7 +315,7 @@ fn hover_popover(
         .text_color(theme.foreground)
         .children(sections)
         .into_any_element();
-    let measured = element.layout_as_root(size(AvailableSpace::Definite(HOVER_WIDTH), AvailableSpace::MinContent), window, cx);
+    let measured = element.layout_as_root(size(AvailableSpace::MaxContent, AvailableSpace::MaxContent), window, cx);
     let origin = place_vertically(point(anchor.left(), anchor.top()), measured.width, measured.height, bounds);
     let left = origin.x.min(bounds.right() - measured.width).max(bounds.left());
     Some(Popover { element, origin: point(left, origin.y) })

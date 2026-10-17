@@ -17,6 +17,7 @@
   { "id": "editor", "plugin": "editor" },
   { "id": "statusbar-position", "plugin": "editor-position" },
   { "id": "git-gutter", "plugin": "git-gutter" },
+  { "id": "lsp", "plugin": "lsp" },
   { "id": "sidecar", "plugin": "sidecar" },
   { "id": "workspace", "plugin": "workspace" },
   { "id": "explorer", "plugin": "explorer" },

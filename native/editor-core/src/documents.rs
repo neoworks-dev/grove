@@ -65,12 +65,7 @@ impl Document {
         if self.detached {
             path = None;
         }
-        DocumentSummary {
-            id: self.id,
-            path,
-            title: self.title(),
-            dirty: self.state.is_modified(),
-        }
+        DocumentSummary { id: self.id, path, title: self.title(), dirty: self.state.is_modified() }
     }
 }
 
@@ -203,7 +198,10 @@ impl Documents {
     /// state changed since the app last heard of it. None when the document is not open.
     pub fn apply(&mut self, id: DocumentId, command: &Command) -> Option<Applied> {
         if command == &Command::Save && self.get(id).is_some_and(Document::is_detached) {
-            let outcome = Outcome { error: Some("this text belongs to no file, so there is nothing to save".into()), ..Outcome::default() };
+            let outcome = Outcome {
+                error: Some("this text belongs to no file, so there is nothing to save".into()),
+                ..Outcome::default()
+            };
             return Some(Applied { outcome, modified_changed: None });
         }
         let uses_memory = command.is_vim();

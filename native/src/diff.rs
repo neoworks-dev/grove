@@ -76,7 +76,12 @@ fn number_argument(args: &Value, name: &str) -> Result<u64, CommandError> {
 }
 
 /// Puts a source's decorations on a document, replacing what it had.
-fn set_decorations(documents: &SharedDocuments, id: DocumentId, source: &str, decorations: Vec<Decoration>) -> Result<(), CommandError> {
+fn set_decorations(
+    documents: &SharedDocuments,
+    id: DocumentId,
+    source: &str,
+    decorations: Vec<Decoration>,
+) -> Result<(), CommandError> {
     let command = EditorCommand::SetDecorations { source: source.to_string(), decorations };
     match documents.apply(id, &command) {
         Some(_) => Ok(()),
@@ -144,7 +149,8 @@ struct RepositoryFile {
 
 /// Finds the repository a file belongs to, even when the file itself is gone.
 fn repository_file(path: &Path) -> Result<RepositoryFile, CommandError> {
-    let not_in_repository = || CommandError::with_code("NotInRepository", format!("{} is not in a git repository", path.display()));
+    let not_in_repository =
+        || CommandError::with_code("NotInRepository", format!("{} is not in a git repository", path.display()));
     let directory = path.parent().ok_or_else(not_in_repository)?;
     let name = path.file_name().ok_or_else(not_in_repository)?;
     let root = run_git(directory, &["rev-parse", "--show-toplevel"]).ok_or_else(not_in_repository)?;
@@ -319,8 +325,9 @@ fn git_discard(args: &Value) -> Result<Value, CommandError> {
 /// Puts one file back as the index has it, or deletes it when git does not know it.
 fn discard_file(path: &Path, untracked: bool) -> Result<(), CommandError> {
     if untracked {
-        return std::fs::remove_file(path)
-            .map_err(|error| CommandError::with_code("DiscardFailed", format!("could not delete {}: {error}", path.display())));
+        return std::fs::remove_file(path).map_err(|error| {
+            CommandError::with_code("DiscardFailed", format!("could not delete {}: {error}", path.display()))
+        });
     }
     let file = repository_file(path)?;
     let restored = run_git(&file.root, &["restore", "--", &file.relative]);

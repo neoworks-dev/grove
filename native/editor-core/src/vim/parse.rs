@@ -159,7 +159,9 @@ pub enum Simple {
     /// `ZQ`.
     CloseWithoutSaving,
     /// `]c` and `[c`.
-    GotoChange { forward: bool },
+    GotoChange {
+        forward: bool,
+    },
     Page(PageStep),
     /// Ctrl-N.
     NextMatch,

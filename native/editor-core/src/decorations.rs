@@ -214,7 +214,14 @@ impl Decorations {
                     Placement::Above => row,
                     Placement::Below => row + 1,
                 };
-                Some(PlacedBlock { slot: slot.min(line_count), row, placement: *placement, lines, tone: *tone, emphasis })
+                Some(PlacedBlock {
+                    slot: slot.min(line_count),
+                    row,
+                    placement: *placement,
+                    lines,
+                    tone: *tone,
+                    emphasis,
+                })
             })
             .collect();
         blocks.sort_by_key(|block| block.slot);

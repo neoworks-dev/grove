@@ -10,10 +10,12 @@
 //! `samples/scratch.rs` in the temp directory, so trying it out never edits real source.
 //!
 //! The host also runs the sidecar, Grove's main process under Bun, and relays the UI's calls
-//! to it (see `sidecar.rs`).
+//! to it (see `sidecar.rs`), and offers the agents plugin the suite daemon's address and a way
+//! to start it (see `suite.rs`).
 
 mod editor;
 mod sidecar;
+mod suite;
 
 use std::path::PathBuf;
 
@@ -33,6 +35,7 @@ fn main() {
         .command("initial_repo", |_| Ok::<_, CommandError>(json!(initial_repo())));
     let sidecar = Sidecar::start(SidecarConfig::from_environment(), commands.emitter());
     let commands = sidecar.commands(commands);
+    let commands = suite::register(commands);
     let documents = SharedDocuments::new(commands.emitter());
     let commands = documents.register(commands);
     let elements = Elements::new().register("editor", move |_host, cx| {

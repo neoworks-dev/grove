@@ -36,6 +36,14 @@
     return service.registerView(leafId, view);
   });
 
+  // The pane that has the focus has the keyboard in its editor, so a split's new pane takes the
+  // keys from the one it came from, and a prompt that closes gives them back.
+  $effect(() => {
+    if (view && service.isFocusedPane(leafId) && service.prompt() === null) {
+      view.focus();
+    }
+  });
+
   /** Shows the tab with this id in this pane. */
   function selectTab(tabId: string): void {
     service.select(leafId, Number(tabId));

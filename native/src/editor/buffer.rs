@@ -64,6 +64,19 @@ impl Buffer {
         self.line(row).chars().count()
     }
 
+    /// The text between two positions, line endings included.
+    pub fn text_between(&self, start: Position, end: Position) -> String {
+        let start_index = self.char_index(start);
+        let end_index = self.char_index(end);
+        self.text.slice(start_index..end_index).to_string()
+    }
+
+    /// The character index in the whole text of a position.
+    fn char_index(&self, position: Position) -> usize {
+        let position = self.clamp(position);
+        self.text.line_to_char(position.row) + position.column
+    }
+
     /// Moves a position onto the nearest place that exists in the buffer.
     pub fn clamp(&self, position: Position) -> Position {
         let last_row = self.line_count().saturating_sub(1);

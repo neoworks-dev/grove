@@ -3,7 +3,7 @@
 // service so the service runs under `bun test` without the host.
 
 import { invoke, listen } from "@neoworks/svelte-gpui";
-import type { DocumentEvent, DocumentHost, DocumentSummary } from "./service";
+import type { DocumentEvent, DocumentHost, DocumentSummary, IndentStyle } from "./service";
 
 /** Documents kept by the native host, which the editor element shows by id. */
 export function gpuiDocumentHost(): DocumentHost {
@@ -17,6 +17,9 @@ export function gpuiDocumentHost(): DocumentHost {
     },
     setDecorations: async (id, source, decorations) => {
       await invoke("document_set_decorations", { id, source, decorations });
+    },
+    configure: async (options) => {
+      await invoke("editor_configure", options);
     },
     onEvent: listenToDocuments,
   };
@@ -34,6 +37,7 @@ function listenToDocuments(handler: (event: DocumentEvent) => void): () => void 
       "document-selections",
       (event) => handler({ type: "selections", ...event }),
     ),
+    listen<{ id: number; indent: IndentStyle }>("document-indent", (event) => handler({ type: "indent", ...event })),
     listen<{ mode: string; pending: string; commandLine: string | null }>("editor-mode", (event) =>
       handler({ type: "mode", ...event }),
     ),

@@ -28,10 +28,12 @@ struct Collector {
 }
 
 impl Handler for Collector {
+    /// Passes the notification on to the test.
     fn notification(&self, method: &str, params: Value) {
         let _ = self.sender.lock().unwrap().send(Heard::Notification(method.to_string(), params));
     }
 
+    /// Answers the configuration request with one object per section asked about, and refuses the rest.
     fn request(&self, method: &str, params: Value) -> Result<Value, ResponseError> {
         if method == "workspace/configuration" {
             let sections = params["items"].as_array().map(Vec::len).unwrap_or(0);
@@ -40,6 +42,7 @@ impl Handler for Collector {
         Err(ResponseError { code: 0, message: "unknown".into() })
     }
 
+    /// Passes the status on to the test.
     fn status(&self, status: &Status) {
         let _ = self.sender.lock().unwrap().send(Heard::Status(status.clone()));
     }
@@ -51,6 +54,7 @@ struct Session {
     uri: String,
 }
 
+/// Starts the fake server and a client for it.
 fn start() -> Session {
     let (sender, heard) = mpsc::channel();
     let handler = Arc::new(Collector { sender: Mutex::new(sender) });
@@ -76,6 +80,7 @@ impl Session {
         }
     }
 
+    /// Waits for a status that satisfies `wanted`.
     fn wait_for_status(&self, wanted: impl Fn(&Status) -> bool) -> Status {
         self.wait_for(|heard| match heard {
             Heard::Status(status) if wanted(status) => Some(status.clone()),
@@ -100,6 +105,7 @@ impl Session {
         receiver.recv_timeout(WAIT).expect("an answer")
     }
 
+    /// The parameters of a request about a place in the document.
     fn position_params(&self, line: usize, character: usize) -> Value {
         json!({ "textDocument": { "uri": self.uri }, "position": { "line": line, "character": character } })
     }

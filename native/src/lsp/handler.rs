@@ -36,6 +36,7 @@ impl ServerHandler {
 }
 
 impl Handler for ServerHandler {
+    /// Takes diagnostics and progress; other notifications are ignored.
     fn notification(&self, method: &str, params: Value) {
         let Some(store) = self.store() else {
             return;
@@ -48,6 +49,7 @@ impl Handler for ServerHandler {
         }
     }
 
+    /// Answers what servers commonly ask of a client: its settings, workspace and registrations.
     fn request(&self, method: &str, params: Value) -> Result<Value, ResponseError> {
         match method {
             "workspace/configuration" => {
@@ -66,6 +68,7 @@ impl Handler for ServerHandler {
         }
     }
 
+    /// Tells the store when the server is ready or gone.
     fn status(&self, status: &Status) {
         let Some(store) = self.store() else {
             return;

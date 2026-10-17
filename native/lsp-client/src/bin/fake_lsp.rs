@@ -10,6 +10,7 @@ use std::io::{BufReader, stdin, stdout};
 use lsp_client::rpc::{read_message, write_message};
 use serde_json::{Value, json};
 
+/// Serves the conversation on stdin and stdout until the client says exit or the stream ends.
 fn main() {
     let mut reader = BufReader::new(stdin().lock());
     let mut writer = stdout().lock();

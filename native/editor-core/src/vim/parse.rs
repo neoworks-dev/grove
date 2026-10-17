@@ -251,8 +251,8 @@ fn parse_motion(keys: &[String]) -> MotionParse {
     match first {
         "h" | "left" => fixed(Motion::ColumnLeft),
         "l" | "right" => fixed(Motion::ColumnRight),
-        "j" | "down" => fixed(Motion::Vertical(1)),
-        "k" | "up" => fixed(Motion::Vertical(-1)),
+        "j" | "down" | "enter" | "+" => fixed(Motion::Vertical(1)),
+        "k" | "up" | "-" => fixed(Motion::Vertical(-1)),
         "backspace" => fixed(Motion::Left),
         "space" => fixed(Motion::Right),
         "0" | "home" => fixed(Motion::LineStart),
@@ -467,7 +467,7 @@ fn parse_simple(keys: &[String]) -> SimpleParse {
     let simple = |simple| SimpleParse::Simple(simple, 1);
     let short = |operator, motion, lines| simple(Simple::ShortOperator { operator, motion, lines });
     match keys[0].as_str() {
-        "x" => short(Operator::Delete, Some(Motion::ColumnRight), false),
+        "x" | "delete" => short(Operator::Delete, Some(Motion::ColumnRight), false),
         "X" => short(Operator::Delete, Some(Motion::ColumnLeft), false),
         "D" => short(Operator::Delete, Some(Motion::LineEnd), false),
         "C" => short(Operator::Change, Some(Motion::LineEnd), false),

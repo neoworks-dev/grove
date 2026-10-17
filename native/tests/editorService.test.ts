@@ -315,3 +315,50 @@ describe("cursor", () => {
     expect(setup.editor.cursorOf(id)).toEqual({ row: 3, column: 7, count: 2, selected: false });
   });
 });
+
+describe("vim keys", () => {
+  test("start as the standard keys and follow the setting", async () => {
+    const setup = await setUp();
+    expect(setup.editor.keymap()).toBe("standard");
+    setup.editor.setKeymap("vim");
+    expect(setup.editor.keymap()).toBe("vim");
+    setup.editor.setKeymap("nonsense");
+    expect(setup.editor.keymap()).toBe("standard");
+  });
+
+  test("the mode and pending keys come from the editor, and go when the keys are standard again", async () => {
+    const setup = await setUp();
+    setup.editor.setKeymap("vim");
+    setup.host.emit({ type: "mode", mode: "NORMAL", pending: "2d", commandLine: null });
+    expect(setup.editor.vimStatus()).toEqual({ mode: "NORMAL", pending: "2d", commandLine: null });
+    setup.editor.setKeymap("standard");
+    expect(setup.editor.vimStatus().mode).toBe("");
+  });
+
+  test(":q closes the tab and :q! closes it without asking about unsaved changes", async () => {
+    const setup = await setUp();
+    const first = (await setup.editor.openPath("/src/a.rs")) as number;
+    const second = (await setup.editor.openPath("/src/b.rs")) as number;
+    setup.host.emit({ type: "close-request", id: first, discard: false });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(setup.host.closedIds).toEqual([first]);
+    setup.host.edit(second, true);
+    setup.host.emit({ type: "close-request", id: second, discard: false });
+    await Promise.resolve();
+    expect(setup.editor.prompt()).toEqual({ kind: "confirm-close", documentId: second, title: "b.rs" });
+    setup.editor.answerConfirmClose("cancel");
+    setup.host.emit({ type: "close-request", id: second, discard: true });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(setup.host.closedIds).toEqual([first, second]);
+  });
+
+  test(":e opens the file it names", async () => {
+    const setup = await setUp();
+    setup.host.emit({ type: "open-request", id: 1, path: "/src/c.rs" });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(setup.editor.buffers().map((buffer) => buffer.title)).toEqual(["c.rs"]);
+  });
+});

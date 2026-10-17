@@ -87,7 +87,9 @@ fn split_unescaped(text: &str, delimiter: char) -> Vec<String> {
     let mut characters = text.chars().peekable();
     while let Some(character) = characters.next() {
         if character == '\\' && characters.peek() == Some(&delimiter) {
-            pieces.last_mut().map(|piece| piece.push(delimiter));
+            if let Some(piece) = pieces.last_mut() {
+                piece.push(delimiter);
+            }
             characters.next();
             continue;
         }
@@ -95,7 +97,9 @@ fn split_unescaped(text: &str, delimiter: char) -> Vec<String> {
             pieces.push(String::new());
             continue;
         }
-        pieces.last_mut().map(|piece| piece.push(character));
+        if let Some(piece) = pieces.last_mut() {
+            piece.push(character);
+        }
     }
     pieces
 }

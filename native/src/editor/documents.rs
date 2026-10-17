@@ -12,6 +12,10 @@
 //! - `document-error`: `{ id, message }`, such as a save that failed.
 //! - `document-selections`: `{ id, count, row, column, selected }`, the newest cursor after any
 //!   command that moved a selection.
+//! - `document-request`: `{ id, request: "close", discard }` or `{ id, request: "open", path }`,
+//!   what a vim ex command such as `:q` or `:e` asks the app to do.
+//! - `editor-mode`: `{ mode, pending, commandLine }`, the vim layer's mode and the keys it is
+//!   waiting on, for the status bar.
 //!
 //! Commands: `document_open { path }`, `document_close { id }`, `document_list`,
 //! `document_save { id }`, and `document_set_decorations { id, source, decorations }`, which
@@ -22,6 +26,7 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use editor_core::vim::types::AppRequest;
 use editor_core::{Command, Decoration, Document, DocumentId, DocumentSummary, Documents, Outcome};
 use serde_json::{Value, json};
 use svelte_gpui::{CommandError, Commands, Emitter};
@@ -89,11 +94,38 @@ impl SharedDocuments {
         if let Some(dirty) = applied.modified_changed {
             self.emitter.emit("document-dirty", json!({ "id": id, "dirty": dirty }));
         }
+        if let Some(request) = &applied.outcome.request {
+            self.emit_request(id, request, &documents);
+        }
         if applied.outcome.changed {
             let selections = documents.get(id).map(selections_event);
             self.emitter.emit("document-selections", selections.unwrap_or(Value::Null));
         }
         Some(applied.outcome)
+    }
+
+    /// Sends an event to the UI that is about the editor rather than a document.
+    pub fn announce(&self, event: &str, payload: Value) {
+        self.emitter.emit(event, payload);
+    }
+
+    /// Tells the UI what an ex command asks of the app: to close the tab, or open a file, which
+    /// is looked for beside the document when its path is relative.
+    fn emit_request(&self, id: DocumentId, request: &AppRequest, documents: &Documents) {
+        match request {
+            AppRequest::CloseTab { discard } => {
+                self.emitter.emit("document-request", json!({ "id": id, "request": "close", "discard": discard }));
+            }
+            AppRequest::OpenFile { path } => {
+                let beside = documents.get(id).and_then(|document| document.path().and_then(Path::parent));
+                let resolved = match beside {
+                    Some(directory) if Path::new(path).is_relative() => directory.join(path),
+                    _ => Path::new(path).to_path_buf(),
+                };
+                let path = resolved.display().to_string();
+                self.emitter.emit("document-request", json!({ "id": id, "request": "open", "path": path }));
+            }
+        }
     }
 
     /// Registers the commands the UI opens, closes, lists and saves documents with.

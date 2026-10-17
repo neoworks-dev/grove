@@ -85,11 +85,14 @@ export const editor = {
   apply(ctx: Context, config: EditorConfig) {
     const service = new EditorService(ctx, gpuiDocumentHost(), ctx.layout);
     service.setKeymap(config.keymap);
-    void service.configure(optionsOf(config));
+    const configure = (options: EditorOptions) => {
+      service.configure(options).catch((error) => ctx.logger.warn(`editor: could not apply the settings: ${String(error)}`));
+    };
+    configure(optionsOf(config));
     ctx.settings.onLive((change) => {
       const live = change.config as EditorConfig;
       service.setKeymap(live.keymap);
-      void service.configure(optionsOf(live));
+      configure(optionsOf(live));
     });
     ctx.slots.register("main", {
       id: "editor",
@@ -125,8 +128,8 @@ export const editor = {
 function registerFileCommands(ctx: Context, service: EditorService): void {
   const hasTab = () => service.hasActiveTab();
   ctx.commands.register({ id: "file.open", title: "Open file", group: "File", run: () => service.requestOpenFile() });
-  ctx.commands.register({ id: "file.closeTab", title: "Close tab", group: "File", when: hasTab, run: () => void service.closeActiveTab() });
-  ctx.commands.register({ id: "editor.save", title: "Save file", group: "Editor", when: hasTab, run: () => void service.save() });
+  ctx.commands.register({ id: "file.closeTab", title: "Close tab", group: "File", when: hasTab, run: async () => { await service.closeActiveTab() } });
+  ctx.commands.register({ id: "editor.save", title: "Save file", group: "Editor", when: hasTab, run: async () => { await service.save() } });
   ctx.commands.register({ id: "go.nextTab", title: "Next tab", group: "Go", when: hasTab, run: () => service.cycleTabs(1) });
   ctx.commands.register({ id: "go.previousTab", title: "Previous tab", group: "Go", when: hasTab, run: () => service.cycleTabs(-1) });
 }

@@ -46,10 +46,10 @@ function registerCommands(ctx: Context, service: DiffService): void {
     group: "Git",
     keywords: "changes compare head",
     when: hasFile,
-    run: () => {
+    run: async () => {
       const active = ctx.editor.active();
       if (active !== null) {
-        void service.openFile(active.path, "head");
+        await service.openFile(active.path, "head");
       }
     },
   });
@@ -58,26 +58,26 @@ function registerCommands(ctx: Context, service: DiffService): void {
     title: "Diff: switch between inline and side by side",
     group: "Git",
     when: () => service.hasFocusedDiff(),
-    run: () => void service.toggleMode(),
+    run: () => service.toggleMode(),
   });
-  ctx.commands.register({ id: "diff.nextChange", title: "Git: go to next change", group: "Git", when: inDiffOrFile, run: () => void service.stepChange(1) });
+  ctx.commands.register({ id: "diff.nextChange", title: "Git: go to next change", group: "Git", when: inDiffOrFile, run: () => service.stepChange(1) });
   ctx.commands.register({
     id: "diff.previousChange",
     title: "Git: go to previous change",
     group: "Git",
     when: inDiffOrFile,
-    run: () => void service.stepChange(-1),
+    run: () => service.stepChange(-1),
   });
-  ctx.commands.register({ id: "git.stageHunk", title: "Git: stage hunk at cursor", group: "Git", when: inDiffOrFile, run: () => void service.stageHunk() });
+  ctx.commands.register({ id: "git.stageHunk", title: "Git: stage hunk at cursor", group: "Git", when: inDiffOrFile, run: () => service.stageHunk() });
   ctx.commands.register({
     id: "git.unstageHunk",
     title: "Git: unstage hunk at cursor",
     group: "Git",
     when: () => service.hasFocusedDiff(),
-    run: () => void service.unstageHunk(),
+    run: () => service.unstageHunk(),
   });
-  ctx.commands.register({ id: "git.revertHunk", title: "Git: revert hunk at cursor", group: "Git", when: inDiffOrFile, run: () => void service.revertHunk() });
-  ctx.commands.register({ id: "git.previewHunk", title: "Git: preview hunk at cursor", group: "Git", when: hasFile, run: () => void service.previewHunk() });
+  ctx.commands.register({ id: "git.revertHunk", title: "Git: revert hunk at cursor", group: "Git", when: inDiffOrFile, run: () => service.revertHunk() });
+  ctx.commands.register({ id: "git.previewHunk", title: "Git: preview hunk at cursor", group: "Git", when: hasFile, run: () => service.previewHunk() });
   ctx.keymap.bind([
     { id: "diff.nextChange", keys: "alt+down", command: "diff.nextChange", description: "Next change" },
     { id: "diff.nextChange.f7", keys: "f7", command: "diff.nextChange", description: "Next change" },

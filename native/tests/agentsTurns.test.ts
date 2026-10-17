@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import type { Component, SessionEvent, ViewItem } from "@suite/protocol/types";
 import { applyCall, chainedTexts, noCalls, type CallFacts, type Calls } from "../plugins/agents/calls";
+import { argumentOf, shortDirectory } from "../plugins/agents/chat/callRow";
 import { chatRows, foldTurn, talliesOf, toolWord, type ChatFacts } from "../plugins/agents/chat/turns";
 
 const text = (words: string): Component => ({ type: "text", blocks: [{ type: "paragraph", spans: [{ text: words }] }] });
@@ -167,4 +168,16 @@ test("changes to a file add up to one when each starts where the one before ende
   expect(chainedTexts([{ path: "a", oldText: "1", newText: "2" }, { path: "a", oldText: "2", newText: "3" }])).toEqual({ oldText: "1", newText: "3" });
   expect(chainedTexts([{ path: "a", newText: "2" }])).toEqual({ oldText: "", newText: "2" });
   expect(chainedTexts([{ path: "a", oldText: "1", newText: "2" }, { path: "a", oldText: "x", newText: "3" }])).toBeUndefined();
+});
+
+const callWith = (fields: Partial<CallFacts>): CallFacts => ({ id: "x", ref: "c-x", kind: "other", title: "A title", status: "completed", diffs: [], ...fields });
+
+test("a call's line names the file it was about, with where it is, or else its command or search", () => {
+  expect(argumentOf(callWith({ kind: "read", rawInput: { path: "/repo/src/util.ts" } }))).toEqual({ text: "util.ts", path: "/repo/src/util.ts", directory: "/repo/src/" });
+  expect(argumentOf(callWith({ rawInput: { file_path: "/a/b/c/d.ts" } }))).toEqual({ text: "d.ts", path: "/a/b/c/d.ts", directory: "…/b/c/" });
+  expect(argumentOf(callWith({ kind: "edit", diffs: [{ path: "/repo/x.md", newText: "" }] }))).toMatchObject({ text: "x.md", path: "/repo/x.md" });
+  expect(argumentOf(callWith({ kind: "execute", rawInput: { command: "bun   test\n--bail" } }))).toEqual({ text: "bun test --bail" });
+  expect(argumentOf(callWith({ kind: "search", rawInput: { pattern: "greet" } }))).toEqual({ text: "greet" });
+  expect(argumentOf(callWith({ rawInput: {} }))).toEqual({ text: "A title" });
+  expect(shortDirectory("name.txt")).toBeUndefined();
 });

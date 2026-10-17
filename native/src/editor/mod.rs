@@ -13,6 +13,7 @@
 
 mod documents;
 mod element;
+mod signals;
 mod theme;
 
 use std::cell::RefCell;
@@ -30,7 +31,8 @@ use svelte_gpui::gpui::{
 };
 use svelte_gpui::{AppElement, CommandError};
 
-pub use documents::SharedDocuments;
+pub use documents::{DocumentObserver, SharedDocuments};
+pub use signals::{Signal, Signals};
 
 use element::{EditorElement, LINE_HEIGHT, Layout};
 use theme::EditorTheme;

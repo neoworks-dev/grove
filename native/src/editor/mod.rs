@@ -14,6 +14,7 @@
 mod documents;
 mod element;
 mod indent_paint;
+mod occurrence_view;
 mod options;
 mod theme;
 mod vim_paint;
@@ -71,6 +72,9 @@ pub struct Editor {
     dragging: bool,
     /// The colours the editor paints with, set by the `theme` prop.
     theme: EditorTheme,
+    /// Counts the times the cursor may have moved, so a timer that was started before the latest
+    /// move knows it is out of date.
+    occurrence_generation: u64,
     /// Redraws when focus moves, since the host caches the view and would keep the cursor
     /// as it last drew it.
     focus_subscriptions: Vec<Subscription>,
@@ -91,6 +95,7 @@ impl Editor {
             last_copied: None,
             dragging: false,
             theme: EditorTheme::default(),
+            occurrence_generation: 0,
             focus_subscriptions: Vec::new(),
         }
     }
@@ -166,6 +171,9 @@ impl Editor {
             self.last_copied = Some(text.clone());
         }
         self.redraw_other_views(id, cx);
+        if outcome.changed || outcome.text_changed {
+            self.occurrences_may_have_changed(cx);
+        }
         outcome
     }
 
@@ -493,6 +501,7 @@ impl Render for Editor {
             }))
             .on_scroll_wheel(cx.listener(|editor, event: &ScrollWheelEvent, _window, cx| {
                 editor.scroll_by(event.delta.pixel_delta(LINE_HEIGHT).y);
+                editor.occurrences_may_have_changed(cx);
                 cx.notify();
             }))
             .on_mouse_down(

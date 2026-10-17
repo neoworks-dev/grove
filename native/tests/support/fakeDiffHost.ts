@@ -32,11 +32,20 @@ export class FakeDocuments implements DocumentHost {
     return this.add({ path: null, title: name }, text);
   }
 
+  /** Fails as the host does for a document that is not open, or was closed. */
+  private requireOpen(id: number): void {
+    if (!this.summaries.has(id)) {
+      throw new Error(`document ${id} is not open`);
+    }
+  }
+
   async text(id: number): Promise<string> {
+    this.requireOpen(id);
     return this.texts.get(id) ?? "";
   }
 
   async setText(id: number, text: string): Promise<void> {
+    this.requireOpen(id);
     this.texts.set(id, text);
     this.emit({ type: "edited", id });
   }
@@ -44,6 +53,7 @@ export class FakeDocuments implements DocumentHost {
   async reload(): Promise<void> {}
 
   async close(id: number): Promise<void> {
+    this.requireOpen(id);
     this.summaries.delete(id);
     this.closed.push(id);
     this.emit({ type: "closed", id });
@@ -52,6 +62,7 @@ export class FakeDocuments implements DocumentHost {
   async save(): Promise<void> {}
 
   async setDecorations(id: number, source: string, decorations: Decoration[]): Promise<void> {
+    this.requireOpen(id);
     this.decorations.set(`${id}/${source}`, decorations);
   }
 
@@ -87,9 +98,24 @@ export class FakeDiffHost implements DiffHost {
   found: Hunk[] = [];
   calls: string[] = [];
   failWith: string | null = null;
+  /** While set, `apply` waits for it, so a test can do something while a drawing is in flight. */
+  gate: Promise<void> | null = null;
+  /** The documents `apply` was asked to draw on that were not open then. */
+  drawnOnClosed: number[] = [];
+  /** Tells whether a document is open, for `apply` to notice one that is not. */
+  isOpen: (id: number) => boolean = () => true;
   discarded: { path: string; untracked: boolean }[][] = [];
 
   async apply(options: { newId: number; oldId?: number; oldText: string; mode: "inline" | "split"; source: string }): Promise<Hunk[]> {
+    for (const id of [options.newId, options.oldId]) {
+      if (id !== undefined && !this.isOpen(id)) {
+        this.drawnOnClosed.push(id);
+        throw new Error(`document ${id} is not open`);
+      }
+    }
+    if (this.gate !== null) {
+      await this.gate;
+    }
     this.calls.push(`apply ${options.mode} new=${options.newId} old=${options.oldId === undefined ? "-" : options.oldId} "${options.oldText}"`);
     return this.found;
   }

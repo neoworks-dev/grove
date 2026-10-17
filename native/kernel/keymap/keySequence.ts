@@ -362,6 +362,9 @@ export function isModifierKey(eventKey: string): boolean {
 export interface ConflictEntry {
   id: string
   sequence: ParsedSequence
+  // The binding has a `when` guard. One with a guard and one without are not in conflict: the
+  // guarded one is for its context and the other for everywhere else.
+  guarded?: boolean
 }
 
 export interface SequenceConflict {
@@ -385,6 +388,7 @@ export function findConflicts(entries: ConflictEntry[]): SequenceConflict[] {
 }
 
 function compareEntries(a: ConflictEntry, b: ConflictEntry): SequenceConflict | null {
+  if ((a.guarded === true) !== (b.guarded === true)) return null
   if (a.sequence.leader !== b.sequence.leader) return null
   const sameLength = a.sequence.steps.length === b.sequence.steps.length
   const [shorter, longer] = a.sequence.steps.length <= b.sequence.steps.length ? [a, b] : [b, a]

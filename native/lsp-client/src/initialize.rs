@@ -24,7 +24,8 @@ pub fn initialize_params(root: &Path, initialization_options: Value) -> Value {
 }
 
 /// What the editor can do with what a server sends: the completion features the panel shows,
-/// markdown in hovers and documentation, and the diagnostics and progress it draws.
+/// markdown in hovers and documentation, the diagnostics and progress it draws, signature help,
+/// inlay hints, references, rename, code actions and the edits a server asks to be applied.
 fn client_capabilities() -> Value {
     json!({
         "general": { "positionEncodings": ["utf-16"] },
@@ -48,10 +49,43 @@ fn client_capabilities() -> Value {
             },
             "hover": { "contentFormat": ["markdown", "plaintext"] },
             "definition": { "linkSupport": true },
+            "typeDefinition": { "linkSupport": true },
+            "implementation": { "linkSupport": true },
+            "references": {},
+            "documentHighlight": {},
+            "signatureHelp": {
+                "contextSupport": true,
+                "signatureInformation": {
+                    "documentationFormat": ["markdown", "plaintext"],
+                    "parameterInformation": { "labelOffsetSupport": true },
+                    "activeParameterSupport": true,
+                },
+            },
+            "inlayHint": { "resolveSupport": { "properties": [] } },
+            "rename": { "prepareSupport": true, "prepareSupportDefaultBehavior": 1 },
+            "codeAction": {
+                "isPreferredSupport": true,
+                "codeActionLiteralSupport": {
+                    "codeActionKind": {
+                        "valueSet": ["", "quickfix", "refactor", "refactor.extract", "refactor.inline", "refactor.rewrite", "source", "source.organizeImports", "source.fixAll"],
+                    },
+                },
+                "resolveSupport": { "properties": ["edit"] },
+            },
+            "formatting": {},
             "publishDiagnostics": { "relatedInformation": false, "versionSupport": true, "tagSupport": { "valueSet": [1, 2] } },
         },
         "window": { "workDoneProgress": true },
-        "workspace": { "configuration": true, "workspaceFolders": true, "applyEdit": false },
+        "workspace": {
+            "configuration": true,
+            "workspaceFolders": true,
+            "applyEdit": true,
+            "workspaceEdit": { "documentChanges": true },
+            "didChangeConfiguration": { "dynamicRegistration": false },
+            "didChangeWatchedFiles": { "dynamicRegistration": true },
+            "inlayHint": { "refreshSupport": true },
+            "executeCommand": { "dynamicRegistration": false },
+        },
     })
 }
 

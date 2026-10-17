@@ -1,0 +1,828 @@
+// The `diff` service: diff views in panes of their own, and the hunk actions that work on the
+// editor's cursor. A diff view is one or two editors over documents, with the difference drawn as
+// decorations by the host (see `src/diff.rs`): inline, one editor over the new text with the removed
+// lines as blocks; or split, an editor for the old text beside one for the new, with fillers so
+// the rows of a hunk line up. The right side is the file's own document, so it can be edited and
+// saved as in any editor. State is plain fields with a change signal, never `$state`.
+//
+// Other plugins open a diff with `ctx.diff.open({ kind: "file", path, base: "head" })`, or of two
+// texts with `ctx.diff.openTexts(...)`.
+
+import { Service, type Context } from "@neoworks/extension-system";
+import { createChangeSignal, type ChangeSignal } from "../../kernel/reactive";
+import type { DocumentEvent, EditorService, EditorViewMethods } from "../editor/service";
+import type { DiffHost, GitBase } from "./diffHost";
+import {
+  baseLabel,
+  fileName,
+  hunkAtRow,
+  requestTitle,
+  sameRequest,
+  stepHunkRow,
+  type DiffBase,
+  type DiffMode,
+  type DiffPaneState,
+  type DiffRequest,
+  type Hunk,
+} from "./model";
+
+export { baseLabel, fileName, hunkPosition, stepHunkRow } from "./model";
+export type { DiffBase, DiffMode, DiffRequest, Hunk } from "./model";
+
+declare module "@neoworks/extension-system" {
+  interface Context {
+    diff: DiffService;
+  }
+}
+
+/** The pane type diff views are drawn in. */
+export const DIFF_PANE_TYPE = "diff";
+
+/** The decoration source the normal editor's hunk preview draws under. */
+export const PREVIEW_SOURCE = "git.preview";
+
+/** How long edits are gathered before the difference is worked out again. */
+const REAPPLY_DELAY_MS = 120;
+
+/** How long file system events are gathered before the git side of the diffs is read again. */
+const FILES_CHANGED_DELAY_MS = 400;
+
+/** What the service needs from the layout. */
+export interface DiffPaneHost {
+  readonly focusedLeafId: string;
+  leafIds(): string[];
+  paneTypeOf(leafId: string): string | undefined;
+  paneState(leafId: string): Record<string, unknown>;
+  setPaneState(leafId: string, patch: Record<string, unknown>): void;
+  splitFocused(direction: "row" | "column", paneTypeId?: string): void;
+  focus(leafId: string): void;
+  onPaneClosed(listener: (leafId: string) => void): () => void;
+  onPaneSplit(listener: (newLeafId: string, sourceLeafId: string) => void): () => void;
+}
+
+export interface DiffOptions {
+  /** Hears of changes to files on disk. Returns the function that stops. */
+  onFilesChanged?: (handler: () => void) => () => void;
+}
+
+/** What a diff pane draws. */
+export interface DiffView {
+  status: "loading" | "ready" | "error";
+  /** Why it could not be shown, when `status` is "error". */
+  message: string;
+  /** The file's name, for the pane's title. */
+  title: string;
+  /** Where the old side comes from: "HEAD", "Index", "Staged" or what a caller called it. */
+  baseLabel: string;
+  mode: DiffMode;
+  /** The document of the new text, which has the cursor and, for a file, takes edits. */
+  rightId: number | null;
+  /** The document of the old text, in split mode. */
+  leftId: number | null;
+  /** Whether the right side is the file's own document, which can be edited and saved. */
+  editable: boolean;
+  hunks: Hunk[];
+  /** What the hunk actions of the header can do. */
+  canStage: boolean;
+  canUnstage: boolean;
+  canRevert: boolean;
+}
+
+/** A diff pane's state beyond what it draws. */
+interface PaneRecord {
+  request: DiffRequest;
+  view: DiffView;
+  oldText: string;
+  /** The newest load, so one that is overtaken drops what it read. */
+  generation: number;
+  /** The editors drawing it, which are asked to draw again when the decorations change. */
+  editors: { left?: EditorViewMethods; right?: EditorViewMethods };
+  reapplyTimer: ReturnType<typeof setTimeout> | undefined;
+}
+
+/** The old text of a diff and the document that has the new text. */
+interface Sides {
+  oldText: string;
+  rightId: number;
+  editable: boolean;
+}
+
+export class DiffService extends Service {
+  private records = new Map<string, PaneRecord>();
+  private noticeText = "";
+  private changes: ChangeSignal = createChangeSignal();
+  private nextGeneration = 0;
+  private filesTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The documents that show a hunk preview, with the rows of the hunk. */
+  private previews = new Map<number, Hunk>();
+  /** The mode a diff opens in. */
+  private defaultMode: DiffMode = "inline";
+
+  constructor(
+    ctx: Context,
+    private editor: EditorService,
+    private panes: DiffPaneHost,
+    private host: DiffHost,
+    options: DiffOptions = {},
+  ) {
+    super(ctx, "diff");
+    ctx.effect(() => editor.onDocumentEvent((event) => this.handleDocumentEvent(event)), "diff.documents");
+    ctx.effect(() => panes.onPaneClosed((leafId) => void this.paneClosed(leafId)), "diff.paneClosed");
+    ctx.effect(() => panes.onPaneSplit((newLeafId, sourceLeafId) => this.paneSplit(newLeafId, sourceLeafId)), "diff.paneSplit");
+    if (options.onFilesChanged) {
+      const onFilesChanged = options.onFilesChanged;
+      ctx.effect(() => onFilesChanged(() => this.scheduleFilesChanged()), "diff.files");
+    }
+    ctx.effect(() => () => this.cancelTimers(), "diff.timers");
+  }
+
+  /**
+   * Shows a diff in a pane: the pane that already shows it, else a diff pane, else a new pane
+   * split off the focused one. Resolves to the pane, or null when the pane could not be made.
+   */
+  async open(request: DiffRequest, mode?: DiffMode): Promise<string | null> {
+    const showing = this.paneIds().find((leafId) => this.sameAsShown(leafId, request));
+    if (showing !== undefined) {
+      this.panes.focus(showing);
+      return showing;
+    }
+    const leafId = this.paneFor();
+    if (leafId === null) {
+      return null;
+    }
+    let chosen = this.defaultMode;
+    if (mode !== undefined) {
+      chosen = mode;
+    }
+    this.panes.setPaneState(leafId, { diff: { request, mode: chosen } satisfies DiffPaneState });
+    this.panes.focus(leafId);
+    await this.load(leafId);
+    return leafId;
+  }
+
+  /** Shows how a file in the working tree differs from a base, HEAD by default. */
+  openFile(path: string, base: DiffBase = "head", mode?: DiffMode): Promise<string | null> {
+    return this.open({ kind: "file", path, base }, mode);
+  }
+
+  /** Shows how two texts differ. `name`'s extension says what language they are. */
+  openTexts(name: string, oldText: string, newText: string, label = "Before", mode?: DiffMode): Promise<string | null> {
+    return this.open({ kind: "texts", name, label, oldText, newText }, mode);
+  }
+
+  /** What a diff pane draws, or undefined while it has nothing to show. Reactive. */
+  view(leafId: string): DiffView | undefined {
+    this.changes.track();
+    return this.records.get(leafId)?.view;
+  }
+
+  /** The title of a diff pane. Reactive. */
+  paneTitle(leafId: string): string {
+    this.changes.track();
+    const record = this.records.get(leafId);
+    if (record === undefined) {
+      const state = this.stateOf(leafId);
+      if (state === null) {
+        return "Diff";
+      }
+      return `${requestTitle(state.request)} (diff)`;
+    }
+    return `${record.view.title} (${record.view.baseLabel})`;
+  }
+
+  /** The last thing worth telling the person, such as a hunk that could not be staged. Reactive. */
+  notice(): string {
+    this.changes.track();
+    return this.noticeText;
+  }
+
+  /** Dismisses the notice. */
+  clearNotice(): void {
+    this.noticeText = "";
+    this.changes.notify();
+  }
+
+  /** The mode diffs open in. Reactive. */
+  mode(): DiffMode {
+    this.changes.track();
+    return this.defaultMode;
+  }
+
+  /** Loads the diff a pane's state asks for, when the pane has not loaded one, as a pane made by a split has not. */
+  ensureLoaded(leafId: string): void {
+    if (this.records.has(leafId) || this.stateOf(leafId) === null) {
+      return;
+    }
+    void this.load(leafId);
+  }
+
+  /** Lets commands and the pane's refreshes reach the editors drawing a diff while they are mounted. */
+  registerEditors(leafId: string, editors: { left?: EditorViewMethods; right?: EditorViewMethods }): () => void {
+    const record = this.records.get(leafId);
+    if (record === undefined) {
+      return () => {};
+    }
+    record.editors = editors;
+    return () => {
+      if (this.records.get(leafId) === record && record.editors === editors) {
+        record.editors = {};
+      }
+    };
+  }
+
+  /** Shows a diff in the other mode. */
+  async setMode(leafId: string, mode: DiffMode): Promise<void> {
+    const record = this.records.get(leafId);
+    if (record === undefined || record.view.mode === mode) {
+      return;
+    }
+    this.defaultMode = mode;
+    this.panes.setPaneState(leafId, { diff: { request: record.request, mode } satisfies DiffPaneState });
+    record.view = { ...record.view, mode };
+    this.changes.notify();
+    await this.applyDiff(leafId);
+  }
+
+  /** Switches the focused diff pane between inline and side by side. */
+  async toggleMode(leafId: string = this.panes.focusedLeafId): Promise<void> {
+    const record = this.records.get(leafId);
+    if (record === undefined) {
+      return;
+    }
+    let next: DiffMode = "split";
+    if (record.view.mode === "split") {
+      next = "inline";
+    }
+    await this.setMode(leafId, next);
+  }
+
+  /** Whether the focused pane shows a diff. Reactive. */
+  hasFocusedDiff(): boolean {
+    this.changes.track();
+    return this.records.has(this.panes.focusedLeafId);
+  }
+
+  /** Moves the cursor to the next (1) or previous (-1) change, in the focused diff or else the focused editor. */
+  async stepChange(step: 1 | -1): Promise<void> {
+    const leafId = this.panes.focusedLeafId;
+    if (this.records.has(leafId)) {
+      await this.stepPane(leafId, step);
+      return;
+    }
+    await this.stepEditor(step);
+  }
+
+  /** Stages the hunk under the cursor of the focused diff pane, or of the focused editor. */
+  async stageHunk(): Promise<void> {
+    const record = this.records.get(this.panes.focusedLeafId);
+    if (record === undefined) {
+      await this.stageInEditor();
+      return;
+    }
+    if (!record.view.canStage || record.view.rightId === null) {
+      this.say("This diff has no unstaged changes to stage.");
+      return;
+    }
+    await this.stageInPane(this.panes.focusedLeafId, record, record.view.rightId);
+  }
+
+  /** Takes the hunk under the cursor of the focused staged diff out of the index. */
+  async unstageHunk(): Promise<void> {
+    const leafId = this.panes.focusedLeafId;
+    const record = this.records.get(leafId);
+    if (record === undefined || record.request.kind !== "file" || !record.view.canUnstage) {
+      this.say("Unstage works in a diff of the staged changes.");
+      return;
+    }
+    const path = record.request.path;
+    const ok = await this.attempt(() => this.host.unstageHunk(path, this.cursorRow(record)), "Unstaged the hunk.");
+    if (ok) {
+      await this.reloadBase(leafId);
+    }
+  }
+
+  /** Puts the old lines of the hunk under the cursor back, in the focused diff pane or editor. */
+  async revertHunk(): Promise<void> {
+    const record = this.records.get(this.panes.focusedLeafId);
+    if (record === undefined) {
+      await this.revertInEditor();
+      return;
+    }
+    const base = gitBaseOf(record.request);
+    if (!record.view.canRevert || base === null || record.view.rightId === null) {
+      this.say("Only a diff of a file against HEAD or the index can be reverted.");
+      return;
+    }
+    const rightId = record.view.rightId;
+    await this.attempt(() => this.host.revertHunk(rightId, base, this.cursorRow(record)), "Reverted the hunk.");
+  }
+
+  /** Shows the old lines of the hunk under the editor's cursor above it, or hides them again. */
+  async previewHunk(): Promise<void> {
+    const active = this.editor.active();
+    if (active === null || active.path === "") {
+      this.say("Open a file to preview its changes.");
+      return;
+    }
+    if (this.previews.has(active.id)) {
+      await this.hidePreview(active.id);
+      return;
+    }
+    await this.attempt(async () => {
+      const base = await this.host.baseText(active.path, "head");
+      const row = this.rowOf(active.id);
+      const hunk = hunkAtRow(await this.host.hunks(active.id, base.text), row);
+      if (hunk === null) {
+        this.say("There is no change under the cursor.");
+        return;
+      }
+      await this.host.preview(active.id, base.text, row, PREVIEW_SOURCE);
+      this.previews.set(active.id, hunk);
+    });
+  }
+
+  /** The name a diff pane's decorations are drawn under, so panes showing one file do not clash. */
+  private sourceOf(leafId: string): string {
+    return `diff.${leafId}`;
+  }
+
+  /** The ids of the panes that show diffs. */
+  private paneIds(): string[] {
+    return this.panes.leafIds().filter((leafId) => this.panes.paneTypeOf(leafId) === DIFF_PANE_TYPE);
+  }
+
+  /** The diff a pane's state asks for, or null. */
+  private stateOf(leafId: string): DiffPaneState | null {
+    const state = this.panes.paneState(leafId).diff as DiffPaneState | undefined;
+    if (state === undefined) {
+      return null;
+    }
+    return state;
+  }
+
+  /** Whether a pane shows, or is about to show, this diff. */
+  private sameAsShown(leafId: string, request: DiffRequest): boolean {
+    const state = this.stateOf(leafId);
+    return state !== null && sameRequest(state.request, request);
+  }
+
+  /** The pane a diff goes to: the focused diff pane, else the first one, else a new one split off the focused pane. */
+  private paneFor(): string | null {
+    const ids = this.paneIds();
+    const focused = this.panes.focusedLeafId;
+    if (ids.includes(focused)) {
+      return focused;
+    }
+    if (ids.length > 0) {
+      return ids[0];
+    }
+    this.panes.splitFocused("row", DIFF_PANE_TYPE);
+    const created = this.panes.focusedLeafId;
+    if (this.panes.paneTypeOf(created) !== DIFF_PANE_TYPE) {
+      return null;
+    }
+    return created;
+  }
+
+  /** Reads what a pane's diff compares and shows it. */
+  private async load(leafId: string): Promise<void> {
+    const state = this.stateOf(leafId);
+    if (state === null) {
+      return;
+    }
+    await this.discardRecord(leafId);
+    this.nextGeneration += 1;
+    const generation = this.nextGeneration;
+    const record: PaneRecord = {
+      request: state.request,
+      view: loadingView(state),
+      oldText: "",
+      generation,
+      editors: {},
+      reapplyTimer: undefined,
+    };
+    this.records.set(leafId, record);
+    this.changes.notify();
+    let sides: Sides;
+    try {
+      sides = await this.readSides(state.request);
+    } catch (error) {
+      this.fail(record, error);
+      return;
+    }
+    if (this.records.get(leafId) !== record || record.generation !== generation) {
+      await this.editor.releaseDocument(sides.rightId);
+      return;
+    }
+    record.oldText = sides.oldText;
+    record.view = readyView(state, sides);
+    this.changes.notify();
+    await this.applyDiff(leafId);
+  }
+
+  /** Reads the old text of a diff and opens the document that has the new one. */
+  private async readSides(request: DiffRequest): Promise<Sides> {
+    if (request.kind === "texts") {
+      const rightId = await this.openTextDocument(request.name, request.newText);
+      return { oldText: request.oldText, rightId, editable: false };
+    }
+    const name = fileName(request.path);
+    if (request.base === "staged") {
+      const head = await this.host.baseText(request.path, "head");
+      const index = await this.host.baseText(request.path, "index");
+      const rightId = await this.openTextDocument(name, index.text);
+      return { oldText: head.text, rightId, editable: false };
+    }
+    const oldText = await this.oldTextOf(request.path, request.base);
+    const fileId = await this.editor.openDocument(request.path);
+    if (fileId === null) {
+      // The file is gone, as a deleted one is: there is nothing on the new side.
+      const rightId = await this.openTextDocument(name, "");
+      return { oldText, rightId, editable: false };
+    }
+    return { oldText, rightId: fileId, editable: true };
+  }
+
+  /** The text the old side of a file's diff has. */
+  private async oldTextOf(path: string, base: DiffBase): Promise<string> {
+    if (typeof base === "object") {
+      return base.text;
+    }
+    if (base === "staged") {
+      return (await this.host.baseText(path, "head")).text;
+    }
+    return (await this.host.baseText(path, base)).text;
+  }
+
+  /** Makes a document of text without a file, or fails with a sentence. */
+  private async openTextDocument(name: string, text: string): Promise<number> {
+    const documentId = await this.editor.openText(name, text);
+    if (documentId === null) {
+      throw new Error(`could not show ${name}`);
+    }
+    return documentId;
+  }
+
+  /** Draws the difference on the documents in the pane's mode, and keeps the hunks. */
+  private async applyDiff(leafId: string): Promise<void> {
+    const record = this.records.get(leafId);
+    if (record === undefined || record.view.rightId === null) {
+      return;
+    }
+    const source = this.sourceOf(leafId);
+    const rightId = record.view.rightId;
+    try {
+      let leftId = record.view.leftId;
+      if (record.view.mode === "split") {
+        leftId = await this.showLeft(record, leftId);
+      } else if (leftId !== null) {
+        await this.editor.setDecorationsOf(leftId, source, []);
+        await this.editor.releaseDocument(leftId);
+        leftId = null;
+      }
+      const options = { newId: rightId, oldText: record.oldText, mode: record.view.mode, source };
+      let hunks: Hunk[];
+      if (leftId === null) {
+        hunks = await this.host.apply(options);
+      } else {
+        hunks = await this.host.apply({ ...options, oldId: leftId });
+      }
+      record.view = withActions(record.request, { ...record.view, leftId, hunks });
+    } catch (error) {
+      this.fail(record, error);
+      return;
+    }
+    this.changes.notify();
+    await this.refreshEditors(record);
+  }
+
+  /** Makes sure the old side's document has the old text, and answers its id. */
+  private async showLeft(record: PaneRecord, leftId: number | null): Promise<number> {
+    const name = fileName(requestName(record.request));
+    if (leftId === null) {
+      return this.openTextDocument(name, record.oldText);
+    }
+    const current = await this.editor.textOf(leftId);
+    if (current !== record.oldText) {
+      await this.editor.setText(leftId, record.oldText);
+    }
+    return leftId;
+  }
+
+  /** Asks the editors drawing a diff to draw again. */
+  private async refreshEditors(record: PaneRecord): Promise<void> {
+    const refreshes: Promise<void>[] = [];
+    if (record.editors.left !== undefined) {
+      refreshes.push(record.editors.left.refresh());
+    }
+    if (record.editors.right !== undefined) {
+      refreshes.push(record.editors.right.refresh());
+    }
+    await Promise.all(refreshes);
+  }
+
+  /** Reads the git side of a diff again, such as after something was staged, and draws it. */
+  private async reloadBase(leafId: string): Promise<void> {
+    const record = this.records.get(leafId);
+    if (record === undefined || record.request.kind !== "file" || record.view.rightId === null) {
+      return;
+    }
+    const request = record.request;
+    try {
+      if (request.base === "staged") {
+        const index = await this.host.baseText(request.path, "index");
+        await this.editor.setText(record.view.rightId, index.text);
+      }
+      record.oldText = await this.oldTextOf(request.path, request.base);
+    } catch (error) {
+      this.fail(record, error);
+      return;
+    }
+    await this.applyDiff(leafId);
+  }
+
+  /** Where the cursor of the diff's new side is, as a row. */
+  private cursorRow(record: PaneRecord): number {
+    if (record.view.rightId === null) {
+      return 0;
+    }
+    return this.rowOf(record.view.rightId);
+  }
+
+  /** The row a document's cursor is on, the first until it has moved. */
+  private rowOf(documentId: number): number {
+    const cursor = this.editor.cursorOf(documentId);
+    if (cursor === null) {
+      return 0;
+    }
+    return cursor.row;
+  }
+
+  /** Moves the cursor of a diff pane to the next or previous hunk, and scrolls it to the middle. */
+  private async stepPane(leafId: string, step: 1 | -1): Promise<void> {
+    const record = this.records.get(leafId);
+    if (record === undefined || record.editors.right === undefined) {
+      return;
+    }
+    const row = stepHunkRow(record.view.hunks, this.cursorRow(record), step);
+    if (row === null) {
+      this.say("There are no changes.");
+      return;
+    }
+    await record.editors.right.apply({ type: "place_cursor", at: { row, column: 0 } });
+    await record.editors.right.apply({ type: "scroll_to", align: "center" });
+  }
+
+  /** Moves the editor's cursor to the next or previous change against HEAD. */
+  private async stepEditor(step: 1 | -1): Promise<void> {
+    const active = this.editor.active();
+    if (active === null || active.path === "") {
+      return;
+    }
+    await this.attempt(async () => {
+      const base = await this.host.baseText(active.path, "head");
+      const hunks = await this.host.hunks(active.id, base.text);
+      const row = stepHunkRow(hunks, this.rowOf(active.id), step);
+      if (row === null) {
+        this.say("There are no changes.");
+        return;
+      }
+      await this.editor.applyToFocused({ type: "place_cursor", at: { row, column: 0 } });
+      await this.editor.applyToFocused({ type: "scroll_to", align: "center" });
+    });
+  }
+
+  /** Stages a hunk from a diff pane and shows the result. */
+  private async stageInPane(leafId: string, record: PaneRecord, rightId: number): Promise<void> {
+    const ok = await this.attempt(() => this.host.stageHunk(rightId, this.cursorRow(record)), "Staged the hunk.");
+    if (ok) {
+      await this.reloadBase(leafId);
+    }
+  }
+
+  /** Stages the hunk under the cursor of the active editor. */
+  private async stageInEditor(): Promise<void> {
+    const active = this.editor.active();
+    if (active === null || active.path === "") {
+      this.say("Open a file to stage its changes.");
+      return;
+    }
+    const row = this.rowOf(active.id);
+    await this.attempt(() => this.host.stageHunk(active.id, row), "Staged the hunk.");
+  }
+
+  /** Puts back the lines of the hunk under the cursor of the active editor, as HEAD has them. */
+  private async revertInEditor(): Promise<void> {
+    const active = this.editor.active();
+    if (active === null || active.path === "") {
+      this.say("Open a file to revert its changes.");
+      return;
+    }
+    const row = this.rowOf(active.id);
+    await this.attempt(() => this.host.revertHunk(active.id, "head", row), "Reverted the hunk.");
+  }
+
+  /** Hides the hunk preview of a document. */
+  private async hidePreview(documentId: number): Promise<void> {
+    this.previews.delete(documentId);
+    await this.editor.setDecorationsOf(documentId, PREVIEW_SOURCE, []);
+  }
+
+  /** Runs a host action, and says `done` when it worked or what went wrong when it did not. */
+  private async attempt(action: () => Promise<unknown>, done = ""): Promise<boolean> {
+    try {
+      await action();
+    } catch (error) {
+      this.say(describeError(error));
+      return false;
+    }
+    if (done !== "") {
+      this.say(done);
+    }
+    return true;
+  }
+
+  /** Records what a diff could not be shown for. */
+  private fail(record: PaneRecord, error: unknown): void {
+    record.view = { ...record.view, status: "error", message: describeError(error) };
+    this.changes.notify();
+  }
+
+  /** Sets the notice. */
+  private say(text: string): void {
+    this.noticeText = text;
+    this.changes.notify();
+  }
+
+  /** Reacts to something that happened to a document. */
+  private handleDocumentEvent(event: DocumentEvent): void {
+    if (event.type === "edited") {
+      this.clearPreview(event.id);
+      this.scheduleReapply(event.id);
+      return;
+    }
+    if (event.type === "selections") {
+      this.followPreviewCursor(event.id, event.row);
+      return;
+    }
+    if (event.type === "closed") {
+      this.previews.delete(event.id);
+    }
+  }
+
+  /** Works the difference out again once the edits to a diff's new side stop. */
+  private scheduleReapply(documentId: number): void {
+    for (const [leafId, record] of this.records) {
+      if (record.view.rightId !== documentId) {
+        continue;
+      }
+      clearTimeout(record.reapplyTimer);
+      record.reapplyTimer = setTimeout(() => void this.applyDiff(leafId), REAPPLY_DELAY_MS);
+    }
+  }
+
+  /** Drops a document's hunk preview, since the text it was drawn for changed. */
+  private clearPreview(documentId: number): void {
+    if (this.previews.has(documentId)) {
+      void this.hidePreview(documentId);
+    }
+  }
+
+  /** Drops a hunk preview when the cursor leaves its hunk. */
+  private followPreviewCursor(documentId: number, row: number): void {
+    const hunk = this.previews.get(documentId);
+    if (hunk !== undefined && !hunkAtRow([hunk], row)) {
+      void this.hidePreview(documentId);
+    }
+  }
+
+  /** Gathers a burst of file system events into one read of the git side of the diffs. */
+  private scheduleFilesChanged(): void {
+    clearTimeout(this.filesTimer);
+    this.filesTimer = setTimeout(() => {
+      for (const leafId of this.records.keys()) {
+        void this.reloadBase(leafId);
+      }
+    }, FILES_CHANGED_DELAY_MS);
+  }
+
+  /** Stops the timers that are pending. */
+  private cancelTimers(): void {
+    clearTimeout(this.filesTimer);
+    for (const record of this.records.values()) {
+      clearTimeout(record.reapplyTimer);
+    }
+  }
+
+  /** A pane closed: its diff lets go of its documents. */
+  private async paneClosed(leafId: string): Promise<void> {
+    await this.discardRecord(leafId);
+  }
+
+  /** A split of a diff pane shows the same diff as the pane it came from. */
+  private paneSplit(newLeafId: string, sourceLeafId: string): void {
+    if (this.panes.paneTypeOf(newLeafId) !== DIFF_PANE_TYPE) {
+      return;
+    }
+    const state = this.stateOf(sourceLeafId);
+    if (state === null) {
+      return;
+    }
+    this.panes.setPaneState(newLeafId, { diff: state });
+  }
+
+  /** Takes a pane's drawing off its documents and lets them go. */
+  private async discardRecord(leafId: string): Promise<void> {
+    const record = this.records.get(leafId);
+    if (record === undefined) {
+      return;
+    }
+    clearTimeout(record.reapplyTimer);
+    this.records.delete(leafId);
+    this.changes.notify();
+    const source = this.sourceOf(leafId);
+    for (const documentId of [record.view.leftId, record.view.rightId]) {
+      if (documentId === null) {
+        continue;
+      }
+      await this.editor.setDecorationsOf(documentId, source, []).catch(() => {});
+      await this.editor.releaseDocument(documentId);
+    }
+  }
+}
+
+/** The git base a request compares against, for the actions that read it again. */
+function gitBaseOf(request: DiffRequest): GitBase | null {
+  if (request.kind === "file" && (request.base === "head" || request.base === "index")) {
+    return request.base;
+  }
+  return null;
+}
+
+/** The name of the file a request is about. */
+function requestName(request: DiffRequest): string {
+  if (request.kind === "file") {
+    return request.path;
+  }
+  return request.name;
+}
+
+/** What a pane draws while it reads its diff. */
+function loadingView(state: DiffPaneState): DiffView {
+  return {
+    status: "loading",
+    message: "",
+    title: requestTitle(state.request),
+    baseLabel: labelOf(state.request),
+    mode: state.mode,
+    rightId: null,
+    leftId: null,
+    editable: false,
+    hunks: [],
+    canStage: false,
+    canUnstage: false,
+    canRevert: false,
+  };
+}
+
+/** The label of what a request's old side is. */
+function labelOf(request: DiffRequest): string {
+  if (request.kind === "texts") {
+    return request.label;
+  }
+  return baseLabel(request.base);
+}
+
+/** What a pane draws once the new side's document exists. */
+function readyView(state: DiffPaneState, sides: Sides): DiffView {
+  const view: DiffView = {
+    ...loadingView(state),
+    status: "ready",
+    rightId: sides.rightId,
+    editable: sides.editable,
+  };
+  return withActions(state.request, view);
+}
+
+/** The view with what its header's actions can do worked out from the request. */
+function withActions(request: DiffRequest, view: DiffView): DiffView {
+  const isFile = request.kind === "file";
+  const base = isFile ? request.base : null;
+  return {
+    ...view,
+    canStage: view.editable && isFile && (base === "head" || base === "index"),
+    canUnstage: isFile && base === "staged",
+    canRevert: view.editable && isFile && (base === "head" || base === "index"),
+  };
+}
+
+/** An error as the sentence to show for it. */
+function describeError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === "object" && error !== null && "message" in error) {
+    return String((error as { message: unknown }).message);
+  }
+  return String(error);
+}

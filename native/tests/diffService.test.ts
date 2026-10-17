@@ -26,6 +26,7 @@ async function setUp(): Promise<Setup> {
   host.head.set(FILE, "old\n");
   host.index.set(FILE, "mid\n");
   host.found = [{ oldStart: 0, oldLen: 1, newStart: 0, newLen: 1 }];
+  host.isOpen = (id) => documents.summaries.has(id);
   let handler: () => void = () => {};
   const setup = { documents, host } as Setup;
   await root.plugin({
@@ -284,5 +285,98 @@ describe("hunk actions", () => {
     expect(setup.host.calls).toContain(`preview ${id} row=0 git.preview`);
     await setup.diff.previewHunk();
     expect(setup.documents.decorations.get(`${id}/git.preview`)).toEqual([]);
+  });
+});
+
+/** An editor view as one that is no longer mounted answers: it throws, as `callMethod` does for a node that is gone. */
+function unmountedView(): EditorViewMethods {
+  return {
+    async apply() {
+      throw new TypeError("cannot read property 'hostId' of null");
+    },
+    refresh() {
+      throw new TypeError("cannot read property 'hostId' of null");
+    },
+  };
+}
+
+/** Lets a gated drawing go on. */
+function openGate(host: FakeDiffHost): () => void {
+  let release: () => void = () => {};
+  host.gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return () => {
+    host.gate = null;
+    release();
+  };
+}
+
+describe("a pane that loads while the diff is opened", () => {
+  test("the pane mounting and asking for its diff while it is opened loads it once", async () => {
+    const setup = await setUp();
+    const opening = setup.diff.openFile(FILE);
+    // The pane exists as soon as it is split off, and its mount asks for the diff its state names.
+    setup.diff.ensureLoaded(setup.layout.focusedLeafId);
+    const leafId = (await opening) as string;
+    await settle(5);
+    expect(setup.diff.view(leafId)?.status).toBe("ready");
+    expect(setup.documents.closed).toEqual([]);
+    expect(setup.host.drawnOnClosed).toEqual([]);
+  });
+});
+
+describe("a pane that goes while it is being drawn", () => {
+  test("closing it during a drawing leaves nothing drawn on a released document and nothing rejected", async () => {
+    const setup = await setUp();
+    const leafId = (await setup.diff.openFile(FILE)) as string;
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown) => rejections.push(reason);
+    process.on("unhandledRejection", onRejection);
+    const release = openGate(setup.host);
+    const switching = setup.diff.setMode(leafId, "split");
+    await settle(5);
+    setup.layout.closeLeaf(leafId);
+    await settle(5);
+    release();
+    await switching;
+    await settle(20);
+    process.off("unhandledRejection", onRejection);
+    expect(rejections).toEqual([]);
+    expect(setup.host.drawnOnClosed).toEqual([]);
+    expect(setup.documents.summaries.size).toBe(0);
+  });
+
+  test("a drawing that finds the pane's editors gone does not fail, and the old record's editors are not asked", async () => {
+    const setup = await setUp();
+    const leafId = (await setup.diff.openFile(FILE)) as string;
+    setup.diff.registerEditors(leafId, { left: unmountedView(), right: unmountedView() });
+    await setup.diff.setMode(leafId, "split");
+    expect(setup.diff.view(leafId)?.status).toBe("ready");
+    setup.layout.closeLeaf(leafId);
+    await settle(5);
+    await setup.diff.refreshAll();
+    expect(setup.diff.view(leafId)).toBeUndefined();
+  });
+});
+
+describe("switching layouts quickly", () => {
+  test("going to side by side and back during a drawing leaves no extra documents", async () => {
+    const setup = await setUp();
+    const leafId = (await setup.diff.openFile(FILE)) as string;
+    const release = openGate(setup.host);
+    const toSplit = setup.diff.setMode(leafId, "split");
+    await settle(5);
+    const toInline = setup.diff.setMode(leafId, "inline");
+    await settle(5);
+    release();
+    await Promise.all([toSplit, toInline]);
+    await settle(10);
+    const view = setup.diff.view(leafId);
+    expect(view?.mode).toBe("inline");
+    expect(view?.status).toBe("ready");
+    expect(view?.leftId).toBeNull();
+    expect([...setup.documents.summaries.keys()]).toEqual([view?.rightId as number]);
+    expect(setup.host.drawnOnClosed).toEqual([]);
   });
 });

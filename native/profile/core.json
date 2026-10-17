@@ -1,0 +1,5 @@
+[
+  { "id": "frame", "plugin": "frame" },
+  { "id": "editor", "plugin": "editor" },
+  { "id": "statusbar-position", "plugin": "editor-position" }
+]

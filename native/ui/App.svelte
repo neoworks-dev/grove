@@ -5,6 +5,7 @@
 <script lang="ts">
   import { element, invoke } from "@neoworks/svelte-gpui";
   import { Text, View } from "@neoworks/svelte-gpui/ui";
+  import SidecarProbe from "./SidecarProbe.svelte";
 
   /** The editor `src/editor/mod.rs` registers, with the events it emits. */
   const Editor = element<{
@@ -50,23 +51,26 @@
     <Text style={{ color: modified ? "#f97316" : "#a1a1aa", fontSize: 12 }}>{describeFile()}</Text>
     <Text style={{ color: "#a1a1aa", fontSize: 12 }}>{position}</Text>
   </View>
-  <Editor
-    style={{ flex: 1 }}
-    key="main"
-    {path}
-    onopened={(event) => {
-      fileSummary = event.path;
-      message = "";
-      modified = false;
-    }}
-    onerror={(event) => (message = event.message)}
-    ondirty={(event) => {
-      modified = event.modified;
-      if (modified) {
+  <View style={{ direction: "row", flex: 1 }}>
+    <SidecarProbe />
+    <Editor
+      style={{ flex: 1 }}
+      key="main"
+      {path}
+      onopened={(event) => {
+        fileSummary = event.path;
         message = "";
-      }
-    }}
-    onsaved={() => (message = "saved")}
-    onselections={(event) => (position = describeSelections(event))}
-  />
+        modified = false;
+      }}
+      onerror={(event) => (message = event.message)}
+      ondirty={(event) => {
+        modified = event.modified;
+        if (modified) {
+          message = "";
+        }
+      }}
+      onsaved={() => (message = "saved")}
+      onselections={(event) => (position = describeSelections(event))}
+    />
+  </View>
 </View>

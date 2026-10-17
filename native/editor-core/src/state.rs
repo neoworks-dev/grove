@@ -174,6 +174,7 @@ impl EditorState {
             Command::Indent => self.shift_lines(false, now),
             Command::Outdent => self.shift_lines(true, now),
             Command::SetIndent { style } => self.set_indent(*style),
+            Command::StartJump { then } => Outcome { jump: Some((**then).clone()), ..Outcome::default() },
             Command::Undo => self.undo_outcome(),
             Command::Redo => self.redo_outcome(),
             Command::Copy => self.copy(),

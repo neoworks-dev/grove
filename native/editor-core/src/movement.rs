@@ -50,6 +50,8 @@ pub enum Motion {
     ParagraphBack,
     /// `%`.
     MatchingBracket,
+    /// To a place, such as the one a jump label stands for.
+    To(Position),
     /// `f`, `t`, `F` and `T`, and `;` and `,` which set `repeat`.
     FindChar {
         character: char,

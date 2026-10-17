@@ -10,6 +10,7 @@ use ropey::Rope;
 use serde::{Deserialize, Serialize};
 
 use crate::edit::Edits;
+use crate::indent::{IndentSource, IndentStyle, detect_indent};
 
 /// A place in the buffer: a line, and a character within it (not a byte).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -26,9 +27,6 @@ pub enum LineEnding {
     Lf,
     Crlf,
 }
-
-/// How many lines at the top of a file are read to tell whether it indents with tabs.
-const INDENT_SAMPLE_LINES: usize = 2000;
 
 /// A place in the text as a line and a byte within it, which is how tree-sitter counts.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -54,7 +52,8 @@ pub struct Buffer {
     text: Rope,
     path: Option<PathBuf>,
     line_ending: LineEnding,
-    indents_with_tabs: bool,
+    indent: IndentStyle,
+    indent_source: IndentSource,
     /// Changes made since the syntax tree last caught up with the text.
     pending_changes: Vec<TextChange>,
 }
@@ -85,12 +84,15 @@ impl Buffer {
     /// Builds a buffer, remembering the line ending and indentation the text uses.
     fn with_text(text: &str, path: Option<PathBuf>) -> Self {
         let line_ending = detect_line_ending(text);
-        let indents_with_tabs = detect_tab_indentation(text);
+        let (indent, indent_source) = match detect_indent(text) {
+            Some(detected) => (detected, IndentSource::Detected),
+            None => (IndentStyle::default(), IndentSource::Default),
+        };
         let rope = match line_ending {
             LineEnding::Crlf => Rope::from_str(&text.replace("\r\n", "\n")),
             LineEnding::Lf => Rope::from_str(text),
         };
-        Buffer { text: rope, path, line_ending, indents_with_tabs, pending_changes: Vec::new() }
+        Buffer { text: rope, path, line_ending, indent, indent_source, pending_changes: Vec::new() }
     }
 
     /// The file the buffer was read from, if any.
@@ -103,9 +105,20 @@ impl Buffer {
         self.line_ending
     }
 
-    /// Whether the file indents with tabs rather than spaces, so Tab inserts one.
-    pub fn indents_with_tabs(&self) -> bool {
-        self.indents_with_tabs
+    /// How the file is indented, which Tab, Enter and vim's shifts follow.
+    pub fn indent(&self) -> IndentStyle {
+        self.indent
+    }
+
+    /// Where the indentation style came from: the file's own lines, the default, or a choice.
+    pub fn indent_source(&self) -> IndentSource {
+        self.indent_source
+    }
+
+    /// Sets how the file is indented, and where that came from.
+    pub fn set_indent(&mut self, style: IndentStyle, source: IndentSource) {
+        self.indent = style;
+        self.indent_source = source;
     }
 
     /// Writes the text to the file it came from, with the line endings it had. A buffer with
@@ -267,20 +280,6 @@ fn detect_line_ending(text: &str) -> LineEnding {
         return LineEnding::Crlf;
     }
     LineEnding::Lf
-}
-
-/// Whether more of the file's indented lines start with a tab than with a space.
-fn detect_tab_indentation(text: &str) -> bool {
-    let mut tabs = 0;
-    let mut spaces = 0;
-    for line in text.lines().take(INDENT_SAMPLE_LINES) {
-        if line.starts_with('\t') {
-            tabs += 1;
-        } else if line.starts_with(' ') {
-            spaces += 1;
-        }
-    }
-    tabs > spaces
 }
 
 #[cfg(test)]

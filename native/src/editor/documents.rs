@@ -9,44 +9,67 @@
 //! - `document-closed`: `{ id }`.
 //! - `document-dirty`: `{ id, dirty }`, when the unsaved-changes state flips.
 //! - `document-saved`: `{ id }`.
+//! - `document-edited`: `{ id }`, after any command that changed the text.
 //! - `document-error`: `{ id, message }`, such as a save that failed.
 //! - `document-selections`: `{ id, count, row, column, selected }`, the newest cursor after any
 //!   command that moved a selection.
-//! - `document-request`: `{ id, request: "close", discard }` or `{ id, request: "open", path }`,
-//!   what a vim ex command such as `:q` or `:e` asks the app to do.
+//! - `document-request`: `{ id, request: "close", discard }`, `{ id, request: "open", path }` or
+//!   `{ id, request: "change", forward }`, what a vim ex command such as `:q` or `:e`, or the
+//!   keys `]c` and `[c`, ask the app to do.
 //! - `editor-mode`: `{ mode, pending, commandLine }`, the vim layer's mode and the keys it is
 //!   waiting on, for the status bar.
 //!
+//! - `document-indent`: `{ id, indent }`, when the way a file is indented changed, with the
+//!   style as `{ "kind": "tabs" }` or `{ "kind": "spaces", "width": 2 }`.
+//!
 //! Commands: `document_open { path }`, `document_close { id }`, `document_list`,
-//! `document_save { id }`, and `document_set_decorations { id, source, decorations }`, which
+//! `document_save { id }`, `editor_configure { defaultIndent, smoothScroll, indentGuides,
+//! occurrenceHighlights }` (every field optional), and `document_set_decorations { id, source, decorations }`, which
 //! replaces what one source has put on top of the text (see `editor_core::decorations` for the
 //! shape of a decoration; an empty list removes the source). The views have to be asked to
 //! redraw afterwards, which is the `refresh` method of the editor element.
+//!
+//! Text that belongs to no file, such as one side of a diff, is a detached document:
+//! `document_open_text { name, text }` makes one (the name's extension picks the language),
+//! `document_set_text { id, text }` replaces its text, and `document_text { id }` reads the text
+//! of any document. `document_reload { id }` reads a file's document from disk again.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use editor_core::vim::types::AppRequest;
-use editor_core::{Command, Decoration, Document, DocumentId, DocumentSummary, Documents, Outcome};
+use editor_core::{Command, Decoration, Document, DocumentId, DocumentSummary, Documents, IndentStyle, Outcome};
 use serde_json::{Value, json};
 use svelte_gpui::{CommandError, Commands, Emitter};
+
+use super::options::EditorOptions;
 
 /// The documents behind a lock, and the way to tell the UI about them. Cheap to clone.
 #[derive(Clone)]
 pub struct SharedDocuments {
     documents: Arc<Mutex<Documents>>,
+    options: Arc<Mutex<EditorOptions>>,
     emitter: Emitter,
 }
 
 impl SharedDocuments {
     /// An empty store whose events go out through `emitter`.
     pub fn new(emitter: Emitter) -> Self {
-        SharedDocuments { documents: Arc::new(Mutex::new(Documents::new())), emitter }
+        SharedDocuments {
+            documents: Arc::new(Mutex::new(Documents::new())),
+            options: Arc::new(Mutex::new(EditorOptions::default())),
+            emitter,
+        }
     }
 
     /// Locks the store, carrying on after a thread that held it panicked.
     pub fn lock(&self) -> MutexGuard<'_, Documents> {
         self.documents.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// What the person has switched on in the editor, as the app last said.
+    pub fn options(&self) -> EditorOptions {
+        *self.options.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// Opens a file, or finds the document that has it, and tells the UI when one was created.
@@ -79,6 +102,37 @@ impl SharedDocuments {
         self.lock().summaries()
     }
 
+    /// Opens text that belongs to no file, and tells the UI.
+    pub fn open_text(&self, name: &str, text: &str) -> Result<DocumentSummary, CommandError> {
+        let mut documents = self.lock();
+        let id = documents.open_detached(text, Path::new(name));
+        let Some(summary) = documents.get(id).map(|document| document.summary()) else {
+            return Err(no_document(id));
+        };
+        self.emitter.emit("document-opened", json!(summary));
+        Ok(summary)
+    }
+
+    /// The text of a document, with `\n` line endings whatever its file uses.
+    pub fn text(&self, id: DocumentId) -> Result<String, CommandError> {
+        let documents = self.lock();
+        let Some(document) = documents.get(id) else {
+            return Err(no_document(id));
+        };
+        Ok(document.state.buffer().rope().to_string())
+    }
+
+    /// Reads a file's document from disk again, and tells the UI its selections moved to the start.
+    pub fn reload(&self, id: DocumentId) -> Result<Value, CommandError> {
+        let mut documents = self.lock();
+        documents
+            .reload(id)
+            .map_err(|error| CommandError::with_code("ReloadFailed", format!("could not reload: {error}")))?;
+        self.emitter.emit("document-dirty", json!({ "id": id, "dirty": false }));
+        self.emitter.emit("document-edited", json!({ "id": id }));
+        Ok(Value::Null)
+    }
+
     /// Applies a command to a document and tells the UI about its effects: a save, a failed
     /// save, a change of the unsaved state, and where the newest cursor is. None when the
     /// document is not open.
@@ -93,6 +147,12 @@ impl SharedDocuments {
         }
         if let Some(dirty) = applied.modified_changed {
             self.emitter.emit("document-dirty", json!({ "id": id, "dirty": dirty }));
+        }
+        if applied.outcome.indent_changed {
+            self.emit_indent(id, &documents);
+        }
+        if applied.outcome.text_changed {
+            self.emitter.emit("document-edited", json!({ "id": id }));
         }
         if let Some(request) = &applied.outcome.request {
             self.emit_request(id, request, &documents);
@@ -109,12 +169,41 @@ impl SharedDocuments {
         self.emitter.emit(event, payload);
     }
 
+    /// Tells the UI how a document is indented now.
+    fn emit_indent(&self, id: DocumentId, documents: &Documents) {
+        let Some(document) = documents.get(id) else {
+            return;
+        };
+        self.emitter.emit("document-indent", json!({ "id": id, "indent": document.state.buffer().indent() }));
+    }
+
+    /// Applies the editor settings the app sends: the indentation for files that do not say, and
+    /// the switches the views follow. A style that cannot be read is an error.
+    fn configure(&self, args: &Value) -> Result<Value, CommandError> {
+        let mut options = self.options.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        *options = options.updated_from(args);
+        drop(options);
+        let Some(style_json) = args.get("defaultIndent") else {
+            return Ok(Value::Null);
+        };
+        let style: IndentStyle = serde_json::from_value(style_json.clone())
+            .map_err(|error| CommandError::with_code("InvalidArguments", format!("bad defaultIndent: {error}")))?;
+        let mut documents = self.lock();
+        for id in documents.set_default_indent(style) {
+            self.emit_indent(id, &documents);
+        }
+        Ok(Value::Null)
+    }
+
     /// Tells the UI what an ex command asks of the app: to close the tab, or open a file, which
     /// is looked for beside the document when its path is relative.
     fn emit_request(&self, id: DocumentId, request: &AppRequest, documents: &Documents) {
         match request {
             AppRequest::CloseTab { discard } => {
                 self.emitter.emit("document-request", json!({ "id": id, "request": "close", "discard": discard }));
+            }
+            AppRequest::GotoChange { forward } => {
+                self.emitter.emit("document-request", json!({ "id": id, "request": "change", "forward": forward }));
             }
             AppRequest::OpenFile { path } => {
                 let beside = documents.get(id).and_then(|document| document.path().and_then(Path::parent));
@@ -135,6 +224,11 @@ impl SharedDocuments {
         let lister = self.clone();
         let saver = self.clone();
         let decorator = self.clone();
+        let configurer = self.clone();
+        let text_opener = self.clone();
+        let text_reader = self.clone();
+        let text_setter = self.clone();
+        let reloader = self.clone();
         commands
             .command("document_open", move |args| {
                 let path = string_argument(&args, "path")?;
@@ -147,6 +241,28 @@ impl SharedDocuments {
             .command("document_list", move |_| Ok::<_, CommandError>(json!(lister.list())))
             .command("document_save", move |args| saver.save(id_argument(&args)?))
             .command("document_set_decorations", move |args| decorator.set_decorations(&args))
+            .command("editor_configure", move |args| configurer.configure(&args))
+            .command("document_open_text", move |args| {
+                let name = string_argument(&args, "name")?;
+                let text = string_argument(&args, "text")?;
+                text_opener.open_text(&name, &text).map(|summary| json!(summary))
+            })
+            .command("document_text", move |args| text_reader.text(id_argument(&args)?).map(|text| json!(text)))
+            .command("document_set_text", move |args| {
+                let id = id_argument(&args)?;
+                let text = string_argument(&args, "text")?;
+                text_setter.set_detached_text(id, &text)
+            })
+            .command("document_reload", move |args| reloader.reload(id_argument(&args)?))
+    }
+
+    /// Replaces the text of a detached document, from the arguments of `document_set_text`.
+    fn set_detached_text(&self, id: DocumentId, text: &str) -> Result<Value, CommandError> {
+        if !self.lock().replace_detached_text(id, text) {
+            return Err(CommandError::with_code("NotDetached", format!("document {id} is not text without a file")));
+        }
+        self.emitter.emit("document-edited", json!({ "id": id }));
+        Ok(Value::Null)
     }
 
     /// Replaces the decorations one source has on a document, from the arguments of
@@ -284,6 +400,19 @@ mod tests {
         assert_eq!(documents.set_decorations(&bad).unwrap_err().code.as_deref(), Some("InvalidArguments"));
         let missing = json!({ "id": 99, "source": "x", "decorations": [] });
         assert_eq!(documents.set_decorations(&missing).unwrap_err().code.as_deref(), Some("NoDocument"));
+    }
+
+    #[test]
+    fn configuring_sets_the_default_indent_and_the_switches() {
+        let documents = SharedDocuments::new(Emitter::default());
+        let id = documents.open(&file_with("configured.txt", "one\n")).unwrap().id;
+        let configuration = json!({ "defaultIndent": { "kind": "tabs" }, "smoothScroll": false });
+        documents.configure(&configuration).unwrap();
+        assert_eq!(documents.lock().get(id).unwrap().state.buffer().indent(), IndentStyle::Tabs);
+        assert!(!documents.options().smooth_scroll);
+        assert!(documents.options().indent_guides);
+        let bad = documents.configure(&json!({ "defaultIndent": { "kind": "wide" } }));
+        assert_eq!(bad.unwrap_err().code.as_deref(), Some("InvalidArguments"));
     }
 
     #[test]

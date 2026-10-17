@@ -12,13 +12,14 @@ use crate::command::Outcome;
 use crate::display::DisplayLine;
 use crate::edit::{Edit, Edits};
 use crate::history::{EditKind, Step, Transaction};
+use crate::indent::IndentStyle;
 use crate::movement::{Motion, move_selection};
 use crate::selections::{Selection, Selections};
 use crate::state::EditorState;
 
 /// Where the selections end up after an edit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SelectionsAfter {
+pub(crate) enum SelectionsAfter {
     /// Every selection became the text of its own edit, and is now a cursor after that text.
     CursorAfterEachEdit,
     /// One edit was made somewhere. The newest selection becomes a cursor after it, and the
@@ -55,8 +56,12 @@ impl EditorState {
         edited(changed)
     }
 
-    /// Replaces each selection with a tab or the spaces up to the next tab stop.
+    /// Replaces each selection with a tab or the spaces up to the next indent stop. Where a
+    /// selection covers several lines, indents those lines instead.
     pub(crate) fn insert_tab(&mut self, now: Instant) -> Outcome {
+        if self.selections.all().iter().any(|selection| selection.start().row != selection.end().row) {
+            return self.shift_lines(false, now);
+        }
         let changed = self.edit_each_selection(EditKind::Other, now, |buffer, _, selection| {
             insertion(buffer, selection, &tab_text(buffer, selection))
         });
@@ -203,7 +208,13 @@ impl EditorState {
 
     /// Applies edits, moves the selections as asked, and records the change for undo. Returns
     /// false, changing nothing, when the edits change nothing.
-    fn commit(&mut self, edits: Edits, selections_after: SelectionsAfter, kind: EditKind, now: Instant) -> bool {
+    pub(crate) fn commit(
+        &mut self,
+        edits: Edits,
+        selections_after: SelectionsAfter,
+        kind: EditKind,
+        now: Instant,
+    ) -> bool {
         self.commit_placing(edits, kind, now, |state, edits, old_offsets| {
             state.selections_after_edit(edits, old_offsets, selections_after)
         })
@@ -369,21 +380,42 @@ fn line_deletion(buffer: &Buffer, row: usize) -> Edit {
     Edit::replace(start..end, "")
 }
 
-/// A line break and the whitespace the line starts with, as far as the selection's start.
+/// A line break and the whitespace the line starts with, as far as the selection's start. After an
+/// opening bracket there is one more level of indentation, unless the bracket is closed right there.
 fn newline_text(buffer: &Buffer, selection: &Selection) -> String {
     let start = selection.start();
+    let line = buffer.line(start.row);
     let indentation: String =
-        buffer.line(start.row).chars().take(start.column).take_while(|character| character.is_whitespace()).collect();
+        line.chars().take(start.column).take_while(|character| character.is_whitespace()).collect();
+    if opens_block(&line, start.column) {
+        return format!("\n{indentation}{}", buffer.indent().unit());
+    }
     format!("\n{indentation}")
 }
 
-/// A tab in a file that uses them, else the spaces up to the next tab stop.
+/// Whether the character before a column opens a bracket that the character after it does not close.
+fn opens_block(line: &str, column: usize) -> bool {
+    let characters: Vec<char> = line.chars().collect();
+    let Some(previous) = column.checked_sub(1).and_then(|before| characters.get(before)) else {
+        return false;
+    };
+    let closer = match previous {
+        '{' => '}',
+        '(' => ')',
+        '[' => ']',
+        _ => return false,
+    };
+    characters.get(column) != Some(&closer)
+}
+
+/// A tab in a file that uses them, else the spaces up to the next indent stop.
 fn tab_text(buffer: &Buffer, selection: &Selection) -> String {
-    if buffer.indents_with_tabs() {
-        return "\t".to_string();
-    }
+    let width = match buffer.indent() {
+        IndentStyle::Tabs => return "\t".to_string(),
+        IndentStyle::Spaces { width } => width.max(1),
+    };
     let start = selection.start();
     let before: String = buffer.line(start.row).chars().take(start.column).collect();
     let display_column = DisplayLine::new(&before).text.chars().count();
-    " ".repeat(crate::display::TAB_WIDTH - display_column % crate::display::TAB_WIDTH)
+    " ".repeat(width - display_column % width)
 }

@@ -103,8 +103,14 @@ pub fn standard_command(key: &KeyInput, context: &InputContext) -> Option<Comman
     if modifiers.control {
         return control_command(&key.key, modifiers.shift);
     }
+    if modifiers.alt && key.key == "j" {
+        return Some(Command::StartJump { then: Box::new(jump_target_move()) });
+    }
     if modifiers.alt {
         return cursor_key_command(key, context);
+    }
+    if key.key == "tab" && modifiers.shift {
+        return Some(Command::Outdent);
     }
     if let Some(command) = editing_key_command(&key.key) {
         return Some(command);
@@ -113,6 +119,11 @@ pub fn standard_command(key: &KeyInput, context: &InputContext) -> Option<Comman
         return Some(Command::CollapseSelections);
     }
     cursor_key_command(key, context)
+}
+
+/// What the standard keys do with the place a jump picks: move the cursor there.
+fn jump_target_move() -> Command {
+    Command::MoveSelections { motion: Motion::To(crate::buffer::Position::default()), extend: false }
 }
 
 /// Backspace, Delete, Enter and Tab, which Shift does not change.
@@ -245,6 +256,7 @@ mod tests {
         assert_eq!(press("delete", false, false, false), Some(Command::Delete { motion: Motion::Right }));
         assert_eq!(press("enter", false, false, true), Some(Command::InsertNewline));
         assert_eq!(press("tab", false, false, false), Some(Command::InsertTab));
+        assert_eq!(press("tab", false, false, true), Some(Command::Outdent));
         assert_eq!(press("backspace", false, true, false), None);
     }
 
@@ -257,6 +269,11 @@ mod tests {
         assert_eq!(press("x", true, false, false), Some(Command::Cut));
         assert_eq!(press("v", true, false, false), Some(Command::PasteClipboard));
         assert_eq!(press("s", true, false, false), Some(Command::Save));
+    }
+
+    #[test]
+    fn alt_j_starts_jump_labels() {
+        assert_eq!(press("j", false, true, false), Some(Command::StartJump { then: Box::new(jump_target_move()) }));
     }
 
     #[test]

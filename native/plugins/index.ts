@@ -4,6 +4,7 @@
 import type { PluginCatalog } from "../kernel/profile";
 import { diff } from "./diff";
 import { editor } from "./editor";
+import { editorContextMenu } from "./editor-context-menu";
 import { editorPosition } from "./editor-position";
 import { explorer } from "./explorer";
 import { agents } from "./agents";
@@ -48,6 +49,7 @@ export const corePlugins: PluginCatalog = {
   layout,
   editor,
   breadcrumbs,
+  "editor-context-menu": editorContextMenu,
   "editor-position": editorPosition,
   diff,
   "git-gutter": gitGutter,

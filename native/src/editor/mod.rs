@@ -12,6 +12,7 @@
 //! the other views of it redraw.
 
 mod completion;
+mod context_menu;
 mod documents;
 mod element;
 mod glide;
@@ -651,6 +652,7 @@ impl AppElement for Editor {
                 Ok(Value::Null)
             }
             "goto" => self.goto_from_app(args, cx),
+            "contextClick" => self.context_click_from_app(args, cx),
             _ => Err(CommandError::with_code("UnknownMethod", format!("the editor has no method {method:?}"))),
         }
     }

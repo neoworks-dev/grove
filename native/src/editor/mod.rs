@@ -87,6 +87,8 @@ pub struct Editor {
     announced_status: Option<InputStatus>,
     /// The pane this view is in, set by the `pane` prop, so the app can tell whose mode it hears of.
     pane: String,
+    /// Whether the app's keymap waits for the next key of a sequence, which it must get, not this view.
+    sequence_pending: bool,
     /// How far the text is scrolled, in pixels from the top of the first line. Each view of a
     /// document scrolls on its own.
     scroll_top: Pixels,
@@ -170,6 +172,7 @@ impl Editor {
             input: Box::new(StandardKeymap),
             announced_status: None,
             pane: String::new(),
+            sequence_pending: false,
             scroll_top: px(0.0),
             scroll_animation: None,
             layout: None,
@@ -376,6 +379,9 @@ impl Editor {
 
     /// Handles a key the input layer knows; returns false for the rest, which then bubble to the app.
     fn handle_key(&mut self, keystroke: &Keystroke, cx: &mut Context<Self>) -> bool {
+        if self.sequence_pending {
+            return false;
+        }
         if self.jump.is_some() {
             return self.jump_key(keystroke, cx);
         }
@@ -663,6 +669,10 @@ impl AppElement for Editor {
         }
         if name == "scrollGroup" {
             self.set_scroll_group(value.as_str().unwrap_or(""), cx);
+            return;
+        }
+        if name == "sequencePending" {
+            self.sequence_pending = value.as_bool().unwrap_or(false);
             return;
         }
         if name == "pane" {

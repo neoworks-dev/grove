@@ -957,3 +957,16 @@ fn tag_and_sentence_objects_work_with_operators() {
     check("One. Tw¦o three. Four.", "das", "One. Four.", (0, 5));
     check("One. Tw¦o three. Four.", "visd", "One.  Four.", (0, 5));
 }
+
+#[test]
+fn escape_in_normal_mode_clears_the_search_highlight() {
+    let mut vim = Vim::new("¦foo bar foo");
+    vim.keys("/foo<CR>");
+    assert!(vim.state.memory.search_highlight);
+    vim.keys("<Esc>");
+    assert!(!vim.state.memory.search_highlight);
+    vim.keys("n");
+    assert!(vim.state.memory.search_highlight);
+    vim.keys(":noh<CR>");
+    assert!(!vim.state.memory.search_highlight);
+}

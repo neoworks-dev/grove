@@ -479,7 +479,7 @@ impl VimLayer {
                 self.mode = Mode::Visual(SelectionKind::Characters);
                 vec![Command::SelectNextMatch { add: false }]
             }
-            Simple::Escape => vec![Command::CollapseSelections],
+            Simple::Escape => vec![Command::CollapseSelections, Command::ClearSearchHighlight],
             _ => vec![Command::Noop],
         }
     }

@@ -1,7 +1,7 @@
 <script lang="ts">
   // Where the user types: a multiline field in a band under the chat, or, once the agent asks a
   // question (a permission or a choice) and the user has paused typing, the panel that answers it.
-  // Enter sends, Shift-Enter and Alt-Enter break the line, Up and Down walk what was sent, `/`
+  // Enter sends, Ctrl-Enter stops a running turn and sends, Shift-Enter and Alt-Enter break the line, Up and Down walk what was sent, `/`
   // opens the command menu, Shift-Tab changes the approvals mode and Esc cancels the turn that is
   // running. The field has the keyboard while its pane is the focused one.
   import { untrack } from "svelte";
@@ -92,6 +92,11 @@
     }
   });
 
+  /** Puts the keyboard back in the field, as when the list of agents hands it over. */
+  export function focus(): void {
+    input?.focus();
+  }
+
   /** Up and Down move the menu's highlight while it is open, else walk the history. */
   function arrow(event: KeyEvent): void {
     const older = event.key === "ArrowUp";
@@ -117,6 +122,10 @@
         return;
       }
       event.preventDefault();
+      if (event.ctrl && running) {
+        void sendNow();
+        return;
+      }
       model.submit();
       return;
     }
@@ -137,6 +146,12 @@
     if (event.key === "Escape") {
       escape(event);
     }
+  }
+
+  /** Stops the turn that is running and sends what was typed, which would otherwise wait behind it. */
+  async function sendNow(): Promise<void> {
+    await session.cancel();
+    model.submit();
   }
 
   /** Esc closes the menu or a question first; with nothing open it cancels the running turn. */

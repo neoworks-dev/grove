@@ -253,6 +253,51 @@ describe("panes", () => {
   });
 });
 
+describe("the tabs and keys of a pane", () => {
+  test("the next and previous session step through the worktree's sessions, around the ends", async () => {
+    const { host, layout, agents } = await setUp();
+    await agents.ensureStarted();
+    host.client.sessions.set([
+      sessionInfo({ id: "a", cwd: "/repo", lastActivity: 3 }),
+      sessionInfo({ id: "b", cwd: "/repo", lastActivity: 2 }),
+      sessionInfo({ id: "c", cwd: "/repo", lastActivity: 1 }),
+      sessionInfo({ id: "other", cwd: "/repo/.worktrees/feature", lastActivity: 9 }),
+    ]);
+    agents.openSession("b");
+    const agentPane = leaves(layout.root)[1];
+    agents.stepSession(1);
+    expect(agents.sessionOfPane(agentPane.id)).toBe("c");
+    agents.stepSession(1);
+    expect(agents.sessionOfPane(agentPane.id)).toBe("a");
+    agents.stepSession(-1);
+    expect(agents.sessionOfPane(agentPane.id)).toBe("c");
+  });
+
+  test("a session alone in its worktree has nowhere to step to", async () => {
+    const { host, layout, agents } = await setUp();
+    await agents.ensureStarted();
+    host.client.sessions.set([sessionInfo({ id: "a", cwd: "/repo" })]);
+    agents.openSession("a");
+    agents.stepSession(1);
+    expect(agents.sessionOfPane(leaves(layout.root)[1].id)).toBe("a");
+  });
+
+  test("a pane's view takes keys for the focused pane until it lets go", async () => {
+    const { layout, agents } = await setUp();
+    agents.openSession("a");
+    const [editorPane, agentPane] = leaves(layout.root);
+    let toggled = 0;
+    const release = agents.registerPane(agentPane.id, { togglePanel: () => (toggled += 1), focusAgents: () => true });
+    agents.focusedPane()?.togglePanel();
+    expect(toggled).toBe(1);
+    layout.focus(editorPane.id);
+    expect(agents.focusedPane()).toBeUndefined();
+    layout.focus(agentPane.id);
+    release();
+    expect(agents.focusedPane()).toBeUndefined();
+  });
+});
+
 describe("the focused agent pane", () => {
   test("is none while another kind of pane has the focus, and the pane showing the session when it has", async () => {
     const { layout, agents } = await setUp();

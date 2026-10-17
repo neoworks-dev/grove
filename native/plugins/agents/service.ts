@@ -68,6 +68,14 @@ export interface AgentWorkspace {
   onSelectionChange(listener: () => void): () => void;
 }
 
+/** What a pane's own view lets the service do when a key asks for it. */
+export interface PaneHandle {
+  /** Shows or hides the plan and files. */
+  togglePanel(): void;
+  /** Puts the keyboard in the list of the session's agents; false when there is none to move through. */
+  focusAgents(): boolean;
+}
+
 /** A session some pane shows: how many do, and its chat once the daemon is connected. */
 interface FollowedChat {
   chat: ChatSession | null;
@@ -86,6 +94,7 @@ export class AgentsService extends Service {
   private address: DaemonAddress | null = null;
   private appName = CLIENT_NAME;
   private followed = new Map<string, FollowedChat>();
+  private paneHandles = new Map<string, PaneHandle>();
   private changes: ChangeSignal = createChangeSignal();
   private timing: AgentsTiming;
   /** Counts connection attempts, so one that gave up cannot adopt its client when it finally answers. */
@@ -283,6 +292,44 @@ export class AgentsService extends Service {
     });
     chat.start();
     return chat;
+  }
+
+  /** Lets keys reach the view of a pane; returns the call that takes it back. */
+  registerPane(leafId: string, handle: PaneHandle): () => void {
+    this.paneHandles.set(leafId, handle);
+    return () => {
+      if (this.paneHandles.get(leafId) === handle) {
+        this.paneHandles.delete(leafId);
+      }
+    };
+  }
+
+  /** The view of the focused agent pane, or undefined while another kind of pane has the focus. */
+  focusedPane(): PaneHandle | undefined {
+    const leafId = this.focusedAgentPane();
+    if (leafId === null) {
+      return undefined;
+    }
+    return this.paneHandles.get(leafId);
+  }
+
+  /** Shows the next session of the focused pane's worktree in it, or the previous one; the list wraps around. */
+  stepSession(direction: 1 | -1): void {
+    const leafId = this.focusedAgentPane();
+    if (leafId === null) {
+      return;
+    }
+    const current = this.sessionOfPane(leafId);
+    if (current === null) {
+      return;
+    }
+    const tabs = this.siblingSessions(current);
+    const at = tabs.findIndex((tab) => tab.id === current);
+    if (at < 0 || tabs.length < 2) {
+      return;
+    }
+    const next = tabs[(at + direction + tabs.length) % tabs.length];
+    this.showSession(leafId, next.id);
   }
 
   /** Makes one pane show another session, the way a tab does. */

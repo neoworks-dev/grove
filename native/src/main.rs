@@ -9,6 +9,10 @@
 //! `GROVE_OPEN=/path/to/file` opens that file; without it the editor opens a scratch copy of
 //! `samples/scratch.rs` in the temp directory, so trying it out never edits real source.
 //!
+//! Terminals are registered as `element("terminal")`: shells run in pseudo-terminals the host
+//! owns and `TerminalElement` draws them (see `terminal/mod.rs`), so their output never passes
+//! through JavaScript.
+//!
 //! The host also runs the sidecar, Grove's main process under Bun, and relays the UI's calls
 //! to it (see `sidecar.rs`), and offers the agents plugin the suite daemon's address and a way
 //! to start it (see `suite.rs`).

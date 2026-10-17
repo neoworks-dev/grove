@@ -16,14 +16,16 @@
 </script>
 
 <script lang="ts">
-  import { View } from "@neoworks/svelte-gpui/ui";
+  import { Text, View } from "@neoworks/svelte-gpui/ui";
   import { colors, fontSize, size } from "../theme/tokens";
 
   interface Props {
     items: StatusItem[];
+    /** An item threw while drawing. It is replaced by a short notice and the rest keep drawing. */
+    onerror?: (itemId: string, error: unknown) => void;
   }
 
-  let { items }: Props = $props();
+  let { items, onerror }: Props = $props();
 
   /** The items of one side, in order. */
   function sideItems(align: "left" | "right"): StatusItem[] {
@@ -48,12 +50,22 @@
 >
   <View style={{ direction: "row", align: "center", gap: 12 }}>
     {#each leftItems as item (item.id)}
-      <item.component {...item.props} />
+      <svelte:boundary onerror={(error) => onerror?.(item.id, error)}>
+        <item.component {...item.props} />
+        {#snippet failed()}
+          <Text style={{ color: colors.red }}>{item.id} failed</Text>
+        {/snippet}
+      </svelte:boundary>
     {/each}
   </View>
   <View style={{ direction: "row", align: "center", gap: 12 }}>
     {#each rightItems as item (item.id)}
-      <item.component {...item.props} />
+      <svelte:boundary onerror={(error) => onerror?.(item.id, error)}>
+        <item.component {...item.props} />
+        {#snippet failed()}
+          <Text style={{ color: colors.red }}>{item.id} failed</Text>
+        {/snippet}
+      </svelte:boundary>
     {/each}
   </View>
 </View>

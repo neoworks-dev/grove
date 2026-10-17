@@ -144,3 +144,21 @@ fn an_untitled_document_has_no_path() {
     assert_eq!(summary.path, None);
     assert_eq!(summary.title, "Untitled");
 }
+
+#[test]
+fn vim_registers_are_shared_between_documents() {
+    use editor_core::vim::types::{Operator, Target};
+    use editor_core::Motion;
+    let mut documents = Documents::new();
+    let first = documents.open_untitled("one two");
+    let second = documents.open_untitled("other");
+    let yank_word = Command::Operate {
+        operator: Operator::Yank,
+        target: Target::Motion { motion: Motion::WordForward { big: false }, count: 1 },
+        register: None,
+    };
+    documents.apply(first, &yank_word).unwrap();
+    let put = Command::Put { register: None, before: true, count: 1, cursor_after: false, over: None, clipboard: None };
+    documents.apply(second, &put).unwrap();
+    assert_eq!(text_of(&documents, second), "one other");
+}

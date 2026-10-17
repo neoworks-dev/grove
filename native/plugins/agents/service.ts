@@ -91,28 +91,30 @@ export interface Openers {
   openDiff(path: string, texts?: { oldText: string; newText: string }): boolean;
 }
 
-/** What the diff plugin offers the chat, as far as the chat uses it. */
-interface DiffOpener {
+/** What the editor plugin offers the chat. */
+export interface EditorOpener {
+  open(path: string): unknown;
+}
+
+/** What the diff plugin offers the chat. */
+export interface DiffOpener {
   openFile(path: string): Promise<string | null>;
   openTexts(name: string, oldText: string, newText: string): Promise<string | null>;
 }
 
-/** The editor and diff plugins of a context as the chat opens things in them; either may be missing. */
-export function contextOpeners(ctx: Context): Openers {
+/** Openers for a service started without the editor and diff views, as in tests: nothing opens. */
+const NO_OPENERS: Openers = {
+  openFile: () => {},
+  openDiff: () => false,
+};
+
+/** The editor and diff services as the chat opens things in them. */
+export function serviceOpeners(editor: EditorOpener, diff: DiffOpener): Openers {
   return {
     openFile: (path) => {
-      const editor = ctx.get("editor");
-      if (!editor) {
-        return;
-      }
       editor.open(path);
     },
     openDiff: (path, texts) => {
-      // The diff plugin declares its service on the context in its own branch; ask for it by name.
-      const diff = (ctx as unknown as { get(name: string): DiffOpener | undefined }).get("diff");
-      if (diff === undefined || diff === null) {
-        return false;
-      }
       if (texts === undefined) {
         void diff.openFile(path);
         return true;
@@ -180,7 +182,7 @@ export class AgentsService extends Service {
     panes: AgentPanes,
     workspace: AgentWorkspace,
     timing: AgentsTiming = DEFAULT_TIMING,
-    openers: Openers = contextOpeners(ctx),
+    openers: Openers = NO_OPENERS,
   ) {
     super(ctx, "agents");
     this.openers = openers;

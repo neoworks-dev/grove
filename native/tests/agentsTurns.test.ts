@@ -181,3 +181,11 @@ test("a call's line names the file it was about, with where it is, or else its c
   expect(argumentOf(callWith({ rawInput: {} }))).toEqual({ text: "A title" });
   expect(shortDirectory("name.txt")).toBeUndefined();
 });
+
+test("the daemon's notices about apps connecting and the agent moving are left out of the chat, other notices stay", () => {
+  const items = [notice("n1"), user("u1"), agent("m1")];
+  const connected: ViewItem = { ref: "n2", kind: "notice", component: text("grove connected (v0): ") };
+  const moved: ViewItem = { ref: "n3", kind: "notice", component: text("now in grove cwd=/repo") };
+  const rows = chatRows([connected, moved, ...items], factsOf(noCalls()));
+  expect(rows.map((row) => row.key)).toEqual(["n1", "u1", "m1"]);
+});

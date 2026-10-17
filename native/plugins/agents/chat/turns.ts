@@ -81,13 +81,29 @@ export function sectionsOf(items: readonly ViewItem[]): Section[] {
   return sections;
 }
 
+/** What the daemon says when an app connects, comes back, updates or goes, and when the agent moves between apps. */
+const APP_NOTICE = /^(now in \S+|\S+ connected \(v\d+\)|\S+ is back \(v\d+\)|\S+ updated \(v\d+\)|\S+ disconnected)/;
+
+/** Whether an item is one of those notices, which say nothing a reader of the chat needs: the panes are the apps. */
+export function isAppNotice(item: ViewItem): boolean {
+  if (item.kind !== "notice" || item.component.type !== "text") {
+    return false;
+  }
+  const first = item.component.blocks[0];
+  if (first === undefined || first.type !== "paragraph") {
+    return false;
+  }
+  return APP_NOTICE.test(first.spans.map((span) => span.text).join(""));
+}
+
 /** The rows of the whole chat, in order. */
-export function chatRows(items: readonly ViewItem[], facts: ChatFacts): ChatRow[] {
+export function chatRows(shown: readonly ViewItem[], facts: ChatFacts): ChatRow[] {
   const rows: ChatRow[] = [];
   if (!facts.fold) {
-    pushItems(rows, items);
+    pushItems(rows, shown);
     return rows;
   }
+  const items = shown.filter((item) => !isAppNotice(item));
   const sections = sectionsOf(items);
   sections.forEach((section, index) => {
     const inFlight = facts.running && index === sections.length - 1;

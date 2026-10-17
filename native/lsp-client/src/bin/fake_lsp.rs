@@ -1,6 +1,9 @@
 //! A small language server for the tests: it keeps the text of the documents it is told about,
 //! reports every `BAD` in them as an error, completes a fixed list of words, answers hover and
-//! definition, and ends when a document contains `CRASH`. It applies changes with its own
+//! definition, and ends when a document contains `CRASH`. It also answers the requests around the
+//! cursor with simple rules: signature help for a call to `alpha`, a hint after the first word
+//! of every line, references and highlights of the word at a place, a rename of it, a fix
+//! for each `BAD`, and a formatter that strips trailing white space. It applies changes with its own
 //! reading of UTF-16 columns, so a test that compares its view of the text with the editor's
 //! checks the editor's changes against an independent implementation.
 
@@ -70,6 +73,15 @@ fn answer(method: &str, params: &Value, documents: &HashMap<String, String>) -> 
                 "completionProvider": { "triggerCharacters": ["."], "resolveProvider": true },
                 "hoverProvider": true,
                 "definitionProvider": true,
+                "typeDefinitionProvider": true,
+                "implementationProvider": true,
+                "signatureHelpProvider": { "triggerCharacters": ["(", ","], "retriggerCharacters": [")"] },
+                "inlayHintProvider": true,
+                "referencesProvider": true,
+                "documentHighlightProvider": true,
+                "renameProvider": { "prepareProvider": true },
+                "codeActionProvider": true,
+                "documentFormattingProvider": true,
             },
             "serverInfo": { "name": "fake-lsp" },
         }),
@@ -84,8 +96,209 @@ fn answer(method: &str, params: &Value, documents: &HashMap<String, String>) -> 
             "uri": params["textDocument"]["uri"],
             "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 1 } },
         }),
+        "textDocument/typeDefinition" | "textDocument/implementation" => json!([{
+            "uri": params["textDocument"]["uri"],
+            "range": { "start": { "line": 1, "character": 0 }, "end": { "line": 1, "character": 2 } },
+        }]),
+        "textDocument/signatureHelp" => signature_help(params, documents),
+        "textDocument/inlayHint" => inlay_hints(params, documents),
+        "textDocument/references" => references(params, documents),
+        "textDocument/documentHighlight" => highlights(params, documents),
+        "textDocument/prepareRename" => prepare_rename(params, documents),
+        "textDocument/rename" => rename(params, documents),
+        "textDocument/codeAction" => code_actions(params, documents),
+        "textDocument/formatting" => formatting(params, documents),
         _ => Value::Null,
     }
+}
+
+/// The text of the document a request is about, and the place in it.
+fn place_of(params: &Value, documents: &HashMap<String, String>) -> (String, usize, usize) {
+    let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
+    let text = documents.get(uri).cloned().unwrap_or_default();
+    let line = params["position"]["line"].as_u64().unwrap_or(0) as usize;
+    let character = params["position"]["character"].as_u64().unwrap_or(0) as usize;
+    (text, line, character)
+}
+
+/// The word that touches a column of a line, as UTF-16 columns.
+fn word_at(line: &str, character: usize) -> Option<(usize, usize, String)> {
+    let units: Vec<(usize, char)> = line.chars().scan(0, |at, c| { let start = *at; *at += c.len_utf16(); Some((start, c)) }).collect();
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    let index = units.iter().position(|(start, _)| *start >= character).unwrap_or(units.len());
+    let mut from = index;
+    if from == units.len() || !is_word(units[from].1) {
+        if from == 0 || !is_word(units[from - 1].1) {
+            return None;
+        }
+        from -= 1;
+    }
+    let mut start = from;
+    while start > 0 && is_word(units[start - 1].1) {
+        start -= 1;
+    }
+    let mut end = from;
+    while end < units.len() && is_word(units[end].1) {
+        end += 1;
+    }
+    let word: String = units[start..end].iter().map(|(_, c)| *c).collect();
+    let from_unit = units[start].0;
+    let to_unit = units.get(end).map(|(at, _)| *at).unwrap_or_else(|| line.encode_utf16().count());
+    Some((from_unit, to_unit, word))
+}
+
+/// Every whole-word occurrence of `word` in a text, as `(line, from, to)` in UTF-16 columns.
+fn occurrences(text: &str, word: &str) -> Vec<(usize, usize, usize)> {
+    let mut found = Vec::new();
+    for (line_number, line) in text.split('\n').enumerate() {
+        let mut character = 0;
+        while character <= line.encode_utf16().count() {
+            if let Some((from, to, candidate)) = word_at(line, character) {
+                if candidate == word && from >= character {
+                    found.push((line_number, from, to));
+                }
+                character = to.max(character + 1);
+            } else {
+                character += 1;
+            }
+        }
+    }
+    found
+}
+
+fn range_json(line: usize, from: usize, to: usize) -> Value {
+    json!({ "start": { "line": line, "character": from }, "end": { "line": line, "character": to } })
+}
+
+/// Two signatures of `alpha`, with the parameter after the commas before the cursor active.
+fn signature_help(params: &Value, documents: &HashMap<String, String>) -> Value {
+    let (text, line, character) = place_of(params, documents);
+    let line_text = text.lines().nth(line).unwrap_or_default();
+    let before = &line_text[..unit_to_byte(line_text, character)];
+    let Some(open) = before.rfind('(') else {
+        return Value::Null;
+    };
+    if before[open..].contains(')') {
+        return Value::Null;
+    }
+    let active = before[open..].matches(',').count();
+    json!({
+        "signatures": [
+            { "label": "alpha(first: number, second: string)", "documentation": "Calls alpha.",
+              "parameters": [{ "label": "first: number", "documentation": "The first." }, { "label": [21, 35] }] },
+            { "label": "alpha(only: boolean)", "parameters": [{ "label": "only: boolean" }] },
+        ],
+        "activeSignature": 0,
+        "activeParameter": active,
+    })
+}
+
+/// A hint after the first word of every line in the range.
+fn inlay_hints(params: &Value, documents: &HashMap<String, String>) -> Value {
+    let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
+    let text = documents.get(uri).cloned().unwrap_or_default();
+    let first = params["range"]["start"]["line"].as_u64().unwrap_or(0) as usize;
+    let last = params["range"]["end"]["line"].as_u64().unwrap_or(0) as usize;
+    let mut hints = Vec::new();
+    for (number, line) in text.split('\n').enumerate().filter(|(number, _)| (first..=last).contains(number)) {
+        if let Some((_, to, _)) = word_at(line, 0) {
+            hints.push(json!({ "position": { "line": number, "character": to }, "label": ": T", "paddingLeft": false }));
+        }
+    }
+    json!(hints)
+}
+
+/// Every occurrence of the word at the place, in every document.
+fn references(params: &Value, documents: &HashMap<String, String>) -> Value {
+    let (text, line, character) = place_of(params, documents);
+    let Some((_, _, word)) = word_at(text.lines().nth(line).unwrap_or_default(), character) else {
+        return Value::Null;
+    };
+    let mut locations = Vec::new();
+    let mut uris: Vec<&String> = documents.keys().collect();
+    uris.sort();
+    for uri in uris {
+        for (line, from, to) in occurrences(&documents[uri], &word) {
+            locations.push(json!({ "uri": uri, "range": range_json(line, from, to) }));
+        }
+    }
+    json!(locations)
+}
+
+/// The occurrences of the word at the place in its own document.
+fn highlights(params: &Value, documents: &HashMap<String, String>) -> Value {
+    let (text, line, character) = place_of(params, documents);
+    let Some((_, _, word)) = word_at(text.lines().nth(line).unwrap_or_default(), character) else {
+        return json!([]);
+    };
+    let found: Vec<Value> = occurrences(&text, &word)
+        .into_iter()
+        .map(|(line, from, to)| json!({ "range": range_json(line, from, to), "kind": 1 }))
+        .collect();
+    json!(found)
+}
+
+/// The word at the place, which can be renamed.
+fn prepare_rename(params: &Value, documents: &HashMap<String, String>) -> Value {
+    let (text, line, character) = place_of(params, documents);
+    match word_at(text.lines().nth(line).unwrap_or_default(), character) {
+        Some((from, to, word)) => json!({ "range": range_json(line, from, to), "placeholder": word }),
+        None => Value::Null,
+    }
+}
+
+/// A workspace edit that gives every occurrence of the word, in every document, the new name.
+fn rename(params: &Value, documents: &HashMap<String, String>) -> Value {
+    let (text, line, character) = place_of(params, documents);
+    let Some((_, _, word)) = word_at(text.lines().nth(line).unwrap_or_default(), character) else {
+        return Value::Null;
+    };
+    let new_name = params["newName"].as_str().unwrap_or_default();
+    let mut changes = serde_json::Map::new();
+    for (uri, text) in documents {
+        let edits: Vec<Value> = occurrences(text, &word)
+            .into_iter()
+            .map(|(line, from, to)| json!({ "range": range_json(line, from, to), "newText": new_name }))
+            .collect();
+        if !edits.is_empty() {
+            changes.insert(uri.clone(), json!(edits));
+        }
+    }
+    json!({ "changes": changes })
+}
+
+/// A fix for every diagnostic in the request, and a refactor that runs a command.
+fn code_actions(params: &Value, documents: &HashMap<String, String>) -> Value {
+    let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
+    let _ = documents;
+    let mut actions = Vec::new();
+    for diagnostic in params["context"]["diagnostics"].as_array().into_iter().flatten() {
+        actions.push(json!({
+            "title": "Replace BAD with GOOD",
+            "kind": "quickfix",
+            "isPreferred": true,
+            "diagnostics": [diagnostic],
+            "edit": { "changes": { uri: [{ "range": diagnostic["range"], "newText": "GOOD" }] } },
+        }));
+    }
+    actions.push(json!({ "title": "Extract function", "kind": "refactor.extract", "command": { "title": "Extract function", "command": "fake.extract" } }));
+    json!(actions)
+}
+
+/// Edits that strip the white space at the end of lines.
+fn formatting(params: &Value, documents: &HashMap<String, String>) -> Value {
+    let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
+    let text = documents.get(uri).cloned().unwrap_or_default();
+    let mut edits = Vec::new();
+    for (number, line) in text.split('\n').enumerate() {
+        let trimmed = line.trim_end();
+        if trimmed.len() != line.len() {
+            let from = trimmed.encode_utf16().count();
+            let to = line.encode_utf16().count();
+            edits.push(json!({ "range": range_json(number, from, to), "newText": "" }));
+        }
+    }
+    json!(edits)
 }
 
 /// Words to complete at the word before the position, replacing it.

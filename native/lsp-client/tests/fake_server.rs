@@ -10,6 +10,8 @@ use std::time::Duration;
 use editor_core::{Buffer, Command, EditorState, Position};
 use lsp_client::client::{Client, Handler, ServerCommand, Status};
 use lsp_client::completion::parse_items;
+use lsp_client::edits::{parse_prepare_rename, parse_text_edits, parse_workspace_edit, range_edits};
+use lsp_client::signature::{SignatureHelp, request_context};
 use lsp_client::protocol::{PublishDiagnostics, ResponseError, SyncKind, parse_targets};
 use lsp_client::sync::{did_change_params, did_close_params, did_open_params, did_save_params};
 use lsp_client::uri::uri_from_path;
@@ -246,4 +248,112 @@ fn a_program_that_is_not_there_does_not_start() {
     let handler = Arc::new(Collector { sender: Mutex::new(sender) });
     let command = ServerCommand { program: PathBuf::from("/no/such/server"), args: Vec::new() };
     assert!(Client::start(&command, Path::new("/tmp"), Path::new("/tmp"), Value::Null, handler).is_err());
+}
+
+/// Opens a document on the fake server and waits until it is ready.
+fn open_document(session: &Session, text: &str) {
+    session.client.notify_document("textDocument/didOpen", did_open_params(&session.uri, "typescript", 1, text));
+    session.wait_for_status(|status| *status == Status::Ready);
+}
+
+#[test]
+fn signature_help_follows_the_commas_and_names_the_parameter() {
+    let session = start();
+    open_document(&session, "alpha(1, \n");
+    let capabilities = session.client.capabilities().unwrap();
+    assert_eq!(capabilities.signature_trigger_characters, vec!["(", ","]);
+    let params = json!({
+        "textDocument": { "uri": session.uri }, "position": { "line": 0, "character": 9 },
+        "context": request_context(Some(','), None),
+    });
+    let help = SignatureHelp::parse(&session.ask("textDocument/signatureHelp", params).unwrap()).unwrap();
+    assert_eq!(help.signatures.len(), 2);
+    let signature = help.signature(help.active_signature);
+    let active = help.parameter_of(signature).unwrap();
+    let range = signature.parameters[active].label_range.clone().unwrap();
+    assert_eq!(&signature.label[range], "second: string");
+    let closed = json!({ "textDocument": { "uri": session.uri }, "position": { "line": 0, "character": 7 } });
+    assert!(session.ask("textDocument/signatureHelp", closed).is_ok());
+    session.client.shutdown(WAIT);
+}
+
+#[test]
+fn inlay_hints_are_requested_for_a_range_of_lines() {
+    let session = start();
+    let text = "let one = 1;\nlet two = 2;\nlet three = 3;\n";
+    open_document(&session, text);
+    let buffer = Buffer::from_text(text);
+    let params = lsp_client::inlay::request_params(&session.uri, &buffer, 1, 2);
+    let hints = lsp_client::inlay::parse_hints(&session.ask("textDocument/inlayHint", params).unwrap());
+    assert_eq!(hints.len(), 2);
+    assert_eq!((hints[0].position.line, hints[0].position.character, hints[0].text.as_str()), (1, 3, ": T"));
+    session.client.shutdown(WAIT);
+}
+
+#[test]
+fn references_and_highlights_find_every_whole_word() {
+    let session = start();
+    open_document(&session, "let total = 1;\ntotal += total2 + total;\n");
+    let references = session.ask("textDocument/references", session.position_params(0, 5)).unwrap();
+    let targets = parse_targets(&references);
+    assert_eq!(targets.len(), 3);
+    assert_eq!((targets[2].range.start.line, targets[2].range.start.character), (1, 18));
+    let highlights = lsp_client::highlights::parse_ranges(&session.ask("textDocument/documentHighlight", session.position_params(1, 1)).unwrap());
+    assert_eq!(highlights.len(), 3);
+    assert!(parse_targets(&session.ask("textDocument/references", session.position_params(0, 11)).unwrap()).is_empty());
+    session.client.shutdown(WAIT);
+}
+
+#[test]
+fn rename_is_prepared_and_answers_with_edits_that_apply() {
+    let session = start();
+    let text = "let total = 1;\nconsole.log(total);\n";
+    open_document(&session, text);
+    let prepared = parse_prepare_rename(&session.ask("textDocument/prepareRename", session.position_params(0, 6)).unwrap()).unwrap();
+    assert_eq!(prepared.placeholder.as_deref(), Some("total"));
+    assert!(session.ask("textDocument/prepareRename", session.position_params(0, 11)).unwrap().is_null());
+    let mut params = session.position_params(0, 6);
+    params["newName"] = json!("sum");
+    let edit = parse_workspace_edit(&session.ask("textDocument/rename", params).unwrap());
+    assert_eq!(edit.files.len(), 1);
+    let mut state = EditorState::new(Buffer::from_text(text));
+    let edits = range_edits(state.buffer(), &edit.files[0].edits);
+    state.apply(&Command::ApplyEdits { edits });
+    assert_eq!(state.buffer().slice(0..state.buffer().length()), "let sum = 1;\nconsole.log(sum);\n");
+    session.client.shutdown(WAIT);
+}
+
+#[test]
+fn code_actions_offer_a_fix_for_each_diagnostic_and_a_refactor() {
+    let session = start();
+    open_document(&session, "x BAD\n");
+    let published = session.next_diagnostics();
+    let range = json!({ "start": { "line": 0, "character": 2 }, "end": { "line": 0, "character": 2 } });
+    let params = lsp_client::actions::request_params(&session.uri, range, &published.diagnostics);
+    let mut actions = lsp_client::actions::parse_actions(&session.ask("textDocument/codeAction", params).unwrap());
+    lsp_client::actions::order_for_menu(&mut actions);
+    assert_eq!(actions.len(), 2);
+    assert!(actions[0].is_quick_fix() && actions[0].is_preferred);
+    assert_eq!(actions[0].edit.as_ref().unwrap().edit_count(), 1);
+    assert_eq!(actions[1].command.as_ref().unwrap()["command"], "fake.extract");
+    session.client.shutdown(WAIT);
+}
+
+#[test]
+fn formatting_edits_strip_trailing_white_space_and_type_definitions_are_found() {
+    let session = start();
+    let text = "let a = 1;   \nlet b = 2;\nlet c = 3; \n";
+    open_document(&session, text);
+    let params = json!({ "textDocument": { "uri": session.uri }, "options": { "tabSize": 4, "insertSpaces": true } });
+    let edits = parse_text_edits(&session.ask("textDocument/formatting", params).unwrap());
+    assert_eq!(edits.len(), 2);
+    let mut state = EditorState::new(Buffer::from_text(text));
+    let converted = range_edits(state.buffer(), &edits);
+    state.apply(&Command::ApplyEdits { edits: converted });
+    assert_eq!(state.buffer().slice(0..state.buffer().length()), "let a = 1;\nlet b = 2;\nlet c = 3;\n");
+    let capabilities = session.client.capabilities().unwrap();
+    assert!(capabilities.type_definition && capabilities.implementation && capabilities.formatting);
+    let targets = parse_targets(&session.ask("textDocument/typeDefinition", session.position_params(0, 4)).unwrap());
+    assert_eq!(targets[0].range.start.line, 1);
+    session.client.shutdown(WAIT);
 }

@@ -15,14 +15,8 @@ import OpenFile from "./OpenFile.svelte";
 import { debugDecorations, DEBUG_SOURCE } from "./debugDecorations";
 import { gpuiDocumentHost } from "./documentHost";
 import EditorIndentStatus from "./EditorIndentStatus.svelte";
-import {
-  EditorService,
-  INDENT_CHOICES,
-  indentFromSetting,
-  indentLabel,
-  type EditorOptions,
-  type ViewAction,
-} from "./service";
+import { LANGUAGE_COMMANDS, LANGUAGE_KEYS } from "./languageCommands";
+import { EditorService, INDENT_CHOICES, indentFromSetting, indentLabel, type EditorOptions } from "./service";
 
 export const editorSettings = defineSettings({
   keymap: setting.enum({
@@ -144,39 +138,8 @@ function registerFileCommands(ctx: Context, service: EditorService): void {
 
 /** The commands that ask the language server, through the focused editor, about its cursor. */
 function registerLanguageCommands(ctx: Context, service: EditorService): void {
-  const hasView = () => service.hasFocusedView();
-  ctx.commands.register({
-    id: "editor.showHover",
-    title: "Show hover",
-    group: "Editor",
-    when: hasView,
-    run: () => void service.actOnFocusedView("hover"),
-  });
-  ctx.commands.register({
-    id: "editor.goToDefinition",
-    title: "Go to definition",
-    group: "Go",
-    when: hasView,
-    run: () => void service.actOnFocusedView("definition"),
-  });
-  ctx.commands.register({
-    id: "editor.triggerSuggest",
-    title: "Trigger completion",
-    group: "Editor",
-    when: hasView,
-    run: () => void service.actOnFocusedView("complete"),
-  });
-  const languageCommands: [string, string, string, ViewAction][] = [
-    ["editor.findReferences", "Find all references", "Go", "references"],
-    ["editor.goToTypeDefinition", "Go to type definition", "Go", "typeDefinition"],
-    ["editor.goToImplementation", "Go to implementations", "Go", "implementation"],
-    ["editor.rename", "Rename symbol", "Editor", "rename"],
-    ["editor.codeAction", "Show code actions (quick fix)", "Editor", "codeActions"],
-    ["editor.triggerParameterHints", "Show signature help", "Editor", "signature"],
-    ["editor.formatDocument", "Format document", "Editor", "format"],
-  ];
-  for (const [id, title, group, action] of languageCommands) {
-    ctx.commands.register({ id, title, group, when: hasView, run: () => void service.actOnFocusedView(action) });
+  for (const { id, title, group, action } of LANGUAGE_COMMANDS) {
+    ctx.commands.register({ id, title, group, when: () => service.hasFocusedView(), run: () => void service.actOnFocusedView(action) });
   }
 }
 
@@ -288,14 +251,7 @@ function registerKeys(ctx: Context, service: EditorService): void {
     { id: "editor.save", keys: "ctrl+alt+s", command: "editor.save", description: "Save file" },
     { id: "editor.save.chord", keys: "ctrl+k f2", command: "editor.save", description: "Save file" },
     { id: "file.open", keys: "ctrl+o", command: "file.open", description: "Open file" },
-    { id: "editor.showHover", keys: "ctrl+k ctrl+i", command: "editor.showHover", description: "Show hover" },
-    { id: "editor.goToDefinition", keys: "f12", command: "editor.goToDefinition", description: "Go to definition" },
-    { id: "editor.findReferences", keys: "shift+f12", command: "editor.findReferences", description: "Find all references" },
-    { id: "editor.goToImplementation", keys: "ctrl+f12", command: "editor.goToImplementation", description: "Go to implementations" },
-    { id: "editor.rename", keys: "f2", command: "editor.rename", description: "Rename symbol" },
-    { id: "editor.codeAction", keys: "ctrl+.", command: "editor.codeAction", description: "Show code actions" },
-    { id: "editor.triggerParameterHints", keys: "ctrl+shift+space", command: "editor.triggerParameterHints", description: "Show signature help" },
-    { id: "editor.formatDocument", keys: "alt+shift+f", command: "editor.formatDocument", description: "Format document" },
+    ...LANGUAGE_KEYS.map((key) => ({ id: key.command, ...key })),
     { id: "file.closeTab", keys: "ctrl+w", command: "file.closeTab", description: "Close tab" },
     { id: "go.nextTab", keys: "ctrl+tab", command: "go.nextTab", description: "Next tab" },
     { id: "go.previousTab", keys: "ctrl+shift+tab", command: "go.previousTab", description: "Previous tab" },

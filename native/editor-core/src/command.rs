@@ -9,7 +9,7 @@ use crate::decorations::Decoration;
 use crate::indent::IndentStyle;
 use crate::movement::Motion;
 use crate::vim::types::{
-    AppRequest, LineRange, Operator, ScrollAlign, SearchRequest, SelectionKind, Target, TextObject,
+    AppRequest, BlockExit, LineRange, Operator, ScrollAlign, SearchRequest, SelectionKind, Target, TextObject,
 };
 
 /// One thing the editor can be told to do. On the wire it is a JSON object whose `type` names
@@ -175,7 +175,15 @@ pub enum Command {
     /// Opens an empty line below each cursor's line, or above it, with its indentation (`o`, `O`).
     OpenLine { above: bool },
     /// Replaces a pattern with text on some lines (`:s`).
-    Substitute { range: LineRange, pattern: String, replacement: String, global: bool },
+    Substitute {
+        range: LineRange,
+        pattern: String,
+        replacement: String,
+        global: bool,
+        /// The `i` flag: letters match in either case.
+        #[serde(default)]
+        ignore_case: bool,
+    },
     /// Moves every cursor to the next match of a search.
     VimSearch {
         request: SearchRequest,
@@ -199,6 +207,34 @@ pub enum Command {
     GroupUndo { open: bool },
     /// Scrolls the view so the newest cursor's line is at the top, middle or bottom.
     ScrollTo { align: ScrollAlign },
+    /// `Ctrl-V`: starts a visual block at the cursor, or at the ends of the selection.
+    BlockStart,
+    /// Moves the visual block's moving corner as a motion would move a cursor.
+    BlockMove { motion: Motion, count: usize },
+    /// `o` in a visual block: the other corner moves.
+    BlockSwap,
+    /// Ends the visual block, with the selections left as `exit` says.
+    BlockEnd { exit: BlockExit },
+    /// `I` and `A` in a visual block: a cursor on each line, to type at all of them.
+    BlockInsert { append: bool },
+    /// `:noh`: stops marking the matches of the last search.
+    ClearSearchHighlight,
+    /// Remembers the selection about to be left, so `gv` and `.` can use it.
+    RememberVisual { kind: SelectionKind },
+    /// `gv`: selects the last visual selection again.
+    ReselectVisual,
+    /// Selects from the cursor as much text as the last visual selection covered, for `.`.
+    SelectLastExtent,
+    /// Notes the cursor's place as one `Ctrl-O` can come back to.
+    PushJump,
+    /// `Ctrl-O`: goes back in the jump list.
+    JumpOlder { count: usize },
+    /// `Ctrl-I`: goes forward in the jump list.
+    JumpNewer { count: usize },
+    /// Backspace in replace mode: puts back what the last typed character covered.
+    RestoreOverwritten,
+    /// Scrolls the view down by some rows, or up when negative, without moving the cursor (`Ctrl-F`).
+    ScrollView { rows: isize },
     /// Remembers the newest cursor's place under a letter (`m`).
     SetMark { name: char },
     /// Goes to a place remembered with `SetMark` (`'` and the backtick).
@@ -269,6 +305,19 @@ impl Command {
             | Command::ClampCursors
             | Command::GroupUndo { .. }
             | Command::ScrollTo { .. }
+            | Command::ScrollView { .. }
+            | Command::ClearSearchHighlight
+            | Command::BlockStart
+            | Command::BlockMove { .. }
+            | Command::BlockSwap
+            | Command::BlockEnd { .. }
+            | Command::BlockInsert { .. }
+            | Command::RememberVisual { .. }
+            | Command::ReselectVisual
+            | Command::SelectLastExtent
+            | Command::PushJump
+            | Command::JumpOlder { .. }
+            | Command::JumpNewer { .. }
             | Command::SetMark { .. }
             | Command::JumpToMark { .. } => false,
             Command::Operate { operator, .. } => *operator != Operator::Yank,
@@ -299,6 +348,20 @@ impl Command {
                 | Command::ClampCursors
                 | Command::GroupUndo { .. }
                 | Command::ScrollTo { .. }
+                | Command::ScrollView { .. }
+                | Command::ClearSearchHighlight
+                | Command::BlockStart
+                | Command::BlockMove { .. }
+                | Command::BlockSwap
+                | Command::BlockEnd { .. }
+                | Command::BlockInsert { .. }
+                | Command::RememberVisual { .. }
+                | Command::ReselectVisual
+                | Command::SelectLastExtent
+                | Command::PushJump
+                | Command::JumpOlder { .. }
+                | Command::JumpNewer { .. }
+                | Command::RestoreOverwritten
                 | Command::SetMark { .. }
                 | Command::JumpToMark { .. }
         )
@@ -324,6 +387,8 @@ pub struct Outcome {
     pub decorations_changed: bool,
     /// Where the view should scroll the newest cursor's line to.
     pub scroll: Option<ScrollAlign>,
+    /// How many rows the view should scroll down, or up when negative.
+    pub scroll_rows: Option<isize>,
     /// The command a jump runs once a place is chosen, as the command made the view start one.
     pub jump: Option<Command>,
     /// Whether the way the file is indented is different now, which the app learns for its status bar.

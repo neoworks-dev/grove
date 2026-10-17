@@ -384,6 +384,19 @@ mod tests {
     }
 
     #[test]
+    fn a_function_call_snippet_leaves_every_cursor_between_its_parentheses() {
+        let mut state = state("gre\ngre\n");
+        state.apply(&Command::PlaceCursor { at: at(0, 3) });
+        state.apply(&Command::ToggleCursor { at: at(1, 3) });
+        accept(&mut state, 3, "greet($0)", true);
+        assert_eq!(text(&state), "greet()\ngreet()\n");
+        let heads: Vec<_> = state.selections().all().iter().map(|selection| selection.head).collect();
+        assert_eq!(heads, vec![at(0, 6), at(1, 6)]);
+        state.apply(&Command::InsertText { text: "x".into() });
+        assert_eq!(text(&state), "greet(x)\ngreet(x)\n");
+    }
+
+    #[test]
     fn mirrored_stops_are_typed_into_together() {
         let mut state = state("");
         accept(&mut state, 0, "${1:name}: $1", true);

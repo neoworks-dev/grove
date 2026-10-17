@@ -92,7 +92,7 @@ export type DocumentEvent =
   | { type: "edited"; id: number }
   | { type: "error"; id: number; message: string }
   | { type: "selections"; id: number; row: number; column: number; count: number; selected: boolean }
-  | { type: "mode"; mode: string; pending: string; commandLine: string | null }
+  | { type: "mode"; pane: string; mode: string; pending: string; commandLine: string | null }
   | { type: "indent"; id: number; indent: IndentStyle }
   | { type: "close-request"; id: number; discard: boolean }
   | { type: "open-request"; id: number; path: string }
@@ -221,7 +221,7 @@ export type KeymapName = "standard" | "vim";
 
 /** What the vim layer reports: its mode, the keys it is waiting on, and the line typed after `:`. */
 export interface VimStatus {
-  /** `NORMAL`, `INSERT`, `VISUAL`, `V-LINE` or `REPLACE`; empty while the keys are the standard ones. */
+  /** `NORMAL`, `INSERT`, `VISUAL`, `V-LINE`, `V-BLOCK` or `REPLACE`; empty while the keys are the standard ones. */
   mode: string;
   pending: string;
   commandLine: string | null;
@@ -250,7 +250,9 @@ export class EditorService extends Service {
   private revealing: RevealRequest | null = null;
   private changes: ChangeSignal = createChangeSignal();
   private keymapName: KeymapName = "standard";
-  private vimState: VimStatus = { mode: "", pending: "", commandLine: null };
+  private pendingSequence: () => boolean = () => false;
+  /** What each pane's vim layer last reported, by pane id. */
+  private vimStates = new Map<string, VimStatus>();
   private documentListeners = new Set<(event: DocumentEvent) => void>();
   private contextMenuListeners = new Set<(request: ContextMenuRequest) => void>();
 
@@ -412,6 +414,19 @@ export class EditorService extends Service {
     return cursor;
   }
 
+  /** Where to ask whether the app's keymap is half way through a key sequence, such as after Ctrl+K. */
+  setPendingSequenceSource(source: () => boolean): void {
+    this.pendingSequence = source;
+  }
+
+  /**
+   * Whether the app's keymap waits for the next key of a sequence. The editors then leave every key to
+   * the keymap, since vim would otherwise take the `v` of Ctrl+K V. Reactive.
+   */
+  sequencePending(): boolean {
+    return this.pendingSequence();
+  }
+
   /** Which keys the editors understand. Reactive. */
   keymap(): KeymapName {
     this.changes.track();
@@ -422,15 +437,19 @@ export class EditorService extends Service {
   setKeymap(name: string): void {
     this.keymapName = name === "vim" ? "vim" : "standard";
     if (this.keymapName === "standard") {
-      this.vimState = { mode: "", pending: "", commandLine: null };
+      this.vimStates.clear();
     }
     this.changes.notify();
   }
 
-  /** The vim layer's mode and pending keys, as the last editor to change them reported. Reactive. */
+  /** The mode and pending keys of the focused pane's vim layer, empty until that pane has reported. Reactive. */
   vimStatus(): VimStatus {
     this.changes.track();
-    return this.vimState;
+    const status = this.vimStates.get(this.panes.focusedLeafId);
+    if (status === undefined) {
+      return { mode: "", pending: "", commandLine: null };
+    }
+    return status;
   }
 
   /** Closes a document, throwing its unsaved changes away without asking, as `:q!` does. */
@@ -887,6 +906,7 @@ export class EditorService extends Service {
 
   /** A pane closed: documents only it showed move to a pane that is still there, so none is lost from view. */
   private paneClosed(leafId: string): void {
+    this.vimStates.delete(leafId);
     const closed = this.paneTabs.get(leafId);
     if (!closed) {
       return;
@@ -939,7 +959,7 @@ export class EditorService extends Service {
       return;
     }
     if (event.type === "mode") {
-      this.vimState = { mode: event.mode, pending: event.pending, commandLine: event.commandLine };
+      this.vimStates.set(event.pane, { mode: event.mode, pending: event.pending, commandLine: event.commandLine });
       this.changes.notify();
       return;
     }

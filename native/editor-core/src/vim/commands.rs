@@ -32,8 +32,8 @@ impl EditorState {
             Command::ReplaceChars { character, count, over } => self.replace_chars(*character, *count, *over, now),
             Command::Overwrite { text } => self.overwrite(text, now),
             Command::OpenLine { above } => self.open_line(*above, now),
-            Command::Substitute { range, pattern, replacement, global } => {
-                self.substitute(*range, pattern, replacement, *global, now)
+            Command::Substitute { range, pattern, replacement, global, ignore_case } => {
+                self.substitute(*range, pattern, replacement, *global, *ignore_case, now)
             }
             Command::VimSearch { request, count, extend } => self.vim_search(request, *count, *extend),
             Command::SelectObject { object, around, count } => self.select_object(*object, *around, *count),
@@ -56,6 +56,7 @@ impl EditorState {
             }
             Command::GroupUndo { open } => {
                 if *open {
+                    self.overwritten.clear();
                     self.history.hold();
                 } else {
                     self.history.release();
@@ -63,6 +64,29 @@ impl EditorState {
                 Outcome::default()
             }
             Command::ScrollTo { align } => Outcome { scroll: Some(*align), ..Outcome::default() },
+            Command::BlockStart => self.block_start(),
+            Command::BlockMove { motion, count } => self.block_move(*motion, *count),
+            Command::BlockSwap => self.block_swap(),
+            Command::BlockEnd { exit } => self.block_end(*exit),
+            Command::BlockInsert { append } => self.block_insert(*append),
+            Command::ClearSearchHighlight => {
+                self.memory.search_highlight = false;
+                Outcome::default()
+            }
+            Command::RememberVisual { kind } => {
+                self.remember_visual(*kind);
+                Outcome::default()
+            }
+            Command::ReselectVisual => self.reselect_visual(),
+            Command::SelectLastExtent => self.select_last_extent(),
+            Command::PushJump => {
+                self.push_jump();
+                Outcome::default()
+            }
+            Command::JumpOlder { count } => self.jump_older(*count),
+            Command::JumpNewer { count } => self.jump_newer(*count),
+            Command::RestoreOverwritten => self.restore_overwritten(now),
+            Command::ScrollView { rows } => Outcome { scroll_rows: Some(*rows), ..Outcome::default() },
             Command::SetMark { name } => {
                 self.set_mark(*name);
                 Outcome::default()

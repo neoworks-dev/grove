@@ -30,6 +30,7 @@ mod options;
 mod popup;
 mod rename;
 mod signals;
+mod search_marks;
 mod signature;
 mod smooth_scroll;
 mod theme;
@@ -84,6 +85,10 @@ pub struct Editor {
     input: Box<dyn InputLayer>,
     /// The status of the input layer as the app was last told it, so it hears of changes only.
     announced_status: Option<InputStatus>,
+    /// The pane this view is in, set by the `pane` prop, so the app can tell whose mode it hears of.
+    pane: String,
+    /// Whether the app's keymap waits for the next key of a sequence, which it must get, not this view.
+    sequence_pending: bool,
     /// How far the text is scrolled, in pixels from the top of the first line. Each view of a
     /// document scrolls on its own.
     scroll_top: Pixels,
@@ -166,6 +171,8 @@ impl Editor {
             focus: cx.focus_handle(),
             input: Box::new(StandardKeymap),
             announced_status: None,
+            pane: String::new(),
+            sequence_pending: false,
             scroll_top: px(0.0),
             scroll_animation: None,
             layout: None,
@@ -269,6 +276,9 @@ impl Editor {
         if let Some(then) = &outcome.jump {
             self.start_jump(then.clone());
         }
+        if let Some(rows) = outcome.scroll_rows {
+            self.scroll_by_rows(rows);
+        }
         if outcome.reveal_newest {
             self.scroll_to_newest();
         }
@@ -287,6 +297,7 @@ impl Editor {
         if outcome.changed || outcome.text_changed {
             self.occurrences_may_have_changed(cx);
         }
+        self.refresh_search_marks(cx);
         self.scroll_group_to_here(cx);
         outcome
     }
@@ -368,6 +379,9 @@ impl Editor {
 
     /// Handles a key the input layer knows; returns false for the rest, which then bubble to the app.
     fn handle_key(&mut self, keystroke: &Keystroke, cx: &mut Context<Self>) -> bool {
+        if self.sequence_pending {
+            return false;
+        }
         if self.jump.is_some() {
             return self.jump_key(keystroke, cx);
         }
@@ -397,7 +411,7 @@ impl Editor {
         let Some(layout) = &self.layout else {
             return 0;
         };
-        let mut display_row = (self.scroll_top / LINE_HEIGHT).ceil() as usize;
+        let mut display_row = (self.scroll_target() / LINE_HEIGHT).ceil() as usize;
         loop {
             match layout.blocks.row_at(display_row) {
                 DisplayRow::Text(row) => return row,
@@ -414,7 +428,12 @@ impl Editor {
         }
         self.documents.announce(
             "editor-mode",
-            json!({ "mode": status.mode, "pending": status.pending, "commandLine": status.command_line }),
+            json!({
+                "pane": self.pane,
+                "mode": status.mode,
+                "pending": status.pending,
+                "commandLine": status.command_line,
+            }),
         );
         self.announced_status = Some(status);
     }
@@ -461,6 +480,7 @@ impl Editor {
         self.dragging = true;
         if event.modifiers.control && !event.modifiers.shift && !event.modifiers.alt {
             self.apply(&Command::PlaceCursor { at }, cx);
+            self.clamp_cursors_in_normal_mode(cx);
             self.go_to_definition_at(at, cx);
             return;
         }
@@ -470,12 +490,24 @@ impl Editor {
         }
         if event.modifiers.alt {
             self.apply(&Command::ToggleCursor { at }, cx);
+            self.clamp_cursors_in_normal_mode(cx);
             return;
         }
         self.apply(&Command::PlaceCursor { at }, cx);
         if event.click_count == 2 {
             self.apply(&Command::SelectWordAt { at }, cx);
+            return;
         }
+        self.clamp_cursors_in_normal_mode(cx);
+    }
+
+    /// Vim's normal mode has no place for the cursor after a line's last character, which a click
+    /// past the end of the line puts it at, so it is moved back onto the character.
+    fn clamp_cursors_in_normal_mode(&mut self, cx: &mut Context<Self>) {
+        if self.input.status().mode != "NORMAL" {
+            return;
+        }
+        self.apply(&Command::ClampCursors, cx);
     }
 
     /// The pointer moved with the button held: the newest selection follows it.
@@ -639,6 +671,15 @@ impl AppElement for Editor {
             self.set_scroll_group(value.as_str().unwrap_or(""), cx);
             return;
         }
+        if name == "sequencePending" {
+            self.sequence_pending = value.as_bool().unwrap_or(false);
+            return;
+        }
+        if name == "pane" {
+            self.pane = value.as_str().unwrap_or("").to_string();
+            self.announced_status = None;
+            return;
+        }
         if name == "keymap" {
             self.set_keymap(value.as_str().unwrap_or("standard"));
             cx.notify();
@@ -775,6 +816,7 @@ impl Render for Editor {
                 editor.jump = None;
                 editor.wheel_scrolled(event.delta);
                 editor.occurrences_may_have_changed(cx);
+                editor.refresh_search_marks(cx);
                 editor.scroll_group_to_here(cx);
                 cx.notify();
             }))

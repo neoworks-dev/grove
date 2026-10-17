@@ -179,6 +179,16 @@ pub enum Simple {
     },
     /// Visual mode: `o` and `O`.
     VisualSwapEnds,
+    /// `gv`.
+    ReselectVisual,
+    /// `q` and a register name, which starts recording a macro.
+    MacroRecord(char),
+    /// `@` and a register name, or `@@`, which types a macro again.
+    MacroPlay(char),
+    /// Ctrl-O.
+    JumpOlder,
+    /// Ctrl-I, which is also Tab.
+    JumpNewer,
 }
 
 /// Whether a key is a digit, which starts or goes on with a count.
@@ -211,6 +221,8 @@ fn object_for(character: char) -> Option<TextObject> {
         'w' => Some(TextObject::Word { big: false }),
         'W' => Some(TextObject::Word { big: true }),
         'p' => Some(TextObject::Paragraph),
+        't' => Some(TextObject::Tag),
+        's' => Some(TextObject::Sentence),
         '"' | '\'' | '`' => Some(TextObject::Quote { quote: character }),
         '(' | ')' | 'b' => pair('(', ')'),
         '{' | '}' | 'B' => pair('{', '}'),
@@ -496,6 +508,7 @@ fn parse_simple(keys: &[String]) -> SimpleParse {
         "~" => simple(Simple::ToggleCaseChar),
         "v" => simple(Simple::Visual(SelectionKind::Characters)),
         "V" => simple(Simple::Visual(SelectionKind::Lines)),
+        "C-v" => simple(Simple::Visual(SelectionKind::Block)),
         ":" => simple(Simple::ExCommandLine),
         "C-n" => simple(Simple::NextMatch),
         "C-d" => simple(Simple::Page(PageStep::HalfDown)),
@@ -503,6 +516,10 @@ fn parse_simple(keys: &[String]) -> SimpleParse {
         "C-f" | "pagedown" => simple(Simple::Page(PageStep::PageDown)),
         "C-b" | "pageup" => simple(Simple::Page(PageStep::PageUp)),
         "escape" | "C-[" | "C-c" => simple(Simple::Escape),
+        "C-o" => simple(Simple::JumpOlder),
+        "C-i" | "tab" => simple(Simple::JumpNewer),
+        "q" => parse_macro(keys, true),
+        "@" => parse_macro(keys, false),
         "r" => parse_replace_char(keys),
         "m" => parse_set_mark(keys),
         "z" => parse_scroll(keys),
@@ -510,6 +527,21 @@ fn parse_simple(keys: &[String]) -> SimpleParse {
         "]" | "[" => parse_goto_change(keys),
         "g" => parse_g_simple(keys),
         _ => SimpleParse::Invalid,
+    }
+}
+
+/// `q` or `@` and the register a macro is recorded in or played from. Playing also takes `@` for the last one.
+fn parse_macro(keys: &[String], record: bool) -> SimpleParse {
+    let Some(next) = keys.get(1) else {
+        return SimpleParse::Incomplete;
+    };
+    let name = typed_character(next).filter(|character| {
+        character.is_ascii_alphanumeric() || character == &'"' || (!record && character == &'@')
+    });
+    match (name, record) {
+        (Some(name), true) => SimpleParse::Simple(Simple::MacroRecord(name), 2),
+        (Some(name), false) => SimpleParse::Simple(Simple::MacroPlay(name), 2),
+        (None, _) => SimpleParse::Invalid,
     }
 }
 
@@ -585,6 +617,7 @@ fn parse_g_simple(keys: &[String]) -> SimpleParse {
         "p" => SimpleParse::Simple(Simple::Put { before: false, cursor_after: true }, 2),
         "P" => SimpleParse::Simple(Simple::Put { before: true, cursor_after: true }, 2),
         "I" => SimpleParse::Simple(Simple::Insert(InsertAt::LineStart), 2),
+        "v" => SimpleParse::Simple(Simple::ReselectVisual, 2),
         _ => SimpleParse::Invalid,
     }
 }

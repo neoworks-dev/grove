@@ -32,7 +32,8 @@ pub fn parse_ex(line: &str) -> Vec<Command> {
             vec![Command::Save, Command::Request { request: AppRequest::CloseTab { discard: false } }]
         }
         "e" | "edit" | "open" => edit(argument),
-        "noh" | "nohlsearch" | "set" | "se" => vec![Command::Noop],
+        "noh" | "nohlsearch" => vec![Command::ClearSearchHighlight],
+        "set" | "se" => vec![Command::Noop],
         _ => vec![Command::Fail { message: format!("E492: Not an editor command: {text}") }],
     }
 }
@@ -73,12 +74,16 @@ fn substitute(range: LineRange, rest: &str) -> Vec<Command> {
         return vec![Command::Fail { message: "E486: Pattern not found".to_string() }];
     };
     let pieces = split_unescaped(characters.as_str(), delimiter);
-    let Some(pattern) = pieces.first().filter(|pattern| !pattern.is_empty()) else {
-        return vec![Command::Fail { message: "E35: No previous regular expression".to_string() }];
-    };
+    let pattern = pieces.first().cloned().unwrap_or_default();
     let replacement = pieces.get(1).cloned().unwrap_or_default();
     let flags = pieces.get(2).cloned().unwrap_or_default();
-    vec![Command::Substitute { range, pattern: pattern.clone(), replacement, global: flags.contains('g') }]
+    vec![Command::Substitute {
+        range,
+        pattern,
+        replacement,
+        global: flags.contains('g'),
+        ignore_case: flags.contains('i'),
+    }]
 }
 
 /// Splits text at a delimiter that is not escaped with a backslash, removing the escapes before delimiters.
@@ -143,7 +148,8 @@ mod tests {
                 range: LineRange::All,
                 pattern: "foo".to_string(),
                 replacement: "bar".to_string(),
-                global: true
+                global: true,
+                ignore_case: false
             }]
         );
         assert_eq!(
@@ -152,9 +158,16 @@ mod tests {
                 range: LineRange::Current,
                 pattern: "a#b".to_string(),
                 replacement: "c".to_string(),
-                global: false
+                global: false,
+                ignore_case: false
             }]
         );
+    }
+
+    #[test]
+    fn noh_turns_the_search_highlight_off() {
+        assert_eq!(parse_ex("noh"), vec![Command::ClearSearchHighlight]);
+        assert_eq!(parse_ex("nohlsearch"), vec![Command::ClearSearchHighlight]);
     }
 
     #[test]

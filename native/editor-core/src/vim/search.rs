@@ -1,41 +1,21 @@
-//! Searching the text for a typed pattern. The pattern is plain text, matched exactly.
+//! Searching the text for a typed pattern, which is a regular expression (see `pattern`).
 
 use crate::buffer::Buffer;
 use crate::selections::Selection;
 use crate::vim::motion::is_word_character;
+use crate::vim::pattern::Pattern;
 use crate::vim::registers::{LastSearch, VimMemory};
 use crate::vim::types::SearchRequest;
 
-/// The offset of the match of `pattern` nearest to `from` in a direction, wrapping around the
-/// text. A match that starts at `from` itself is not the nearest one, so searching again moves
-/// on. With `whole_word`, a match only counts when no word character touches it.
-pub fn find_match(buffer: &Buffer, pattern: &str, from: usize, forward: bool, whole_word: bool) -> Option<usize> {
-    let needle: Vec<char> = pattern.chars().collect();
-    if needle.is_empty() {
-        return None;
+/// The offset of the match nearest to `from` in a direction, wrapping around the text. A match
+/// that starts at `from` itself is not the nearest one, so searching again moves on.
+pub fn find_match(buffer: &Buffer, pattern: &Pattern, from: usize, forward: bool) -> Option<usize> {
+    let text = buffer.slice(0..buffer.length());
+    let starts = pattern.starts_in(&text);
+    if forward {
+        return starts.iter().copied().find(|start| *start > from).or_else(|| starts.first().copied());
     }
-    let text: Vec<char> = buffer.slice(0..buffer.length()).chars().collect();
-    if text.len() < needle.len() {
-        return None;
-    }
-    let matches_at = |start: usize| {
-        if text[start..start + needle.len()] != needle[..] {
-            return false;
-        }
-        if !whole_word {
-            return true;
-        }
-        let before_is_word = start > 0 && is_word_character(text[start - 1]);
-        let after_is_word = text.get(start + needle.len()).is_some_and(|character| is_word_character(*character));
-        !before_is_word && !after_is_word
-    };
-    let last_start = text.len() - needle.len();
-    let starts: Vec<usize> = if forward {
-        (from + 1..=last_start).chain(0..=from.min(last_start)).collect()
-    } else {
-        (0..from.min(last_start + 1)).rev().chain((from.min(last_start)..=last_start).rev()).collect()
-    };
-    starts.into_iter().find(|start| matches_at(*start))
+    starts.iter().rev().copied().find(|start| *start < from).or_else(|| starts.last().copied())
 }
 
 /// The word at or after a column of a line, as the columns it spans.
@@ -84,8 +64,10 @@ pub fn search_landing(
     if !matches!(request, SearchRequest::Repeat { .. }) {
         memory.last_search = Some(search.clone());
     }
+    memory.search_highlight = true;
+    let pattern = Pattern::parse(&search.pattern, search.whole_word, false).ok()?;
     for _ in 0..count.max(1) {
-        from = find_match(buffer, &search.pattern, from, search.forward, search.whole_word)?;
+        from = find_match(buffer, &pattern, from, search.forward)?;
     }
     Some(from)
 }
@@ -94,26 +76,34 @@ pub fn search_landing(
 mod tests {
     use super::*;
 
+    fn find(text: &str, pattern: &str, from: usize, forward: bool, whole_word: bool) -> Option<usize> {
+        let pattern = Pattern::parse(pattern, whole_word, false).unwrap();
+        find_match(&Buffer::from_text(text), &pattern, from, forward)
+    }
+
     #[test]
     fn forward_search_skips_the_match_under_the_cursor_and_wraps() {
-        let buffer = Buffer::from_text("foo bar foo baz foo");
-        assert_eq!(find_match(&buffer, "foo", 0, true, false), Some(8));
-        assert_eq!(find_match(&buffer, "foo", 16, true, false), Some(0));
-        assert_eq!(find_match(&buffer, "zzz", 0, true, false), None);
+        assert_eq!(find("foo bar foo baz foo", "foo", 0, true, false), Some(8));
+        assert_eq!(find("foo bar foo baz foo", "foo", 16, true, false), Some(0));
+        assert_eq!(find("foo bar foo baz foo", "zzz", 0, true, false), None);
     }
 
     #[test]
     fn backward_search_goes_to_the_one_before_and_wraps() {
-        let buffer = Buffer::from_text("foo bar foo baz foo");
-        assert_eq!(find_match(&buffer, "foo", 16, false, false), Some(8));
-        assert_eq!(find_match(&buffer, "foo", 0, false, false), Some(16));
+        assert_eq!(find("foo bar foo baz foo", "foo", 16, false, false), Some(8));
+        assert_eq!(find("foo bar foo baz foo", "foo", 0, false, false), Some(16));
     }
 
     #[test]
     fn whole_word_matches_ignore_longer_words() {
-        let buffer = Buffer::from_text("foobar foo");
-        assert_eq!(find_match(&buffer, "foo", 0, true, true), Some(7));
-        assert_eq!(find_match(&buffer, "foo", 0, true, false), Some(7));
-        assert_eq!(find_match(&buffer, "foo", 7, true, true), Some(7));
+        assert_eq!(find("foobar foo", "foo", 0, true, true), Some(7));
+        assert_eq!(find("foobar foo", "foo", 0, true, false), Some(3).filter(|_| false).or(Some(7)));
+        assert_eq!(find("foobar foo", "foo", 7, true, true), Some(7));
+    }
+
+    #[test]
+    fn a_pattern_can_be_a_regular_expression() {
+        assert_eq!(find("a1 b22 c333", "[0-9]\\{3}", 0, true, false), Some(8));
+        assert_eq!(find("let x = 1;", "\\<x\\>", 0, true, false), Some(4));
     }
 }

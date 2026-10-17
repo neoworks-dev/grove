@@ -40,6 +40,10 @@ pub enum TextObject {
     Quote { quote: char },
     /// `(`, `{`, `[` and `<`, with their closing characters.
     Pair { open: char, close: char },
+    /// `t`: the element between a start tag and its end tag.
+    Tag,
+    /// `s`: a sentence.
+    Sentence,
 }
 
 /// What a visual selection covers, which decides whether an operator takes characters or lines.
@@ -50,6 +54,22 @@ pub enum SelectionKind {
     Characters,
     /// `V`: every line the selection touches.
     Lines,
+    /// `Ctrl-V`: a rectangle, as one selection on each line.
+    Block,
+}
+
+/// Where the selections are left when a visual block ends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BlockExit {
+    /// The selections stay as they are, for typing at all of them.
+    Keep,
+    /// One cursor at the corner that was moving.
+    Head,
+    /// One cursor at the top left corner.
+    TopLeft,
+    /// One selection from the first corner to the last, as in `v`.
+    Range,
 }
 
 /// A search for text, from a typed pattern or the last one.

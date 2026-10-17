@@ -118,7 +118,7 @@ fn resolve_target(
         Target::Selection { kind: SelectionKind::Lines } => {
             Some(Covered::Lines { first: selection.start().row, last: selection.end().row })
         }
-        Target::Selection { kind: SelectionKind::Characters } => {
+        Target::Selection { kind: SelectionKind::Characters | SelectionKind::Block } => {
             let start = buffer.offset_of(selection.start());
             let end = (buffer.offset_of(selection.end()) + 1).min(buffer.length());
             Some(Covered::Chars { start, end })
@@ -265,7 +265,8 @@ impl EditorState {
         }
         let mut outcome = Outcome { reveal_newest: true, ..Outcome::default() };
         if matches!(operator, Operator::Delete | Operator::Change | Operator::Yank) {
-            outcome.copied = self.remember(&covered, register_name, operator == Operator::Yank);
+            let blockwise = matches!(target, Target::Selection { kind: SelectionKind::Block });
+            outcome.copied = self.remember(&covered, register_name, operator == Operator::Yank, blockwise);
         }
         if operator == Operator::Yank {
             self.cursors_after_yank(&selections, &covered);
@@ -284,11 +285,17 @@ impl EditorState {
 
     /// Stores what the operator covers in a register, and gives back the text for the system
     /// clipboard when the register is one.
-    fn remember(&mut self, covered: &[Option<Covered>], register_name: Option<char>, is_yank: bool) -> Option<String> {
+    fn remember(
+        &mut self,
+        covered: &[Option<Covered>],
+        register_name: Option<char>,
+        is_yank: bool,
+        blockwise: bool,
+    ) -> Option<String> {
         let taken: Vec<Covered> = covered.iter().flatten().copied().collect();
         let linewise = taken.iter().any(|covered| matches!(covered, Covered::Lines { .. }));
         let texts = taken.iter().map(|covered| covered_text(&self.buffer, *covered)).collect();
-        let register = Register { texts, linewise };
+        let register = Register { texts, linewise, blockwise };
         let clipboard = matches!(register_name, Some('+') | Some('*')).then(|| register.clipboard_text());
         self.memory.record(register_name, register, is_yank);
         clipboard

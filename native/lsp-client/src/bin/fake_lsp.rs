@@ -1,6 +1,7 @@
 //! A small language server for the tests: it keeps the text of the documents it is told about,
 //! reports every `BAD` in them as an error, completes a fixed list of words, answers hover and
-//! definition, and ends when a document contains `CRASH`. It also answers the requests around the
+//! definition, adds documentation to an item when it is resolved (and, like `vtsls`, the
+//! parentheses of a function call when the client's settings ask for them), and ends when a document contains `CRASH`. It also answers the requests around the
 //! cursor with simple rules: signature help for a call to `alpha`, a hint after the first word
 //! of every line, references and highlights of the word at a place, a rename of it, a fix
 //! for each `BAD`, and a formatter that strips trailing white space. It applies changes with its own
@@ -18,11 +19,13 @@ fn main() {
     let mut reader = BufReader::new(stdin().lock());
     let mut writer = stdout().lock();
     let mut documents: HashMap<String, String> = HashMap::new();
+    let mut complete_function_calls = false;
     while let Ok(Some(message)) = read_message(&mut reader) {
         if message.get("method").is_none() && message["id"] == 9001 {
             continue;
         }
         if message.get("method").is_none() && message["id"] == 9000 {
+            complete_function_calls = message["result"][2]["suggest"]["completeFunctionCalls"] == true;
             report_configuration(&mut writer, &message);
             continue;
         }
@@ -71,13 +74,13 @@ fn main() {
         if message.get("method").is_none() {
             continue;
         }
-        let result = answer(&method, &params, &documents);
+        let result = answer(&method, &params, &documents, complete_function_calls);
         let _ = write_message(&mut writer, &json!({ "jsonrpc": "2.0", "id": id, "result": result }));
     }
 }
 
 /// The answer to a request.
-fn answer(method: &str, params: &Value, documents: &HashMap<String, String>) -> Value {
+fn answer(method: &str, params: &Value, documents: &HashMap<String, String>, complete_function_calls: bool) -> Value {
     match method {
         "initialize" => json!({
             "capabilities": {
@@ -98,11 +101,7 @@ fn answer(method: &str, params: &Value, documents: &HashMap<String, String>) -> 
             "serverInfo": { "name": "fake-lsp" },
         }),
         "textDocument/completion" => completion(params, documents),
-        "completionItem/resolve" => {
-            let mut item = params.clone();
-            item["documentation"] = json!({ "kind": "markdown", "value": format!("docs for **{}**", params["label"].as_str().unwrap_or_default()) });
-            item
-        }
+        "completionItem/resolve" => resolve(params, complete_function_calls),
         "textDocument/hover" => hover(params, documents),
         "textDocument/definition" => json!({
             "uri": params["textDocument"]["uri"],
@@ -322,6 +321,21 @@ fn formatting(params: &Value, documents: &HashMap<String, String>) -> Value {
     json!(edits)
 }
 
+/// The item with its documentation and signature added, and as a snippet with the parameters
+/// of a function call when the client asked for those.
+fn resolve(item: &Value, complete_function_calls: bool) -> Value {
+    let label = item["label"].as_str().unwrap_or_default();
+    let mut resolved = item.clone();
+    resolved["documentation"] = json!({ "kind": "markdown", "value": format!("docs for **{label}**") });
+    if complete_function_calls && item["kind"] == 3 {
+        let snippet = format!("{label}(${{1:value}})$0");
+        resolved["insertTextFormat"] = json!(2);
+        resolved["insertText"] = json!(snippet);
+        resolved["textEdit"]["newText"] = json!(snippet);
+    }
+    resolved
+}
+
 /// Words to complete at the word before the position, replacing it.
 fn completion(params: &Value, documents: &HashMap<String, String>) -> Value {
     let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
@@ -361,7 +375,7 @@ fn hover(params: &Value, documents: &HashMap<String, String>) -> Value {
 
 /// Sends a request for configuration; the answer is reported to the client in the main loop.
 fn ask_for_configuration(writer: &mut impl std::io::Write) {
-    let items = json!([{ "section": "fake" }, { "section": "rust-analyzer" }]);
+    let items = json!([{ "section": "fake" }, { "section": "rust-analyzer" }, { "section": "typescript" }]);
     let request =
         json!({ "jsonrpc": "2.0", "id": 9000, "method": "workspace/configuration", "params": { "items": items } });
     let _ = write_message(writer, &request);

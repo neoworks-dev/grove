@@ -39,8 +39,8 @@ export const gitChanges = {
 
 /** Registers the commands that act on all the changes, for the palette. */
 function registerActions(ctx: Context, service: GitChangesService): void {
-  ctx.commands.register({ id: "gitChanges.stageAll", title: "Git: stage all changes", group: "Git", run: () => void service.stageAll() });
-  ctx.commands.register({ id: "gitChanges.unstageAll", title: "Git: unstage all changes", group: "Git", run: () => void service.unstageAll() });
+  ctx.commands.register({ id: "gitChanges.stageAll", title: "Git: stage all changes", group: "Git", run: () => service.stageAll() });
+  ctx.commands.register({ id: "gitChanges.unstageAll", title: "Git: unstage all changes", group: "Git", run: () => service.unstageAll() });
   ctx.commands.register({
     id: "gitChanges.discardAll",
     title: "Git: discard all unstaged changes",
@@ -50,5 +50,5 @@ function registerActions(ctx: Context, service: GitChangesService): void {
       service.beginDiscard(service.files().unstaged);
     },
   });
-  ctx.commands.register({ id: "gitChanges.commit", title: "Git: commit staged changes", group: "Git", run: () => void service.commit() });
+  ctx.commands.register({ id: "gitChanges.commit", title: "Git: commit staged changes", group: "Git", run: async () => { await service.commit() } });
 }

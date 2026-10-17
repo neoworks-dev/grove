@@ -47,7 +47,7 @@ export class GitGutterService extends Service {
     ctx.effect(() => this.editor.onDocumentEvent((event) => this.handle(event)), "git-gutter.documents");
     ctx.effect(() => () => this.cancelTimers(), "git-gutter.timers");
     for (const buffer of this.editor.buffers()) {
-      void this.refresh(buffer.id);
+      this.background(this.refresh(buffer.id));
     }
   }
 
@@ -59,16 +59,16 @@ export class GitGutterService extends Service {
   /** Reacts to something that happened to a document. */
   private handle(event: DocumentEvent): void {
     if (event.type === "opened") {
-      void this.refresh(event.summary.id);
+      this.background(this.refresh(event.summary.id));
       return;
     }
     if (event.type === "saved") {
-      void this.showChanges(event.id);
+      this.background(this.showChanges(event.id));
       return;
     }
     // The text matches the file again, after a save or an undo back to it, so what git says fits.
     if (event.type === "dirty" && !event.dirty) {
-      void this.refresh(event.id);
+      this.background(this.refresh(event.id));
       return;
     }
     if (event.type === "selections") {
@@ -97,7 +97,7 @@ export class GitGutterService extends Service {
     }
     const request = this.begin(path + "#changes");
     const changes = await this.git.fileChanges(path).catch(() => null);
-    if (!this.isLatest(path + "#changes", request)) {
+    if (!this.isLatest(path + "#changes", request) || this.pathOf(documentId) === null) {
       return;
     }
     const hunks = changes === null ? [] : changes.hunks;
@@ -117,7 +117,7 @@ export class GitGutterService extends Service {
       row = cursor.row;
     }
     const blame = buffer.dirty ? null : await this.git.blameLine(buffer.path, row + 1).catch(() => null);
-    if (!this.isLatest(buffer.path + "#blame", request)) {
+    if (!this.isLatest(buffer.path + "#blame", request) || this.pathOf(documentId) === null) {
       return;
     }
     if (blame === null) {
@@ -135,9 +135,14 @@ export class GitGutterService extends Service {
     }
     const timer = setTimeout(() => {
       this.blameTimers.delete(documentId);
-      void this.showBlame(documentId);
+      this.background(this.showBlame(documentId));
     }, this.blameDelayMs);
     this.blameTimers.set(documentId, timer);
+  }
+
+  /** Runs a refresh nobody waits for, and logs what it throws, such as a document that closed meanwhile. */
+  private background(work: Promise<unknown>): void {
+    work.catch((error) => this.ctx.logger.warn(`git-gutter: could not draw: ${String(error)}`));
   }
 
   /** Starts a request for a key and returns its number. */

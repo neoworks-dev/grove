@@ -100,6 +100,8 @@ interface PaneRecord {
   /** The editors drawing it, which are asked to draw again when the decorations change. */
   editors: { left?: EditorViewMethods; right?: EditorViewMethods };
   reapplyTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The drawing in progress, which the next one waits for so two never open the old side's document twice. */
+  drawing: Promise<void>;
 }
 
 /** The old text of a diff and the document that has the new text. */
@@ -115,6 +117,8 @@ export class DiffService extends Service {
   private changes: ChangeSignal = createChangeSignal();
   private nextGeneration = 0;
   private filesTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The load each pane has under way, so another one for the same pane waits for it. */
+  private loading = new Map<string, Promise<void>>();
   /** The documents that show a hunk preview, with the rows of the hunk. */
   private previews = new Map<number, Hunk>();
   /** The mode a diff opens in. */
@@ -130,7 +134,7 @@ export class DiffService extends Service {
   ) {
     super(ctx, "diff");
     ctx.effect(() => editor.onDocumentEvent((event) => this.handleDocumentEvent(event)), "diff.documents");
-    ctx.effect(() => panes.onPaneClosed((leafId) => void this.paneClosed(leafId)), "diff.paneClosed");
+    ctx.effect(() => panes.onPaneClosed((leafId) => this.background(this.paneClosed(leafId), "closing a pane")), "diff.paneClosed");
     ctx.effect(() => panes.onPaneSplit((newLeafId, sourceLeafId) => this.paneSplit(newLeafId, sourceLeafId)), "diff.paneSplit");
     if (options.onFilesChanged) {
       const onFilesChanged = options.onFilesChanged;
@@ -227,10 +231,10 @@ export class DiffService extends Service {
 
   /** Loads the diff a pane's state asks for, when the pane has not loaded one, as a pane made by a split has not. */
   ensureLoaded(leafId: string): void {
-    if (this.records.has(leafId) || this.stateOf(leafId) === null) {
+    if (this.records.has(leafId) || this.loading.has(leafId) || this.stateOf(leafId) === null) {
       return;
     }
-    void this.load(leafId);
+    this.background(this.load(leafId), "loading a diff");
   }
 
   /** Lets commands and the pane's refreshes reach the editors drawing a diff while they are mounted. */
@@ -241,7 +245,7 @@ export class DiffService extends Service {
     }
     record.editors = editors;
     return () => {
-      if (this.records.get(leafId) === record && record.editors === editors) {
+      if (record.editors === editors) {
         record.editors = {};
       }
     };
@@ -401,8 +405,27 @@ export class DiffService extends Service {
     return created;
   }
 
-  /** Reads what a pane's diff compares and shows it. */
-  private async load(leafId: string): Promise<void> {
+  /** Reads what a pane's diff compares and shows it, once the load the pane already has under way is done. */
+  private load(leafId: string): Promise<void> {
+    const previous = this.loading.get(leafId);
+    let run: Promise<void>;
+    if (previous === undefined) {
+      run = this.loadNow(leafId);
+    } else {
+      run = previous.then(() => this.loadNow(leafId));
+    }
+    this.loading.set(leafId, run);
+    const forget = () => {
+      if (this.loading.get(leafId) === run) {
+        this.loading.delete(leafId);
+      }
+    };
+    run.then(forget, forget);
+    return run;
+  }
+
+  /** Lets go of what the pane drew before, reads its diff again and shows it. */
+  private async loadNow(leafId: string): Promise<void> {
     const state = this.stateOf(leafId);
     if (state === null) {
       return;
@@ -417,6 +440,7 @@ export class DiffService extends Service {
       generation,
       editors: {},
       reapplyTimer: undefined,
+      drawing: Promise.resolve(),
     };
     this.records.set(leafId, record);
     this.changes.notify();
@@ -427,8 +451,8 @@ export class DiffService extends Service {
       this.fail(record, error);
       return;
     }
-    if (this.records.get(leafId) !== record || record.generation !== generation) {
-      await this.editor.releaseDocument(sides.rightId);
+    if (!this.isCurrent(leafId, record) || record.generation !== generation) {
+      await this.releaseQuietly(sides.rightId);
       return;
     }
     record.oldText = sides.oldText;
@@ -480,22 +504,28 @@ export class DiffService extends Service {
     return documentId;
   }
 
-  /** Draws the difference on the documents in the pane's mode, and keeps the hunks. */
+  /** Draws the difference on the documents in the pane's mode, and keeps the hunks. One drawing of a pane runs at a time. */
   private async applyDiff(leafId: string): Promise<void> {
     const record = this.records.get(leafId);
-    if (record === undefined || record.view.rightId === null) {
+    if (record === undefined) {
+      return;
+    }
+    const drawing = record.drawing.then(() => this.drawDiff(leafId, record));
+    record.drawing = drawing.catch(() => {});
+    await drawing;
+  }
+
+  /** One drawing: stops as soon as the pane's diff is not the one it started with, since its documents are gone by then. */
+  private async drawDiff(leafId: string, record: PaneRecord): Promise<void> {
+    if (!this.isCurrent(leafId, record) || record.view.rightId === null) {
       return;
     }
     const source = this.sourceOf(leafId);
     const rightId = record.view.rightId;
     try {
-      let leftId = record.view.leftId;
-      if (record.view.mode === "split") {
-        leftId = await this.showLeft(record, leftId);
-      } else if (leftId !== null) {
-        await this.editor.setDecorationsOf(leftId, source, []);
-        await this.editor.releaseDocument(leftId);
-        leftId = null;
+      const leftId = await this.settleLeft(leafId, record, source);
+      if (leftId === undefined) {
+        return;
       }
       const options = { newId: rightId, oldText: record.oldText, mode: record.view.mode, source };
       let hunks: Hunk[];
@@ -504,13 +534,44 @@ export class DiffService extends Service {
       } else {
         hunks = await this.host.apply({ ...options, oldId: leftId });
       }
+      if (!this.isCurrent(leafId, record)) {
+        return;
+      }
       record.view = withActions(record.request, { ...record.view, leftId, hunks });
     } catch (error) {
-      this.fail(record, error);
+      if (this.isCurrent(leafId, record)) {
+        this.fail(record, error);
+      }
       return;
     }
     this.changes.notify();
-    await this.refreshEditors(record);
+    await this.refreshEditors(leafId, record);
+  }
+
+  /**
+   * Gives the pane the old side's document its mode needs: one in split mode, none inline. Answers
+   * its id or null, or undefined when the pane went away meanwhile, which leaves nothing opened.
+   */
+  private async settleLeft(leafId: string, record: PaneRecord, source: string): Promise<number | null | undefined> {
+    const leftId = record.view.leftId;
+    if (record.view.mode !== "split") {
+      if (leftId !== null) {
+        // Taken off the record first, so a pane closing meanwhile does not release it a second time.
+        record.view = { ...record.view, leftId: null };
+        await this.editor.setDecorationsOf(leftId, source, []);
+        await this.editor.releaseDocument(leftId);
+      }
+      return null;
+    }
+    const shown = await this.showLeft(record, leftId);
+    if (!this.isCurrent(leafId, record)) {
+      if (shown !== leftId) {
+        await this.releaseQuietly(shown);
+      }
+      return undefined;
+    }
+    record.view = { ...record.view, leftId: shown };
+    return shown;
   }
 
   /** Makes sure the old side's document has the old text, and answers its id. */
@@ -526,16 +587,28 @@ export class DiffService extends Service {
     return leftId;
   }
 
-  /** Asks the editors drawing a diff to draw again. */
-  private async refreshEditors(record: PaneRecord): Promise<void> {
+  /** Asks the editors drawing a diff to draw again, unless the diff is gone and so are they. */
+  private async refreshEditors(leafId: string, record: PaneRecord): Promise<void> {
+    if (!this.isCurrent(leafId, record)) {
+      return;
+    }
     const refreshes: Promise<void>[] = [];
     if (record.editors.left !== undefined) {
-      refreshes.push(record.editors.left.refresh());
+      refreshes.push(this.refreshQuietly(record.editors.left));
     }
     if (record.editors.right !== undefined) {
-      refreshes.push(record.editors.right.refresh());
+      refreshes.push(this.refreshQuietly(record.editors.right));
     }
     await Promise.all(refreshes);
+  }
+
+  /** Asks one editor to draw again. One that is being unmounted cannot, which is no reason to fail the drawing. */
+  private async refreshQuietly(view: EditorViewMethods): Promise<void> {
+    try {
+      await view.refresh();
+    } catch (error) {
+      this.ctx.logger.warn(`diff: could not redraw an editor: ${describeError(error)}`);
+    }
   }
 
   /** Reads the git side of a diff again, such as after something was staged, and draws it. */
@@ -545,14 +618,24 @@ export class DiffService extends Service {
       return;
     }
     const request = record.request;
+    const rightId = record.view.rightId;
     try {
       if (request.base === "staged") {
         const index = await this.host.baseText(request.path, "index");
-        await this.editor.setText(record.view.rightId, index.text);
+        if (!this.isCurrent(leafId, record)) {
+          return;
+        }
+        await this.editor.setText(rightId, index.text);
       }
-      record.oldText = await this.oldTextOf(request.path, request.base);
+      const oldText = await this.oldTextOf(request.path, request.base);
+      if (!this.isCurrent(leafId, record)) {
+        return;
+      }
+      record.oldText = oldText;
     } catch (error) {
-      this.fail(record, error);
+      if (this.isCurrent(leafId, record)) {
+        this.fail(record, error);
+      }
       return;
     }
     await this.applyDiff(leafId);
@@ -586,8 +669,11 @@ export class DiffService extends Service {
       this.say("There are no changes.");
       return;
     }
-    await record.editors.right.apply({ type: "place_cursor", at: { row, column: 0 } });
-    await record.editors.right.apply({ type: "scroll_to", align: "center" });
+    const editor = record.editors.right;
+    await this.attempt(async () => {
+      await editor.apply({ type: "place_cursor", at: { row, column: 0 } });
+      await editor.apply({ type: "scroll_to", align: "center" });
+    });
   }
 
   /** Moves the editor's cursor to the next or previous change against HEAD. */
@@ -698,7 +784,7 @@ export class DiffService extends Service {
       if (event.forward) {
         step = 1;
       }
-      void this.stepChange(step);
+      this.background(this.stepChange(step), "moving to a change");
       return;
     }
     if (event.type === "closed") {
@@ -713,14 +799,14 @@ export class DiffService extends Service {
         continue;
       }
       clearTimeout(record.reapplyTimer);
-      record.reapplyTimer = setTimeout(() => void this.applyDiff(leafId), REAPPLY_DELAY_MS);
+      record.reapplyTimer = setTimeout(() => this.background(this.applyDiff(leafId), "drawing the changes"), REAPPLY_DELAY_MS);
     }
   }
 
   /** Drops a document's hunk preview, since the text it was drawn for changed. */
   private clearPreview(documentId: number): void {
     if (this.previews.has(documentId)) {
-      void this.hidePreview(documentId);
+      this.background(this.hidePreview(documentId), "hiding a preview");
     }
   }
 
@@ -728,7 +814,7 @@ export class DiffService extends Service {
   private followPreviewCursor(documentId: number, row: number): void {
     const hunk = this.previews.get(documentId);
     if (hunk !== undefined && !hunkAtRow([hunk], row)) {
-      void this.hidePreview(documentId);
+      this.background(this.hidePreview(documentId), "hiding a preview");
     }
   }
 
@@ -736,8 +822,8 @@ export class DiffService extends Service {
   private scheduleFilesChanged(): void {
     clearTimeout(this.filesTimer);
     this.filesTimer = setTimeout(() => {
-      for (const leafId of this.records.keys()) {
-        void this.reloadBase(leafId);
+      for (const leafId of [...this.records.keys()]) {
+        this.background(this.reloadBase(leafId), "reading the changes again");
       }
     }, FILES_CHANGED_DELAY_MS);
   }
@@ -775,6 +861,7 @@ export class DiffService extends Service {
     }
     clearTimeout(record.reapplyTimer);
     this.records.delete(leafId);
+    record.editors = {};
     this.changes.notify();
     const source = this.sourceOf(leafId);
     for (const documentId of [record.view.leftId, record.view.rightId]) {
@@ -782,8 +869,27 @@ export class DiffService extends Service {
         continue;
       }
       await this.editor.setDecorationsOf(documentId, source, []).catch(() => {});
-      await this.editor.releaseDocument(documentId);
+      await this.releaseQuietly(documentId);
     }
+  }
+
+  /** Whether this record is still the one the pane has, which is not so once the pane closed or loaded again. */
+  private isCurrent(leafId: string, record: PaneRecord): boolean {
+    return this.records.get(leafId) === record;
+  }
+
+  /** Lets go of a document, and says so in the log if that fails: there is nobody to tell. */
+  private async releaseQuietly(documentId: number): Promise<void> {
+    try {
+      await this.editor.releaseDocument(documentId);
+    } catch (error) {
+      this.ctx.logger.warn(`diff: could not release document ${documentId}: ${describeError(error)}`);
+    }
+  }
+
+  /** Runs work nobody waits for, and logs what it throws so that it never ends as an unhandled rejection. */
+  private background(work: Promise<unknown>, what: string): void {
+    work.catch((error) => this.ctx.logger.warn(`diff: ${what} failed: ${describeError(error)}`));
   }
 }
 

@@ -10,7 +10,7 @@ use std::collections::{HashMap, VecDeque};
 use std::io::{self, BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdout, Command, Stdio};
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
@@ -21,6 +21,9 @@ use serde_json::{Value, json};
 use crate::initialize::initialize_params;
 use crate::protocol::{Capabilities, METHOD_NOT_FOUND, ResponseError};
 use crate::rpc::{read_message, write_frame};
+
+/// How often the process is looked at to see whether it is still there.
+const EXIT_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 /// How many of the server's last lines on stderr are kept, to say why it died.
 const STDERR_LINES_KEPT: usize = 20;
@@ -74,6 +77,9 @@ struct Shared {
     child: Mutex<Option<Child>>,
     stderr_tail: Mutex<VecDeque<String>>,
     handler: Arc<dyn Handler>,
+    /// Set once the end of the server has been handled, so the two ways of noticing it, its
+    /// output closing and the process exiting, are not both acted on.
+    ended: AtomicBool,
 }
 
 /// The server's status, what it can do, and the document messages waiting for it to be ready.
@@ -125,10 +131,12 @@ impl Client {
             child: Mutex::new(Some(child)),
             stderr_tail: Mutex::new(VecDeque::new()),
             handler,
+            ended: AtomicBool::new(false),
         });
         spawn_writer(stdin, receiver);
         spawn_stderr_reader(stderr, shared.clone());
         spawn_reader(stdout, shared.clone());
+        spawn_exit_watcher(shared.clone());
         let client = Client { shared };
         client.shared.handler.status(&Status::Starting);
         client.send_initialize(root, initialization_options);
@@ -336,6 +344,27 @@ fn spawn_reader(stdout: ChildStdout, shared: Arc<Shared>) {
     });
 }
 
+/// Starts the thread that notices the process exiting. A server whose helper processes inherited
+/// its output keeps that open after it is gone, so waiting for the output to close is not enough.
+fn spawn_exit_watcher(shared: Arc<Shared>) {
+    let _ = thread::Builder::new().name("lsp-exit".into()).spawn(move || {
+        loop {
+            thread::sleep(EXIT_POLL_INTERVAL);
+            if shared.ended.load(Ordering::SeqCst) {
+                return;
+            }
+            let exited = match lock(&shared.child).as_mut() {
+                Some(child) => matches!(child.try_wait(), Ok(Some(_))),
+                None => true,
+            };
+            if exited {
+                server_ended(&shared);
+                return;
+            }
+        }
+    });
+}
+
 /// Routes a message from the server: an answer to its callback, a request to the handler, or a
 /// notification to the handler.
 fn dispatch(shared: &Arc<Shared>, message: Value) {
@@ -389,6 +418,9 @@ fn answer_server_request(shared: &Arc<Shared>, message: Value) {
 /// The server's stdout closed: every request still waiting fails, and the status says whether
 /// it was asked to go.
 fn server_ended(shared: &Arc<Shared>) {
+    if shared.ended.swap(true, Ordering::SeqCst) {
+        return;
+    }
     let waiting: Vec<Callback> = lock(&shared.pending).drain().map(|(_, callback)| callback).collect();
     for callback in waiting {
         callback(Err(ResponseError::internal("the server ended")));

@@ -8,6 +8,7 @@ use crate::command::{Command, Outcome};
 use crate::history::History;
 use crate::movement::{Motion, find_next, move_selection, vertical, word_at};
 use crate::selections::{Selection, Selections};
+use crate::syntax::{HighlightSpan, Syntax};
 
 pub struct EditorState {
     pub(crate) buffer: Buffer,
@@ -24,11 +25,14 @@ pub struct EditorState {
     pub(crate) marked: Option<(AnchorId, AnchorId)>,
     /// The text of the last copy that took whole lines, so pasting it puts the lines above the cursor.
     pub(crate) whole_line_copy: Option<String>,
+    /// The parse of the text, kept up to date after every command.
+    syntax: Syntax,
 }
 
 impl EditorState {
     /// A state over a buffer, with one cursor at its start.
-    pub fn new(buffer: Buffer) -> Self {
+    pub fn new(mut buffer: Buffer) -> Self {
+        let syntax = Syntax::new(&mut buffer);
         EditorState {
             buffer,
             selections: Selections::single(Position::default()),
@@ -39,7 +43,18 @@ impl EditorState {
             saved_revision: 0,
             marked: None,
             whole_line_copy: None,
+            syntax,
         }
+    }
+
+    /// The highlight runs of each row in `rows`, as character columns of the row.
+    pub fn highlights(&self, rows: std::ops::Range<usize>) -> Vec<Vec<HighlightSpan>> {
+        self.syntax.highlights(&self.buffer, rows)
+    }
+
+    /// The name of the language the text is highlighted as, if it is recognised.
+    pub fn language_name(&self) -> Option<&'static str> {
+        self.syntax.language_name()
     }
 
     /// Whether the text differs from what was last read from or written to its file.
@@ -101,6 +116,7 @@ impl EditorState {
             self.history.close_group();
         }
         let mut outcome = self.run(command, now);
+        self.syntax.update(&mut self.buffer);
         outcome.changed = outcome.changed || self.selections != before;
         outcome
     }

@@ -13,6 +13,7 @@
 
 mod documents;
 mod element;
+mod theme;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -32,6 +33,7 @@ use svelte_gpui::{AppElement, CommandError};
 pub use documents::SharedDocuments;
 
 use element::{EditorElement, LINE_HEIGHT, Layout};
+use theme::EditorTheme;
 
 thread_local! {
     /// Which document each view of the window shows, so a change made in one view can redraw
@@ -59,6 +61,8 @@ pub struct Editor {
     /// Whether the left button went down in the editor and is still held, so moving the
     /// pointer extends the newest selection.
     dragging: bool,
+    /// The colours the editor paints with, set by the `theme` prop.
+    theme: EditorTheme,
     /// Redraws when focus moves, since the host caches the view and would keep the cursor
     /// as it last drew it.
     focus_subscriptions: Vec<Subscription>,
@@ -77,6 +81,7 @@ impl Editor {
             layout: None,
             last_copied: None,
             dragging: false,
+            theme: EditorTheme::default(),
             focus_subscriptions: Vec::new(),
         }
     }
@@ -299,8 +304,13 @@ fn key_input(keystroke: &Keystroke) -> KeyInput {
 }
 
 impl AppElement for Editor {
-    /// The `document` prop is the id of the document to show; removing it empties the view.
+    /// The `document` prop is the id of the document to show; removing it empties the view. The
+    /// `theme` prop carries the colours to paint with (see `theme.rs`).
     fn set_prop(&mut self, name: &str, value: Value, cx: &mut Context<Self>) {
+        if name == "theme" {
+            self.theme = EditorTheme::from_json(&value);
+            return;
+        }
         if name != "document" {
             return;
         }

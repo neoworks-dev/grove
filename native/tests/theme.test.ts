@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Context } from "@neoworks/extension-system";
 import { activeScheme } from "../plugins/theme/active";
+import { DARK_SYNTAX, LIGHT_SYNTAX, activeEditorTheme } from "../plugins/theme/editorTheme";
 import { CORE_THEMES, NEOWORKS_DARK, NEOWORKS_LIGHT } from "../plugins/theme/palette";
 import { ThemeService } from "../plugins/theme/service";
 import { colors, menuItemStyle, shell } from "../plugins/theme/tokens";
@@ -91,5 +92,40 @@ describe("theme service", () => {
     expect(colors.canvas).toBe(NEOWORKS_LIGHT.canvas);
     await fiber.dispose();
     expect(colors.canvas).toBe(NEOWORKS_DARK.canvas);
+  });
+});
+
+describe("editor theme", () => {
+  test("the editor's colours and syntax colours follow the active theme", async () => {
+    const context = await themed();
+    context.theme.select("neoworks");
+    const dark = activeEditorTheme();
+    expect(dark.background).toBe(NEOWORKS_DARK.surface);
+    expect(dark.foreground).toBe(NEOWORKS_DARK.text);
+    expect(dark.syntax).toBe(DARK_SYNTAX);
+
+    context.theme.select("neoworks-light");
+    const light = activeEditorTheme();
+    expect(light.background).toBe(NEOWORKS_LIGHT.surface);
+    expect(light.cursor).toBe(NEOWORKS_LIGHT.accent);
+    expect(light.syntax).toBe(LIGHT_SYNTAX);
+    expect(light.syntax.keyword).not.toBe(dark.syntax.keyword);
+  });
+
+  test("an accent override reaches the cursor and the selection", async () => {
+    const context = await themed();
+    context.theme.select("neoworks");
+    context.theme.setAccent("#ff0000");
+    expect(activeEditorTheme().cursor).toBe("#ff0000");
+    expect(activeEditorTheme().selection).toBe("#ff000040");
+  });
+
+  test("every syntax colour names a highlight the editor core knows", async () => {
+    const source = await Bun.file(new URL("../editor-core/src/syntax/highlight.rs", import.meta.url)).text();
+    const list = source.slice(source.indexOf("HIGHLIGHT_NAMES: &[&str]"), source.indexOf("];"));
+    const known = [...list.matchAll(/"([a-z_.]+)"/g)].map((match) => match[1]);
+    for (const name of [...Object.keys(DARK_SYNTAX), ...Object.keys(LIGHT_SYNTAX)]) {
+      expect(known).toContain(name);
+    }
   });
 });

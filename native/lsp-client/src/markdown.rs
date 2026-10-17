@@ -88,6 +88,7 @@ impl Builder {
             Event::SoftBreak => self.push_span(" ", self.style),
             Event::HardBreak => self.push_span("\n", self.style),
             Event::Rule => self.blocks.push(Block::Rule),
+            Event::Html(html) | Event::InlineHtml(html) => self.push_span(&visible_text_of_html(&html), self.style),
             _ => {}
         }
     }
@@ -239,6 +240,45 @@ impl Builder {
     }
 }
 
+/// What reading a piece of HTML in documentation leaves visible. Formatting tags such as `<p>` and
+/// comments draw nothing and `<br>` is a line break, but anything else that looks like a tag is text
+/// somebody wrote, such as the `<T>` of `Vec<T>` or `Promise<string>` outside of backticks, and stays.
+fn visible_text_of_html(html: &str) -> String {
+    const FORMATTING_TAGS: [&str; 30] = [
+        "p", "b", "i", "u", "em", "strong", "code", "pre", "a", "span", "div", "details", "summary", "sup", "sub",
+        "img", "ul", "ol", "li", "hr", "table", "tr", "td", "th", "thead", "tbody", "h1", "h2", "h3", "kbd",
+    ];
+    let mut visible = String::new();
+    let mut rest = html;
+    while let Some(open) = rest.find('<') {
+        visible.push_str(&rest[..open]);
+        rest = &rest[open..];
+        if rest.starts_with("<!--") {
+            rest = rest.find("-->").map(|end| &rest[end + 3..]).unwrap_or("");
+            continue;
+        }
+        let Some(close) = rest.find('>') else {
+            visible.push_str(rest);
+            return visible;
+        };
+        let tag = &rest[1..close];
+        let name: String = tag
+            .trim_start_matches('/')
+            .chars()
+            .take_while(|character| character.is_ascii_alphanumeric())
+            .collect::<String>()
+            .to_ascii_lowercase();
+        if name == "br" {
+            visible.push('\n');
+        } else if !FORMATTING_TAGS.contains(&name.as_str()) {
+            visible.push_str(&rest[..=close]);
+        }
+        rest = &rest[close + 1..];
+    }
+    visible.push_str(rest);
+    visible
+}
+
 /// The number of a heading level.
 fn heading_number(level: HeadingLevel) -> u8 {
     match level {
@@ -319,9 +359,23 @@ mod tests {
     }
 
     #[test]
-    fn html_and_empty_text_draw_nothing() {
+    fn empty_text_and_formatting_tags_draw_nothing() {
         assert!(parse("").is_empty());
         assert!(parse("<br>").is_empty());
+        assert!(parse("<!-- note -->").is_empty());
+    }
+
+    #[test]
+    fn angle_brackets_that_are_not_formatting_stay_as_text() {
+        let blocks = parse("Returns a Vec<T> of <name> values.\n");
+        let Block::Paragraph(spans) = &blocks[0] else {
+            panic!("a paragraph");
+        };
+        let text: String = spans.iter().map(|span| span.text.as_str()).collect();
+        assert_eq!(text, "Returns a Vec<T> of <name> values.");
+        assert_eq!(visible_text_of_html("<p>Does <b>it</b><br>twice</p>"), "Does it\ntwice");
+        let blocks = parse("<T> is the element type.\n");
+        assert!(matches!(&blocks[0], Block::Paragraph(spans) if spans[0].text.starts_with("<T> is")));
     }
 
     #[test]

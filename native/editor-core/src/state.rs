@@ -42,6 +42,8 @@ pub struct EditorState {
     pub(crate) marks: HashMap<char, AnchorId>,
     /// The last visual selection, for `gv` and for `.` after an operator on a selection.
     pub(crate) last_visual: Option<crate::vim::recall::LastVisual>,
+    /// The corners of the visual block being selected.
+    pub(crate) block: Option<crate::vim::block::Block>,
     /// The places jumped from, for `Ctrl-O` and `Ctrl-I`.
     pub(crate) jumps: crate::vim::recall::JumpList,
     /// What the characters typed in replace mode covered, for Backspace to put back.
@@ -68,6 +70,7 @@ impl EditorState {
             memory: VimMemory::default(),
             marks: HashMap::new(),
             last_visual: None,
+            block: None,
             jumps: Default::default(),
             overwritten: Vec::new(),
         }

@@ -890,3 +890,60 @@ fn substitute_leaves_the_last_pattern_for_n() {
     vim.keys("n");
     assert_eq!(vim.heads(), vec![at(0, 4)]);
 }
+
+#[test]
+fn visual_block_selects_a_rectangle_and_operators_work_on_it() {
+    let mut vim = Vim::new("¦abcd\nabcd\nabcd");
+    vim.keys("<C-v>jl");
+    assert_eq!(vim.mode(), "V-BLOCK");
+    assert_eq!(vim.state.selections().count(), 2);
+    vim.keys("d");
+    assert_eq!(vim.text(), "cd\ncd\nabcd");
+    assert_eq!(vim.heads(), vec![at(0, 0)]);
+    assert_eq!(vim.mode(), "NORMAL");
+    check("¦abcd\nabcd\nabcd", "l<C-v>jjld", "ad\nad\nad", (0, 1));
+    check("¦abcd\nab\nabcd", "ll<C-v>jjd", "abd\nab\nabd", (0, 2));
+    check("¦abcd\nabcd", "<C-v>j$d", "\n", (0, 0));
+    check("¦abcd\nabcd", "<C-v>jly$p", "abcdab\nabcdab", (0, 4));
+}
+
+#[test]
+fn visual_block_insert_append_and_change_type_on_every_line() {
+    check("¦abc\nabc\nabc", "<C-v>jjIX<Esc>", "Xabc\nXabc\nXabc", (0, 0));
+    check("¦abc\nabc\nabc", "l<C-v>jjAX<Esc>", "abXc\nabXc\nabXc", (0, 2));
+    check("¦abc\nabc", "<C-v>jlcX<Esc>", "Xc\nXc", (0, 0));
+    check("¦abc\nabc", "<C-v>j$AX<Esc>", "abcX\nabcX", (0, 3));
+    check("¦abc\nabc", "<C-v>jrx", "xbc\nxbc", (0, 0));
+    check("¦abc\nabc", "<C-v>jlU", "ABc\nABc", (0, 0));
+}
+
+#[test]
+fn visual_block_moves_by_corner_and_can_become_another_selection() {
+    let mut vim = Vim::new("¦abcd\nabcd\nabcd");
+    vim.keys("<C-v>jlo");
+    let selection = vim.state.selections().newest();
+    assert_eq!(selection.head, at(0, 0));
+    vim.keys("jj");
+    assert_eq!(vim.state.selections().count(), 2);
+    vim.keys("<Esc>");
+    assert_eq!(vim.mode(), "NORMAL");
+    assert_eq!(vim.state.selections().count(), 1);
+    vim.keys("<C-v>jv");
+    assert_eq!(vim.mode(), "VISUAL");
+    assert_eq!(vim.state.selections().count(), 1);
+    vim.keys("<C-v><C-v>");
+    assert_eq!(vim.mode(), "NORMAL");
+}
+
+#[test]
+fn gv_and_dot_work_with_a_block() {
+    let mut vim = Vim::new("¦abcd\nabcd\nabcd\nabcd");
+    vim.keys("<C-v>jd");
+    assert_eq!(vim.text(), "bcd\nbcd\nabcd\nabcd");
+    vim.keys("jj.");
+    assert_eq!(vim.text(), "bcd\nbcd\nbcd\nbcd");
+    let mut again = Vim::new("¦abc\nabc");
+    again.keys("<C-v>j<Esc>gv");
+    assert_eq!(again.mode(), "V-BLOCK");
+    assert_eq!(again.state.selections().count(), 2);
+}

@@ -9,7 +9,7 @@ use crate::decorations::Decoration;
 use crate::indent::IndentStyle;
 use crate::movement::Motion;
 use crate::vim::types::{
-    AppRequest, LineRange, Operator, ScrollAlign, SearchRequest, SelectionKind, Target, TextObject,
+    AppRequest, BlockExit, LineRange, Operator, ScrollAlign, SearchRequest, SelectionKind, Target, TextObject,
 };
 
 /// One thing the editor can be told to do. On the wire it is a JSON object whose `type` names
@@ -203,6 +203,16 @@ pub enum Command {
     GroupUndo { open: bool },
     /// Scrolls the view so the newest cursor's line is at the top, middle or bottom.
     ScrollTo { align: ScrollAlign },
+    /// `Ctrl-V`: starts a visual block at the cursor, or at the ends of the selection.
+    BlockStart,
+    /// Moves the visual block's moving corner as a motion would move a cursor.
+    BlockMove { motion: Motion, count: usize },
+    /// `o` in a visual block: the other corner moves.
+    BlockSwap,
+    /// Ends the visual block, with the selections left as `exit` says.
+    BlockEnd { exit: BlockExit },
+    /// `I` and `A` in a visual block: a cursor on each line, to type at all of them.
+    BlockInsert { append: bool },
     /// `:noh`: stops marking the matches of the last search.
     ClearSearchHighlight,
     /// Remembers the selection about to be left, so `gv` and `.` can use it.
@@ -293,6 +303,11 @@ impl Command {
             | Command::ScrollTo { .. }
             | Command::ScrollView { .. }
             | Command::ClearSearchHighlight
+            | Command::BlockStart
+            | Command::BlockMove { .. }
+            | Command::BlockSwap
+            | Command::BlockEnd { .. }
+            | Command::BlockInsert { .. }
             | Command::RememberVisual { .. }
             | Command::ReselectVisual
             | Command::SelectLastExtent
@@ -331,6 +346,11 @@ impl Command {
                 | Command::ScrollTo { .. }
                 | Command::ScrollView { .. }
                 | Command::ClearSearchHighlight
+                | Command::BlockStart
+                | Command::BlockMove { .. }
+                | Command::BlockSwap
+                | Command::BlockEnd { .. }
+                | Command::BlockInsert { .. }
                 | Command::RememberVisual { .. }
                 | Command::ReselectVisual
                 | Command::SelectLastExtent

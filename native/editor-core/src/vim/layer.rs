@@ -14,7 +14,7 @@ use crate::vim::ex::parse_ex;
 use crate::vim::parse::{
     Action, InsertAt, MotionSpec, PageStep, Parse, Parsed, ScreenRow, Simple, TargetSpec, parse, typed_character,
 };
-use crate::vim::types::{AppRequest, Operator, SearchRequest, SelectionKind, Target};
+use crate::vim::types::{AppRequest, BlockExit, Operator, SearchRequest, SelectionKind, Target};
 
 /// Which mode the layer is in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,6 +79,9 @@ pub struct VimLayer {
     /// Whether keys are being fed in by `.`, which must not record themselves.
     replaying: bool,
     insert: InsertSession,
+    /// Whether the insert mode being typed in was started at every line of a visual block, and
+    /// ends on one cursor.
+    block_insert: bool,
     /// The kind of the last visual selection that was left, for `gv`.
     last_visual_kind: Option<SelectionKind>,
     /// The keys of each macro recorded, by register name.
@@ -109,6 +112,7 @@ impl VimLayer {
             recording: None,
             replaying: false,
             insert: InsertSession::default(),
+            block_insert: false,
             last_visual_kind: None,
             macros: HashMap::new(),
             macro_recording: None,
@@ -145,7 +149,7 @@ fn is_escape(token: &str) -> bool {
 const MAX_UNDO_COUNT: usize = 1000;
 
 /// The control keys vim uses in normal and visual mode. Others, such as Ctrl-S, are left to the standard keys.
-const CONTROL_KEYS: [&str; 10] = ["C-r", "C-n", "C-d", "C-u", "C-f", "C-b", "C-[", "C-c", "C-o", "C-i"];
+const CONTROL_KEYS: [&str; 11] = ["C-r", "C-n", "C-d", "C-u", "C-f", "C-b", "C-[", "C-c", "C-o", "C-i", "C-v"];
 
 /// The most macros that may be playing inside one another, so one that plays itself ends.
 const MAX_MACRO_DEPTH: usize = 20;
@@ -182,6 +186,7 @@ impl InputLayer for VimLayer {
             Mode::Replace => "REPLACE",
             Mode::Visual(SelectionKind::Characters) => "VISUAL",
             Mode::Visual(SelectionKind::Lines) => "V-LINE",
+            Mode::Visual(SelectionKind::Block) => "V-BLOCK",
         };
         let cursor = match self.mode {
             Mode::Insert => CursorShape::Bar,
@@ -190,7 +195,7 @@ impl InputLayer for VimLayer {
             _ => CursorShape::Block,
         };
         let selection = match self.mode {
-            Mode::Visual(SelectionKind::Characters) => SelectionStyle::Inclusive,
+            Mode::Visual(SelectionKind::Characters | SelectionKind::Block) => SelectionStyle::Inclusive,
             Mode::Visual(SelectionKind::Lines) => SelectionStyle::Lines,
             _ => SelectionStyle::Exclusive,
         };
@@ -266,7 +271,12 @@ impl VimLayer {
         if is_jump(spec) {
             commands.push(Command::PushJump);
         }
-        commands.extend(self.motion_commands(spec, parsed, context));
+        let moves = self.motion_commands(spec, parsed, context);
+        if self.visual_kind() == Some(SelectionKind::Block) {
+            commands.extend(moves.into_iter().map(block_version_of));
+            return commands;
+        }
+        commands.extend(moves);
         commands
     }
 
@@ -369,12 +379,22 @@ impl VimLayer {
 
     /// The commands for an operator, which for a change also start insert mode inside an undo group.
     fn operator_commands(&mut self, operator: Operator, target: Target, register: Option<char>) -> Vec<Command> {
+        let in_block = matches!(target, Target::Selection { kind: SelectionKind::Block });
         if operator != Operator::Change {
             self.mode = Mode::Normal;
-            return vec![Command::Operate { operator, target, register }];
+            let mut commands = vec![Command::Operate { operator, target, register }];
+            if in_block {
+                commands.push(Command::BlockEnd { exit: BlockExit::TopLeft });
+            }
+            return commands;
         }
         self.start_insert(1, Vec::new());
-        vec![Command::GroupUndo { open: true }, Command::Operate { operator, target, register }]
+        self.block_insert = in_block;
+        let mut commands = vec![Command::GroupUndo { open: true }, Command::Operate { operator, target, register }];
+        if in_block {
+            commands.push(Command::BlockEnd { exit: BlockExit::Keep });
+        }
+        commands
     }
 
     /// Enters insert mode, to do again `repeat` times what is typed.
@@ -424,6 +444,9 @@ impl VimLayer {
             ],
             Simple::Visual(kind) => {
                 self.mode = Mode::Visual(kind);
+                if kind == SelectionKind::Block {
+                    return vec![Command::BlockStart];
+                }
                 vec![Command::Noop]
             }
             Simple::ExCommandLine => {
@@ -471,8 +494,14 @@ impl VimLayer {
             }
             Simple::VisualLinesOperator(operator) => {
                 let target = Target::Selection { kind: SelectionKind::Lines };
-                return Some(self.operator_commands(*operator, target, register));
+                let mut commands = self.operator_commands(*operator, target, register);
+                if kind == SelectionKind::Block {
+                    let exit = if *operator == Operator::Change { BlockExit::Keep } else { BlockExit::TopLeft };
+                    commands.push(Command::BlockEnd { exit });
+                }
+                return Some(commands);
             }
+            Simple::VisualSwapEnds if kind == SelectionKind::Block => vec![Command::BlockSwap],
             Simple::VisualSwapEnds => vec![Command::SwapSelectionEnds],
             Simple::VisualObject { object, around } => {
                 if matches!(object, crate::vim::types::TextObject::Paragraph) {
@@ -482,30 +511,49 @@ impl VimLayer {
             }
             Simple::Visual(other) if *other != kind => {
                 self.mode = Mode::Visual(*other);
-                vec![Command::Noop]
+                match (kind, *other) {
+                    (SelectionKind::Block, _) => vec![Command::BlockEnd { exit: BlockExit::Range }],
+                    (_, SelectionKind::Block) => vec![Command::BlockStart],
+                    _ => vec![Command::Noop],
+                }
             }
             Simple::Visual(_) | Simple::Escape => {
                 self.mode = Mode::Normal;
+                if kind == SelectionKind::Block {
+                    return Some(vec![Command::BlockEnd { exit: BlockExit::Head }]);
+                }
                 vec![Command::CollapseToHeads]
+            }
+            Simple::Insert(InsertAt::FirstNonBlank | InsertAt::LineEnd) if kind == SelectionKind::Block => {
+                let append = matches!(simple, Simple::Insert(InsertAt::LineEnd));
+                self.start_insert(1, Vec::new());
+                self.block_insert = true;
+                vec![Command::GroupUndo { open: true }, Command::BlockInsert { append }]
             }
             Simple::Put { before, cursor_after } => {
                 self.mode = Mode::Normal;
-                vec![Command::Put {
+                let mut commands = vec![Command::Put {
                     register,
                     before: *before,
                     count,
                     cursor_after: *cursor_after,
                     over: Some(kind),
                     clipboard: None,
-                }]
+                }];
+                end_block_after(kind, &mut commands);
+                commands
             }
             Simple::Join => {
                 self.mode = Mode::Normal;
-                vec![Command::JoinLines { count, from_selection: true }]
+                let mut commands = vec![Command::JoinLines { count, from_selection: true }];
+                end_block_after(kind, &mut commands);
+                commands
             }
             Simple::ReplaceChar(character) => {
                 self.mode = Mode::Normal;
-                vec![Command::ReplaceChars { character: *character, count, over: Some(kind) }]
+                let mut commands = vec![Command::ReplaceChars { character: *character, count, over: Some(kind) }];
+                end_block_after(kind, &mut commands);
+                commands
             }
             Simple::ExCommandLine => {
                 self.open_command_line(':', "'<,'>", count, None);
@@ -583,7 +631,11 @@ impl VimLayer {
             }
         };
         // The view moves first, so the cursor lands inside it and the view has no need to follow.
-        vec![Command::ScrollView { rows }, Command::VimMove { motion: cursor, count: 1, extend }]
+        let moves = Command::VimMove { motion: cursor, count: 1, extend };
+        if self.visual_kind() == Some(SelectionKind::Block) {
+            return vec![Command::ScrollView { rows }, block_version_of(moves)];
+        }
+        vec![Command::ScrollView { rows }, moves]
     }
 
     /// Whether a key ends the macro being recorded: `q` typed in normal mode between commands.
@@ -675,7 +727,11 @@ impl VimLayer {
                 self.mode = Mode::Normal;
                 self.last_visual_kind = Some(kind);
                 commands.insert(0, Command::RememberVisual { kind });
-                commands.push(Command::CollapseToHeads);
+                if kind == SelectionKind::Block {
+                    commands.push(Command::BlockEnd { exit: BlockExit::Head });
+                } else {
+                    commands.push(Command::CollapseToHeads);
+                }
             }
             if line.text.trim().chars().all(|character| character.is_ascii_digit()) && !line.text.trim().is_empty() {
                 commands.insert(0, Command::PushJump);
@@ -754,6 +810,9 @@ impl VimLayer {
         }
         commands.push(Command::GroupUndo { open: false });
         commands.push(Command::VimMove { motion: Motion::ColumnLeft, count: 1, extend: false });
+        if std::mem::take(&mut self.block_insert) {
+            commands.push(Command::CollapseSelections);
+        }
         self.mode = Mode::Normal;
         self.insert = InsertSession::default();
         if !self.replaying {
@@ -778,6 +837,23 @@ fn is_jump(spec: MotionSpec) -> bool {
             matches!(motion, Motion::ParagraphBack | Motion::ParagraphForward | Motion::MatchingBracket)
         }
         _ => false,
+    }
+}
+
+/// A move that extends the selection, as the same move of a visual block's corner. Anything else
+/// that would extend a selection does nothing in a block, which has no one selection to extend.
+fn block_version_of(command: Command) -> Command {
+    match command {
+        Command::VimMove { motion, count, extend: true } => Command::BlockMove { motion, count },
+        Command::VimSearch { extend: true, .. } | Command::JumpToMark { extend: true, .. } => Command::Noop,
+        other => other,
+    }
+}
+
+/// Ends the visual block after a command that worked on it, with one cursor at its top left corner.
+fn end_block_after(kind: SelectionKind, commands: &mut Vec<Command>) {
+    if kind == SelectionKind::Block {
+        commands.push(Command::BlockEnd { exit: BlockExit::TopLeft });
     }
 }
 

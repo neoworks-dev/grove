@@ -16,7 +16,7 @@
     if (status.mode === "REPLACE") {
       return "#f87171";
     }
-    if (status.mode === "VISUAL" || status.mode === "V-LINE") {
+    if (status.mode === "VISUAL" || status.mode === "V-LINE" || status.mode === "V-BLOCK") {
       return "#a78bfa";
     }
     return "#a1a1aa";

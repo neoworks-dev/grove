@@ -40,6 +40,50 @@ fn leading_space(text: &str) -> usize {
     text.chars().take_while(|character| character.is_whitespace() && *character != '\n').count()
 }
 
+/// The plan for putting the lines of a block after or before a cursor: each line goes in its own
+/// row, in the same columns, with spaces added where a row is too short and rows added at the end
+/// of the text when there are too few.
+fn put_block_plan(buffer: &Buffer, head: Position, pieces: &[String], before: bool, count: usize) -> Plan {
+    let length = buffer.line_length(head.row);
+    let column = if before || length == 0 { head.column } else { (head.column + 1).min(length) };
+    let width = pieces.iter().map(|piece| piece.chars().count()).max().unwrap_or(0);
+    let mut edits = Vec::new();
+    let mut appended = String::new();
+    let mut first_padding = 0;
+    for (index, piece) in pieces.iter().enumerate() {
+        let row = head.row + index;
+        let body = piece.repeat(count);
+        if row >= buffer.line_count() {
+            appended.push('\n');
+            appended.push_str(&" ".repeat(column));
+            appended.push_str(&body);
+            continue;
+        }
+        let row_length = buffer.line_length(row);
+        let line_start = buffer.offset_of(Position { row, column: 0 });
+        if row_length < column {
+            let padding = " ".repeat(column - row_length);
+            if index == 0 {
+                first_padding = column - row_length;
+            }
+            edits.push(Edit::replace(line_start + row_length..line_start + row_length, format!("{padding}{body}")));
+            continue;
+        }
+        let evened = if row_length > column {
+            let missing = width.saturating_sub(piece.chars().count());
+            format!("{body}{}", " ".repeat(missing))
+        } else {
+            body
+        };
+        edits.push(Edit::replace(line_start + column..line_start + column, evened));
+    }
+    if !appended.is_empty() {
+        let end = buffer.length();
+        edits.push(Edit::replace(end..end, appended));
+    }
+    Plan { edits, cursor: CursorSpec::InReplacement { edit: 0, offset: first_padding } }
+}
+
 /// The plan for putting text after or before a cursor.
 fn put_plan(
     buffer: &Buffer,
@@ -123,7 +167,7 @@ impl EditorState {
             .iter()
             .map(|selection| match kind {
                 SelectionKind::Lines => Covered::Lines { first: selection.start().row, last: selection.end().row },
-                SelectionKind::Characters => Covered::Chars {
+                SelectionKind::Characters | SelectionKind::Block => Covered::Chars {
                     start: self.buffer.offset_of(selection.start()),
                     end: (self.buffer.offset_of(selection.end()) + 1).min(self.buffer.length()),
                 },
@@ -156,11 +200,15 @@ impl EditorState {
                 let ranges = self.selected_ranges(kind);
                 let replaced: Vec<String> = ranges.iter().map(|range| covered_text(&self.buffer, *range)).collect();
                 let linewise = matches!(kind, SelectionKind::Lines);
-                self.memory.record(None, Register { texts: replaced, linewise }, false);
+                self.memory.record(None, Register { texts: replaced, linewise, blockwise: false }, false);
                 let pairs = ranges.iter().zip(&pieces);
                 pairs
                     .map(|(range, piece)| put_over_plan(*range, &self.buffer, piece, register.linewise, count))
                     .collect()
+            }
+            None if register.blockwise && register.texts.len() > 1 && self.selections.count() == 1 => {
+                let head = self.selections.newest().head;
+                vec![put_block_plan(&self.buffer, head, &register.texts, before, count)]
             }
             None => {
                 let heads = self.selections.all().iter().map(|selection| selection.head);

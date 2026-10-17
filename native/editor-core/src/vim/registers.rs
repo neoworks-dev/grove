@@ -10,12 +10,14 @@ use std::collections::HashMap;
 pub struct Register {
     pub texts: Vec<String>,
     pub linewise: bool,
+    /// Whether the pieces were the lines of a visual block, which are put back as a block.
+    pub blockwise: bool,
 }
 
 impl Register {
     /// A register of one piece of text.
     pub fn single(text: impl Into<String>, linewise: bool) -> Self {
-        Register { texts: vec![text.into()], linewise }
+        Register { texts: vec![text.into()], linewise, blockwise: false }
     }
 
     /// Every piece, one to a line.
@@ -112,7 +114,7 @@ fn append(existing: Option<&Register>, addition: &Register) -> Register {
     let linewise = existing.linewise || addition.linewise;
     let separator = if linewise { "\n" } else { "" };
     let text = format!("{}{separator}{}", existing.joined(), addition.joined());
-    Register { texts: vec![text], linewise }
+    Register { texts: vec![text], linewise, blockwise: false }
 }
 
 #[cfg(test)]

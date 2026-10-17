@@ -551,6 +551,7 @@ impl Editor {
         match signal {
             Signal::Redraw(document) => {
                 if self.document == Some(document) {
+                    self.text_may_have_changed_elsewhere(cx);
                     cx.notify();
                 }
             }

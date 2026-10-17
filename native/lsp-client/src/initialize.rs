@@ -65,7 +65,6 @@ fn client_capabilities() -> Value {
             "rename": { "prepareSupport": true, "prepareSupportDefaultBehavior": 1 },
             "codeAction": {
                 "isPreferredSupport": true,
-                "disabledSupport": true,
                 "codeActionLiteralSupport": {
                     "codeActionKind": {
                         "valueSet": ["", "quickfix", "refactor", "refactor.extract", "refactor.inline", "refactor.rewrite", "source", "source.organizeImports", "source.fixAll"],

@@ -6,6 +6,7 @@
 import type { Context } from "@neoworks/extension-system";
 import robot from "@phosphor-icons/core/regular/robot.svg";
 import AgentPane from "./AgentPane.svelte";
+import { sidecarChanges } from "./changesSource";
 import { chatView } from "./chat/viewState";
 import { AGENT_PANE_TYPE, AgentsService } from "./service";
 import SessionsView from "./SessionsView.svelte";
@@ -13,14 +14,21 @@ import { createSuiteHost } from "./suiteHost";
 
 export const agents = {
   name: "agents",
-  inject: ["slots", "sidebar", "workspace", "commands", "keymap", "layout"],
+  inject: ["slots", "sidebar", "workspace", "commands", "keymap", "layout", "sidecar"],
   apply(ctx: Context) {
     const service = new AgentsService(ctx, createSuiteHost(), ctx.layout, ctx.workspace);
     ctx.slots.register("main", {
       id: "agent",
       key: AGENT_PANE_TYPE,
       component: AgentPane,
-      props: { title: (leafId: string) => service.paneTitle(leafId), icon: robot, agents: service, layout: ctx.layout },
+      props: {
+        title: (leafId: string) => service.paneTitle(leafId),
+        icon: robot,
+        agents: service,
+        layout: ctx.layout,
+        workspace: ctx.workspace,
+        changes: sidecarChanges(ctx.sidecar),
+      },
     });
     ctx.sidebar.registerView({
       id: "agents",

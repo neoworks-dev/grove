@@ -44,5 +44,6 @@ pub use keymap::{
 };
 pub use movement::Motion;
 pub use selections::{Selection, Selections};
+pub use syntax::Scope;
 pub use state::EditorState;
 pub use vim::VimLayer;

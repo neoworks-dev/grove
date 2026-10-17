@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Context } from "@neoworks/extension-system";
 import { Context as RootContext } from "@neoworks/extension-system";
-import type { LspHost } from "../plugins/lsp/host";
+import type { FileChange, LspHost, LspOptions } from "../plugins/lsp/host";
 import { entryFor, statusEntries, type ServerSummary } from "../plugins/lsp/servers";
 import { LspService } from "../plugins/lsp/service";
 import { settle } from "./support/fakeSidecar";
@@ -61,6 +61,8 @@ describe("how the status bar words a server", () => {
 class FakeLspHost implements LspHost {
   servers: ServerSummary[] = [];
   restarted: number[] = [];
+  configured: LspOptions[] = [];
+  changed: FileChange[][] = [];
   private handlers: ((servers: ServerSummary[]) => void)[] = [];
 
   async status(): Promise<ServerSummary[]> {
@@ -69,6 +71,14 @@ class FakeLspHost implements LspHost {
 
   async restart(id: number): Promise<void> {
     this.restarted.push(id);
+  }
+
+  async configure(options: LspOptions): Promise<void> {
+    this.configured.push(options);
+  }
+
+  async filesChanged(changes: FileChange[]): Promise<void> {
+    this.changed.push(changes);
   }
 
   onStatus(handler: (servers: ServerSummary[]) => void): () => void {
@@ -125,5 +135,40 @@ describe("the lsp service", () => {
     const service = await setUp(host);
     await settle();
     expect(service.servers()).toEqual([]);
+  });
+});
+
+describe("telling the host about the settings and the files that change", () => {
+  test("the switches of the language features go to the host as they are", async () => {
+    const host = new FakeLspHost();
+    const service = await setUp(host);
+    await service.configure({ inlayHints: false, formatOnSave: true, eslint: false });
+    expect(host.configured).toEqual([{ inlayHints: false, formatOnSave: true, eslint: false }]);
+  });
+
+  test("a burst of watched changes reaches the host as one message of absolute paths", async () => {
+    const host = new FakeLspHost();
+    const service = await setUp(host);
+    service.noteWatchedChange("/work/app", { relPath: "src/a.ts", type: "change" });
+    service.noteWatchedChange("/work/app", { relPath: "src/b.ts", type: "add" });
+    service.noteWatchedChange("/work/app", { relPath: "src/old.ts", type: "unlink" });
+    service.noteWatchedChange("/work/app", { relPath: "src", type: "addDir" });
+    expect(host.changed).toEqual([]);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(host.changed).toEqual([
+      [
+        { path: "/work/app/src/a.ts", kind: "changed" },
+        { path: "/work/app/src/b.ts", kind: "created" },
+        { path: "/work/app/src/old.ts", kind: "deleted" },
+      ],
+    ]);
+  });
+
+  test("changes to directories alone tell the host nothing", async () => {
+    const host = new FakeLspHost();
+    const service = await setUp(host);
+    service.noteWatchedChange("/work/app", { relPath: "src", type: "unlinkDir" });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(host.changed).toEqual([]);
   });
 });

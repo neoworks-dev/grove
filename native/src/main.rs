@@ -9,6 +9,10 @@
 //! `GROVE_OPEN=/path/to/file` opens that file; without it the editor opens a scratch copy of
 //! `samples/scratch.rs` in the temp directory, so trying it out never edits real source.
 //!
+//! Terminals are registered as `element("terminal")`: shells run in pseudo-terminals the host
+//! owns and `TerminalElement` draws them (see `terminal/mod.rs`), so their output never passes
+//! through JavaScript.
+//!
 //! The host also runs the sidecar, Grove's main process under Bun, and relays the UI's calls
 //! to it (see `sidecar.rs`), and offers the agents plugin the suite daemon's address and a way
 //! to start it (see `suite.rs`).
@@ -19,6 +23,7 @@ mod git;
 mod lsp;
 mod sidecar;
 mod suite;
+mod terminal;
 
 use std::path::PathBuf;
 
@@ -28,6 +33,7 @@ use serde_json::json;
 use sidecar::{Sidecar, SidecarConfig};
 use svelte_gpui::gpui::AppContext as _;
 use svelte_gpui::{CommandError, Commands, Elements, Options};
+use terminal::{TerminalView, Terminals};
 
 /// The sample code the scratch file starts from.
 const SCRATCH_SAMPLE: &str = include_str!("../samples/scratch.rs");
@@ -47,12 +53,18 @@ fn main() {
     let commands = lsp.register(commands);
     let commands = git::register(commands);
     let commands = diff::register(commands, documents.clone());
+    let terminals = Terminals::new(commands.emitter());
+    let commands = terminals.register(commands);
     let lsp_for_views = lsp.clone();
     let elements = Elements::new().register("editor", move |host, cx| {
         let documents = documents.clone();
         let lsp = lsp_for_views.clone();
         let signals = signals.clone();
         cx.new(|cx| Editor::new(documents, lsp, &signals, host, cx))
+    });
+    let elements = elements.register("terminal", move |host, cx| {
+        let terminals = terminals.clone();
+        cx.new(|cx| TerminalView::new(terminals, host, cx))
     });
     svelte_gpui::run(options().commands(commands).elements(elements));
     lsp.shutdown();

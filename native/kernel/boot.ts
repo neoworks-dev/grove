@@ -7,7 +7,7 @@ import { CommandsService } from "./commands";
 import type { Kernel } from "./kernel";
 import { KeymapService } from "./keymap";
 import { mountHostLogExporter } from "./logging";
-import { LoaderService, loadProfile, type PluginCatalog, type ProfileFiles, type ProfileRow } from "./profile";
+import { LoaderService, ProfileService, type PluginCatalog, type ProfileFiles, type ProfileRow } from "./profile";
 import { SlotsService } from "./slots";
 
 export interface BootOptions {
@@ -19,7 +19,7 @@ export interface BootOptions {
 }
 
 /**
- * Creates the root context, mounts the services, reads the profile and starts loading its
+ * Creates the root context, mounts the services and starts reading the profile and loading its
  * plugins. Resolves with the kernel once the services are up; `kernel.loaded` follows when
  * the plugins have settled.
  */
@@ -30,18 +30,18 @@ export async function bootKernel(options: BootOptions): Promise<Kernel> {
   await context.plugin(KeymapService);
   await context.plugin(SlotsService);
   await context.plugin(LoaderService, options.catalog);
+  await context.plugin(ProfileService, { coreRows: options.coreRows, files: options.files });
 
-  const profile = await loadProfile(options.coreRows, options.files);
-  for (const problem of profile.problems) {
-    context.logger.warn(problem);
-  }
-  const loaded = context.loader.apply(profile.rows);
+  // No folder is open yet, so this is the core and user layers. Opening a folder adds the
+  // project layer through `ctx.profile.setProjectFolder`.
+  const loaded = context.profile.reload();
   return {
     context,
     slots: context.slots,
     commands: context.commands,
     keymap: context.keymap,
     loader: context.loader,
+    profile: context.profile,
     loaded,
     reportError(source, error) {
       context.logger(source).error(error);

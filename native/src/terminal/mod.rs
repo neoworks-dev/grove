@@ -17,6 +17,7 @@
 //! - `terminal-exit`, with the exit `code`, when the shell ended.
 
 mod element;
+mod glyphs;
 mod grid;
 mod keys;
 mod links;

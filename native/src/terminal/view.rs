@@ -459,11 +459,18 @@ pub fn paste_bytes(text: &str, mode: TermMode) -> Vec<u8> {
     text.replace("\r\n", "\r").replace('\n', "\r").into_bytes()
 }
 
-/// Keys the app keeps for itself, because they open and close the terminal that would otherwise
-/// swallow them.
+/// Keys the app keeps for itself, because they open and close the terminal or the command
+/// palette that would otherwise be out of reach while a terminal has the keyboard.
 fn belongs_to_the_app(keystroke: &Keystroke) -> bool {
     let modifiers = &keystroke.modifiers;
-    keystroke.key == "`" && modifiers.control && !modifiers.alt
+    if modifiers.alt || !modifiers.control {
+        return false;
+    }
+    match keystroke.key.as_str() {
+        "`" => true,
+        "p" => modifiers.shift,
+        _ => false,
+    }
 }
 
 /// A key's meaning for the terminal view itself rather than for the shell.
@@ -1046,6 +1053,8 @@ mod tests {
     fn the_toggle_keys_are_left_to_the_app() {
         assert!(belongs_to_the_app(&keystroke("ctrl-`")));
         assert!(belongs_to_the_app(&keystroke("ctrl-shift-`")));
+        assert!(belongs_to_the_app(&keystroke("ctrl-shift-p")));
+        assert!(!belongs_to_the_app(&keystroke("ctrl-p")));
         assert!(!belongs_to_the_app(&keystroke("ctrl-c")));
     }
 

@@ -62,7 +62,7 @@
       >
         <View style={{ flex: 1, minHeight: 0 }} ondown={() => layout.focus(node.id)}>
           {#if entryFor(node.paneTypeId)}
-            <Slot name="main" key={node.paneTypeId} />
+            <Slot name="main" key={node.paneTypeId} props={{ leafId: node.id }} />
           {:else}
             <Text style={{ padding: 12, fontSize: fontSize.xs, color: colors.dim }}>No plugin shows "{node.paneTypeId}" panes.</Text>
           {/if}

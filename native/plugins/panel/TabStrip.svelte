@@ -1,7 +1,9 @@
 <!--
   A row of tabs that scrolls sideways when they do not fit. Tabs cut off at either edge are
   counted in a button on that edge, which brings the nearest one into view. Tab positions come
-  from their measured widths, so they stay right while the row scrolls.
+  from their measured widths, so they stay right while the row scrolls. Given `onclose`, each tab
+  has a close button, which a middle click on the tab presses too, and a tab with unsaved
+  changes shows a dot in its place until the pointer is over it.
 -->
 <script module lang="ts">
   export interface TabEntry {
@@ -9,11 +11,14 @@
     title: string;
     /** SVG markup. */
     icon?: string;
+    /** The tab has unsaved changes. */
+    dirty?: boolean;
   }
 </script>
 
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import x from "@phosphor-icons/core/regular/x.svg";
   import { Button, Icon, Scroll, Text, View, type Layout, type ScrollPosition } from "@neoworks/svelte-gpui/ui";
   import { colors, fontSize, radius, size } from "../theme/tokens";
   import { nextHiddenTab, revealScrollLeft, tabOverflow, type TabSpan } from "./tabOverflow";
@@ -22,11 +27,13 @@
     tabs: TabEntry[];
     activeId: string;
     onselect: (id: string) => void;
+    /** Gives every tab a close button, and a middle click closes it too. */
+    onclose?: (id: string) => void;
     /** Drawn after the tabs, outside the scrolling row: the pane's controls. */
     trailing?: Snippet;
   }
 
-  let { tabs, activeId, onselect, trailing }: Props = $props();
+  let { tabs, activeId, onselect, onclose, trailing }: Props = $props();
 
   const TAB_GAP = 4;
   /** How far an edge counter reaches into the row, so a revealed tab clears it. */
@@ -36,6 +43,8 @@
   let scrollLeft = $state(0);
   let viewWidth = $state(0);
   let tabWidths = $state<Record<string, number>>({});
+  /** The tab the pointer is over, whose dot gives way to the close icon. */
+  let hoveredTabId = $state<string | null>(null);
 
   /** Where each tab sits in the scrolled row, from the widths measured so far. */
   const spans = $derived.by(() => {
@@ -57,6 +66,17 @@
   /** Records one tab's width when it is laid out or resized. */
   function measureTab(tabId: string, layout: Layout): void {
     tabWidths[tabId] = layout.width;
+  }
+
+  /** Remembers which tab the pointer is over. */
+  function trackHover(tabId: string, hovered: boolean): void {
+    if (hovered) {
+      hoveredTabId = tabId;
+      return;
+    }
+    if (hoveredTabId === tabId) {
+      hoveredTabId = null;
+    }
   }
 
   /** Follows the row's scroll position. */
@@ -116,23 +136,44 @@
       <View style={{ direction: "row", align: "center", gap: TAB_GAP, height: "100%", shrink: 0, width: contentWidth }}>
         {#each tabs as tab (tab.id)}
           {@const active = tab.id === activeId}
-          <Button
+          <View
+            buttons={["middle"]}
+            ondown={() => onclose?.(tab.id)}
+            onhover={(hovered) => trackHover(tab.id, hovered)}
             style={{
               shrink: 0,
+              direction: "row",
+              align: "center",
               radius: radius.sm,
               fontSize: fontSize.xs,
               background: active ? colors.hover : "transparent",
               color: active ? colors.text : colors.dim,
               transition: 120,
             }}
-            hover={{ color: colors.text }}
-            onpress={() => onselect(tab.id)}
+            onresize={(layout) => measureTab(tab.id, layout)}
           >
-            <View style={{ direction: "row", align: "center", gap: 6, paddingX: 8, paddingY: 4 }} onresize={(layout) => measureTab(tab.id, layout)}>
+            <Button
+              style={{ direction: "row", align: "center", gap: 6, paddingLeft: 8, paddingRight: onclose ? 2 : 8, paddingY: 4 }}
+              hover={{ color: colors.text }}
+              onpress={() => onselect(tab.id)}
+            >
               {#if tab.icon}<Icon svg={tab.icon} size={14} />{/if}
               <Text style={{ nowrap: true }}>{tab.title}</Text>
-            </View>
-          </Button>
+            </Button>
+            {#if onclose}
+              <Button
+                style={{ size: 18, align: "center", justify: "center", shrink: 0, radius: radius.sm, marginRight: 4, color: colors.dim }}
+                hover={{ background: colors.raised, color: colors.text }}
+                onpress={() => onclose(tab.id)}
+              >
+                {#if tab.dirty && hoveredTabId !== tab.id}
+                  <Text style={{ color: colors.amber, fontSize: fontSize.xs }}>●</Text>
+                {:else}
+                  <Icon svg={x} size={12} />
+                {/if}
+              </Button>
+            {/if}
+          </View>
         {/each}
       </View>
     </Scroll>

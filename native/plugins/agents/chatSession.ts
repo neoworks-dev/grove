@@ -11,6 +11,7 @@ import { nextApprovals, type Approvals, type SessionStatus } from "./status";
 import { SessionFacts } from "./sessionFacts";
 import type { PlanList } from "./plan";
 import type { AgentRow } from "./subagents";
+import type { CallFacts } from "./calls";
 import type { Touches } from "./files";
 import type { ChatClient } from "./suiteClient";
 
@@ -79,6 +80,12 @@ export class ChatSession {
   touches(): Touches {
     this.changes.track();
     return this.facts.touches;
+  }
+
+  /** What the events say about the tool call whose chat item has this ref, or undefined for anything else. Reactive. */
+  callOf(ref: string): CallFacts | undefined {
+    this.changes.track();
+    return this.facts.calls.byRef.get(ref);
   }
 
   /** The subagents and guests working for the session, finished ones included. Reactive. */

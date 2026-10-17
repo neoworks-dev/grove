@@ -18,6 +18,7 @@
   { "id": "breadcrumbs", "plugin": "breadcrumbs" },
   { "id": "statusbar-position", "plugin": "editor-position" },
   { "id": "git-gutter", "plugin": "git-gutter" },
+  { "id": "prompt-blame", "plugin": "prompt-blame" },
   { "id": "lsp", "plugin": "lsp" },
   { "id": "diff", "plugin": "diff" },
   { "id": "git-changes", "plugin": "git-changes" },

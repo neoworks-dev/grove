@@ -337,6 +337,33 @@ mod tests {
         }
     }
 
+    fn line_end(row: usize, text: &str) -> Decoration {
+        Decoration {
+            start: at(row, 1_000_000),
+            end: None,
+            tooltip: None,
+            kind: DecorationKind::LineEnd { text: text.into(), tone: None },
+        }
+    }
+
+    #[test]
+    fn decorations_come_in_the_order_of_their_sources_names() {
+        // The editor draws the first line-end text of a row, so a source named `agent.blame`
+        // takes the end of the line from `git.blame`.
+        let mut state = EditorState::new(Buffer::from_text("one\ntwo\n"));
+        state.set_decorations("git.blame", &[line_end(1, "Ada, 3 days ago")]);
+        state.set_decorations("agent.blame", &[line_end(1, "an agent wrote this")]);
+        let placed = state.decorations_in_rows(0..usize::MAX);
+        let texts: Vec<&str> = placed
+            .iter()
+            .filter_map(|placed| match placed.kind {
+                DecorationKind::LineEnd { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, ["an agent wrote this", "Ada, 3 days ago"]);
+    }
+
     fn type_at(state: &mut EditorState, position: Position, text: &str) {
         state.apply(&Command::PlaceCursor { at: position });
         state.apply(&Command::InsertText { text: text.into() });

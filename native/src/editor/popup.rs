@@ -6,7 +6,7 @@
 use lsp_client::completion::{Item, KindFamily};
 use lsp_client::markdown::{self, Block, Span};
 use svelte_gpui::gpui::{
-    AnyElement, App, AvailableSpace, Bounds, Entity, FontStyle, FontWeight, Hsla, MouseButton, Pixels, Point,
+    AnyElement, App, AvailableSpace, Bounds, Entity, FontStyle, FontWeight, Hsla, MouseButton, Pixels, Point, Size,
     StrikethroughStyle, StyledText, UnderlineStyle, Window, div, point, prelude::*, px, size,
 };
 
@@ -282,12 +282,20 @@ fn documentation_popover(
         .text_color(theme.foreground)
         .children(sections)
         .into_any_element();
-    let measured = element.layout_as_root(size(AvailableSpace::MaxContent, AvailableSpace::MaxContent), window, cx);
+    let measured = fit_to_content(&mut element, window, cx);
     let fits_right = panel_origin.x + panel_width + px(4.0) + measured.width <= bounds.right();
     let left =
         if fits_right { panel_origin.x + panel_width + px(4.0) } else { panel_origin.x - measured.width - px(4.0) };
     let top = panel_origin.y.min(bounds.bottom() - measured.height).max(bounds.top());
     Some(Popover { element, origin: point(left.max(bounds.left()), top) })
+}
+
+/// Lays a popover out as wide as its content, up to its own maximum width, and as tall as the
+/// text then needs. Measuring the width first and then laying out at that width is what makes
+/// the text wrap where the box ends, so the height is not that of unwrapped lines.
+fn fit_to_content(element: &mut AnyElement, window: &mut Window, cx: &mut App) -> Size<Pixels> {
+    let natural = element.layout_as_root(size(AvailableSpace::MaxContent, AvailableSpace::MaxContent), window, cx);
+    element.layout_as_root(size(AvailableSpace::Definite(natural.width), AvailableSpace::MaxContent), window, cx)
 }
 
 /// The hover: diagnostics first, then what the server says.
@@ -333,7 +341,7 @@ fn hover_popover(
         .text_color(theme.foreground)
         .children(sections)
         .into_any_element();
-    let measured = element.layout_as_root(size(AvailableSpace::MaxContent, AvailableSpace::MaxContent), window, cx);
+    let measured = fit_to_content(&mut element, window, cx);
     let origin = place_vertically(point(anchor.left(), anchor.top()), measured.width, measured.height, bounds);
     let left = origin.x.min(bounds.right() - measured.width).max(bounds.left());
     Some(Popover { element, origin: point(left, origin.y) })

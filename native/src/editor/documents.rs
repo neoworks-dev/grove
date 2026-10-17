@@ -157,3 +157,64 @@ fn id_argument(args: &Value) -> Result<DocumentId, CommandError> {
 fn no_document(id: DocumentId) -> CommandError {
     CommandError::with_code("NoDocument", format!("document {id} is not open"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A file in a directory of its own, so tests do not share files.
+    fn file_with(name: &str, text: &str) -> String {
+        let directory = std::env::temp_dir().join(format!("grove-native-documents-{}-{name}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join(name);
+        std::fs::write(&path, text).unwrap();
+        path.display().to_string()
+    }
+
+    #[test]
+    fn opening_twice_gives_the_same_document() {
+        let documents = SharedDocuments::new(Emitter::default());
+        let path = file_with("twice.rs", "one\n");
+        let first = documents.open(&path).unwrap();
+        let second = documents.open(&path).unwrap();
+        assert_eq!(first.id, second.id);
+        assert_eq!(documents.list().len(), 1);
+    }
+
+    #[test]
+    fn a_missing_file_is_an_open_failure() {
+        let documents = SharedDocuments::new(Emitter::default());
+        let error = documents.open("/no/such/file.rs").unwrap_err();
+        assert_eq!(error.code.as_deref(), Some("OpenFailed"));
+    }
+
+    #[test]
+    fn edits_survive_closing_and_reopening_the_view_but_not_the_document() {
+        let documents = SharedDocuments::new(Emitter::default());
+        let path = file_with("edits.rs", "one\n");
+        let id = documents.open(&path).unwrap().id;
+        documents.apply(id, &Command::InsertText { text: "X".into() }).unwrap();
+        assert!(documents.list()[0].dirty);
+        assert_eq!(documents.open(&path).unwrap().id, id);
+        assert!(documents.list()[0].dirty);
+        assert!(documents.close(id));
+        assert!(!documents.open(&path).unwrap().dirty);
+    }
+
+    #[test]
+    fn saving_through_the_command_clears_the_dirty_state() {
+        let documents = SharedDocuments::new(Emitter::default());
+        let path = file_with("save.rs", "one\n");
+        let id = documents.open(&path).unwrap().id;
+        documents.apply(id, &Command::InsertText { text: "X".into() }).unwrap();
+        documents.save(id).unwrap();
+        assert!(!documents.list()[0].dirty);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "Xone\n");
+    }
+
+    #[test]
+    fn saving_a_closed_document_is_an_error() {
+        let documents = SharedDocuments::new(Emitter::default());
+        assert_eq!(documents.save(9).unwrap_err().code.as_deref(), Some("NoDocument"));
+    }
+}

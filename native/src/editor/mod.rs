@@ -23,9 +23,9 @@ use editor_core::{
 };
 use serde_json::{Value, json};
 use svelte_gpui::gpui::{
-    App, Bounds, ClipboardItem, Context, EntityId, WeakEntity, EntityInputHandler, FocusHandle, IntoElement, KeyDownEvent, Keystroke,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, ScrollWheelEvent, Subscription,
-    UTF16Selection, Window, div, prelude::*, px,
+    App, Bounds, ClipboardItem, Context, EntityId, EntityInputHandler, FocusHandle, IntoElement, KeyDownEvent,
+    Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, ScrollWheelEvent,
+    Subscription, UTF16Selection, WeakEntity, Window, div, prelude::*, px,
 };
 use svelte_gpui::{AppElement, CommandError};
 

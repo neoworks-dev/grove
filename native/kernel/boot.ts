@@ -8,6 +8,7 @@ import type { Kernel } from "./kernel";
 import { KeymapService } from "./keymap";
 import { mountHostLogExporter } from "./logging";
 import { LoaderService, loadProfile, type PluginCatalog, type ProfileFiles, type ProfileRow } from "./profile";
+import { SettingsService } from "./settings";
 import { SlotsService } from "./slots";
 
 export interface BootOptions {
@@ -19,9 +20,9 @@ export interface BootOptions {
 }
 
 /**
- * Creates the root context, mounts the services, reads the profile and starts loading its
- * plugins. Resolves with the kernel once the services are up; `kernel.loaded` follows when
- * the plugins have settled.
+ * Creates the root context, mounts the services, reads the profile, hands it to the settings
+ * service and starts loading its plugins. Resolves with the kernel once the services are up;
+ * `kernel.loaded` follows when the plugins have settled.
  */
 export async function bootKernel(options: BootOptions): Promise<Kernel> {
   const context = new Context();
@@ -35,6 +36,7 @@ export async function bootKernel(options: BootOptions): Promise<Kernel> {
   for (const problem of profile.problems) {
     context.logger.warn(problem);
   }
+  await context.plugin(SettingsService, { catalog: options.catalog, profile, files: options.files });
   const loaded = context.loader.apply(profile.rows);
   return {
     context,
@@ -42,6 +44,7 @@ export async function bootKernel(options: BootOptions): Promise<Kernel> {
     commands: context.commands,
     keymap: context.keymap,
     loader: context.loader,
+    settings: context.settings,
     loaded,
     reportError(source, error) {
       context.logger(source).error(error);

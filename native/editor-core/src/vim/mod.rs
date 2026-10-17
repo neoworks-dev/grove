@@ -12,6 +12,7 @@ pub mod objects;
 mod operate;
 mod parse;
 mod plan;
+pub(crate) mod recall;
 pub mod registers;
 pub mod search;
 pub mod types;

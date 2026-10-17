@@ -56,6 +56,7 @@ impl EditorState {
             }
             Command::GroupUndo { open } => {
                 if *open {
+                    self.overwritten.clear();
                     self.history.hold();
                 } else {
                     self.history.release();
@@ -63,6 +64,19 @@ impl EditorState {
                 Outcome::default()
             }
             Command::ScrollTo { align } => Outcome { scroll: Some(*align), ..Outcome::default() },
+            Command::RememberVisual { kind } => {
+                self.remember_visual(*kind);
+                Outcome::default()
+            }
+            Command::ReselectVisual => self.reselect_visual(),
+            Command::SelectLastExtent => self.select_last_extent(),
+            Command::PushJump => {
+                self.push_jump();
+                Outcome::default()
+            }
+            Command::JumpOlder { count } => self.jump_older(*count),
+            Command::JumpNewer { count } => self.jump_newer(*count),
+            Command::RestoreOverwritten => self.restore_overwritten(now),
             Command::ScrollView { rows } => Outcome { scroll_rows: Some(*rows), ..Outcome::default() },
             Command::SetMark { name } => {
                 self.set_mark(*name);

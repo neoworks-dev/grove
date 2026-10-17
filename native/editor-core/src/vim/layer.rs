@@ -2,6 +2,8 @@
 //! state machine over key presses. It never looks at the text. Everything that depends on the
 //! text is left to the commands it makes, which the editor state carries out at every cursor.
 
+use std::collections::HashMap;
+
 use crate::buffer::Position;
 use crate::command::Command;
 use crate::keymap::{
@@ -50,6 +52,9 @@ struct Change {
     register: Option<char>,
     count: Option<usize>,
     keys: Vec<KeyInput>,
+    /// The kind of visual selection the keys were typed over, when there was one: `.` then selects
+    /// as much text from the cursor first.
+    visual: Option<SelectionKind>,
 }
 
 /// What typing in insert mode has done, for a count to do again when the mode ends.
@@ -74,6 +79,16 @@ pub struct VimLayer {
     /// Whether keys are being fed in by `.`, which must not record themselves.
     replaying: bool,
     insert: InsertSession,
+    /// The kind of the last visual selection that was left, for `gv`.
+    last_visual_kind: Option<SelectionKind>,
+    /// The keys of each macro recorded, by register name.
+    macros: HashMap<char, Vec<KeyInput>>,
+    /// The register and keys of the macro being recorded.
+    macro_recording: Option<(char, Vec<KeyInput>)>,
+    /// The macro `@@` plays again.
+    last_macro: Option<char>,
+    /// How many macros are being played, one inside another, which is limited.
+    macro_depth: usize,
 }
 
 impl Default for VimLayer {
@@ -94,6 +109,11 @@ impl VimLayer {
             recording: None,
             replaying: false,
             insert: InsertSession::default(),
+            last_visual_kind: None,
+            macros: HashMap::new(),
+            macro_recording: None,
+            last_macro: None,
+            macro_depth: 0,
         }
     }
 }
@@ -125,10 +145,25 @@ fn is_escape(token: &str) -> bool {
 const MAX_UNDO_COUNT: usize = 1000;
 
 /// The control keys vim uses in normal and visual mode. Others, such as Ctrl-S, are left to the standard keys.
-const CONTROL_KEYS: [&str; 8] = ["C-r", "C-n", "C-d", "C-u", "C-f", "C-b", "C-[", "C-c"];
+const CONTROL_KEYS: [&str; 10] = ["C-r", "C-n", "C-d", "C-u", "C-f", "C-b", "C-[", "C-c", "C-o", "C-i"];
+
+/// The most macros that may be playing inside one another, so one that plays itself ends.
+const MAX_MACRO_DEPTH: usize = 20;
+
+/// The most times a macro is played for one count.
+const MAX_MACRO_COUNT: usize = 10_000;
 
 impl InputLayer for VimLayer {
     fn translate(&mut self, key: &KeyInput, context: &InputContext) -> Vec<Command> {
+        if self.is_end_of_macro(key) {
+            self.finish_macro();
+            return vec![Command::Noop];
+        }
+        if !self.replaying && self.macro_depth == 0 {
+            if let Some((_, keys)) = self.macro_recording.as_mut() {
+                keys.push(key.clone());
+            }
+        }
         match self.mode {
             Mode::Insert | Mode::Replace => self.insert_key(key, context),
             Mode::Normal | Mode::Visual(_) => {
@@ -194,15 +229,20 @@ impl VimLayer {
     /// Carries out a command that was read in full.
     fn execute(&mut self, parsed: Parsed, context: &InputContext) -> Vec<Command> {
         self.recording = None;
+        let was_visual = self.visual_kind();
         if !self.replaying && is_change(&parsed.action, self.mode) {
             let keys = parsed.keys.iter().map(|token| key_of(token)).collect();
-            self.recording = Some(Change { register: parsed.register, count: parsed.count, keys });
+            self.recording = Some(Change { register: parsed.register, count: parsed.count, keys, visual: was_visual });
         }
-        let commands = match parsed.action.clone() {
+        let mut commands = match parsed.action.clone() {
             Action::Move(spec) => self.move_commands(spec, &parsed, context),
             Action::Operate { operator, target } => self.operate_with_target(operator, target, &parsed, context),
             Action::Simple(simple) => self.simple_commands(simple, &parsed, context),
         };
+        if let (Some(kind), None) = (was_visual, self.visual_kind()) {
+            commands.insert(0, Command::RememberVisual { kind });
+            self.last_visual_kind = Some(kind);
+        }
         let still_typing = matches!(self.mode, Mode::Insert | Mode::Replace) || self.command_line.is_some();
         if !still_typing && !self.replaying {
             if let Some(change) = self.recording.take() {
@@ -222,6 +262,16 @@ impl VimLayer {
 
     /// What a motion does as a command of its own: moves every cursor, or extends the selections in visual mode.
     fn move_commands(&mut self, spec: MotionSpec, parsed: &Parsed, context: &InputContext) -> Vec<Command> {
+        let mut commands = Vec::new();
+        if is_jump(spec) {
+            commands.push(Command::PushJump);
+        }
+        commands.extend(self.motion_commands(spec, parsed, context));
+        commands
+    }
+
+    /// The commands of a motion, without the note of where the jump came from.
+    fn motion_commands(&mut self, spec: MotionSpec, parsed: &Parsed, context: &InputContext) -> Vec<Command> {
         let extend = self.visual_kind().is_some();
         let count = parsed.count.unwrap_or(1);
         match spec {
@@ -388,6 +438,20 @@ impl VimLayer {
             Simple::CloseWithoutSaving => vec![Command::Request { request: AppRequest::CloseTab { discard: true } }],
             Simple::GotoChange { forward } => vec![Command::Request { request: AppRequest::GotoChange { forward } }],
             Simple::Page(step) => self.page_commands(step, context),
+            Simple::ReselectVisual => match self.last_visual_kind {
+                Some(kind) => {
+                    self.mode = Mode::Visual(kind);
+                    vec![Command::ReselectVisual]
+                }
+                None => vec![Command::Noop],
+            },
+            Simple::JumpOlder => vec![Command::JumpOlder { count }],
+            Simple::JumpNewer => vec![Command::JumpNewer { count }],
+            Simple::MacroRecord(name) => {
+                self.macro_recording = Some((name, Vec::new()));
+                vec![Command::Noop]
+            }
+            Simple::MacroPlay(name) => self.play_macro(name, count, context),
             Simple::NextMatch => {
                 self.mode = Mode::Visual(SelectionKind::Characters);
                 vec![Command::SelectNextMatch { add: false }]
@@ -493,6 +557,10 @@ impl VimLayer {
         keys.extend(change.keys.iter().cloned());
         self.replaying = true;
         let mut commands = Vec::new();
+        if let Some(kind) = change.visual {
+            commands.push(Command::SelectLastExtent);
+            self.mode = Mode::Visual(kind);
+        }
         for key in &keys {
             commands.extend(self.translate(key, context));
         }
@@ -516,6 +584,41 @@ impl VimLayer {
         };
         // The view moves first, so the cursor lands inside it and the view has no need to follow.
         vec![Command::ScrollView { rows }, Command::VimMove { motion: cursor, count: 1, extend }]
+    }
+
+    /// Whether a key ends the macro being recorded: `q` typed in normal mode between commands.
+    fn is_end_of_macro(&self, key: &KeyInput) -> bool {
+        let idle = self.mode == Mode::Normal && self.keys.is_empty() && self.command_line.is_none();
+        let recording = self.macro_recording.is_some() && !self.replaying && self.macro_depth == 0;
+        recording && idle && token_of(key) == "q"
+    }
+
+    /// Stores the macro that was being recorded under its register.
+    fn finish_macro(&mut self) {
+        if let Some((name, keys)) = self.macro_recording.take() {
+            self.macros.insert(name, keys);
+        }
+    }
+
+    /// `@a`: types a macro's keys `count` times, and `@@` the one played last.
+    fn play_macro(&mut self, name: char, count: usize, context: &InputContext) -> Vec<Command> {
+        let name = if name == '@' { self.last_macro.unwrap_or('@') } else { name };
+        let Some(keys) = self.macros.get(&name).cloned() else {
+            return vec![Command::Noop];
+        };
+        if self.macro_depth >= MAX_MACRO_DEPTH {
+            return vec![Command::Noop];
+        }
+        self.last_macro = Some(name);
+        self.macro_depth += 1;
+        let mut commands = Vec::new();
+        for _ in 0..count.min(MAX_MACRO_COUNT) {
+            for key in &keys {
+                commands.extend(self.translate(key, context));
+            }
+        }
+        self.macro_depth -= 1;
+        commands
     }
 
     /// Starts typing a command line.
@@ -568,9 +671,14 @@ impl VimLayer {
         let visual = self.visual_kind().is_some();
         if line.prefix == ':' {
             let mut commands = parse_ex(&line.text);
-            if visual {
+            if let Some(kind) = self.visual_kind() {
                 self.mode = Mode::Normal;
+                self.last_visual_kind = Some(kind);
+                commands.insert(0, Command::RememberVisual { kind });
                 commands.push(Command::CollapseToHeads);
+            }
+            if line.text.trim().chars().all(|character| character.is_ascii_digit()) && !line.text.trim().is_empty() {
+                commands.insert(0, Command::PushJump);
             }
             return commands;
         }
@@ -583,7 +691,7 @@ impl VimLayer {
         if let Some((operator, register)) = line.operator {
             return self.operator_commands(operator, Target::Search { request, count: line.count }, register);
         }
-        vec![Command::VimSearch { request, count: line.count, extend: visual }]
+        vec![Command::PushJump, Command::VimSearch { request, count: line.count, extend: visual }]
     }
 
     /// A key in insert or replace mode.
@@ -607,9 +715,7 @@ impl VimLayer {
         let command = match token.as_str() {
             "enter" => Command::InsertNewline,
             "tab" => Command::InsertTab,
-            "backspace" | "C-h" if replacing => {
-                Command::VimMove { motion: Motion::ColumnLeft, count: 1, extend: false }
-            }
+            "backspace" | "C-h" if replacing => Command::RestoreOverwritten,
             "backspace" | "C-h" => Command::Delete { motion: Motion::Left },
             "delete" => Command::Delete { motion: Motion::Right },
             "C-w" => Command::Delete { motion: Motion::WordBack { big: false } },
@@ -656,6 +762,22 @@ impl VimLayer {
             }
         }
         commands
+    }
+}
+
+/// Whether a motion is one of vim's jumps, which `Ctrl-O` goes back from.
+fn is_jump(spec: MotionSpec) -> bool {
+    match spec {
+        MotionSpec::GotoLine
+        | MotionSpec::GotoFirstLine
+        | MotionSpec::Screen(_)
+        | MotionSpec::Mark { .. }
+        | MotionSpec::SearchRepeat { .. }
+        | MotionSpec::SearchWord { .. } => true,
+        MotionSpec::Fixed(motion) => {
+            matches!(motion, Motion::ParagraphBack | Motion::ParagraphForward | Motion::MatchingBracket)
+        }
+        _ => false,
     }
 }
 
@@ -709,7 +831,13 @@ fn page_scroll(step: PageStep, context: &InputContext) -> PageScroll {
 /// Whether `.` repeats a command: everything that changes the text.
 fn is_change(action: &Action, mode: Mode) -> bool {
     if matches!(mode, Mode::Visual(_)) {
-        return false;
+        return match action {
+            Action::Simple(Simple::VisualOperator(operator) | Simple::VisualLinesOperator(operator)) => {
+                *operator != Operator::Yank
+            }
+            Action::Simple(Simple::Put { .. } | Simple::Join | Simple::ReplaceChar(_)) => true,
+            _ => false,
+        };
     }
     match action {
         Action::Move(_) => false,

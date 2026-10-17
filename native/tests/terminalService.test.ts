@@ -129,6 +129,15 @@ describe("the panel", () => {
     expect(service.focusRequest()).toBe(first.id);
   });
 
+  test("a panel drawn for a worktree with no terminal gets one, without the keyboard or the panel", async () => {
+    const { service, panel } = await setUp();
+    service.ensurePanelTerminal();
+    service.ensurePanelTerminal();
+    expect(service.panelTerminals()).toHaveLength(1);
+    expect(service.focusRequest()).toBeNull();
+    expect(panel.isOpen()).toBe(false);
+  });
+
   test("toggling again hides the panel and keeps the shell", async () => {
     const { service, panel, host } = await setUp();
     service.togglePanel();

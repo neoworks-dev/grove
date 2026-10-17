@@ -184,6 +184,18 @@ export class TerminalService extends Service {
     return info.id;
   }
 
+  /**
+   * Makes sure the selected worktree has a terminal in the panel, opening one without taking the
+   * keyboard or showing the panel. The panel calls this when it is drawn for a worktree that has none.
+   */
+  ensurePanelTerminal(): void {
+    if (this.panelTerminals().length > 0) {
+      return;
+    }
+    const info = this.create(null);
+    this.activeByWorktree[info.worktreeId] = info.id;
+  }
+
   /** Splits the focused pane and shows a new terminal in the new half. */
   openInPane(direction: SplitDirection): void {
     this.layout.splitFocused(direction, TERMINAL_PANE_TYPE);

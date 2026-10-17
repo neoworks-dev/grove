@@ -13,6 +13,8 @@
 //!   whenever one changes. `state` is `starting`, `ready`, `failed`, `exited`, `stopped` or `missing`.
 //!
 //! Commands: `lsp_status` answers the same list, and `lsp_restart { id }` starts a server again.
+//!
+//! `GROVE_NO_LSP=1` starts no server, for comparing with the editor without them.
 
 mod handler;
 mod state;
@@ -65,6 +67,8 @@ pub(crate) struct Inner {
     emitter: Emitter,
     signals: Signals,
     search_directories: Vec<std::path::PathBuf>,
+    /// Whether `GROVE_NO_LSP` is set, which starts no server at all.
+    disabled: bool,
     state: Mutex<State>,
 }
 
@@ -86,6 +90,7 @@ impl LspStore {
             emitter,
             signals,
             search_directories,
+            disabled: std::env::var_os("GROVE_NO_LSP").is_some(),
             state: Mutex::new(State::default()),
         };
         let store = LspStore { inner: Arc::new(inner) };
@@ -112,10 +117,8 @@ impl LspStore {
     /// Asks every server to shut down and waits a moment for them to. Called as the app exits.
     pub fn shutdown(&self) {
         let clients: Vec<Client> = self.state().servers.iter_mut().filter_map(|entry| entry.client.take()).collect();
-        let threads: Vec<_> = clients
-            .into_iter()
-            .map(|client| std::thread::spawn(move || client.shutdown(SHUTDOWN_TIMEOUT)))
-            .collect();
+        let threads: Vec<_> =
+            clients.into_iter().map(|client| std::thread::spawn(move || client.shutdown(SHUTDOWN_TIMEOUT))).collect();
         for thread in threads {
             let _ = thread.join();
         }
@@ -260,7 +263,9 @@ impl LspStore {
                     entry.client = Some(client);
                 }
             }
-            Err(error) => self.set_state(server, ServerState::Failed(format!("could not start {}: {error}", spec.name))),
+            Err(error) => {
+                self.set_state(server, ServerState::Failed(format!("could not start {}: {error}", spec.name)))
+            }
         }
     }
 
@@ -370,6 +375,9 @@ fn send_open(client: &Client, tracked: &mut Tracked, state: &EditorState) {
 impl DocumentObserver for LspStore {
     /// Starts tracking a file a server serves, and opens it on the server if that is ready.
     fn opened(&self, id: DocumentId, state: &EditorState) {
+        if self.inner.disabled {
+            return;
+        }
         let Some(path) = state.buffer().path() else {
             return;
         };
@@ -410,7 +418,8 @@ impl DocumentObserver for LspStore {
         if !tracked.open_on_server {
             return;
         }
-        let Some(client) = servers.iter().find(|entry| entry.id == tracked.server).and_then(|e| e.client.as_ref()) else {
+        let Some(client) = servers.iter().find(|entry| entry.id == tracked.server).and_then(|e| e.client.as_ref())
+        else {
             return;
         };
         let Some(capabilities) = client.capabilities() else {
@@ -583,7 +592,8 @@ mod tests {
         documents.open(&fixture.directory.join("notes.txt").display().to_string()).unwrap();
         assert_eq!(store.summaries(), json!([]));
         let empty = SharedDocuments::new(Emitter::default());
-        let nowhere = LspStore::with_search_directories(empty.clone(), Emitter::default(), Signals::default(), Vec::new());
+        let nowhere =
+            LspStore::with_search_directories(empty.clone(), Emitter::default(), Signals::default(), Vec::new());
         empty.open(&fixture.directory.join("src/main.rs").display().to_string()).unwrap();
         assert_eq!(state_of(&nowhere), "missing");
         assert!(nowhere.summaries()[0]["message"].as_str().unwrap().contains("not found"));

@@ -59,7 +59,9 @@ impl Handler for ServerHandler {
                 Ok(Value::Null)
             }
             "window/showMessageRequest" => Ok(Value::Null),
-            "workspace/applyEdit" => Ok(json!({ "applied": false, "failureReason": "the editor does not apply server edits yet" })),
+            "workspace/applyEdit" => {
+                Ok(json!({ "applied": false, "failureReason": "the editor does not apply server edits yet" }))
+            }
             _ => Err(ResponseError { code: METHOD_NOT_FOUND, message: format!("the editor has no {method}") }),
         }
     }

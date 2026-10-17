@@ -129,10 +129,4 @@ impl State {
     pub fn find_server(&self, spec: &Server, root: &std::path::Path) -> Option<u64> {
         self.servers.iter().find(|entry| entry.spec.name == spec.name && entry.root == root).map(|entry| entry.id)
     }
-
-    /// The server a document is tracked by.
-    pub fn server_of(&self, document: DocumentId) -> Option<&ServerEntry> {
-        let tracked = self.tracked.get(&document)?;
-        self.server(tracked.server)
-    }
 }

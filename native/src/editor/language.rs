@@ -129,7 +129,7 @@ impl Editor {
             self.remove_anchor(document, anchor);
             return;
         };
-        self.completion = Some(Session::new(document, anchor, trigger, request, pending));
+        self.completion = Some(Session::new(document, anchor, request, pending));
         cx.notify();
     }
 
@@ -507,7 +507,11 @@ impl Editor {
         });
         let capabilities = self.lsp.capabilities(document);
         let wants_hover = capabilities.is_some_and(|capabilities| capabilities.hover);
-        let pending = if wants_hover { self.lsp.request_at(document, position, "textDocument/hover", json!({}), reply) } else { None };
+        let pending = if wants_hover {
+            self.lsp.request_at(document, position, "textDocument/hover", json!({}), reply)
+        } else {
+            None
+        };
         let waiting = pending.is_some();
         let hover = Hover { range, diagnostics, markdown: None, request, waiting, pending };
         if hover.has_content() || waiting {

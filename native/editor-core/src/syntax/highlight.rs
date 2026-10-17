@@ -102,9 +102,7 @@ pub fn highlight_for_capture(name: &str) -> Option<HighlightId> {
         if let Some((_, target)) = ALIASES.iter().find(|(alias, _)| *alias == candidate) {
             return highlight_for_capture(target);
         }
-        let Some((shorter, _)) = candidate.rsplit_once('.') else {
-            return None;
-        };
+        let (shorter, _) = candidate.rsplit_once('.')?;
         candidate = shorter;
     }
 }
@@ -164,11 +162,13 @@ fn push_run(runs: &mut Vec<(Range<usize>, HighlightId)>, range: Range<usize>, id
     if range.start >= range.end {
         return;
     }
-    if let Some((previous, previous_id)) = runs.last_mut() {
-        if previous.end == range.start && *previous_id == id {
+    let joins_previous =
+        runs.last().is_some_and(|(previous, previous_id)| previous.end == range.start && *previous_id == id);
+    if joins_previous {
+        if let Some((previous, _)) = runs.last_mut() {
             previous.end = range.end;
-            return;
         }
+        return;
     }
     runs.push((range, id));
 }

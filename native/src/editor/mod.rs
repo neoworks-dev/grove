@@ -82,11 +82,16 @@ impl Editor {
     /// Handles a key the input layer knows; returns false for the rest, which then bubble to the app.
     fn handle_key(&mut self, keystroke: &Keystroke) -> bool {
         let context = InputContext { page_rows: self.rows_in_view() };
-        let Some(command) = self.input.translate(&key_input(keystroke), &context) else {
+        let commands = self.input.translate(&key_input(keystroke), &context);
+        if commands.is_empty() {
             return false;
-        };
-        let outcome = self.apply(&command);
-        outcome.changed || !command.passes_on_when_unchanged()
+        }
+        let mut handled = false;
+        for command in &commands {
+            let outcome = self.apply(command);
+            handled = handled || outcome.changed || !command.passes_on_when_unchanged();
+        }
+        handled
     }
 
     /// A press of the left button: a click places one cursor, Alt-click adds or removes one,

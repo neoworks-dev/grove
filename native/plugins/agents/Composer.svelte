@@ -11,7 +11,7 @@
   import type { ChatSession } from "./chatSession";
   import CommandMenu from "./CommandMenu.svelte";
   import { ComposerModel } from "./composerModel";
-  import { statusSegments, type Tone } from "./composerStatus";
+  import ComposerControls from "./ComposerControls.svelte";
   import { createHistoryStore } from "./historyStore";
   import { palette } from "./palette";
   import PromptPanel from "./PromptPanel.svelte";
@@ -52,7 +52,6 @@
   const promptRef = $derived(prompt?.ref);
   const showPanel = $derived(model.engaged());
   const menuVisible = $derived(model.menuVisible());
-  const segments = $derived(statusSegments(session.status()));
   const notice = $derived(model.notice());
 
   // What was sent in this session before is what Up walks back through.
@@ -92,17 +91,6 @@
       input.focus();
     }
   });
-
-  /** The colour of a status segment. */
-  function toneColor(tone: Tone): string {
-    if (tone === "accent") {
-      return p.accent;
-    }
-    if (tone === "danger") {
-      return p.danger;
-    }
-    return p.muted;
-  }
 
   /** Up and Down move the menu's highlight while it is open, else walk the history. */
   function arrow(event: KeyEvent): void {
@@ -190,7 +178,10 @@
         {prompt.title || "A question"} is waiting. Stop typing to answer it, Esc puts it aside.
       </Text>
     {/if}
-    <View style={{ direction: "row", gap: p.space.m }} onpress={() => input?.focus()}>
+    <View
+      style={{ direction: "row", gap: p.space.m, padding: p.space.m, radius: 6, borderWidth: 1, borderColor: p.border, background: p.bg }}
+      onpress={() => input?.focus()}
+    >
       <Text style={{ color: p.accent, lineHeight: LINE_HEIGHT, fontWeight: 600 }}>›</Text>
       <View style={{ flex: 1, minWidth: 0 }} onlayout={layout}>
         <Scroll bind:this={scroller} style={{ maxHeight: MAX_INPUT_HEIGHT }}>
@@ -200,7 +191,7 @@
               bind:value={model.text}
               multiline
               rows={1}
-              placeholder={running ? "The agent is working. Esc cancels the turn." : "Message the agent, / for commands"}
+              placeholder={running ? "The agent is working. Esc cancels the turn." : "Message the agent ( / commands · ↑↓ history )"}
               style={{ color: p.fg, lineHeight: LINE_HEIGHT }}
               oninput={() => model.typed()}
               onkey={key}
@@ -215,14 +206,5 @@
       </View>
     </View>
   {/if}
-  <View style={{ direction: "row", gap: p.space.m, fontSize: p.text.body - 1 }}>
-    {#each segments as segment, index}
-      <Text style={{ shrink: 0, color: toneColor(segment.tone) }}>{segment.text}{index < segments.length - 1 ? " ·" : ""}</Text>
-    {/each}
-    <View style={{ flex: 1, minWidth: 0 }} />
-    {#if notice !== undefined}
-      <Text style={{ shrink: 0, color: p.accent }}>{notice}</Text>
-    {/if}
-    <Text style={{ shrink: 0, color: p.muted }}>shift-tab approvals</Text>
-  </View>
+  <ComposerControls {session} {notice} />
 </View>

@@ -2,8 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { Context as RootContext, type Context } from "@neoworks/extension-system";
 import { leaves } from "../plugins/layout/layoutTree";
 import { LayoutService } from "../plugins/layout/service";
-import { AGENT_PANE_TYPE, AgentsService, freeAppName, nextRetryDelay, type AgentsTiming } from "../plugins/agents/service";
+import { AGENT_PANE_TYPE, AgentsService, freeAppName, nextRetryDelay, type AgentsTiming, type Openers } from "../plugins/agents/service";
 import { FakeWorkspace, setUpAgents as setUp } from "./support/agentsSetup";
+import type { SessionEvent } from "@suite/protocol/types";
 import { FakeHost, agentItem, sessionInfo } from "./support/fakeSuite";
 import { settle } from "./support/fakeSidecar";
 
@@ -153,6 +154,58 @@ describe("a daemon that is alive but wedged", () => {
     expect(agents.state().connection).toBe("unavailable");
     expect(agents.state().message).toBe("The suite daemon stopped answering");
     expect(host.client.closed).toBe(true);
+  });
+});
+
+describe("showing a change", () => {
+  /** Openers that record what they were asked, and whether a diff view is there to answer. */
+  function recordingOpeners(hasDiff: boolean): { openers: Openers; asked: string[] } {
+    const asked: string[] = [];
+    const openers: Openers = {
+      openFile: (path) => asked.push(`file ${path}`),
+      openDiff: (path, texts) => {
+        if (!hasDiff) {
+          return false;
+        }
+        asked.push(texts === undefined ? `diff ${path}` : `diff ${path} ${texts.oldText}>${texts.newText}`);
+        return true;
+      },
+    };
+    return { openers, asked };
+  }
+
+  test("goes to the diff view, with the two texts when a call reported them", async () => {
+    const { openers, asked } = recordingOpeners(true);
+    const { agents } = await setUp(undefined, openers);
+    agents.openDiff("/repo/a.ts");
+    agents.openDiff("/repo/a.ts", { oldText: "one", newText: "two" });
+    expect(asked).toEqual(["diff /repo/a.ts", "diff /repo/a.ts one>two"]);
+  });
+
+  test("shows the file when the app has no diff view", async () => {
+    const { openers, asked } = recordingOpeners(false);
+    const { agents } = await setUp(undefined, openers);
+    agents.openDiff("/repo/a.ts");
+    expect(asked).toEqual(["file /repo/a.ts"]);
+  });
+
+  test("a chat asks for the one change its calls add up to, else the file against HEAD", async () => {
+    const { openers, asked } = recordingOpeners(true);
+    const { host, agents } = await setUp(undefined, openers);
+    await agents.ensureStarted();
+    agents.follow("a");
+    await settle();
+    const chat = agents.chat("a");
+    const emit = (event: SessionEvent): void => host.client.events[0].emit(event);
+    emit({ type: "tool_call", toolCallId: "1", title: "Edit", kind: "edit", status: "pending" });
+    emit({ type: "tool_call_update", toolCallId: "1", content: [{ type: "diff", path: "/repo/a.ts", oldText: "a", newText: "b" }] });
+    emit({ type: "tool_call", toolCallId: "2", title: "Edit", kind: "edit", status: "pending" });
+    emit({ type: "tool_call_update", toolCallId: "2", content: [{ type: "diff", path: "/repo/a.ts", oldText: "b", newText: "c" }] });
+    chat?.openDiff("/repo/a.ts");
+    emit({ type: "tool_call", toolCallId: "3", title: "Edit", kind: "edit", status: "pending" });
+    emit({ type: "tool_call_update", toolCallId: "3", content: [{ type: "diff", path: "/repo/a.ts", oldText: "zzz", newText: "d" }] });
+    chat?.openDiff("/repo/a.ts");
+    expect(asked).toEqual(["diff /repo/a.ts a>c", "diff /repo/a.ts"]);
   });
 });
 

@@ -118,3 +118,22 @@ function diffsOf(content: readonly ToolCallContent[]): CallDiff[] {
   }
   return diffs;
 }
+
+/**
+ * The two texts a file's changes add up to: the first change's old text and the last one's new
+ * text, when every change begins with what the one before it ended with. Changes that do not
+ * chain, as those of a tool that reports only the lines it replaced, give none.
+ */
+export function chainedTexts(changes: readonly CallDiff[]): { oldText: string; newText: string } | undefined {
+  if (changes.length === 0) {
+    return undefined;
+  }
+  for (let index = 1; index < changes.length; index += 1) {
+    if (changes[index].oldText !== changes[index - 1].newText) {
+      return undefined;
+    }
+  }
+  const first = changes[0];
+  const last = changes[changes.length - 1];
+  return { oldText: first.oldText === undefined ? "" : first.oldText, newText: last.newText };
+}

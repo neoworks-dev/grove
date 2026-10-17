@@ -11,7 +11,7 @@
   /** Lines shown before "… +N lines". */
   const PREVIEW_DIFF_LINES = 6;
 
-  let { diff }: { diff: DiffComponent } = $props();
+  let { diff, onpress }: { diff: DiffComponent; onpress?: () => void } = $props();
 
   const p = palette;
   const colors = $derived(diffColors(p));
@@ -41,7 +41,7 @@
   }
 </script>
 
-<View style={{ radius: 4, overflow: "hidden" }}>
+<View {onpress} style={{ radius: 4, overflow: "hidden", cursor: onpress === undefined ? undefined : "pointer" }}>
   {#each clipped.shown as line}
     <View style={{ direction: "row", paddingX: p.space.s, background: background(line.kind) }}>
       <Text style={{ width: 14, fontFamily: "mono", fontSize: p.text.code, lineHeight, color: p.muted }}>{sign(line.kind)}</Text>

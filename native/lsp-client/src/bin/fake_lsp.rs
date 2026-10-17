@@ -185,6 +185,7 @@ fn occurrences(text: &str, word: &str) -> Vec<(usize, usize, usize)> {
     found
 }
 
+/// A range on one line, as the protocol writes it.
 fn range_json(line: usize, from: usize, to: usize) -> Value {
     json!({ "start": { "line": line, "character": from }, "end": { "line": line, "character": to } })
 }

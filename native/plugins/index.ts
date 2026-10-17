@@ -17,6 +17,7 @@ import { settingsView } from "./settings";
 import { sidebar } from "./sidebar";
 import { statusbar } from "./statusbar";
 import { coreThemes, theme, themePicker } from "./theme";
+import { whichKey } from "./which-key";
 
 export const corePlugins: PluginCatalog = {
   frame,
@@ -28,6 +29,7 @@ export const corePlugins: PluginCatalog = {
   "theme-picker": themePicker,
   palette,
   "settings-view": settingsView,
+  "which-key": whichKey,
   rails,
   sidebar,
   statusbar,

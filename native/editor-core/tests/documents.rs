@@ -147,8 +147,8 @@ fn an_untitled_document_has_no_path() {
 
 #[test]
 fn vim_registers_are_shared_between_documents() {
-    use editor_core::vim::types::{Operator, Target};
     use editor_core::Motion;
+    use editor_core::vim::types::{Operator, Target};
     let mut documents = Documents::new();
     let first = documents.open_untitled("one two");
     let second = documents.open_untitled("other");

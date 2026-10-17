@@ -6,30 +6,50 @@
 import { invoke } from "@neoworks/svelte-gpui";
 import type { Context } from "@neoworks/extension-system";
 import { KeyPriority } from "../../kernel/keymap";
+import { defineSettings, setting } from "../../kernel/settings";
 import ConfirmClose from "./ConfirmClose.svelte";
 import EditorFileStatus from "./EditorFileStatus.svelte";
+import EditorModeStatus from "./EditorModeStatus.svelte";
 import EditorMain from "./EditorMain.svelte";
 import OpenFile from "./OpenFile.svelte";
 import { debugDecorations, DEBUG_SOURCE } from "./debugDecorations";
 import { gpuiDocumentHost } from "./documentHost";
 import { EditorService } from "./service";
 
+export const editorSettings = defineSettings({
+  keymap: setting.enum({
+    label: "Keymap",
+    description: "The keys the editor understands: VS Code's, or vim's modes, operators and motions.",
+    default: "standard",
+    options: [
+      { value: "standard", label: "Standard" },
+      { value: "vim", label: "Vim" },
+    ],
+    live: true,
+  }),
+});
+
 export const editor = {
   name: "editor",
-  inject: ["slots", "commands", "keymap", "menus", "layout"],
-  apply(ctx: Context) {
+  Config: editorSettings,
+  inject: ["slots", "commands", "keymap", "menus", "layout", "settings"],
+  apply(ctx: Context, config: { keymap: string }) {
     const service = new EditorService(ctx, gpuiDocumentHost(), ctx.layout);
+    service.setKeymap(config.keymap);
+    ctx.settings.onLive((change) => service.setKeymap(change.config.keymap as string));
     ctx.slots.register("main", {
       id: "editor",
       key: "editor",
       component: EditorMain,
       props: { title: "Editor", service },
     });
+    ctx.slots.register("statusbar", { id: "editor.mode", order: 5, component: EditorModeStatus, props: { service } });
     ctx.slots.register("statusbar", { id: "editor.file", order: 10, component: EditorFileStatus, props: { service } });
     ctx.slots.register("overlay", { id: "editor.confirmClose", order: 10, component: ConfirmClose, props: { service } });
     ctx.slots.register("overlay", { id: "editor.openFile", order: 11, component: OpenFile, props: { service } });
     registerFileCommands(ctx, service);
     registerEditCommands(ctx, service);
+    registerKeymapCommand(ctx, service);
     registerDebugCommands(ctx, service);
     registerKeys(ctx, service);
     ctx.menus.registerItems([
@@ -65,6 +85,24 @@ function registerEditCommands(ctx: Context, service: EditorService): void {
       run: () => service.sendCommand(type),
     });
   }
+}
+
+/** The command that switches between the standard keys and vim's, and keeps the choice in the profile. */
+function registerKeymapCommand(ctx: Context, service: EditorService): void {
+  ctx.commands.register({
+    id: "editor.toggleVim",
+    title: "Toggle vim keys in the editor",
+    group: "Editor",
+    keywords: "vim keymap modal",
+    run: async () => {
+      const rowId = ctx.settings.rowIdOf("editor");
+      if (rowId === undefined) {
+        return;
+      }
+      const next = service.keymap() === "vim" ? "standard" : "vim";
+      await ctx.settings.set(rowId, "keymap", next);
+    },
+  });
 }
 
 /**

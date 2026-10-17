@@ -120,6 +120,9 @@ fn is_escape(token: &str) -> bool {
     matches!(token, "escape" | "C-[" | "C-c")
 }
 
+/// The most steps one `u` or Ctrl-R goes through, so a mistyped count cannot hang the editor.
+const MAX_UNDO_COUNT: usize = 1000;
+
 /// The control keys vim uses in normal and visual mode. Others, such as Ctrl-S, are left to the standard keys.
 const CONTROL_KEYS: [&str; 8] = ["C-r", "C-n", "C-d", "C-u", "C-f", "C-b", "C-[", "C-c"];
 
@@ -164,6 +167,9 @@ impl VimLayer {
     /// A key in normal or visual mode.
     fn normal_key(&mut self, key: &KeyInput, context: &InputContext) -> Vec<Command> {
         let token = token_of(key);
+        if token == "C-a" && self.keys.is_empty() {
+            return vec![Command::Noop];
+        }
         let ours = !key.modifiers.control || CONTROL_KEYS.contains(&token.as_str());
         let alt_only = key.modifiers.alt && !key.modifiers.control;
         if (!ours || alt_only || key.modifiers.control && key.modifiers.alt) && self.keys.is_empty() {
@@ -329,8 +335,8 @@ impl VimLayer {
             Simple::Put { before, cursor_after } => {
                 vec![Command::Put { register, before, count, cursor_after, over: None, clipboard: None }]
             }
-            Simple::Undo => repeat_commands(count, vec![Command::Undo, Command::ClampCursors]),
-            Simple::Redo => repeat_commands(count, vec![Command::Redo, Command::ClampCursors]),
+            Simple::Undo => repeat_commands(count.min(MAX_UNDO_COUNT), vec![Command::Undo, Command::ClampCursors]),
+            Simple::Redo => repeat_commands(count.min(MAX_UNDO_COUNT), vec![Command::Redo, Command::ClampCursors]),
             Simple::Repeat => self.repeat_last_change(parsed.count, context),
             Simple::Insert(at) => self.insert_commands(at, count),
             Simple::ReplaceMode => {

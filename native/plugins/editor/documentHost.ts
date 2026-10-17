@@ -34,6 +34,16 @@ function listenToDocuments(handler: (event: DocumentEvent) => void): () => void 
       "document-selections",
       (event) => handler({ type: "selections", ...event }),
     ),
+    listen<{ mode: string; pending: string; commandLine: string | null }>("editor-mode", (event) =>
+      handler({ type: "mode", ...event }),
+    ),
+    listen<{ id: number; request: "close" | "open"; discard?: boolean; path?: string }>("document-request", (event) => {
+      if (event.request === "close") {
+        handler({ type: "close-request", id: event.id, discard: event.discard === true });
+        return;
+      }
+      handler({ type: "open-request", id: event.id, path: event.path ?? "" });
+    }),
   ];
   return () => {
     for (const stop of stops) {

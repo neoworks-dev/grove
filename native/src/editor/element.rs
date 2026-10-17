@@ -19,10 +19,11 @@ use svelte_gpui::gpui::{
 
 use super::Editor;
 use super::theme::{EditorTheme, HighlightStyle};
+use super::vim_paint::{self, VimPaint};
 use editor_core::decorations::{DecorationKind, GutterMark, Placed, PlacedBlock, Placement, Tone, UnderlineKind};
 use editor_core::display::{BlockMap, BlockSlot, DisplayLine, DisplayRow, InlayText};
 use editor_core::syntax::HighlightSpan;
-use editor_core::{EditorState, Position, Selection};
+use editor_core::{EditorState, InputStatus, Position};
 
 pub const FONT_FAMILY: &str = "DejaVu Sans Mono";
 pub const FONT_SIZE: Pixels = px(14.0);
@@ -31,7 +32,7 @@ pub const LINE_HEIGHT: Pixels = px(21.0);
 const GUTTER_PADDING: Pixels = px(16.0);
 const CURSOR_WIDTH: Pixels = px(2.0);
 /// How wide a selected line ending is drawn.
-const LINE_ENDING_WIDTH: Pixels = px(7.0);
+pub(super) const LINE_ENDING_WIDTH: Pixels = px(7.0);
 
 const UNDERLINE_HEIGHT: Pixels = px(1.5);
 /// How thick the line under a highlighted range is; a squiggle is three times as tall.
@@ -115,7 +116,7 @@ impl Layout {
     }
 
     /// The drawn line of a buffer row and the y of its top, or none while it is out of view.
-    fn line_of(&self, row: usize) -> Option<(&VisibleLine, Pixels)> {
+    pub(super) fn line_of(&self, row: usize) -> Option<(&VisibleLine, Pixels)> {
         let index = self.blocks.display_row_of(row).checked_sub(self.first_display_row)?;
         match self.rows.get(index)? {
             VisibleRow::Text(line) if line.row == row => Some((line, self.top_of_index(index))),
@@ -173,6 +174,8 @@ pub struct Frame {
     cursors: Vec<Bounds<Pixels>>,
     /// Under the text an input method is composing.
     underlines: Vec<Bounds<Pixels>>,
+    /// What vim mode adds: block cursors and the command line.
+    vim: VimPaint,
     /// The colours this frame is painted with.
     theme: EditorTheme,
 }
@@ -191,6 +194,7 @@ impl Frame {
             line_ends: Vec::new(),
             cursors: Vec::new(),
             underlines: Vec::new(),
+            vim: VimPaint::default(),
         }
     }
 }
@@ -243,7 +247,9 @@ impl Element for EditorElement {
         let editor = self.editor.read(cx);
         let scroll_top = editor.scroll_top;
         let theme = editor.theme.clone();
-        let Some((layout, frame)) = editor.read(|state| build_frame(state, scroll_top, bounds, window, &theme)) else {
+        let status = editor.input.status();
+        let built = editor.read(|state| build_frame(state, scroll_top, bounds, window, &theme, &status));
+        let Some((layout, frame)) = built else {
             return Frame::empty(theme);
         };
         self.editor.update(cx, |editor, _| editor.layout = Some(layout));
@@ -283,6 +289,7 @@ impl Element for EditorElement {
             for selection in &frame.selections {
                 window.paint_quad(fill(*selection, theme.selection));
             }
+            vim_paint::paint_behind_text(&frame.vim, theme, focused, window);
             for mark in &frame.gutter_marks {
                 paint_gutter_mark(mark, window, cx);
             }
@@ -314,6 +321,7 @@ impl Element for EditorElement {
             for cursor in &frame.cursors {
                 window.paint_quad(fill(*cursor, cursor_color));
             }
+            vim_paint::paint_command_line(&frame.vim, theme, window, cx);
         });
     }
 }
@@ -392,6 +400,7 @@ fn build_frame(
     bounds: Bounds<Pixels>,
     window: &mut Window,
     theme: &EditorTheme,
+    status: &InputStatus,
 ) -> (Layout, Frame) {
     let line_count = state.buffer().line_count();
     let digits = line_count.max(1).to_string().len();
@@ -466,9 +475,14 @@ fn build_frame(
     }
 
     let layout = Layout { bounds, text_left, first_display_row, first_row_top, blocks: blocks_map, rows: visible_rows };
-    let selections = visible_selections.iter().flat_map(|selection| selection_bounds(&layout, selection)).collect();
+    let selections = visible_selections
+        .iter()
+        .flat_map(|selection| vim_paint::selection_spans(&layout, selection, status.selection))
+        .collect();
     let underlines = state.marked_range().map(|(start, end)| underline_bounds(&layout, start, end)).unwrap_or_default();
-    let cursors = visible_selections.iter().filter_map(|selection| cursor_bounds(&layout, selection.head)).collect();
+    let character_width = vim_paint::character_width(window, theme.foreground);
+    let (cursors, block_cursors) = vim_paint::cursor_bounds_for(&layout, visible_selections, status, character_width);
+    let vim = VimPaint { block_cursors, command_line: vim_paint::command_line(&layout, status, theme, window) };
     let (range_backgrounds, decoration_underlines) = range_decorations(&layout, &decorations, theme);
     let gutter_marks = gutter_marks(&layout, &decorations, theme, window);
     let frame = Frame {
@@ -481,6 +495,7 @@ fn build_frame(
         line_ends,
         cursors,
         underlines,
+        vim,
         theme: theme.clone(),
     };
     (layout, frame)
@@ -582,15 +597,6 @@ pub(super) fn cursor_bounds(layout: &Layout, head: Position) -> Option<Bounds<Pi
     Some(Bounds::new(point(x, top), size(CURSOR_WIDTH, LINE_HEIGHT)))
 }
 
-/// The highlight behind a selection, one rectangle per visible row it covers. A row the
-/// selection runs past the end of gets a little extra width, standing for its line ending.
-fn selection_bounds(layout: &Layout, selection: &Selection) -> Vec<Bounds<Pixels>> {
-    if selection.is_empty() {
-        return Vec::new();
-    }
-    span_bounds(layout, selection.start(), selection.end(), LINE_ENDING_WIDTH)
-}
-
 /// A thin line along the bottom of each visible row a range covers.
 fn underline_bounds(layout: &Layout, start: Position, end: Position) -> Vec<Bounds<Pixels>> {
     let spans = span_bounds(layout, start, end, px(0.0));
@@ -604,7 +610,12 @@ fn underline_bounds(layout: &Layout, start: Position, end: Position) -> Vec<Boun
 /// One rectangle per visible row a range covers, as tall as a line. A row the range runs past
 /// the end of is widened by `line_ending_width`. A range starts after the inlays at its first
 /// column and takes in the ones inside it.
-fn span_bounds(layout: &Layout, start: Position, end: Position, line_ending_width: Pixels) -> Vec<Bounds<Pixels>> {
+pub(super) fn span_bounds(
+    layout: &Layout,
+    start: Position,
+    end: Position,
+    line_ending_width: Pixels,
+) -> Vec<Bounds<Pixels>> {
     let mut spans = Vec::new();
     for (index, visible) in layout.rows.iter().enumerate() {
         let VisibleRow::Text(line) = visible else {
@@ -628,7 +639,7 @@ fn span_bounds(layout: &Layout, start: Position, end: Position, line_ending_widt
 }
 
 /// Shapes one line of text in the editor's font, in a single colour.
-fn shape_plain(window: &mut Window, text: &str, color: Hsla) -> ShapedLine {
+pub(super) fn shape_plain(window: &mut Window, text: &str, color: Hsla) -> ShapedLine {
     let plain = HighlightStyle { color, bold: false, italic: false };
     shape_runs(window, text, &[text_run(text.len(), plain, None)])
 }

@@ -7,7 +7,7 @@
 import type { ViewItem } from "@suite/protocol/types";
 import { ViewState } from "@suite/sdk";
 import { createChangeSignal, type ChangeSignal } from "../../kernel/reactive";
-import type { Approvals, SessionStatus } from "./status";
+import { nextApprovals, type Approvals, type SessionStatus } from "./status";
 import { SessionFacts } from "./sessionFacts";
 import type { PlanList } from "./plan";
 import type { AgentRow } from "./subagents";
@@ -181,6 +181,11 @@ export class ChatSession {
   /** Cancels the turn that is running. Inputs queued behind it still run. */
   async cancel(): Promise<void> {
     await this.guard(this.client.cancel(this.sessionId));
+  }
+
+  /** Switches the session to the next approvals mode (ask, review, edits, auto). */
+  async cycleApprovals(): Promise<void> {
+    await this.send(`/approvals ${nextApprovals(this.approvals())}`);
   }
 
   /** Reports that a button was pressed in the item `ref`; `args` carries a note for the agent. */

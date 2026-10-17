@@ -193,6 +193,18 @@ describe("KeymapService", () => {
     expect(ran).toEqual(["save"]);
   });
 
+  test("a binding for a context beats one for everywhere on the same keys, whichever came first", async () => {
+    const { context, ran } = await bootedContext();
+    let inContext = false;
+    context.keymap.bind({ id: "everywhere", keys: "ctrl+o", command: "open" });
+    context.keymap.bind({ id: "here", keys: "ctrl+o", command: "find", when: () => inContext });
+    expect(context.keymap.dispatch(press("o", { ctrl: true }))).toBe(true);
+    inContext = true;
+    expect(context.keymap.dispatch(press("o", { ctrl: true }))).toBe(true);
+    await settle();
+    expect(ran).toEqual(["open", "find"]);
+  });
+
   test("a rebind layer changes keys and null unbinds", async () => {
     const { context } = await bootedContext();
     context.keymap.bind([

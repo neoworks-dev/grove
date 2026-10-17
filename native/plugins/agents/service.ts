@@ -150,6 +150,28 @@ export class AgentsService extends Service {
     return sessionId;
   }
 
+  /** The agent pane that has the focus, or null while another kind of pane has it. Reactive. */
+  focusedAgentPane(): string | null {
+    const leafId = this.panes.focusedLeafId;
+    if (this.panes.paneTypeOf(leafId) !== AGENT_PANE_TYPE) {
+      return null;
+    }
+    return leafId;
+  }
+
+  /** The conversation the focused agent pane shows, or undefined when there is none. Reactive. */
+  focusedChat(): ChatSession | undefined {
+    const leafId = this.focusedAgentPane();
+    if (leafId === null) {
+      return undefined;
+    }
+    const sessionId = this.sessionOfPane(leafId);
+    if (sessionId === null) {
+      return undefined;
+    }
+    return this.chat(sessionId);
+  }
+
   /** Whether a pane shows the session. Reactive. */
   isShown(sessionId: string): boolean {
     return this.panes

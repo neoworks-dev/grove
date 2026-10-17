@@ -136,6 +136,7 @@ function describeExit(state: SidecarState): string {
   return "the sidecar is not running";
 }
 
+/** An error as the sentence to show for it. */
 function describeError(error: unknown): string {
   if (error instanceof Error) {
     return error.message;

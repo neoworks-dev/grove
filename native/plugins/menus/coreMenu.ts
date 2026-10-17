@@ -26,7 +26,7 @@ function item(
 }
 
 export const CORE_MENU_ITEMS: MenuBarItem[] = [
-  item("file", "1-open", 1, "Open Folder…", "repo.open"),
+  item("file", "1-open", 1, "Open Folder…", "workspace.openFolder"),
   item("file", "5-close", 1, "Close Tab", "file.closeTab", "␣ b d"),
   item("file", "9-quit", 1, "Quit", "app.quit"),
 

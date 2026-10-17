@@ -50,12 +50,10 @@ fn initial_file() -> String {
     scratch.display().to_string()
 }
 
-/// The repository the sidecar probe opens: `GROVE_REPO` when it is set, else the working directory.
+/// The repository to open at start: `GROVE_REPO` when it is set, else empty, and the app then
+/// reopens the last repository it had.
 fn initial_repo() -> String {
-    if let Ok(path) = std::env::var("GROVE_REPO") {
-        return path;
-    }
-    std::env::current_dir().map(|path| path.display().to_string()).unwrap_or_default()
+    std::env::var("GROVE_REPO").unwrap_or_default()
 }
 
 /// Where the scratch copy lives in the system temp directory.

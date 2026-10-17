@@ -148,6 +148,11 @@ pub enum Command {
     },
     /// Selects the text object around each cursor (`viw`).
     SelectObject { object: TextObject, around: bool, count: usize },
+    /// Ctrl-N: selects the word under the newest cursor, or with `add` adds the next place the
+    /// newest selection's text occurs. A selection's head is its last character.
+    SelectNextMatch { add: bool },
+    /// Collapses every selection to its head, keeping every cursor (leaving visual mode).
+    CollapseToHeads,
     /// Swaps each selection's anchor and head, so the other end moves (`o` in visual mode).
     SwapSelectionEnds,
     /// Moves any cursor that is past the last character of its line back onto it.
@@ -192,6 +197,8 @@ impl Command {
                 | Command::Substitute { .. }
                 | Command::VimSearch { .. }
                 | Command::SelectObject { .. }
+                | Command::SelectNextMatch { .. }
+                | Command::CollapseToHeads
                 | Command::SwapSelectionEnds
                 | Command::ClampCursors
                 | Command::GroupUndo { .. }

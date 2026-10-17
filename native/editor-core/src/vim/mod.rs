@@ -5,10 +5,18 @@
 
 mod changes;
 mod commands;
+mod ex;
+mod layer;
 pub mod motion;
 pub mod objects;
 mod operate;
+mod parse;
 mod plan;
 pub mod registers;
 pub mod search;
 pub mod types;
+
+pub use layer::VimLayer;
+
+#[cfg(test)]
+mod tests;

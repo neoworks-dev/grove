@@ -335,6 +335,10 @@ pub fn reach(
             }
             exclusive(Position { row: head.row, column: head.column.saturating_sub(count) })
         }
+        Motion::AfterCursor => {
+            let length = buffer.line_length(head.row);
+            exclusive(Position { row: head.row, column: (head.column + 1).min(length) })
+        }
         Motion::ColumnRight => {
             let length = buffer.line_length(head.row);
             if head.column >= length {

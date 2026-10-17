@@ -45,6 +45,11 @@ impl EditorState {
                 });
                 Outcome { reveal_newest: true, ..Outcome::default() }
             }
+            Command::SelectNextMatch { add } => self.select_next_match(*add),
+            Command::CollapseToHeads => {
+                self.collapse_to_heads();
+                Outcome::default()
+            }
             Command::ClampCursors => {
                 self.clamp_cursors();
                 Outcome::default()
@@ -78,6 +83,33 @@ impl EditorState {
             let anchor = if extend { selection.anchor } else { head };
             Selection { anchor, head, goal_column: reached.goal_column }
         });
+    }
+
+    /// Collapses every selection to a cursor at its head, on a character of its line.
+    fn collapse_to_heads(&mut self) {
+        let buffer = &self.buffer;
+        self.selections.transform(|selection| Selection::cursor(clamp_to_line(buffer, selection.head)));
+    }
+
+    /// Selects the word under the newest cursor, or adds the next place the newest selection's
+    /// text occurs. A selection ends on its last character, as in visual mode.
+    fn select_next_match(&mut self, add: bool) -> Outcome {
+        let newest = self.selections.newest();
+        let last_character = |end: Position| Position { row: end.row, column: end.column.saturating_sub(1) };
+        if !add {
+            let Some(word) = crate::movement::word_at(&self.buffer, newest.head) else {
+                return Outcome::default();
+            };
+            self.selections.replace_newest(Selection::spanning(word.start(), last_character(word.end())));
+            return Outcome { reveal_newest: true, ..Outcome::default() };
+        }
+        let end = Position { row: newest.end().row, column: newest.end().column + 1 };
+        let needle = self.buffer.text_between(newest.start(), end);
+        let Some(found) = crate::movement::find_next(&self.buffer, &needle, end) else {
+            return Outcome::default();
+        };
+        self.selections.add(Selection::spanning(found.start(), last_character(found.end())));
+        Outcome { reveal_newest: true, ..Outcome::default() }
     }
 
     /// Moves every head back onto a character of its line.

@@ -10,12 +10,12 @@ use svelte_gpui::gpui::{
     StrikethroughStyle, StyledText, UnderlineStyle, Window, div, point, prelude::*, px, size,
 };
 
+use super::Editor;
 use super::completion::{Session, VISIBLE_ROWS};
 use super::element::{FONT_FAMILY, LINE_HEIGHT, Layout, cursor_bounds, measure_text_width};
 use super::hover::Hover;
 use super::language::severity_of;
 use super::theme::{EditorTheme, mix};
-use super::Editor;
 use lsp_client::protocol::Severity;
 use svelte_gpui::gpui::HighlightStyle as TextHighlight;
 
@@ -49,7 +49,10 @@ pub fn build(
     cx: &mut App,
 ) -> Vec<Popover> {
     let mut popovers = Vec::new();
-    if let Some(session) = editor.completion.as_ref().filter(|session| session.is_visible()) {
+    let shown_document = editor.document;
+    let session =
+        editor.completion.as_ref().filter(|session| session.is_visible() && Some(session.document) == shown_document);
+    if let Some(session) = session {
         popovers.extend(completion_popovers(entity, editor, session, layout, theme, bounds, window, cx));
     }
     if let (Some(hover), true) = (&editor.hover, editor.completion.is_none()) {
@@ -125,12 +128,22 @@ fn panel_width(session: &Session, shown: &[usize], window: &mut Window) -> Pixel
 
 /// One row of the panel: the kind's badge, the label with what matched what was typed
 /// emphasised, and the detail after it.
-fn panel_row(entity: &Entity<Editor>, session: &Session, position: usize, theme: &EditorTheme, window: &mut Window) -> AnyElement {
+fn panel_row(
+    entity: &Entity<Editor>,
+    session: &Session,
+    position: usize,
+    theme: &EditorTheme,
+    window: &mut Window,
+) -> AnyElement {
     let found = &session.matches[position];
     let item = &session.items[found.index];
     let selected = position == session.selected;
-    let label = StyledText::new(item.label.clone()).with_highlights(label_highlights(item, &found.label_positions, theme));
-    let click = move |editor: &mut Editor, _: &svelte_gpui::gpui::MouseDownEvent, _: &mut Window, cx: &mut svelte_gpui::gpui::Context<Editor>| {
+    let label =
+        StyledText::new(item.label.clone()).with_highlights(label_highlights(item, &found.label_positions, theme));
+    let click = move |editor: &mut Editor,
+                      _: &svelte_gpui::gpui::MouseDownEvent,
+                      _: &mut Window,
+                      cx: &mut svelte_gpui::gpui::Context<Editor>| {
         editor.accept_completion_row(position, cx);
         cx.stop_propagation();
     };
@@ -197,7 +210,11 @@ fn family_color(family: KindFamily, theme: &EditorTheme) -> Hsla {
 
 /// How the label's text is emphasised: the matched characters in the accent colour and bold, and
 /// a deprecated item struck through.
-fn label_highlights(item: &Item, positions: &[usize], theme: &EditorTheme) -> Vec<(std::ops::Range<usize>, TextHighlight)> {
+fn label_highlights(
+    item: &Item,
+    positions: &[usize],
+    theme: &EditorTheme,
+) -> Vec<(std::ops::Range<usize>, TextHighlight)> {
     let mut highlights = Vec::new();
     let offsets: Vec<usize> = item.label.char_indices().map(|(offset, _)| offset).collect();
     for position in positions {
@@ -267,7 +284,8 @@ fn documentation_popover(
         .into_any_element();
     let measured = element.layout_as_root(size(AvailableSpace::MaxContent, AvailableSpace::MaxContent), window, cx);
     let fits_right = panel_origin.x + panel_width + px(4.0) + measured.width <= bounds.right();
-    let left = if fits_right { panel_origin.x + panel_width + px(4.0) } else { panel_origin.x - measured.width - px(4.0) };
+    let left =
+        if fits_right { panel_origin.x + panel_width + px(4.0) } else { panel_origin.x - measured.width - px(4.0) };
     let top = panel_origin.y.min(bounds.bottom() - measured.height).max(bounds.top());
     Some(Popover { element, origin: point(left.max(bounds.left()), top) })
 }

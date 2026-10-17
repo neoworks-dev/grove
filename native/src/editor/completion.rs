@@ -27,7 +27,6 @@ pub struct Session {
     pub document: DocumentId,
     /// Pinned where the text the items replace starts, so it follows edits made before it.
     pub start: AnchorId,
-    pub trigger: Trigger,
     pub items: Vec<Item>,
     /// Whether the server wants asking again as the word grows.
     pub is_incomplete: bool,
@@ -48,11 +47,10 @@ pub struct Session {
 
 impl Session {
     /// A session whose first answer is awaited.
-    pub fn new(document: DocumentId, start: AnchorId, trigger: Trigger, request: u64, pending: Pending) -> Session {
+    pub fn new(document: DocumentId, start: AnchorId, request: u64, pending: Pending) -> Session {
         Session {
             document,
             start,
-            trigger,
             items: Vec::new(),
             is_incomplete: false,
             matches: Vec::new(),
@@ -241,10 +239,7 @@ mod tests {
     }
 
     fn range(line: usize, start: usize, end: usize) -> Range {
-        Range {
-            start: LspPosition { line, character: start },
-            end: LspPosition { line, character: end },
-        }
+        Range { start: LspPosition { line, character: start }, end: LspPosition { line, character: end } }
     }
 
     #[test]
@@ -330,7 +325,6 @@ mod tests {
         let mut session = Session {
             document: 1,
             start: EditorState::new(Buffer::from_text("")).create_anchor(at(0, 0), Bias::Left),
-            trigger: Trigger::Typing,
             items,
             is_incomplete: false,
             matches: Vec::new(),

@@ -185,6 +185,8 @@ pub struct Frame {
     underlines: Vec<Bounds<Pixels>>,
     /// The colours this frame is painted with.
     theme: EditorTheme,
+    /// How long the frame took to prepare, for `GROVE_LATENCY`.
+    prepaint_took: std::time::Duration,
 }
 
 impl Frame {
@@ -201,6 +203,7 @@ impl Frame {
             line_ends: Vec::new(),
             cursors: Vec::new(),
             underlines: Vec::new(),
+            prepaint_took: std::time::Duration::ZERO,
         }
     }
 }
@@ -250,10 +253,12 @@ impl Element for EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Frame {
+        let prepaint_started = std::time::Instant::now();
         let editor = self.editor.read(cx);
         let scroll_top = editor.scroll_top;
         let theme = editor.theme.clone();
-        let Some((layout, frame)) = editor.read(|state| build_frame(state, scroll_top, bounds, window, &theme)) else {
+        let Some((layout, mut frame)) = editor.read(|state| build_frame(state, scroll_top, bounds, window, &theme))
+        else {
             return Frame::empty(theme);
         };
         let entity = self.editor.clone();
@@ -265,6 +270,7 @@ impl Element for EditorElement {
         for popover in popovers {
             window.defer_draw(popover.element, popover.origin, 1);
         }
+        frame.prepaint_took = prepaint_started.elapsed();
         frame
     }
 
@@ -280,6 +286,7 @@ impl Element for EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let paint_started = std::time::Instant::now();
         let focus = self.editor.read(cx).focus.clone();
         let focused = focus.is_focused(window);
         window.handle_input(&focus, ElementInputHandler::new(bounds, self.editor.clone()), cx);
@@ -333,6 +340,29 @@ impl Element for EditorElement {
                 window.paint_quad(fill(*cursor, cursor_color));
             }
         });
+        self.report_latency(frame, paint_started, cx);
+    }
+}
+
+impl EditorElement {
+    /// Prints how long the keystroke that caused this frame took, when `GROVE_LATENCY` is set:
+    /// from reaching the view to the end of painting, and the parts of that.
+    fn report_latency(&self, frame: &Frame, paint_started: std::time::Instant, cx: &mut App) {
+        if !self.editor.read(cx).measure_latency {
+            return;
+        }
+        let Some(probe) = self.editor.update(cx, |editor, _| editor.latency_probe.take()) else {
+            return;
+        };
+        let waited = paint_started.duration_since(probe.arrived_at).saturating_sub(frame.prepaint_took);
+        eprintln!(
+            "[latency] handled {:.2} ms, waited for the frame {:.2} ms, prepared {:.2} ms, painted {:.2} ms, key to end of paint {:.2} ms",
+            probe.handled.as_secs_f64() * 1000.0,
+            waited.as_secs_f64() * 1000.0,
+            frame.prepaint_took.as_secs_f64() * 1000.0,
+            paint_started.elapsed().as_secs_f64() * 1000.0,
+            probe.arrived_at.elapsed().as_secs_f64() * 1000.0,
+        );
     }
 }
 
@@ -500,6 +530,7 @@ fn build_frame(
         cursors,
         underlines,
         theme: theme.clone(),
+        prepaint_took: std::time::Duration::ZERO,
     };
     (layout, frame)
 }

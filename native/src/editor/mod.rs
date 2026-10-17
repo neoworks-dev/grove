@@ -23,17 +23,18 @@ mod theme;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::Range;
+use std::time::{Duration, Instant};
 
 use editor_core::{
     Command, DocumentId, EditorState, InputContext, InputLayer, KeyInput, Modifiers, Outcome, Position, StandardKeymap,
 };
+use futures::StreamExt;
 use serde_json::{Value, json};
 use svelte_gpui::gpui::{
     App, Bounds, ClipboardItem, Context, EntityId, EntityInputHandler, FocusHandle, IntoElement, KeyDownEvent,
     Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, ScrollWheelEvent,
     Subscription, UTF16Selection, WeakEntity, Window, div, prelude::*, px,
 };
-use futures::StreamExt;
 use svelte_gpui::{AppElement, CommandError, NativeHost};
 
 pub use documents::{DocumentObserver, SharedDocuments};
@@ -92,6 +93,16 @@ pub struct Editor {
     /// The go-to-definition request that is out, and its number.
     definition_pending: Option<crate::lsp::Pending>,
     definition_request: u64,
+    /// Whether to print how long a keystroke takes to reach the screen, which `GROVE_LATENCY` turns on.
+    measure_latency: bool,
+    /// The keystroke whose paint has not been timed yet.
+    latency_probe: Option<LatencyProbe>,
+}
+
+/// When a keystroke that changed the text arrived, and how long the view took to handle it.
+struct LatencyProbe {
+    pub(super) arrived_at: Instant,
+    pub(super) handled: Duration,
 }
 
 impl Editor {
@@ -127,11 +138,15 @@ impl Editor {
             request_counter: 0,
             definition_pending: None,
             definition_request: 0,
+            measure_latency: std::env::var_os("GROVE_LATENCY").is_some(),
+            latency_probe: None,
         }
     }
 
     /// Shows another document, or none, and remembers which for the other views' sake.
     fn show(&mut self, document: Option<DocumentId>, cx: &mut Context<Self>) {
+        self.close_completion();
+        self.hover = None;
         self.document = document;
         self.scroll_top = self.remembered_scroll_top(document);
         self.layout = None;
@@ -184,6 +199,7 @@ impl Editor {
         let Some(id) = self.document else {
             return Outcome::default();
         };
+        let arrived_at = Instant::now();
         let Some(command) = self.resolve_clipboard(command, cx) else {
             return Outcome::default();
         };
@@ -199,6 +215,9 @@ impl Editor {
         }
         self.redraw_other_views(id, cx);
         self.track_language_features(&command, &outcome, cx);
+        if self.measure_latency && outcome.text_changed {
+            self.latency_probe = Some(LatencyProbe { arrived_at, handled: arrived_at.elapsed() });
+        }
         outcome
     }
 

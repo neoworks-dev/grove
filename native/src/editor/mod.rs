@@ -14,16 +14,22 @@
 mod completion;
 mod documents;
 mod element;
+mod feature_popups;
+mod features;
 mod glide;
+mod hints;
 mod hover;
 mod indent_paint;
 mod jump_paint;
 mod jump_view;
 mod language;
+mod menu;
 mod occurrence_view;
 mod options;
 mod popup;
+mod rename;
 mod signals;
+mod signature;
 mod smooth_scroll;
 mod theme;
 mod vim_paint;
@@ -118,6 +124,10 @@ pub struct Editor {
     /// The go-to-definition request that is out, and its number.
     definition_pending: Option<crate::lsp::Pending>,
     definition_request: u64,
+    /// What the places a go-to request found are called when there are several.
+    targets_title: &'static str,
+    /// Signature help, the lists of references and actions, the rename box and the hints.
+    features: features::Features,
     /// Whether to print how long a keystroke takes to reach the screen, which `GROVE_LATENCY` turns on.
     measure_latency: bool,
     /// The keystroke whose paint has not been timed yet.
@@ -174,6 +184,8 @@ impl Editor {
             request_counter: 0,
             definition_pending: None,
             definition_request: 0,
+            targets_title: "Definitions",
+            features: features::Features::default(),
             measure_latency: std::env::var_os("GROVE_LATENCY").is_some(),
             latency_probe: None,
             read_only: false,
@@ -185,6 +197,7 @@ impl Editor {
     /// Shows another document, or none, and remembers which for the other views' sake.
     fn show(&mut self, document: Option<DocumentId>, cx: &mut Context<Self>) {
         self.close_completion();
+        self.reset_features();
         self.hover = None;
         self.document = document;
         self.scroll_top = self.remembered_scroll_top(document);
@@ -355,7 +368,10 @@ impl Editor {
             return self.jump_key(keystroke, cx);
         }
         self.hide_hover(cx);
-        if self.completion_key(keystroke, cx) {
+        if self.rename_key(keystroke, cx) || self.menu_key(keystroke, cx) {
+            return true;
+        }
+        if self.completion_key(keystroke, cx) || self.signature_key(keystroke, cx) {
             return true;
         }
         let context = InputContext { page_rows: self.rows_in_view(), top_row: self.top_row() };
@@ -435,6 +451,9 @@ impl Editor {
         };
         self.hide_hover(cx);
         self.close_completion();
+        self.close_signature();
+        self.close_menu();
+        self.cancel_rename(cx);
         self.dragging = true;
         if event.modifiers.control && !event.modifiers.shift && !event.modifiers.alt {
             self.apply(&Command::PlaceCursor { at }, cx);
@@ -539,6 +558,11 @@ impl Editor {
             Signal::Resolved { request, item } => self.item_resolved(request, item, cx),
             Signal::Hover { request, markdown } => self.hover_arrived(request, markdown, cx),
             Signal::Targets { request, targets } => self.targets_arrived(request, targets, cx),
+            Signal::SettingsChanged | Signal::HintsStale => {
+                self.hints_are_stale(cx);
+                self.occurrences_may_have_changed(cx);
+            }
+            Signal::Feature(signal) => self.feature_signal(signal, cx),
         }
     }
 }
@@ -648,6 +672,34 @@ impl AppElement for Editor {
                 Ok(Value::Null)
             }
             "goto" => self.goto_from_app(args, cx),
+            "references" => {
+                self.find_references(cx);
+                Ok(Value::Null)
+            }
+            "typeDefinition" => {
+                self.go_to_cursor_with("textDocument/typeDefinition", "Type definitions", cx);
+                Ok(Value::Null)
+            }
+            "implementation" => {
+                self.go_to_cursor_with("textDocument/implementation", "Implementations", cx);
+                Ok(Value::Null)
+            }
+            "rename" => {
+                self.start_rename(cx);
+                Ok(Value::Null)
+            }
+            "codeActions" => {
+                self.show_code_actions(cx);
+                Ok(Value::Null)
+            }
+            "signature" => {
+                self.request_signature(None, cx);
+                Ok(Value::Null)
+            }
+            "format" => {
+                self.format_now();
+                Ok(Value::Null)
+            }
             _ => Err(CommandError::with_code("UnknownMethod", format!("the editor has no method {method:?}"))),
         }
     }

@@ -55,6 +55,9 @@ pub trait DocumentObserver: Send + Sync {
     fn opened(&self, id: DocumentId, state: &EditorState);
     /// The text of a document changed.
     fn changed(&self, id: DocumentId, state: &EditorState, changes: Vec<ContentChange>);
+    /// A document is about to be written to its file. Called with the documents unlocked, and
+    /// may take a moment, such as for a formatter to finish and change the text.
+    fn before_save(&self, _id: DocumentId) {}
     /// A document was written to its file.
     fn saved(&self, id: DocumentId, state: &EditorState);
     /// A document was closed.
@@ -168,6 +171,11 @@ impl SharedDocuments {
     /// save, a change of the unsaved state, and where the newest cursor is. None when the
     /// document is not open.
     pub fn apply(&self, id: DocumentId, command: &Command) -> Option<Outcome> {
+        if command == &Command::Save {
+            if let Some(observer) = self.observer.get() {
+                observer.before_save(id);
+            }
+        }
         let mut documents = self.lock();
         let applied = documents.apply(id, command)?;
         self.tell_observer(&mut documents, id, &applied.outcome);

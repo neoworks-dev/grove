@@ -15,7 +15,14 @@ import OpenFile from "./OpenFile.svelte";
 import { debugDecorations, DEBUG_SOURCE } from "./debugDecorations";
 import { gpuiDocumentHost } from "./documentHost";
 import EditorIndentStatus from "./EditorIndentStatus.svelte";
-import { EditorService, INDENT_CHOICES, indentFromSetting, indentLabel, type EditorOptions } from "./service";
+import {
+  EditorService,
+  INDENT_CHOICES,
+  indentFromSetting,
+  indentLabel,
+  type EditorOptions,
+  type ViewAction,
+} from "./service";
 
 export const editorSettings = defineSettings({
   keymap: setting.enum({
@@ -159,6 +166,18 @@ function registerLanguageCommands(ctx: Context, service: EditorService): void {
     when: hasView,
     run: () => void service.actOnFocusedView("complete"),
   });
+  const languageCommands: [string, string, string, ViewAction][] = [
+    ["editor.findReferences", "Find all references", "Go", "references"],
+    ["editor.goToTypeDefinition", "Go to type definition", "Go", "typeDefinition"],
+    ["editor.goToImplementation", "Go to implementations", "Go", "implementation"],
+    ["editor.rename", "Rename symbol", "Editor", "rename"],
+    ["editor.codeAction", "Show code actions (quick fix)", "Editor", "codeActions"],
+    ["editor.triggerParameterHints", "Show signature help", "Editor", "signature"],
+    ["editor.formatDocument", "Format document", "Editor", "format"],
+  ];
+  for (const [id, title, group, action] of languageCommands) {
+    ctx.commands.register({ id, title, group, when: hasView, run: () => void service.actOnFocusedView(action) });
+  }
 }
 
 /** The commands the Edit menu names that the focused pane's editor can carry out by itself. */
@@ -271,6 +290,12 @@ function registerKeys(ctx: Context, service: EditorService): void {
     { id: "file.open", keys: "ctrl+o", command: "file.open", description: "Open file" },
     { id: "editor.showHover", keys: "ctrl+k ctrl+i", command: "editor.showHover", description: "Show hover" },
     { id: "editor.goToDefinition", keys: "f12", command: "editor.goToDefinition", description: "Go to definition" },
+    { id: "editor.findReferences", keys: "shift+f12", command: "editor.findReferences", description: "Find all references" },
+    { id: "editor.goToImplementation", keys: "ctrl+f12", command: "editor.goToImplementation", description: "Go to implementations" },
+    { id: "editor.rename", keys: "f2", command: "editor.rename", description: "Rename symbol" },
+    { id: "editor.codeAction", keys: "ctrl+.", command: "editor.codeAction", description: "Show code actions" },
+    { id: "editor.triggerParameterHints", keys: "ctrl+shift+space", command: "editor.triggerParameterHints", description: "Show signature help" },
+    { id: "editor.formatDocument", keys: "alt+shift+f", command: "editor.formatDocument", description: "Format document" },
     { id: "file.closeTab", keys: "ctrl+w", command: "file.closeTab", description: "Close tab" },
     { id: "go.nextTab", keys: "ctrl+tab", command: "go.nextTab", description: "Next tab" },
     { id: "go.previousTab", keys: "ctrl+shift+tab", command: "go.previousTab", description: "Previous tab" },

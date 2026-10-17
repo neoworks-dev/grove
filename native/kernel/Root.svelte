@@ -8,6 +8,14 @@
   import type { Kernel } from "./kernel";
 
   let { boot }: { boot: Promise<Kernel> } = $props();
+
+  /** What went wrong, as text for the window. */
+  function describeError(error: unknown): string {
+    if (error instanceof Error) {
+      return error.message;
+    }
+    return String(error);
+  }
 </script>
 
 {#await boot}
@@ -17,6 +25,6 @@
 {:catch error}
   <View style={{ flex: 1, background: "#18181b", padding: 24, gap: 8 }}>
     <Text style={{ color: "#fecaca", fontSize: 16, fontWeight: "bold" }}>Grove could not start</Text>
-    <Text style={{ color: "#fca5a5", fontSize: 13 }}>{error instanceof Error ? error.message : String(error)}</Text>
+    <Text style={{ color: "#fca5a5", fontSize: 13 }}>{describeError(error)}</Text>
   </View>
 {/await}

@@ -203,6 +203,19 @@ describe("moving between changes", () => {
   });
 });
 
+describe("vim's change keys", () => {
+  test("]c and [c asked of an editor go to the next and previous change", async () => {
+    const setup = await setUp();
+    setup.host.found = [{ oldStart: 4, oldLen: 1, newStart: 4, newLen: 1 }];
+    const leafId = (await setup.diff.openFile(FILE)) as string;
+    const view = recordingView();
+    setup.diff.registerEditors(leafId, { right: view });
+    setup.documents.emit({ type: "change-request", id: setup.diff.view(leafId)?.rightId as number, forward: true });
+    await settle(5);
+    expect(view.commands[0]).toEqual({ type: "place_cursor", at: { row: 4, column: 0 } });
+  });
+});
+
 describe("hunk actions", () => {
   test("staging puts the hunk under the cursor in the index and reads the diff again", async () => {
     const setup = await setUp();

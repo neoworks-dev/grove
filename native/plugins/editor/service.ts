@@ -52,7 +52,8 @@ export type DocumentEvent =
   | { type: "selections"; id: number; row: number; column: number; count: number; selected: boolean }
   | { type: "mode"; mode: string; pending: string; commandLine: string | null }
   | { type: "close-request"; id: number; discard: boolean }
-  | { type: "open-request"; id: number; path: string };
+  | { type: "open-request"; id: number; path: string }
+  | { type: "change-request"; id: number; forward: boolean };
 
 /** The documents the Rust host keeps. A test supplies a fake. */
 export interface DocumentHost {
@@ -750,6 +751,9 @@ export class EditorService extends Service {
     }
     if (event.type === "open-request") {
       this.open(event.path);
+      return;
+    }
+    if (event.type === "change-request") {
       return;
     }
     this.cursorsById.set(event.id, { row: event.row, column: event.column, count: event.count, selected: event.selected });

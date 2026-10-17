@@ -8,6 +8,7 @@ import type { Kernel } from "./kernel";
 import { KeymapService } from "./keymap";
 import { mountHostLogExporter } from "./logging";
 import { LoaderService, ProfileService, type PluginCatalog, type ProfileFiles, type ProfileRow } from "./profile";
+import { SettingsService } from "./settings";
 import { SlotsService } from "./slots";
 
 export interface BootOptions {
@@ -30,6 +31,7 @@ export async function bootKernel(options: BootOptions): Promise<Kernel> {
   await context.plugin(KeymapService);
   await context.plugin(SlotsService);
   await context.plugin(LoaderService, options.catalog);
+  await context.plugin(SettingsService, { catalog: options.catalog, files: options.files });
   await context.plugin(ProfileService, { coreRows: options.coreRows, files: options.files });
 
   // No folder is open yet, so this is the core and user layers. Opening a folder adds the
@@ -42,6 +44,7 @@ export async function bootKernel(options: BootOptions): Promise<Kernel> {
     keymap: context.keymap,
     loader: context.loader,
     profile: context.profile,
+    settings: context.settings,
     loaded,
     reportError(source, error) {
       context.logger(source).error(error);

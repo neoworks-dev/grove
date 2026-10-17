@@ -35,6 +35,16 @@ describe("layerProfiles", () => {
     expect(rows[1].config).toEqual({ size: 2 });
   });
 
+  test("a row inherits what it leaves out and merges its config over the row it replaces", () => {
+    const { rows } = layerProfiles([
+      { name: "core", rows: [{ id: "a", plugin: "one", config: { size: 1, color: "red" }, disabled: true }] },
+      { name: "user", rows: [{ id: "a", config: { size: 2 } }] },
+    ]);
+    expect(rows).toEqual([
+      { id: "a", plugin: "one", config: { size: 2, color: "red" }, disabled: true, layer: "user" },
+    ]);
+  });
+
   test("a disabling row without a plugin keeps the plugin of the row it replaces", () => {
     const { rows, problems } = layerProfiles([
       { name: "core", rows: [{ id: "a", plugin: "one" }] },
@@ -58,6 +68,7 @@ describe("loadProfile", () => {
       async configDirectory() {
         return "/config";
       },
+      async writeText() {},
     };
   }
 
@@ -70,7 +81,7 @@ describe("loadProfile", () => {
     const files = memoryFiles(
       {
         "/config/grove/profile.json": '[{"id":"clock","disabled":true}]',
-        "/work/.grove/profile.json": '[{"id":"clock","plugin":"clock","config":{"format":"24h"}}]',
+        "/work/.grove/profile.json": '[{"id":"clock","plugin":"clock","disabled":false,"config":{"format":"24h"}}]',
       }
     );
     const { rows, problems } = await loadProfile(coreRows, files, "/work");

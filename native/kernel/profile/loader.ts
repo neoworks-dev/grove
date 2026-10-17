@@ -70,6 +70,23 @@ export class LoaderService extends Service {
     await Promise.all(loading);
   }
 
+  /**
+   * Records that a mounted row's config changed in a way its plugin follows on its own, so the
+   * next `apply` leaves the plugin mounted. Does nothing for a row that is not mounted.
+   */
+  retarget(row: ResolvedRow): void {
+    const mounted = this.mounted.get(row.id);
+    if (!mounted) {
+      return;
+    }
+    mounted.row = row;
+  }
+
+  /** Whether the row's plugin is mounted now, so a change to it can be followed live. */
+  isMounted(rowId: string): boolean {
+    return this.mounted.has(rowId);
+  }
+
   /** How each row of the last `apply` went, in profile order. Reactive. */
   reports(): RowReport[] {
     this.changes.track();

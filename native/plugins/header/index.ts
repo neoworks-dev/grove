@@ -3,31 +3,28 @@
 // logo, the app menu, the command center and the window controls, and other plugins add more.
 
 import type { Context } from "@neoworks/extension-system";
+import { defineSettings, setting } from "../../kernel/settings";
 import CommandCenterEntry from "./CommandCenterEntry.svelte";
 import HeaderHost from "./HeaderHost.svelte";
 import Logo from "./Logo.svelte";
 import MenuBarEntry from "./MenuBarEntry.svelte";
 import WindowControlsEntry from "./WindowControlsEntry.svelte";
 
-export interface HeaderConfig {
-  /** Text in the command center pill. */
-  title?: string;
-  /** The build label before the window buttons. */
-  versionLabel?: string;
-}
+export const headerSettings = defineSettings({
+  title: setting.string({ label: "Title", description: "The text in the command center pill.", default: "grove" }),
+  versionLabel: setting.string({
+    label: "Build label",
+    description: "The build label before the window buttons.",
+    default: "v0.1.0 · native",
+  }),
+});
 
 export const header = {
   name: "header",
+  Config: headerSettings,
   inject: ["slots", "menus"],
-  apply(ctx: Context, config: HeaderConfig | undefined) {
-    let title = "grove";
-    let versionLabel = "v0.1.0 · native";
-    if (config && config.title !== undefined) {
-      title = config.title;
-    }
-    if (config && config.versionLabel !== undefined) {
-      versionLabel = config.versionLabel;
-    }
+  apply(ctx: Context, config: { title: string; versionLabel: string }) {
+    const { title, versionLabel } = config;
     ctx.slots.declare("header.left", "list");
     ctx.slots.declare("header.center", "list");
     ctx.slots.declare("header.right", "list");

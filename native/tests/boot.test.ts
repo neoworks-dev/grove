@@ -21,6 +21,7 @@ function files(userProfile: string | null, projectProfile: string | null = null)
     async configDirectory() {
       return "/config";
     },
+    async writeText() {},
   };
 }
 

@@ -1,15 +1,17 @@
-<!-- An on and off switch: a track with a knob at one end. -->
+<!-- An on and off switch: a track with a knob at one end. `label` is for the test harness (see `HiddenLabel`). -->
 <script lang="ts">
   import { Button, View } from "@neoworks/svelte-gpui/ui";
   import { colors } from "../theme/tokens";
+  import HiddenLabel from "./HiddenLabel.svelte";
 
   interface Props {
     on: boolean;
+    label?: string;
     disabled?: boolean;
     onchange: (on: boolean) => void;
   }
 
-  let { on, disabled = false, onchange }: Props = $props();
+  let { on, label, disabled = false, onchange }: Props = $props();
 </script>
 
 <Button
@@ -28,4 +30,7 @@
   onpress={() => onchange(!on)}
 >
   <View style={{ size: 12, radius: 6, background: "#ffffff" }} />
+  {#if label}
+    <HiddenLabel text={label} />
+  {/if}
 </Button>

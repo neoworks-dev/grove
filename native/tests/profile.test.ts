@@ -71,6 +71,7 @@ describe("loadProfile", () => {
       async openedFolder() {
         return folder;
       },
+      async writeText() {},
     };
   }
 

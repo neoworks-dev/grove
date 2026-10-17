@@ -63,7 +63,7 @@
           {#if entry.schema}
             <View style={{ size: 5, radius: 3, shrink: 0, background: colors.accent }} />
           {/if}
-          <ToggleSwitch on={entry.enabled} disabled={entry.essential} onchange={(on) => onenable(entry.rowId, on)} />
+          <ToggleSwitch on={entry.enabled} label={`Toggle ${entry.rowId}`} disabled={entry.essential} onchange={(on) => onenable(entry.rowId, on)} />
         </View>
       {/each}
     </View>

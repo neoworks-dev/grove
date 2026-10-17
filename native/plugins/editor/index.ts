@@ -168,6 +168,9 @@ function registerEditCommands(ctx: Context, service: EditorService): void {
   const commands: [string, string, string][] = [
     ["edit.undo", "Undo", "undo"],
     ["edit.redo", "Redo", "redo"],
+    ["edit.cut", "Cut", "cut"],
+    ["edit.copy", "Copy", "copy"],
+    ["edit.paste", "Paste", "paste_clipboard"],
     ["edit.selectAll", "Select all", "select_all"],
   ];
   for (const [id, title, type] of commands) {

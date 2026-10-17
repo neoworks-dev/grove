@@ -19,6 +19,9 @@ fn main() {
     let mut writer = stdout().lock();
     let mut documents: HashMap<String, String> = HashMap::new();
     while let Ok(Some(message)) = read_message(&mut reader) {
+        if message.get("method").is_none() && message["id"] == 9001 {
+            continue;
+        }
         if message.get("method").is_none() && message["id"] == 9000 {
             report_configuration(&mut writer, &message);
             continue;
@@ -49,7 +52,16 @@ fn main() {
                 let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
                 documents.remove(uri);
             }
-            "initialized" => ask_for_configuration(&mut writer),
+            "initialized" => {
+                ask_for_configuration(&mut writer);
+                register_watchers(&mut writer);
+            }
+            "workspace/didChangeWatchedFiles" => {
+                for change in params["changes"].as_array().cloned().unwrap_or_default() {
+                    keep_note(&format!("watched {} {}", change["uri"].as_str().unwrap_or_default(), change["type"]));
+                }
+            }
+            "workspace/didChangeConfiguration" => keep_note(&format!("configuration pushed {}", params["settings"])),
             "exit" => std::process::exit(0),
             _ => {}
         }
@@ -340,12 +352,30 @@ fn hover(params: &Value, documents: &HashMap<String, String>) -> Value {
 
 /// Sends a request for configuration; the answer is reported to the client in the main loop.
 fn ask_for_configuration(writer: &mut impl std::io::Write) {
-    let request = json!({ "jsonrpc": "2.0", "id": 9000, "method": "workspace/configuration", "params": { "items": [{ "section": "fake" }] } });
+    let items = json!([{ "section": "fake" }, { "section": "rust-analyzer" }]);
+    let request = json!({ "jsonrpc": "2.0", "id": 9000, "method": "workspace/configuration", "params": { "items": items } });
     let _ = write_message(writer, &request);
+}
+
+/// Asks to hear about changes to files ending in `.watched`.
+fn register_watchers(writer: &mut impl std::io::Write) {
+    let options = json!({ "watchers": [{ "globPattern": "**/*.watched" }] });
+    let registration = json!({ "id": "watch-1", "method": "workspace/didChangeWatchedFiles", "registerOptions": options });
+    let request = json!({ "jsonrpc": "2.0", "id": 9001, "method": "client/registerCapability", "params": { "registrations": [registration] } });
+    let _ = write_message(writer, &request);
+}
+
+/// Appends a line to `fake-lsp.log` in the server's working directory, for a test to read.
+fn keep_note(line: &str) {
+    use std::io::Write;
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open("fake-lsp.log") {
+        let _ = writeln!(file, "{line}");
+    }
 }
 
 /// Tells the client, as a log message, what it answered to the configuration request.
 fn report_configuration(writer: &mut impl std::io::Write, answer: &Value) {
+    keep_note(&format!("configuration answered {}", answer["result"]));
     let log = json!({ "jsonrpc": "2.0", "method": "window/logMessage", "params": { "type": 3, "message": format!("configuration answered {}", answer["result"]) } });
     let _ = write_message(writer, &log);
 }

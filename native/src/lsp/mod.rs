@@ -736,6 +736,91 @@ mod tests {
         store.shutdown();
     }
 
+    /// What the fake server wrote to its log, one note per line.
+    fn notes(fixture: &Fixture) -> String {
+        std::fs::read_to_string(fixture.directory.join("fake-lsp.log")).unwrap_or_default()
+    }
+
+    #[test]
+    fn the_server_is_answered_from_the_settings_and_hears_of_the_files_it_asked_for() {
+        let Some(fixture) = fixture("watch", "fn main() {}\n") else {
+            return;
+        };
+        let (documents, store) = store_for(&fixture);
+        documents.open(&fixture.directory.join("src/main.rs").display().to_string()).unwrap();
+        wait_until("the configuration answer", || notes(&fixture).contains("configuration answered"));
+        let answered = notes(&fixture);
+        assert!(answered.contains("[null,{\"inlayHints\""), "{answered}");
+        assert!(answered.contains("\"typeHints\":{\"enable\":true}"), "{answered}");
+        wait_until("the configuration push", || notes(&fixture).contains("configuration pushed"));
+
+        let watched = fixture.directory.join("src/a.watched");
+        let ignored = fixture.directory.join("src/b.txt");
+        use lsp_client::glob::FileChange;
+        store.files_changed(&[(watched.clone(), FileChange::Created), (ignored, FileChange::Changed)]);
+        wait_until("the watched file to be heard of", || notes(&fixture).contains("a.watched 1"));
+        assert!(!notes(&fixture).contains("b.txt"));
+
+        store.configure(&json!({ "inlayHints": false }));
+        wait_until("the settings to be pushed", || notes(&fixture).contains("\"typeHints\":{\"enable\":false}"));
+        store.shutdown();
+    }
+
+    #[test]
+    fn saving_formats_with_the_server_when_the_project_has_no_prettier_and_can_be_switched_off() {
+        let Some(fixture) = fixture("format", "fn main() {}   \nlet x = 1;  \n") else {
+            return;
+        };
+        let (documents, store) = store_for(&fixture);
+        let path = fixture.directory.join("src/main.rs");
+        let id = documents.open(&path.display().to_string()).unwrap().id;
+        wait_until("the server to be ready", || state_of(&store) == "ready");
+        documents.apply(id, &Command::InsertText { text: "// ".into() }).unwrap();
+        let outcome = documents.apply(id, &Command::Save).unwrap();
+        assert!(outcome.saved);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "// fn main() {}\nlet x = 1;\n");
+        assert_eq!(documents.text(id).unwrap(), "// fn main() {}\nlet x = 1;\n");
+
+        store.configure(&json!({ "formatOnSave": false }));
+        documents.apply(id, &Command::PlaceCursor { at: Position { row: 0, column: 0 } }).unwrap();
+        documents.apply(id, &Command::InsertText { text: "x   \n".into() }).unwrap();
+        documents.apply(id, &Command::Save).unwrap();
+        assert!(std::fs::read_to_string(&path).unwrap().starts_with("x   \n"));
+        let formatted = store.format(id, WAIT).unwrap().unwrap();
+        assert_eq!(formatted, super::format::Formatted { formatter: "the language server", changed: true });
+        documents.apply(id, &Command::Undo).unwrap();
+        assert!(documents.text(id).unwrap().starts_with("x   \n"), "one undo takes the whole format back");
+        store.shutdown();
+    }
+
+    #[test]
+    fn eslint_findings_decorate_the_file_and_go_when_the_switch_is_turned_off() {
+        let directory = std::env::temp_dir().join(format!("grove-lsp-lint-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        let tools = directory.join("tools");
+        std::fs::create_dir_all(directory.join("src")).unwrap();
+        std::fs::create_dir_all(&tools).unwrap();
+        std::fs::write(directory.join("eslint.config.mjs"), "export default []").unwrap();
+        std::fs::write(directory.join("src/a.ts"), "let a = 1\n").unwrap();
+        let report = r#"[{"messages":[{"ruleId":"semi","severity":2,"message":"Missing semicolon","line":1,"column":10}]}]"#;
+        let script = tools.join("eslint_d");
+        std::fs::write(&script, format!("#!/bin/sh\ncat >/dev/null\necho '{report}'\n")).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let documents = SharedDocuments::new(Emitter::default());
+        let store = LspStore::with_search_directories(documents.clone(), Emitter::default(), Signals::default(), vec![tools]);
+        let id = documents.open(&directory.join("src/a.ts").display().to_string()).unwrap().id;
+        let count = |documents: &SharedDocuments| {
+            documents.lock().get(id).map(|doc| doc.state.decoration_count(lint::ESLINT_SOURCE)).unwrap_or(0)
+        };
+        wait_until("the lint", || count(&documents) == 2);
+        store.configure(&json!({ "eslint": false }));
+        wait_until("the lint to be taken off", || count(&documents) == 0);
+        store.configure(&json!({ "eslint": true }));
+        wait_until("the lint to come back", || count(&documents) == 2);
+    }
+
     #[test]
     fn a_file_no_server_serves_is_left_alone_and_a_missing_server_is_said_to_be_missing() {
         let Some(fixture) = fixture("missing", "text\n") else {

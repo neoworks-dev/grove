@@ -231,6 +231,18 @@ impl EditorState {
     /// Types text over the characters after each cursor.
     pub(crate) fn overwrite(&mut self, text: &str, now: Instant) -> Outcome {
         let typed = text.chars().count();
+        let covered: Vec<(usize, String)> = self
+            .selections
+            .all()
+            .iter()
+            .map(|selection| {
+                let head = selection.head;
+                let available = self.buffer.line_length(head.row).saturating_sub(head.column);
+                let start = self.buffer.offset_of(head);
+                (typed, self.buffer.slice(start..start + typed.min(available)))
+            })
+            .collect();
+        self.note_overwritten(covered);
         let plans: Vec<Plan> = self
             .selections
             .all()

@@ -751,3 +751,88 @@ fn an_operator_takes_the_jump_as_its_motion() {
     assert_eq!(vim.text(), "three");
     assert_eq!(jump_started_by("¦one two", "cs"), None);
 }
+
+#[test]
+fn backspace_in_replace_mode_puts_back_what_was_typed_over() {
+    check("¦abcd", "Rxy<BS><Esc>", "xbcd", (0, 0));
+    check("¦abcd", "Rxyz<BS><BS><Esc>", "xbcd", (0, 0));
+    check("¦abcd", "Rxyz<BS><BS><BS><Esc>", "abcd", (0, 0));
+    check("a¦b", "Rxyz<BS><Esc>", "axy", (0, 2));
+    check("¦abcd", "R<BS>x<Esc>", "xbcd", (0, 0));
+    let mut vim = Vim::new("¦ab\ncd").with_cursor(1, 0);
+    vim.keys("Rxy<BS><Esc>");
+    assert_eq!(vim.text(), "xb\nxd");
+}
+
+#[test]
+fn gv_selects_the_last_visual_selection_again() {
+    let mut vim = Vim::new("¦one two three");
+    vim.keys("vw<Esc>");
+    assert_eq!(vim.mode(), "NORMAL");
+    vim.keys("$gv");
+    assert_eq!(vim.mode(), "VISUAL");
+    let selection = vim.state.selections().newest();
+    assert_eq!((selection.anchor, selection.head), (at(0, 0), at(0, 4)));
+    vim.keys("d");
+    assert_eq!(vim.text(), "wo three");
+    let mut lines = Vim::new("a\n¦b\nc\nd");
+    lines.keys("Vj<Esc>ggjjgv");
+    assert_eq!(lines.mode(), "V-LINE");
+    lines.keys("d");
+    assert_eq!(lines.text(), "a\nd");
+}
+
+#[test]
+fn dot_repeats_an_operator_on_a_visual_selection() {
+    check("¦abcdef", "vld.", "ef", (0, 0));
+    check("¦abcdef", "vlc1<Esc>l.", "11ef", (0, 1));
+    check("¦a\nb\nc\nd\ne", "Vjd.", "e", (0, 0));
+    check("¦abcdef", "vlUll.", "ABCDef", (0, 2));
+    check("¦abc abc", "vlrxw.", "xxc xxc", (0, 4));
+    check("¦a b c", "vlyx.", "b c", (0, 0));
+}
+
+#[test]
+fn macros_record_keys_and_play_them_back() {
+    check("¦a\nb\nc\nd", "qaA!<Esc>jq@a", "a!\nb!\nc\nd", (2, 0));
+    check("¦a\nb\nc\nd", "qaA!<Esc>jq2@a", "a!\nb!\nc!\nd", (3, 0));
+    check("¦a\nb\nc\nd", "qaA!<Esc>jq@a@@", "a!\nb!\nc!\nd", (3, 0));
+    check("¦one two", "qqdwq@q", "", (0, 0));
+    check("¦x", "@z", "x", (0, 0));
+}
+
+#[test]
+fn a_macro_that_plays_itself_ends() {
+    let mut vim = Vim::new("¦a\nb");
+    vim.keys("qaix<Esc>@aq");
+    vim.keys("@a");
+    assert_eq!(vim.mode(), "NORMAL");
+}
+
+#[test]
+fn ctrl_o_and_ctrl_i_move_through_the_jump_list() {
+    let mut vim = Vim::new("¦a\nb\nc\nd\ne");
+    vim.keys("G");
+    assert_eq!(vim.heads(), vec![at(4, 0)]);
+    vim.keys("<C-o>");
+    assert_eq!(vim.heads(), vec![at(0, 0)]);
+    vim.keys("<C-i>");
+    assert_eq!(vim.heads(), vec![at(4, 0)]);
+    vim.keys("gg<C-o>");
+    assert_eq!(vim.heads(), vec![at(4, 0)]);
+    vim.keys("<Tab>");
+    assert_eq!(vim.heads(), vec![at(0, 0)]);
+}
+
+#[test]
+fn searches_and_line_numbers_are_jumps_too() {
+    let mut vim = Vim::new("¦one\ntwo\nthree\nfour");
+    vim.keys("/four<CR>");
+    assert_eq!(vim.heads(), vec![at(3, 0)]);
+    vim.keys("<C-o>");
+    assert_eq!(vim.heads(), vec![at(0, 0)]);
+    vim.keys(":3<CR>");
+    assert_eq!(vim.heads(), vec![at(2, 0)]);
+    vim.keys("<C-o>");
+    assert_eq!(vim.heads(), vec![at(0, 0)]);
+}

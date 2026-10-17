@@ -195,6 +195,20 @@ pub enum Command {
     GroupUndo { open: bool },
     /// Scrolls the view so the newest cursor's line is at the top, middle or bottom.
     ScrollTo { align: ScrollAlign },
+    /// Remembers the selection about to be left, so `gv` and `.` can use it.
+    RememberVisual { kind: SelectionKind },
+    /// `gv`: selects the last visual selection again.
+    ReselectVisual,
+    /// Selects from the cursor as much text as the last visual selection covered, for `.`.
+    SelectLastExtent,
+    /// Notes the cursor's place as one `Ctrl-O` can come back to.
+    PushJump,
+    /// `Ctrl-O`: goes back in the jump list.
+    JumpOlder { count: usize },
+    /// `Ctrl-I`: goes forward in the jump list.
+    JumpNewer { count: usize },
+    /// Backspace in replace mode: puts back what the last typed character covered.
+    RestoreOverwritten,
     /// Scrolls the view down by some rows, or up when negative, without moving the cursor (`Ctrl-F`).
     ScrollView { rows: isize },
     /// Remembers the newest cursor's place under a letter (`m`).
@@ -268,6 +282,12 @@ impl Command {
             | Command::GroupUndo { .. }
             | Command::ScrollTo { .. }
             | Command::ScrollView { .. }
+            | Command::RememberVisual { .. }
+            | Command::ReselectVisual
+            | Command::SelectLastExtent
+            | Command::PushJump
+            | Command::JumpOlder { .. }
+            | Command::JumpNewer { .. }
             | Command::SetMark { .. }
             | Command::JumpToMark { .. } => false,
             Command::Operate { operator, .. } => *operator != Operator::Yank,
@@ -299,6 +319,13 @@ impl Command {
                 | Command::GroupUndo { .. }
                 | Command::ScrollTo { .. }
                 | Command::ScrollView { .. }
+                | Command::RememberVisual { .. }
+                | Command::ReselectVisual
+                | Command::SelectLastExtent
+                | Command::PushJump
+                | Command::JumpOlder { .. }
+                | Command::JumpNewer { .. }
+                | Command::RestoreOverwritten
                 | Command::SetMark { .. }
                 | Command::JumpToMark { .. }
         )

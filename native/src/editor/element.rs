@@ -51,6 +51,10 @@ const LINE_END_GAP: Pixels = px(28.0);
 const BACKGROUND_OPACITY: f32 = 0.18;
 /// How opaque a tone is behind a block's rows.
 const BLOCK_OPACITY: f32 = 0.12;
+/// How opaque the words a diff changed are behind their text, over the tint of their line.
+const WORD_OPACITY: f32 = 0.38;
+/// How opaque the filler rows of a side-by-side diff are.
+const FILLER_OPACITY: f32 = 0.07;
 
 /// What the last frame drew, kept on the editor so the pointer can be mapped to a position
 /// and the cursor kept in view.
@@ -136,8 +140,10 @@ struct PaintedRow {
     number: Option<(ShapedLine, Pixels)>,
     text: ShapedLine,
     is_cursor_row: bool,
-    /// Behind the whole row, for the rows of a block.
+    /// Behind the whole row, for the rows of a block and the lines a diff marks.
     tint: Option<Hsla>,
+    /// Behind stretches of the row's text, such as the words a diff changed in a removed line.
+    emphasis: Vec<(Bounds<Pixels>, Hsla)>,
 }
 
 /// A line under a decorated range.
@@ -278,6 +284,9 @@ impl Element for EditorElement {
                 let line = Bounds::new(point(bounds.left(), row.top), size(bounds.size.width, LINE_HEIGHT));
                 if let Some(tint) = row.tint {
                     window.paint_quad(fill(line, tint));
+                }
+                for (span, color) in &row.emphasis {
+                    window.paint_quad(fill(*span, *color));
                 }
                 if row.is_cursor_row {
                     window.paint_quad(fill(line, theme.current_line));
@@ -427,6 +436,7 @@ fn build_frame(
     let syntax = state.highlights(text_rows.clone());
     let decorations = state.decorations_in_rows(text_rows.clone());
     let row_decorations = RowDecorations::new(&decorations);
+    let line_tints = line_tints(&decorations, theme);
 
     let mut visible_rows = Vec::with_capacity(display_rows.len());
     let mut painted_rows = Vec::with_capacity(display_rows.len());
@@ -454,20 +464,25 @@ fn build_frame(
                     number: Some((number, number_left)),
                     text: text.clone(),
                     is_cursor_row,
-                    tint: None,
+                    tint: line_tints.get(&row).copied(),
+                    emphasis: Vec::new(),
                 });
                 visible_rows.push(VisibleRow::Text(VisibleLine { row, display, shaped: text }));
             }
             DisplayRow::Block { block, line } => {
                 let placed = &blocks[block];
-                let color = theme.tone(placed.tone.unwrap_or(Tone::Inlay));
-                let text = shape_plain(window, &placed.lines[line], color);
+                let tone = placed.tone.unwrap_or(Tone::Inlay);
+                let color = theme.tone(tone);
+                let display = DisplayLine::new(&placed.lines[line]);
+                let text = shape_plain(window, &display.text, color);
+                let emphasis = block_emphasis(placed, line, &display, &text, text_left, top, theme);
                 painted_rows.push(PaintedRow {
                     top,
                     number: None,
                     text,
                     is_cursor_row: false,
-                    tint: Some(color.opacity(BLOCK_OPACITY)),
+                    tint: Some(color.opacity(block_opacity(tone))),
+                    emphasis,
                 });
                 visible_rows.push(VisibleRow::Block { row: placed.row, placement: placed.placement });
             }
@@ -501,6 +516,63 @@ fn build_frame(
     (layout, frame)
 }
 
+/// How opaque a tone is as a background behind text: the words a diff changed stand out from the rest.
+fn background_opacity(tone: Tone) -> f32 {
+    match tone {
+        Tone::AddedWord | Tone::DeletedWord => WORD_OPACITY,
+        _ => BACKGROUND_OPACITY,
+    }
+}
+
+/// How opaque a tone is behind a whole row of a block: fillers are barely there.
+fn block_opacity(tone: Tone) -> f32 {
+    match tone {
+        Tone::Filler => FILLER_OPACITY,
+        _ => BLOCK_OPACITY,
+    }
+}
+
+/// The tint of each buffer row a line decoration covers, such as the lines of a diff hunk.
+fn line_tints(decorations: &[Placed], theme: &EditorTheme) -> HashMap<usize, Hsla> {
+    let mut tints = HashMap::new();
+    for placed in decorations {
+        let DecorationKind::Line { tone } = placed.kind else {
+            continue;
+        };
+        let color = theme.tone(*tone).opacity(BLOCK_OPACITY);
+        for row in placed.start.row..=placed.end.row {
+            tints.insert(row, color);
+        }
+    }
+    tints
+}
+
+/// The strongly tinted stretches of one row of a block, where its emphasis marks them.
+fn block_emphasis(
+    block: &PlacedBlock,
+    line: usize,
+    display: &DisplayLine,
+    shaped: &ShapedLine,
+    text_left: Pixels,
+    top: Pixels,
+    theme: &EditorTheme,
+) -> Vec<(Bounds<Pixels>, Hsla)> {
+    let tone = match block.tone {
+        Some(Tone::Deleted) => Tone::DeletedWord,
+        Some(Tone::Added) => Tone::AddedWord,
+        _ => return Vec::new(),
+    };
+    let color = theme.tone(tone).opacity(WORD_OPACITY);
+    let marked = block.emphasis.iter().filter(|emphasis| emphasis.line == line);
+    marked
+        .map(|emphasis| {
+            let left = text_left + shaped.x_for_index(display.range_start_offset(emphasis.start));
+            let right = text_left + shaped.x_for_index(display.range_end_offset(emphasis.end));
+            (Bounds::new(point(left, top), size(right - left, LINE_HEIGHT)), color)
+        })
+        .collect()
+}
+
 /// A buffer line laid out with the inlays on it, which must be ordered by column.
 fn line_with_inlays(line: &str, inlays: &[(usize, &str, Tone)]) -> DisplayLine {
     let texts: Vec<InlayText> = inlays.iter().map(|(column, text, _)| InlayText { column: *column, text }).collect();
@@ -524,7 +596,7 @@ fn range_decorations(
         }
         let spans = span_bounds(layout, placed.start, placed.end, px(0.0));
         if let Some(tone) = background {
-            let color = theme.tone(*tone).opacity(BACKGROUND_OPACITY);
+            let color = theme.tone(*tone).opacity(background_opacity(*tone));
             backgrounds.extend(spans.iter().map(|span| (*span, color)));
         }
         let Some(underline) = underline else {

@@ -2,15 +2,15 @@
 // extracted under resources/nvim/dist by scripts/fetch-nvim.ts; packaged
 // builds ship the same tree via electron-builder extraResources.
 
-import { app } from 'electron'
+import { platform } from './platform'
 import { existsSync } from 'node:fs'
 import { mkdir, symlink, lstat, realpath, unlink } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join, sep } from 'node:path'
 
 function nvimRoot(): string {
-  if (app.isPackaged) return join(process.resourcesPath, 'nvim')
-  return join(app.getAppPath(), 'resources', 'nvim')
+  if (platform().isPackaged()) return join(process.resourcesPath, 'nvim')
+  return join(platform().appPath(), 'resources', 'nvim')
 }
 
 function distDir(): string {
@@ -136,7 +136,7 @@ export function nvimAvailable(): boolean {
 // deliberately not named "nvim": on Linux userData is ~/.config/grove, so that
 // would collide with the config dir at ~/.config/grove/nvim.
 export function nvimEnvOverlay(): Record<string, string> {
-  const base = join(app.getPath('userData'), 'nvim-runtime')
+  const base = join(platform().userDataPath(), 'nvim-runtime')
   return {
     VIMRUNTIME: nvimRuntime(),
     REAL_XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME || join(homedir(), '.config'),

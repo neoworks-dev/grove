@@ -3,7 +3,7 @@
 //   user     <userData>/plugins
 //   project  <repo>/.workbench/plugins (requires one-time trust per version)
 
-import { app } from 'electron'
+import { platform } from '../platform'
 import { readdir, readFile } from 'fs/promises'
 import { join } from 'path'
 import { validateManifest, type PluginManifest } from '../../shared/plugins'
@@ -25,12 +25,12 @@ export interface PluginRecord {
 
 /** Where the built-in plugins live: the app's resources, or the repo's in development. */
 export function builtinRoot(): string {
-  if (app.isPackaged) return join(process.resourcesPath, 'plugins')
-  return join(app.getAppPath(), 'resources', 'plugins')
+  if (platform().isPackaged()) return join(process.resourcesPath, 'plugins')
+  return join(platform().appPath(), 'resources', 'plugins')
 }
 
 function userRoot(): string {
-  return join(app.getPath('userData'), 'plugins')
+  return join(platform().userDataPath(), 'plugins')
 }
 
 function projectRoot(repoPath: string): string {

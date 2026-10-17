@@ -11,7 +11,7 @@
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { app } from 'electron'
+import { platform } from './platform'
 import type { CustomEndpoint } from '../shared/agents'
 
 const ENDPOINTS_FILE = 'endpoints.json'
@@ -165,5 +165,5 @@ function isEndpoint(value: unknown): value is CustomEndpoint {
 }
 
 function endpointsPath(): string {
-  return join(app.getPath('userData'), ENDPOINTS_FILE)
+  return join(platform().userDataPath(), ENDPOINTS_FILE)
 }

@@ -4,7 +4,8 @@
 // Only loaded + trusted + enabled plugins are served, path-validated to their
 // own directory. PLUGIN_SCHEME is declared with the others in main/index.ts.
 
-import { protocol, type CustomScheme } from 'electron'
+import type { CustomScheme } from 'electron'
+import { platform } from '../platform'
 import { readFile } from 'fs/promises'
 import { extname, join } from 'path'
 import { isInside } from '../api/broker'
@@ -70,7 +71,7 @@ export const PLUGIN_SCHEME: CustomScheme = {
 
 /** Serve grove-plugin:// bundle files; returns the inverse. */
 export function registerPluginProtocol(registry: PluginRegistry): () => void {
-  protocol.handle('grove-plugin', async (request) => {
+  return platform().handleProtocol('grove-plugin', async (request) => {
     const url = new URL(request.url)
     const pluginId = url.hostname
     const relPath = decodeURIComponent(url.pathname).replace(/^\//, '')
@@ -89,5 +90,4 @@ export function registerPluginProtocol(registry: PluginRegistry): () => void {
       return new Response('not found', { status: 404 })
     }
   })
-  return () => protocol.unhandle('grove-plugin')
 }

@@ -5,6 +5,9 @@
 // Every test that has to load an electron-importing module registers this one
 // instead, and overrides only the parts it cares about.
 
+import { installPlatform } from '../src/main/platform'
+import { createElectronPlatform } from '../src/main/platform/electron'
+
 export interface AppStub {
   isPackaged: boolean
   getAppPath: () => string
@@ -44,3 +47,6 @@ export const electronStub = {
   dialog: { showOpenDialog: () => ({ canceled: true, filePaths: [] }) },
   BrowserWindow: { getAllWindows: () => [] }
 }
+
+// Every test that stubs electron also gets the platform the app builds on top of it.
+installPlatform(createElectronPlatform(electronStub as never))

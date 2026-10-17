@@ -133,6 +133,19 @@ export class FilesModel {
     }
   }
 
+  /** Shows how a file changed in a diff pane: the session's own change to it, else the file against HEAD. */
+  open(entry: FileEntry): void {
+    let base = this.sessionDirectory();
+    const worktree = this.worktree();
+    if (worktree !== null) {
+      base = worktree.path;
+    }
+    if (base === undefined) {
+      return;
+    }
+    this.chat.openDiff(`${base.replace(/\/+$/, "")}/${entry.rel}`);
+  }
+
   /**
    * Opens a file's diff in place of the list: git's, or for a file git sees no change in, the
    * changes the session's calls made to it. A file with neither does nothing.

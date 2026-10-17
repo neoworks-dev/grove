@@ -1,6 +1,6 @@
 <!--
   The files panel: what git says changed in the session's worktree, plus the files the agent and
-  its guests touched, tagged by who. Pressing a file shows its diff in place of the list.
+  its guests touched, tagged by who. Pressing a file shows its diff in a diff pane.
   Ported from neoworks-harness apps/gui (plugins/files).
 -->
 <script lang="ts">
@@ -79,11 +79,10 @@
     <Scroll style={{ flex: 1, minHeight: 0 }}>
       <View>
         {#each entries as entry (entry.rel)}
-          {@const diffable = files.canDiff(entry)}
           <View
-            onpress={() => void files.showDiff(entry)}
-            hover={diffable ? { background: p.surface } : undefined}
-            style={{ direction: "row", gap: p.space.m, paddingY: 1, cursor: diffable ? "pointer" : "default" }}
+            onpress={() => files.open(entry)}
+            hover={{ background: p.surface }}
+            style={{ direction: "row", gap: p.space.m, paddingY: 1, cursor: "pointer" }}
           >
             <Text style={{ width: 12, color: colorOf(entry.mark) }}>{glyphOfMark(entry.mark)}</Text>
             <Text style={{ flex: 1, minWidth: 0, truncate: true, color: colorOf(entry.mark) }}>{nameOf(entry)}{tagsOf(entry)}</Text>

@@ -150,6 +150,16 @@ describe("a file's diff", () => {
     ]);
   });
 
+  test("opening a file asks for its diff pane, by the path in the worktree", () => {
+    const asked: string[] = [];
+    const source = new FakeChanges();
+    const client = new FakeClient();
+    const chat = new ChatSession(client as never, "s", () => undefined, { openDiff: (path) => asked.push(path) });
+    const model = new FilesModel(source, () => [worktree("main", "/repo", true)], chat, () => "/repo/src");
+    model.open({ rel: "src/a.ts", mark: "modified", tags: [] });
+    expect(asked).toEqual(["/repo/src/a.ts"]);
+  });
+
   test("a failure to read it is kept for the panel to show", async () => {
     const { model, source } = setUp("/repo");
     await model.refresh();

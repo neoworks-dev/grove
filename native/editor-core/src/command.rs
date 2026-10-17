@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::buffer::Position;
+use crate::completion::RangeEdit;
 use crate::decorations::Decoration;
 use crate::movement::Motion;
 
@@ -77,6 +78,24 @@ pub enum Command {
     /// Replaces everything one source has put on top of the text (errors, blame, a diff) with
     /// `decorations`. An empty list removes the source's. Text and selections are not touched.
     SetDecorations { source: String, decorations: Vec<Decoration> },
+    /// Accepts a completion: replaces `before` characters before every cursor and `after`
+    /// characters after it with `text`, which is expanded as a snippet when `snippet` is set.
+    /// The edits in `additional` (an import the completion needs) go in once, at the positions
+    /// they give in the text as it is now.
+    InsertCompletion {
+        before: usize,
+        #[serde(default)]
+        after: usize,
+        text: String,
+        #[serde(default)]
+        snippet: bool,
+        #[serde(default)]
+        additional: Vec<RangeEdit>,
+    },
+    /// Selects the places of the next tab stop of the snippet being filled in.
+    SnippetNext,
+    /// Selects the places of the previous tab stop of the snippet being filled in.
+    SnippetPrevious,
 }
 
 impl Command {

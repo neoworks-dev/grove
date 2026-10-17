@@ -97,6 +97,10 @@ pub struct Decoration {
     pub start: Position,
     #[serde(default)]
     pub end: Option<Position>,
+    /// What the decoration says when the pointer rests on it, such as a diagnostic's message.
+    /// Markdown.
+    #[serde(default)]
+    pub tooltip: Option<String>,
     #[serde(flatten)]
     pub kind: DecorationKind,
 }
@@ -106,6 +110,7 @@ struct Pinned {
     start: AnchorId,
     end: AnchorId,
     kind: DecorationKind,
+    tooltip: Option<String>,
 }
 
 /// A decoration with its anchors turned into positions as the text is now.
@@ -114,6 +119,7 @@ pub struct Placed<'a> {
     pub start: Position,
     pub end: Position,
     pub kind: &'a DecorationKind,
+    pub tooltip: Option<&'a str>,
 }
 
 /// A block in the place it is laid out: after which rows it is, what it says and how it is coloured.
@@ -221,6 +227,7 @@ fn pin(decoration: &Decoration, buffer: &Buffer, anchors: &mut Anchors) -> Pinne
         start: anchors.insert(Anchor { offset: start_offset, bias: start_bias }),
         end: anchors.insert(Anchor { offset: end_offset, bias: end_bias }),
         kind: decoration.kind.clone(),
+        tooltip: decoration.tooltip.clone(),
     }
 }
 
@@ -229,7 +236,12 @@ fn pin(decoration: &Decoration, buffer: &Buffer, anchors: &mut Anchors) -> Pinne
 fn place<'a>(pinned: &'a Pinned, buffer: &Buffer, anchors: &Anchors) -> Option<Placed<'a>> {
     let start = anchors.get(pinned.start)?.offset;
     let end = anchors.get(pinned.end)?.offset.max(start);
-    Some(Placed { start: buffer.position_of(start), end: buffer.position_of(end), kind: &pinned.kind })
+    Some(Placed {
+        start: buffer.position_of(start),
+        end: buffer.position_of(end),
+        kind: &pinned.kind,
+        tooltip: pinned.tooltip.as_deref(),
+    })
 }
 
 #[cfg(test)]
@@ -247,12 +259,18 @@ mod tests {
         Decoration {
             start,
             end: Some(end),
+            tooltip: None,
             kind: DecorationKind::Highlight { background: None, underline: Some(underline) },
         }
     }
 
     fn inlay(at: Position, text: &str) -> Decoration {
-        Decoration { start: at, end: None, kind: DecorationKind::Inlay { text: text.into(), tone: None } }
+        Decoration {
+            start: at,
+            end: None,
+            tooltip: None,
+            kind: DecorationKind::Inlay { text: text.into(), tone: None },
+        }
     }
 
     fn type_at(state: &mut EditorState, position: Position, text: &str) {
@@ -371,6 +389,7 @@ mod tests {
         let block = |row: usize, placement: Placement| Decoration {
             start: at(row, 0),
             end: None,
+            tooltip: None,
             kind: DecorationKind::Block { lines: vec!["x".into()], placement, tone: None },
         };
         let mut state = EditorState::new(Buffer::from_text("a\nb\nc\n"));
@@ -396,5 +415,18 @@ mod tests {
         assert_eq!(parsed.len(), 5);
         assert_eq!(parsed[2].kind, DecorationKind::Gutter { mark: GutterMark::Bar, tone: Some(Tone::Added) });
         assert_eq!(parsed[3].kind, DecorationKind::Gutter { mark: GutterMark::Glyph('!'), tone: None });
+        assert_eq!(parsed[0].tooltip, None);
+    }
+
+    #[test]
+    fn a_tooltip_travels_with_the_decoration() {
+        let mut state = EditorState::new(Buffer::from_text("one two\n"));
+        let mut squiggled = squiggle(at(0, 4), at(0, 7));
+        squiggled.tooltip = Some("not a word".into());
+        state.set_decorations("lsp", &[squiggled]);
+        type_at(&mut state, at(0, 0), "xx");
+        let placed = state.decorations_in_rows(0..1);
+        assert_eq!(placed[0].tooltip, Some("not a word"));
+        assert_eq!(placed[0].start, at(0, 6));
     }
 }

@@ -5,6 +5,7 @@ use std::time::Instant;
 use crate::anchor::{Anchor, AnchorId, Anchors, Bias};
 use crate::buffer::{Buffer, Position};
 use crate::command::{Command, Outcome};
+use crate::completion::{Completion, SnippetSession};
 use crate::decorations::{Decoration, Decorations, Placed, PlacedBlock};
 use crate::history::History;
 use crate::movement::{Motion, find_next, move_selection, vertical, word_at};
@@ -30,6 +31,8 @@ pub struct EditorState {
     syntax: Syntax,
     /// What sources have put on top of the text, pinned to anchors.
     decorations: Decorations,
+    /// The snippet whose tab stops are being visited, if one was just completed.
+    pub(crate) snippet: Option<SnippetSession>,
 }
 
 impl EditorState {
@@ -48,7 +51,14 @@ impl EditorState {
             whole_line_copy: None,
             syntax,
             decorations: Decorations::default(),
+            snippet: None,
         }
+    }
+
+    /// Hands over the changes made to the text since the last call, in a language server's
+    /// terms, so the server can be kept in step with the text.
+    pub fn take_content_changes(&mut self) -> Vec<crate::buffer::ContentChange> {
+        self.buffer.take_content_changes()
     }
 
     /// Replaces every decoration a source has with `decorations`, pinning them to the text as it
@@ -149,6 +159,9 @@ impl EditorState {
         if !continues_typing {
             self.history.close_group();
         }
+        if crate::completion::leaves_snippet(command) {
+            self.end_snippet();
+        }
         let mut outcome = self.run(command, now);
         self.syntax.update(&mut self.buffer);
         outcome.changed = outcome.changed || self.selections != before;
@@ -179,6 +192,12 @@ impl EditorState {
                 self.set_decorations(source, decorations);
                 Outcome { decorations_changed: true, ..Outcome::default() }
             }
+            Command::InsertCompletion { before, after, text, snippet, additional } => {
+                let completion = Completion { before: *before, after: *after, text, snippet: *snippet, additional };
+                self.insert_completion(&completion, now)
+            }
+            Command::SnippetNext => self.snippet_next(),
+            Command::SnippetPrevious => self.snippet_previous(),
             _ => self.run_navigation(command),
         }
     }

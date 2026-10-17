@@ -20,6 +20,8 @@ pub enum Motion {
     ColumnLeft,
     /// `l`: one column right, staying on the line.
     ColumnRight,
+    /// `a`: one column right, which at the end of a line is past its last character.
+    AfterCursor,
     /// `^`: the first character that is not white space.
     FirstNonBlank,
     /// `g_`: the last character that is not white space.

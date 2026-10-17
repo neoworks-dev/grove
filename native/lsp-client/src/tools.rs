@@ -250,16 +250,81 @@ pub fn line_edits(old: &str, new: &str) -> Vec<RangeEdit> {
         hunks_between(old_middle, new_middle)
     };
     let starts = line_starts(&old_lines);
-    let end_of_text = position_of_end(old);
+    let mut edits = Vec::new();
+    for (old_from, old_to, new_from, new_to) in hunks {
+        let old_hunk = &old_middle[old_from..old_to];
+        let new_hunk = &new_middle[new_from..new_to];
+        let first_row = prefix + old_from;
+        if old_hunk.len() == new_hunk.len() {
+            for (index, (old_line, new_line)) in old_hunk.iter().zip(new_hunk).enumerate() {
+                let at = editor_core::Position { row: first_row + index, column: 0 };
+                edits.extend(trimmed_edit(at, old_line, new_line));
+            }
+            continue;
+        }
+        let start = starts[first_row.min(starts.len() - 1)];
+        edits.extend(trimmed_edit(start, &old_hunk.concat(), &new_hunk.concat()));
+    }
+    edits
+}
+
+/// The longest stretch of characters two texts are compared character by character over; past it
+/// they are compared only by what they begin and end with.
+const LONGEST_DIFFED_TEXT: usize = 500;
+
+/// The edits that turn `old` into `new`, which start at `start`, as small as characters allow, so
+/// a cursor in what stayed is not moved. None when they are equal.
+fn trimmed_edit(start: editor_core::Position, old: &str, new: &str) -> Vec<RangeEdit> {
+    if old == new {
+        return Vec::new();
+    }
+    let old_chars: Vec<char> = old.chars().collect();
+    let new_chars: Vec<char> = new.chars().collect();
+    let prefix = old_chars.iter().zip(&new_chars).take_while(|(a, b)| a == b).count();
+    let limit = old_chars.len().min(new_chars.len()) - prefix;
+    let suffix = old_chars.iter().rev().zip(new_chars.iter().rev()).take(limit).take_while(|(a, b)| a == b).count();
+    let old_middle = &old_chars[prefix..old_chars.len() - suffix];
+    let new_middle = &new_chars[prefix..new_chars.len() - suffix];
+    let origin = advance(start, &old_chars[..prefix]);
+    let hunks = if old_middle.len() > LONGEST_DIFFED_TEXT || new_middle.len() > LONGEST_DIFFED_TEXT {
+        vec![(0, old_middle.len(), 0, new_middle.len())]
+    } else {
+        hunks_between(old_middle, new_middle)
+    };
+    let positions = positions_of(origin, old_middle);
     hunks
         .into_iter()
-        .map(|(old_from, old_to, new_from, new_to)| {
-            let start_line = prefix + old_from;
-            let end_line = prefix + old_to;
-            let end = if end_line >= old_lines.len() { end_of_text } else { starts[end_line] };
-            RangeEdit { start: starts[start_line.min(starts.len() - 1)], end, text: new_middle[new_from..new_to].concat() }
+        .map(|(old_from, old_to, new_from, new_to)| RangeEdit {
+            start: positions[old_from],
+            end: positions[old_to],
+            text: new_middle[new_from..new_to].iter().collect(),
         })
         .collect()
+}
+
+/// The position before every character of a text that starts at `start`, and after the last.
+fn positions_of(start: editor_core::Position, characters: &[char]) -> Vec<editor_core::Position> {
+    let mut positions = Vec::with_capacity(characters.len() + 1);
+    let mut position = start;
+    positions.push(position);
+    for character in characters {
+        position = advance(position, std::slice::from_ref(character));
+        positions.push(position);
+    }
+    positions
+}
+
+/// Where a position is after the characters that follow it.
+fn advance(start: editor_core::Position, characters: &[char]) -> editor_core::Position {
+    let mut position = start;
+    for character in characters {
+        if *character == '\n' {
+            position = editor_core::Position { row: position.row + 1, column: 0 };
+        } else {
+            position.column += 1;
+        }
+    }
+    position
 }
 
 /// The position at the start of every line, with one more for the end of the last line.
@@ -272,16 +337,9 @@ fn line_starts(lines: &[&str]) -> Vec<editor_core::Position> {
     starts
 }
 
-/// The position after the last character of a text.
-fn position_of_end(text: &str) -> editor_core::Position {
-    let row = text.matches('\n').count();
-    let last_line = text.rsplit('\n').next().unwrap_or_default();
-    editor_core::Position { row, column: last_line.chars().count() }
-}
-
-/// The ranges of lines that differ between two lists, as `(old_from, old_to, new_from, new_to)`,
+/// The ranges that differ between two lists of lines or characters, as `(old_from, old_to, new_from, new_to)`,
 /// found from the longest common subsequence.
-fn hunks_between(old: &[&str], new: &[&str]) -> Vec<(usize, usize, usize, usize)> {
+fn hunks_between<T: PartialEq>(old: &[T], new: &[T]) -> Vec<(usize, usize, usize, usize)> {
     let (rows, columns) = (old.len(), new.len());
     let mut lengths = vec![vec![0u32; columns + 1]; rows + 1];
     for row in (0..rows).rev() {
@@ -374,6 +432,20 @@ mod tests {
         state.apply(&Command::PlaceCursor { at: editor_core::Position { row: 1, column: 3 } });
         state.apply(&Command::ApplyEdits { edits: line_edits(old, "A\nkeep me\nB\n") });
         assert_eq!(state.selections().newest().head, editor_core::Position { row: 1, column: 3 });
+    }
+
+    #[test]
+    fn cursors_in_lines_that_were_reformatted_stay_in_the_text_that_stayed() {
+        let old = "const   a = [1,2]\nfoo( x )\n";
+        let new = "const a = [1, 2];\nfoo(x);\n";
+        let at = |row, column| editor_core::Position { row, column };
+        for (cursor, expected) in [(at(0, 0), at(0, 0)), (at(0, 6), at(0, 6)), (at(0, 9), at(0, 7)), (at(1, 0), at(1, 0)), (at(1, 5), at(1, 4))] {
+            let mut state = EditorState::new(Buffer::from_text(old));
+            state.apply(&Command::PlaceCursor { at: cursor });
+            state.apply(&Command::ApplyEdits { edits: line_edits(old, new) });
+            assert_eq!(state.buffer().slice(0..state.buffer().length()), new);
+            assert_eq!(state.selections().newest().head, expected, "from {cursor:?}");
+        }
     }
 
     #[test]

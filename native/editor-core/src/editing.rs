@@ -28,6 +28,9 @@ pub(crate) enum SelectionsAfter {
     CursorAfterTheEdit,
     /// Every selection keeps its place in the text around the edits.
     KeepPlaces,
+    /// Like `KeepPlaces`, but an end of a selection that is at or inside replaced text goes to
+    /// before it, so a cursor where a formatter rewrote the text stays where the person put it.
+    StayBeforeReplacements,
 }
 
 impl EditorState {
@@ -149,7 +152,8 @@ impl EditorState {
     }
 
     /// Replaces several ranges at once, which are positions in the text as it is now, as one step
-    /// for undo. Selections keep their place in the text around the edits.
+    /// for undo. Selections keep their place in the text around the edits, and one at or inside
+    /// replaced text goes to before it.
     pub(crate) fn apply_range_edits(&mut self, edits: &[RangeEdit], now: Instant) -> Outcome {
         let mut list: Vec<Edit> = edits
             .iter()
@@ -160,7 +164,7 @@ impl EditorState {
             })
             .collect();
         list.sort_by_key(|edit| (edit.start, edit.end));
-        let changed = self.commit(Edits::new(list), SelectionsAfter::KeepPlaces, EditKind::Other, now);
+        let changed = self.commit(Edits::new(list), SelectionsAfter::StayBeforeReplacements, EditKind::Other, now);
         edited(changed)
     }
 
@@ -287,10 +291,18 @@ impl EditorState {
             let after_text = match selections_after {
                 SelectionsAfter::CursorAfterEachEdit => Some(replacements[index].end),
                 SelectionsAfter::CursorAfterTheEdit if index == newest => Some(replacements[0].end),
-                SelectionsAfter::CursorAfterTheEdit | SelectionsAfter::KeepPlaces => None,
+                SelectionsAfter::CursorAfterTheEdit
+                | SelectionsAfter::KeepPlaces
+                | SelectionsAfter::StayBeforeReplacements => None,
             };
             if let Some(offset) = after_text {
                 list.push(Selection::cursor(self.buffer.position_of(offset)));
+                continue;
+            }
+            if selections_after == SelectionsAfter::StayBeforeReplacements {
+                let anchor = self.buffer.position_of(edits.map_offset(*anchor, Bias::Left));
+                let head = self.buffer.position_of(edits.map_offset(*head, Bias::Left));
+                list.push(Selection::spanning(anchor, head));
                 continue;
             }
             list.push(self.selection_through(edits, *anchor, *head));

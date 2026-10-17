@@ -49,6 +49,9 @@ pub struct Features {
     pub hints_pending: Option<Pending>,
     pub hints_range: Option<(DocumentId, usize, usize)>,
     pub hints_timer_armed: bool,
+    /// The version of the text the servers had when the view last looked, so a change made
+    /// behind the view's back, such as formatting or a rename, is noticed.
+    pub seen_version: Option<i64>,
     /// The request for the server's highlights that is out.
     pub highlight_request: u64,
     pub highlight_pending: Option<Pending>,
@@ -66,6 +69,19 @@ impl Editor {
             FeatureSignal::Renamed { request, result } => self.rename_finished(request, result, cx),
             FeatureSignal::Actions { request, actions } => self.actions_arrived(request, actions, cx),
         }
+    }
+
+    /// Notices that the text changed without a command of this view, and asks for hints again.
+    pub(super) fn text_may_have_changed_elsewhere(&mut self, cx: &mut Context<Self>) {
+        let Some(document) = self.document else {
+            return;
+        };
+        let version = self.lsp.version_of(document);
+        if version == self.features.seen_version {
+            return;
+        }
+        self.features.seen_version = version;
+        self.hints_are_stale(cx);
     }
 
     /// Says something in the status bar.

@@ -2,10 +2,13 @@
   The agents working for the session, under the composer: one row per subagent or guest while it
   runs and a few seconds after, with its harness and model, what it is doing, how long it has run
   and its tokens. Pressing a row opens that agent's own chat (or its session, when it works in a
-  directory of its own); "stop" ends it. Ported from neoworks-harness apps/gui (plugins/agents).
+  directory of its own); "stop" ends it. Ctrl-X moves the keyboard here: the arrows move between
+  the rows, Enter opens one, x stops a running agent, and Escape or the up arrow from the first
+  row goes back to the composer. Ported from neoworks-harness apps/gui (plugins/agents).
 -->
 <script lang="ts">
   import { Button, Text, View } from "@neoworks/svelte-gpui/ui";
+  import type { KeyEvent } from "@neoworks/svelte-gpui/ui";
   import type { SessionInfo } from "@suite/protocol/types";
   import type { ChatSession } from "./chatSession";
   import { clock } from "./clock";
@@ -26,9 +29,11 @@
     sessions: readonly SessionInfo[];
     /** The agent's row was pressed: show its own chat. */
     onopen: (row: AgentRow) => void;
+    /** The keyboard was sent back, to the composer. */
+    onleave: () => void;
   }
 
-  let { chat, sessions, onopen }: Props = $props();
+  let { chat, sessions, onopen, onleave }: Props = $props();
 
   const p = palette;
 
@@ -37,6 +42,54 @@
   const visible = $derived(shown.slice(0, MAX_ROWS));
   const hidden = $derived(shown.length - visible.length);
   const status = $derived(chat.status());
+
+  let region: ReturnType<typeof View> | undefined = $state();
+  /** The row the keyboard is on: 0 is the session itself, 1 and up are the agents; -1 while the keyboard is elsewhere. */
+  let cursor = $state(-1);
+
+  /** Takes the keyboard, starting on the session's own row; false when there is no list to move through. */
+  export function focus(): boolean {
+    if (visible.length === 0 || region === undefined) {
+      return false;
+    }
+    cursor = 0;
+    region.focus();
+    return true;
+  }
+
+  /** The keys of the list: the arrows move, Enter opens, x stops, Escape goes back. */
+  function key(event: KeyEvent): void {
+    if (event.ctrl || event.alt || event.meta) {
+      return;
+    }
+    event.preventDefault();
+    if (event.key === "ArrowDown") {
+      cursor = Math.min(cursor + 1, visible.length);
+      return;
+    }
+    if (event.key === "ArrowUp" && cursor > 0) {
+      cursor -= 1;
+      return;
+    }
+    if (event.key === "ArrowUp" || event.key === "Escape") {
+      onleave();
+      return;
+    }
+    const row = visible[cursor - 1];
+    if (row === undefined) {
+      if (event.key === "Enter") {
+        onleave();
+      }
+      return;
+    }
+    if (event.key === "Enter") {
+      onopen(row);
+      return;
+    }
+    if (event.key === "x") {
+      stop(row);
+    }
+  }
 
   /** Agents the user asked to stop, until their end arrives. */
   let stopping = $state.raw<ReadonlySet<string>>(new Set());
@@ -107,18 +160,24 @@
 </script>
 
 {#if shown.length > 0}
-  <View style={{ paddingX: p.space.l, paddingY: p.space.s, borderTopWidth: 1, borderColor: p.border, fontSize: p.text.body - 1 }}>
-    <View style={{ direction: "row", gap: p.space.s }}>
+  <View
+    bind:this={region}
+    focusable
+    onkey={key}
+    onblur={() => (cursor = -1)}
+    style={{ paddingX: p.space.l, paddingY: p.space.s, borderTopWidth: 1, borderColor: p.border, fontSize: p.text.body - 1 }}
+  >
+    <View style={{ direction: "row", gap: p.space.s, background: cursor === 0 ? p.band : undefined }}>
       <Text style={{ shrink: 0, color: status.running ? p.accent : p.muted }}>●</Text>
       <Text style={{ shrink: 0 }}>main</Text>
       <Text style={{ shrink: 0, color: p.muted }}>· {status.harness}</Text>
     </View>
-    {#each visible as row (row.id)}
+    {#each visible as row, index (row.id)}
       {@const mark = glyph(row)}
       <View
         onpress={() => onopen(row)}
         hover={{ background: p.surface }}
-        style={{ direction: "row", gap: p.space.m, paddingY: 1, cursor: "pointer" }}
+        style={{ direction: "row", gap: p.space.m, paddingY: 1, cursor: "pointer", background: cursor === index + 1 ? p.band : undefined }}
       >
         <Text style={{ color: mark.color }}>{mark.mark}</Text>
         <Text style={{ shrink: 0 }}>{name(row)}</Text>

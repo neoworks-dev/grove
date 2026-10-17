@@ -49,6 +49,8 @@
   );
 
   let width = $state(0);
+  let composer: ReturnType<typeof Composer> | undefined = $state();
+  let agentsList: ReturnType<typeof AgentsList> | undefined = $state();
   /** What the user chose for the plan and files column; undefined while the pane's width decides. */
   let panelChoice = $state<boolean | undefined>(undefined);
   /** The agent whose own chat is shown, and that chat. */
@@ -118,6 +120,14 @@
     return modelLabel(row.model);
   }
 
+  // The pane's keys reach this view through the service.
+  $effect(() =>
+    agents.registerPane(leafId, {
+      togglePanel,
+      focusAgents: () => agentsList?.focus() === true,
+    }),
+  );
+
   /** The edits button: shows the plan and files, or hides them. */
   function togglePanel(): void {
     panelChoice = !sidePanelShown;
@@ -151,9 +161,9 @@
           />
         {:else}
           <Chat session={chat} />
-          <Composer session={chat} {running} {focused} />
+          <Composer bind:this={composer} session={chat} {running} {focused} />
         {/if}
-        <AgentsList {chat} sessions={agents.sessions()} onopen={openAgent} />
+        <AgentsList bind:this={agentsList} {chat} sessions={agents.sessions()} onopen={openAgent} onleave={() => composer?.focus()} />
       </View>
     {/if}
     {#if sidePanelShown}

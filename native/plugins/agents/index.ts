@@ -44,6 +44,7 @@ export const agents = {
 
 /** Registers the commands for showing the view, starting a session, what the chat shows and the approvals mode, and their keys. */
 function registerCommands(ctx: Context, service: AgentsService): void {
+  const inAgentPane = (): boolean => service.focusedAgentPane() !== null;
   ctx.commands.register({ id: "agents.show", title: "Show agents", group: "View", run: () => ctx.sidebar.open("agents") });
   ctx.commands.register({
     id: "agents.newSession",
@@ -69,9 +70,37 @@ function registerCommands(ctx: Context, service: AgentsService): void {
     group: "Agents",
     run: () => void service.focusedChat()?.cycleApprovals(),
   });
+  ctx.commands.register({
+    id: "agents.toggleEdits",
+    title: "Agents: show or hide the plan and files",
+    group: "Agents",
+    run: () => service.focusedPane()?.togglePanel(),
+  });
+  ctx.commands.register({
+    id: "agents.focusAgents",
+    title: "Agents: move to the list of agents",
+    group: "Agents",
+    run: () => void service.focusedPane()?.focusAgents(),
+  });
+  ctx.commands.register({
+    id: "agents.previousSession",
+    title: "Agents: previous session",
+    group: "Agents",
+    run: () => service.stepSession(-1),
+  });
+  ctx.commands.register({
+    id: "agents.nextSession",
+    title: "Agents: next session",
+    group: "Agents",
+    run: () => service.stepSession(1),
+  });
   ctx.keymap.bind([
     { id: "agents.show", keys: "ctrl+shift+a", command: "agents.show", description: "Show agents" },
     { id: "agents.newSession", keys: "ctrl+alt+n", command: "agents.newSession", description: "New agent session" },
+    { id: "agents.previousSession", keys: "alt+h", command: "agents.previousSession", description: "Previous session", when: inAgentPane },
+    { id: "agents.nextSession", keys: "alt+l", command: "agents.nextSession", description: "Next session", when: inAgentPane },
+    { id: "agents.toggleEdits", keys: "alt+e", command: "agents.toggleEdits", description: "Plan and files", when: inAgentPane },
+    { id: "agents.focusAgents", keys: "ctrl+x", command: "agents.focusAgents", description: "List of agents", when: inAgentPane },
     // Keys other panes use too (Ctrl-O opens a file in the editor): theirs while an agent pane has the focus.
     {
       id: "agents.toggleResults",

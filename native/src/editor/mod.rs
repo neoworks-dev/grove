@@ -853,6 +853,11 @@ impl EntityInputHandler for Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(rename) = &mut self.features.rename {
+            rename.insert(text);
+            cx.notify();
+            return;
+        }
         let command = self.command_for_replacing(range, text);
         self.apply(&command, cx);
         cx.notify();

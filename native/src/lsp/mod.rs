@@ -13,6 +13,13 @@
 //!   whenever one changes. `state` is `starting`, `ready`, `failed`, `exited`, `stopped` or `missing`.
 //!
 //! Commands: `lsp_status` answers the same list, and `lsp_restart { id }` starts a server again.
+//! `lsp_configure { inlayHints, formatOnSave, eslint }` (every field optional) sets what the
+//! language features do, and `lsp_files_changed { changes: [{ path, kind }] }` tells the servers
+//! that asked to hear of it that files changed on disk, `kind` being `created`, `changed` or `deleted`.
+//!
+//! Beside the servers, the store runs `prettierd` and the server's own formatter to format a file
+//! before it is saved (`format.rs`), and `eslint_d` to lint JavaScript and TypeScript (`lint.rs`).
+//! Edits a server asks for, such as a rename's, are carried out by `apply.rs`.
 //!
 //! `GROVE_NO_LSP=1` starts no server, for comparing with the editor without them.
 
@@ -128,6 +135,9 @@ impl LspStore {
                 Ok::<_, CommandError>(Value::Null)
             })
             .command("lsp_files_changed", move |args| {
+                if std::env::var_os("GROVE_LSP_TRACE").is_some() {
+                    eprintln!("[lsp] the app reports {args}");
+                }
                 watcher.files_changed(&changes_from(&args));
                 Ok::<_, CommandError>(Value::Null)
             })
@@ -187,6 +197,9 @@ impl LspStore {
                 .map(|(path, change)| json!({ "uri": uri_from_path(path), "type": change.number() }))
                 .collect();
             if !events.is_empty() {
+                if std::env::var_os("GROVE_LSP_TRACE").is_some() {
+                    eprintln!("[lsp] telling {} of {} changed files", entry.spec.name, events.len());
+                }
                 client.notify("workspace/didChangeWatchedFiles", json!({ "changes": events }));
             }
         }
@@ -424,6 +437,7 @@ impl LspStore {
         }
         drop(documents);
         self.emit_status();
+        self.inner.signals.hints_stale();
     }
 
     /// A server ended or failed: its documents are no longer open on it, and what it reported goes away.

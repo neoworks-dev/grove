@@ -81,6 +81,46 @@ describe("key sequences", () => {
   });
 });
 
+describe("conflicts with guards", () => {
+  const sequence = (text: string) => parseSequence(text)!;
+
+  test("a guarded binding and an unguarded one on the same keys do not conflict", () => {
+    const conflicts = findConflicts([
+      { id: "everywhere", sequence: sequence("ctrl+o") },
+      { id: "in-context", sequence: sequence("ctrl+o"), guarded: true },
+    ]);
+    expect(conflicts).toEqual([]);
+  });
+
+  test("two guarded bindings, or two unguarded ones, on the same keys still conflict", () => {
+    expect(
+      findConflicts([
+        { id: "a", sequence: sequence("ctrl+o"), guarded: true },
+        { id: "b", sequence: sequence("ctrl+o"), guarded: true },
+      ]),
+    ).toHaveLength(1);
+    expect(
+      findConflicts([
+        { id: "a", sequence: sequence("ctrl+o") },
+        { id: "b", sequence: sequence("ctrl+o") },
+      ]),
+    ).toHaveLength(1);
+  });
+
+  test("the service does not warn when a guarded binding overlaps an unguarded one", async () => {
+    const { context } = await bootedContext();
+    const warnings: string[] = [];
+    const original = context.logger.warn.bind(context.logger);
+    context.logger.warn = (...args: unknown[]) => {
+      warnings.push(String(args[0]));
+      return original(...(args as [string]));
+    };
+    context.keymap.bind({ id: "file.open", keys: "ctrl+o", command: "save" });
+    context.keymap.bind({ id: "agents.toggleResults", keys: "ctrl+o", command: "save", when: () => false });
+    expect(warnings.filter((message) => message.includes("duplicate"))).toEqual([]);
+  });
+});
+
 describe("KeymapService", () => {
   test("a chord runs its command and takes the key", async () => {
     const { context, ran } = await bootedContext();

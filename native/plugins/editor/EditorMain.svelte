@@ -1,67 +1,76 @@
 <!--
-  The code editor, drawn by GPUI, filling the `main` slot. It reports what the file is, whether
-  it has unsaved changes and where the cursors are into `editorState`, which the status bar
-  entries and the editor's commands read.
+  A pane of the editor: this pane's tabs over the editor element, which shows the active tab's
+  document. The text lives in Rust under the document's id, so drawing this component again,
+  as splitting or closing a neighbouring pane does, finds the same text and cursors. Pressing in the
+  editor focuses the pane.
 -->
 <script lang="ts">
-  import { element, invoke } from "@neoworks/svelte-gpui";
-  import { editorState, type EditorMethods } from "./editorState.svelte";
+  import { element, type ElementMethods } from "@neoworks/svelte-gpui";
+  import { Text, View } from "@neoworks/svelte-gpui/ui";
+  import TabStrip, { type TabEntry } from "../panel/TabStrip.svelte";
+  import { colors, fontSize } from "../theme/tokens";
+  import type { EditorService, EditorViewMethods } from "./service";
 
-  /** The editor `src/editor/mod.rs` registers, with the events it emits. */
-  const Editor = element<
-    {
-      path: string;
-      onopened: (event: { path: string; lines: number }) => void;
-      onerror: (event: { path: string; message: string }) => void;
-      onselections: (event: { count: number; row: number; column: number; selected: boolean }) => void;
-      ondirty: (event: { modified: boolean }) => void;
-      onsaved: (event: { path: string }) => void;
-    },
-    EditorMethods
-  >("editor");
-
-  let editor = $state<EditorMethods | null>(null);
-
-  // The layout remounts this component when a split wraps or frees its pane, so the host is
-  // asked for the file once, and the editor is not drawn before it is known.
-  if (editorState.path === "") {
-    invoke<string>("initial_file").then((file) => {
-      editorState.path = file;
-    });
+  interface Props {
+    service: EditorService;
+    /** The pane this is drawn in; one editor outside the split layout is the pane "main". */
+    leafId?: string;
   }
 
-  // The element is known to the commands only while it is mounted.
+  let { service, leafId = "main" }: Props = $props();
+
+  /** The editor `src/editor/mod.rs` registers. */
+  const Editor = element<{ document: number; onfocus: () => void }, EditorViewMethods>("editor");
+
+  let view = $state<ElementMethods<EditorViewMethods> | null>(null);
+
+  const tabs = $derived(service.tabsIn(leafId));
+  const active = $derived(service.activeIn(leafId));
+  const entries = $derived<TabEntry[]>(tabs.map((tab) => ({ id: String(tab.id), title: tab.title, dirty: tab.dirty })));
+
+  // Commands reach the editor through the service while it is mounted.
   $effect(() => {
-    editorState.element = editor;
-    return () => {
-      editorState.element = null;
-    };
+    if (!view) {
+      return;
+    }
+    return service.registerView(leafId, view);
   });
+
+  // The pane that has the focus has the keyboard in its editor, so a split's new pane takes the
+  // keys from the one it came from, and a prompt that closes gives them back.
+  $effect(() => {
+    if (view && service.isFocusedPane(leafId) && service.prompt() === null) {
+      view.focus();
+    }
+  });
+
+  /** Shows the tab with this id in this pane. */
+  function selectTab(tabId: string): void {
+    service.select(leafId, Number(tabId));
+  }
+
+  /** Closes the tab with this id in this pane, asking about unsaved changes first. */
+  function closeTab(tabId: string): void {
+    void service.closeTab(leafId, Number(tabId));
+  }
 </script>
 
-{#if editorState.path !== ""}
-<Editor
-  bind:this={editor}
-  style={{ flex: 1 }}
-  key="main"
-  path={editorState.path}
-  onopened={(event) => {
-    editorState.fileSummary = event.path;
-    editorState.message = "";
-    editorState.modified = false;
-  }}
-  onerror={(event) => (editorState.message = event.message)}
-  ondirty={(event) => {
-    editorState.modified = event.modified;
-    if (event.modified) {
-      editorState.message = "";
-    }
-  }}
-  onsaved={() => (editorState.message = "saved")}
-  onselections={(event) => {
-    editorState.row = event.row;
-    editorState.column = event.column;
-    editorState.cursorCount = event.count;
-  }}
-/>
-{/if}
+<View style={{ flex: 1, minHeight: 0 }}>
+  {#if entries.length > 0}
+    <TabStrip tabs={entries} activeId={active ? String(active.id) : ""} onselect={selectTab} onclose={closeTab} />
+  {/if}
+  {#if active}
+    <Editor
+      bind:this={view}
+      style={{ flex: 1 }}
+      key={`editor-${leafId}`}
+      document={active.id}
+      onfocus={() => service.focusPane(leafId)}
+    />
+  {:else}
+    <View style={{ flex: 1, align: "center", justify: "center", gap: 4 }}>
+      <Text style={{ fontSize: fontSize.sm, color: colors.muted }}>No file open</Text>
+      <Text style={{ fontSize: fontSize.xs, color: colors.dim }}>Open one with Ctrl+O.</Text>
+    </View>
+  {/if}
+</View>

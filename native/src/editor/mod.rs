@@ -4,41 +4,58 @@
 //! `EditorState` that only `Command`s change, and input layers that turn keys into commands.
 //! This view owns one of each and the things only a window has, the scroll offset and the
 //! layout of the last frame. It forwards keys and the pointer, applies the commands that come
-//! back, scrolls, reports the selections to the app and lets `EditorElement` paint.
+//! back, scrolls and lets `EditorElement` paint.
+//!
+//! The view does not own the text. A document, shared through `SharedDocuments`, does, and the
+//! view shows the one its `document` prop names, so a view made again, or a second view of the
+//! same document, shows the same text, cursors and history. When one view changes a document,
+//! the other views of it redraw.
 
+mod documents;
 mod element;
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::ops::Range;
-use std::path::Path;
 
 use editor_core::{
-    Buffer, Command, EditorState, InputContext, InputLayer, KeyInput, Modifiers, Outcome, Position, StandardKeymap,
+    Command, DocumentId, EditorState, InputContext, InputLayer, KeyInput, Modifiers, Outcome, Position, StandardKeymap,
 };
 use serde_json::{Value, json};
 use svelte_gpui::gpui::{
-    App, Bounds, ClipboardItem, Context, EntityInputHandler, FocusHandle, IntoElement, KeyDownEvent, Keystroke,
+    App, Bounds, ClipboardItem, Context, EntityId, WeakEntity, EntityInputHandler, FocusHandle, IntoElement, KeyDownEvent, Keystroke,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, ScrollWheelEvent, Subscription,
     UTF16Selection, Window, div, prelude::*, px,
 };
-use svelte_gpui::{AppElement, CommandError, NativeHost};
+use svelte_gpui::{AppElement, CommandError};
+
+pub use documents::SharedDocuments;
 
 use element::{EditorElement, LINE_HEIGHT, Layout};
 
+thread_local! {
+    /// Which document each view of the window shows, so a change made in one view can redraw
+    /// the others. Views live on the window's thread, so this does too.
+    static VIEWS: RefCell<HashMap<EntityId, (DocumentId, WeakEntity<Editor>)>> = RefCell::new(HashMap::new());
+}
+
 pub struct Editor {
-    host: NativeHost,
+    documents: SharedDocuments,
+    /// The document this view shows, set by the `document` prop; none shows an empty view.
+    document: Option<DocumentId>,
+    /// This view's entity, once it has been listed in `VIEWS`.
+    view: Option<EntityId>,
     focus: FocusHandle,
-    state: EditorState,
     /// Turns keys into commands: the standard keymap now, a vim layer later.
     input: Box<dyn InputLayer>,
-    /// How far the text is scrolled, in pixels from the top of the first line.
+    /// How far the text is scrolled, in pixels from the top of the first line. Each view of a
+    /// document scrolls on its own.
     scroll_top: Pixels,
     /// What the last frame drew; none before the first.
     layout: Option<Layout>,
     /// The last text this editor copied. The system clipboard only takes text from a window that
     /// has focus, so where it refuses, a paste still gets this.
     last_copied: Option<String>,
-    /// The modified state the app was last told about, so it hears of changes only.
-    reported_modified: bool,
     /// Whether the left button went down in the editor and is still held, so moving the
     /// pointer extends the newest selection.
     dragging: bool,
@@ -48,46 +65,82 @@ pub struct Editor {
 }
 
 impl Editor {
-    /// An empty editor; the `path` prop opens a file in it.
-    pub fn new(host: NativeHost, cx: &mut Context<Self>) -> Self {
+    /// A view that shows no document yet; the `document` prop picks one.
+    pub fn new(documents: SharedDocuments, cx: &mut Context<Self>) -> Self {
         Editor {
-            host,
+            documents,
+            document: None,
+            view: None,
             focus: cx.focus_handle(),
-            state: EditorState::new(Buffer::empty()),
             input: Box::new(StandardKeymap),
             scroll_top: px(0.0),
             layout: None,
             last_copied: None,
-            reported_modified: false,
             dragging: false,
             focus_subscriptions: Vec::new(),
         }
     }
 
-    /// Replaces the buffer with a file, and tells the app whether that worked.
-    fn open(&mut self, path: &str) {
-        match Buffer::open(Path::new(path)) {
-            Ok(buffer) => {
-                self.state.replace_buffer(buffer);
-                self.scroll_top = px(0.0);
-                self.reported_modified = false;
-                self.host.emit("opened", json!({ "path": path, "lines": self.state.buffer().line_count() }));
-                self.report_selections();
-            }
-            Err(error) => {
-                self.host.emit("error", json!({ "path": path, "message": error.to_string() }));
-            }
+    /// Shows another document, or none, and remembers which for the other views' sake.
+    fn show(&mut self, document: Option<DocumentId>, cx: &mut Context<Self>) {
+        self.document = document;
+        self.scroll_top = self.remembered_scroll_top(document);
+        self.layout = None;
+        self.dragging = false;
+        let view = cx.entity_id();
+        self.view = Some(view);
+        let weak = cx.entity().downgrade();
+        VIEWS.with(|views| match document {
+            Some(id) => views.borrow_mut().insert(view, (id, weak)),
+            None => views.borrow_mut().remove(&view),
+        });
+    }
+
+    /// Runs `read` over the shown document's state, or gives none while the view shows no open
+    /// document. The documents are locked while it runs, so keep it short.
+    fn read<R>(&self, read: impl FnOnce(&EditorState) -> R) -> Option<R> {
+        let id = self.document?;
+        let documents = self.documents.lock();
+        let document = documents.get(id)?;
+        Some(read(&document.state))
+    }
+
+    /// Scrolls this view, and records where the document was left so a view made later starts there.
+    fn set_scroll_top(&mut self, scroll_top: Pixels) {
+        self.scroll_top = scroll_top;
+        let Some(id) = self.document else {
+            return;
+        };
+        if let Some(document) = self.documents.lock().get_mut(id) {
+            document.scroll_top = f32::from(scroll_top);
         }
     }
 
-    /// Applies a command to the state and reacts to what it did: scrolls to follow the newest
-    /// cursor, puts copied text on the clipboard, and tells the app about selections, saving and
-    /// the modified state. A paste request is filled in from the clipboard first.
+    /// Where the document was last scrolled to, or the top for one that is not open.
+    fn remembered_scroll_top(&self, id: Option<DocumentId>) -> Pixels {
+        let Some(id) = id else {
+            return px(0.0);
+        };
+        match self.documents.lock().get(id) {
+            Some(document) => px(document.scroll_top),
+            None => px(0.0),
+        }
+    }
+
+    /// Applies a command to the shown document and reacts to what it did: scrolls to follow the
+    /// newest cursor, puts copied text on the clipboard, and redraws the other views of the
+    /// document. The app hears about the effects from the documents. A paste request is filled
+    /// in from the clipboard first.
     fn apply(&mut self, command: &Command, cx: &mut Context<Self>) -> Outcome {
+        let Some(id) = self.document else {
+            return Outcome::default();
+        };
         let Some(command) = self.resolve_clipboard(command, cx) else {
             return Outcome::default();
         };
-        let outcome = self.state.apply(&command);
+        let Some(outcome) = self.documents.apply(id, &command) else {
+            return Outcome::default();
+        };
         if outcome.reveal_newest {
             self.scroll_to_newest();
         }
@@ -95,11 +148,22 @@ impl Editor {
             cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
             self.last_copied = Some(text.clone());
         }
-        if outcome.changed {
-            self.report_selections();
-        }
-        self.report_outcome(&outcome);
+        self.redraw_other_views(id, cx);
         outcome
+    }
+
+    /// Redraws every other view of a document, since the host keeps what a view painted until
+    /// that view asks to be drawn again.
+    fn redraw_other_views(&self, id: DocumentId, cx: &mut Context<Self>) {
+        let own = cx.entity_id();
+        let others: Vec<WeakEntity<Editor>> = VIEWS.with(|views| {
+            let views = views.borrow();
+            let showing = views.iter().filter(|(view, (shown, _))| *shown == id && **view != own);
+            showing.map(|(_, (_, weak))| weak.clone()).collect()
+        });
+        for view in others {
+            let _ = view.update(cx, |_, cx| cx.notify());
+        }
     }
 
     /// Swaps a request to paste for a paste of the clipboard's text, or of the editor's own last
@@ -111,22 +175,6 @@ impl Editor {
         let clipboard_text = cx.read_from_clipboard().and_then(|item| item.text());
         let text = clipboard_text.or_else(|| self.last_copied.clone())?;
         Some(Command::Paste { text })
-    }
-
-    /// Tells the app about a save, a failed save, and a change of the modified state.
-    fn report_outcome(&mut self, outcome: &Outcome) {
-        let path = self.state.buffer().path().map(|path| path.display().to_string());
-        if outcome.saved {
-            self.host.emit("saved", json!({ "path": path }));
-        }
-        if let Some(message) = &outcome.error {
-            self.host.emit("error", json!({ "path": path, "message": message }));
-        }
-        let modified = self.state.is_modified();
-        if modified != self.reported_modified {
-            self.reported_modified = modified;
-            self.host.emit("dirty", json!({ "path": path, "modified": modified }));
-        }
     }
 
     /// Handles a key the input layer knows; returns false for the rest, which then bubble to the app.
@@ -188,20 +236,27 @@ impl Editor {
         let Some(layout) = &self.layout else {
             return;
         };
-        let head_top = LINE_HEIGHT * self.state.selections().newest().head.row as f32;
+        let Some(head_row) = self.read(|state| state.selections().newest().head.row) else {
+            return;
+        };
+        let head_top = LINE_HEIGHT * head_row as f32;
         let head_bottom = head_top + LINE_HEIGHT;
         let view_height = layout.bounds.size.height;
-        if head_top < self.scroll_top {
-            self.scroll_top = head_top;
-        } else if head_bottom > self.scroll_top + view_height {
-            self.scroll_top = head_bottom - view_height;
+        let scroll_top = self.scroll_top;
+        if head_top < scroll_top {
+            self.set_scroll_top(head_top);
+        } else if head_bottom > scroll_top + view_height {
+            self.set_scroll_top(head_bottom - view_height);
         }
     }
 
     /// Scrolls by the wheel's delta, stopping with the last line at the top.
     fn scroll_by(&mut self, delta: Pixels) {
-        let last_line_top = LINE_HEIGHT * self.state.buffer().line_count().saturating_sub(1) as f32;
-        self.scroll_top = (self.scroll_top - delta).clamp(px(0.0), last_line_top);
+        let Some(line_count) = self.read(|state| state.buffer().line_count()) else {
+            return;
+        };
+        let last_line_top = LINE_HEIGHT * line_count.saturating_sub(1) as f32;
+        self.set_scroll_top((self.scroll_top - delta).clamp(px(0.0), last_line_top));
     }
 
     /// How many rows a page is.
@@ -210,21 +265,6 @@ impl Editor {
             Some(layout) => layout.rows_in_view(),
             None => 1,
         }
-    }
-
-    /// Tells the app how many cursors there are and where the newest one is.
-    fn report_selections(&self) {
-        let selections = self.state.selections();
-        let newest = selections.newest();
-        self.host.emit(
-            "selections",
-            json!({
-                "count": selections.count(),
-                "row": newest.head.row,
-                "column": newest.head.column,
-                "selected": !newest.is_empty(),
-            }),
-        );
     }
 
     /// Redraws when the editor gains or loses focus, so the cursor shows it.
@@ -239,6 +279,16 @@ impl Editor {
     }
 }
 
+impl Drop for Editor {
+    /// Forgets the view, so a change to its document does not redraw it any more.
+    fn drop(&mut self) {
+        let Some(view) = self.view else {
+            return;
+        };
+        let _ = VIEWS.try_with(|views| views.borrow_mut().remove(&view));
+    }
+}
+
 /// A GPUI keystroke as the input layers see it.
 fn key_input(keystroke: &Keystroke) -> KeyInput {
     let modifiers = keystroke.modifiers;
@@ -249,17 +299,16 @@ fn key_input(keystroke: &Keystroke) -> KeyInput {
 }
 
 impl AppElement for Editor {
-    fn set_prop(&mut self, name: &str, value: Value, _cx: &mut Context<Self>) {
-        if name != "path" {
+    /// The `document` prop is the id of the document to show; removing it empties the view.
+    fn set_prop(&mut self, name: &str, value: Value, cx: &mut Context<Self>) {
+        if name != "document" {
             return;
         }
-        let Some(path) = value.as_str() else {
-            return;
-        };
-        if self.state.buffer().path() == Some(Path::new(path)) {
+        let document = value.as_u64();
+        if document == self.document {
             return;
         }
-        self.open(path);
+        self.show(document, cx);
     }
 
     fn call(&mut self, method: &str, args: Value, cx: &mut Context<Self>) -> Result<Value, CommandError> {
@@ -291,7 +340,8 @@ impl Editor {
 
     /// Every selection as the app sees it.
     fn selections_json(&self) -> Value {
-        json!(self.state.selections().all().iter().map(selection_json).collect::<Vec<_>>())
+        let selections = self.read(|state| state.selections().all().iter().map(selection_json).collect::<Vec<_>>());
+        json!(selections.unwrap_or_default())
     }
 }
 
@@ -354,10 +404,13 @@ impl EntityInputHandler for Editor {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<String> {
-        let buffer = self.state.buffer();
-        let (start, end) = (buffer.offset_of_utf16(range.start), buffer.offset_of_utf16(range.end));
-        *adjusted = Some(buffer.utf16_of_offset(start)..buffer.utf16_of_offset(end));
-        Some(buffer.slice(start..end))
+        let (text, adjusted_range) = self.read(|state| {
+            let buffer = state.buffer();
+            let (start, end) = (buffer.offset_of_utf16(range.start), buffer.offset_of_utf16(range.end));
+            (buffer.slice(start..end), buffer.utf16_of_offset(start)..buffer.utf16_of_offset(end))
+        })?;
+        *adjusted = Some(adjusted_range);
+        Some(text)
     }
 
     fn selected_text_range(
@@ -366,16 +419,20 @@ impl EntityInputHandler for Editor {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<UTF16Selection> {
-        let newest = self.state.selections().newest();
-        let buffer = self.state.buffer();
-        let anchor = buffer.utf16_of_offset(buffer.offset_of(newest.anchor));
-        let head = buffer.utf16_of_offset(buffer.offset_of(newest.head));
-        Some(UTF16Selection { range: anchor.min(head)..anchor.max(head), reversed: head < anchor })
+        self.read(|state| {
+            let newest = state.selections().newest();
+            let buffer = state.buffer();
+            let anchor = buffer.utf16_of_offset(buffer.offset_of(newest.anchor));
+            let head = buffer.utf16_of_offset(buffer.offset_of(newest.head));
+            UTF16Selection { range: anchor.min(head)..anchor.max(head), reversed: head < anchor }
+        })
     }
 
     fn marked_text_range(&self, _window: &mut Window, _cx: &mut Context<Self>) -> Option<Range<usize>> {
-        let (start, end) = self.state.marked_range()?;
-        Some(self.utf16_range(start, end))
+        self.read(|state| {
+            let (start, end) = state.marked_range()?;
+            Some(utf16_range(state, start, end))
+        })?
     }
 
     fn unmark_text(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
@@ -414,8 +471,7 @@ impl EntityInputHandler for Editor {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
-        let buffer = self.state.buffer();
-        let position = buffer.position_of(buffer.offset_of_utf16(range.start));
+        let position = self.read(|state| state.buffer().position_of(state.buffer().offset_of_utf16(range.start)))?;
         let Some(layout) = &self.layout else {
             return Some(element_bounds);
         };
@@ -429,18 +485,11 @@ impl EntityInputHandler for Editor {
         _cx: &mut Context<Self>,
     ) -> Option<usize> {
         let position = self.position_at(point)?;
-        let buffer = self.state.buffer();
-        Some(buffer.utf16_of_offset(buffer.offset_of(position)))
+        self.read(|state| state.buffer().utf16_of_offset(state.buffer().offset_of(position)))
     }
 }
 
 impl Editor {
-    /// The UTF-16 range between two positions.
-    fn utf16_range(&self, start: Position, end: Position) -> Range<usize> {
-        let buffer = self.state.buffer();
-        buffer.utf16_of_offset(buffer.offset_of(start))..buffer.utf16_of_offset(buffer.offset_of(end))
-    }
-
     /// The command for an input method's request to put text over a UTF-16 range. Text that goes
     /// where the cursors are, or over the composed text, is typed at every cursor; a range
     /// elsewhere replaces just that range.
@@ -449,20 +498,28 @@ impl Editor {
         let Some(range) = range else {
             return typing;
         };
-        let newest = self.state.selections().newest();
-        let at_selection = range == self.utf16_range(newest.start(), newest.end());
-        let at_composition = match self.state.marked_range() {
-            Some((start, end)) => range == self.utf16_range(start, end),
-            None => false,
-        };
-        if at_selection || at_composition {
-            return typing;
-        }
-        let buffer = self.state.buffer();
-        Command::ReplaceRange {
-            start: buffer.offset_of_utf16(range.start),
-            end: buffer.offset_of_utf16(range.end),
-            text: text.to_string(),
+        let replaces_elsewhere = self.read(|state| {
+            let newest = state.selections().newest();
+            let at_selection = range == utf16_range(state, newest.start(), newest.end());
+            let at_composition = match state.marked_range() {
+                Some((start, end)) => range == utf16_range(state, start, end),
+                None => false,
+            };
+            if at_selection || at_composition {
+                return None;
+            }
+            let buffer = state.buffer();
+            Some((buffer.offset_of_utf16(range.start), buffer.offset_of_utf16(range.end)))
+        });
+        match replaces_elsewhere.flatten() {
+            Some((start, end)) => Command::ReplaceRange { start, end, text: text.to_string() },
+            None => typing,
         }
     }
+}
+
+/// The UTF-16 range between two positions.
+fn utf16_range(state: &EditorState, start: Position, end: Position) -> Range<usize> {
+    let buffer = state.buffer();
+    buffer.utf16_of_offset(buffer.offset_of(start))..buffer.utf16_of_offset(buffer.offset_of(end))
 }

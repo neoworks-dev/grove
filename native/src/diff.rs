@@ -11,6 +11,8 @@
 //!   with the old text (document `oldId`, or `oldText`), puts the decorations of `source` on it,
 //!   and answers `{ hunks }`. A `mode` of `inline` draws the removed lines in the new document; `split`
 //!   draws one side in each of the two documents, with fillers so their rows line up.
+//! - `diff_hunks { id, oldText }` answers `{ hunks }` of document `id` against the old text,
+//!   without drawing anything.
 //! - `diff_preview { id, oldText, row, source }` shows the old lines of the hunk at `row` as a
 //!   block above it, and answers whether there is one. No hunk there removes the block.
 //! - `hunk_stage { id, row }` stages the hunk of document `id` at `row` against the index.
@@ -38,11 +40,13 @@ use crate::git::run_git;
 pub fn register(commands: Commands, documents: SharedDocuments) -> Commands {
     let applier = documents.clone();
     let previewer = documents.clone();
+    let lister = documents.clone();
     let stager = documents.clone();
     let reverter = documents;
     commands
         .command("diff_apply", move |args| diff_apply(&applier, &args))
         .command("diff_preview", move |args| diff_preview(&previewer, &args))
+        .command("diff_hunks", move |args| diff_hunks(&lister, &args))
         .command("hunk_stage", move |args| hunk_stage(&stager, &args))
         .command("hunk_unstage", |args| hunk_unstage(&args))
         .command("hunk_revert", move |args| hunk_revert(&reverter, &args))
@@ -106,6 +110,15 @@ fn diff_apply(documents: &SharedDocuments, args: &Value) -> Result<Value, Comman
     let (decorations, hunks) = diff::decorations(&old_text, &new_text, Side::Inline);
     set_decorations(documents, new_id, &source, decorations)?;
     Ok(json!({ "hunks": hunks.iter().map(hunk_json).collect::<Vec<_>>() }))
+}
+
+/// The `diff_hunks` command.
+fn diff_hunks(documents: &SharedDocuments, args: &Value) -> Result<Value, CommandError> {
+    let id = number_argument(args, "id")?;
+    let old_text = string_argument(args, "oldText")?;
+    let new_text = documents.text(id)?;
+    let found = diff::hunks(&diff::split_lines(&old_text), &diff::split_lines(&new_text));
+    Ok(json!({ "hunks": found.iter().map(hunk_json).collect::<Vec<_>>() }))
 }
 
 /// The `diff_preview` command.

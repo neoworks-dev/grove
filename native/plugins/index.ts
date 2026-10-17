@@ -2,6 +2,7 @@
 // bundle, so every core plugin is imported here and the profile selects and configures them.
 
 import type { PluginCatalog } from "../kernel/profile";
+import { diff } from "./diff";
 import { editor } from "./editor";
 import { editorPosition } from "./editor-position";
 import { explorer } from "./explorer";
@@ -43,6 +44,7 @@ export const corePlugins: PluginCatalog = {
   layout,
   editor,
   "editor-position": editorPosition,
+  diff,
   "git-gutter": gitGutter,
   sidecar,
   workspace,

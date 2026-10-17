@@ -50,6 +50,27 @@ class FakeDocumentHost implements DocumentHost {
 
   async setDecorations(): Promise<void> {}
 
+  texts = new Map<number, string>();
+
+  async openText(name: string, text: string): Promise<DocumentSummary> {
+    const summary = { id: this.nextId, path: null, title: name, dirty: false };
+    this.nextId += 1;
+    this.documents.set(summary.id, summary);
+    this.texts.set(summary.id, text);
+    this.emit({ type: "opened", summary });
+    return summary;
+  }
+
+  async text(id: number): Promise<string> {
+    return this.texts.get(id) ?? "";
+  }
+
+  async setText(id: number, text: string): Promise<void> {
+    this.texts.set(id, text);
+  }
+
+  async reload(): Promise<void> {}
+
   onEvent(handler: (event: DocumentEvent) => void): () => void {
     this.handlers.push(handler);
     return () => {

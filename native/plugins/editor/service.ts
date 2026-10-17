@@ -137,7 +137,25 @@ export interface EditorViewMethods {
   apply(command: { type: string; [field: string]: unknown }): Promise<{ changed: boolean }>;
   /** Draws the view again, such as after the decorations of its document changed. */
   refresh(): Promise<void>;
+  /** Shows what the language server says about the symbol at the cursor. */
+  hover(): Promise<void>;
+  /** Goes to the definition of the symbol at the cursor. */
+  definition(): Promise<void>;
+  /** Opens the completion panel at the cursor. */
+  complete(): Promise<void>;
+  /** Puts the cursor at a line and UTF-16 column, counted from zero, and scrolls to it. */
+  goto(line: number, character: number): Promise<void>;
 }
+
+/** A place to put the cursor once the document that has it is shown. */
+export interface RevealRequest {
+  documentId: number;
+  line: number;
+  character: number;
+}
+
+/** The methods of the editor element a command can call without an answer. */
+export type ViewAction = "hover" | "definition" | "complete";
 
 /** An open document, as other plugins see it. */
 export interface BufferInfo {
@@ -188,6 +206,7 @@ export class EditorService extends Service {
   private promptState: Prompt | null = null;
   private answerClose: ((choice: CloseChoice) => void) | null = null;
   private messageText = "";
+  private revealing: RevealRequest | null = null;
   private changes: ChangeSignal = createChangeSignal();
   private keymapName: KeymapName = "standard";
   private vimState: VimStatus = { mode: "", pending: "", commandLine: null };
@@ -444,6 +463,41 @@ export class EditorService extends Service {
     }
     await this.host.configure(options);
     await Promise.all([...this.viewsByLeaf.values()].map((view) => view.refresh()));
+  }
+
+  /** Asks the focused pane's editor to do something at its cursor, such as show a hover. */
+  async actOnFocusedView(action: ViewAction): Promise<void> {
+    const view = this.viewsByLeaf.get(this.panes.focusedLeafId);
+    if (!view) {
+      return;
+    }
+    await view[action]();
+  }
+
+  /**
+   * Opens a file and puts the cursor at a line and UTF-16 column, counted from zero, as going to
+   * a definition does. The cursor moves once the pane shows the file.
+   */
+  async reveal(path: string, line: number, character: number): Promise<void> {
+    const documentId = await this.openPath(path);
+    if (documentId === null) {
+      return;
+    }
+    this.revealing = { documentId, line, character };
+    this.changes.notify();
+  }
+
+  /** The cursor move that is waiting for its document to be shown, or null. Reactive. */
+  pendingReveal(): RevealRequest | null {
+    this.changes.track();
+    return this.revealing;
+  }
+
+  /** Marks a cursor move as done, so it is not made again. */
+  finishReveal(request: RevealRequest): void {
+    if (this.revealing === request) {
+      this.revealing = null;
+    }
   }
 
   /**

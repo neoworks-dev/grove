@@ -8,6 +8,7 @@ pub mod anchor;
 pub mod buffer;
 pub mod clipboard;
 pub mod command;
+pub mod completion;
 pub mod decorations;
 pub mod diff;
 pub mod display;
@@ -23,13 +24,15 @@ pub mod keymap;
 pub mod movement;
 pub mod occurrences;
 pub mod selections;
+pub mod snippet;
 pub mod state;
 pub mod syntax;
 pub mod vim;
 
 pub use anchor::{Anchor, AnchorId, Bias};
-pub use buffer::{Buffer, LineEnding, Position};
+pub use buffer::{Buffer, ContentChange, LineEnding, Position, Utf16Point};
 pub use command::{Command, Outcome};
+pub use completion::RangeEdit;
 pub use decorations::{
     Decoration, DecorationKind, GutterMark, Placement, SourceFilter, Tone, Underline, UnderlineKind,
 };

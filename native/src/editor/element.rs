@@ -21,6 +21,7 @@ use super::Editor;
 use super::indent_paint::{self, GuideLine};
 use super::jump_paint::{self, JumpPaint};
 use super::options::EditorOptions;
+use super::popup;
 use super::theme::{EditorTheme, HighlightStyle};
 use super::vim_paint::{self, VimPaint};
 use editor_core::decorations::{DecorationKind, GutterMark, Placed, PlacedBlock, Placement, Tone, UnderlineKind};
@@ -118,6 +119,15 @@ impl Layout {
         }
     }
 
+    /// Whether a point is on the text of a line, rather than the gutter or past the line's end.
+    pub fn over_text(&self, point: svelte_gpui::gpui::Point<Pixels>) -> bool {
+        let rows_down = ((point.y - self.first_row_top) / LINE_HEIGHT).floor().max(0.0) as usize;
+        let Some(VisibleRow::Text(line)) = self.rows.get(rows_down) else {
+            return false;
+        };
+        point.x >= self.text_left && point.x <= self.text_left + line.shaped.width
+    }
+
     /// The y of the top of the drawn display row at `index` (counted from the first drawn).
     pub(super) fn top_of_index(&self, index: usize) -> Pixels {
         self.first_row_top + LINE_HEIGHT * index as f32
@@ -192,6 +202,8 @@ pub struct Frame {
     jump: JumpPaint,
     /// The colours this frame is painted with.
     theme: EditorTheme,
+    /// How long the frame took to prepare, for `GROVE_LATENCY`.
+    prepaint_took: std::time::Duration,
 }
 
 impl Frame {
@@ -209,6 +221,7 @@ impl Frame {
             line_ends: Vec::new(),
             cursors: Vec::new(),
             underlines: Vec::new(),
+            prepaint_took: std::time::Duration::ZERO,
             vim: VimPaint::default(),
             jump: JumpPaint::default(),
         }
@@ -260,6 +273,7 @@ impl Element for EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Frame {
+        let prepaint_started = std::time::Instant::now();
         self.editor.update(cx, |editor, cx| editor.advance_glide(window, cx));
         let editor = self.editor.read(cx);
         let scroll_top = editor.scroll_top;
@@ -270,10 +284,19 @@ impl Element for EditorElement {
         let sources = editor.sources.clone();
         let built = editor
             .read(|state| build_frame(state, scroll_top, bounds, window, &theme, &status, options, jump, &sources));
-        let Some((layout, frame)) = built else {
+        let Some((layout, mut frame)) = built else {
             return Frame::empty(theme);
         };
-        self.editor.update(cx, |editor, _| editor.layout = Some(layout));
+        let entity = self.editor.clone();
+        let popovers = self.editor.update(cx, |editor, cx| {
+            let popovers = popup::build(&entity, editor, &layout, &theme, bounds, window, cx);
+            editor.layout = Some(layout);
+            popovers
+        });
+        for popover in popovers {
+            window.defer_draw(popover.element, popover.origin, 1);
+        }
+        frame.prepaint_took = prepaint_started.elapsed();
         frame
     }
 
@@ -289,6 +312,7 @@ impl Element for EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let paint_started = std::time::Instant::now();
         let focus = self.editor.read(cx).focus.clone();
         let focused = focus.is_focused(window);
         window.handle_input(&focus, ElementInputHandler::new(bounds, self.editor.clone()), cx);
@@ -350,6 +374,29 @@ impl Element for EditorElement {
             jump_paint::paint_over_text(&frame.jump, theme, window, cx);
             vim_paint::paint_command_line(&frame.vim, theme, window, cx);
         });
+        self.report_latency(frame, paint_started, cx);
+    }
+}
+
+impl EditorElement {
+    /// Prints how long the keystroke that caused this frame took, when `GROVE_LATENCY` is set:
+    /// from reaching the view to the end of painting, and the parts of that.
+    fn report_latency(&self, frame: &Frame, paint_started: std::time::Instant, cx: &mut App) {
+        if !self.editor.read(cx).measure_latency {
+            return;
+        }
+        let Some(probe) = self.editor.update(cx, |editor, _| editor.latency_probe.take()) else {
+            return;
+        };
+        let waited = paint_started.duration_since(probe.arrived_at).saturating_sub(frame.prepaint_took);
+        eprintln!(
+            "[latency] handled {:.2} ms, waited for the frame {:.2} ms, prepared {:.2} ms, painted {:.2} ms, key to end of paint {:.2} ms",
+            probe.handled.as_secs_f64() * 1000.0,
+            waited.as_secs_f64() * 1000.0,
+            frame.prepaint_took.as_secs_f64() * 1000.0,
+            paint_started.elapsed().as_secs_f64() * 1000.0,
+            probe.arrived_at.elapsed().as_secs_f64() * 1000.0,
+        );
     }
 }
 
@@ -543,6 +590,7 @@ fn build_frame(
         vim,
         jump: jump_paint,
         theme: theme.clone(),
+        prepaint_took: std::time::Duration::ZERO,
     };
     (layout, frame)
 }
@@ -748,6 +796,14 @@ pub(super) fn span_bounds(
         spans.push(Bounds::new(point(left, layout.top_of_index(index)), size(right - left, LINE_HEIGHT)));
     }
     spans
+}
+
+/// How wide a line of text is in the editor's font at the size popovers use.
+pub(super) fn measure_text_width(window: &mut Window, text: &str) -> Pixels {
+    let plain = HighlightStyle { color: Hsla::default(), bold: false, italic: false };
+    let run = text_run(text.len(), plain, None);
+    let size = px(13.0);
+    window.text_system().shape_line(SharedString::from(text.to_string()), size, &[run], None).width
 }
 
 /// Shapes one line of text in the editor's font, in a single colour.

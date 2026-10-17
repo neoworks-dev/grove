@@ -28,7 +28,7 @@
 use editor_core::Tone;
 use editor_core::syntax::{HIGHLIGHT_NAMES, HighlightId};
 use serde_json::Value;
-use svelte_gpui::gpui::{Hsla, rgba};
+use svelte_gpui::gpui::{Hsla, Rgba, rgba};
 
 /// How one kind of highlighted text is painted.
 #[derive(Clone, Copy)]
@@ -158,10 +158,23 @@ impl EditorTheme {
         }
     }
 
+    /// The colour the theme gives a highlight name such as `function`, if it gives one.
+    pub fn syntax_color(&self, name: &str) -> Option<Hsla> {
+        let id = editor_core::syntax::highlight_for_capture(name)?;
+        self.style_of(id).map(|style| style.color)
+    }
+
     /// How a highlight is painted, or none for text in the foreground colour.
     pub fn style_of(&self, id: HighlightId) -> Option<HighlightStyle> {
         self.syntax.get(id.0 as usize).copied().flatten()
     }
+}
+
+/// A colour part of the way from one colour to another, `amount` being 0 for the first and 1 for the second.
+pub fn mix(from: Hsla, to: Hsla, amount: f32) -> Hsla {
+    let (from, to): (Rgba, Rgba) = (from.into(), to.into());
+    let blend = |first: f32, second: f32| first + (second - first) * amount;
+    Rgba { r: blend(from.r, to.r), g: blend(from.g, to.g), b: blend(from.b, to.b), a: blend(from.a, to.a) }.into()
 }
 
 /// The style of every highlight name from the theme's `syntax` object.
@@ -245,6 +258,15 @@ mod tests {
         assert_eq!(theme.tone(Tone::Error), hex(0x010203ff));
         assert_eq!(theme.tone(Tone::LineEnd), hex(0x040506ff));
         assert_eq!(theme.tone(Tone::Added), EditorTheme::default().added);
+    }
+
+    #[test]
+    fn mixing_moves_between_two_colours() {
+        let black = hex(0x000000ff);
+        let white = hex(0xffffffff);
+        assert_eq!(mix(black, white, 0.0), black);
+        assert_eq!(mix(black, white, 1.0), white);
+        assert!((mix(black, white, 0.5).l - 0.5).abs() < 0.01);
     }
 
     #[test]

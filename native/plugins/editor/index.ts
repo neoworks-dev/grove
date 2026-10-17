@@ -109,6 +109,7 @@ export const editor = {
     ctx.slots.register("overlay", { id: "editor.openFile", order: 11, component: OpenFile, props: { service } });
     registerFileCommands(ctx, service);
     registerEditCommands(ctx, service);
+    registerLanguageCommands(ctx, service);
     registerKeymapCommand(ctx, service);
     registerIndentCommand(ctx, service);
     registerJumpCommand(ctx, service);
@@ -129,6 +130,32 @@ function registerFileCommands(ctx: Context, service: EditorService): void {
   ctx.commands.register({ id: "editor.save", title: "Save file", group: "Editor", when: hasTab, run: () => void service.save() });
   ctx.commands.register({ id: "go.nextTab", title: "Next tab", group: "Go", when: hasTab, run: () => service.cycleTabs(1) });
   ctx.commands.register({ id: "go.previousTab", title: "Previous tab", group: "Go", when: hasTab, run: () => service.cycleTabs(-1) });
+}
+
+/** The commands that ask the language server, through the focused editor, about its cursor. */
+function registerLanguageCommands(ctx: Context, service: EditorService): void {
+  const hasView = () => service.hasFocusedView();
+  ctx.commands.register({
+    id: "editor.showHover",
+    title: "Show hover",
+    group: "Editor",
+    when: hasView,
+    run: () => void service.actOnFocusedView("hover"),
+  });
+  ctx.commands.register({
+    id: "editor.goToDefinition",
+    title: "Go to definition",
+    group: "Go",
+    when: hasView,
+    run: () => void service.actOnFocusedView("definition"),
+  });
+  ctx.commands.register({
+    id: "editor.triggerSuggest",
+    title: "Trigger completion",
+    group: "Editor",
+    when: hasView,
+    run: () => void service.actOnFocusedView("complete"),
+  });
 }
 
 /** The commands the Edit menu names that the focused pane's editor can carry out by itself. */
@@ -239,6 +266,8 @@ function registerKeys(ctx: Context, service: EditorService): void {
     { id: "editor.save", keys: "ctrl+alt+s", command: "editor.save", description: "Save file" },
     { id: "editor.save.chord", keys: "ctrl+k f2", command: "editor.save", description: "Save file" },
     { id: "file.open", keys: "ctrl+o", command: "file.open", description: "Open file" },
+    { id: "editor.showHover", keys: "ctrl+k ctrl+i", command: "editor.showHover", description: "Show hover" },
+    { id: "editor.goToDefinition", keys: "f12", command: "editor.goToDefinition", description: "Go to definition" },
     { id: "file.closeTab", keys: "ctrl+w", command: "file.closeTab", description: "Close tab" },
     { id: "go.nextTab", keys: "ctrl+tab", command: "go.nextTab", description: "Next tab" },
     { id: "go.previousTab", keys: "ctrl+shift+tab", command: "go.previousTab", description: "Previous tab" },

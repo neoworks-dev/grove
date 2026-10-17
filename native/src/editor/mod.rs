@@ -11,14 +11,19 @@
 //! same document, shows the same text, cursors and history. When one view changes a document,
 //! the other views of it redraw.
 
+mod completion;
 mod documents;
 mod element;
 mod glide;
+mod hover;
 mod indent_paint;
 mod jump_paint;
 mod jump_view;
+mod language;
 mod occurrence_view;
 mod options;
+mod popup;
+mod signals;
 mod smooth_scroll;
 mod theme;
 mod vim_paint;
@@ -26,22 +31,26 @@ mod vim_paint;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::Range;
+use std::time::{Duration, Instant};
 
 use editor_core::vim::types::ScrollAlign;
 use editor_core::{
     Command, DocumentId, EditorState, InputContext, InputLayer, InputStatus, KeyInput, Modifiers, Outcome, Position,
     SourceFilter, StandardKeymap, VimLayer,
 };
+use futures::StreamExt;
 use serde_json::{Value, json};
 use svelte_gpui::gpui::{
     App, Bounds, ClipboardItem, Context, EntityId, EntityInputHandler, FocusHandle, IntoElement, KeyDownEvent,
     Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, ScrollWheelEvent,
     Subscription, UTF16Selection, WeakEntity, Window, div, prelude::*, px,
 };
-use svelte_gpui::{AppElement, CommandError};
+use svelte_gpui::{AppElement, CommandError, NativeHost};
 
-pub use documents::SharedDocuments;
+pub use documents::{DocumentObserver, SharedDocuments};
+pub use signals::{Signal, SignalSender, Signals};
 
+use crate::lsp::LspStore;
 use editor_core::display::DisplayRow;
 use editor_core::jump::JumpSession;
 use element::{EditorElement, LINE_HEIGHT, Layout};
@@ -91,6 +100,28 @@ pub struct Editor {
     /// Redraws when focus moves, since the host caches the view and would keep the cursor
     /// as it last drew it.
     focus_subscriptions: Vec<Subscription>,
+    /// The language servers, which this view asks for completions, hovers and definitions.
+    lsp: LspStore,
+    /// Where answers from other threads are sent to reach this view.
+    signals: SignalSender,
+    /// How the view tells the app about things it cannot do itself, such as opening another file.
+    host: NativeHost,
+    /// The completion panel, while it is open or waiting for its items.
+    completion: Option<completion::Session>,
+    /// The hover popover, while it shows or waits for the server.
+    hover: Option<hover::Hover>,
+    /// Where the pointer last stopped, which turns into a hover if it stays.
+    rest: Option<language::PointerRest>,
+    hover_timer_armed: bool,
+    /// The number the last request was given.
+    request_counter: u64,
+    /// The go-to-definition request that is out, and its number.
+    definition_pending: Option<crate::lsp::Pending>,
+    definition_request: u64,
+    /// Whether to print how long a keystroke takes to reach the screen, which `GROVE_LATENCY` turns on.
+    measure_latency: bool,
+    /// The keystroke whose paint has not been timed yet.
+    latency_probe: Option<LatencyProbe>,
     /// Whether the view refuses commands that change the text, as the old side of a diff does.
     read_only: bool,
     /// The scroll group this view is in, set by the `scrollGroup` prop; empty for none.
@@ -100,9 +131,23 @@ pub struct Editor {
     sources: SourceFilter,
 }
 
+/// When a keystroke that changed the text arrived, and how long the view took to handle it.
+struct LatencyProbe {
+    pub(super) arrived_at: Instant,
+    pub(super) handled: Duration,
+}
+
 impl Editor {
     /// A view that shows no document yet; the `document` prop picks one.
-    pub fn new(documents: SharedDocuments, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        documents: SharedDocuments,
+        lsp: LspStore,
+        signals: &Signals,
+        host: NativeHost,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let (sender, receiver) = signals.subscribe();
+        listen_for_signals(receiver, cx);
         Editor {
             documents,
             document: None,
@@ -119,6 +164,18 @@ impl Editor {
             jump: None,
             occurrence_generation: 0,
             focus_subscriptions: Vec::new(),
+            lsp,
+            signals: sender,
+            host,
+            completion: None,
+            hover: None,
+            rest: None,
+            hover_timer_armed: false,
+            request_counter: 0,
+            definition_pending: None,
+            definition_request: 0,
+            measure_latency: std::env::var_os("GROVE_LATENCY").is_some(),
+            latency_probe: None,
             read_only: false,
             scroll_group: String::new(),
             sources: SourceFilter::default(),
@@ -127,6 +184,8 @@ impl Editor {
 
     /// Shows another document, or none, and remembers which for the other views' sake.
     fn show(&mut self, document: Option<DocumentId>, cx: &mut Context<Self>) {
+        self.close_completion();
+        self.hover = None;
         self.document = document;
         self.scroll_top = self.remembered_scroll_top(document);
         self.scroll_animation = None;
@@ -180,6 +239,7 @@ impl Editor {
         let Some(id) = self.document else {
             return Outcome::default();
         };
+        let arrived_at = Instant::now();
         let Some(command) = self.resolve_clipboard(command, cx) else {
             return Outcome::default();
         };
@@ -203,6 +263,10 @@ impl Editor {
             self.last_copied = Some(text.clone());
         }
         self.redraw_other_views(id, cx);
+        self.track_language_features(&command, &outcome, cx);
+        if self.measure_latency && outcome.text_changed {
+            self.latency_probe = Some(LatencyProbe { arrived_at, handled: arrived_at.elapsed() });
+        }
         if outcome.changed || outcome.text_changed {
             self.occurrences_may_have_changed(cx);
         }
@@ -290,6 +354,10 @@ impl Editor {
         if self.jump.is_some() {
             return self.jump_key(keystroke, cx);
         }
+        self.hide_hover(cx);
+        if self.completion_key(keystroke, cx) {
+            return true;
+        }
         let context = InputContext { page_rows: self.rows_in_view(), top_row: self.top_row() };
         let commands = self.input.translate(&key_input(keystroke), &context);
         self.announce_status();
@@ -365,7 +433,14 @@ impl Editor {
         let Some(at) = self.position_at(event.position) else {
             return;
         };
+        self.hide_hover(cx);
+        self.close_completion();
         self.dragging = true;
+        if event.modifiers.control && !event.modifiers.shift && !event.modifiers.alt {
+            self.apply(&Command::PlaceCursor { at }, cx);
+            self.go_to_definition_at(at, cx);
+            return;
+        }
         if event.modifiers.shift {
             self.apply(&Command::ExtendNewestTo { at }, cx);
             return;
@@ -434,6 +509,37 @@ impl Editor {
         self.focus_subscriptions.push(cx.on_focus_in(&self.focus, window, redraw));
         self.focus_subscriptions
             .push(cx.on_focus_out(&self.focus, window, move |editor, _, window, cx| redraw(editor, window, cx)));
+    }
+}
+
+/// Handles what other threads send the view, on the window's thread, until the view is gone.
+fn listen_for_signals(mut receiver: futures::channel::mpsc::UnboundedReceiver<Signal>, cx: &mut Context<Editor>) {
+    cx.spawn(async move |editor, cx| {
+        while let Some(signal) = receiver.next().await {
+            let handled = editor.update(cx, |editor, cx| editor.handle_signal(signal, cx));
+            if handled.is_err() {
+                return;
+            }
+        }
+    })
+    .detach();
+}
+
+impl Editor {
+    /// Reacts to something another thread sent: a document that was decorated, or an answer from
+    /// a language server.
+    fn handle_signal(&mut self, signal: Signal, cx: &mut Context<Self>) {
+        match signal {
+            Signal::Redraw(document) => {
+                if self.document == Some(document) {
+                    cx.notify();
+                }
+            }
+            Signal::Completions { request, result } => self.completions_arrived(request, result, cx),
+            Signal::Resolved { request, item } => self.item_resolved(request, item, cx),
+            Signal::Hover { request, markdown } => self.hover_arrived(request, markdown, cx),
+            Signal::Targets { request, targets } => self.targets_arrived(request, targets, cx),
+        }
     }
 }
 
@@ -527,6 +633,21 @@ impl AppElement for Editor {
                 cx.notify();
                 Ok(Value::Null)
             }
+            "hover" => {
+                self.hover_at_cursor(cx);
+                Ok(Value::Null)
+            }
+            "definition" => {
+                if let Some(head) = self.read(|state| state.selections().newest().head) {
+                    self.go_to_definition_at(head, cx);
+                }
+                Ok(Value::Null)
+            }
+            "complete" => {
+                self.start_completion(completion::Trigger::Invoked, cx);
+                Ok(Value::Null)
+            }
+            "goto" => self.goto_from_app(args, cx),
             _ => Err(CommandError::with_code("UnknownMethod", format!("the editor has no method {method:?}"))),
         }
     }
@@ -548,6 +669,18 @@ impl Editor {
         let outcome = self.apply(&command, cx);
         cx.notify();
         Ok(json!({ "changed": outcome.changed }))
+    }
+
+    /// The `goto` method: puts the cursor at a line and UTF-16 column, counted from zero, and
+    /// scrolls to it, as the app does after opening the file a definition is in.
+    fn goto_from_app(&mut self, args: Value, cx: &mut Context<Self>) -> Result<Value, CommandError> {
+        let line = args.get(0).and_then(Value::as_u64);
+        let character = args.get(1).and_then(Value::as_u64);
+        let (Some(line), Some(character)) = (line, character) else {
+            return Err(CommandError::with_code("InvalidArguments", "goto takes a line and a column"));
+        };
+        self.go_to(line as usize, character as usize, cx);
+        Ok(Value::Null)
     }
 
     /// Every selection as the app sees it.
@@ -580,6 +713,7 @@ impl Render for Editor {
                 cx.stop_propagation();
             }))
             .on_scroll_wheel(cx.listener(|editor, event: &ScrollWheelEvent, _window, cx| {
+                editor.hide_hover(cx);
                 editor.jump = None;
                 editor.wheel_scrolled(event.delta);
                 editor.occurrences_may_have_changed(cx);
@@ -597,6 +731,10 @@ impl Render for Editor {
             .on_mouse_move(cx.listener(|editor, event: &MouseMoveEvent, _window, cx| {
                 if editor.drag(event, cx) {
                     cx.notify();
+                    return;
+                }
+                if event.pressed_button.is_none() {
+                    editor.pointer_moved(event.position, cx);
                 }
             }))
             .on_mouse_up(

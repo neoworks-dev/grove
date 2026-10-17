@@ -22,9 +22,16 @@
 
   /** The editor `src/editor/mod.rs` registers. */
   const Editor = element<
-    { document: number; theme: EditorTheme; keymap: string; onfocus: () => void },
+    { document: number; theme: EditorTheme; keymap: string; onfocus: () => void; ongoto: (event: GotoEvent) => void },
     EditorViewMethods
   >("editor");
+
+  /** Where the editor asks to go when a definition is in another file. */
+  interface GotoEvent {
+    path: string;
+    line: number;
+    character: number;
+  }
 
   let view = $state<ElementMethods<EditorViewMethods> | null>(null);
 
@@ -46,6 +53,16 @@
     if (view && service.isFocusedPane(leafId) && service.prompt() === null) {
       view.focus();
     }
+  });
+
+  // A go-to-definition into another file opens it, and the cursor moves once this pane shows it.
+  $effect(() => {
+    const request = service.pendingReveal();
+    if (!view || !request || active?.id !== request.documentId || !service.isFocusedPane(leafId)) {
+      return;
+    }
+    service.finishReveal(request);
+    void view.goto(request.line, request.character);
   });
 
   /** Shows the tab with this id in this pane. */
@@ -72,6 +89,7 @@
       theme={activeEditorTheme()}
       keymap={service.keymap()}
       onfocus={() => service.focusPane(leafId)}
+      ongoto={(event) => void service.reveal(event.path, event.line, event.character)}
     />
   {:else}
     <View style={{ flex: 1, align: "center", justify: "center", gap: 4 }}>

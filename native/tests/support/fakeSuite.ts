@@ -57,8 +57,13 @@ export class FakeClient {
   closed = false;
   /** Makes the next call that talks to the daemon reject with this. */
   failNext: Error | null = null;
+  /** Makes `listSessions` wait forever, as a daemon that is alive but wedged does. */
+  listingHangs = false;
 
   async listSessions(): Promise<SessionInfo[]> {
+    if (this.listingHangs) {
+      await new Promise<never>(() => {});
+    }
     return this.sessions.value;
   }
 
@@ -132,6 +137,9 @@ export class FakeHost implements SuiteHost {
   /** Whether a daemon is running; `startDaemon` makes it so unless `startFails` is set. */
   running = true;
   startFails: string | null = null;
+  /** Holds `connect` until `releaseConnect` is called, as a daemon that accepts and never answers does. */
+  private connectGate: Promise<void> | null = null;
+  private releaseGate: (() => void) | null = null;
   calls: string[] = [];
   connectOptions: SuiteConnectOptions[] = [];
 
@@ -151,9 +159,25 @@ export class FakeHost implements SuiteHost {
     this.running = true;
   }
 
+  /** Makes the next `connect` wait until `releaseConnect`. */
+  holdConnect(): void {
+    this.connectGate = new Promise<void>((resolve) => {
+      this.releaseGate = resolve;
+    });
+  }
+
+  /** Lets the held `connect` finish. */
+  releaseConnect(): void {
+    this.releaseGate?.();
+    this.connectGate = null;
+  }
+
   async connect(options: SuiteConnectOptions): Promise<SuiteClient> {
     this.calls.push("connect");
     this.connectOptions.push(options);
+    if (this.connectGate !== null) {
+      await this.connectGate;
+    }
     return this.client as unknown as SuiteClient;
   }
 

@@ -3,7 +3,7 @@ import { Context as RootContext, type Context } from "@neoworks/extension-system
 import type { Worktree } from "../../src/shared/types";
 import { leaves } from "../plugins/layout/layoutTree";
 import { LayoutService } from "../plugins/layout/service";
-import { AGENT_PANE_TYPE, AgentsService, freeAppName, type AgentWorkspace } from "../plugins/agents/service";
+import { AGENT_PANE_TYPE, AgentsService, freeAppName, type AgentsTiming, type AgentWorkspace } from "../plugins/agents/service";
 import { FakeHost, agentItem, sessionInfo } from "./support/fakeSuite";
 import { settle } from "./support/fakeSidecar";
 
@@ -34,7 +34,7 @@ interface Setup {
 }
 
 /** A layout with one editor pane, a workspace, and the agents service over a fake daemon. */
-async function setUp(): Promise<Setup> {
+async function setUp(timing?: AgentsTiming): Promise<Setup> {
   const root = new RootContext();
   const host = new FakeHost();
   const workspace = new FakeWorkspace();
@@ -44,7 +44,7 @@ async function setUp(): Promise<Setup> {
     name: "agents-test",
     apply: (ctx: Context) => {
       layout = new LayoutService(ctx, "editor", null);
-      agents = new AgentsService(ctx, host, layout, workspace);
+      agents = new AgentsService(ctx, host, layout, workspace, timing);
     },
   });
   return { host, layout, workspace, agents };
@@ -126,6 +126,75 @@ describe("connecting", () => {
     host.calls.length = 0;
     await host.connectOptions[0].address();
     expect(host.calls).toEqual(["address"]);
+  });
+});
+
+/** Short waits, so a daemon that never answers is given up on within a test. */
+const QUICK: AgentsTiming = { connectTimeoutMs: 40, requestTimeoutMs: 20, reconnectTimeoutMs: 40 };
+
+/** Waits for real time to pass, for the timeouts. */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+describe("a daemon that is alive but wedged", () => {
+  test("a connection that is never answered ends as unavailable, not as a wait without end", async () => {
+    const { host, agents } = await setUp(QUICK);
+    host.holdConnect();
+    await agents.ensureStarted();
+    expect(agents.state().connection).toBe("unavailable");
+    expect(agents.state().message).toBe("The suite daemon did not answer");
+  });
+
+  test("a daemon that connects but never lists its sessions ends as unavailable and the client is closed", async () => {
+    const { host, agents } = await setUp(QUICK);
+    host.client.listingHangs = true;
+    await agents.ensureStarted();
+    expect(agents.state().connection).toBe("unavailable");
+    expect(host.client.closed).toBe(true);
+  });
+
+  test("a client that answers after the service gave up is closed, not adopted", async () => {
+    const { host, agents } = await setUp(QUICK);
+    host.holdConnect();
+    await agents.ensureStarted();
+    host.releaseConnect();
+    await sleep(10);
+    expect(host.client.closed).toBe(true);
+    expect(agents.state().connection).toBe("unavailable");
+  });
+
+  test("trying again connects once the daemon answers", async () => {
+    const { host, agents } = await setUp(QUICK);
+    host.holdConnect();
+    await agents.ensureStarted();
+    host.releaseConnect();
+    await sleep(10);
+    host.client.closed = false;
+    await agents.retry();
+    expect(agents.state().connection).toBe("open");
+    expect(host.client.closed).toBe(false);
+  });
+
+  test("the client is asked to give up on a request, and not to wait for the daemon without end", async () => {
+    const { host, agents } = await setUp(QUICK);
+    await agents.ensureStarted();
+    expect(host.connectOptions[0].requestTimeoutMs).toBe(20);
+  });
+
+  test("a connection that stays down is given up on, and one that comes back in time is kept", async () => {
+    const { host, agents } = await setUp(QUICK);
+    await agents.ensureStarted();
+    host.client.state.set("reconnecting");
+    await sleep(10);
+    host.client.state.set("open");
+    await sleep(60);
+    expect(agents.state().connection).toBe("open");
+    host.client.state.set("reconnecting");
+    await sleep(60);
+    expect(agents.state().connection).toBe("unavailable");
+    expect(agents.state().message).toBe("The suite daemon stopped answering");
+    expect(host.client.closed).toBe(true);
   });
 });
 

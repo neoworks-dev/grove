@@ -45,9 +45,12 @@ fn main() {
     let lsp = LspStore::new(documents.clone(), commands.emitter(), signals.clone());
     let commands = lsp.register(commands);
     let commands = git::register(commands);
-    let elements = Elements::new().register("editor", move |_host, cx| {
+    let lsp_for_views = lsp.clone();
+    let elements = Elements::new().register("editor", move |host, cx| {
         let documents = documents.clone();
-        cx.new(|cx| Editor::new(documents, cx))
+        let lsp = lsp_for_views.clone();
+        let signals = signals.clone();
+        cx.new(|cx| Editor::new(documents, lsp, &signals, host, cx))
     });
     svelte_gpui::run(options().commands(commands).elements(elements));
     lsp.shutdown();

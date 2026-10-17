@@ -202,6 +202,9 @@ impl LspStore {
     /// Tells the UI how the servers are doing.
     pub(crate) fn emit_status(&self) {
         let summaries = self.summaries();
+        if std::env::var_os("GROVE_LSP_TRACE").is_some() {
+            eprintln!("[lsp] status {summaries}");
+        }
         self.inner.emitter.emit("lsp-status", summaries);
     }
 

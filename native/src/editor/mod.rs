@@ -29,11 +29,13 @@ use svelte_gpui::gpui::{
     Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, ScrollWheelEvent,
     Subscription, UTF16Selection, WeakEntity, Window, div, prelude::*, px,
 };
-use svelte_gpui::{AppElement, CommandError};
+use futures::StreamExt;
+use svelte_gpui::{AppElement, CommandError, NativeHost};
 
 pub use documents::{DocumentObserver, SharedDocuments};
-pub use signals::{Signal, Signals};
+pub use signals::{Signal, SignalSender, Signals};
 
+use crate::lsp::LspStore;
 use element::{EditorElement, LINE_HEIGHT, Layout};
 use theme::EditorTheme;
 
@@ -68,11 +70,25 @@ pub struct Editor {
     /// Redraws when focus moves, since the host caches the view and would keep the cursor
     /// as it last drew it.
     focus_subscriptions: Vec<Subscription>,
+    /// The language servers, which this view asks for completions, hovers and definitions.
+    lsp: LspStore,
+    /// Where answers from other threads are sent to reach this view.
+    signals: SignalSender,
+    /// How the view tells the app about things it cannot do itself, such as opening another file.
+    host: NativeHost,
 }
 
 impl Editor {
     /// A view that shows no document yet; the `document` prop picks one.
-    pub fn new(documents: SharedDocuments, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        documents: SharedDocuments,
+        lsp: LspStore,
+        signals: &Signals,
+        host: NativeHost,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let (sender, receiver) = signals.subscribe();
+        listen_for_signals(receiver, cx);
         Editor {
             documents,
             document: None,
@@ -85,6 +101,9 @@ impl Editor {
             dragging: false,
             theme: EditorTheme::default(),
             focus_subscriptions: Vec::new(),
+            lsp,
+            signals: sender,
+            host,
         }
     }
 
@@ -287,6 +306,34 @@ impl Editor {
         self.focus_subscriptions.push(cx.on_focus_in(&self.focus, window, redraw));
         self.focus_subscriptions
             .push(cx.on_focus_out(&self.focus, window, move |editor, _, window, cx| redraw(editor, window, cx)));
+    }
+}
+
+/// Handles what other threads send the view, on the window's thread, until the view is gone.
+fn listen_for_signals(mut receiver: futures::channel::mpsc::UnboundedReceiver<Signal>, cx: &mut Context<Editor>) {
+    cx.spawn(async move |editor, cx| {
+        while let Some(signal) = receiver.next().await {
+            let handled = editor.update(cx, |editor, cx| editor.handle_signal(signal, cx));
+            if handled.is_err() {
+                return;
+            }
+        }
+    })
+    .detach();
+}
+
+impl Editor {
+    /// Reacts to something another thread sent: a document that was decorated, or an answer from
+    /// a language server.
+    fn handle_signal(&mut self, signal: Signal, cx: &mut Context<Self>) {
+        match signal {
+            Signal::Redraw(document) => {
+                if self.document == Some(document) {
+                    cx.notify();
+                }
+            }
+            _ => {}
+        }
     }
 }
 

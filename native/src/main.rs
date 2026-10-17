@@ -13,6 +13,7 @@
 //! to it (see `sidecar.rs`), and offers the agents plugin the suite daemon's address and a way
 //! to start it (see `suite.rs`).
 
+mod diff;
 mod editor;
 mod git;
 mod sidecar;
@@ -40,6 +41,7 @@ fn main() {
     let documents = SharedDocuments::new(commands.emitter());
     let commands = documents.register(commands);
     let commands = git::register(commands);
+    let commands = diff::register(commands, documents.clone());
     let elements = Elements::new().register("editor", move |_host, cx| {
         let documents = documents.clone();
         cx.new(|cx| Editor::new(documents, cx))

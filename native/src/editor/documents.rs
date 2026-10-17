@@ -9,6 +9,7 @@
 //! - `document-closed`: `{ id }`.
 //! - `document-dirty`: `{ id, dirty }`, when the unsaved-changes state flips.
 //! - `document-saved`: `{ id }`.
+//! - `document-edited`: `{ id }`, after any command that changed the text.
 //! - `document-error`: `{ id, message }`, such as a save that failed.
 //! - `document-selections`: `{ id, count, row, column, selected }`, the newest cursor after any
 //!   command that moved a selection.
@@ -22,6 +23,11 @@
 //! replaces what one source has put on top of the text (see `editor_core::decorations` for the
 //! shape of a decoration; an empty list removes the source). The views have to be asked to
 //! redraw afterwards, which is the `refresh` method of the editor element.
+//!
+//! Text that belongs to no file, such as one side of a diff, is a detached document:
+//! `document_open_text { name, text }` makes one (the name's extension picks the language),
+//! `document_set_text { id, text }` replaces its text, and `document_text { id }` reads the text
+//! of any document. `document_reload { id }` reads a file's document from disk again.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -79,6 +85,37 @@ impl SharedDocuments {
         self.lock().summaries()
     }
 
+    /// Opens text that belongs to no file, and tells the UI.
+    pub fn open_text(&self, name: &str, text: &str) -> Result<DocumentSummary, CommandError> {
+        let mut documents = self.lock();
+        let id = documents.open_detached(text, Path::new(name));
+        let Some(summary) = documents.get(id).map(|document| document.summary()) else {
+            return Err(no_document(id));
+        };
+        self.emitter.emit("document-opened", json!(summary));
+        Ok(summary)
+    }
+
+    /// The text of a document, with `\n` line endings whatever its file uses.
+    pub fn text(&self, id: DocumentId) -> Result<String, CommandError> {
+        let documents = self.lock();
+        let Some(document) = documents.get(id) else {
+            return Err(no_document(id));
+        };
+        Ok(document.state.buffer().rope().to_string())
+    }
+
+    /// Reads a file's document from disk again, and tells the UI its selections moved to the start.
+    pub fn reload(&self, id: DocumentId) -> Result<Value, CommandError> {
+        let mut documents = self.lock();
+        documents
+            .reload(id)
+            .map_err(|error| CommandError::with_code("ReloadFailed", format!("could not reload: {error}")))?;
+        self.emitter.emit("document-dirty", json!({ "id": id, "dirty": false }));
+        self.emitter.emit("document-edited", json!({ "id": id }));
+        Ok(Value::Null)
+    }
+
     /// Applies a command to a document and tells the UI about its effects: a save, a failed
     /// save, a change of the unsaved state, and where the newest cursor is. None when the
     /// document is not open.
@@ -93,6 +130,9 @@ impl SharedDocuments {
         }
         if let Some(dirty) = applied.modified_changed {
             self.emitter.emit("document-dirty", json!({ "id": id, "dirty": dirty }));
+        }
+        if applied.outcome.text_changed {
+            self.emitter.emit("document-edited", json!({ "id": id }));
         }
         if let Some(request) = &applied.outcome.request {
             self.emit_request(id, request, &documents);
@@ -135,6 +175,10 @@ impl SharedDocuments {
         let lister = self.clone();
         let saver = self.clone();
         let decorator = self.clone();
+        let text_opener = self.clone();
+        let text_reader = self.clone();
+        let text_setter = self.clone();
+        let reloader = self.clone();
         commands
             .command("document_open", move |args| {
                 let path = string_argument(&args, "path")?;
@@ -147,6 +191,27 @@ impl SharedDocuments {
             .command("document_list", move |_| Ok::<_, CommandError>(json!(lister.list())))
             .command("document_save", move |args| saver.save(id_argument(&args)?))
             .command("document_set_decorations", move |args| decorator.set_decorations(&args))
+            .command("document_open_text", move |args| {
+                let name = string_argument(&args, "name")?;
+                let text = string_argument(&args, "text")?;
+                text_opener.open_text(&name, &text).map(|summary| json!(summary))
+            })
+            .command("document_text", move |args| text_reader.text(id_argument(&args)?).map(|text| json!(text)))
+            .command("document_set_text", move |args| {
+                let id = id_argument(&args)?;
+                let text = string_argument(&args, "text")?;
+                text_setter.set_detached_text(id, &text)
+            })
+            .command("document_reload", move |args| reloader.reload(id_argument(&args)?))
+    }
+
+    /// Replaces the text of a detached document, from the arguments of `document_set_text`.
+    fn set_detached_text(&self, id: DocumentId, text: &str) -> Result<Value, CommandError> {
+        if !self.lock().replace_detached_text(id, text) {
+            return Err(CommandError::with_code("NotDetached", format!("document {id} is not text without a file")));
+        }
+        self.emitter.emit("document-edited", json!({ "id": id }));
+        Ok(Value::Null)
     }
 
     /// Replaces the decorations one source has on a document, from the arguments of

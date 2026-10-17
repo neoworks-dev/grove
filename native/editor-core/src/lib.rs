@@ -25,7 +25,9 @@ pub mod vim;
 pub use anchor::{Anchor, AnchorId, Bias};
 pub use buffer::{Buffer, LineEnding, Position};
 pub use command::{Command, Outcome};
-pub use decorations::{Decoration, DecorationKind, GutterMark, Placement, Tone, Underline, UnderlineKind};
+pub use decorations::{
+    Decoration, DecorationKind, GutterMark, Placement, SourceFilter, Tone, Underline, UnderlineKind,
+};
 pub use documents::{Applied, Document, DocumentId, DocumentSummary, Documents, Opened};
 pub use edit::{Edit, Edits};
 pub use keymap::{

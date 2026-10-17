@@ -358,9 +358,9 @@ export class DiffService extends Service {
     });
   }
 
-  /** The name a diff pane's decorations are drawn under, so panes showing one file do not clash. */
+  /** The name a diff pane's decorations are drawn under. It belongs to the pane's editors alone, so the file's other views do not show it. */
   private sourceOf(leafId: string): string {
-    return `diff.${leafId}`;
+    return `view:${leafId}:diff`;
   }
 
   /** The ids of the panes that show diffs. */

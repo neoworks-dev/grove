@@ -23,7 +23,7 @@ use std::ops::Range;
 use editor_core::vim::types::ScrollAlign;
 use editor_core::{
     Command, DocumentId, EditorState, InputContext, InputLayer, InputStatus, KeyInput, Modifiers, Outcome, Position,
-    StandardKeymap, VimLayer,
+    SourceFilter, StandardKeymap, VimLayer,
 };
 use serde_json::{Value, json};
 use svelte_gpui::gpui::{
@@ -78,6 +78,9 @@ pub struct Editor {
     read_only: bool,
     /// The scroll group this view is in, set by the `scrollGroup` prop; empty for none.
     scroll_group: String,
+    /// Which decoration sources this view draws: the ones that are its own (the `viewId` prop)
+    /// and every document-wide one except those the `hideSources` prop names.
+    sources: SourceFilter,
 }
 
 impl Editor {
@@ -98,6 +101,7 @@ impl Editor {
             focus_subscriptions: Vec::new(),
             read_only: false,
             scroll_group: String::new(),
+            sources: SourceFilter::default(),
         }
     }
 
@@ -465,6 +469,17 @@ impl AppElement for Editor {
         }
         if name == "readonly" {
             self.read_only = value.as_bool().unwrap_or(false);
+            return;
+        }
+        if name == "viewId" {
+            self.sources.view = value.as_str().unwrap_or("").to_string();
+            cx.notify();
+            return;
+        }
+        if name == "hideSources" {
+            let names = value.as_array().into_iter().flatten().filter_map(Value::as_str);
+            self.sources.hidden = names.map(str::to_string).collect();
+            cx.notify();
             return;
         }
         if name == "scrollGroup" {

@@ -23,7 +23,7 @@ use super::vim_paint::{self, VimPaint};
 use editor_core::decorations::{DecorationKind, GutterMark, Placed, PlacedBlock, Placement, Tone, UnderlineKind};
 use editor_core::display::{BlockMap, BlockSlot, DisplayLine, DisplayRow, InlayText};
 use editor_core::syntax::HighlightSpan;
-use editor_core::{EditorState, InputStatus, Position};
+use editor_core::{EditorState, InputStatus, Position, SourceFilter};
 
 pub const FONT_FAMILY: &str = "DejaVu Sans Mono";
 pub const FONT_SIZE: Pixels = px(14.0);
@@ -254,7 +254,8 @@ impl Element for EditorElement {
         let scroll_top = editor.scroll_top;
         let theme = editor.theme.clone();
         let status = editor.input.status();
-        let built = editor.read(|state| build_frame(state, scroll_top, bounds, window, &theme, &status));
+        let sources = editor.sources.clone();
+        let built = editor.read(|state| build_frame(state, scroll_top, bounds, window, &theme, &status, &sources));
         let Some((layout, frame)) = built else {
             return Frame::empty(theme);
         };
@@ -410,6 +411,7 @@ fn build_frame(
     window: &mut Window,
     theme: &EditorTheme,
     status: &InputStatus,
+    sources: &SourceFilter,
 ) -> (Layout, Frame) {
     let line_count = state.buffer().line_count();
     let digits = line_count.max(1).to_string().len();
@@ -417,7 +419,7 @@ fn build_frame(
     let gutter_width = digit_width + GUTTER_PADDING * 2.0;
     let text_left = bounds.left() + gutter_width;
 
-    let blocks = state.decoration_blocks();
+    let blocks = state.decoration_blocks_for(sources);
     let blocks_map = block_map(&blocks);
     let first_display_row = (scroll_top / LINE_HEIGHT).floor() as usize;
     let first_row_top = bounds.top() - (scroll_top - LINE_HEIGHT * first_display_row as f32);
@@ -434,7 +436,7 @@ fn build_frame(
         .map(|selection| selection.head.row)
         .collect();
     let syntax = state.highlights(text_rows.clone());
-    let decorations = state.decorations_in_rows(text_rows.clone());
+    let decorations = state.decorations_in_rows_for(text_rows.clone(), sources);
     let row_decorations = RowDecorations::new(&decorations);
     let line_tints = line_tints(&decorations, theme);
 

@@ -2,7 +2,7 @@
 //! empty when the two meet. The editor keeps any number of them, the way VS Code and Zed
 //! do, sorted and never overlapping, so each edit and each paint walks them in order.
 
-use super::buffer::Position;
+use crate::buffer::Position;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Selection {
@@ -39,6 +39,7 @@ impl Selection {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Selections {
     /// Sorted by start, none overlapping.
     list: Vec<Selection>,

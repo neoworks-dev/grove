@@ -1434,6 +1434,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
+name = "editor-core"
+version = "0.1.0"
+dependencies = [
+ "ropey",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "either"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2358,7 +2367,7 @@ checksum = "12101ecc8225ea6d675bc70263074eab6169079621c2186fe0c66590b2df9681"
 name = "grove_native"
 version = "0.1.0"
 dependencies = [
- "ropey",
+ "editor-core",
  "serde_json",
  "svelte_gpui_host",
 ]

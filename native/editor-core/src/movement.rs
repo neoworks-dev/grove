@@ -1,9 +1,11 @@
 //! Where each cursor key takes a selection's head, worked out from the buffer alone.
 
-use super::buffer::{Buffer, Position};
-use super::selections::Selection;
+use crate::buffer::{Buffer, Position};
+use crate::selections::Selection;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Motion {
     Left,
     Right,

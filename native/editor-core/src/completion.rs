@@ -44,6 +44,11 @@ pub(crate) struct SnippetSession {
     current: usize,
 }
 
+/// Whether a character can be part of a word being completed.
+fn is_word_character(character: char) -> bool {
+    character.is_alphanumeric() || character == '_' || character == '$'
+}
+
 /// Whether a command takes the cursor out of a snippet's stops, so Tab is a tab again.
 pub(crate) fn leaves_snippet(command: &Command) -> bool {
     matches!(
@@ -138,9 +143,14 @@ impl EditorState {
     fn plan_completion(&self, completion: &Completion) -> Vec<Planned> {
         let buffer = &self.buffer;
         let mut planned = Vec::new();
+        let newest = self.selections.newest_index();
         for (index, selection) in self.selections.all().iter().enumerate() {
             let head = buffer.offset_of(selection.head);
-            let start = head.saturating_sub(completion.before);
+            let mut before = completion.before;
+            if index != newest {
+                before = self.replaceable_before(head, before);
+            }
+            let start = head.saturating_sub(before);
             let end = (head + completion.after).min(buffer.length());
             let (text, expanded) = self.completion_text(completion, selection);
             planned.push(Planned { edit: Edit::replace(start..end, text), cursor: Some(index), expanded });
@@ -151,6 +161,20 @@ impl EditorState {
         }
         planned.sort_by_key(|planned| (planned.edit.start, planned.edit.end));
         planned
+    }
+
+    /// How many of the `before` characters before an offset another cursor replaces. The count
+    /// was worked out at the newest cursor; where this cursor has less of the same word before it,
+    /// only that is replaced, so a cursor that had typed `co` beside one that had typed `cons`
+    /// does not eat what comes before its word.
+    fn replaceable_before(&self, offset: usize, before: usize) -> usize {
+        let available = offset.min(before);
+        let window = self.buffer.slice(offset - available..offset);
+        let word_characters = window.chars().rev().take_while(|character| is_word_character(*character)).count();
+        if word_characters == window.chars().count() {
+            return available;
+        }
+        word_characters
     }
 
     /// The text one cursor gets: the snippet expanded to the indentation of the cursor's line,
@@ -292,6 +316,16 @@ mod tests {
         assert_eq!(text(&state), "const\nconst\n");
         let heads: Vec<_> = state.selections().all().iter().map(|selection| selection.head).collect();
         assert_eq!(heads, vec![at(0, 5), at(1, 5)]);
+    }
+
+    #[test]
+    fn a_cursor_with_less_typed_replaces_only_its_own_word() {
+        let mut state = state("a con\ncons\n  \n");
+        state.apply(&Command::PlaceCursor { at: at(0, 5) });
+        state.apply(&Command::ToggleCursor { at: at(2, 2) });
+        state.apply(&Command::ToggleCursor { at: at(1, 4) });
+        accept(&mut state, 4, "console", false);
+        assert_eq!(text(&state), "a console\nconsole\n  console\n");
     }
 
     #[test]

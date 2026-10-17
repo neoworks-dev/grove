@@ -947,3 +947,13 @@ fn gv_and_dot_work_with_a_block() {
     assert_eq!(again.mode(), "V-BLOCK");
     assert_eq!(again.state.selections().count(), 2);
 }
+
+#[test]
+fn tag_and_sentence_objects_work_with_operators() {
+    check("<p>hel¦lo <b>x</b></p>", "dit", "<p></p>", (0, 3));
+    check("<p>hel¦lo</p>", "dat", "", (0, 0));
+    check("<a><b>¦x</b></a>", "d2it", "<a></a>", (0, 3));
+    check("One. Tw¦o three. Four.", "cisX<Esc>", "One. X Four.", (0, 5));
+    check("One. Tw¦o three. Four.", "das", "One. Four.", (0, 5));
+    check("One. Tw¦o three. Four.", "visd", "One.  Four.", (0, 5));
+}

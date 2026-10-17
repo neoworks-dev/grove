@@ -162,3 +162,27 @@ fn vim_registers_are_shared_between_documents() {
     documents.apply(second, &put).unwrap();
     assert_eq!(text_of(&documents, second), "one other");
 }
+
+#[test]
+fn a_new_default_indent_reaches_only_files_that_did_not_say() {
+    use editor_core::IndentStyle;
+    let plain = file_with("plain.txt", "one\ntwo\n");
+    let indented = file_with("indented.ts", "a {\n  b;\n}\n");
+    let chosen = file_with("chosen.txt", "x\n");
+    let mut documents = Documents::new();
+    let plain_id = documents.open(&plain).unwrap().id;
+    let indented_id = documents.open(&indented).unwrap().id;
+    let chosen_id = documents.open(&chosen).unwrap().id;
+    documents.apply(chosen_id, &Command::SetIndent { style: IndentStyle::Tabs }).unwrap();
+
+    let changed = documents.set_default_indent(IndentStyle::Spaces { width: 8 });
+    assert_eq!(changed, vec![plain_id]);
+    let indent_of = |documents: &Documents, id| documents.get(id).unwrap().summary().indent;
+    assert_eq!(indent_of(&documents, plain_id), IndentStyle::Spaces { width: 8 });
+    assert_eq!(indent_of(&documents, indented_id), IndentStyle::Spaces { width: 2 });
+    assert_eq!(indent_of(&documents, chosen_id), IndentStyle::Tabs);
+
+    let later = file_with("later.txt", "z\n");
+    let later_id = documents.open(&later).unwrap().id;
+    assert_eq!(indent_of(&documents, later_id), IndentStyle::Spaces { width: 8 });
+}

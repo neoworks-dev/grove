@@ -26,6 +26,16 @@ impl EditorState {
         edited(changed)
     }
 
+    /// Gives a file whose own lines did not say how it is indented the default style. Returns
+    /// whether that changed anything.
+    pub fn apply_default_indent(&mut self, style: IndentStyle) -> bool {
+        if self.buffer.indent_source() != IndentSource::Default || self.buffer.indent() == style {
+            return false;
+        }
+        self.buffer.set_indent(style, IndentSource::Default);
+        true
+    }
+
     /// Sets the file's indentation style as a choice that changing the default does not undo.
     pub(crate) fn set_indent(&mut self, style: IndentStyle) -> Outcome {
         let changed = self.buffer.indent() != style || self.buffer.indent_source() != IndentSource::Chosen;

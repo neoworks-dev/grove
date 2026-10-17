@@ -13,6 +13,7 @@
 
 mod documents;
 mod element;
+mod options;
 mod theme;
 mod vim_paint;
 

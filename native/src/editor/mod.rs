@@ -14,19 +14,29 @@
 mod completion;
 mod documents;
 mod element;
+mod glide;
 mod hover;
+mod indent_paint;
+mod jump_paint;
+mod jump_view;
 mod language;
+mod occurrence_view;
+mod options;
 mod popup;
 mod signals;
+mod smooth_scroll;
 mod theme;
+mod vim_paint;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::time::{Duration, Instant};
 
+use editor_core::vim::types::ScrollAlign;
 use editor_core::{
-    Command, DocumentId, EditorState, InputContext, InputLayer, KeyInput, Modifiers, Outcome, Position, StandardKeymap,
+    Command, DocumentId, EditorState, InputContext, InputLayer, InputStatus, KeyInput, Modifiers, Outcome, Position,
+    SourceFilter, StandardKeymap, VimLayer,
 };
 use futures::StreamExt;
 use serde_json::{Value, json};
@@ -41,13 +51,19 @@ pub use documents::{DocumentObserver, SharedDocuments};
 pub use signals::{Signal, SignalSender, Signals};
 
 use crate::lsp::LspStore;
+use editor_core::display::DisplayRow;
+use editor_core::jump::JumpSession;
 use element::{EditorElement, LINE_HEIGHT, Layout};
+use glide::MIN_GLIDE;
+use smooth_scroll::ScrollAnimation;
 use theme::EditorTheme;
 
 thread_local! {
     /// Which document each view of the window shows, so a change made in one view can redraw
     /// the others. Views live on the window's thread, so this does too.
     static VIEWS: RefCell<HashMap<EntityId, (DocumentId, WeakEntity<Editor>)>> = RefCell::new(HashMap::new());
+    /// The scroll group each view that has one is in, so scrolling one scrolls the rest of its group.
+    static SCROLL_GROUPS: RefCell<HashMap<EntityId, (String, WeakEntity<Editor>)>> = RefCell::new(HashMap::new());
 }
 
 pub struct Editor {
@@ -57,11 +73,15 @@ pub struct Editor {
     /// This view's entity, once it has been listed in `VIEWS`.
     view: Option<EntityId>,
     focus: FocusHandle,
-    /// Turns keys into commands: the standard keymap now, a vim layer later.
+    /// Turns keys into commands: the standard keymap, or the vim layer when the `keymap` prop says so.
     input: Box<dyn InputLayer>,
+    /// The status of the input layer as the app was last told it, so it hears of changes only.
+    announced_status: Option<InputStatus>,
     /// How far the text is scrolled, in pixels from the top of the first line. Each view of a
     /// document scrolls on its own.
     scroll_top: Pixels,
+    /// The glide the view is making to somewhere else, if there is one (see `glide.rs`).
+    scroll_animation: Option<ScrollAnimation>,
     /// What the last frame drew; none before the first.
     layout: Option<Layout>,
     /// The last text this editor copied. The system clipboard only takes text from a window that
@@ -72,6 +92,11 @@ pub struct Editor {
     dragging: bool,
     /// The colours the editor paints with, set by the `theme` prop.
     theme: EditorTheme,
+    /// The jump labels being shown, if the person is picking a place with them.
+    jump: Option<JumpSession>,
+    /// Counts the times the cursor may have moved, so a timer that was started before the latest
+    /// move knows it is out of date.
+    occurrence_generation: u64,
     /// Redraws when focus moves, since the host caches the view and would keep the cursor
     /// as it last drew it.
     focus_subscriptions: Vec<Subscription>,
@@ -97,6 +122,13 @@ pub struct Editor {
     measure_latency: bool,
     /// The keystroke whose paint has not been timed yet.
     latency_probe: Option<LatencyProbe>,
+    /// Whether the view refuses commands that change the text, as the old side of a diff does.
+    read_only: bool,
+    /// The scroll group this view is in, set by the `scrollGroup` prop; empty for none.
+    scroll_group: String,
+    /// Which decoration sources this view draws: the ones that are its own (the `viewId` prop)
+    /// and every document-wide one except those the `hideSources` prop names.
+    sources: SourceFilter,
 }
 
 /// When a keystroke that changed the text arrived, and how long the view took to handle it.
@@ -122,11 +154,15 @@ impl Editor {
             view: None,
             focus: cx.focus_handle(),
             input: Box::new(StandardKeymap),
+            announced_status: None,
             scroll_top: px(0.0),
+            scroll_animation: None,
             layout: None,
             last_copied: None,
             dragging: false,
             theme: EditorTheme::default(),
+            jump: None,
+            occurrence_generation: 0,
             focus_subscriptions: Vec::new(),
             lsp,
             signals: sender,
@@ -140,6 +176,9 @@ impl Editor {
             definition_request: 0,
             measure_latency: std::env::var_os("GROVE_LATENCY").is_some(),
             latency_probe: None,
+            read_only: false,
+            scroll_group: String::new(),
+            sources: SourceFilter::default(),
         }
     }
 
@@ -149,6 +188,7 @@ impl Editor {
         self.hover = None;
         self.document = document;
         self.scroll_top = self.remembered_scroll_top(document);
+        self.scroll_animation = None;
         self.layout = None;
         self.dragging = false;
         let view = cx.entity_id();
@@ -203,11 +243,20 @@ impl Editor {
         let Some(command) = self.resolve_clipboard(command, cx) else {
             return Outcome::default();
         };
+        if self.read_only && command.changes_text() {
+            return Outcome::default();
+        }
         let Some(outcome) = self.documents.apply(id, &command) else {
             return Outcome::default();
         };
+        if let Some(then) = &outcome.jump {
+            self.start_jump(then.clone());
+        }
         if outcome.reveal_newest {
             self.scroll_to_newest();
+        }
+        if let Some(align) = outcome.scroll {
+            self.scroll_newest_to(align);
         }
         if let Some(text) = &outcome.copied {
             cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
@@ -218,7 +267,47 @@ impl Editor {
         if self.measure_latency && outcome.text_changed {
             self.latency_probe = Some(LatencyProbe { arrived_at, handled: arrived_at.elapsed() });
         }
+        if outcome.changed || outcome.text_changed {
+            self.occurrences_may_have_changed(cx);
+        }
+        self.scroll_group_to_here(cx);
         outcome
+    }
+
+    /// Puts the views in this view's scroll group at the scroll position this one has.
+    fn scroll_group_to_here(&self, cx: &mut Context<Self>) {
+        if self.scroll_group.is_empty() {
+            return;
+        }
+        let own = cx.entity_id();
+        let scroll_top = self.scroll_top;
+        let others: Vec<WeakEntity<Editor>> = SCROLL_GROUPS.with(|groups| {
+            let groups = groups.borrow();
+            let same_group = groups.iter().filter(|(view, (group, _))| *group == self.scroll_group && **view != own);
+            same_group.map(|(_, (_, weak))| weak.clone()).collect()
+        });
+        for view in others {
+            let _ = view.update(cx, |other, cx| {
+                other.set_scroll_top(scroll_top);
+                cx.notify();
+            });
+        }
+    }
+
+    /// Joins a scroll group, or leaves the one this view is in when the name is empty.
+    fn set_scroll_group(&mut self, name: &str, cx: &mut Context<Self>) {
+        self.scroll_group = name.to_string();
+        let view = cx.entity_id();
+        self.view = Some(view);
+        let weak = cx.entity().downgrade();
+        let group = name.to_string();
+        SCROLL_GROUPS.with(|groups| {
+            if group.is_empty() {
+                groups.borrow_mut().remove(&view);
+                return;
+            }
+            groups.borrow_mut().insert(view, (group, weak));
+        });
     }
 
     /// Redraws every other view of a document, since the host keeps what a view painted until
@@ -236,24 +325,42 @@ impl Editor {
     }
 
     /// Swaps a request to paste for a paste of the clipboard's text, or of the editor's own last
-    /// copy when the clipboard has none, or nothing when there is neither.
+    /// copy when the clipboard has none, or nothing when there is neither. A vim put from the
+    /// clipboard registers (`"+p`) gets the text the same way.
     fn resolve_clipboard(&self, command: &Command, cx: &mut Context<Self>) -> Option<Command> {
+        if let Command::Put { register: Some('+' | '*'), clipboard: None, .. } = command {
+            let mut resolved = command.clone();
+            let text = self.clipboard_text(cx);
+            if let Command::Put { clipboard, .. } = &mut resolved {
+                *clipboard = text;
+            }
+            return Some(resolved);
+        }
         if *command != Command::PasteClipboard {
             return Some(command.clone());
         }
-        let clipboard_text = cx.read_from_clipboard().and_then(|item| item.text());
-        let text = clipboard_text.or_else(|| self.last_copied.clone())?;
+        let text = self.clipboard_text(cx)?;
         Some(Command::Paste { text })
+    }
+
+    /// The clipboard's text, or the editor's own last copy when the clipboard has none.
+    fn clipboard_text(&self, cx: &mut Context<Self>) -> Option<String> {
+        let clipboard_text = cx.read_from_clipboard().and_then(|item| item.text());
+        clipboard_text.or_else(|| self.last_copied.clone())
     }
 
     /// Handles a key the input layer knows; returns false for the rest, which then bubble to the app.
     fn handle_key(&mut self, keystroke: &Keystroke, cx: &mut Context<Self>) -> bool {
+        if self.jump.is_some() {
+            return self.jump_key(keystroke, cx);
+        }
         self.hide_hover(cx);
         if self.completion_key(keystroke, cx) {
             return true;
         }
-        let context = InputContext { page_rows: self.rows_in_view() };
+        let context = InputContext { page_rows: self.rows_in_view(), top_row: self.top_row() };
         let commands = self.input.translate(&key_input(keystroke), &context);
+        self.announce_status();
         if commands.is_empty() {
             return false;
         }
@@ -265,9 +372,64 @@ impl Editor {
         handled
     }
 
+    /// The first buffer row that is fully in view, which vim's `H` goes to.
+    fn top_row(&self) -> usize {
+        let Some(layout) = &self.layout else {
+            return 0;
+        };
+        let mut display_row = (self.scroll_top / LINE_HEIGHT).ceil() as usize;
+        loop {
+            match layout.blocks.row_at(display_row) {
+                DisplayRow::Text(row) => return row,
+                DisplayRow::Block { .. } => display_row += 1,
+            }
+        }
+    }
+
+    /// Tells the app the input layer's mode and pending keys when they changed, for the status bar.
+    fn announce_status(&mut self) {
+        let status = self.input.status();
+        if self.announced_status.as_ref() == Some(&status) {
+            return;
+        }
+        self.documents.announce(
+            "editor-mode",
+            json!({ "mode": status.mode, "pending": status.pending, "commandLine": status.command_line }),
+        );
+        self.announced_status = Some(status);
+    }
+
+    /// Switches between the standard keymap and vim.
+    fn set_keymap(&mut self, name: &str) {
+        self.input = match name {
+            "vim" => Box::new(VimLayer::new()),
+            _ => Box::new(StandardKeymap),
+        };
+        self.announce_status();
+    }
+
+    /// Scrolls so the newest cursor's row is at the top, middle or bottom of the view.
+    fn scroll_newest_to(&mut self, align: ScrollAlign) {
+        let Some(layout) = &self.layout else {
+            return;
+        };
+        let Some(head_row) = self.read(|state| state.selections().newest().head.row) else {
+            return;
+        };
+        let head_top = LINE_HEIGHT * layout.blocks.display_row_of(head_row) as f32;
+        let view_height = layout.bounds.size.height;
+        let target = match align {
+            ScrollAlign::Top => head_top,
+            ScrollAlign::Center => head_top - (view_height - LINE_HEIGHT) / 2.0,
+            ScrollAlign::Bottom => head_top + LINE_HEIGHT - view_height,
+        };
+        self.scroll_to(target.max(px(0.0)), MIN_GLIDE);
+    }
+
     /// A press of the left button: a click places one cursor, Alt-click adds or removes one,
     /// Shift-click extends the newest selection, and a double click selects a word.
     fn press(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) {
+        self.jump = None;
         let Some(at) = self.position_at(event.position) else {
             return;
         };
@@ -322,25 +484,12 @@ impl Editor {
         let head_top = LINE_HEIGHT * layout.blocks.display_row_of(head_row) as f32;
         let head_bottom = head_top + LINE_HEIGHT;
         let view_height = layout.bounds.size.height;
-        let scroll_top = self.scroll_top;
+        let scroll_top = self.scroll_target();
         if head_top < scroll_top {
-            self.set_scroll_top(head_top);
+            self.scroll_to(head_top, MIN_GLIDE);
         } else if head_bottom > scroll_top + view_height {
-            self.set_scroll_top(head_bottom - view_height);
+            self.scroll_to(head_bottom - view_height, MIN_GLIDE);
         }
-    }
-
-    /// Scrolls by the wheel's delta, stopping with the last row at the top. Blocks count as rows.
-    fn scroll_by(&mut self, delta: Pixels) {
-        let Some(line_count) = self.read(|state| state.buffer().line_count()) else {
-            return;
-        };
-        let total_rows = match &self.layout {
-            Some(layout) => layout.blocks.total_rows(line_count),
-            None => line_count,
-        };
-        let last_line_top = LINE_HEIGHT * total_rows.saturating_sub(1) as f32;
-        self.set_scroll_top((self.scroll_top - delta).clamp(px(0.0), last_line_top));
     }
 
     /// How many rows a page is.
@@ -401,16 +550,37 @@ impl Drop for Editor {
             return;
         };
         let _ = VIEWS.try_with(|views| views.borrow_mut().remove(&view));
+        let _ = SCROLL_GROUPS.try_with(|groups| groups.borrow_mut().remove(&view));
     }
 }
 
 /// A GPUI keystroke as the input layers see it.
 fn key_input(keystroke: &Keystroke) -> KeyInput {
     let modifiers = keystroke.modifiers;
+    if let Some(character) = typed_character(keystroke) {
+        return KeyInput { key: character, modifiers: Modifiers { control: false, alt: false, shift: false } };
+    }
     KeyInput {
         key: keystroke.key.clone(),
         modifiers: Modifiers { control: modifiers.control, alt: modifiers.alt, shift: modifiers.shift },
     }
+}
+
+/// The character a key types, as the key itself, so a layer sees `$` and `A` rather than
+/// Shift and `4` or `a`. Keys with Control or Alt held, white space and the named keys
+/// (`enter`, `left`) are not characters.
+fn typed_character(keystroke: &Keystroke) -> Option<String> {
+    let modifiers = keystroke.modifiers;
+    if modifiers.control || modifiers.alt || modifiers.platform {
+        return None;
+    }
+    let text = keystroke.key_char.as_ref()?;
+    let mut characters = text.chars();
+    let character = characters.next()?;
+    if characters.next().is_some() || character.is_control() || character.is_whitespace() {
+        return None;
+    }
+    Some(text.clone())
 }
 
 impl AppElement for Editor {
@@ -419,6 +589,30 @@ impl AppElement for Editor {
     fn set_prop(&mut self, name: &str, value: Value, cx: &mut Context<Self>) {
         if name == "theme" {
             self.theme = EditorTheme::from_json(&value);
+            return;
+        }
+        if name == "readonly" {
+            self.read_only = value.as_bool().unwrap_or(false);
+            return;
+        }
+        if name == "viewId" {
+            self.sources.view = value.as_str().unwrap_or("").to_string();
+            cx.notify();
+            return;
+        }
+        if name == "hideSources" {
+            let names = value.as_array().into_iter().flatten().filter_map(Value::as_str);
+            self.sources.hidden = names.map(str::to_string).collect();
+            cx.notify();
+            return;
+        }
+        if name == "scrollGroup" {
+            self.set_scroll_group(value.as_str().unwrap_or(""), cx);
+            return;
+        }
+        if name == "keymap" {
+            self.set_keymap(value.as_str().unwrap_or("standard"));
+            cx.notify();
             return;
         }
         if name != "document" {
@@ -520,7 +714,10 @@ impl Render for Editor {
             }))
             .on_scroll_wheel(cx.listener(|editor, event: &ScrollWheelEvent, _window, cx| {
                 editor.hide_hover(cx);
-                editor.scroll_by(event.delta.pixel_delta(LINE_HEIGHT).y);
+                editor.jump = None;
+                editor.wheel_scrolled(event.delta);
+                editor.occurrences_may_have_changed(cx);
+                editor.scroll_group_to_here(cx);
                 cx.notify();
             }))
             .on_mouse_down(
@@ -678,4 +875,33 @@ impl Editor {
 fn utf16_range(state: &EditorState, start: Position, end: Position) -> Range<usize> {
     let buffer = state.buffer();
     buffer.utf16_of_offset(buffer.offset_of(start))..buffer.utf16_of_offset(buffer.offset_of(end))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn keystroke(key: &str, key_char: Option<&str>, shift: bool, control: bool) -> Keystroke {
+        let mut keystroke =
+            Keystroke { key: key.to_string(), key_char: key_char.map(str::to_string), ..Keystroke::default() };
+        keystroke.modifiers.shift = shift;
+        keystroke.modifiers.control = control;
+        keystroke
+    }
+
+    #[test]
+    fn a_typed_key_is_the_character_it_types() {
+        assert_eq!(key_input(&keystroke("4", Some("$"), true, false)).key, "$");
+        assert_eq!(key_input(&keystroke("a", Some("A"), true, false)).key, "A");
+        assert!(!key_input(&keystroke("a", Some("A"), true, false)).modifiers.shift);
+    }
+
+    #[test]
+    fn named_keys_and_control_chords_stay_as_they_are() {
+        assert_eq!(key_input(&keystroke("enter", Some("\n"), false, false)).key, "enter");
+        assert_eq!(key_input(&keystroke("space", Some(" "), false, false)).key, "space");
+        let chord = key_input(&keystroke("d", None, false, true));
+        assert_eq!(chord.key, "d");
+        assert!(chord.modifiers.control);
+    }
 }

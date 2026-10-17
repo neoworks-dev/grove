@@ -6,31 +6,113 @@
 import { invoke } from "@neoworks/svelte-gpui";
 import type { Context } from "@neoworks/extension-system";
 import { KeyPriority } from "../../kernel/keymap";
+import { defineSettings, setting } from "../../kernel/settings";
 import ConfirmClose from "./ConfirmClose.svelte";
 import EditorFileStatus from "./EditorFileStatus.svelte";
+import EditorModeStatus from "./EditorModeStatus.svelte";
 import EditorMain from "./EditorMain.svelte";
 import OpenFile from "./OpenFile.svelte";
 import { debugDecorations, DEBUG_SOURCE } from "./debugDecorations";
 import { gpuiDocumentHost } from "./documentHost";
-import { EditorService } from "./service";
+import EditorIndentStatus from "./EditorIndentStatus.svelte";
+import { EditorService, INDENT_CHOICES, indentFromSetting, indentLabel, type EditorOptions } from "./service";
+
+export const editorSettings = defineSettings({
+  keymap: setting.enum({
+    label: "Keymap",
+    description: "The keys the editor understands: VS Code's, or vim's modes, operators and motions.",
+    default: "standard",
+    options: [
+      { value: "standard", label: "Standard" },
+      { value: "vim", label: "Vim" },
+    ],
+    live: true,
+  }),
+  defaultIndent: setting.enum({
+    label: "Default indentation",
+    description: "How a file is indented when its own lines do not say. Files that do keep their own.",
+    default: "spaces-4",
+    options: [
+      { value: "spaces-2", label: "2 spaces" },
+      { value: "spaces-4", label: "4 spaces" },
+      { value: "spaces-8", label: "8 spaces" },
+      { value: "tabs", label: "Tabs" },
+    ],
+    live: true,
+  }),
+  smoothScroll: setting.boolean({
+    label: "Smooth scrolling",
+    description: "Glide on page jumps and mouse wheel notches instead of snapping.",
+    default: true,
+    live: true,
+  }),
+  indentGuides: setting.boolean({
+    label: "Indent guides",
+    description: "Draw a line per indentation level, with the one around the cursor brighter.",
+    default: true,
+    live: true,
+  }),
+  occurrenceHighlights: setting.boolean({
+    label: "Highlight word occurrences",
+    description: "Mark the other places the word under the cursor appears in view.",
+    default: true,
+    live: true,
+  }),
+});
+
+type EditorConfig = {
+  keymap: string;
+  defaultIndent: string;
+  smoothScroll: boolean;
+  indentGuides: boolean;
+  occurrenceHighlights: boolean;
+};
+
+/** What the host is told of the settings. */
+function optionsOf(config: EditorConfig): EditorOptions {
+  return {
+    defaultIndent: indentFromSetting(config.defaultIndent),
+    smoothScroll: config.smoothScroll,
+    indentGuides: config.indentGuides,
+    occurrenceHighlights: config.occurrenceHighlights,
+  };
+}
 
 export const editor = {
   name: "editor",
-  inject: ["slots", "commands", "keymap", "menus", "layout"],
-  apply(ctx: Context) {
+  Config: editorSettings,
+  inject: ["slots", "commands", "keymap", "menus", "layout", "settings", "palette"],
+  apply(ctx: Context, config: EditorConfig) {
     const service = new EditorService(ctx, gpuiDocumentHost(), ctx.layout);
+    service.setKeymap(config.keymap);
+    void service.configure(optionsOf(config));
+    ctx.settings.onLive((change) => {
+      const live = change.config as EditorConfig;
+      service.setKeymap(live.keymap);
+      void service.configure(optionsOf(live));
+    });
     ctx.slots.register("main", {
       id: "editor",
       key: "editor",
       component: EditorMain,
       props: { title: "Editor", service },
     });
+    ctx.slots.register("statusbar", { id: "editor.mode", order: 5, component: EditorModeStatus, props: { service } });
     ctx.slots.register("statusbar", { id: "editor.file", order: 10, component: EditorFileStatus, props: { service } });
+    ctx.slots.register("statusbar", {
+      id: "editor.indent",
+      order: 15,
+      component: EditorIndentStatus,
+      props: { align: "right", service, change: () => void ctx.commands.run("editor.changeIndent") },
+    });
     ctx.slots.register("overlay", { id: "editor.confirmClose", order: 10, component: ConfirmClose, props: { service } });
     ctx.slots.register("overlay", { id: "editor.openFile", order: 11, component: OpenFile, props: { service } });
     registerFileCommands(ctx, service);
     registerEditCommands(ctx, service);
     registerLanguageCommands(ctx, service);
+    registerKeymapCommand(ctx, service);
+    registerIndentCommand(ctx, service);
+    registerJumpCommand(ctx, service);
     registerDebugCommands(ctx, service);
     registerKeys(ctx, service);
     ctx.menus.registerItems([
@@ -92,6 +174,56 @@ function registerEditCommands(ctx: Context, service: EditorService): void {
       run: () => service.sendCommand(type),
     });
   }
+}
+
+/** The command that switches between the standard keys and vim's, and keeps the choice in the profile. */
+function registerKeymapCommand(ctx: Context, service: EditorService): void {
+  ctx.commands.register({
+    id: "editor.toggleVim",
+    title: "Toggle vim keys in the editor",
+    group: "Editor",
+    keywords: "vim keymap modal",
+    run: async () => {
+      const rowId = ctx.settings.rowIdOf("editor");
+      if (rowId === undefined) {
+        return;
+      }
+      const next = service.keymap() === "vim" ? "standard" : "vim";
+      await ctx.settings.set(rowId, "keymap", next);
+    },
+  });
+}
+
+/** The command that shows jump labels in the focused editor, for people who would rather not remember the key. */
+function registerJumpCommand(ctx: Context, service: EditorService): void {
+  ctx.commands.register({
+    id: "editor.jump",
+    title: "Jump to a place on screen with labels",
+    group: "Go",
+    keywords: "flash jump label motion easymotion",
+    when: () => service.hasFocusedView() && service.active() !== null,
+    run: () => service.sendCommand("start_jump"),
+  });
+}
+
+/** The command that lists the indentation styles and applies the one picked to the focused file. */
+function registerIndentCommand(ctx: Context, service: EditorService): void {
+  ctx.commands.register({
+    id: "editor.changeIndent",
+    title: "Change indentation of this file",
+    group: "Editor",
+    keywords: "indent tabs spaces width",
+    when: () => service.hasFocusedView() && service.active() !== null,
+    run: async () => {
+      const items = INDENT_CHOICES.map((style) => ({ id: JSON.stringify(style), title: indentLabel(style) }));
+      const current = service.active()?.indent;
+      const activeId = current ? JSON.stringify(current) : undefined;
+      const picked = await ctx.palette.pick(items, { placeholder: "Indent this file with", activeId });
+      if (picked) {
+        await service.setIndent(JSON.parse(picked.id));
+      }
+    },
+  });
 }
 
 /**

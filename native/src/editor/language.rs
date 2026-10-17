@@ -45,6 +45,10 @@ impl Editor {
         if outcome.text_changed {
             self.hover = None;
         }
+        if !self.is_typing_mode() {
+            self.close_completion();
+            return;
+        }
         match command {
             Command::InsertText { text } if outcome.text_changed => self.completion_typed(text, cx),
             Command::Delete { .. } if outcome.text_changed => self.revalidate_completion(cx),
@@ -99,6 +103,9 @@ impl Editor {
         let Some(document) = self.document else {
             return;
         };
+        if self.read_only {
+            return;
+        }
         let Some(capabilities) = self.lsp.capabilities(document) else {
             return;
         };
@@ -297,7 +304,8 @@ impl Editor {
     pub(super) fn completion_key(&mut self, keystroke: &Keystroke, cx: &mut Context<Self>) -> bool {
         let key = keystroke.key.as_str();
         let modifiers = keystroke.modifiers;
-        if key == "space" && modifiers.control && !modifiers.alt {
+        let typing = self.is_typing_mode();
+        if key == "space" && modifiers.control && !modifiers.alt && typing {
             self.start_completion(Trigger::Invoked, cx);
             return true;
         }
@@ -314,7 +322,8 @@ impl Editor {
             ("escape", false, false) => {
                 self.close_completion();
                 cx.notify();
-                return true;
+                // Vim's Escape ends insert mode as well, the same press, so it goes on to the layer.
+                return typing && self.input.status().mode.is_empty();
             }
             _ => return false,
         };
@@ -326,9 +335,16 @@ impl Editor {
         true
     }
 
+    /// Whether typed keys go into the text: always with the standard keymap, and in vim's insert
+    /// mode. Completion does not open or take keys in any other mode.
+    fn is_typing_mode(&self) -> bool {
+        let mode = self.input.status().mode;
+        mode.is_empty() || mode == "INSERT"
+    }
+
     /// Tab and Shift-Tab move between the stops of a snippet that was just completed.
     fn snippet_key(&mut self, keystroke: &Keystroke, cx: &mut Context<Self>) -> bool {
-        if keystroke.key != "tab" || keystroke.modifiers.control || keystroke.modifiers.alt {
+        if keystroke.key != "tab" || keystroke.modifiers.control || keystroke.modifiers.alt || !self.is_typing_mode() {
             return false;
         }
         if self.read(|state| state.in_snippet()) != Some(true) {
@@ -482,9 +498,10 @@ impl Editor {
         let Some(document) = self.document else {
             return;
         };
+        let sources = self.sources.clone();
         let found = self.read(|state| {
             let range = word_range_at(&state.buffer().line(position.row), position.row, position.column)?;
-            Some((range, diagnostics_at(state, position)))
+            Some((range, diagnostics_at(state, position, &sources)))
         });
         let Some(Some((range, diagnostics))) = found else {
             return;
@@ -634,11 +651,15 @@ fn hover_markdown(answer: &Value) -> Option<String> {
     Some(markdown)
 }
 
-/// The diagnostics whose range covers a position.
-fn diagnostics_at(state: &editor_core::EditorState, position: Position) -> Vec<HoverDiagnostic> {
+/// The diagnostics whose range covers a position, among the decorations the view shows.
+fn diagnostics_at(
+    state: &editor_core::EditorState,
+    position: Position,
+    sources: &editor_core::SourceFilter,
+) -> Vec<HoverDiagnostic> {
     let rows = position.row..position.row + 1;
     let mut found = Vec::new();
-    for placed in state.decorations_in_rows(rows) {
+    for placed in state.decorations_in_rows_for(rows, sources) {
         let Some(tooltip) = placed.tooltip else {
             continue;
         };

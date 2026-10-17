@@ -15,6 +15,50 @@ pub enum Motion {
     LineEnd,
     BufferStart,
     BufferEnd,
+    // The motions below are vim's; the standard keymap does not make them.
+    /// `h`: one column left, staying on the line.
+    ColumnLeft,
+    /// `l`: one column right, staying on the line.
+    ColumnRight,
+    /// `a`: one column right, which at the end of a line is past its last character.
+    AfterCursor,
+    /// `^`: the first character that is not white space.
+    FirstNonBlank,
+    /// `g_`: the last character that is not white space.
+    LastNonBlank,
+    /// `gg`, `G` and `:n`: the first non-blank of a row, counted from zero.
+    Line(usize),
+    /// `w` and `W`.
+    WordForward {
+        big: bool,
+    },
+    /// `e` and `E`.
+    WordEnd {
+        big: bool,
+    },
+    /// `b` and `B`.
+    WordBack {
+        big: bool,
+    },
+    /// `ge` and `gE`.
+    WordEndBack {
+        big: bool,
+    },
+    /// `}`.
+    ParagraphForward,
+    /// `{`.
+    ParagraphBack,
+    /// `%`.
+    MatchingBracket,
+    /// To a place, such as the one a jump label stands for.
+    To(Position),
+    /// `f`, `t`, `F` and `T`, and `;` and `,` which set `repeat`.
+    FindChar {
+        character: char,
+        forward: bool,
+        till: bool,
+        repeat: bool,
+    },
 }
 
 /// Moves a selection's head. Extending keeps the anchor; otherwise the selection becomes a
@@ -33,7 +77,7 @@ pub fn move_selection(buffer: &Buffer, selection: &Selection, motion: Motion, ex
 }
 
 /// Where a motion takes the head, and the goal column it keeps for further vertical moves.
-fn move_head(buffer: &Buffer, selection: &Selection, motion: Motion) -> (Position, Option<usize>) {
+pub(crate) fn move_head(buffer: &Buffer, selection: &Selection, motion: Motion) -> (Position, Option<usize>) {
     let head = selection.head;
     match motion {
         Motion::Left => (position_before(buffer, head), None),
@@ -43,6 +87,7 @@ fn move_head(buffer: &Buffer, selection: &Selection, motion: Motion) -> (Positio
         Motion::LineEnd => (Position { row: head.row, column: buffer.line_length(head.row) }, None),
         Motion::BufferStart => (Position::default(), None),
         Motion::BufferEnd => (buffer.clamp(Position { row: usize::MAX, column: usize::MAX }), None),
+        vim_motion => crate::vim::motion::head_for(buffer, selection, vim_motion),
     }
 }
 

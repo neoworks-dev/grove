@@ -19,7 +19,10 @@ export function createSuiteHost(): SuiteHost {
       return connect({
         client: options.client,
         address: options.address,
-        waitForDaemon: true,
+        // The service starts the daemon and bounds the wait itself: a daemon that accepts the
+        // connection and never answers must end as an error, not as a retry that never stops.
+        waitForDaemon: false,
+        requestTimeoutMs: options.requestTimeoutMs,
         onError: options.onError,
       });
     },

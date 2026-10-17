@@ -6,11 +6,13 @@ use crate::anchor::{Anchor, AnchorId, Anchors, Bias};
 use crate::buffer::{Buffer, Position};
 use crate::command::{Command, Outcome};
 use crate::completion::{Completion, SnippetSession};
-use crate::decorations::{Decoration, Decorations, Placed, PlacedBlock};
+use crate::decorations::{Decoration, Decorations, Placed, PlacedBlock, SourceFilter};
 use crate::history::History;
 use crate::movement::{Motion, find_next, move_selection, vertical, word_at};
 use crate::selections::{Selection, Selections};
 use crate::syntax::{HighlightSpan, Syntax};
+use crate::vim::registers::VimMemory;
+use std::collections::HashMap;
 
 pub struct EditorState {
     pub(crate) buffer: Buffer,
@@ -33,6 +35,11 @@ pub struct EditorState {
     decorations: Decorations,
     /// The snippet whose tab stops are being visited, if one was just completed.
     pub(crate) snippet: Option<SnippetSession>,
+    /// What vim's registers and search remember. A document set puts one shared set here for
+    /// the length of each command, so a yank in one file can be put in another.
+    pub memory: VimMemory,
+    /// The places vim's marks name, pinned so they follow the text.
+    pub(crate) marks: HashMap<char, AnchorId>,
 }
 
 impl EditorState {
@@ -52,6 +59,8 @@ impl EditorState {
             syntax,
             decorations: Decorations::default(),
             snippet: None,
+            memory: VimMemory::default(),
+            marks: HashMap::new(),
         }
     }
 
@@ -74,12 +83,22 @@ impl EditorState {
 
     /// The decorations that touch any of `rows`, positioned as the text is now.
     pub fn decorations_in_rows(&self, rows: std::ops::Range<usize>) -> Vec<Placed<'_>> {
-        self.decorations.placed_in_rows(rows, &self.buffer, &self.anchors)
+        self.decorations_in_rows_for(rows, &SourceFilter::default())
+    }
+
+    /// Like `decorations_in_rows`, with only the sources a view shows.
+    pub fn decorations_in_rows_for(&self, rows: std::ops::Range<usize>, filter: &SourceFilter) -> Vec<Placed<'_>> {
+        self.decorations.placed_in_rows(rows, &self.buffer, &self.anchors, filter)
     }
 
     /// The blocks between lines, in the order they are laid out.
     pub fn decoration_blocks(&self) -> Vec<PlacedBlock<'_>> {
-        self.decorations.blocks(&self.buffer, &self.anchors)
+        self.decoration_blocks_for(&SourceFilter::default())
+    }
+
+    /// Like `decoration_blocks`, with only the sources a view shows.
+    pub fn decoration_blocks_for(&self, filter: &SourceFilter) -> Vec<PlacedBlock<'_>> {
+        self.decorations.blocks(&self.buffer, &self.anchors, filter)
     }
 
     /// How many anchors are being kept up to date, which tests use to see none are leaked.
@@ -175,6 +194,10 @@ impl EditorState {
             Command::Delete { motion } => self.delete(*motion, now),
             Command::InsertNewline => self.insert_newline(now),
             Command::InsertTab => self.insert_tab(now),
+            Command::Indent => self.shift_lines(false, now),
+            Command::Outdent => self.shift_lines(true, now),
+            Command::SetIndent { style } => self.set_indent(*style),
+            Command::StartJump { then } => Outcome { jump: Some((**then).clone()), ..Outcome::default() },
             Command::Undo => self.undo_outcome(),
             Command::Redo => self.redo_outcome(),
             Command::Copy => self.copy(),
@@ -198,6 +221,7 @@ impl EditorState {
             }
             Command::SnippetNext => self.snippet_next(),
             Command::SnippetPrevious => self.snippet_previous(),
+            _ if command.is_vim() => self.run_vim(command, now),
             _ => self.run_navigation(command),
         }
     }

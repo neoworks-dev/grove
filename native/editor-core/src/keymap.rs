@@ -27,6 +27,8 @@ pub struct KeyInput {
 pub struct InputContext {
     /// How many rows a page is, for the keys that move by one.
     pub page_rows: usize,
+    /// The first row in view, for the keys that go to the top, middle or bottom of the view.
+    pub top_row: usize,
 }
 
 /// Turns key presses into commands. A layer may keep state between keys, which is why it is
@@ -36,6 +38,49 @@ pub trait InputLayer {
     /// key for whatever is behind the editor. A layer with several to give, such as a vim key
     /// that deletes and then switches mode, returns them all.
     fn translate(&mut self, key: &KeyInput, context: &InputContext) -> Vec<Command>;
+
+    /// What the view shows of the layer's state: the mode, keys waiting for the rest of a
+    /// command, and the cursor to draw. A layer without modes keeps the default.
+    fn status(&self) -> InputStatus {
+        InputStatus::default()
+    }
+}
+
+/// The cursor a layer asks for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CursorShape {
+    /// A thin line between characters, as the standard keymap and insert mode use.
+    #[default]
+    Bar,
+    /// A box over the character, as vim's normal and visual modes use.
+    Block,
+    /// A line under the character, as replace mode and a pending operator use.
+    Underline,
+}
+
+/// How selections are painted: whether the character under the head is part of them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SelectionStyle {
+    /// From the anchor up to the head.
+    #[default]
+    Exclusive,
+    /// Both the anchor's and the head's characters, as in vim's visual mode.
+    Inclusive,
+    /// Every line the selection touches, whole.
+    Lines,
+}
+
+/// What a layer shows of itself.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct InputStatus {
+    /// The mode's name, such as `NORMAL`, or empty for a layer that has none.
+    pub mode: &'static str,
+    /// The keys typed so far of a command that is not complete.
+    pub pending: String,
+    /// The line being typed after `:`, `/` or `?`, with that character first.
+    pub command_line: Option<String>,
+    pub cursor: CursorShape,
+    pub selection: SelectionStyle,
 }
 
 /// VS Code's keys: cursor keys, Home and End, Ctrl-A and Ctrl-D, Ctrl-Alt-Up and Down, Escape,
@@ -58,8 +103,14 @@ pub fn standard_command(key: &KeyInput, context: &InputContext) -> Option<Comman
     if modifiers.control {
         return control_command(&key.key, modifiers.shift);
     }
+    if modifiers.alt && key.key == "j" {
+        return Some(Command::StartJump { then: Box::new(jump_target_move()) });
+    }
     if modifiers.alt {
         return cursor_key_command(key, context);
+    }
+    if key.key == "tab" && modifiers.shift {
+        return Some(Command::Outdent);
     }
     if let Some(command) = editing_key_command(&key.key) {
         return Some(command);
@@ -68,6 +119,11 @@ pub fn standard_command(key: &KeyInput, context: &InputContext) -> Option<Comman
         return Some(Command::CollapseSelections);
     }
     cursor_key_command(key, context)
+}
+
+/// What the standard keys do with the place a jump picks: move the cursor there.
+fn jump_target_move() -> Command {
+    Command::MoveSelections { motion: Motion::To(crate::buffer::Position::default()), extend: false }
 }
 
 /// Backspace, Delete, Enter and Tab, which Shift does not change.
@@ -136,7 +192,7 @@ fn cursor_key_motion(key: &str, page_rows: usize) -> Option<Motion> {
 mod tests {
     use super::*;
 
-    const PAGE: InputContext = InputContext { page_rows: 30 };
+    const PAGE: InputContext = InputContext { page_rows: 30, top_row: 0 };
 
     fn press(key: &str, control: bool, alt: bool, shift: bool) -> Option<Command> {
         let input = KeyInput { key: key.to_string(), modifiers: Modifiers { control, alt, shift } };
@@ -200,6 +256,7 @@ mod tests {
         assert_eq!(press("delete", false, false, false), Some(Command::Delete { motion: Motion::Right }));
         assert_eq!(press("enter", false, false, true), Some(Command::InsertNewline));
         assert_eq!(press("tab", false, false, false), Some(Command::InsertTab));
+        assert_eq!(press("tab", false, false, true), Some(Command::Outdent));
         assert_eq!(press("backspace", false, true, false), None);
     }
 
@@ -212,6 +269,11 @@ mod tests {
         assert_eq!(press("x", true, false, false), Some(Command::Cut));
         assert_eq!(press("v", true, false, false), Some(Command::PasteClipboard));
         assert_eq!(press("s", true, false, false), Some(Command::Save));
+    }
+
+    #[test]
+    fn alt_j_starts_jump_labels() {
+        assert_eq!(press("j", false, true, false), Some(Command::StartJump { then: Box::new(jump_target_move()) }));
     }
 
     #[test]

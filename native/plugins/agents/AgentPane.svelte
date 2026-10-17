@@ -4,26 +4,36 @@
 -->
 <script lang="ts">
   import { Button, Text, View } from "@neoworks/svelte-gpui/ui";
-  import Chat from "./chat/Chat.svelte";
-  import Composer from "./Composer.svelte";
+  import AgentSession from "./AgentSession.svelte";
   import type { LayoutService } from "../layout/service";
   import { colors, fontSize, radius } from "../theme/tokens";
+  import type { WorkspaceService } from "../workspace/service";
+  import type { ChangesSource } from "./filesModel";
   import type { AgentsService } from "./service";
 
   interface Props {
     agents: AgentsService;
     layout: LayoutService;
+    workspace: WorkspaceService;
+    /** Where the files panel reads the worktree's changes from. */
+    changes: ChangesSource;
     /** The pane this is drawn in. */
     leafId?: string;
   }
 
-  let { agents, layout, leafId = "main" }: Props = $props();
+  let { agents, layout, workspace, changes, leafId = "main" }: Props = $props();
 
   const sessionId = $derived(agents.sessionOfPane(leafId));
   const connection = $derived(agents.state());
   const chat = $derived(sessionId === null ? undefined : agents.chat(sessionId));
-  const running = $derived(sessionId !== null && agents.isRunning(sessionId));
   const focused = $derived(layout.focusedLeafId === leafId);
+
+  // The daemon is told which session the pane the user is in shows, and moves the agent here with it.
+  $effect(() => {
+    if (focused && sessionId !== null) {
+      void agents.showing(sessionId);
+    }
+  });
 
   // The pane follows its session while it shows it, and the daemon starts when the first pane needs it.
   $effect(() => {
@@ -37,7 +47,7 @@
 <View style={{ flex: 1, minHeight: 0 }}>
   {#if connection.connection === "unavailable"}
     <View style={{ flex: 1, align: "center", justify: "center", gap: 8, padding: 24 }}>
-      <Text style={{ fontSize: fontSize.sm, color: colors.text }}>The suite daemon is not running</Text>
+      <Text style={{ fontSize: fontSize.sm, color: colors.text }}>Can't reach the suite daemon</Text>
       <Text style={{ fontSize: fontSize.xs, color: colors.dim }}>{connection.message === undefined ? "" : connection.message}</Text>
       <Button
         onpress={() => void agents.retry()}
@@ -58,8 +68,7 @@
     </View>
   {:else}
     {#key sessionId}
-      <Chat session={chat} />
-      <Composer session={chat} {running} {focused} />
+      <AgentSession {agents} {workspace} {changes} {chat} {focused} />
     {/key}
   {/if}
 </View>

@@ -11,7 +11,13 @@
   import { provideChat } from "./context";
   import { chatView } from "./viewState";
 
-  let { session }: { session: ChatSession } = $props();
+  interface Props {
+    session: ChatSession;
+    /** What an empty chat says. */
+    emptyText?: string;
+  }
+
+  let { session, emptyText = "Nothing said yet. Write a message below." }: Props = $props();
 
   const p = palette;
 
@@ -42,7 +48,7 @@
 
 {#if items.length === 0}
   <View style={{ flex: 1, align: "center", justify: "center", padding: p.space.l }}>
-    <Text style={{ color: p.muted }}>Nothing said yet. Write a message below.</Text>
+    <Text style={{ color: p.muted }}>{emptyText}</Text>
   </View>
 {:else}
   {#key width}

@@ -128,3 +128,27 @@ describe("WorkspaceService worktrees", () => {
     expect(workspace.selectedWorktree()?.id).toBe("/work/repo");
   });
 });
+
+describe("WorkspaceService selection listeners", () => {
+  test("hear of the worktree a repository opens on, of each other one selected, and of one that replaces a gone one", async () => {
+    const { workspace, link } = await bootWorkspace(routes("/work/repo-feature"));
+    const heard: (string | null)[] = [];
+    workspace.onSelectionChange((worktree) => heard.push(worktree === null ? null : worktree.path));
+    await workspace.open("/work/repo");
+    await workspace.selectWorktree("/work/repo");
+    await workspace.selectWorktree("/work/repo");
+    link.emit("event:worktrees-changed", [main]);
+    await settle();
+    expect(heard).toEqual(["/work/repo-feature", "/work/repo"]);
+  });
+
+  test("stop hearing once they leave", async () => {
+    const { workspace } = await bootWorkspace(routes());
+    const heard: string[] = [];
+    const leave = workspace.onSelectionChange((worktree) => heard.push(String(worktree?.path)));
+    await workspace.open("/work/repo");
+    leave();
+    await workspace.selectWorktree("/work/repo-feature");
+    expect(heard).toEqual(["/work/repo"]);
+  });
+});

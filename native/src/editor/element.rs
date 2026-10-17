@@ -18,12 +18,17 @@ use svelte_gpui::gpui::{
 };
 
 use super::Editor;
+use super::indent_paint::{self, GuideLine};
+use super::jump_paint::{self, JumpPaint};
+use super::options::EditorOptions;
 use super::popup;
 use super::theme::{EditorTheme, HighlightStyle};
+use super::vim_paint::{self, VimPaint};
 use editor_core::decorations::{DecorationKind, GutterMark, Placed, PlacedBlock, Placement, Tone, UnderlineKind};
 use editor_core::display::{BlockMap, BlockSlot, DisplayLine, DisplayRow, InlayText};
+use editor_core::jump::JumpSession;
 use editor_core::syntax::HighlightSpan;
-use editor_core::{EditorState, Position, Selection};
+use editor_core::{EditorState, InputStatus, Position, SourceFilter};
 
 pub const FONT_FAMILY: &str = "DejaVu Sans Mono";
 pub const FONT_SIZE: Pixels = px(14.0);
@@ -32,7 +37,7 @@ pub const LINE_HEIGHT: Pixels = px(21.0);
 const GUTTER_PADDING: Pixels = px(16.0);
 const CURSOR_WIDTH: Pixels = px(2.0);
 /// How wide a selected line ending is drawn.
-const LINE_ENDING_WIDTH: Pixels = px(7.0);
+pub(super) const LINE_ENDING_WIDTH: Pixels = px(7.0);
 
 const UNDERLINE_HEIGHT: Pixels = px(1.5);
 /// How thick the line under a highlighted range is; a squiggle is three times as tall.
@@ -51,6 +56,10 @@ const LINE_END_GAP: Pixels = px(28.0);
 const BACKGROUND_OPACITY: f32 = 0.18;
 /// How opaque a tone is behind a block's rows.
 const BLOCK_OPACITY: f32 = 0.12;
+/// How opaque the words a diff changed are behind their text, over the tint of their line.
+const WORD_OPACITY: f32 = 0.38;
+/// How opaque the filler rows of a side-by-side diff are.
+const FILLER_OPACITY: f32 = 0.07;
 
 /// What the last frame drew, kept on the editor so the pointer can be mapped to a position
 /// and the cursor kept in view.
@@ -120,12 +129,12 @@ impl Layout {
     }
 
     /// The y of the top of the drawn display row at `index` (counted from the first drawn).
-    fn top_of_index(&self, index: usize) -> Pixels {
+    pub(super) fn top_of_index(&self, index: usize) -> Pixels {
         self.first_row_top + LINE_HEIGHT * index as f32
     }
 
     /// The drawn line of a buffer row and the y of its top, or none while it is out of view.
-    fn line_of(&self, row: usize) -> Option<(&VisibleLine, Pixels)> {
+    pub(super) fn line_of(&self, row: usize) -> Option<(&VisibleLine, Pixels)> {
         let index = self.blocks.display_row_of(row).checked_sub(self.first_display_row)?;
         match self.rows.get(index)? {
             VisibleRow::Text(line) if line.row == row => Some((line, self.top_of_index(index))),
@@ -145,8 +154,10 @@ struct PaintedRow {
     number: Option<(ShapedLine, Pixels)>,
     text: ShapedLine,
     is_cursor_row: bool,
-    /// Behind the whole row, for the rows of a block.
+    /// Behind the whole row, for the rows of a block and the lines a diff marks.
     tint: Option<Hsla>,
+    /// Behind stretches of the row's text, such as the words a diff changed in a removed line.
+    emphasis: Vec<(Bounds<Pixels>, Hsla)>,
 }
 
 /// A line under a decorated range.
@@ -176,6 +187,8 @@ pub struct Frame {
     selections: Vec<Bounds<Pixels>>,
     /// Behind the text: the ranges decorations colour.
     range_backgrounds: Vec<(Bounds<Pixels>, Hsla)>,
+    /// Behind the text: a line per indentation level.
+    guides: Vec<GuideLine>,
     /// Under the text: lines and squiggles decorations draw.
     decoration_underlines: Vec<DecorationUnderline>,
     gutter_marks: Vec<GutterPaint>,
@@ -183,6 +196,10 @@ pub struct Frame {
     cursors: Vec<Bounds<Pixels>>,
     /// Under the text an input method is composing.
     underlines: Vec<Bounds<Pixels>>,
+    /// What vim mode adds: block cursors and the command line.
+    vim: VimPaint,
+    /// What a jump in progress adds: labels, and the matches they stand for.
+    jump: JumpPaint,
     /// The colours this frame is painted with.
     theme: EditorTheme,
     /// How long the frame took to prepare, for `GROVE_LATENCY`.
@@ -198,12 +215,15 @@ impl Frame {
             gutter_width: px(0.0),
             selections: Vec::new(),
             range_backgrounds: Vec::new(),
+            guides: Vec::new(),
             decoration_underlines: Vec::new(),
             gutter_marks: Vec::new(),
             line_ends: Vec::new(),
             cursors: Vec::new(),
             underlines: Vec::new(),
             prepaint_took: std::time::Duration::ZERO,
+            vim: VimPaint::default(),
+            jump: JumpPaint::default(),
         }
     }
 }
@@ -254,11 +274,17 @@ impl Element for EditorElement {
         cx: &mut App,
     ) -> Frame {
         let prepaint_started = std::time::Instant::now();
+        self.editor.update(cx, |editor, cx| editor.advance_glide(window, cx));
         let editor = self.editor.read(cx);
         let scroll_top = editor.scroll_top;
         let theme = editor.theme.clone();
-        let Some((layout, mut frame)) = editor.read(|state| build_frame(state, scroll_top, bounds, window, &theme))
-        else {
+        let status = editor.input.status();
+        let options = editor.documents.options();
+        let jump = editor.jump.as_ref();
+        let sources = editor.sources.clone();
+        let built = editor
+            .read(|state| build_frame(state, scroll_top, bounds, window, &theme, &status, options, jump, &sources));
+        let Some((layout, mut frame)) = built else {
             return Frame::empty(theme);
         };
         let entity = self.editor.clone();
@@ -298,16 +324,22 @@ impl Element for EditorElement {
                 if let Some(tint) = row.tint {
                     window.paint_quad(fill(line, tint));
                 }
+                for (span, color) in &row.emphasis {
+                    window.paint_quad(fill(*span, *color));
+                }
                 if row.is_cursor_row {
                     window.paint_quad(fill(line, theme.current_line));
                 }
             }
+            indent_paint::paint_guides(&frame.guides, theme, window);
             for (range, color) in &frame.range_backgrounds {
                 window.paint_quad(fill(*range, *color));
             }
             for selection in &frame.selections {
                 window.paint_quad(fill(*selection, theme.selection));
             }
+            jump_paint::paint_behind_text(&frame.jump, theme, window);
+            vim_paint::paint_behind_text(&frame.vim, theme, focused, window);
             for mark in &frame.gutter_marks {
                 paint_gutter_mark(mark, window, cx);
             }
@@ -339,6 +371,8 @@ impl Element for EditorElement {
             for cursor in &frame.cursors {
                 window.paint_quad(fill(*cursor, cursor_color));
             }
+            jump_paint::paint_over_text(&frame.jump, theme, window, cx);
+            vim_paint::paint_command_line(&frame.vim, theme, window, cx);
         });
         self.report_latency(frame, paint_started, cx);
     }
@@ -440,6 +474,10 @@ fn build_frame(
     bounds: Bounds<Pixels>,
     window: &mut Window,
     theme: &EditorTheme,
+    status: &InputStatus,
+    options: EditorOptions,
+    jump: Option<&JumpSession>,
+    sources: &SourceFilter,
 ) -> (Layout, Frame) {
     let line_count = state.buffer().line_count();
     let digits = line_count.max(1).to_string().len();
@@ -447,7 +485,7 @@ fn build_frame(
     let gutter_width = digit_width + GUTTER_PADDING * 2.0;
     let text_left = bounds.left() + gutter_width;
 
-    let blocks = state.decoration_blocks();
+    let blocks = state.decoration_blocks_for(sources);
     let blocks_map = block_map(&blocks);
     let first_display_row = (scroll_top / LINE_HEIGHT).floor() as usize;
     let first_row_top = bounds.top() - (scroll_top - LINE_HEIGHT * first_display_row as f32);
@@ -464,8 +502,9 @@ fn build_frame(
         .map(|selection| selection.head.row)
         .collect();
     let syntax = state.highlights(text_rows.clone());
-    let decorations = state.decorations_in_rows(text_rows.clone());
+    let decorations = state.decorations_in_rows_for(text_rows.clone(), sources);
     let row_decorations = RowDecorations::new(&decorations);
+    let line_tints = line_tints(&decorations, theme);
 
     let mut visible_rows = Vec::with_capacity(display_rows.len());
     let mut painted_rows = Vec::with_capacity(display_rows.len());
@@ -493,20 +532,25 @@ fn build_frame(
                     number: Some((number, number_left)),
                     text: text.clone(),
                     is_cursor_row,
-                    tint: None,
+                    tint: line_tints.get(&row).copied(),
+                    emphasis: Vec::new(),
                 });
                 visible_rows.push(VisibleRow::Text(VisibleLine { row, display, shaped: text }));
             }
             DisplayRow::Block { block, line } => {
                 let placed = &blocks[block];
-                let color = theme.tone(placed.tone.unwrap_or(Tone::Inlay));
-                let text = shape_plain(window, &placed.lines[line], color);
+                let tone = placed.tone.unwrap_or(Tone::Inlay);
+                let color = theme.tone(tone);
+                let display = DisplayLine::new(&placed.lines[line]);
+                let text = shape_plain(window, &display.text, color);
+                let emphasis = block_emphasis(placed, line, &display, &text, text_left, top, theme);
                 painted_rows.push(PaintedRow {
                     top,
                     number: None,
                     text,
                     is_cursor_row: false,
-                    tint: Some(color.opacity(BLOCK_OPACITY)),
+                    tint: Some(color.opacity(block_opacity(tone))),
+                    emphasis,
                 });
                 visible_rows.push(VisibleRow::Block { row: placed.row, placement: placed.placement });
             }
@@ -514,25 +558,98 @@ fn build_frame(
     }
 
     let layout = Layout { bounds, text_left, first_display_row, first_row_top, blocks: blocks_map, rows: visible_rows };
-    let selections = visible_selections.iter().flat_map(|selection| selection_bounds(&layout, selection)).collect();
+    let selections = visible_selections
+        .iter()
+        .flat_map(|selection| vim_paint::selection_spans(&layout, selection, status.selection))
+        .collect();
     let underlines = state.marked_range().map(|(start, end)| underline_bounds(&layout, start, end)).unwrap_or_default();
-    let cursors = visible_selections.iter().filter_map(|selection| cursor_bounds(&layout, selection.head)).collect();
+    let character_width = vim_paint::character_width(window, theme.foreground);
+    let (cursors, block_cursors) = vim_paint::cursor_bounds_for(&layout, visible_selections, status, character_width);
+    let vim = VimPaint { block_cursors, command_line: vim_paint::command_line(&layout, status, theme, window) };
     let (range_backgrounds, decoration_underlines) = range_decorations(&layout, &decorations, theme);
+    let mut guides = Vec::new();
+    if options.indent_guides {
+        guides = indent_paint::guide_lines(state, &layout, character_width);
+    }
     let gutter_marks = gutter_marks(&layout, &decorations, theme, window);
+    let mut jump_paint = JumpPaint::default();
+    if let Some(session) = jump {
+        jump_paint = jump_paint::build(session, &layout, theme, character_width, window);
+    }
     let frame = Frame {
         rows: painted_rows,
         gutter_width,
         selections,
         range_backgrounds,
+        guides,
         decoration_underlines,
         gutter_marks,
         line_ends,
         cursors,
         underlines,
+        vim,
+        jump: jump_paint,
         theme: theme.clone(),
         prepaint_took: std::time::Duration::ZERO,
     };
     (layout, frame)
+}
+
+/// How opaque a tone is as a background behind text: the words a diff changed stand out from the rest.
+fn background_opacity(tone: Tone) -> f32 {
+    match tone {
+        Tone::AddedWord | Tone::DeletedWord => WORD_OPACITY,
+        _ => BACKGROUND_OPACITY,
+    }
+}
+
+/// How opaque a tone is behind a whole row of a block: fillers are barely there.
+fn block_opacity(tone: Tone) -> f32 {
+    match tone {
+        Tone::Filler => FILLER_OPACITY,
+        _ => BLOCK_OPACITY,
+    }
+}
+
+/// The tint of each buffer row a line decoration covers, such as the lines of a diff hunk.
+fn line_tints(decorations: &[Placed], theme: &EditorTheme) -> HashMap<usize, Hsla> {
+    let mut tints = HashMap::new();
+    for placed in decorations {
+        let DecorationKind::Line { tone } = placed.kind else {
+            continue;
+        };
+        let color = theme.tone(*tone).opacity(BLOCK_OPACITY);
+        for row in placed.start.row..=placed.end.row {
+            tints.insert(row, color);
+        }
+    }
+    tints
+}
+
+/// The strongly tinted stretches of one row of a block, where its emphasis marks them.
+fn block_emphasis(
+    block: &PlacedBlock,
+    line: usize,
+    display: &DisplayLine,
+    shaped: &ShapedLine,
+    text_left: Pixels,
+    top: Pixels,
+    theme: &EditorTheme,
+) -> Vec<(Bounds<Pixels>, Hsla)> {
+    let tone = match block.tone {
+        Some(Tone::Deleted) => Tone::DeletedWord,
+        Some(Tone::Added) => Tone::AddedWord,
+        _ => return Vec::new(),
+    };
+    let color = theme.tone(tone).opacity(WORD_OPACITY);
+    let marked = block.emphasis.iter().filter(|emphasis| emphasis.line == line);
+    marked
+        .map(|emphasis| {
+            let left = text_left + shaped.x_for_index(display.range_start_offset(emphasis.start));
+            let right = text_left + shaped.x_for_index(display.range_end_offset(emphasis.end));
+            (Bounds::new(point(left, top), size(right - left, LINE_HEIGHT)), color)
+        })
+        .collect()
 }
 
 /// A buffer line laid out with the inlays on it, which must be ordered by column.
@@ -558,7 +675,7 @@ fn range_decorations(
         }
         let spans = span_bounds(layout, placed.start, placed.end, px(0.0));
         if let Some(tone) = background {
-            let color = theme.tone(*tone).opacity(BACKGROUND_OPACITY);
+            let color = background_color(theme, *tone);
             backgrounds.extend(spans.iter().map(|span| (*span, color)));
         }
         let Some(underline) = underline else {
@@ -577,6 +694,15 @@ fn range_decorations(
         }
     }
     (backgrounds, underlines)
+}
+
+/// The colour a decoration's background is drawn in: the tone's, faded so the text stays readable.
+/// An occurrence's is the theme's own, which is already a quiet background.
+fn background_color(theme: &EditorTheme, tone: Tone) -> Hsla {
+    if tone == Tone::Occurrence {
+        return theme.tone(tone);
+    }
+    theme.tone(tone).opacity(background_opacity(tone))
 }
 
 /// The marks gutter decorations put beside the line numbers on the rows in view.
@@ -631,15 +757,6 @@ pub(super) fn cursor_bounds(layout: &Layout, head: Position) -> Option<Bounds<Pi
     Some(Bounds::new(point(x, top), size(CURSOR_WIDTH, LINE_HEIGHT)))
 }
 
-/// The highlight behind a selection, one rectangle per visible row it covers. A row the
-/// selection runs past the end of gets a little extra width, standing for its line ending.
-fn selection_bounds(layout: &Layout, selection: &Selection) -> Vec<Bounds<Pixels>> {
-    if selection.is_empty() {
-        return Vec::new();
-    }
-    span_bounds(layout, selection.start(), selection.end(), LINE_ENDING_WIDTH)
-}
-
 /// A thin line along the bottom of each visible row a range covers.
 fn underline_bounds(layout: &Layout, start: Position, end: Position) -> Vec<Bounds<Pixels>> {
     let spans = span_bounds(layout, start, end, px(0.0));
@@ -653,7 +770,12 @@ fn underline_bounds(layout: &Layout, start: Position, end: Position) -> Vec<Boun
 /// One rectangle per visible row a range covers, as tall as a line. A row the range runs past
 /// the end of is widened by `line_ending_width`. A range starts after the inlays at its first
 /// column and takes in the ones inside it.
-fn span_bounds(layout: &Layout, start: Position, end: Position, line_ending_width: Pixels) -> Vec<Bounds<Pixels>> {
+pub(super) fn span_bounds(
+    layout: &Layout,
+    start: Position,
+    end: Position,
+    line_ending_width: Pixels,
+) -> Vec<Bounds<Pixels>> {
     let mut spans = Vec::new();
     for (index, visible) in layout.rows.iter().enumerate() {
         let VisibleRow::Text(line) = visible else {
@@ -685,7 +807,7 @@ pub(super) fn measure_text_width(window: &mut Window, text: &str) -> Pixels {
 }
 
 /// Shapes one line of text in the editor's font, in a single colour.
-fn shape_plain(window: &mut Window, text: &str, color: Hsla) -> ShapedLine {
+pub(super) fn shape_plain(window: &mut Window, text: &str, color: Hsla) -> ShapedLine {
     let plain = HighlightStyle { color, bold: false, italic: false };
     shape_runs(window, text, &[text_run(text.len(), plain, None)])
 }

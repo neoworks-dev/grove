@@ -1,12 +1,24 @@
 // One session's conversation as a pane draws it: the items the daemon resolved from the session's
 // events, replaced whenever they change, and the calls that talk back (send, cancel, press a
 // button). It follows the session from `start` until `stop`; the service starts one when the first
-// pane shows the session and stops it when the last pane lets go.
+// pane shows the session and stops it when the last pane lets go. A chat can also follow one
+// agent's work in the session (a subagent or a guest), read-only, for the agents list.
 
 import type { ViewItem } from "@suite/protocol/types";
 import { ViewState } from "@suite/sdk";
 import { createChangeSignal, type ChangeSignal } from "../../kernel/reactive";
+import type { Approvals, SessionStatus } from "./status";
+import { SessionFacts } from "./sessionFacts";
+import type { PlanList } from "./plan";
+import type { AgentRow } from "./subagents";
+import type { Touches } from "./files";
 import type { ChatClient } from "./suiteClient";
+
+/** What a chat follows beyond the session's own view. */
+export interface ChatOptions {
+  /** Follow only this agent's work in the session, and not the session's events. */
+  agent?: string;
+}
 
 export class ChatSession {
   readonly sessionId: string;
@@ -15,14 +27,83 @@ export class ChatSession {
   private currentItems: readonly ViewItem[] = [];
   private failure: string | null = null;
   private stopFollowing: (() => void) | null = null;
+  private stopEvents: (() => void) | null = null;
   private assetSources: (source: string) => string | undefined;
+  private options: ChatOptions;
+  private facts = new SessionFacts();
+  private answering: ReadonlySet<string> = new Set();
   private changes: ChangeSignal = createChangeSignal();
 
   /** `assetSources` turns an `asset://` handle into the URL the daemon serves it from, if it can. */
-  constructor(client: ChatClient, sessionId: string, assetSources: (source: string) => string | undefined) {
+  constructor(
+    client: ChatClient,
+    sessionId: string,
+    assetSources: (source: string) => string | undefined,
+    options: ChatOptions = {},
+  ) {
     this.client = client;
     this.sessionId = sessionId;
     this.assetSources = assetSources;
+    this.options = options;
+  }
+
+  /** The agent this chat follows, or undefined for the session's own conversation. */
+  get agent(): string | undefined {
+    return this.options.agent;
+  }
+
+  /** Whether a turn is running, from the session's events. Reactive. */
+  running(): boolean {
+    this.changes.track();
+    return this.facts.status.running;
+  }
+
+  /** The session's status folded from its events: harness, approvals, usage. Reactive. */
+  status(): SessionStatus {
+    this.changes.track();
+    return this.facts.status;
+  }
+
+  /** The approvals mode the session is in. Reactive. */
+  approvals(): Approvals {
+    return this.status().approvals;
+  }
+
+  /** The todo lists of the session's agents. Reactive. */
+  plans(): readonly PlanList[] {
+    this.changes.track();
+    return this.facts.plans;
+  }
+
+  /** The files the session's agents touched. Reactive. */
+  touches(): Touches {
+    this.changes.track();
+    return this.facts.touches;
+  }
+
+  /** The subagents and guests working for the session, finished ones included. Reactive. */
+  agentRows(): readonly AgentRow[] {
+    this.changes.track();
+    return this.facts.agents;
+  }
+
+  /** Whether the composer is answering the question in item `ref`, so the chat shows a stub for it. Reactive. */
+  isAnswering(ref: string): boolean {
+    this.changes.track();
+    return this.answering.has(ref);
+  }
+
+  /** Marks question `ref` as answered in the composer, or, with undefined, no question. */
+  setAnswering(ref: string | undefined): void {
+    const next = new Set<string>();
+    if (ref !== undefined) {
+      next.add(ref);
+    }
+    if (next.size === this.answering.size && [...next].every((entry) => this.answering.has(entry))) {
+      return;
+    }
+    this.answering = next;
+    this.changes.notify();
   }
 
   /** The conversation so far, replaced and never mutated on each change. Reactive. */
@@ -48,7 +129,9 @@ export class ChatSession {
     if (this.stopFollowing !== null) {
       return;
     }
+    this.followEvents();
     this.stopFollowing = this.client.subscribeView(this.sessionId, {
+      agent: this.options.agent,
       onSnapshot: (snapshot) => {
         this.view.applySnapshot(snapshot);
         this.publish();
@@ -64,11 +147,30 @@ export class ChatSession {
 
   /** Stops following the session. */
   stop(): void {
+    if (this.stopEvents !== null) {
+      this.stopEvents();
+      this.stopEvents = null;
+    }
     if (this.stopFollowing === null) {
       return;
     }
     this.stopFollowing();
     this.stopFollowing = null;
+  }
+
+  /** Follows the session's events for what they say beyond the chat; an agent's own chat has no use for them. */
+  private followEvents(): void {
+    if (this.options.agent !== undefined) {
+      return;
+    }
+    this.stopEvents = this.client.subscribe(this.sessionId, {
+      onEvent: (_event, record) => {
+        if (this.facts.apply(record)) {
+          this.changes.notify();
+        }
+      },
+      onError: (error) => this.fail(error),
+    });
   }
 
   /** Sends what the user typed to the session's agent, commands such as `/model` included. */

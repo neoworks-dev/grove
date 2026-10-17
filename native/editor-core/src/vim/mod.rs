@@ -6,11 +6,13 @@
 mod changes;
 mod commands;
 mod ex;
+pub mod hlsearch;
 mod layer;
 pub mod motion;
 pub mod objects;
 mod operate;
 mod parse;
+pub mod pattern;
 mod plan;
 pub(crate) mod recall;
 pub mod registers;

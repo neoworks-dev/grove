@@ -12,6 +12,7 @@ use serde::Serialize;
 
 use crate::buffer::Buffer;
 use crate::command::{Command, Outcome};
+use crate::decorations::Decoration;
 use crate::indent::IndentStyle;
 use crate::state::EditorState;
 use crate::vim::registers::VimMemory;
@@ -237,6 +238,15 @@ impl Documents {
         }
         self.memory = memory;
         Some(Applied { outcome, modified_changed })
+    }
+
+    /// The marks for the matches of vim's last search in some rows of a document, none when the
+    /// highlight is off or the document is not open.
+    pub fn search_highlights(&self, id: DocumentId, rows: std::ops::Range<usize>) -> Vec<Decoration> {
+        let Some(document) = self.get(id) else {
+            return Vec::new();
+        };
+        crate::vim::hlsearch::search_decorations(document.state.buffer(), &self.memory, rows)
     }
 
     /// Sets the indentation style of files whose own lines do not say, for the documents that are

@@ -135,6 +135,8 @@ fn named_key(name: &str) -> KeyInput {
         "BS" => "backspace",
         "Space" => "space",
         "Tab" => "tab",
+        "lt" => "<",
+        "gt" => ">",
         "Del" => "delete",
         "Left" => "left",
         "Right" => "right",
@@ -835,4 +837,56 @@ fn searches_and_line_numbers_are_jumps_too() {
     assert_eq!(vim.heads(), vec![at(2, 0)]);
     vim.keys("<C-o>");
     assert_eq!(vim.heads(), vec![at(0, 0)]);
+}
+
+#[test]
+fn search_takes_regular_expressions() {
+    check("¦a1 b22 c333", "/[0-9]\\{3}<CR>", "a1 b22 c333", (0, 8));
+    check("¦one two three", "/t\\w\\+e<CR>", "one two three", (0, 8));
+    check("¦let x = 1; let y = 2;", "/\\<lt>y\\<gt><CR>", "let x = 1; let y = 2;", (0, 15));
+    check("¦foo\nbar\nfoo", "/^bar$<CR>", "foo\nbar\nfoo", (1, 0));
+    check("¦cat dog bird", "/dog\\|bird<CR>n", "cat dog bird", (0, 8));
+    check("a ¦b", "?a\\|b<CR>", "a b", (0, 0));
+    check("¦Foo foo", "/foo\\c<CR>", "Foo foo", (0, 4));
+}
+
+#[test]
+fn star_matches_the_word_as_text() {
+    check("¦a.b x a.b ab", "*", "a.b x a.b ab", (0, 6));
+    check("¦$el x $el", "*", "$el x $el", (0, 7));
+}
+
+#[test]
+fn a_broken_pattern_says_so_and_stays_put() {
+    let mut vim = Vim::new("¦abc");
+    vim.keys("/\\(<CR>");
+    assert_eq!(vim.heads(), vec![at(0, 0)]);
+    assert!(vim.errors.iter().any(|message| message.starts_with("E486") || message.starts_with("E383")));
+}
+
+#[test]
+fn substitute_takes_regular_expressions_groups_and_flags() {
+    check("¦a1 b22", ":s/[0-9]\\+/N/g<CR>", "aN bN", (0, 0));
+    check("¦foo bar", ":s/\\(\\w\\+\\) \\(\\w\\+\\)/\\2 \\1/<CR>", "bar foo", (0, 0));
+    check("¦cat", ":s/c/[&]/<CR>", "[c]at", (0, 0));
+    check("¦Cat cat", ":s/cat/dog/gi<CR>", "dog dog", (0, 0));
+    check("¦Cat cat", ":s/cat/dog/g<CR>", "Cat dog", (0, 0));
+    check("¦a b", ":s/ /\\r/<CR>", "a\nb", (0, 0));
+    check("¦one\ntwo", ":%s/^/> /<CR>", "> one\n> two", (1, 0));
+    check("¦aaa", ":s/a*/x/<CR>", "x", (0, 0));
+}
+
+#[test]
+fn an_empty_substitute_pattern_uses_the_last_search() {
+    check("¦foo bar foo", "/bar<CR>0:s//X/<CR>", "foo X foo", (0, 0));
+    check("¦foo bar", ":s/foo/X/<CR>:s//Y/<CR>", "X bar", (0, 0));
+}
+
+#[test]
+fn substitute_leaves_the_last_pattern_for_n() {
+    let mut vim = Vim::new("¦ab ab ab\nab");
+    vim.keys(":s/b/B/<CR>");
+    assert_eq!(vim.text(), "aB ab ab\nab");
+    vim.keys("n");
+    assert_eq!(vim.heads(), vec![at(0, 4)]);
 }

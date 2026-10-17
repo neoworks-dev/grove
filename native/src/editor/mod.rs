@@ -14,13 +14,16 @@
 mod documents;
 mod element;
 mod theme;
+mod vim_paint;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::Range;
 
+use editor_core::vim::types::ScrollAlign;
 use editor_core::{
-    Command, DocumentId, EditorState, InputContext, InputLayer, KeyInput, Modifiers, Outcome, Position, StandardKeymap,
+    Command, DocumentId, EditorState, InputContext, InputLayer, InputStatus, KeyInput, Modifiers, Outcome, Position,
+    StandardKeymap, VimLayer,
 };
 use serde_json::{Value, json};
 use svelte_gpui::gpui::{
@@ -32,6 +35,7 @@ use svelte_gpui::{AppElement, CommandError};
 
 pub use documents::SharedDocuments;
 
+use editor_core::display::DisplayRow;
 use element::{EditorElement, LINE_HEIGHT, Layout};
 use theme::EditorTheme;
 
@@ -48,8 +52,10 @@ pub struct Editor {
     /// This view's entity, once it has been listed in `VIEWS`.
     view: Option<EntityId>,
     focus: FocusHandle,
-    /// Turns keys into commands: the standard keymap now, a vim layer later.
+    /// Turns keys into commands: the standard keymap, or the vim layer when the `keymap` prop says so.
     input: Box<dyn InputLayer>,
+    /// The status of the input layer as the app was last told it, so it hears of changes only.
+    announced_status: Option<InputStatus>,
     /// How far the text is scrolled, in pixels from the top of the first line. Each view of a
     /// document scrolls on its own.
     scroll_top: Pixels,
@@ -77,6 +83,7 @@ impl Editor {
             view: None,
             focus: cx.focus_handle(),
             input: Box::new(StandardKeymap),
+            announced_status: None,
             scroll_top: px(0.0),
             layout: None,
             last_copied: None,
@@ -149,6 +156,9 @@ impl Editor {
         if outcome.reveal_newest {
             self.scroll_to_newest();
         }
+        if let Some(align) = outcome.scroll {
+            self.scroll_newest_to(align);
+        }
         if let Some(text) = &outcome.copied {
             cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
             self.last_copied = Some(text.clone());
@@ -172,20 +182,35 @@ impl Editor {
     }
 
     /// Swaps a request to paste for a paste of the clipboard's text, or of the editor's own last
-    /// copy when the clipboard has none, or nothing when there is neither.
+    /// copy when the clipboard has none, or nothing when there is neither. A vim put from the
+    /// clipboard registers (`"+p`) gets the text the same way.
     fn resolve_clipboard(&self, command: &Command, cx: &mut Context<Self>) -> Option<Command> {
+        if let Command::Put { register: Some('+' | '*'), clipboard: None, .. } = command {
+            let mut resolved = command.clone();
+            let text = self.clipboard_text(cx);
+            if let Command::Put { clipboard, .. } = &mut resolved {
+                *clipboard = text;
+            }
+            return Some(resolved);
+        }
         if *command != Command::PasteClipboard {
             return Some(command.clone());
         }
-        let clipboard_text = cx.read_from_clipboard().and_then(|item| item.text());
-        let text = clipboard_text.or_else(|| self.last_copied.clone())?;
+        let text = self.clipboard_text(cx)?;
         Some(Command::Paste { text })
+    }
+
+    /// The clipboard's text, or the editor's own last copy when the clipboard has none.
+    fn clipboard_text(&self, cx: &mut Context<Self>) -> Option<String> {
+        let clipboard_text = cx.read_from_clipboard().and_then(|item| item.text());
+        clipboard_text.or_else(|| self.last_copied.clone())
     }
 
     /// Handles a key the input layer knows; returns false for the rest, which then bubble to the app.
     fn handle_key(&mut self, keystroke: &Keystroke, cx: &mut Context<Self>) -> bool {
-        let context = InputContext { page_rows: self.rows_in_view() };
+        let context = InputContext { page_rows: self.rows_in_view(), top_row: self.top_row() };
         let commands = self.input.translate(&key_input(keystroke), &context);
+        self.announce_status();
         if commands.is_empty() {
             return false;
         }
@@ -195,6 +220,60 @@ impl Editor {
             handled = handled || outcome.changed || !command.passes_on_when_unchanged();
         }
         handled
+    }
+
+    /// The first buffer row that is fully in view, which vim's `H` goes to.
+    fn top_row(&self) -> usize {
+        let Some(layout) = &self.layout else {
+            return 0;
+        };
+        let mut display_row = (self.scroll_top / LINE_HEIGHT).ceil() as usize;
+        loop {
+            match layout.blocks.row_at(display_row) {
+                DisplayRow::Text(row) => return row,
+                DisplayRow::Block { .. } => display_row += 1,
+            }
+        }
+    }
+
+    /// Tells the app the input layer's mode and pending keys when they changed, for the status bar.
+    fn announce_status(&mut self) {
+        let status = self.input.status();
+        if self.announced_status.as_ref() == Some(&status) {
+            return;
+        }
+        self.documents.announce(
+            "editor-mode",
+            json!({ "mode": status.mode, "pending": status.pending, "commandLine": status.command_line }),
+        );
+        self.announced_status = Some(status);
+    }
+
+    /// Switches between the standard keymap and vim.
+    fn set_keymap(&mut self, name: &str) {
+        self.input = match name {
+            "vim" => Box::new(VimLayer::new()),
+            _ => Box::new(StandardKeymap),
+        };
+        self.announce_status();
+    }
+
+    /// Scrolls so the newest cursor's row is at the top, middle or bottom of the view.
+    fn scroll_newest_to(&mut self, align: ScrollAlign) {
+        let Some(layout) = &self.layout else {
+            return;
+        };
+        let Some(head_row) = self.read(|state| state.selections().newest().head.row) else {
+            return;
+        };
+        let head_top = LINE_HEIGHT * layout.blocks.display_row_of(head_row) as f32;
+        let view_height = layout.bounds.size.height;
+        let target = match align {
+            ScrollAlign::Top => head_top,
+            ScrollAlign::Center => head_top - (view_height - LINE_HEIGHT) / 2.0,
+            ScrollAlign::Bottom => head_top + LINE_HEIGHT - view_height,
+        };
+        self.set_scroll_top(target.max(px(0.0)));
     }
 
     /// A press of the left button: a click places one cursor, Alt-click adds or removes one,
@@ -301,10 +380,30 @@ impl Drop for Editor {
 /// A GPUI keystroke as the input layers see it.
 fn key_input(keystroke: &Keystroke) -> KeyInput {
     let modifiers = keystroke.modifiers;
+    if let Some(character) = typed_character(keystroke) {
+        return KeyInput { key: character, modifiers: Modifiers { control: false, alt: false, shift: false } };
+    }
     KeyInput {
         key: keystroke.key.clone(),
         modifiers: Modifiers { control: modifiers.control, alt: modifiers.alt, shift: modifiers.shift },
     }
+}
+
+/// The character a key types, as the key itself, so a layer sees `$` and `A` rather than
+/// Shift and `4` or `a`. Keys with Control or Alt held, white space and the named keys
+/// (`enter`, `left`) are not characters.
+fn typed_character(keystroke: &Keystroke) -> Option<String> {
+    let modifiers = keystroke.modifiers;
+    if modifiers.control || modifiers.alt || modifiers.platform {
+        return None;
+    }
+    let text = keystroke.key_char.as_ref()?;
+    let mut characters = text.chars();
+    let character = characters.next()?;
+    if characters.next().is_some() || character.is_control() || character.is_whitespace() {
+        return None;
+    }
+    Some(text.clone())
 }
 
 impl AppElement for Editor {
@@ -313,6 +412,11 @@ impl AppElement for Editor {
     fn set_prop(&mut self, name: &str, value: Value, cx: &mut Context<Self>) {
         if name == "theme" {
             self.theme = EditorTheme::from_json(&value);
+            return;
+        }
+        if name == "keymap" {
+            self.set_keymap(value.as_str().unwrap_or("standard"));
+            cx.notify();
             return;
         }
         if name != "document" {
@@ -540,4 +644,33 @@ impl Editor {
 fn utf16_range(state: &EditorState, start: Position, end: Position) -> Range<usize> {
     let buffer = state.buffer();
     buffer.utf16_of_offset(buffer.offset_of(start))..buffer.utf16_of_offset(buffer.offset_of(end))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn keystroke(key: &str, key_char: Option<&str>, shift: bool, control: bool) -> Keystroke {
+        let mut keystroke =
+            Keystroke { key: key.to_string(), key_char: key_char.map(str::to_string), ..Keystroke::default() };
+        keystroke.modifiers.shift = shift;
+        keystroke.modifiers.control = control;
+        keystroke
+    }
+
+    #[test]
+    fn a_typed_key_is_the_character_it_types() {
+        assert_eq!(key_input(&keystroke("4", Some("$"), true, false)).key, "$");
+        assert_eq!(key_input(&keystroke("a", Some("A"), true, false)).key, "A");
+        assert!(!key_input(&keystroke("a", Some("A"), true, false)).modifiers.shift);
+    }
+
+    #[test]
+    fn named_keys_and_control_chords_stay_as_they_are() {
+        assert_eq!(key_input(&keystroke("enter", Some("\n"), false, false)).key, "enter");
+        assert_eq!(key_input(&keystroke("space", Some(" "), false, false)).key, "space");
+        let chord = key_input(&keystroke("d", None, false, true));
+        assert_eq!(chord.key, "d");
+        assert!(chord.modifiers.control);
+    }
 }

@@ -19,6 +19,7 @@ pub mod movement;
 pub mod selections;
 pub mod state;
 pub mod syntax;
+pub mod vim;
 
 pub use anchor::{Anchor, AnchorId, Bias};
 pub use buffer::{Buffer, LineEnding, Position};
@@ -26,7 +27,10 @@ pub use command::{Command, Outcome};
 pub use decorations::{Decoration, DecorationKind, GutterMark, Placement, Tone, Underline, UnderlineKind};
 pub use documents::{Applied, Document, DocumentId, DocumentSummary, Documents, Opened};
 pub use edit::{Edit, Edits};
-pub use keymap::{InputContext, InputLayer, KeyInput, Modifiers, StandardKeymap};
+pub use keymap::{
+    CursorShape, InputContext, InputLayer, InputStatus, KeyInput, Modifiers, SelectionStyle, StandardKeymap,
+};
 pub use movement::Motion;
 pub use selections::{Selection, Selections};
 pub use state::EditorState;
+pub use vim::VimLayer;

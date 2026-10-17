@@ -204,13 +204,26 @@ impl EditorState {
     /// Applies edits, moves the selections as asked, and records the change for undo. Returns
     /// false, changing nothing, when the edits change nothing.
     fn commit(&mut self, edits: Edits, selections_after: SelectionsAfter, kind: EditKind, now: Instant) -> bool {
+        self.commit_placing(edits, kind, now, |state, edits, old_offsets| {
+            state.selections_after_edit(edits, old_offsets, selections_after)
+        })
+    }
+
+    /// Like `commit`, with `place` working out the selections from the edits and the new text.
+    pub(crate) fn commit_placing(
+        &mut self,
+        edits: Edits,
+        kind: EditKind,
+        now: Instant,
+        place: impl FnOnce(&EditorState, &Edits, &[(usize, usize)]) -> Selections,
+    ) -> bool {
         if edits.is_noop() {
             return false;
         }
         let selections_before = self.selections.clone();
         let old_offsets = self.selection_offsets();
         let inverse = self.replace_text(&edits);
-        self.selections = self.selections_after_edit(&edits, &old_offsets, selections_after);
+        self.selections = place(self, &edits, &old_offsets);
         let revision_before = self.revision;
         self.next_revision += 1;
         self.revision = self.next_revision;
@@ -311,7 +324,7 @@ impl EditorState {
 }
 
 /// An outcome for a command that edits: if the text changed, the view follows the newest cursor.
-fn edited(changed: bool) -> Outcome {
+pub(crate) fn edited(changed: bool) -> Outcome {
     Outcome { text_changed: changed, reveal_newest: changed, changed, ..Outcome::default() }
 }
 

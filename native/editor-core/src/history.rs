@@ -96,6 +96,9 @@ pub struct History {
     undo: Vec<Transaction>,
     redo: Vec<Transaction>,
     open_group: Option<OpenGroup>,
+    /// Set while an undo group is open: whether its first change is recorded yet, after which
+    /// every change joins that transaction.
+    held: Option<bool>,
 }
 
 impl History {
@@ -104,11 +107,47 @@ impl History {
     /// is a transaction of its own. Either way, what could be redone is gone.
     pub fn record(&mut self, transaction: Transaction, kind: EditKind, now: Instant) {
         self.redo.clear();
+        let Some(transaction) = self.join_held_group(transaction) else {
+            return;
+        };
         let Some(transaction) = self.join_open_group(transaction, kind, now) else {
             return;
         };
         self.undo.push(transaction);
         self.open_group = open_group_for(kind, now);
+    }
+
+    /// Opens an undo group: from the next change until `release`, every change is one
+    /// transaction, whatever its kind. Vim's insert mode and its operators use it, so
+    /// `cwfoo<Esc>` undoes in one step.
+    pub fn hold(&mut self) {
+        self.held = Some(false);
+        self.open_group = None;
+    }
+
+    /// Closes the undo group.
+    pub fn release(&mut self) {
+        self.held = None;
+        self.open_group = None;
+    }
+
+    /// Adds the change to the held group's transaction once that has begun. Otherwise this
+    /// change begins it, and comes back to be recorded.
+    fn join_held_group(&mut self, transaction: Transaction) -> Option<Transaction> {
+        let Some(begun) = self.held else {
+            return Some(transaction);
+        };
+        if !begun {
+            self.held = Some(true);
+            return Some(transaction);
+        }
+        let Some(last) = self.undo.last_mut() else {
+            return Some(transaction);
+        };
+        last.steps.extend(transaction.steps);
+        last.selections_after = transaction.selections_after;
+        last.revision_after = transaction.revision_after;
+        None
     }
 
     /// Adds the change to the last transaction when it may join it. When it may not, the
@@ -151,12 +190,14 @@ impl History {
     /// Takes the transaction to undo off the history. It is not on the redo stack until `push_redo`.
     pub fn take_undo(&mut self) -> Option<Transaction> {
         self.open_group = None;
+        self.held = None;
         self.undo.pop()
     }
 
     /// Takes the transaction to redo off the history.
     pub fn take_redo(&mut self) -> Option<Transaction> {
         self.open_group = None;
+        self.held = None;
         self.redo.pop()
     }
 

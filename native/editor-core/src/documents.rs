@@ -13,6 +13,7 @@ use serde::Serialize;
 use crate::buffer::Buffer;
 use crate::command::{Command, Outcome};
 use crate::state::EditorState;
+use crate::vim::registers::VimMemory;
 
 /// Names a document for as long as it stays open. Ids are never reused.
 pub type DocumentId = u64;
@@ -91,6 +92,9 @@ pub struct Opened {
 pub struct Documents {
     next_id: DocumentId,
     documents: Vec<Document>,
+    /// Vim's registers and last search, which every document shares: a command works on the
+    /// document's own copy of them for as long as it runs, then they are handed back.
+    memory: VimMemory,
 }
 
 impl Documents {
@@ -146,14 +150,27 @@ impl Documents {
     /// Applies a command to a document, and says what it did along with whether the modified
     /// state changed since the app last heard of it. None when the document is not open.
     pub fn apply(&mut self, id: DocumentId, command: &Command) -> Option<Applied> {
-        let document = self.get_mut(id)?;
+        let uses_memory = command.is_vim();
+        let mut memory = std::mem::take(&mut self.memory);
+        let document = self.get_mut(id);
+        let Some(document) = document else {
+            self.memory = memory;
+            return None;
+        };
+        if uses_memory {
+            std::mem::swap(&mut document.state.memory, &mut memory);
+        }
         let outcome = document.state.apply(command);
+        if uses_memory {
+            std::mem::swap(&mut document.state.memory, &mut memory);
+        }
         let modified = document.state.is_modified();
         let mut modified_changed = None;
         if modified != document.reported_modified {
             document.reported_modified = modified;
             modified_changed = Some(modified);
         }
+        self.memory = memory;
         Some(Applied { outcome, modified_changed })
     }
 

@@ -21,7 +21,10 @@
   let { service, leafId = "main" }: Props = $props();
 
   /** The editor `src/editor/mod.rs` registers. */
-  const Editor = element<{ document: number; theme: EditorTheme; onfocus: () => void }, EditorViewMethods>("editor");
+  const Editor = element<
+    { document: number; theme: EditorTheme; keymap: string; onfocus: () => void },
+    EditorViewMethods
+  >("editor");
 
   let view = $state<ElementMethods<EditorViewMethods> | null>(null);
 
@@ -67,6 +70,7 @@
       key={`editor-${leafId}`}
       document={active.id}
       theme={activeEditorTheme()}
+      keymap={service.keymap()}
       onfocus={() => service.focusPane(leafId)}
     />
   {:else}

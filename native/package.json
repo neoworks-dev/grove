@@ -5,9 +5,11 @@
   "type": "module",
   "scripts": {
     "build": "bun build.mjs",
-    "host": "bash scripts/host.sh"
+    "host": "bash scripts/host.sh",
+    "test": "bun test tests"
   },
   "dependencies": {
+    "@neoworks/extension-system": "link:@neoworks/extension-system",
     "@neoworks/svelte-gpui": "github:neoworks-dev/svelte-gpui#0a714498b8894ccc7e05a7274d4400994a9d230f",
     "esbuild": "^0.24.0",
     "svelte": "^5.57.0"

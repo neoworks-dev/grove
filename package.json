@@ -26,6 +26,7 @@
     "test:e2e:fast": "GROVE_E2E_SKIP_BUILD=1 bun scripts/e2e.ts",
     "test:env": "bun scripts/test-env.ts",
     "qa": "bun scripts/qa.ts",
+    "native:channels": "bun scripts/generate-sidecar-channels.ts",
     "build:plugins": "bun scripts/build-plugins.ts",
     "build:browser-host": "bun scripts/build-browser-host.ts",
     "fetch:nvim": "bun scripts/fetch-nvim.ts",

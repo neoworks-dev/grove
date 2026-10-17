@@ -1,3 +1,5 @@
+// Installs the Electron host before any module that reads the platform is evaluated.
+import './platform/electronInstall'
 import { app, shell, protocol, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'

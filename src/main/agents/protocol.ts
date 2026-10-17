@@ -5,7 +5,8 @@
 // outside the renderer's origin, so the bytes come back through a scheme the
 // main process owns. AGENT_SCHEME is declared with the others in main/index.ts.
 
-import { protocol, type CustomScheme } from 'electron'
+import type { CustomScheme } from 'electron'
+import { platform } from '../platform'
 import type { AgentService } from './service'
 
 const BLOB_HOST = 'blob'
@@ -17,7 +18,7 @@ export const AGENT_SCHEME: CustomScheme = {
 
 /** Serve grove-agent:// from the session store; returns the inverse. */
 export function registerAgentProtocol(agents: AgentService): () => void {
-  protocol.handle('grove-agent', async (request) => {
+  return platform().handleProtocol('grove-agent', async (request) => {
     const url = new URL(request.url)
     if (url.hostname !== BLOB_HOST) return new Response('unknown host', { status: 404 })
 
@@ -31,7 +32,6 @@ export function registerAgentProtocol(agents: AgentService): () => void {
       return new Response((cause as Error).message, { status: 404 })
     }
   })
-  return () => protocol.unhandle('grove-agent')
 }
 
 /** The URL the renderer uses for one attachment. */

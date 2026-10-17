@@ -18,6 +18,7 @@ import {
 } from '../../../shared/plugins'
 import type { ClientRecord } from '../clients'
 import { ApiError } from '../registry'
+import { platform } from '../../platform'
 
 export interface AppPairingRequest {
   id: string
@@ -69,8 +70,7 @@ export class AppPairing {
 
   private async storePath(): Promise<string> {
     if (this.storeFilePath) return this.storeFilePath
-    const { app } = await import('electron')
-    this.storeFilePath = join(app.getPath('userData'), 'external-apps.json')
+    this.storeFilePath = join(platform().userDataPath(), 'external-apps.json')
     return this.storeFilePath
   }
 

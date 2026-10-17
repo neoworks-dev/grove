@@ -7,7 +7,8 @@
 // Video and audio seek with Range requests, which this answers with 206s.
 // FILE_SCHEME is declared with the others in main/index.ts.
 
-import { protocol, type CustomScheme } from 'electron'
+import type { CustomScheme } from 'electron'
+import { platform } from './platform'
 import { createReadStream } from 'fs'
 import { realpath, stat } from 'fs/promises'
 import { extname, join } from 'path'
@@ -64,7 +65,7 @@ export const FILE_SCHEME: CustomScheme = {
 
 /** Serves grove-file:// from the worktrees `findWorktree` knows; returns the inverse. */
 export function registerFileProtocol(findWorktree: (worktreeId: string) => Worktree): () => void {
-  protocol.handle('grove-file', async (request) => {
+  return platform().handleProtocol('grove-file', async (request) => {
     const url = new URL(request.url)
     if (url.hostname !== WORKTREE_HOST) return new Response('unknown host', { status: 404 })
 
@@ -81,7 +82,6 @@ export function registerFileProtocol(findWorktree: (worktreeId: string) => Workt
     if (!filePath) return new Response('not found', { status: 404 })
     return serveFile(filePath, request.headers.get('range'))
   })
-  return () => protocol.unhandle('grove-file')
 }
 
 /**

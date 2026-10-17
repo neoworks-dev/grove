@@ -2,7 +2,8 @@
 
 import type { Context } from '@neoworks/extension-system'
 import { route } from '../kernel/route'
-import { BrowserWindow, shell, type IpcMainInvokeEvent } from 'electron'
+import type { IpcMainInvokeEvent } from 'electron'
+import { platform } from '../platform'
 
 export const miscRoutes = {
   name: 'main/routes/misc',
@@ -11,25 +12,25 @@ export const miscRoutes = {
   apply(ctx: Context): void {
     // ── Misc ──────────────────────────────────────────────────────
     route(ctx, 'shell:openExternal', (_e: IpcMainInvokeEvent, url: string) =>
-      shell.openExternal(url)
+      platform().openExternal(url)
     )
     route(ctx, 'window:raise', (event: IpcMainInvokeEvent) => raiseWindow(event))
     route(ctx, 'window:controls', (event: IpcMainInvokeEvent) => windowControls(event))
     route(ctx, 'window:minimize', (event: IpcMainInvokeEvent) => {
-      BrowserWindow.fromWebContents(event.sender)?.minimize()
+      platform().windowOf(event)?.minimize()
     })
     route(ctx, 'window:toggleFullScreen', (event: IpcMainInvokeEvent) =>
       toggleFullScreen(event)
     )
     route(ctx, 'window:close', (event: IpcMainInvokeEvent) => {
-      BrowserWindow.fromWebContents(event.sender)?.close()
+      platform().windowOf(event)?.close()
     })
   }
 }
 
 /** Brings the window that asked to the front, restoring it if it was minimised. */
 function raiseWindow(event: IpcMainInvokeEvent): void {
-  const window = BrowserWindow.fromWebContents(event.sender)
+  const window = platform().windowOf(event)
   if (!window) {
     return
   }
@@ -74,7 +75,7 @@ function windowControls(event: IpcMainInvokeEvent): {
   fullScreen: boolean
   isFullScreen: boolean
 } {
-  const window = BrowserWindow.fromWebContents(event.sender)
+  const window = platform().windowOf(event)
   let isFullScreen = false
   if (window) {
     isFullScreen = window.isFullScreen()
@@ -84,7 +85,7 @@ function windowControls(event: IpcMainInvokeEvent): {
 
 /** Flips the asking window in or out of fullscreen; resolves to the new state. */
 function toggleFullScreen(event: IpcMainInvokeEvent): boolean {
-  const window = BrowserWindow.fromWebContents(event.sender)
+  const window = platform().windowOf(event)
   if (!window) {
     return false
   }

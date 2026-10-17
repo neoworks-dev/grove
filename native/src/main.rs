@@ -8,13 +8,18 @@
 //!
 //! `GROVE_OPEN=/path/to/file` opens that file; without it the editor opens a scratch copy of
 //! `samples/scratch.rs` in the temp directory, so trying it out never edits real source.
+//!
+//! The host also runs the sidecar, Grove's main process under Bun, and relays the UI's calls
+//! to it (see `sidecar.rs`).
 
 mod editor;
+mod sidecar;
 
 use std::path::PathBuf;
 
 use editor::Editor;
 use serde_json::json;
+use sidecar::{Sidecar, SidecarConfig};
 use svelte_gpui::gpui::AppContext as _;
 use svelte_gpui::{CommandError, Commands, Elements, Options};
 
@@ -23,9 +28,14 @@ const SCRATCH_SAMPLE: &str = include_str!("../samples/scratch.rs");
 
 fn main() {
     let file = initial_file();
-    let commands = Commands::new().command("initial_file", move |_| Ok::<_, CommandError>(json!(file)));
+    let commands = Commands::new()
+        .command("initial_file", move |_| Ok::<_, CommandError>(json!(file)))
+        .command("initial_repo", |_| Ok::<_, CommandError>(json!(initial_repo())));
+    let sidecar = Sidecar::start(SidecarConfig::from_environment(), commands.emitter());
+    let commands = sidecar.commands(commands);
     let elements = Elements::new().register("editor", |host, cx| cx.new(|cx| Editor::new(host, cx)));
     svelte_gpui::run(options().commands(commands).elements(elements));
+    sidecar.stop();
 }
 
 /// The file to open at start: `GROVE_OPEN` when it is set, else a fresh scratch copy of the sample.
@@ -38,6 +48,14 @@ fn initial_file() -> String {
         eprintln!("could not write {}: {error}", scratch.display());
     }
     scratch.display().to_string()
+}
+
+/// The repository the sidecar probe opens: `GROVE_REPO` when it is set, else the working directory.
+fn initial_repo() -> String {
+    if let Ok(path) = std::env::var("GROVE_REPO") {
+        return path;
+    }
+    std::env::current_dir().map(|path| path.display().to_string()).unwrap_or_default()
 }
 
 /// Where the scratch copy lives in the system temp directory.

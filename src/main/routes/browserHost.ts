@@ -2,8 +2,9 @@
 // native-messaging host per browser, and showing the user the extension to load.
 
 import type { Context } from '@neoworks/extension-system'
-import { shell, type IpcMainInvokeEvent } from 'electron'
+import type { IpcMainInvokeEvent } from 'electron'
 import { route } from '../kernel/route'
+import { platform } from '../platform'
 import type { ChromiumBrowserId } from '../../shared/browserHost'
 
 export const browserHostRoutes = {
@@ -19,7 +20,7 @@ export const browserHostRoutes = {
       ctx.browserHost.remove(browser)
     )
     route(ctx, 'browserHost:revealExtension', async () => {
-      const error = await shell.openPath(ctx.browserHost.extensionPath)
+      const error = await platform().openPath(ctx.browserHost.extensionPath)
       if (error) throw new Error(error)
     })
   }

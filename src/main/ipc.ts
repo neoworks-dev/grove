@@ -2,13 +2,13 @@
 // streamed events (logs, service/agent status) to the renderer. This is the
 // single source of truth for the API exposed via preload.
 
-import { app, clipboard, dialog, BrowserWindow } from 'electron'
 import { dirname, join } from 'path'
 import { mkdirSync } from 'fs'
 import { homedir } from 'os'
 import { profileHash, profileSocketPath } from './socketPath'
 import type { Context } from '@neoworks/extension-system'
 import { mainContext } from './kernel/context'
+import { platform } from './platform'
 import { routePlugins } from './routes'
 import type { WorkbenchService, NvimService, PluginsService, AppsService } from './kernel/services'
 import type { WorkbenchConfig, Worktree, RepoInfo } from '../shared/types'
@@ -83,10 +83,9 @@ import { refreshRepoWorktrees, type RepoContext } from './repoContext'
 
 const context: RepoContext = { repoPath: null, config: null, worktrees: [] }
 
+/** Pushes an event to every window the host shows. */
 function send(channel: string, payload: unknown): void {
-  for (const window of BrowserWindow.getAllWindows()) {
-    window.webContents.send(channel, payload)
-  }
+  platform().broadcast(channel, payload)
 }
 
 const supervisor = new ServiceSupervisor({
@@ -111,7 +110,7 @@ const checkpoints = new CheckpointManager({
 // Merge-conflict resolutions an agent proposed, waiting on the user.
 const conflictProposals = new ConflictProposals({
   publish: (worktreePath) => send('event:conflict-proposals', { worktreeId: worktreePath }),
-  file: join(app.getPath('userData'), 'conflict-proposals.json')
+  file: join(platform().userDataPath(), 'conflict-proposals.json')
 })
 
 const watcher = new WorktreeWatcher((change) => {
@@ -172,7 +171,7 @@ const switchboard = new SwitchboardHost()
 
 // Sessions are stored as switchboard reports them. The log grove kept before
 // (`agents/`) is left on disk untouched; it is no longer read.
-const sessionStore = new SessionStore(join(app.getPath('userData'), 'agent-sessions'), (message) =>
+const sessionStore = new SessionStore(join(platform().userDataPath(), 'agent-sessions'), (message) =>
   console.error(`[agents] ${message}`)
 )
 
@@ -185,7 +184,7 @@ const browserHostInstaller = new BrowserHostInstaller({
   platform: process.platform,
   home: homedir(),
   configHome: configHome(),
-  userData: app.getPath('userData'),
+  userData: platform().userDataPath(),
   electronBinary: nodeRunnableBinary(),
   hostScript: shippedResource(
     join('browser-host', 'host.cjs'),
@@ -217,8 +216,8 @@ function nodeRunnableBinary(): string {
 
 /** A file that ships beside the app: under resources/ packaged, in the repo's resources/ in dev. */
 function shippedResource(packagedPath: string, developmentPath: string): string {
-  if (app.isPackaged) return join(process.resourcesPath, packagedPath)
-  return join(app.getAppPath(), 'resources', developmentPath)
+  if (platform().isPackaged()) return join(process.resourcesPath, packagedPath)
+  return join(platform().appPath(), 'resources', developmentPath)
 }
 
 const agents = new AgentService({
@@ -238,7 +237,7 @@ const agents = new AgentService({
       skills: () => aiBridge.skillList()
     }),
     ...browserTools(browserProviders, {
-      helpersPath: join(app.getPath('userData'), 'browser-helpers.js')
+      helpersPath: join(platform().userDataPath(), 'browser-helpers.js')
     }),
     ...aiBridge.pluginTools()
   ],
@@ -258,7 +257,7 @@ const agents = new AgentService({
   defaultHarness: () => settings.get<string>('workbench.agentHarness'),
   // fish consults its bundled completions before a directory with exactly this
   // name, so a man-page git.fish cannot shadow the real one.
-  shellCompletionsDir: join(app.getPath('userData'), 'fish', 'generated_completions')
+  shellCompletionsDir: join(platform().userDataPath(), 'fish', 'generated_completions')
 })
 
 // No run outlives the app, so a turn the last one quit in the middle of is over.
@@ -351,7 +350,7 @@ const editSteps = new EditStepRecorder({
 // Which prompt wrote which lines, kept apart from the sessions so blame still
 // answers once a session is deleted.
 const promptBlame = new PromptBlame({
-  directory: join(app.getPath('userData'), 'prompt-blame'),
+  directory: join(platform().userDataPath(), 'prompt-blame'),
   sessionExists: (sessionId) => sessionStore.peek(sessionId) !== undefined,
   // Declared by the git plugin's settings in the renderer.
   sharingNotes: () => settings.get<boolean>('git.sharePromptBlame') === true
@@ -398,7 +397,7 @@ const terminals = new TerminalManager(
     },
     onTitle: (id, title) => send('event:terminal-title', { id, title })
   },
-  { socketPath: terminalSocketPath(app.getPath('userData')) }
+  { socketPath: terminalSocketPath(platform().userDataPath()) }
 )
 
 /**
@@ -515,11 +514,11 @@ registerBrowserRoutes(apiRegistry, {
 })
 registerAiRoutes(apiRegistry, { aiBridge })
 registerStorageRoutes(apiRegistry, {
-  storagePath: () => join(app.getPath('userData'), 'plugin-storage.json')
+  storagePath: () => join(platform().userDataPath(), 'plugin-storage.json')
 })
 registerClipboardRoutes(apiRegistry, {
-  writeText: (text) => clipboard.writeText(text),
-  readText: () => clipboard.readText()
+  writeText: (text) => platform().clipboard.writeText(text),
+  readText: () => platform().clipboard.readText()
 })
 const editorDocs = new DocumentRegistry({
   nvim: { request: (id, method, args) => nvims.request(id, method, args) },
@@ -550,9 +549,7 @@ if (process.env.GROVE_DEBUG === '1') {
     nvimSessionIds: () => nvims.sessionIds(),
     nvimRequest: (id, method, args) => nvims.request(id, method, args),
     rendererEval: async (expression) => {
-      const window = BrowserWindow.getAllWindows()[0]
-      if (!window) throw new Error('no renderer window is open')
-      return window.webContents.executeJavaScript(expression, true)
+      return platform().evaluateInRenderer(expression)
     }
   })
   console.warn('[grove] GROVE_DEBUG=1 — debug.* API routes are registered')
@@ -603,7 +600,7 @@ registerGitRoutes(apiRegistry, {
   },
   // Native dialog: the calling client cannot see or answer it.
   confirmDangerous: async (title, detail) => {
-    const result = await dialog.showMessageBox({
+    const response = await platform().showMessageBox({
       type: 'warning',
       title,
       message: title,
@@ -612,7 +609,7 @@ registerGitRoutes(apiRegistry, {
       defaultId: 0,
       cancelId: 0
     })
-    return result.response === 1
+    return response === 1
   }
 })
 registerServicesRoutes(apiRegistry, {
@@ -707,7 +704,7 @@ function socketPathFor(userData: string): string {
 }
 
 function startApiSocket(): void {
-  const userData = app.getPath('userData')
+  const userData = platform().userDataPath()
   apiSocketPath = socketPathFor(userData)
   apiSocketServer = new ApiSocketServer({
     dispatcher: apiDispatcher,

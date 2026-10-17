@@ -3,7 +3,7 @@
 // repo's .workbench directory (project overrides user; resolution against
 // schema defaults happens renderer-side where the schemas live).
 
-import { app } from 'electron'
+import { platform } from './platform'
 import { watch, type FSWatcher } from 'fs'
 import { mkdir, readFile, writeFile } from 'fs/promises'
 import { dirname, join } from 'path'
@@ -18,7 +18,7 @@ interface SettingsEvents {
 }
 
 function userSettingsPath(): string {
-  return join(app.getPath('userData'), 'settings.json')
+  return join(platform().userDataPath(), 'settings.json')
 }
 
 function projectSettingsPath(repoPath: string): string {

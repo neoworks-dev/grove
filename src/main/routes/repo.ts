@@ -3,7 +3,7 @@
 
 import type { Context } from '@neoworks/extension-system'
 import { route } from '../kernel/route'
-import { dialog } from 'electron'
+import { platform } from '../platform'
 import { loadState, clearRecentRepos } from '../state'
 
 export const repoRoutes = {
@@ -13,9 +13,9 @@ export const repoRoutes = {
   apply(ctx: Context): void {
     // ── Repo ──────────────────────────────────────────────────────
     route(ctx, 'repo:pick', async () => {
-      const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
-      if (result.canceled || result.filePaths.length === 0) return null
-      return ctx.workbench.openRepo(result.filePaths[0])
+      const directory = await platform().pickDirectory()
+      if (directory === null) return null
+      return ctx.workbench.openRepo(directory)
     })
 
     route(ctx, 'repo:open', (_e, repoPath: string) => ctx.workbench.openRepo(repoPath))

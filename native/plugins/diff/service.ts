@@ -693,6 +693,14 @@ export class DiffService extends Service {
       this.followPreviewCursor(event.id, event.row);
       return;
     }
+    if (event.type === "change-request") {
+      let step: 1 | -1 = -1;
+      if (event.forward) {
+        step = 1;
+      }
+      void this.stepChange(step);
+      return;
+    }
     if (event.type === "closed") {
       this.previews.delete(event.id);
     }

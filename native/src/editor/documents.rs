@@ -13,8 +13,9 @@
 //! - `document-error`: `{ id, message }`, such as a save that failed.
 //! - `document-selections`: `{ id, count, row, column, selected }`, the newest cursor after any
 //!   command that moved a selection.
-//! - `document-request`: `{ id, request: "close", discard }` or `{ id, request: "open", path }`,
-//!   what a vim ex command such as `:q` or `:e` asks the app to do.
+//! - `document-request`: `{ id, request: "close", discard }`, `{ id, request: "open", path }` or
+//!   `{ id, request: "change", forward }`, what a vim ex command such as `:q` or `:e`, or the
+//!   keys `]c` and `[c`, ask the app to do.
 //! - `editor-mode`: `{ mode, pending, commandLine }`, the vim layer's mode and the keys it is
 //!   waiting on, for the status bar.
 //!
@@ -155,6 +156,9 @@ impl SharedDocuments {
         match request {
             AppRequest::CloseTab { discard } => {
                 self.emitter.emit("document-request", json!({ "id": id, "request": "close", "discard": discard }));
+            }
+            AppRequest::GotoChange { forward } => {
+                self.emitter.emit("document-request", json!({ "id": id, "request": "change", "forward": forward }));
             }
             AppRequest::OpenFile { path } => {
                 let beside = documents.get(id).and_then(|document| document.path().and_then(Path::parent));

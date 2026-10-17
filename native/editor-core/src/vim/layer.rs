@@ -367,6 +367,7 @@ impl VimLayer {
                 vec![Command::Save, Command::Request { request: AppRequest::CloseTab { discard: false } }]
             }
             Simple::CloseWithoutSaving => vec![Command::Request { request: AppRequest::CloseTab { discard: true } }],
+            Simple::GotoChange { forward } => vec![Command::Request { request: AppRequest::GotoChange { forward } }],
             Simple::Page(step) => {
                 vec![Command::VimMove { motion: page_motion(step, context), count: 1, extend: false }]
             }

@@ -25,5 +25,6 @@
   { "id": "explorer", "plugin": "explorer" },
   { "id": "worktrees", "plugin": "worktrees" },
   { "id": "agents", "plugin": "agents" },
+  { "id": "terminal", "plugin": "terminal" },
   { "id": "placeholder-panel", "plugin": "placeholder-panel" }
 ]

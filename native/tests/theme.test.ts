@@ -4,6 +4,7 @@ import { activeScheme } from "../plugins/theme/active";
 import { DARK_SYNTAX, LIGHT_SYNTAX, activeEditorTheme } from "../plugins/theme/editorTheme";
 import { CORE_THEMES, NEOWORKS_DARK, NEOWORKS_LIGHT } from "../plugins/theme/palette";
 import { ThemeService } from "../plugins/theme/service";
+import { DARK_ANSI, LIGHT_ANSI, activeTerminalTheme } from "../plugins/theme/terminalTheme";
 import { colors, menuItemStyle, shell } from "../plugins/theme/tokens";
 
 /** A context with the theme service and the two core themes registered by a plugin of their own. */
@@ -140,5 +141,21 @@ describe("editor theme", () => {
     for (const name of [...Object.keys(DARK_SYNTAX), ...Object.keys(LIGHT_SYNTAX)]) {
       expect(known).toContain(name);
     }
+  });
+});
+
+describe("terminal theme", () => {
+  test("takes the window colours from the theme and the sixteen ANSI colours from the scheme", async () => {
+    const context = await themed();
+    context.theme.select("neoworks");
+    const dark = activeTerminalTheme();
+    expect(dark.background).toBe(NEOWORKS_DARK.surface);
+    expect(dark.foreground).toBe(NEOWORKS_DARK.text);
+    expect(dark.ansi).toEqual(DARK_ANSI);
+    context.theme.select("neoworks-light");
+    const light = activeTerminalTheme();
+    expect(light.background).toBe(NEOWORKS_LIGHT.surface);
+    expect(light.ansi).toEqual(LIGHT_ANSI);
+    expect(light.ansi).toHaveLength(16);
   });
 });

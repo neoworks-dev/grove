@@ -23,6 +23,7 @@ import { settingsView } from "./settings";
 import { sidebar } from "./sidebar";
 import { sidecar } from "./sidecar";
 import { statusbar } from "./statusbar";
+import { terminal } from "./terminal";
 import { workspace } from "./workspace";
 import { worktrees } from "./worktrees";
 import { coreThemes, theme, themePicker } from "./theme";
@@ -55,6 +56,7 @@ export const corePlugins: PluginCatalog = {
   explorer,
   worktrees,
   agents,
+  terminal,
   "placeholder-panel": placeholderPanel,
   failing,
   "broken-entry": brokenEntry,

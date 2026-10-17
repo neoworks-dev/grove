@@ -175,6 +175,13 @@ impl Item {
         if fuller.edit.is_some() {
             self.edit = fuller.edit;
         }
+        // Servers such as `vtsls` add the parentheses of a function call, as a snippet, only when resolving.
+        if resolved.get("insertTextFormat").is_some() {
+            self.is_snippet = fuller.is_snippet;
+        }
+        if resolved["insertText"].is_string() {
+            self.insert_text = fuller.insert_text;
+        }
         self.raw = resolved.clone();
     }
 }
@@ -576,6 +583,32 @@ mod tests {
         assert_eq!(found.detail.as_deref(), Some("fn foo()"));
         assert_eq!(found.additional_edits.len(), 1);
         assert_eq!(found.raw, resolved);
+    }
+
+    #[test]
+    fn resolving_can_turn_a_function_into_a_snippet_with_its_parameters() {
+        let mut found = parse_item(
+            &json!({ "label": "greet", "kind": 3, "insertTextFormat": 1, "textEdit": { "newText": "greet", "range": { "start": { "line": 2, "character": 0 }, "end": { "line": 2, "character": 3 } } } }),
+            &Value::Null,
+        )
+        .unwrap();
+        assert!(!found.is_snippet);
+        let resolved = json!({
+            "label": "greet", "kind": 3, "insertTextFormat": 2, "insertText": "greet(${1:name})$0",
+            "textEdit": { "newText": "greet(${1:name})$0", "range": { "start": { "line": 2, "character": 0 }, "end": { "line": 2, "character": 3 } } },
+        });
+        found.merge_resolved(&resolved);
+        assert!(found.is_snippet);
+        assert_eq!(found.insert_text, "greet(${1:name})$0");
+        assert_eq!(found.edit.as_ref().unwrap().new_text, "greet(${1:name})$0");
+    }
+
+    #[test]
+    fn a_resolved_item_that_says_nothing_of_its_text_keeps_it() {
+        let mut found = parse_item(&json!({ "label": "x", "insertText": "x($0)", "insertTextFormat": 2 }), &Value::Null).unwrap();
+        found.merge_resolved(&json!({ "label": "x", "documentation": "Docs." }));
+        assert!(found.is_snippet);
+        assert_eq!(found.insert_text, "x($0)");
     }
 
     #[test]

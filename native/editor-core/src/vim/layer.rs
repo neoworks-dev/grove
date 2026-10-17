@@ -2,6 +2,7 @@
 //! state machine over key presses. It never looks at the text. Everything that depends on the
 //! text is left to the commands it makes, which the editor state carries out at every cursor.
 
+use crate::buffer::Position;
 use crate::command::Command;
 use crate::keymap::{
     CursorShape, InputContext, InputLayer, InputStatus, KeyInput, Modifiers, SelectionStyle, standard_command,
@@ -235,6 +236,10 @@ impl VimLayer {
                 self.open_command_line(if forward { '/' } else { '?' }, "", count, None);
                 vec![Command::Noop]
             }
+            MotionSpec::Jump => {
+                let then = Command::VimMove { motion: Motion::To(Position::default()), count: 1, extend };
+                vec![Command::StartJump { then: Box::new(then) }]
+            }
             _ => match self.motion_of(spec, parsed.count, context) {
                 Some((motion, count)) => vec![Command::VimMove { motion, count, extend }],
                 None => vec![Command::Noop],
@@ -290,12 +295,26 @@ impl VimLayer {
                 Target::Search { request: SearchRequest::Word { forward }, count }
             }
             TargetSpec::Motion(MotionSpec::Mark { .. }) => return vec![Command::Noop],
+            TargetSpec::Motion(MotionSpec::Jump) => return self.operate_after_jump(operator, parsed.register),
             TargetSpec::Motion(spec) => match self.motion_of(spec, parsed.count, context) {
                 Some((motion, count)) => Target::Motion { motion, count },
                 None => return vec![Command::Noop],
             },
         };
         self.operator_commands(operator, target, parsed.register)
+    }
+
+    /// An operator that waits for jump labels to say what it covers: the text between the cursor
+    /// and the label that is typed. A change is left out, since leaving the labels would leave
+    /// insert mode half started.
+    fn operate_after_jump(&mut self, operator: Operator, register: Option<char>) -> Vec<Command> {
+        if operator == Operator::Change {
+            return vec![Command::Noop];
+        }
+        self.mode = Mode::Normal;
+        let target = Target::Motion { motion: Motion::To(Position::default()), count: 1 };
+        let then = Command::Operate { operator, target, register };
+        vec![Command::StartJump { then: Box::new(then) }]
     }
 
     /// The commands for an operator, which for a change also start insert mode inside an undo group.

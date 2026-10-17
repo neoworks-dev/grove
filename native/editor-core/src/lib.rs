@@ -13,9 +13,14 @@ pub mod display;
 pub mod documents;
 pub mod edit;
 pub mod editing;
+pub mod guides;
 pub mod history;
+pub mod indent;
+pub mod indenting;
+pub mod jump;
 pub mod keymap;
 pub mod movement;
+pub mod occurrences;
 pub mod selections;
 pub mod state;
 pub mod syntax;
@@ -27,6 +32,7 @@ pub use command::{Command, Outcome};
 pub use decorations::{Decoration, DecorationKind, GutterMark, Placement, Tone, Underline, UnderlineKind};
 pub use documents::{Applied, Document, DocumentId, DocumentSummary, Documents, Opened};
 pub use edit::{Edit, Edits};
+pub use indent::{IndentSource, IndentStyle};
 pub use keymap::{
     CursorShape, InputContext, InputLayer, InputStatus, KeyInput, Modifiers, SelectionStyle, StandardKeymap,
 };

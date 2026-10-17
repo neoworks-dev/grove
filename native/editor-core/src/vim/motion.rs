@@ -371,6 +371,7 @@ pub fn reach(
             let trimmed = line.trim_end().chars().count();
             inclusive(Position { row, column: trimmed.saturating_sub(1) })
         }
+        Motion::To(position) => exclusive(buffer.clamp(position)),
         Motion::Line(target) => {
             let row = target.min(last_row);
             let column = first_non_blank_column(&buffer.line(row));

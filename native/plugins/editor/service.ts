@@ -33,12 +33,54 @@ declare module "@neoworks/extension-system" {
 /** The pane type that shows documents; a pane of any other type is never given tabs. */
 export const EDITOR_PANE_TYPE = "editor";
 
+/** How a file is indented: tabs, or a number of spaces per level. */
+export type IndentStyle = { kind: "tabs" } | { kind: "spaces"; width: number };
+
+/** The styles the palette offers when changing a file's indentation, in the order it lists them. */
+export const INDENT_CHOICES: IndentStyle[] = [
+  { kind: "tabs" },
+  { kind: "spaces", width: 2 },
+  { kind: "spaces", width: 4 },
+  { kind: "spaces", width: 8 },
+];
+
+/** What the status bar calls a style: `Tabs` or `Spaces: 2`. */
+export function indentLabel(style: IndentStyle): string {
+  if (style.kind === "tabs") {
+    return "Tabs";
+  }
+  return `Spaces: ${style.width}`;
+}
+
+/** Reads the `defaultIndent` setting, such as `spaces-2` or `tabs`; anything else is four spaces. */
+export function indentFromSetting(value: string): IndentStyle {
+  if (value === "tabs") {
+    return { kind: "tabs" };
+  }
+  const width = Number(value.replace("spaces-", ""));
+  if (value.startsWith("spaces-") && Number.isInteger(width) && width > 0) {
+    return { kind: "spaces", width };
+  }
+  return { kind: "spaces", width: 4 };
+}
+
+/** What the editor's settings tell the host to do. */
+export interface EditorOptions {
+  /** The indentation of files whose own lines do not say. */
+  defaultIndent: IndentStyle;
+  smoothScroll: boolean;
+  indentGuides: boolean;
+  occurrenceHighlights: boolean;
+}
+
 /** A document as the host describes it. */
 export interface DocumentSummary {
   id: number;
   path: string | null;
   title: string;
   dirty: boolean;
+  /** How the file is indented; a host that does not say leaves it out. */
+  indent?: IndentStyle;
 }
 
 /** What the host tells the service about its documents. */
@@ -50,6 +92,7 @@ export type DocumentEvent =
   | { type: "error"; id: number; message: string }
   | { type: "selections"; id: number; row: number; column: number; count: number; selected: boolean }
   | { type: "mode"; mode: string; pending: string; commandLine: string | null }
+  | { type: "indent"; id: number; indent: IndentStyle }
   | { type: "close-request"; id: number; discard: boolean }
   | { type: "open-request"; id: number; path: string };
 
@@ -63,6 +106,8 @@ export interface DocumentHost {
   save(id: number): Promise<void>;
   /** Replaces what one source has put on top of a document's text. An empty list removes the source's. */
   setDecorations(id: number, source: string, decorations: Decoration[]): Promise<void>;
+  /** Tells the host what the editor's settings say. A host that has nothing to configure leaves it out. */
+  configure?(options: EditorOptions): Promise<void>;
   /** Hears of everything that happens to documents. Returns the function that stops it. */
   onEvent(handler: (event: DocumentEvent) => void): () => void;
 }
@@ -79,7 +124,7 @@ export interface PaneHost {
 
 /** The methods the editor element has, which a pane's view registers so commands can reach it. */
 export interface EditorViewMethods {
-  apply(command: { type: string }): Promise<{ changed: boolean }>;
+  apply(command: { type: string; [field: string]: unknown }): Promise<{ changed: boolean }>;
   /** Draws the view again, such as after the decorations of its document changed. */
   refresh(): Promise<void>;
 }
@@ -90,6 +135,8 @@ export interface BufferInfo {
   path: string;
   title: string;
   dirty: boolean;
+  /** How the file is indented, or null before the host has said. */
+  indent: IndentStyle | null;
 }
 
 /** Where the newest cursor of a document is, counted from zero. */
@@ -292,12 +339,26 @@ export class EditorService extends Service {
   }
 
   /** Sends the focused pane's editor one of its commands, such as `undo`, as its own keys would. */
-  async sendCommand(type: string): Promise<void> {
+  async sendCommand(type: string, fields: Record<string, unknown> = {}): Promise<void> {
     const view = this.viewsByLeaf.get(this.panes.focusedLeafId);
     if (!view) {
       throw new Error(`there is no editor to ${type} in`);
     }
-    await view.apply({ type });
+    await view.apply({ ...fields, type });
+  }
+
+  /** Sets how the focused pane's file is indented, which its Tab, Enter and shifts follow. */
+  setIndent(style: IndentStyle): Promise<void> {
+    return this.sendCommand("set_indent", { style });
+  }
+
+  /** Passes the editor's settings on to the host, which the views follow from the next frame. */
+  async configure(options: EditorOptions): Promise<void> {
+    if (!this.host.configure) {
+      return;
+    }
+    await this.host.configure(options);
+    await Promise.all([...this.viewsByLeaf.values()].map((view) => view.refresh()));
   }
 
   /**
@@ -474,7 +535,11 @@ export class EditorService extends Service {
     if (summary.path !== null) {
       path = summary.path;
     }
-    this.documentsById.set(summary.id, { id: summary.id, path, title: summary.title, dirty: summary.dirty });
+    let indent: IndentStyle | null = null;
+    if (summary.indent !== undefined) {
+      indent = summary.indent;
+    }
+    this.documentsById.set(summary.id, { id: summary.id, path, title: summary.title, dirty: summary.dirty, indent });
     this.changes.notify();
   }
 
@@ -648,6 +713,10 @@ export class EditorService extends Service {
       this.changes.notify();
       return;
     }
+    if (event.type === "indent") {
+      this.setIndentOf(event.id, event.indent);
+      return;
+    }
     if (event.type === "close-request") {
       void this.closeFromCommandLine(event.id, event.discard);
       return;
@@ -667,6 +736,16 @@ export class EditorService extends Service {
       return;
     }
     await this.closeTab(this.panes.focusedLeafId, documentId);
+  }
+
+  /** Records how a document is indented. */
+  private setIndentOf(documentId: number, indent: IndentStyle): void {
+    const info = this.documentsById.get(documentId);
+    if (!info) {
+      return;
+    }
+    this.documentsById.set(documentId, { ...info, indent });
+    this.changes.notify();
   }
 
   /** Records whether a document has unsaved changes. */

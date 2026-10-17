@@ -13,6 +13,13 @@
 
 mod documents;
 mod element;
+mod glide;
+mod indent_paint;
+mod jump_paint;
+mod jump_view;
+mod occurrence_view;
+mod options;
+mod smooth_scroll;
 mod theme;
 mod vim_paint;
 
@@ -36,7 +43,10 @@ use svelte_gpui::{AppElement, CommandError};
 pub use documents::SharedDocuments;
 
 use editor_core::display::DisplayRow;
+use editor_core::jump::JumpSession;
 use element::{EditorElement, LINE_HEIGHT, Layout};
+use glide::MIN_GLIDE;
+use smooth_scroll::ScrollAnimation;
 use theme::EditorTheme;
 
 thread_local! {
@@ -59,6 +69,8 @@ pub struct Editor {
     /// How far the text is scrolled, in pixels from the top of the first line. Each view of a
     /// document scrolls on its own.
     scroll_top: Pixels,
+    /// The glide the view is making to somewhere else, if there is one (see `glide.rs`).
+    scroll_animation: Option<ScrollAnimation>,
     /// What the last frame drew; none before the first.
     layout: Option<Layout>,
     /// The last text this editor copied. The system clipboard only takes text from a window that
@@ -69,6 +81,11 @@ pub struct Editor {
     dragging: bool,
     /// The colours the editor paints with, set by the `theme` prop.
     theme: EditorTheme,
+    /// The jump labels being shown, if the person is picking a place with them.
+    jump: Option<JumpSession>,
+    /// Counts the times the cursor may have moved, so a timer that was started before the latest
+    /// move knows it is out of date.
+    occurrence_generation: u64,
     /// Redraws when focus moves, since the host caches the view and would keep the cursor
     /// as it last drew it.
     focus_subscriptions: Vec<Subscription>,
@@ -85,10 +102,13 @@ impl Editor {
             input: Box::new(StandardKeymap),
             announced_status: None,
             scroll_top: px(0.0),
+            scroll_animation: None,
             layout: None,
             last_copied: None,
             dragging: false,
             theme: EditorTheme::default(),
+            jump: None,
+            occurrence_generation: 0,
             focus_subscriptions: Vec::new(),
         }
     }
@@ -97,6 +117,7 @@ impl Editor {
     fn show(&mut self, document: Option<DocumentId>, cx: &mut Context<Self>) {
         self.document = document;
         self.scroll_top = self.remembered_scroll_top(document);
+        self.scroll_animation = None;
         self.layout = None;
         self.dragging = false;
         let view = cx.entity_id();
@@ -153,6 +174,9 @@ impl Editor {
         let Some(outcome) = self.documents.apply(id, &command) else {
             return Outcome::default();
         };
+        if let Some(then) = &outcome.jump {
+            self.start_jump(then.clone());
+        }
         if outcome.reveal_newest {
             self.scroll_to_newest();
         }
@@ -164,6 +188,9 @@ impl Editor {
             self.last_copied = Some(text.clone());
         }
         self.redraw_other_views(id, cx);
+        if outcome.changed || outcome.text_changed {
+            self.occurrences_may_have_changed(cx);
+        }
         outcome
     }
 
@@ -208,6 +235,9 @@ impl Editor {
 
     /// Handles a key the input layer knows; returns false for the rest, which then bubble to the app.
     fn handle_key(&mut self, keystroke: &Keystroke, cx: &mut Context<Self>) -> bool {
+        if self.jump.is_some() {
+            return self.jump_key(keystroke, cx);
+        }
         let context = InputContext { page_rows: self.rows_in_view(), top_row: self.top_row() };
         let commands = self.input.translate(&key_input(keystroke), &context);
         self.announce_status();
@@ -273,12 +303,13 @@ impl Editor {
             ScrollAlign::Center => head_top - (view_height - LINE_HEIGHT) / 2.0,
             ScrollAlign::Bottom => head_top + LINE_HEIGHT - view_height,
         };
-        self.set_scroll_top(target.max(px(0.0)));
+        self.scroll_to(target.max(px(0.0)), MIN_GLIDE);
     }
 
     /// A press of the left button: a click places one cursor, Alt-click adds or removes one,
     /// Shift-click extends the newest selection, and a double click selects a word.
     fn press(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) {
+        self.jump = None;
         let Some(at) = self.position_at(event.position) else {
             return;
         };
@@ -326,25 +357,12 @@ impl Editor {
         let head_top = LINE_HEIGHT * layout.blocks.display_row_of(head_row) as f32;
         let head_bottom = head_top + LINE_HEIGHT;
         let view_height = layout.bounds.size.height;
-        let scroll_top = self.scroll_top;
+        let scroll_top = self.scroll_target();
         if head_top < scroll_top {
-            self.set_scroll_top(head_top);
+            self.scroll_to(head_top, MIN_GLIDE);
         } else if head_bottom > scroll_top + view_height {
-            self.set_scroll_top(head_bottom - view_height);
+            self.scroll_to(head_bottom - view_height, MIN_GLIDE);
         }
-    }
-
-    /// Scrolls by the wheel's delta, stopping with the last row at the top. Blocks count as rows.
-    fn scroll_by(&mut self, delta: Pixels) {
-        let Some(line_count) = self.read(|state| state.buffer().line_count()) else {
-            return;
-        };
-        let total_rows = match &self.layout {
-            Some(layout) => layout.blocks.total_rows(line_count),
-            None => line_count,
-        };
-        let last_line_top = LINE_HEIGHT * total_rows.saturating_sub(1) as f32;
-        self.set_scroll_top((self.scroll_top - delta).clamp(px(0.0), last_line_top));
     }
 
     /// How many rows a page is.
@@ -490,7 +508,9 @@ impl Render for Editor {
                 cx.stop_propagation();
             }))
             .on_scroll_wheel(cx.listener(|editor, event: &ScrollWheelEvent, _window, cx| {
-                editor.scroll_by(event.delta.pixel_delta(LINE_HEIGHT).y);
+                editor.jump = None;
+                editor.wheel_scrolled(event.delta);
+                editor.occurrences_may_have_changed(cx);
                 cx.notify();
             }))
             .on_mouse_down(

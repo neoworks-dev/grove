@@ -100,7 +100,7 @@
 
 {#if prompt !== undefined}
   <View bind:this={root} focusable onkey={key} style={{ gap: p.space.m }}>
-    <Text style={{ fontWeight: "bold", truncate: true }}>{prompt.title || "The agent asks"}</Text>
+    <Text style={{ fontWeight: "bold" }}>{prompt.title || "The agent asks"}</Text>
 
     {#if hasBody}
       <Scroll style={{ maxHeight: 180 }}>

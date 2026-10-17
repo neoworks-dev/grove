@@ -105,6 +105,26 @@ describe("KeymapService", () => {
     expect(ran).toEqual(["open"]);
   });
 
+  test("nextKeys lists what can finish a half-typed sequence, once per key", async () => {
+    const { context } = await bootedContext();
+    context.keymap.bind([
+      { id: "open", keys: "ctrl+k f2", command: "open", description: "Open" },
+      { id: "find", keys: "ctrl+k f3", command: "find", description: "Find" },
+      { id: "save", keys: "ctrl+k ctrl+s", command: "save", description: "Save" },
+      { id: "deep", keys: "ctrl+k f5 f6", command: "save", description: "Deep" },
+    ]);
+    expect(context.keymap.nextKeys()).toEqual([]);
+    context.keymap.dispatch(press("k", { ctrl: true }));
+    expect(context.keymap.nextKeys()).toEqual([
+      { key: "F2", description: "Open", continues: false },
+      { key: "F3", description: "Find", continues: false },
+      { key: "Ctrl+s", description: "Save", continues: false },
+      { key: "F5", description: undefined, continues: true },
+    ]);
+    context.keymap.dispatch(press("Escape"));
+    expect(context.keymap.nextKeys()).toEqual([]);
+  });
+
   test("a wrong second key ends the sequence without running anything", async () => {
     const { context, ran } = await bootedContext();
     context.keymap.bind({ id: "open", keys: "ctrl+k f2", command: "open" });

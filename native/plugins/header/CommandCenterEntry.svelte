@@ -1,4 +1,4 @@
-<!-- The header's middle pill, wired to open the file finder when some plugin provides one. -->
+<!-- The header's middle pill, wired to open the command palette, or the file finder when there is no palette. -->
 <script lang="ts">
   import { useKernel } from "../../kernel/kernel";
   import CommandCenter from "./CommandCenter.svelte";
@@ -7,12 +7,15 @@
 
   const kernel = useKernel();
 
-  /** Runs the file finder if there is one. */
-  function openFinder(): void {
-    if (kernel.commands.canRun("files.find")) {
-      void kernel.commands.run("files.find");
+  /** Opens the command palette, or the file finder if the palette is not loaded. */
+  function openPalette(): void {
+    for (const commandId of ["palette.open", "files.find"]) {
+      if (kernel.commands.canRun(commandId)) {
+        void kernel.commands.run(commandId);
+        return;
+      }
     }
   }
 </script>
 
-<CommandCenter {label} onpress={openFinder} />
+<CommandCenter {label} onpress={openPalette} />

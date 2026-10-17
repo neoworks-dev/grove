@@ -7,6 +7,7 @@ import type { Context } from "@neoworks/extension-system";
 import type { CommandsService } from "./commands";
 import type { KeymapService } from "./keymap";
 import type { LoaderService, ProfileService } from "./profile";
+import type { SettingsService } from "./settings";
 import type { SlotsService } from "./slots";
 
 export interface Kernel {
@@ -17,6 +18,7 @@ export interface Kernel {
   keymap: KeymapService;
   loader: LoaderService;
   profile: ProfileService;
+  settings: SettingsService;
   /** Resolves once every plugin in the profile has settled as active, waiting or failed. */
   loaded: Promise<void>;
   /** Writes an error that no plugin caught, such as a throwing slot entry, to the log. */

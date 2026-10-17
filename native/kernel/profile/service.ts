@@ -2,6 +2,7 @@
 // project layer is the opened folder's `.grove/profile.json`, so it changes when a folder is
 // opened, and the service rereads and reapplies the profile then. Rows that did not change
 // stay loaded, so opening a folder only mounts or unloads the plugins its profile differs in.
+// The settings service is told of every read, so its entries show the same layers.
 
 import { Service, type Context } from "@neoworks/extension-system";
 import type { ProfileRow } from "./rows";
@@ -20,7 +21,7 @@ export interface ProfileServiceConfig {
 }
 
 export class ProfileService extends Service {
-  static inject = ["loader"];
+  static inject = ["loader", "settings"];
 
   private coreRows: ProfileRow[];
   private files: ProfileFiles;
@@ -46,6 +47,7 @@ export class ProfileService extends Service {
     for (const problem of profile.problems) {
       this.ctx.logger.warn(problem);
     }
+    this.ctx.settings.setProfile(profile);
     await this.ctx.loader.apply(profile.rows);
   }
 

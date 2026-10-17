@@ -249,6 +249,7 @@ impl Element for EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Frame {
+        self.editor.update(cx, |editor, cx| editor.advance_glide(window, cx));
         let editor = self.editor.read(cx);
         let scroll_top = editor.scroll_top;
         let theme = editor.theme.clone();

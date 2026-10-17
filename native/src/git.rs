@@ -148,7 +148,7 @@ fn parse_blame(output: &str) -> Value {
 }
 
 /// Runs git in a directory and gives what it printed, or none when it failed.
-fn run_git(directory: &Path, args: &[&str]) -> Option<String> {
+pub(crate) fn run_git(directory: &Path, args: &[&str]) -> Option<String> {
     let output = Command::new("git").arg("-C").arg(directory).args(args).output().ok()?;
     if !output.status.success() {
         return None;

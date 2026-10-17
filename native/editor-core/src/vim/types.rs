@@ -100,6 +100,8 @@ pub enum AppRequest {
     CloseTab { discard: bool },
     /// `:e path`: open a file.
     OpenFile { path: String },
+    /// `]c` and `[c`: go to the next or previous change of a diff, or of the file against git.
+    GotoChange { forward: bool },
 }
 
 /// Which lines an ex command works on.

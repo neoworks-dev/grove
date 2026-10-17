@@ -5,7 +5,7 @@ use std::time::Instant;
 use crate::anchor::{Anchor, AnchorId, Anchors, Bias};
 use crate::buffer::{Buffer, Position};
 use crate::command::{Command, Outcome};
-use crate::decorations::{Decoration, Decorations, Placed, PlacedBlock};
+use crate::decorations::{Decoration, Decorations, Placed, PlacedBlock, SourceFilter};
 use crate::history::History;
 use crate::movement::{Motion, find_next, move_selection, vertical, word_at};
 use crate::selections::{Selection, Selections};
@@ -73,12 +73,22 @@ impl EditorState {
 
     /// The decorations that touch any of `rows`, positioned as the text is now.
     pub fn decorations_in_rows(&self, rows: std::ops::Range<usize>) -> Vec<Placed<'_>> {
-        self.decorations.placed_in_rows(rows, &self.buffer, &self.anchors)
+        self.decorations_in_rows_for(rows, &SourceFilter::default())
+    }
+
+    /// Like `decorations_in_rows`, with only the sources a view shows.
+    pub fn decorations_in_rows_for(&self, rows: std::ops::Range<usize>, filter: &SourceFilter) -> Vec<Placed<'_>> {
+        self.decorations.placed_in_rows(rows, &self.buffer, &self.anchors, filter)
     }
 
     /// The blocks between lines, in the order they are laid out.
     pub fn decoration_blocks(&self) -> Vec<PlacedBlock<'_>> {
-        self.decorations.blocks(&self.buffer, &self.anchors)
+        self.decoration_blocks_for(&SourceFilter::default())
+    }
+
+    /// Like `decoration_blocks`, with only the sources a view shows.
+    pub fn decoration_blocks_for(&self, filter: &SourceFilter) -> Vec<PlacedBlock<'_>> {
+        self.decorations.blocks(&self.buffer, &self.anchors, filter)
     }
 
     /// How many anchors are being kept up to date, which tests use to see none are leaked.
@@ -171,6 +181,10 @@ impl EditorState {
             Command::Delete { motion } => self.delete(*motion, now),
             Command::InsertNewline => self.insert_newline(now),
             Command::InsertTab => self.insert_tab(now),
+            Command::Indent => self.shift_lines(false, now),
+            Command::Outdent => self.shift_lines(true, now),
+            Command::SetIndent { style } => self.set_indent(*style),
+            Command::StartJump { then } => Outcome { jump: Some((**then).clone()), ..Outcome::default() },
             Command::Undo => self.undo_outcome(),
             Command::Redo => self.redo_outcome(),
             Command::Copy => self.copy(),

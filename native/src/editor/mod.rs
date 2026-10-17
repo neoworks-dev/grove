@@ -13,6 +13,13 @@
 
 mod documents;
 mod element;
+mod glide;
+mod indent_paint;
+mod jump_paint;
+mod jump_view;
+mod occurrence_view;
+mod options;
+mod smooth_scroll;
 mod theme;
 mod vim_paint;
 
@@ -23,7 +30,7 @@ use std::ops::Range;
 use editor_core::vim::types::ScrollAlign;
 use editor_core::{
     Command, DocumentId, EditorState, InputContext, InputLayer, InputStatus, KeyInput, Modifiers, Outcome, Position,
-    StandardKeymap, VimLayer,
+    SourceFilter, StandardKeymap, VimLayer,
 };
 use serde_json::{Value, json};
 use svelte_gpui::gpui::{
@@ -36,13 +43,18 @@ use svelte_gpui::{AppElement, CommandError};
 pub use documents::SharedDocuments;
 
 use editor_core::display::DisplayRow;
+use editor_core::jump::JumpSession;
 use element::{EditorElement, LINE_HEIGHT, Layout};
+use glide::MIN_GLIDE;
+use smooth_scroll::ScrollAnimation;
 use theme::EditorTheme;
 
 thread_local! {
     /// Which document each view of the window shows, so a change made in one view can redraw
     /// the others. Views live on the window's thread, so this does too.
     static VIEWS: RefCell<HashMap<EntityId, (DocumentId, WeakEntity<Editor>)>> = RefCell::new(HashMap::new());
+    /// The scroll group each view that has one is in, so scrolling one scrolls the rest of its group.
+    static SCROLL_GROUPS: RefCell<HashMap<EntityId, (String, WeakEntity<Editor>)>> = RefCell::new(HashMap::new());
 }
 
 pub struct Editor {
@@ -59,6 +71,8 @@ pub struct Editor {
     /// How far the text is scrolled, in pixels from the top of the first line. Each view of a
     /// document scrolls on its own.
     scroll_top: Pixels,
+    /// The glide the view is making to somewhere else, if there is one (see `glide.rs`).
+    scroll_animation: Option<ScrollAnimation>,
     /// What the last frame drew; none before the first.
     layout: Option<Layout>,
     /// The last text this editor copied. The system clipboard only takes text from a window that
@@ -69,9 +83,21 @@ pub struct Editor {
     dragging: bool,
     /// The colours the editor paints with, set by the `theme` prop.
     theme: EditorTheme,
+    /// The jump labels being shown, if the person is picking a place with them.
+    jump: Option<JumpSession>,
+    /// Counts the times the cursor may have moved, so a timer that was started before the latest
+    /// move knows it is out of date.
+    occurrence_generation: u64,
     /// Redraws when focus moves, since the host caches the view and would keep the cursor
     /// as it last drew it.
     focus_subscriptions: Vec<Subscription>,
+    /// Whether the view refuses commands that change the text, as the old side of a diff does.
+    read_only: bool,
+    /// The scroll group this view is in, set by the `scrollGroup` prop; empty for none.
+    scroll_group: String,
+    /// Which decoration sources this view draws: the ones that are its own (the `viewId` prop)
+    /// and every document-wide one except those the `hideSources` prop names.
+    sources: SourceFilter,
 }
 
 impl Editor {
@@ -85,11 +111,17 @@ impl Editor {
             input: Box::new(StandardKeymap),
             announced_status: None,
             scroll_top: px(0.0),
+            scroll_animation: None,
             layout: None,
             last_copied: None,
             dragging: false,
             theme: EditorTheme::default(),
+            jump: None,
+            occurrence_generation: 0,
             focus_subscriptions: Vec::new(),
+            read_only: false,
+            scroll_group: String::new(),
+            sources: SourceFilter::default(),
         }
     }
 
@@ -97,6 +129,7 @@ impl Editor {
     fn show(&mut self, document: Option<DocumentId>, cx: &mut Context<Self>) {
         self.document = document;
         self.scroll_top = self.remembered_scroll_top(document);
+        self.scroll_animation = None;
         self.layout = None;
         self.dragging = false;
         let view = cx.entity_id();
@@ -150,9 +183,15 @@ impl Editor {
         let Some(command) = self.resolve_clipboard(command, cx) else {
             return Outcome::default();
         };
+        if self.read_only && command.changes_text() {
+            return Outcome::default();
+        }
         let Some(outcome) = self.documents.apply(id, &command) else {
             return Outcome::default();
         };
+        if let Some(then) = &outcome.jump {
+            self.start_jump(then.clone());
+        }
         if outcome.reveal_newest {
             self.scroll_to_newest();
         }
@@ -164,7 +203,47 @@ impl Editor {
             self.last_copied = Some(text.clone());
         }
         self.redraw_other_views(id, cx);
+        if outcome.changed || outcome.text_changed {
+            self.occurrences_may_have_changed(cx);
+        }
+        self.scroll_group_to_here(cx);
         outcome
+    }
+
+    /// Puts the views in this view's scroll group at the scroll position this one has.
+    fn scroll_group_to_here(&self, cx: &mut Context<Self>) {
+        if self.scroll_group.is_empty() {
+            return;
+        }
+        let own = cx.entity_id();
+        let scroll_top = self.scroll_top;
+        let others: Vec<WeakEntity<Editor>> = SCROLL_GROUPS.with(|groups| {
+            let groups = groups.borrow();
+            let same_group = groups.iter().filter(|(view, (group, _))| *group == self.scroll_group && **view != own);
+            same_group.map(|(_, (_, weak))| weak.clone()).collect()
+        });
+        for view in others {
+            let _ = view.update(cx, |other, cx| {
+                other.set_scroll_top(scroll_top);
+                cx.notify();
+            });
+        }
+    }
+
+    /// Joins a scroll group, or leaves the one this view is in when the name is empty.
+    fn set_scroll_group(&mut self, name: &str, cx: &mut Context<Self>) {
+        self.scroll_group = name.to_string();
+        let view = cx.entity_id();
+        self.view = Some(view);
+        let weak = cx.entity().downgrade();
+        let group = name.to_string();
+        SCROLL_GROUPS.with(|groups| {
+            if group.is_empty() {
+                groups.borrow_mut().remove(&view);
+                return;
+            }
+            groups.borrow_mut().insert(view, (group, weak));
+        });
     }
 
     /// Redraws every other view of a document, since the host keeps what a view painted until
@@ -208,6 +287,9 @@ impl Editor {
 
     /// Handles a key the input layer knows; returns false for the rest, which then bubble to the app.
     fn handle_key(&mut self, keystroke: &Keystroke, cx: &mut Context<Self>) -> bool {
+        if self.jump.is_some() {
+            return self.jump_key(keystroke, cx);
+        }
         let context = InputContext { page_rows: self.rows_in_view(), top_row: self.top_row() };
         let commands = self.input.translate(&key_input(keystroke), &context);
         self.announce_status();
@@ -273,12 +355,13 @@ impl Editor {
             ScrollAlign::Center => head_top - (view_height - LINE_HEIGHT) / 2.0,
             ScrollAlign::Bottom => head_top + LINE_HEIGHT - view_height,
         };
-        self.set_scroll_top(target.max(px(0.0)));
+        self.scroll_to(target.max(px(0.0)), MIN_GLIDE);
     }
 
     /// A press of the left button: a click places one cursor, Alt-click adds or removes one,
     /// Shift-click extends the newest selection, and a double click selects a word.
     fn press(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) {
+        self.jump = None;
         let Some(at) = self.position_at(event.position) else {
             return;
         };
@@ -326,25 +409,12 @@ impl Editor {
         let head_top = LINE_HEIGHT * layout.blocks.display_row_of(head_row) as f32;
         let head_bottom = head_top + LINE_HEIGHT;
         let view_height = layout.bounds.size.height;
-        let scroll_top = self.scroll_top;
+        let scroll_top = self.scroll_target();
         if head_top < scroll_top {
-            self.set_scroll_top(head_top);
+            self.scroll_to(head_top, MIN_GLIDE);
         } else if head_bottom > scroll_top + view_height {
-            self.set_scroll_top(head_bottom - view_height);
+            self.scroll_to(head_bottom - view_height, MIN_GLIDE);
         }
-    }
-
-    /// Scrolls by the wheel's delta, stopping with the last row at the top. Blocks count as rows.
-    fn scroll_by(&mut self, delta: Pixels) {
-        let Some(line_count) = self.read(|state| state.buffer().line_count()) else {
-            return;
-        };
-        let total_rows = match &self.layout {
-            Some(layout) => layout.blocks.total_rows(line_count),
-            None => line_count,
-        };
-        let last_line_top = LINE_HEIGHT * total_rows.saturating_sub(1) as f32;
-        self.set_scroll_top((self.scroll_top - delta).clamp(px(0.0), last_line_top));
     }
 
     /// How many rows a page is.
@@ -374,6 +444,7 @@ impl Drop for Editor {
             return;
         };
         let _ = VIEWS.try_with(|views| views.borrow_mut().remove(&view));
+        let _ = SCROLL_GROUPS.try_with(|groups| groups.borrow_mut().remove(&view));
     }
 }
 
@@ -412,6 +483,25 @@ impl AppElement for Editor {
     fn set_prop(&mut self, name: &str, value: Value, cx: &mut Context<Self>) {
         if name == "theme" {
             self.theme = EditorTheme::from_json(&value);
+            return;
+        }
+        if name == "readonly" {
+            self.read_only = value.as_bool().unwrap_or(false);
+            return;
+        }
+        if name == "viewId" {
+            self.sources.view = value.as_str().unwrap_or("").to_string();
+            cx.notify();
+            return;
+        }
+        if name == "hideSources" {
+            let names = value.as_array().into_iter().flatten().filter_map(Value::as_str);
+            self.sources.hidden = names.map(str::to_string).collect();
+            cx.notify();
+            return;
+        }
+        if name == "scrollGroup" {
+            self.set_scroll_group(value.as_str().unwrap_or(""), cx);
             return;
         }
         if name == "keymap" {
@@ -490,7 +580,10 @@ impl Render for Editor {
                 cx.stop_propagation();
             }))
             .on_scroll_wheel(cx.listener(|editor, event: &ScrollWheelEvent, _window, cx| {
-                editor.scroll_by(event.delta.pixel_delta(LINE_HEIGHT).y);
+                editor.jump = None;
+                editor.wheel_scrolled(event.delta);
+                editor.occurrences_may_have_changed(cx);
+                editor.scroll_group_to_here(cx);
                 cx.notify();
             }))
             .on_mouse_down(

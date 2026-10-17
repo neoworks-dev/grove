@@ -82,6 +82,8 @@ pub enum MotionSpec {
     SearchPrompt {
         forward: bool,
     },
+    /// `s`: jump labels, which take the cursor to a match picked from the screen.
+    Jump,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -122,7 +124,7 @@ pub enum PageStep {
 /// Commands that are not an operator or a motion.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Simple {
-    /// `x`, `X`, `D`, `C`, `s`, `S` and `Y`, which are operators in short form.
+    /// `x`, `X`, `D`, `C`, `S` and `Y`, which are operators in short form.
     ShortOperator {
         operator: Operator,
         motion: Option<Motion>,
@@ -158,6 +160,10 @@ pub enum Simple {
     SaveAndClose,
     /// `ZQ`.
     CloseWithoutSaving,
+    /// `]c` and `[c`.
+    GotoChange {
+        forward: bool,
+    },
     Page(PageStep),
     /// Ctrl-N.
     NextMatch,
@@ -279,6 +285,7 @@ fn parse_motion(keys: &[String]) -> MotionParse {
         "#" => MotionParse::Motion(MotionSpec::SearchWord { forward: false }, 1),
         "/" => MotionParse::Motion(MotionSpec::SearchPrompt { forward: true }, 1),
         "?" => MotionParse::Motion(MotionSpec::SearchPrompt { forward: false }, 1),
+        "s" => MotionParse::Motion(MotionSpec::Jump, 1),
         "f" | "t" | "F" | "T" => parse_find(keys),
         "'" | "`" => parse_mark_motion(keys),
         "g" => parse_g_motion(keys),
@@ -471,7 +478,6 @@ fn parse_simple(keys: &[String]) -> SimpleParse {
         "X" => short(Operator::Delete, Some(Motion::ColumnLeft), false),
         "D" => short(Operator::Delete, Some(Motion::LineEnd), false),
         "C" => short(Operator::Change, Some(Motion::LineEnd), false),
-        "s" => short(Operator::Change, Some(Motion::ColumnRight), false),
         "S" => short(Operator::Change, None, true),
         "Y" => short(Operator::Yank, None, true),
         "J" => simple(Simple::Join),
@@ -501,6 +507,7 @@ fn parse_simple(keys: &[String]) -> SimpleParse {
         "m" => parse_set_mark(keys),
         "z" => parse_scroll(keys),
         "Z" => parse_save_and_close(keys),
+        "]" | "[" => parse_goto_change(keys),
         "g" => parse_g_simple(keys),
         _ => SimpleParse::Invalid,
     }
@@ -557,6 +564,17 @@ fn parse_save_and_close(keys: &[String]) -> SimpleParse {
     }
 }
 
+/// `]c` and `[c`.
+fn parse_goto_change(keys: &[String]) -> SimpleParse {
+    let Some(next) = keys.get(1) else {
+        return SimpleParse::Incomplete;
+    };
+    if next != "c" {
+        return SimpleParse::Invalid;
+    }
+    SimpleParse::Simple(Simple::GotoChange { forward: keys[0] == "]" }, 2)
+}
+
 /// The commands that start with `g` and are not motions or operators.
 fn parse_g_simple(keys: &[String]) -> SimpleParse {
     let Some(next) = keys.get(1) else {
@@ -582,7 +600,7 @@ fn parse_visual(
     match first {
         "d" | "x" | "delete" => return visual(Simple::VisualOperator(Operator::Delete)),
         "y" => return visual(Simple::VisualOperator(Operator::Yank)),
-        "c" | "s" => return visual(Simple::VisualOperator(Operator::Change)),
+        "c" => return visual(Simple::VisualOperator(Operator::Change)),
         ">" => return visual(Simple::VisualOperator(Operator::Indent)),
         "<" => return visual(Simple::VisualOperator(Operator::Outdent)),
         "u" => return visual(Simple::VisualOperator(Operator::Lowercase)),
@@ -690,6 +708,15 @@ mod tests {
             Action::Operate { operator: Operator::Uppercase, target: TargetSpec::Lines }
         );
         assert_eq!(complete("gugu").keys, vec!["g", "u", "g", "u"]);
+    }
+
+    #[test]
+    fn s_is_a_motion_that_an_operator_can_take() {
+        assert_eq!(complete("s").action, Action::Move(MotionSpec::Jump));
+        assert_eq!(
+            complete("ds").action,
+            Action::Operate { operator: Operator::Delete, target: TargetSpec::Motion(MotionSpec::Jump) }
+        );
     }
 
     #[test]

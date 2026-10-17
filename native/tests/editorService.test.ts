@@ -5,9 +5,12 @@ import { leaves } from "../plugins/layout/layoutTree";
 import { LayoutService } from "../plugins/layout/service";
 import {
   EditorService,
+  indentFromSetting,
+  indentLabel,
   type DocumentEvent,
   type DocumentHost,
   type DocumentSummary,
+  type EditorOptions,
 } from "../plugins/editor/service";
 
 /** The host's documents, held in memory: one document per path, with the events a real host emits. */
@@ -49,6 +52,33 @@ class FakeDocumentHost implements DocumentHost {
   }
 
   async setDecorations(): Promise<void> {}
+
+  configured: EditorOptions[] = [];
+
+  async configure(options: EditorOptions): Promise<void> {
+    this.configured.push(options);
+  }
+
+  texts = new Map<number, string>();
+
+  async openText(name: string, text: string): Promise<DocumentSummary> {
+    const summary = { id: this.nextId, path: null, title: name, dirty: false };
+    this.nextId += 1;
+    this.documents.set(summary.id, summary);
+    this.texts.set(summary.id, text);
+    this.emit({ type: "opened", summary });
+    return summary;
+  }
+
+  async text(id: number): Promise<string> {
+    return this.texts.get(id) ?? "";
+  }
+
+  async setText(id: number, text: string): Promise<void> {
+    this.texts.set(id, text);
+  }
+
+  async reload(): Promise<void> {}
 
   onEvent(handler: (event: DocumentEvent) => void): () => void {
     this.handlers.push(handler);
@@ -360,5 +390,71 @@ describe("vim keys", () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(setup.editor.buffers().map((buffer) => buffer.title)).toEqual(["c.rs"]);
+  });
+});
+
+describe("indentation", () => {
+  test("the status bar's label comes from what the host says about the file", async () => {
+    const setup = await setUp();
+    const id = (await setup.editor.openPath("/src/a.rs")) as number;
+    expect(setup.editor.active()?.indent).toBeNull();
+    setup.host.emit({ type: "indent", id, indent: { kind: "spaces", width: 2 } });
+    const indent = setup.editor.active()?.indent;
+    expect(indent).toEqual({ kind: "spaces", width: 2 });
+    expect(indentLabel(indent as NonNullable<typeof indent>)).toBe("Spaces: 2");
+    setup.host.emit({ type: "indent", id, indent: { kind: "tabs" } });
+    expect(indentLabel(setup.editor.active()?.indent as NonNullable<typeof indent>)).toBe("Tabs");
+  });
+
+  test("a document that opens with its indentation keeps it", async () => {
+    const setup = await setUp();
+    setup.host.emit({
+      type: "opened",
+      summary: { id: 9, path: "/src/go.go", title: "go.go", dirty: false, indent: { kind: "tabs" } },
+    });
+    expect(setup.editor.buffers()[0].indent).toEqual({ kind: "tabs" });
+  });
+
+  test("changing it sends the focused editor a set_indent command", async () => {
+    const setup = await setUp();
+    await setup.editor.openPath("/src/a.rs");
+    const sent: unknown[] = [];
+    setup.editor.registerView(setup.layout.focusedLeafId, {
+      apply: async (command) => {
+        sent.push(command);
+        return { changed: true };
+      },
+      refresh: async () => {},
+    });
+    await setup.editor.setIndent({ kind: "spaces", width: 8 });
+    expect(sent).toEqual([{ type: "set_indent", style: { kind: "spaces", width: 8 } }]);
+  });
+
+  test("the settings reach the host, and the views draw again", async () => {
+    const setup = await setUp();
+    await setup.editor.openPath("/src/a.rs");
+    let refreshes = 0;
+    setup.editor.registerView(setup.layout.focusedLeafId, {
+      apply: async () => ({ changed: false }),
+      refresh: async () => {
+        refreshes += 1;
+      },
+    });
+    const options = {
+      defaultIndent: indentFromSetting("spaces-2"),
+      smoothScroll: false,
+      indentGuides: true,
+      occurrenceHighlights: true,
+    };
+    await setup.editor.configure(options);
+    expect(setup.host.configured).toEqual([options]);
+    expect(refreshes).toBe(1);
+  });
+
+  test("the default indentation setting names tabs or a width, and falls back to four spaces", () => {
+    expect(indentFromSetting("tabs")).toEqual({ kind: "tabs" });
+    expect(indentFromSetting("spaces-8")).toEqual({ kind: "spaces", width: 8 });
+    expect(indentFromSetting("spaces-x")).toEqual({ kind: "spaces", width: 4 });
+    expect(indentFromSetting("nonsense")).toEqual({ kind: "spaces", width: 4 });
   });
 });

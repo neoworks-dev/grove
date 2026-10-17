@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::buffer::Position;
 use crate::decorations::Decoration;
+use crate::indent::IndentStyle;
 use crate::movement::Motion;
 use crate::vim::types::{
     AppRequest, LineRange, Operator, ScrollAlign, SearchRequest, SelectionKind, Target, TextObject,
@@ -53,6 +54,12 @@ pub enum Command {
     /// Replaces every selection with a tab, or with spaces up to the next tab stop in a file
     /// that is indented with spaces.
     InsertTab,
+    /// Adds one level of indentation to every line a selection touches.
+    Indent,
+    /// Takes one level of indentation off every line a selection touches (Shift-Tab).
+    Outdent,
+    /// Sets how this file is indented, which Tab, Enter and shifting lines follow from then on.
+    SetIndent { style: IndentStyle },
     /// Takes back the last transaction, with the cursors as they were before it.
     Undo,
     /// Does again what undo took back.
@@ -80,6 +87,13 @@ pub enum Command {
     /// Replaces everything one source has put on top of the text (errors, blame, a diff) with
     /// `decorations`. An empty list removes the source's. Text and selections are not touched.
     SetDecorations { source: String, decorations: Vec<Decoration> },
+    /// Starts jump labels in the view: the person types what to look for, every match in view gets
+    /// a label, and typing one runs `then` with the place it stands for, where `then` has a
+    /// `Motion::To` as a placeholder. Without one it moves the cursor there.
+    StartJump {
+        #[serde(default = "move_to_jump_target")]
+        then: Box<Command>,
+    },
     /// Does nothing. A layer returns it for a key it has used up, so the key is neither typed
     /// into the text nor passed on to the app.
     Noop,
@@ -173,11 +187,70 @@ pub enum Command {
     },
 }
 
+/// What a jump does when it is not told: move the cursor to the place.
+fn move_to_jump_target() -> Box<Command> {
+    Box::new(Command::MoveSelections { motion: Motion::To(Position::default()), extend: false })
+}
+
 impl Command {
+    /// This command with the place of a jump put where it has a placeholder: in the motion of a
+    /// move, or of an operator's target. A command that has no such place is as it was.
+    pub fn with_jump_target(&self, at: Position) -> Command {
+        match self {
+            Command::MoveSelections { motion: Motion::To(_), extend } => {
+                Command::MoveSelections { motion: Motion::To(at), extend: *extend }
+            }
+            Command::VimMove { motion: Motion::To(_), count, extend } => {
+                Command::VimMove { motion: Motion::To(at), count: *count, extend: *extend }
+            }
+            Command::Operate { operator, target: Target::Motion { motion: Motion::To(_), count }, register } => {
+                let target = Target::Motion { motion: Motion::To(at), count: *count };
+                Command::Operate { operator: *operator, target, register: *register }
+            }
+            other => other.clone(),
+        }
+    }
+
     /// Whether a key that makes this command should pass on to whatever is behind the editor
     /// when it changed nothing, so Escape in a single plain cursor reaches the app.
     pub fn passes_on_when_unchanged(&self) -> bool {
         *self == Command::CollapseSelections
+    }
+
+    /// Whether the command can change the text. A read-only view refuses the ones that can, and a
+    /// command nobody has listed as harmless counts as one that can.
+    pub fn changes_text(&self) -> bool {
+        match self {
+            Command::MoveSelections { .. }
+            | Command::AddCursorAbove
+            | Command::AddCursorBelow
+            | Command::SelectNextOccurrence
+            | Command::SelectAll
+            | Command::CollapseSelections
+            | Command::PlaceCursor { .. }
+            | Command::ToggleCursor { .. }
+            | Command::ExtendNewestTo { .. }
+            | Command::SelectWordAt { .. }
+            | Command::Copy
+            | Command::UnmarkText
+            | Command::SetDecorations { .. }
+            | Command::Noop
+            | Command::Fail { .. }
+            | Command::Request { .. }
+            | Command::VimMove { .. }
+            | Command::VimSearch { .. }
+            | Command::SelectObject { .. }
+            | Command::SelectNextMatch { .. }
+            | Command::CollapseToHeads
+            | Command::SwapSelectionEnds
+            | Command::ClampCursors
+            | Command::GroupUndo { .. }
+            | Command::ScrollTo { .. }
+            | Command::SetMark { .. }
+            | Command::JumpToMark { .. } => false,
+            Command::Operate { operator, .. } => *operator != Operator::Yank,
+            _ => true,
+        }
     }
 
     /// Whether the command is one of vim's, which `vim::commands` carries out.
@@ -228,6 +301,35 @@ pub struct Outcome {
     pub decorations_changed: bool,
     /// Where the view should scroll the newest cursor's line to.
     pub scroll: Option<ScrollAlign>,
+    /// The command a jump runs once a place is chosen, as the command made the view start one.
+    pub jump: Option<Command>,
+    /// Whether the way the file is indented is different now, which the app learns for its status bar.
+    pub indent_changed: bool,
     /// What the app is asked to do, as the command made a `Request`.
     pub request: Option<AppRequest>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::movement::Motion;
+    use crate::vim::types::Target;
+
+    #[test]
+    fn moving_and_copying_leave_the_text_alone_and_typing_and_deleting_do_not() {
+        assert!(!Command::MoveSelections { motion: Motion::Left, extend: true }.changes_text());
+        assert!(!Command::Copy.changes_text());
+        assert!(Command::InsertText { text: "x".into() }.changes_text());
+        assert!(Command::Delete { motion: Motion::Left }.changes_text());
+        assert!(Command::Undo.changes_text());
+        assert!(Command::Save.changes_text());
+    }
+
+    #[test]
+    fn a_yank_leaves_the_text_alone_and_the_other_operators_do_not() {
+        let target = Target::Motion { motion: Motion::WordForward { big: false }, count: 1 };
+        let operate = |operator| Command::Operate { operator, target: target.clone(), register: None };
+        assert!(!operate(Operator::Yank).changes_text());
+        assert!(operate(Operator::Delete).changes_text());
+    }
 }

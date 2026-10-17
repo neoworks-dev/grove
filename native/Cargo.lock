@@ -2380,6 +2380,7 @@ name = "grove_native"
 version = "0.1.0"
 dependencies = [
  "editor-core",
+ "futures",
  "lsp-client",
  "serde_json",
  "svelte_gpui_host",

@@ -209,7 +209,7 @@ export class EditorService extends Service {
    * on another kind. A file that is already open is shown as it is, with its edits.
    */
   open(path: string): void {
-    void this.openPath(path);
+    this.openPath(path).catch((error) => this.setMessage(describeError(error)));
   }
 
   /** Like `open`, and resolves to the document's id once it is shown, or null when it could not be opened. */
@@ -294,8 +294,9 @@ export class EditorService extends Service {
       this.showIn(leafId, documentId, false);
       return;
     }
-    await this.host.close(documentId);
+    // Forgotten before the host is asked, so a second release meanwhile finds nothing to close.
     this.forget(documentId);
+    await this.host.close(documentId);
   }
 
   /** Every open document, in the order they were opened. Reactive. */
@@ -443,7 +444,7 @@ export class EditorService extends Service {
       return;
     }
     await this.host.configure(options);
-    await Promise.all([...this.viewsByLeaf.values()].map((view) => view.refresh()));
+    await this.refreshViews();
   }
 
   /**
@@ -457,7 +458,7 @@ export class EditorService extends Service {
       return false;
     }
     await this.host.setDecorations(info.id, source, decorations);
-    await Promise.all([...this.viewsByLeaf.values()].map((view) => view.refresh()));
+    await this.refreshViews();
     return true;
   }
 
@@ -467,7 +468,19 @@ export class EditorService extends Service {
    */
   async setDecorationsOf(documentId: number, source: string, decorations: Decoration[]): Promise<void> {
     await this.host.setDecorations(documentId, source, decorations);
-    await Promise.all([...this.viewsByLeaf.values()].map((view) => view.refresh()));
+    await this.refreshViews();
+  }
+
+  /** Asks every mounted editor to draw again. One that is being unmounted cannot, and that does not stop the others. */
+  private async refreshViews(): Promise<void> {
+    const refreshes = [...this.viewsByLeaf.values()].map(async (view) => {
+      try {
+        await view.refresh();
+      } catch (error) {
+        this.ctx.logger.warn(`editor: could not redraw a view: ${describeError(error)}`);
+      }
+    });
+    await Promise.all(refreshes);
   }
 
   /** Removes everything a source has put on a file's text. */
@@ -815,7 +828,7 @@ export class EditorService extends Service {
       return;
     }
     if (event.type === "close-request") {
-      void this.closeFromCommandLine(event.id, event.discard);
+      this.closeFromCommandLine(event.id, event.discard).catch((error) => this.setMessage(describeError(error)));
       return;
     }
     if (event.type === "open-request") {

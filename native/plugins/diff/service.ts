@@ -669,8 +669,11 @@ export class DiffService extends Service {
       this.say("There are no changes.");
       return;
     }
-    await record.editors.right.apply({ type: "place_cursor", at: { row, column: 0 } });
-    await record.editors.right.apply({ type: "scroll_to", align: "center" });
+    const editor = record.editors.right;
+    await this.attempt(async () => {
+      await editor.apply({ type: "place_cursor", at: { row, column: 0 } });
+      await editor.apply({ type: "scroll_to", align: "center" });
+    });
   }
 
   /** Moves the editor's cursor to the next or previous change against HEAD. */

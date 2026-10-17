@@ -15,6 +15,9 @@ export function gpuiDocumentHost(): DocumentHost {
     save: async (id) => {
       await invoke("document_save", { id });
     },
+    setDecorations: async (id, source, decorations) => {
+      await invoke("document_set_decorations", { id, source, decorations });
+    },
     onEvent: listenToDocuments,
   };
 }

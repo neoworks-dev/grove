@@ -1,19 +1,76 @@
 //! What an editor is, apart from how it is shown: the buffer and the selections in it.
 
+use std::time::Instant;
+
+use crate::anchor::{Anchor, AnchorId, Anchors, Bias};
 use crate::buffer::{Buffer, Position};
 use crate::command::{Command, Outcome};
+use crate::history::History;
 use crate::movement::{Motion, find_next, move_selection, vertical, word_at};
 use crate::selections::{Selection, Selections};
 
 pub struct EditorState {
-    buffer: Buffer,
-    selections: Selections,
+    pub(crate) buffer: Buffer,
+    pub(crate) selections: Selections,
+    /// The places other things have pinned to the text, kept up to date through every edit.
+    pub(crate) anchors: Anchors,
+    pub(crate) history: History,
+    /// Identifies the text as it is now. Every change makes a new one, and undo goes back to
+    /// the one before, so the text is unmodified exactly when this is the saved one.
+    pub(crate) revision: u64,
+    pub(crate) next_revision: u64,
+    saved_revision: u64,
+    /// The start and end of the text an input method is composing, if any.
+    pub(crate) marked: Option<(AnchorId, AnchorId)>,
+    /// The text of the last copy that took whole lines, so pasting it puts the lines above the cursor.
+    pub(crate) whole_line_copy: Option<String>,
 }
 
 impl EditorState {
     /// A state over a buffer, with one cursor at its start.
     pub fn new(buffer: Buffer) -> Self {
-        EditorState { buffer, selections: Selections::single(Position::default()) }
+        EditorState {
+            buffer,
+            selections: Selections::single(Position::default()),
+            anchors: Anchors::default(),
+            history: History::default(),
+            revision: 0,
+            next_revision: 0,
+            saved_revision: 0,
+            marked: None,
+            whole_line_copy: None,
+        }
+    }
+
+    /// Whether the text differs from what was last read from or written to its file.
+    pub fn is_modified(&self) -> bool {
+        self.revision != self.saved_revision
+    }
+
+    /// The text being composed by an input method, as the positions it starts and ends at.
+    pub fn marked_range(&self) -> Option<(Position, Position)> {
+        let (start, end) = self.marked?;
+        let start = self.anchors.get(start)?;
+        let end = self.anchors.get(end)?;
+        Some((self.buffer.position_of(start.offset), self.buffer.position_of(end.offset)))
+    }
+
+    /// Pins a place in the text that keeps its meaning through edits, such as one a squiggle
+    /// or a blame annotation is drawn at. `bias` says which side of text inserted exactly there
+    /// it stays on.
+    pub fn create_anchor(&mut self, at: Position, bias: Bias) -> AnchorId {
+        self.anchors.insert(Anchor { offset: self.buffer.offset_of(at), bias })
+    }
+
+    /// Where an anchor is now, or none once it has been removed.
+    pub fn anchor_position(&self, id: AnchorId) -> Option<Position> {
+        let anchor = self.anchors.get(id)?;
+        Some(self.buffer.position_of(anchor.offset))
+    }
+
+    /// Stops keeping an anchor up to date.
+    pub fn remove_anchor(&mut self, id: AnchorId) {
+        self.anchors.remove(id);
     }
 
     /// The text.
@@ -33,13 +90,76 @@ impl EditorState {
 
     /// Applies a command. This is the only way the buffer and the selections change.
     pub fn apply(&mut self, command: &Command) -> Outcome {
-        let before = self.selections.clone();
-        let reveal_newest = self.run(command);
-        Outcome { changed: self.selections != before, reveal_newest }
+        self.apply_at(command, Instant::now())
     }
 
-    /// Runs a command and says whether the view should follow the newest selection.
-    fn run(&mut self, command: &Command) -> bool {
+    /// Applies a command that happened at a given time, which decides whether typed text joins
+    /// the typing before it.
+    pub fn apply_at(&mut self, command: &Command, now: Instant) -> Outcome {
+        let before = self.selections.clone();
+        if !matches!(command, Command::InsertText { .. } | Command::SetMarkedText { .. }) {
+            self.history.close_group();
+        }
+        let mut outcome = self.run(command, now);
+        outcome.changed = outcome.changed || self.selections != before;
+        outcome
+    }
+
+    /// Runs a command and says what it did, apart from whether the selections changed.
+    fn run(&mut self, command: &Command, now: Instant) -> Outcome {
+        match command {
+            Command::InsertText { text } => self.insert_text(text, now),
+            Command::Delete { motion } => self.delete(*motion, now),
+            Command::InsertNewline => self.insert_newline(now),
+            Command::InsertTab => self.insert_tab(now),
+            Command::Undo => self.undo_outcome(),
+            Command::Redo => self.redo_outcome(),
+            Command::Copy => self.copy(),
+            Command::Cut => self.cut(now),
+            Command::Paste { text } => self.paste(text, now),
+            Command::PasteClipboard => Outcome::default(),
+            Command::Save => self.save(),
+            Command::SetMarkedText { text } => self.set_marked_text(text, now),
+            Command::UnmarkText => {
+                self.clear_marked();
+                Outcome::default()
+            }
+            Command::ReplaceRange { start, end, text } => self.replace_range(*start, *end, text, now),
+            _ => self.run_navigation(command),
+        }
+    }
+
+    /// Runs a command that moves or selects, and never touches the text.
+    fn run_navigation(&mut self, command: &Command) -> Outcome {
+        let reveal_newest = self.navigate(command);
+        Outcome { reveal_newest, ..Outcome::default() }
+    }
+
+    /// Takes back the last transaction, and says that the text and the selections changed.
+    fn undo_outcome(&mut self) -> Outcome {
+        let changed = self.undo();
+        Outcome { changed, text_changed: changed, reveal_newest: changed, ..Outcome::default() }
+    }
+
+    /// Does the last undone transaction again.
+    fn redo_outcome(&mut self) -> Outcome {
+        let changed = self.redo();
+        Outcome { changed, text_changed: changed, reveal_newest: changed, ..Outcome::default() }
+    }
+
+    /// Writes the buffer to its file, and the text counts as unmodified if that worked.
+    fn save(&mut self) -> Outcome {
+        match self.buffer.save() {
+            Ok(()) => {
+                self.saved_revision = self.revision;
+                Outcome { saved: true, ..Outcome::default() }
+            }
+            Err(error) => Outcome { error: Some(error.to_string()), ..Outcome::default() },
+        }
+    }
+
+    /// Runs a navigation command and says whether the view should follow the newest selection.
+    fn navigate(&mut self, command: &Command) -> bool {
         match command {
             Command::MoveSelections { motion, extend } => {
                 self.move_selections(*motion, *extend);
@@ -72,6 +192,7 @@ impl EditorState {
                 self.select_word_at(self.buffer.clamp(*at));
                 false
             }
+            _ => false,
         }
     }
 
@@ -175,7 +296,7 @@ mod tests {
     fn moving_reports_a_change_and_asks_to_follow() {
         let mut state = state("abc\ndef");
         let outcome = state.apply(&move_by(Motion::Right, false));
-        assert_eq!(outcome, Outcome { changed: true, reveal_newest: true });
+        assert_eq!(outcome, Outcome { changed: true, reveal_newest: true, ..Outcome::default() });
         assert_eq!(heads(&state), vec![at(0, 1)]);
     }
 
@@ -231,7 +352,7 @@ mod tests {
     fn select_next_occurrence_takes_the_word_then_each_match() {
         let mut state = state("foo bar\nfoo\nfoo");
         let outcome = state.apply(&Command::SelectNextOccurrence);
-        assert_eq!(outcome, Outcome { changed: true, reveal_newest: false });
+        assert_eq!(outcome, Outcome { changed: true, reveal_newest: false, ..Outcome::default() });
         assert_eq!(state.selections().all(), &[Selection::spanning(at(0, 0), at(0, 3))]);
         let outcome = state.apply(&Command::SelectNextOccurrence);
         assert!(outcome.reveal_newest);
@@ -281,7 +402,7 @@ mod tests {
         let mut state = state("abc\ndef");
         state.apply(&Command::AddCursorBelow);
         let outcome = state.apply(&Command::PlaceCursor { at: at(0, 99) });
-        assert_eq!(outcome, Outcome { changed: true, reveal_newest: false });
+        assert_eq!(outcome, Outcome { changed: true, reveal_newest: false, ..Outcome::default() });
         assert_eq!(heads(&state), vec![at(0, 3)]);
     }
 

@@ -32,18 +32,20 @@ pub struct InputContext {
 /// Turns key presses into commands. A layer may keep state between keys, which is why it is
 /// borrowed mutably; the view holds one and asks it about every key.
 pub trait InputLayer {
-    /// The command a key makes, or none when the layer leaves the key for whatever is behind
-    /// the editor.
-    fn translate(&mut self, key: &KeyInput, context: &InputContext) -> Option<Command>;
+    /// The commands a key makes, in the order to apply them, or none when the layer leaves the
+    /// key for whatever is behind the editor. A layer with several to give, such as a vim key
+    /// that deletes and then switches mode, returns them all.
+    fn translate(&mut self, key: &KeyInput, context: &InputContext) -> Vec<Command>;
 }
 
-/// VS Code's keys: cursor keys, Home and End, Ctrl-A and Ctrl-D, Ctrl-Alt-Up and Down, Escape.
+/// VS Code's keys: cursor keys, Home and End, Ctrl-A and Ctrl-D, Ctrl-Alt-Up and Down, Escape,
+/// Backspace, Delete, Enter and Tab, undo and redo, the clipboard keys and Ctrl-S.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct StandardKeymap;
 
 impl InputLayer for StandardKeymap {
-    fn translate(&mut self, key: &KeyInput, context: &InputContext) -> Option<Command> {
-        standard_command(key, context)
+    fn translate(&mut self, key: &KeyInput, context: &InputContext) -> Vec<Command> {
+        standard_command(key, context).into_iter().collect()
     }
 }
 
@@ -56,9 +58,32 @@ pub fn standard_command(key: &KeyInput, context: &InputContext) -> Option<Comman
     if modifiers.control {
         return control_command(&key.key, modifiers.shift);
     }
+    if modifiers.alt {
+        return cursor_key_command(key, context);
+    }
+    if let Some(command) = editing_key_command(&key.key) {
+        return Some(command);
+    }
     if key.key == "escape" {
         return Some(Command::CollapseSelections);
     }
+    cursor_key_command(key, context)
+}
+
+/// Backspace, Delete, Enter and Tab, which Shift does not change.
+fn editing_key_command(key: &str) -> Option<Command> {
+    match key {
+        "backspace" => Some(Command::Delete { motion: Motion::Left }),
+        "delete" => Some(Command::Delete { motion: Motion::Right }),
+        "enter" => Some(Command::InsertNewline),
+        "tab" => Some(Command::InsertTab),
+        _ => None,
+    }
+}
+
+/// A cursor key: moving, or extending the selection with Shift.
+fn cursor_key_command(key: &KeyInput, context: &InputContext) -> Option<Command> {
+    let modifiers = key.modifiers;
     let motion = cursor_key_motion(&key.key, context.page_rows)?;
     Some(Command::MoveSelections { motion, extend: modifiers.shift })
 }
@@ -72,9 +97,16 @@ fn multi_cursor_command(key: &str) -> Option<Command> {
     }
 }
 
-/// Ctrl with another key: the buffer's ends, selecting all, and selecting the next match.
+/// Ctrl with another key: the buffer's ends, selecting, undo and redo, the clipboard and saving.
 fn control_command(key: &str, extend: bool) -> Option<Command> {
     match key {
+        "z" if extend => Some(Command::Redo),
+        "z" => Some(Command::Undo),
+        "y" => Some(Command::Redo),
+        "c" => Some(Command::Copy),
+        "x" => Some(Command::Cut),
+        "v" => Some(Command::PasteClipboard),
+        "s" => Some(Command::Save),
         "home" => Some(Command::MoveSelections { motion: Motion::BufferStart, extend }),
         "end" => Some(Command::MoveSelections { motion: Motion::BufferEnd, extend }),
         "a" => Some(Command::SelectAll),
@@ -108,7 +140,9 @@ mod tests {
 
     fn press(key: &str, control: bool, alt: bool, shift: bool) -> Option<Command> {
         let input = KeyInput { key: key.to_string(), modifiers: Modifiers { control, alt, shift } };
-        StandardKeymap.translate(&input, &PAGE)
+        let mut commands = StandardKeymap.translate(&input, &PAGE);
+        assert!(commands.len() <= 1, "the standard keymap gives one command per key");
+        commands.pop()
     }
 
     fn movement(motion: Motion, extend: bool) -> Option<Command> {
@@ -151,7 +185,33 @@ mod tests {
     fn escape_collapses_and_other_keys_are_left_alone() {
         assert_eq!(press("escape", false, false, false), Some(Command::CollapseSelections));
         assert_eq!(press("x", false, false, false), None);
-        assert_eq!(press("tab", false, false, false), None);
+        assert_eq!(press("f5", false, false, false), None);
+    }
+
+    #[test]
+    fn keys_the_layer_leaves_alone_give_an_empty_list() {
+        let input = KeyInput { key: "space".to_string(), modifiers: Modifiers::default() };
+        assert!(StandardKeymap.translate(&input, &PAGE).is_empty());
+    }
+
+    #[test]
+    fn editing_keys_make_edit_commands() {
+        assert_eq!(press("backspace", false, false, false), Some(Command::Delete { motion: Motion::Left }));
+        assert_eq!(press("delete", false, false, false), Some(Command::Delete { motion: Motion::Right }));
+        assert_eq!(press("enter", false, false, true), Some(Command::InsertNewline));
+        assert_eq!(press("tab", false, false, false), Some(Command::InsertTab));
+        assert_eq!(press("backspace", false, true, false), None);
+    }
+
+    #[test]
+    fn control_keys_undo_redo_copy_paste_and_save() {
+        assert_eq!(press("z", true, false, false), Some(Command::Undo));
+        assert_eq!(press("z", true, false, true), Some(Command::Redo));
+        assert_eq!(press("y", true, false, false), Some(Command::Redo));
+        assert_eq!(press("c", true, false, false), Some(Command::Copy));
+        assert_eq!(press("x", true, false, false), Some(Command::Cut));
+        assert_eq!(press("v", true, false, false), Some(Command::PasteClipboard));
+        assert_eq!(press("s", true, false, false), Some(Command::Save));
     }
 
     #[test]

@@ -53,6 +53,14 @@ impl Selections {
         Selections { list: vec![Selection::cursor(at)], newest: 0 }
     }
 
+    /// Selections from a list in any order, with the one at `newest` as the newest. Any that
+    /// overlap are merged.
+    pub fn from_list(list: Vec<Selection>, newest: usize) -> Self {
+        let mut selections = Selections { newest: newest.min(list.len() - 1), list };
+        selections.normalize();
+        selections
+    }
+
     /// All selections, in order.
     pub fn all(&self) -> &[Selection] {
         &self.list
@@ -61,6 +69,11 @@ impl Selections {
     /// The selection added last.
     pub fn newest(&self) -> Selection {
         self.list[self.newest]
+    }
+
+    /// Where the newest selection is in `all()`.
+    pub fn newest_index(&self) -> usize {
+        self.newest
     }
 
     /// How many there are.

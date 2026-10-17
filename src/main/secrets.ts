@@ -4,7 +4,7 @@
 // is the one thing in grove that must not sit in `settings.json`: those files are
 // human-editable, one of them lives inside the repository, and both are read by
 // anything that can read the disk. These live in their own file, encrypted with
-// the OS keychain through Electron's `safeStorage`.
+// the OS keychain through the host's encryption (Electron's `safeStorage`).
 //
 // Where no keychain is available — a Linux box with no keyring running —
 // encryption is refused rather than downgraded: grove stores nothing and says
@@ -13,7 +13,7 @@
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { app, safeStorage } from 'electron'
+import { platform } from './platform'
 
 const SECRETS_FILE = 'credentials.enc'
 
@@ -67,7 +67,7 @@ export class SecretsService {
   }
 
   storable(): boolean {
-    return safeStorage.isEncryptionAvailable()
+    return platform().encryption.isAvailable()
   }
 
   status(names: string[]): SecretStatus {
@@ -93,7 +93,7 @@ export class SecretsService {
   private decrypt(encrypted: string): string | null {
     if (!this.storable()) return null
     try {
-      return safeStorage.decryptString(Buffer.from(encrypted, 'base64'))
+      return platform().encryption.decrypt(Buffer.from(encrypted, 'base64'))
     } catch {
       // A store written under a different keychain entry is unreadable, not fatal.
       return null
@@ -113,7 +113,7 @@ export class SecretsService {
   private async write(): Promise<void> {
     const encrypted: Record<string, string> = {}
     for (const [name, value] of this.values) {
-      encrypted[name] = safeStorage.encryptString(value).toString('base64')
+      encrypted[name] = platform().encryption.encrypt(value).toString('base64')
     }
     const path = secretsPath()
     await mkdir(dirname(path), { recursive: true })
@@ -122,5 +122,5 @@ export class SecretsService {
 }
 
 function secretsPath(): string {
-  return join(app.getPath('userData'), SECRETS_FILE)
+  return join(platform().userDataPath(), SECRETS_FILE)
 }

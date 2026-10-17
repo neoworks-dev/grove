@@ -2,7 +2,8 @@
 
 import type { Context } from '@neoworks/extension-system'
 import { route } from '../kernel/route'
-import { app, type IpcMainInvokeEvent } from 'electron'
+import type { IpcMainInvokeEvent } from 'electron'
+import { platform } from '../platform'
 import { registerPluginProtocol } from '../plugins/protocol'
 import { watchBuiltinBuilds } from '../plugins/devReload'
 import type { PermissionDecision as PluginPermissionDecision } from '../api/broker'
@@ -19,7 +20,7 @@ export const pluginsRoutes = {
     // plugins join when one is.
     void ctx.plugins.registry.loadAll(null)
     // `bun run dev` rebuilds built-in plugins as their sources change.
-    if (!app.isPackaged) {
+    if (!platform().isPackaged()) {
       ctx.effect(
         () =>
           watchBuiltinBuilds(ctx.plugins.registry, (pluginId) =>

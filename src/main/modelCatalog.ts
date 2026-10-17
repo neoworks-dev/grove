@@ -14,6 +14,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { ModelPricing } from '../shared/agents'
+import { platform } from './platform'
 
 const CATALOG_URL = 'https://models.dev/api.json'
 const CACHE_FILE = 'model-catalog.json'
@@ -207,8 +208,7 @@ function stringList(value: unknown): string[] {
 }
 
 async function cachePath(): Promise<string> {
-  const { app } = await import('electron')
-  return join(app.getPath('userData'), CACHE_FILE)
+  return join(platform().userDataPath(), CACHE_FILE)
 }
 
 async function readCache(): Promise<CachedCatalog | null> {

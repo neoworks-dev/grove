@@ -6,7 +6,7 @@
 // themes/LSP entries are metadata. Installed set is persisted app-globally in
 // state.
 
-import { app } from 'electron'
+import { platform } from './platform'
 import { readFile, writeFile, mkdir, rm } from 'fs/promises'
 import { join } from 'path'
 import { loadState, saveState } from './state'
@@ -231,7 +231,7 @@ export function catalogEntry(id: string): CatalogEntry | undefined {
 }
 
 function extDir(id: string): string {
-  return join(app.getPath('userData'), 'extensions', id)
+  return join(platform().userDataPath(), 'extensions', id)
 }
 
 export async function listInstalled(): Promise<InstalledExtension[]> {

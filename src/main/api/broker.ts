@@ -9,6 +9,7 @@ import { readFile, writeFile, mkdir } from 'fs/promises'
 import { dirname, join, resolve, sep } from 'path'
 import type { PluginManifest, PluginPermission } from '../../shared/plugins'
 import type { ClientRecord, ClientKind } from './clients'
+import { platform } from '../platform'
 
 export interface PluginPermissionRequest {
   id: string
@@ -75,12 +76,9 @@ export class PermissionBroker {
     this.grantsFilePath = options.grantsPath ?? null
   }
 
-  // Electron is imported lazily so tests (which always inject a path) can
-  // load this module under bun without an electron runtime.
   private async grantsPath(): Promise<string> {
     if (this.grantsFilePath) return this.grantsFilePath
-    const { app } = await import('electron')
-    this.grantsFilePath = join(app.getPath('userData'), 'plugin-grants.json')
+    this.grantsFilePath = join(platform().userDataPath(), 'plugin-grants.json')
     return this.grantsFilePath
   }
 

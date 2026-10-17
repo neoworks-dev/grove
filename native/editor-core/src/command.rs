@@ -171,7 +171,15 @@ pub enum Command {
     /// Opens an empty line below each cursor's line, or above it, with its indentation (`o`, `O`).
     OpenLine { above: bool },
     /// Replaces a pattern with text on some lines (`:s`).
-    Substitute { range: LineRange, pattern: String, replacement: String, global: bool },
+    Substitute {
+        range: LineRange,
+        pattern: String,
+        replacement: String,
+        global: bool,
+        /// The `i` flag: letters match in either case.
+        #[serde(default)]
+        ignore_case: bool,
+    },
     /// Moves every cursor to the next match of a search.
     VimSearch {
         request: SearchRequest,
@@ -195,6 +203,8 @@ pub enum Command {
     GroupUndo { open: bool },
     /// Scrolls the view so the newest cursor's line is at the top, middle or bottom.
     ScrollTo { align: ScrollAlign },
+    /// `:noh`: stops marking the matches of the last search.
+    ClearSearchHighlight,
     /// Remembers the selection about to be left, so `gv` and `.` can use it.
     RememberVisual { kind: SelectionKind },
     /// `gv`: selects the last visual selection again.
@@ -282,6 +292,7 @@ impl Command {
             | Command::GroupUndo { .. }
             | Command::ScrollTo { .. }
             | Command::ScrollView { .. }
+            | Command::ClearSearchHighlight
             | Command::RememberVisual { .. }
             | Command::ReselectVisual
             | Command::SelectLastExtent
@@ -319,6 +330,7 @@ impl Command {
                 | Command::GroupUndo { .. }
                 | Command::ScrollTo { .. }
                 | Command::ScrollView { .. }
+                | Command::ClearSearchHighlight
                 | Command::RememberVisual { .. }
                 | Command::ReselectVisual
                 | Command::SelectLastExtent

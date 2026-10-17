@@ -11,7 +11,8 @@ use crate::selections::Selection;
 use crate::state::EditorState;
 use crate::vim::operate::{Covered, covered_text, line_end_offset};
 use crate::vim::plan::{CursorSpec, Plan};
-use crate::vim::registers::Register;
+use crate::vim::pattern::Pattern;
+use crate::vim::registers::{LastSearch, Register};
 use crate::vim::types::{LineRange, SelectionKind};
 
 /// The text the system clipboard gives as a register: text ending in a line break is whole lines.
@@ -294,15 +295,31 @@ impl EditorState {
         edited(self.commit_plans(plans, false, now))
     }
 
-    /// Replaces a pattern with text on some lines, and reports when it was nowhere.
+    /// Replaces matches of a pattern, in the lines of a range, with a replacement (see `expand_replacement`).
     pub(crate) fn substitute(
         &mut self,
         range: LineRange,
         pattern: &str,
         replacement: &str,
         global: bool,
+        ignore_case: bool,
         now: Instant,
     ) -> Outcome {
+        let source = if pattern.is_empty() {
+            match &self.memory.last_search {
+                Some(last) => last.pattern.clone(),
+                None => return error_outcome("E35: No previous regular expression".to_string()),
+            }
+        } else {
+            pattern.to_string()
+        };
+        let whole_word = pattern.is_empty() && self.memory.last_search.as_ref().is_some_and(|last| last.whole_word);
+        let compiled = match Pattern::parse(&source, whole_word, ignore_case) {
+            Ok(compiled) => compiled,
+            Err(message) => return error_outcome(message),
+        };
+        self.memory.last_search = Some(LastSearch { pattern: source.clone(), forward: true, whole_word });
+        self.memory.search_highlight = true;
         let last_row = self.buffer.line_count().saturating_sub(1);
         let (first, last) = match range {
             LineRange::Current => (self.selections.newest().head.row, self.selections.newest().head.row),
@@ -312,21 +329,30 @@ impl EditorState {
                 (all[0].start().row, all[all.len() - 1].end().row)
             }
         };
-        let pattern_length = pattern.chars().count();
         let mut edits = Vec::new();
         let mut last_changed_row = first;
         for row in first..=last.min(last_row) {
             let line_start = self.buffer.offset_of(Position { row, column: 0 });
-            let columns = matches_in_line(&self.buffer.line(row), pattern);
-            let taken = if global { columns.len() } else { columns.len().min(1) };
-            for column in columns.into_iter().take(taken) {
+            let line = self.buffer.line(row);
+            let before = edits.len();
+            for captures in compiled.regex().captures_iter(&line) {
+                let Some(whole) = captures.get(0) else {
+                    continue;
+                };
+                let column = line[..whole.start()].chars().count();
+                let length = whole.as_str().chars().count();
                 let start = line_start + column;
-                edits.push(Edit::replace(start..start + pattern_length, replacement));
+                edits.push(Edit::replace(start..start + length, expand_replacement(replacement, &captures)));
+                if !global {
+                    break;
+                }
+            }
+            if edits.len() > before {
                 last_changed_row = row;
             }
         }
         if edits.is_empty() {
-            return Outcome { error: Some(format!("E486: Pattern not found: {pattern}")), ..Outcome::default() };
+            return error_outcome(format!("E486: Pattern not found: {source}"));
         }
         let near = self.buffer.offset_of(Position { row: last_changed_row, column: 0 });
         let plan = Plan { edits, cursor: CursorSpec::FirstNonBlankNear(near) };
@@ -334,24 +360,33 @@ impl EditorState {
     }
 }
 
-/// The columns where a pattern occurs in a line, not overlapping.
-fn matches_in_line(line: &str, pattern: &str) -> Vec<usize> {
-    let characters: Vec<char> = line.chars().collect();
-    let needle: Vec<char> = pattern.chars().collect();
-    let mut columns = Vec::new();
-    if needle.is_empty() {
-        return columns;
-    }
-    let mut column = 0;
-    while column + needle.len() <= characters.len() {
-        if characters[column..column + needle.len()] == needle[..] {
-            columns.push(column);
-            column += needle.len();
-            continue;
+/// An outcome that only carries an error message.
+fn error_outcome(message: String) -> Outcome {
+    Outcome { error: Some(message), ..Outcome::default() }
+}
+
+/// What a match is replaced with: `&` is the whole match, `\1` to `\9` are its groups, `\r` is a
+/// line break, `\t` a tab, and a backslash before anything else is that character.
+fn expand_replacement(replacement: &str, captures: &regex::Captures) -> String {
+    let mut text = String::new();
+    let mut characters = replacement.chars();
+    while let Some(character) = characters.next() {
+        match character {
+            '&' => text.push_str(captures.get(0).map_or("", |whole| whole.as_str())),
+            '\\' => match characters.next() {
+                Some(digit @ '0'..='9') => {
+                    let group = digit.to_digit(10).unwrap_or(0) as usize;
+                    text.push_str(captures.get(group).map_or("", |found| found.as_str()));
+                }
+                Some('r') => text.push('\n'),
+                Some('t') => text.push('\t'),
+                Some(other) => text.push(other),
+                None => text.push('\\'),
+            },
+            other => text.push(other),
         }
-        column += 1;
     }
-    columns
+    text
 }
 
 /// The plan for joining a row with the `joins` rows after it.

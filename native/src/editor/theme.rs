@@ -155,6 +155,7 @@ impl EditorTheme {
             Tone::AddedWord => self.added,
             Tone::DeletedWord => self.deleted,
             Tone::Filler => self.hint,
+            Tone::SearchMatch => self.warning,
         }
     }
 

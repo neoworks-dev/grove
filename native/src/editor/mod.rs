@@ -24,6 +24,7 @@ mod occurrence_view;
 mod options;
 mod popup;
 mod signals;
+mod search_marks;
 mod smooth_scroll;
 mod theme;
 mod vim_paint;
@@ -276,6 +277,7 @@ impl Editor {
         if outcome.changed || outcome.text_changed {
             self.occurrences_may_have_changed(cx);
         }
+        self.refresh_search_marks(cx);
         self.scroll_group_to_here(cx);
         outcome
     }
@@ -746,6 +748,7 @@ impl Render for Editor {
                 editor.jump = None;
                 editor.wheel_scrolled(event.delta);
                 editor.occurrences_may_have_changed(cx);
+                editor.refresh_search_marks(cx);
                 editor.scroll_group_to_here(cx);
                 cx.notify();
             }))

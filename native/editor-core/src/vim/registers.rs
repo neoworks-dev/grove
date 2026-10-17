@@ -47,6 +47,8 @@ pub struct LastSearch {
 pub struct VimMemory {
     registers: HashMap<char, Register>,
     pub last_search: Option<LastSearch>,
+    /// Whether the matches of the last search are marked in the text, until `:noh`.
+    pub search_highlight: bool,
 }
 
 impl VimMemory {

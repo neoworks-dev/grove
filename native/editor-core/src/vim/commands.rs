@@ -32,8 +32,8 @@ impl EditorState {
             Command::ReplaceChars { character, count, over } => self.replace_chars(*character, *count, *over, now),
             Command::Overwrite { text } => self.overwrite(text, now),
             Command::OpenLine { above } => self.open_line(*above, now),
-            Command::Substitute { range, pattern, replacement, global } => {
-                self.substitute(*range, pattern, replacement, *global, now)
+            Command::Substitute { range, pattern, replacement, global, ignore_case } => {
+                self.substitute(*range, pattern, replacement, *global, *ignore_case, now)
             }
             Command::VimSearch { request, count, extend } => self.vim_search(request, *count, *extend),
             Command::SelectObject { object, around, count } => self.select_object(*object, *around, *count),
@@ -64,6 +64,10 @@ impl EditorState {
                 Outcome::default()
             }
             Command::ScrollTo { align } => Outcome { scroll: Some(*align), ..Outcome::default() },
+            Command::ClearSearchHighlight => {
+                self.memory.search_highlight = false;
+                Outcome::default()
+            }
             Command::RememberVisual { kind } => {
                 self.remember_visual(*kind);
                 Outcome::default()

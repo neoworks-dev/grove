@@ -36,6 +36,8 @@ pub enum Tone {
     DeletedWord,
     /// Rows that stand in for lines the other side of a comparison has, so the two line up.
     Filler,
+    /// A place the last search found in vim.
+    SearchMatch,
 }
 
 /// How a line under a highlighted range is drawn.

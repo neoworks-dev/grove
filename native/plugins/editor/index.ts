@@ -86,6 +86,7 @@ export const editor = {
   apply(ctx: Context, config: EditorConfig) {
     const service = new EditorService(ctx, gpuiDocumentHost(), ctx.layout);
     service.setKeymap(config.keymap);
+    service.setPendingSequenceSource(() => ctx.keymap.pendingSteps().length > 0);
     const configure = (options: EditorOptions) => {
       service.configure(options).catch((error) => ctx.logger.warn(`editor: could not apply the settings: ${String(error)}`));
     };

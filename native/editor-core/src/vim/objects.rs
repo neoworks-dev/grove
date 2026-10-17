@@ -31,6 +31,8 @@ pub fn find_object(
         TextObject::Paragraph => paragraph_object(buffer, at.row, around, count),
         TextObject::Quote { quote } => quote_object(buffer, at, quote, around),
         TextObject::Pair { open, close } => pair_object(buffer, at, open, close, around),
+        TextObject::Tag => tag_object(buffer, at, around, count),
+        TextObject::Sentence => sentence_object(buffer, at, around, count),
     }
 }
 
@@ -221,6 +223,165 @@ fn pair_object(buffer: &Buffer, at: Position, open: char, close: char, around: b
     Some(ObjectRange::Chars { start: open_offset + 1, end: close_offset })
 }
 
+/// A start tag or an end tag found in the text: its name, and where it starts and ends as offsets.
+struct Tag {
+    name: String,
+    closing: bool,
+    start: usize,
+    end: usize,
+}
+
+/// Tags that never have an end tag.
+const VOID_TAGS: [&str; 14] =
+    ["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"];
+
+/// The start and end tags of `characters`, leaving out comments, self-closing tags and void tags.
+fn tags_of(characters: &[char]) -> Vec<Tag> {
+    let mut tags = Vec::new();
+    let mut index = 0;
+    while index < characters.len() {
+        if characters[index] != '<' {
+            index += 1;
+            continue;
+        }
+        let rest: String = characters[index..].iter().take(4).collect();
+        if rest == "<!--" {
+            let comment_end = (index + 4..characters.len().saturating_sub(2))
+                .find(|at| characters[*at] == '-' && characters[*at + 1] == '-' && characters[*at + 2] == '>');
+            index = comment_end.map_or(characters.len(), |at| at + 3);
+            continue;
+        }
+        let Some(close) = characters[index..].iter().position(|character| *character == '>') else {
+            break;
+        };
+        let end = index + close + 1;
+        let inside: String = characters[index + 1..end - 1].iter().collect();
+        let closing = inside.starts_with('/');
+        let name: String = inside
+            .trim_start_matches('/')
+            .chars()
+            .take_while(|character| character.is_alphanumeric() || matches!(character, '-' | '_' | ':' | '.'))
+            .collect();
+        let self_closing = inside.ends_with('/');
+        let void = VOID_TAGS.contains(&name.to_ascii_lowercase().as_str());
+        if !name.is_empty() && !self_closing && !void {
+            tags.push(Tag { name, closing, start: index, end });
+        }
+        index = end;
+    }
+    tags
+}
+
+/// `it` and `at`: the element around the cursor, `count` elements out. `it` is what is between
+/// its tags and `at` includes them.
+fn tag_object(buffer: &Buffer, at: Position, around: bool, count: usize) -> Option<ObjectRange> {
+    let characters: Vec<char> = buffer.slice(0..buffer.length()).chars().collect();
+    let offset = buffer.offset_of(at);
+    let mut open_tags: Vec<&Tag> = Vec::new();
+    let mut elements: Vec<(&Tag, &Tag)> = Vec::new();
+    let tags = tags_of(&characters);
+    for tag in &tags {
+        if !tag.closing {
+            open_tags.push(tag);
+            continue;
+        }
+        let Some(matching) = open_tags.iter().rposition(|open| open.name == tag.name) else {
+            continue;
+        };
+        let open = open_tags[matching];
+        open_tags.truncate(matching);
+        elements.push((open, tag));
+    }
+    let mut around_cursor: Vec<(&Tag, &Tag)> =
+        elements.into_iter().filter(|(open, close)| open.start <= offset && offset < close.end).collect();
+    around_cursor.sort_by_key(|(open, close)| close.end - open.start);
+    let (open, close) = *around_cursor.get(count.max(1) - 1)?;
+    if around {
+        return Some(ObjectRange::Chars { start: open.start, end: close.end });
+    }
+    Some(ObjectRange::Chars { start: open.end, end: close.start })
+}
+
+/// Whether a character ends a sentence when white space follows it.
+fn ends_sentence(character: char) -> bool {
+    matches!(character, '.' | '!' | '?')
+}
+
+/// The sentences of a stretch of text, as the ranges of characters, each without the white space after it.
+/// A sentence ends at `.`, `!` or `?` and any closing quotes or brackets after it, when white space
+/// or the end of the text follows, and at a blank line.
+fn sentences_of(characters: &[char]) -> Vec<(usize, usize)> {
+    let mut sentences = Vec::new();
+    let mut index = 0;
+    while index < characters.len() {
+        while index < characters.len() && characters[index].is_whitespace() {
+            index += 1;
+        }
+        if index >= characters.len() {
+            break;
+        }
+        let start = index;
+        let mut end = index;
+        while end < characters.len() {
+            let blank_line = characters[end] == '\n'
+                && characters[end + 1..].iter().take_while(|next| **next != '\n').all(|next| next.is_whitespace())
+                && end + 1 < characters.len()
+                && characters[end + 1..].contains(&'\n');
+            if blank_line {
+                break;
+            }
+            if ends_sentence(characters[end]) {
+                let mut stop = end + 1;
+                while stop < characters.len() && matches!(characters[stop], ')' | ']' | '"' | '\'' | '}') {
+                    stop += 1;
+                }
+                if stop >= characters.len() || characters[stop].is_whitespace() {
+                    end = stop;
+                    break;
+                }
+            }
+            end += 1;
+        }
+        let mut trimmed = end;
+        while trimmed > start && characters[trimmed - 1].is_whitespace() {
+            trimmed -= 1;
+        }
+        sentences.push((start, trimmed));
+        index = end;
+    }
+    sentences
+}
+
+/// `is` and `as`: the sentence at the cursor, with the white space after it for `as`. On white
+/// space between sentences, `is` is the white space and `as` the white space and the next sentence.
+fn sentence_object(buffer: &Buffer, at: Position, around: bool, count: usize) -> Option<ObjectRange> {
+    let characters: Vec<char> = buffer.slice(0..buffer.length()).chars().collect();
+    let offset = buffer.offset_of(at).min(characters.len().saturating_sub(1));
+    let sentences = sentences_of(&characters);
+    let count = count.max(1);
+    let on_sentence = sentences.iter().position(|(start, end)| *start <= offset && offset < *end);
+    let Some(first) = on_sentence else {
+        let next = sentences.iter().position(|(start, _)| *start > offset)?;
+        let gap_start = if next == 0 { 0 } else { sentences[next - 1].1 };
+        if !around {
+            return Some(ObjectRange::Chars { start: gap_start, end: sentences[next].0 });
+        }
+        let last = (next + count - 1).min(sentences.len() - 1);
+        return Some(ObjectRange::Chars { start: gap_start, end: sentences[last].1 });
+    };
+    let last = (first + count - 1).min(sentences.len() - 1);
+    let (start, end) = (sentences[first].0, sentences[last].1);
+    if !around {
+        return Some(ObjectRange::Chars { start, end });
+    }
+    let after = characters[end..].iter().take_while(|character| character.is_whitespace() && **character != '\n').count();
+    if after > 0 {
+        return Some(ObjectRange::Chars { start, end: end + after });
+    }
+    let before = characters[..start].iter().rev().take_while(|character| character.is_whitespace() && **character != '\n').count();
+    Some(ObjectRange::Chars { start: start - before, end })
+}
+
 /// Whether a line separates paragraphs.
 fn is_blank_line(buffer: &Buffer, row: usize) -> bool {
     buffer.line(row).trim().is_empty()
@@ -323,5 +484,34 @@ mod tests {
         assert_eq!(covered("a\nb\n\nc", at(0, 0), TextObject::Paragraph, false).as_deref(), Some("lines:a|b"));
         assert_eq!(covered("a\nb\n\nc", at(1, 0), TextObject::Paragraph, true).as_deref(), Some("lines:a|b|"));
         assert_eq!(covered("a\n\nc\nd", at(2, 0), TextObject::Paragraph, true).as_deref(), Some("lines:|c|d"));
+    }
+
+    #[test]
+    fn tags_are_the_element_around_the_cursor() {
+        let text = "<div><p>hello <b>big</b> world</p></div>";
+        assert_eq!(covered(text, at(0, 10), TextObject::Tag, false).as_deref(), Some("hello <b>big</b> world"));
+        assert_eq!(covered(text, at(0, 10), TextObject::Tag, true).as_deref(), Some("<p>hello <b>big</b> world</p>"));
+        assert_eq!(covered(text, at(0, 18), TextObject::Tag, false).as_deref(), Some("big"));
+        assert_eq!(covered(text, at(0, 18), TextObject::Tag, true).as_deref(), Some("<b>big</b>"));
+        assert_eq!(covered("<a><br>x</a>", at(0, 7), TextObject::Tag, false).as_deref(), Some("<br>x"));
+        assert_eq!(covered("no tags", at(0, 2), TextObject::Tag, false), None);
+        let buffer = Buffer::from_text(text);
+        let outer = find_object(&buffer, at(0, 18), TextObject::Tag, false, 3).unwrap();
+        assert_eq!(outer, ObjectRange::Chars { start: 5, end: 34 });
+    }
+
+    #[test]
+    fn sentences_end_at_punctuation_followed_by_space() {
+        let text = "One two. Three four! Five?";
+        assert_eq!(covered(text, at(0, 2), TextObject::Sentence, false).as_deref(), Some("One two."));
+        assert_eq!(covered(text, at(0, 12), TextObject::Sentence, false).as_deref(), Some("Three four!"));
+        assert_eq!(covered(text, at(0, 12), TextObject::Sentence, true).as_deref(), Some("Three four! "));
+        assert_eq!(covered(text, at(0, 22), TextObject::Sentence, true).as_deref(), Some(" Five?"));
+        assert_eq!(covered("v1.2 is out. Yes.", at(0, 1), TextObject::Sentence, false).as_deref(), Some("v1.2 is out."));
+        assert_eq!(covered("a. b", at(0, 3), TextObject::Sentence, false).as_deref(), Some("b"));
+        assert_eq!(covered("a. b", at(0, 2), TextObject::Sentence, false).as_deref(), Some(" "));
+        assert_eq!(covered("a. b", at(0, 2), TextObject::Sentence, true).as_deref(), Some(" b"));
+        assert_eq!(covered("First.\n\nSecond one.", at(0, 1), TextObject::Sentence, false).as_deref(), Some("First."));
+        assert_eq!(covered("Wraps over\ntwo lines. Next.", at(1, 1), TextObject::Sentence, false).as_deref(), Some("Wraps over\ntwo lines."));
     }
 }

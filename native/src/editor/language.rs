@@ -276,10 +276,11 @@ impl Editor {
         }
         let request = self.next_request_number();
         let sender = self.signals.clone();
+        // A failed request, such as one the server cancels because the text changed, is reported as a
+        // null item, so the item can be asked about again the next time it is selected.
         let reply = Box::new(move |result: Result<Value, lsp_client::protocol::ResponseError>| {
-            if let Ok(item) = result {
-                let _ = sender.unbounded_send(Signal::Resolved { request, item });
-            }
+            let item = result.unwrap_or(Value::Null);
+            let _ = sender.unbounded_send(Signal::Resolved { request, item });
         });
         self.lsp.request_for(document, "completionItem/resolve", raw, reply);
         if let Some(session) = &mut self.completion {
@@ -295,6 +296,10 @@ impl Editor {
         let Some(index) = session.resolving.remove(&request) else {
             return;
         };
+        if resolved.is_null() {
+            cx.notify();
+            return;
+        }
         if let Some(item) = session.items.get_mut(index) {
             item.merge_resolved(&resolved);
             session.resolved.push(index);

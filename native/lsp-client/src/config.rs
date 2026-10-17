@@ -13,6 +13,9 @@ pub struct Switches {
 /// The answer to one configuration item, naming the section the server wants.
 pub fn section(server: &str, section: &str, switches: Switches) -> Value {
     let all = all_sections(server, switches);
+    if section.is_empty() {
+        return all;
+    }
     let mut value = &all;
     for part in section.split('.') {
         match value.get(part) {
@@ -28,7 +31,13 @@ pub fn all_sections(server: &str, switches: Switches) -> Value {
     match server {
         "typescript" => {
             let language = typescript_settings(switches);
-            json!({ "typescript": language, "javascript": language, "vtsls": { "autoUseWorkspaceTsdk": true } })
+            // `completions` is where typescript-language-server reads its call completion from.
+            json!({
+                "typescript": language,
+                "javascript": language,
+                "vtsls": { "autoUseWorkspaceTsdk": true },
+                "completions": { "completeFunctionCalls": true },
+            })
         }
         "rust-analyzer" => json!({
             "rust-analyzer": {
@@ -83,6 +92,8 @@ fn typescript_settings(switches: Switches) -> Value {
     json!({
         // Rename the symbol itself in every file, not just an alias in the file that imports it.
         "preferences": { "useAliasesForRenames": false },
+        // A function completion comes with its parentheses and parameters, as a snippet.
+        "suggest": { "completeFunctionCalls": true },
         "inlayHints": {
             "parameterNames": { "enabled": hints, "suppressWhenArgumentMatchesName": true },
             "parameterTypes": { "enabled": enabled },
@@ -109,6 +120,15 @@ mod tests {
         assert_eq!(section("rust-analyzer", "rust-analyzer", ON)["inlayHints"]["typeHints"]["enable"], true);
         assert!(section("rust-analyzer", "rust-analyzer.cargo.nothing", ON).is_null());
         assert!(section("css", "css", ON).is_null());
+    }
+
+    #[test]
+    fn servers_are_asked_to_complete_function_calls() {
+        assert_eq!(section("typescript", "typescript.suggest.completeFunctionCalls", OFF), json!(true));
+        assert_eq!(section("typescript", "javascript.suggest.completeFunctionCalls", ON), json!(true));
+        assert_eq!(section("typescript", "completions.completeFunctionCalls", ON), json!(true));
+        assert_eq!(section("typescript", "", ON)["typescript"]["suggest"]["completeFunctionCalls"], true);
+        assert!(section("typescript", "typescript.format", ON).is_null());
     }
 
     #[test]

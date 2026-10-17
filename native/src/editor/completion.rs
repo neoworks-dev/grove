@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 
 use editor_core::{AnchorId, Buffer, DocumentId, Position, RangeEdit, Utf16Point};
-use lsp_client::completion::{self, Item, Match};
+use lsp_client::completion::{self, Item, ItemKind, Match};
 
 use crate::lsp::Pending;
 
@@ -179,17 +179,78 @@ pub fn plan_acceptance(buffer: &Buffer, head: Position, start: Position, item: &
     let head_offset = buffer.offset_of(head);
     let (from, to) = replaced_offsets(buffer, head, start, item);
     let from = from.min(head_offset);
-    let text = match &item.edit {
+    let mut text = match &item.edit {
         Some(edit) => edit.new_text.clone(),
         None => item.insert_text.clone(),
     };
+    let mut snippet = item.is_snippet;
+    if wants_call_parentheses(buffer, item, &text, from, to) {
+        if takes_no_arguments(item) {
+            text.push_str("()");
+        } else {
+            text = with_cursor_in_parentheses(&text);
+            snippet = true;
+        }
+    }
     Acceptance {
         before: head_offset - from,
         after: to.saturating_sub(head_offset),
         text,
-        snippet: item.is_snippet,
+        snippet,
         additional: additional_edits(buffer, item),
     }
+}
+
+/// Whether accepting a function that came back as plain text should add `()` after it, as editors do
+/// for servers that do not send a snippet with the parentheses. Not when the text already has a
+/// parenthesis, when one follows the replaced text, or when the name is being imported.
+fn wants_call_parentheses(buffer: &Buffer, item: &Item, text: &str, from: usize, to: usize) -> bool {
+    let callable = matches!(item.kind, ItemKind::Function | ItemKind::Method | ItemKind::Constructor);
+    if !callable || item.is_snippet || text.contains('(') {
+        return false;
+    }
+    if buffer.slice(to..to + 1) == "(" {
+        return false;
+    }
+    let line_start = buffer.offset_of(Position { row: buffer.position_of(from).row, column: 0 });
+    !names_an_import(&buffer.slice(line_start..from))
+}
+
+/// Whether the text of a line before a name puts the name in an import or export list, where a call makes no sense.
+fn names_an_import(before_name: &str) -> bool {
+    let trimmed = before_name.trim_start();
+    ["import ", "export {", "export *", "use ", "pub use "].iter().any(|prefix| trimmed.starts_with(prefix))
+}
+
+/// Whether the item's signature, as far as the server gave it, says it takes no arguments: the
+/// parenthesis after its name closes at once. Details such as `(method) Console.log(...)` start with
+/// a parenthesis of their own, so the name is looked for first.
+fn takes_no_arguments(item: &Item) -> bool {
+    let Some(detail) = &item.detail else {
+        return false;
+    };
+    let name_then_parenthesis = format!("{}(", item.label);
+    let open = match detail.find(&name_then_parenthesis) {
+        Some(found) => found + name_then_parenthesis.len() - 1,
+        None => match detail.find('(') {
+            Some(first) if first > 0 => first,
+            _ => return false,
+        },
+    };
+    detail[open + 1..].trim_start().starts_with(')')
+}
+
+/// Snippet text that inserts `text` literally and then `()` with the cursor between the parentheses.
+fn with_cursor_in_parentheses(text: &str) -> String {
+    let mut snippet = String::new();
+    for character in text.chars() {
+        if matches!(character, '$' | '}' | '\\') {
+            snippet.push('\\');
+        }
+        snippet.push(character);
+    }
+    snippet.push_str("($0)");
+    snippet
 }
 
 /// The offsets of the text an item replaces.
@@ -226,7 +287,7 @@ fn offset_of(buffer: &Buffer, position: lsp_client::protocol::Position) -> usize
 mod tests {
     use super::*;
     use editor_core::{Bias, EditorState};
-    use lsp_client::completion::{ItemEdit, parse_item};
+    use lsp_client::completion::{ItemEdit, ItemKind, parse_item};
     use lsp_client::protocol::{Position as LspPosition, Range, TextEdit};
     use serde_json::{Value, json};
 
@@ -301,6 +362,64 @@ mod tests {
         let plan = plan_acceptance(&buffer, at(0, 5), at(0, 2), &found);
         assert_eq!((plan.before, plan.after, plan.text.as_str()), (3, 0, "console"));
         assert!(!plan.snippet);
+    }
+
+    fn function_item(label: &str, detail: Option<&str>) -> Item {
+        let mut found = item(label);
+        found.kind = ItemKind::Function;
+        found.detail = detail.map(str::to_string);
+        found
+    }
+
+    #[test]
+    fn a_plain_function_gets_parentheses_with_the_cursor_inside() {
+        let buffer = Buffer::from_text("  gre\n");
+        let found = function_item("greet", Some("function greet(name: string): string"));
+        let plan = plan_acceptance(&buffer, at(0, 5), at(0, 2), &found);
+        assert_eq!((plan.text.as_str(), plan.snippet), ("greet($0)", true));
+    }
+
+    #[test]
+    fn a_function_without_arguments_gets_parentheses_and_the_cursor_after_them() {
+        let buffer = Buffer::from_text("  sayH\n");
+        let found = function_item("sayHello", Some("function sayHello(): void"));
+        let plan = plan_acceptance(&buffer, at(0, 6), at(0, 2), &found);
+        assert_eq!((plan.text.as_str(), plan.snippet), ("sayHello()", false));
+        let method = function_item("log", Some("(method) Console.log(): void"));
+        let plan = plan_acceptance(&buffer, at(0, 6), at(0, 2), &method);
+        assert_eq!(plan.text, "log()");
+    }
+
+    #[test]
+    fn no_parentheses_when_one_follows_or_the_text_has_them_or_it_is_an_import() {
+        let followed = Buffer::from_text("  gre(1)\n");
+        let found = function_item("greet", None);
+        assert_eq!(plan_acceptance(&followed, at(0, 5), at(0, 2), &found).text, "greet");
+        let mut with_parentheses = function_item("greet", None);
+        with_parentheses.insert_text = "greet(name)".into();
+        let buffer = Buffer::from_text("  gre\n");
+        assert_eq!(plan_acceptance(&buffer, at(0, 5), at(0, 2), &with_parentheses).text, "greet(name)");
+        let import = Buffer::from_text("import { gre\n");
+        assert_eq!(plan_acceptance(&import, at(0, 12), at(0, 9), &found).text, "greet");
+        let mut variable = item("greet");
+        variable.kind = ItemKind::Variable;
+        assert_eq!(plan_acceptance(&buffer, at(0, 5), at(0, 2), &variable).text, "greet");
+    }
+
+    #[test]
+    fn a_snippet_the_server_sent_is_left_alone() {
+        let buffer = Buffer::from_text("  gre\n");
+        let mut found = function_item("greet", None);
+        found.is_snippet = true;
+        found.insert_text = "greet(${1:name})$0".into();
+        assert_eq!(plan_acceptance(&buffer, at(0, 5), at(0, 2), &found).text, "greet(${1:name})$0");
+    }
+
+    #[test]
+    fn characters_that_mean_something_in_a_snippet_are_escaped() {
+        let buffer = Buffer::from_text("$e\n");
+        let found = function_item("$el", None);
+        assert_eq!(plan_acceptance(&buffer, at(0, 2), at(0, 0), &found).text, "\\$el($0)");
     }
 
     #[test]

@@ -26,6 +26,8 @@ struct Vim {
     errors: Vec<String>,
     requests: Vec<crate::vim::types::AppRequest>,
     copied: Vec<String>,
+    /// The first row of the view the keys are typed in, which scroll commands move.
+    top_row: usize,
 }
 
 impl Vim {
@@ -36,7 +38,7 @@ impl Vim {
         let mut state = EditorState::new(Buffer::from_text(&text));
         let position = state.buffer().position_of(offset);
         state.apply(&Command::PlaceCursor { at: position });
-        Vim { state, layer: VimLayer::new(), errors: Vec::new(), requests: Vec::new(), copied: Vec::new() }
+        Vim { state, layer: VimLayer::new(), errors: Vec::new(), requests: Vec::new(), copied: Vec::new(), top_row: 0 }
     }
 
     /// Adds a cursor at a position.
@@ -49,9 +51,13 @@ impl Vim {
     /// `<C-x>` and `<A-C-x>` name the others.
     fn keys(&mut self, typed: &str) -> &mut Vim {
         for key in key_list(typed) {
-            let commands = self.layer.translate(&key, &CONTEXT);
+            let context = InputContext { page_rows: CONTEXT.page_rows, top_row: self.top_row };
+            let commands = self.layer.translate(&key, &context);
             for command in commands {
                 let outcome = self.state.apply_at(&command, Instant::now());
+                if let Some(rows) = outcome.scroll_rows {
+                    self.top_row = (self.top_row as isize + rows).max(0) as usize;
+                }
                 if let Some(message) = outcome.error {
                     self.errors.push(message);
                 }
@@ -129,6 +135,8 @@ fn named_key(name: &str) -> KeyInput {
         "BS" => "backspace",
         "Space" => "space",
         "Tab" => "tab",
+        "lt" => "<",
+        "gt" => ">",
         "Del" => "delete",
         "Left" => "left",
         "Right" => "right",
@@ -597,17 +605,38 @@ fn control_keys_the_layer_does_not_use_go_to_the_app() {
 }
 
 #[test]
-fn page_keys_move_half_and_whole_pages() {
+fn page_keys_scroll_the_view_and_bring_the_cursor() {
     let text: String = (0..40).map(|row| format!("{row}\n")).collect();
     let mut vim = Vim::new(&format!("¦{text}"));
     vim.keys("<C-d>");
-    assert_eq!(vim.heads(), vec![at(5, 0)]);
+    assert_eq!((vim.top_row, vim.heads()), (5, vec![at(5, 0)]));
     vim.keys("<C-f>");
-    assert_eq!(vim.heads(), vec![at(13, 0)]);
+    assert_eq!((vim.top_row, vim.heads()), (13, vec![at(13, 0)]));
     vim.keys("<C-b>");
-    assert_eq!(vim.heads(), vec![at(5, 0)]);
+    assert_eq!((vim.top_row, vim.heads()), (5, vec![at(14, 0)]));
     vim.keys("<C-u>");
-    assert_eq!(vim.heads(), vec![at(0, 0)]);
+    assert_eq!((vim.top_row, vim.heads()), (0, vec![at(9, 0)]));
+}
+
+#[test]
+fn ctrl_f_moves_the_view_a_page_less_two_lines_and_ctrl_b_back() {
+    let text: String = (0..60).map(|row| format!("{row}\n")).collect();
+    let mut vim = Vim::new(&format!("¦{text}"));
+    vim.keys("<C-f><C-f>");
+    assert_eq!((vim.top_row, vim.heads()), (16, vec![at(16, 0)]));
+    vim.keys("<C-b>");
+    assert_eq!((vim.top_row, vim.heads()), (8, vec![at(17, 0)]));
+    vim.keys("<C-b><C-b>");
+    assert_eq!((vim.top_row, vim.heads()), (0, vec![at(9, 0)]));
+}
+
+#[test]
+fn page_keys_extend_a_visual_selection() {
+    let text: String = (0..40).map(|row| format!("{row}\n")).collect();
+    let mut vim = Vim::new(&format!("¦{text}"));
+    vim.keys("v<C-f>");
+    let selection = vim.state.selections().newest();
+    assert_eq!((selection.anchor, selection.head), (at(0, 0), at(8, 0)));
 }
 
 #[test]
@@ -723,4 +752,221 @@ fn an_operator_takes_the_jump_as_its_motion() {
     vim.state.apply(&then.with_jump_target(at(0, 8)));
     assert_eq!(vim.text(), "three");
     assert_eq!(jump_started_by("¦one two", "cs"), None);
+}
+
+#[test]
+fn backspace_in_replace_mode_puts_back_what_was_typed_over() {
+    check("¦abcd", "Rxy<BS><Esc>", "xbcd", (0, 0));
+    check("¦abcd", "Rxyz<BS><BS><Esc>", "xbcd", (0, 0));
+    check("¦abcd", "Rxyz<BS><BS><BS><Esc>", "abcd", (0, 0));
+    check("a¦b", "Rxyz<BS><Esc>", "axy", (0, 2));
+    check("¦abcd", "R<BS>x<Esc>", "xbcd", (0, 0));
+    let mut vim = Vim::new("¦ab\ncd").with_cursor(1, 0);
+    vim.keys("Rxy<BS><Esc>");
+    assert_eq!(vim.text(), "xb\nxd");
+}
+
+#[test]
+fn gv_selects_the_last_visual_selection_again() {
+    let mut vim = Vim::new("¦one two three");
+    vim.keys("vw<Esc>");
+    assert_eq!(vim.mode(), "NORMAL");
+    vim.keys("$gv");
+    assert_eq!(vim.mode(), "VISUAL");
+    let selection = vim.state.selections().newest();
+    assert_eq!((selection.anchor, selection.head), (at(0, 0), at(0, 4)));
+    vim.keys("d");
+    assert_eq!(vim.text(), "wo three");
+    let mut lines = Vim::new("a\n¦b\nc\nd");
+    lines.keys("Vj<Esc>ggjjgv");
+    assert_eq!(lines.mode(), "V-LINE");
+    lines.keys("d");
+    assert_eq!(lines.text(), "a\nd");
+}
+
+#[test]
+fn dot_repeats_an_operator_on_a_visual_selection() {
+    check("¦abcdef", "vld.", "ef", (0, 0));
+    check("¦abcdef", "vlc1<Esc>l.", "11ef", (0, 1));
+    check("¦a\nb\nc\nd\ne", "Vjd.", "e", (0, 0));
+    check("¦abcdef", "vlUll.", "ABCDef", (0, 2));
+    check("¦abc abc", "vlrxw.", "xxc xxc", (0, 4));
+    check("¦a b c", "vlyx.", "b c", (0, 0));
+}
+
+#[test]
+fn macros_record_keys_and_play_them_back() {
+    check("¦a\nb\nc\nd", "qaA!<Esc>jq@a", "a!\nb!\nc\nd", (2, 0));
+    check("¦a\nb\nc\nd", "qaA!<Esc>jq2@a", "a!\nb!\nc!\nd", (3, 0));
+    check("¦a\nb\nc\nd", "qaA!<Esc>jq@a@@", "a!\nb!\nc!\nd", (3, 0));
+    check("¦one two", "qqdwq@q", "", (0, 0));
+    check("¦x", "@z", "x", (0, 0));
+}
+
+#[test]
+fn a_macro_that_plays_itself_ends() {
+    let mut vim = Vim::new("¦a\nb");
+    vim.keys("qaix<Esc>@aq");
+    vim.keys("@a");
+    assert_eq!(vim.mode(), "NORMAL");
+}
+
+#[test]
+fn ctrl_o_and_ctrl_i_move_through_the_jump_list() {
+    let mut vim = Vim::new("¦a\nb\nc\nd\ne");
+    vim.keys("G");
+    assert_eq!(vim.heads(), vec![at(4, 0)]);
+    vim.keys("<C-o>");
+    assert_eq!(vim.heads(), vec![at(0, 0)]);
+    vim.keys("<C-i>");
+    assert_eq!(vim.heads(), vec![at(4, 0)]);
+    vim.keys("gg<C-o>");
+    assert_eq!(vim.heads(), vec![at(4, 0)]);
+    vim.keys("<Tab>");
+    assert_eq!(vim.heads(), vec![at(0, 0)]);
+}
+
+#[test]
+fn searches_and_line_numbers_are_jumps_too() {
+    let mut vim = Vim::new("¦one\ntwo\nthree\nfour");
+    vim.keys("/four<CR>");
+    assert_eq!(vim.heads(), vec![at(3, 0)]);
+    vim.keys("<C-o>");
+    assert_eq!(vim.heads(), vec![at(0, 0)]);
+    vim.keys(":3<CR>");
+    assert_eq!(vim.heads(), vec![at(2, 0)]);
+    vim.keys("<C-o>");
+    assert_eq!(vim.heads(), vec![at(0, 0)]);
+}
+
+#[test]
+fn search_takes_regular_expressions() {
+    check("¦a1 b22 c333", "/[0-9]\\{3}<CR>", "a1 b22 c333", (0, 8));
+    check("¦one two three", "/t\\w\\+e<CR>", "one two three", (0, 8));
+    check("¦let x = 1; let y = 2;", "/\\<lt>y\\<gt><CR>", "let x = 1; let y = 2;", (0, 15));
+    check("¦foo\nbar\nfoo", "/^bar$<CR>", "foo\nbar\nfoo", (1, 0));
+    check("¦cat dog bird", "/dog\\|bird<CR>n", "cat dog bird", (0, 8));
+    check("a ¦b", "?a\\|b<CR>", "a b", (0, 0));
+    check("¦Foo foo", "/foo\\c<CR>", "Foo foo", (0, 4));
+}
+
+#[test]
+fn star_matches_the_word_as_text() {
+    check("¦a.b x a.b ab", "*", "a.b x a.b ab", (0, 6));
+    check("¦$el x $el", "*", "$el x $el", (0, 7));
+}
+
+#[test]
+fn a_broken_pattern_says_so_and_stays_put() {
+    let mut vim = Vim::new("¦abc");
+    vim.keys("/\\(<CR>");
+    assert_eq!(vim.heads(), vec![at(0, 0)]);
+    assert!(vim.errors.iter().any(|message| message.starts_with("E486") || message.starts_with("E383")));
+}
+
+#[test]
+fn substitute_takes_regular_expressions_groups_and_flags() {
+    check("¦a1 b22", ":s/[0-9]\\+/N/g<CR>", "aN bN", (0, 0));
+    check("¦foo bar", ":s/\\(\\w\\+\\) \\(\\w\\+\\)/\\2 \\1/<CR>", "bar foo", (0, 0));
+    check("¦cat", ":s/c/[&]/<CR>", "[c]at", (0, 0));
+    check("¦Cat cat", ":s/cat/dog/gi<CR>", "dog dog", (0, 0));
+    check("¦Cat cat", ":s/cat/dog/g<CR>", "Cat dog", (0, 0));
+    check("¦a b", ":s/ /\\r/<CR>", "a\nb", (0, 0));
+    check("¦one\ntwo", ":%s/^/> /<CR>", "> one\n> two", (1, 0));
+    check("¦aaa", ":s/a*/x/<CR>", "x", (0, 0));
+}
+
+#[test]
+fn an_empty_substitute_pattern_uses_the_last_search() {
+    check("¦foo bar foo", "/bar<CR>0:s//X/<CR>", "foo X foo", (0, 0));
+    check("¦foo bar", ":s/foo/X/<CR>:s//Y/<CR>", "X bar", (0, 0));
+}
+
+#[test]
+fn substitute_leaves_the_last_pattern_for_n() {
+    let mut vim = Vim::new("¦ab ab ab\nab");
+    vim.keys(":s/b/B/<CR>");
+    assert_eq!(vim.text(), "aB ab ab\nab");
+    vim.keys("n");
+    assert_eq!(vim.heads(), vec![at(0, 4)]);
+}
+
+#[test]
+fn visual_block_selects_a_rectangle_and_operators_work_on_it() {
+    let mut vim = Vim::new("¦abcd\nabcd\nabcd");
+    vim.keys("<C-v>jl");
+    assert_eq!(vim.mode(), "V-BLOCK");
+    assert_eq!(vim.state.selections().count(), 2);
+    vim.keys("d");
+    assert_eq!(vim.text(), "cd\ncd\nabcd");
+    assert_eq!(vim.heads(), vec![at(0, 0)]);
+    assert_eq!(vim.mode(), "NORMAL");
+    check("¦abcd\nabcd\nabcd", "l<C-v>jjld", "ad\nad\nad", (0, 1));
+    check("¦abcd\nab\nabcd", "ll<C-v>jjd", "abd\nab\nabd", (0, 2));
+    check("¦abcd\nabcd", "<C-v>j$d", "\n", (0, 0));
+    check("¦abcd\nabcd", "<C-v>jly$p", "abcdab\nabcdab", (0, 4));
+}
+
+#[test]
+fn visual_block_insert_append_and_change_type_on_every_line() {
+    check("¦abc\nabc\nabc", "<C-v>jjIX<Esc>", "Xabc\nXabc\nXabc", (0, 0));
+    check("¦abc\nabc\nabc", "l<C-v>jjAX<Esc>", "abXc\nabXc\nabXc", (0, 2));
+    check("¦abc\nabc", "<C-v>jlcX<Esc>", "Xc\nXc", (0, 0));
+    check("¦abc\nabc", "<C-v>j$AX<Esc>", "abcX\nabcX", (0, 3));
+    check("¦abc\nabc", "<C-v>jrx", "xbc\nxbc", (0, 0));
+    check("¦abc\nabc", "<C-v>jlU", "ABc\nABc", (0, 0));
+}
+
+#[test]
+fn visual_block_moves_by_corner_and_can_become_another_selection() {
+    let mut vim = Vim::new("¦abcd\nabcd\nabcd");
+    vim.keys("<C-v>jlo");
+    let selection = vim.state.selections().newest();
+    assert_eq!(selection.head, at(0, 0));
+    vim.keys("jj");
+    assert_eq!(vim.state.selections().count(), 2);
+    vim.keys("<Esc>");
+    assert_eq!(vim.mode(), "NORMAL");
+    assert_eq!(vim.state.selections().count(), 1);
+    vim.keys("<C-v>jv");
+    assert_eq!(vim.mode(), "VISUAL");
+    assert_eq!(vim.state.selections().count(), 1);
+    vim.keys("<C-v><C-v>");
+    assert_eq!(vim.mode(), "NORMAL");
+}
+
+#[test]
+fn gv_and_dot_work_with_a_block() {
+    let mut vim = Vim::new("¦abcd\nabcd\nabcd\nabcd");
+    vim.keys("<C-v>jd");
+    assert_eq!(vim.text(), "bcd\nbcd\nabcd\nabcd");
+    vim.keys("jj.");
+    assert_eq!(vim.text(), "bcd\nbcd\nbcd\nbcd");
+    let mut again = Vim::new("¦abc\nabc");
+    again.keys("<C-v>j<Esc>gv");
+    assert_eq!(again.mode(), "V-BLOCK");
+    assert_eq!(again.state.selections().count(), 2);
+}
+
+#[test]
+fn tag_and_sentence_objects_work_with_operators() {
+    check("<p>hel¦lo <b>x</b></p>", "dit", "<p></p>", (0, 3));
+    check("<p>hel¦lo</p>", "dat", "", (0, 0));
+    check("<a><b>¦x</b></a>", "d2it", "<a></a>", (0, 3));
+    check("One. Tw¦o three. Four.", "cisX<Esc>", "One. X Four.", (0, 5));
+    check("One. Tw¦o three. Four.", "das", "One. Four.", (0, 5));
+    check("One. Tw¦o three. Four.", "visd", "One.  Four.", (0, 5));
+}
+
+#[test]
+fn escape_in_normal_mode_clears_the_search_highlight() {
+    let mut vim = Vim::new("¦foo bar foo");
+    vim.keys("/foo<CR>");
+    assert!(vim.state.memory.search_highlight);
+    vim.keys("<Esc>");
+    assert!(!vim.state.memory.search_highlight);
+    vim.keys("n");
+    assert!(vim.state.memory.search_highlight);
+    vim.keys(":noh<CR>");
+    assert!(!vim.state.memory.search_highlight);
 }

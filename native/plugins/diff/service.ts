@@ -117,6 +117,7 @@ export class DiffService extends Service {
   private previews = new Map<number, Hunk>();
   /** The mode a diff opens in. */
   private defaultMode: DiffMode = "inline";
+  private indexListeners = new Set<() => void>();
 
   constructor(
     ctx: Context,
@@ -202,6 +203,19 @@ export class DiffService extends Service {
     this.changes.notify();
   }
 
+  /** Hears of hunks that were staged or unstaged, which the file system watcher does not see. Returns the function that stops. */
+  onIndexChanged(listener: () => void): () => void {
+    this.indexListeners.add(listener);
+    return () => {
+      this.indexListeners.delete(listener);
+    };
+  }
+
+  /** Reads the git side of every open diff again, such as after a commit. */
+  async refreshAll(): Promise<void> {
+    await Promise.all([...this.records.keys()].map((leafId) => this.reloadBase(leafId)));
+  }
+
   /** The mode diffs open in. Reactive. */
   mode(): DiffMode {
     this.changes.track();
@@ -283,7 +297,7 @@ export class DiffService extends Service {
       this.say("This diff has no unstaged changes to stage.");
       return;
     }
-    await this.stageInPane(this.panes.focusedLeafId, record, record.view.rightId);
+    await this.stageInPane(record, record.view.rightId);
   }
 
   /** Takes the hunk under the cursor of the focused staged diff out of the index. */
@@ -297,7 +311,7 @@ export class DiffService extends Service {
     const path = record.request.path;
     const ok = await this.attempt(() => this.host.unstageHunk(path, this.cursorRow(record)), "Unstaged the hunk.");
     if (ok) {
-      await this.reloadBase(leafId);
+      await this.indexChanged();
     }
   }
 
@@ -593,10 +607,10 @@ export class DiffService extends Service {
   }
 
   /** Stages a hunk from a diff pane and shows the result. */
-  private async stageInPane(leafId: string, record: PaneRecord, rightId: number): Promise<void> {
+  private async stageInPane(record: PaneRecord, rightId: number): Promise<void> {
     const ok = await this.attempt(() => this.host.stageHunk(rightId, this.cursorRow(record)), "Staged the hunk.");
     if (ok) {
-      await this.reloadBase(leafId);
+      await this.indexChanged();
     }
   }
 
@@ -608,7 +622,10 @@ export class DiffService extends Service {
       return;
     }
     const row = this.rowOf(active.id);
-    await this.attempt(() => this.host.stageHunk(active.id, row), "Staged the hunk.");
+    const ok = await this.attempt(() => this.host.stageHunk(active.id, row), "Staged the hunk.");
+    if (ok) {
+      await this.indexChanged();
+    }
   }
 
   /** Puts back the lines of the hunk under the cursor of the active editor, as HEAD has them. */
@@ -620,6 +637,14 @@ export class DiffService extends Service {
     }
     const row = this.rowOf(active.id);
     await this.attempt(() => this.host.revertHunk(active.id, "head", row), "Reverted the hunk.");
+  }
+
+  /** The index changed: open diffs read it again and the listeners hear of it. */
+  private async indexChanged(): Promise<void> {
+    for (const listener of [...this.indexListeners]) {
+      listener();
+    }
+    await this.refreshAll();
   }
 
   /** Hides the hunk preview of a document. */

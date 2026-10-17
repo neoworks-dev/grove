@@ -9,12 +9,13 @@ import { explorer } from "./explorer";
 import { agents } from "./agents";
 import { brokenEntry, failing } from "./failing";
 import { frame } from "./frame";
+import { gitChanges } from "./git-changes";
 import { gitGutter } from "./git-gutter";
 import { header } from "./header";
 import { layout } from "./layout";
 import { coreMenu, menus } from "./menus";
 import { panel } from "./panel";
-import { placeholderPanel, placeholderSidebar } from "./placeholders";
+import { placeholderPanel } from "./placeholders";
 import { palette } from "./palette";
 import { rails } from "./rails";
 import { settingsView } from "./settings";
@@ -46,12 +47,12 @@ export const corePlugins: PluginCatalog = {
   "editor-position": editorPosition,
   diff,
   "git-gutter": gitGutter,
+  "git-changes": gitChanges,
   sidecar,
   workspace,
   explorer,
   worktrees,
   agents,
-  "placeholder-sidebar": placeholderSidebar,
   "placeholder-panel": placeholderPanel,
   failing,
   "broken-entry": brokenEntry,

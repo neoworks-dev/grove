@@ -18,11 +18,11 @@
   { "id": "statusbar-position", "plugin": "editor-position" },
   { "id": "git-gutter", "plugin": "git-gutter" },
   { "id": "diff", "plugin": "diff" },
+  { "id": "git-changes", "plugin": "git-changes" },
   { "id": "sidecar", "plugin": "sidecar" },
   { "id": "workspace", "plugin": "workspace" },
   { "id": "explorer", "plugin": "explorer" },
   { "id": "worktrees", "plugin": "worktrees" },
   { "id": "agents", "plugin": "agents" },
-  { "id": "placeholder-sidebar", "plugin": "placeholder-sidebar" },
   { "id": "placeholder-panel", "plugin": "placeholder-panel" }
 ]

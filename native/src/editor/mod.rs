@@ -11,8 +11,12 @@
 //! same document, shows the same text, cursors and history. When one view changes a document,
 //! the other views of it redraw.
 
+mod completion;
 mod documents;
 mod element;
+mod hover;
+mod language;
+mod popup;
 mod signals;
 mod theme;
 
@@ -76,6 +80,18 @@ pub struct Editor {
     signals: SignalSender,
     /// How the view tells the app about things it cannot do itself, such as opening another file.
     host: NativeHost,
+    /// The completion panel, while it is open or waiting for its items.
+    completion: Option<completion::Session>,
+    /// The hover popover, while it shows or waits for the server.
+    hover: Option<hover::Hover>,
+    /// Where the pointer last stopped, which turns into a hover if it stays.
+    rest: Option<language::PointerRest>,
+    hover_timer_armed: bool,
+    /// The number the last request was given.
+    request_counter: u64,
+    /// The go-to-definition request that is out, and its number.
+    definition_pending: Option<crate::lsp::Pending>,
+    definition_request: u64,
 }
 
 impl Editor {
@@ -104,6 +120,13 @@ impl Editor {
             lsp,
             signals: sender,
             host,
+            completion: None,
+            hover: None,
+            rest: None,
+            hover_timer_armed: false,
+            request_counter: 0,
+            definition_pending: None,
+            definition_request: 0,
         }
     }
 
@@ -175,6 +198,7 @@ impl Editor {
             self.last_copied = Some(text.clone());
         }
         self.redraw_other_views(id, cx);
+        self.track_language_features(&command, &outcome, cx);
         outcome
     }
 
@@ -205,6 +229,10 @@ impl Editor {
 
     /// Handles a key the input layer knows; returns false for the rest, which then bubble to the app.
     fn handle_key(&mut self, keystroke: &Keystroke, cx: &mut Context<Self>) -> bool {
+        self.hide_hover(cx);
+        if self.completion_key(keystroke, cx) {
+            return true;
+        }
         let context = InputContext { page_rows: self.rows_in_view() };
         let commands = self.input.translate(&key_input(keystroke), &context);
         if commands.is_empty() {
@@ -224,7 +252,14 @@ impl Editor {
         let Some(at) = self.position_at(event.position) else {
             return;
         };
+        self.hide_hover(cx);
+        self.close_completion();
         self.dragging = true;
+        if event.modifiers.control && !event.modifiers.shift && !event.modifiers.alt {
+            self.apply(&Command::PlaceCursor { at }, cx);
+            self.go_to_definition_at(at, cx);
+            return;
+        }
         if event.modifiers.shift {
             self.apply(&Command::ExtendNewestTo { at }, cx);
             return;
@@ -332,7 +367,10 @@ impl Editor {
                     cx.notify();
                 }
             }
-            _ => {}
+            Signal::Completions { request, result } => self.completions_arrived(request, result, cx),
+            Signal::Resolved { request, item } => self.item_resolved(request, item, cx),
+            Signal::Hover { request, markdown } => self.hover_arrived(request, markdown, cx),
+            Signal::Targets { request, targets } => self.targets_arrived(request, targets, cx),
         }
     }
 }
@@ -382,6 +420,21 @@ impl AppElement for Editor {
                 cx.notify();
                 Ok(Value::Null)
             }
+            "hover" => {
+                self.hover_at_cursor(cx);
+                Ok(Value::Null)
+            }
+            "definition" => {
+                if let Some(head) = self.read(|state| state.selections().newest().head) {
+                    self.go_to_definition_at(head, cx);
+                }
+                Ok(Value::Null)
+            }
+            "complete" => {
+                self.start_completion(completion::Trigger::Invoked, cx);
+                Ok(Value::Null)
+            }
+            "goto" => self.goto_from_app(args, cx),
             _ => Err(CommandError::with_code("UnknownMethod", format!("the editor has no method {method:?}"))),
         }
     }
@@ -403,6 +456,18 @@ impl Editor {
         let outcome = self.apply(&command, cx);
         cx.notify();
         Ok(json!({ "changed": outcome.changed }))
+    }
+
+    /// The `goto` method: puts the cursor at a line and UTF-16 column, counted from zero, and
+    /// scrolls to it, as the app does after opening the file a definition is in.
+    fn goto_from_app(&mut self, args: Value, cx: &mut Context<Self>) -> Result<Value, CommandError> {
+        let line = args.get(0).and_then(Value::as_u64);
+        let character = args.get(1).and_then(Value::as_u64);
+        let (Some(line), Some(character)) = (line, character) else {
+            return Err(CommandError::with_code("InvalidArguments", "goto takes a line and a column"));
+        };
+        self.go_to(line as usize, character as usize, cx);
+        Ok(Value::Null)
     }
 
     /// Every selection as the app sees it.
@@ -435,6 +500,7 @@ impl Render for Editor {
                 cx.stop_propagation();
             }))
             .on_scroll_wheel(cx.listener(|editor, event: &ScrollWheelEvent, _window, cx| {
+                editor.hide_hover(cx);
                 editor.scroll_by(event.delta.pixel_delta(LINE_HEIGHT).y);
                 cx.notify();
             }))
@@ -449,6 +515,10 @@ impl Render for Editor {
             .on_mouse_move(cx.listener(|editor, event: &MouseMoveEvent, _window, cx| {
                 if editor.drag(event, cx) {
                     cx.notify();
+                    return;
+                }
+                if event.pressed_button.is_none() {
+                    editor.pointer_moved(event.position, cx);
                 }
             }))
             .on_mouse_up(

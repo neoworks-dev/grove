@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use editor_core::DocumentId;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use lsp_client::completion::ItemList;
-use lsp_client::protocol::{Target, TextEdit};
+use lsp_client::protocol::Target;
 
 /// One thing a view is told. Answers carry the number of the request they answer, so a view
 /// ignores the ones it has since stopped waiting for.
@@ -16,8 +16,8 @@ pub enum Signal {
     Redraw(DocumentId),
     /// The items for a completion request, or why there are none.
     Completions { request: u64, result: Result<ItemList, String> },
-    /// More about one completion item.
-    Resolved { request: u64, documentation: Option<String>, detail: Option<String>, additional_edits: Vec<TextEdit> },
+    /// The fuller item a server answered a resolve request with.
+    Resolved { request: u64, item: serde_json::Value },
     /// What the server says about the symbol under the pointer or the cursor, as markdown.
     Hover { request: u64, markdown: Option<String> },
     /// Where a go-to-definition request leads.

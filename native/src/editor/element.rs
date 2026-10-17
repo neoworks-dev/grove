@@ -18,6 +18,7 @@ use svelte_gpui::gpui::{
 };
 
 use super::Editor;
+use super::popup;
 use super::theme::{EditorTheme, HighlightStyle};
 use editor_core::decorations::{DecorationKind, GutterMark, Placed, PlacedBlock, Placement, Tone, UnderlineKind};
 use editor_core::display::{BlockMap, BlockSlot, DisplayLine, DisplayRow, InlayText};
@@ -107,6 +108,15 @@ impl Layout {
                 DisplayRow::Block { .. } => Position { row: usize::MAX, column: usize::MAX },
             },
         }
+    }
+
+    /// Whether a point is on the text of a line, rather than the gutter or past the line's end.
+    pub fn over_text(&self, point: svelte_gpui::gpui::Point<Pixels>) -> bool {
+        let rows_down = ((point.y - self.first_row_top) / LINE_HEIGHT).floor().max(0.0) as usize;
+        let Some(VisibleRow::Text(line)) = self.rows.get(rows_down) else {
+            return false;
+        };
+        point.x >= self.text_left && point.x <= self.text_left + line.shaped.width
     }
 
     /// The y of the top of the drawn display row at `index` (counted from the first drawn).
@@ -246,7 +256,15 @@ impl Element for EditorElement {
         let Some((layout, frame)) = editor.read(|state| build_frame(state, scroll_top, bounds, window, &theme)) else {
             return Frame::empty(theme);
         };
-        self.editor.update(cx, |editor, _| editor.layout = Some(layout));
+        let entity = self.editor.clone();
+        let popovers = self.editor.update(cx, |editor, cx| {
+            let popovers = popup::build(&entity, editor, &layout, &theme, bounds, window, cx);
+            editor.layout = Some(layout);
+            popovers
+        });
+        for popover in popovers {
+            window.defer_draw(popover.element, popover.origin, 1);
+        }
         frame
     }
 
@@ -625,6 +643,14 @@ fn span_bounds(layout: &Layout, start: Position, end: Position, line_ending_widt
         spans.push(Bounds::new(point(left, layout.top_of_index(index)), size(right - left, LINE_HEIGHT)));
     }
     spans
+}
+
+/// How wide a line of text is in the editor's font at the size popovers use.
+pub(super) fn measure_text_width(window: &mut Window, text: &str) -> Pixels {
+    let plain = HighlightStyle { color: Hsla::default(), bold: false, italic: false };
+    let run = text_run(text.len(), plain, None);
+    let size = px(13.0);
+    window.text_system().shape_line(SharedString::from(text.to_string()), size, &[run], None).width
 }
 
 /// Shapes one line of text in the editor's font, in a single colour.

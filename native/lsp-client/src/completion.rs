@@ -156,6 +156,29 @@ pub struct Item {
     pub raw: Value,
 }
 
+impl Item {
+    /// Takes in what resolving the item added: documentation, detail, and the edits it makes
+    /// elsewhere, which a server often leaves out of the first answer because they are slow to work out.
+    pub fn merge_resolved(&mut self, resolved: &Value) {
+        let Some(fuller) = parse_item(resolved, &Value::Null) else {
+            return;
+        };
+        if fuller.documentation.is_some() {
+            self.documentation = fuller.documentation;
+        }
+        if fuller.detail.is_some() {
+            self.detail = fuller.detail;
+        }
+        if !fuller.additional_edits.is_empty() {
+            self.additional_edits = fuller.additional_edits;
+        }
+        if fuller.edit.is_some() {
+            self.edit = fuller.edit;
+        }
+        self.raw = resolved.clone();
+    }
+}
+
 /// The items of an answer, and whether the server wants asking again as the word grows.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ItemList {
@@ -539,6 +562,20 @@ mod tests {
         assert_eq!(found.documentation.as_deref(), Some("Prints."));
         assert_eq!(found.edit.as_ref().unwrap().range.start.character, 4);
         assert_eq!(found.additional_edits.len(), 1);
+    }
+
+    #[test]
+    fn resolving_adds_documentation_and_edits_without_losing_the_rest() {
+        let mut found = parse_item(&json!({ "label": "foo", "detail": "fn foo()" }), &Value::Null).unwrap();
+        let resolved = json!({
+            "label": "foo", "documentation": "Does foo.",
+            "additionalTextEdits": [{ "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 0 } }, "newText": "use a;\n" }],
+        });
+        found.merge_resolved(&resolved);
+        assert_eq!(found.documentation.as_deref(), Some("Does foo."));
+        assert_eq!(found.detail.as_deref(), Some("fn foo()"));
+        assert_eq!(found.additional_edits.len(), 1);
+        assert_eq!(found.raw, resolved);
     }
 
     #[test]

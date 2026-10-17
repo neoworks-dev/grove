@@ -13,7 +13,7 @@ use svelte_gpui::gpui::{
 
 use super::Editor;
 use editor_core::display::DisplayLine;
-use editor_core::{Position, Selection};
+use editor_core::{EditorState, Position, Selection};
 
 pub const FONT_FAMILY: &str = "DejaVu Sans Mono";
 pub const FONT_SIZE: Pixels = px(14.0);
@@ -93,6 +93,19 @@ pub struct Frame {
     underlines: Vec<Bounds<Pixels>>,
 }
 
+impl Frame {
+    /// What is drawn for a view that shows no document: the background and nothing else.
+    fn empty() -> Frame {
+        Frame {
+            rows: Vec::new(),
+            gutter_width: px(0.0),
+            highlights: Vec::new(),
+            cursors: Vec::new(),
+            underlines: Vec::new(),
+        }
+    }
+}
+
 impl IntoElement for EditorElement {
     type Element = Self;
 
@@ -139,51 +152,12 @@ impl Element for EditorElement {
         cx: &mut App,
     ) -> Frame {
         let editor = self.editor.read(cx);
-        let line_count = editor.state.buffer().line_count();
         let scroll_top = editor.scroll_top;
-
-        let digits = line_count.max(1).to_string().len();
-        let digit_width = shape(window, &"0".repeat(digits), LINE_NUMBER).width;
-        let gutter_width = digit_width + GUTTER_PADDING * 2.0;
-        let text_left = bounds.left() + gutter_width;
-
-        let first_row = (scroll_top / LINE_HEIGHT).floor() as usize;
-        let first_row_top = bounds.top() - (scroll_top - LINE_HEIGHT * first_row as f32);
-        let rows_drawn = (bounds.size.height / LINE_HEIGHT).ceil() as usize + 1;
-        let end_row = (first_row + rows_drawn).min(line_count);
-        let visible_selections = editor.state.selections().in_rows(first_row, end_row);
-        let cursor_rows: HashSet<usize> = visible_selections
-            .iter()
-            .filter(|selection| selection.is_empty())
-            .map(|selection| selection.head.row)
-            .collect();
-
-        let mut lines = Vec::with_capacity(end_row.saturating_sub(first_row));
-        let mut rows = Vec::with_capacity(lines.capacity());
-        for row in first_row..end_row {
-            let display = DisplayLine::new(&editor.state.buffer().line(row));
-            let is_cursor_row = cursor_rows.contains(&row);
-            let number_color = if is_cursor_row { CURRENT_LINE_NUMBER } else { LINE_NUMBER };
-            let number = shape(window, &(row + 1).to_string(), number_color);
-            let text = shape(window, &display.text, TEXT);
-            rows.push(PaintedRow {
-                top: first_row_top + LINE_HEIGHT * (row - first_row) as f32,
-                number_left: bounds.left() + GUTTER_PADDING + digit_width - number.width,
-                number,
-                text: text.clone(),
-                is_cursor_row,
-            });
-            lines.push(VisibleLine { display, shaped: text });
-        }
-
-        let layout = Layout { bounds, text_left, first_row, first_row_top, lines };
-        let highlights = visible_selections.iter().flat_map(|selection| selection_bounds(&layout, selection)).collect();
-        let underlines =
-            editor.state.marked_range().map(|(start, end)| underline_bounds(&layout, start, end)).unwrap_or_default();
-        let cursors =
-            visible_selections.iter().filter_map(|selection| cursor_bounds(&layout, selection.head)).collect();
+        let Some((layout, frame)) = editor.read(|state| build_frame(state, scroll_top, bounds, window)) else {
+            return Frame::empty();
+        };
         self.editor.update(cx, |editor, _| editor.layout = Some(layout));
-        Frame { rows, gutter_width, highlights, cursors, underlines }
+        frame
     }
 
     /// Paints the background, the cursors' lines, the selections, the gutter, the text and the cursors.
@@ -226,6 +200,57 @@ impl Element for EditorElement {
             }
         });
     }
+}
+
+/// Shapes the rows in view and works out where the selections and cursors are drawn, for a
+/// state scrolled to `scroll_top` in a box of `bounds`. Also gives the layout the pointer is
+/// mapped through.
+fn build_frame(
+    state: &EditorState,
+    scroll_top: Pixels,
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+) -> (Layout, Frame) {
+    let line_count = state.buffer().line_count();
+    let digits = line_count.max(1).to_string().len();
+    let digit_width = shape(window, &"0".repeat(digits), LINE_NUMBER).width;
+    let gutter_width = digit_width + GUTTER_PADDING * 2.0;
+    let text_left = bounds.left() + gutter_width;
+
+    let first_row = (scroll_top / LINE_HEIGHT).floor() as usize;
+    let first_row_top = bounds.top() - (scroll_top - LINE_HEIGHT * first_row as f32);
+    let rows_drawn = (bounds.size.height / LINE_HEIGHT).ceil() as usize + 1;
+    let end_row = (first_row + rows_drawn).min(line_count);
+    let visible_selections = state.selections().in_rows(first_row, end_row);
+    let cursor_rows: HashSet<usize> = visible_selections
+        .iter()
+        .filter(|selection| selection.is_empty())
+        .map(|selection| selection.head.row)
+        .collect();
+
+    let mut lines = Vec::with_capacity(end_row.saturating_sub(first_row));
+    let mut rows = Vec::with_capacity(lines.capacity());
+    for row in first_row..end_row {
+        let display = DisplayLine::new(&state.buffer().line(row));
+        let is_cursor_row = cursor_rows.contains(&row);
+        let number_color = if is_cursor_row { CURRENT_LINE_NUMBER } else { LINE_NUMBER };
+        let number = shape(window, &(row + 1).to_string(), number_color);
+        let text = shape(window, &display.text, TEXT);
+        rows.push(PaintedRow {
+            top: first_row_top + LINE_HEIGHT * (row - first_row) as f32,
+            number_left: bounds.left() + GUTTER_PADDING + digit_width - number.width,
+            number,
+            text: text.clone(),
+            is_cursor_row,
+        });
+        lines.push(VisibleLine { display, shaped: text });
+    }
+
+    let layout = Layout { bounds, text_left, first_row, first_row_top, lines };
+    let highlights = visible_selections.iter().flat_map(|selection| selection_bounds(&layout, selection)).collect();
+    let underlines = state.marked_range().map(|(start, end)| underline_bounds(&layout, start, end)).unwrap_or_default();
+    let cursors = visible_selections.iter().filter_map(|selection| cursor_bounds(&layout, selection.head)).collect();
+    (layout, Frame { rows, gutter_width, highlights, cursors, underlines })
 }
 
 /// Where a cursor is drawn, or none while its row is scrolled out of view.

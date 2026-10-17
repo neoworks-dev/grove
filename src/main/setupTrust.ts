@@ -3,9 +3,9 @@
 // the user has seen them, and a change to them asks again.
 
 import { createHash } from 'crypto'
-import { dialog } from 'electron'
 import type { WorkbenchConfig } from '../shared/types'
 import { getRepoState, updateRepoState } from './state'
+import { platform } from './platform'
 
 /** Shows setup commands to the user and resolves to whether they may run. */
 export type AskToTrustSetup = (commands: string[]) => Promise<boolean>
@@ -46,7 +46,7 @@ export async function ensureSetupTrusted(
 
 /** Asks through a native dialog, listing the commands exactly as they will run. */
 export async function askToTrustSetupNatively(commands: string[]): Promise<boolean> {
-  const result = await dialog.showMessageBox({
+  const response = await platform().showMessageBox({
     type: 'warning',
     title: 'Run setup commands?',
     message: "This repository's grove.config.yaml runs these commands when a worktree is created:",
@@ -55,5 +55,5 @@ export async function askToTrustSetupNatively(commands: string[]): Promise<boole
     defaultId: 0,
     cancelId: 0
   })
-  return result.response === 1
+  return response === 1
 }

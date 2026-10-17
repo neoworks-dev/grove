@@ -2,7 +2,7 @@
 // assignments and open tabs survive worktree removal and app restarts.
 // Running services/agents are never assumed alive across restarts.
 
-import { app } from 'electron'
+import { platform } from './platform'
 import { readFile, writeFile, mkdir } from 'fs/promises'
 import { join, dirname } from 'path'
 import type {
@@ -81,7 +81,7 @@ const EMPTY_STATE: AppState = {
 }
 
 function statePath(): string {
-  return join(app.getPath('userData'), 'workbench-state.json')
+  return join(platform().userDataPath(), 'workbench-state.json')
 }
 
 let cache: AppState | null = null

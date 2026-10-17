@@ -17,6 +17,7 @@ import { layout } from "./layout";
 import { lsp } from "./lsp";
 import { coreMenu, menus } from "./menus";
 import { panel } from "./panel";
+import { promptBlame } from "./prompt-blame";
 import { placeholderPanel } from "./placeholders";
 import { palette } from "./palette";
 import { rails } from "./rails";
@@ -50,6 +51,7 @@ export const corePlugins: PluginCatalog = {
   "editor-position": editorPosition,
   diff,
   "git-gutter": gitGutter,
+  "prompt-blame": promptBlame,
   lsp,
   "git-changes": gitChanges,
   sidecar,

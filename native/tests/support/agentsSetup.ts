@@ -4,7 +4,7 @@
 import { Context as RootContext, type Context } from "@neoworks/extension-system";
 import type { Worktree } from "../../../src/shared/types";
 import { LayoutService } from "../../plugins/layout/service";
-import { AgentsService, type AgentsTiming, type AgentWorkspace } from "../../plugins/agents/service";
+import { AgentsService, type AgentsTiming, type AgentWorkspace, type Openers } from "../../plugins/agents/service";
 import { FakeHost } from "./fakeSuite";
 
 /** A worktree as the workspace lists it. */
@@ -50,7 +50,7 @@ export interface AgentsSetup {
 }
 
 /** A layout with one editor pane, a workspace, and the agents service over a fake daemon. */
-export async function setUpAgents(timing?: AgentsTiming): Promise<AgentsSetup> {
+export async function setUpAgents(timing?: AgentsTiming, openers?: Openers): Promise<AgentsSetup> {
   const root = new RootContext();
   const host = new FakeHost();
   const workspace = new FakeWorkspace();
@@ -60,7 +60,7 @@ export async function setUpAgents(timing?: AgentsTiming): Promise<AgentsSetup> {
     name: "agents-test",
     apply: (ctx: Context) => {
       layout = new LayoutService(ctx, "editor", null);
-      agents = new AgentsService(ctx, host, layout, workspace, timing);
+      agents = new AgentsService(ctx, host, layout, workspace, timing, openers);
     },
   });
   return { host, layout, workspace, agents };

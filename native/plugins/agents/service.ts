@@ -13,7 +13,7 @@ import { createChangeSignal, type ChangeSignal } from "../../kernel/reactive";
 import type { SplitDirection } from "../layout/layoutTree";
 import type { Worktree } from "../../../src/shared/types";
 import { ChatSession } from "./chatSession";
-import { groupSessions, sessionTitle, type SessionGroup } from "./sessions";
+import { groupSessions, sessionTitle, siblingsOf, type SessionGroup } from "./sessions";
 import type { ConnectionState, DaemonAddress, SuiteClient, SuiteHost } from "./suiteClient";
 
 declare module "@neoworks/extension-system" {
@@ -36,9 +36,19 @@ export interface AgentsTiming {
   requestTimeoutMs: number;
   /** How long a dropped connection may keep trying before the service gives up on it. */
   reconnectTimeoutMs: number;
+  /** After giving up on a dropped connection, how long before the first new attempt; each failed attempt doubles it. */
+  retryInitialMs: number;
+  /** The longest the wait between two attempts grows to. */
+  retryMaxMs: number;
 }
 
-const DEFAULT_TIMING: AgentsTiming = { connectTimeoutMs: 20_000, requestTimeoutMs: 8_000, reconnectTimeoutMs: 30_000 };
+const DEFAULT_TIMING: AgentsTiming = {
+  connectTimeoutMs: 20_000,
+  requestTimeoutMs: 8_000,
+  reconnectTimeoutMs: 30_000,
+  retryInitialMs: 2_000,
+  retryMaxMs: 60_000,
+};
 
 /** How the connection to the daemon is doing. */
 export interface AgentsState {
@@ -46,6 +56,8 @@ export interface AgentsState {
   connection: "idle" | "starting" | "connecting" | "open" | "reconnecting" | "unavailable";
   /** Why the daemon is unavailable, or the last failure nobody was waiting for. */
   message?: string;
+  /** While the service waits to try again by itself: when it will, in milliseconds since the epoch. */
+  retryAt?: number;
 }
 
 /** The part of the layout the service drives. */
@@ -68,6 +80,68 @@ export interface AgentWorkspace {
   onSelectionChange(listener: () => void): () => void;
 }
 
+/** How the chat shows a file or a change in the rest of the app. */
+export interface Openers {
+  /** Shows the file at an absolute path in the editor. */
+  openFile(path: string): void;
+  /**
+   * Shows a diff in a pane: the file against HEAD, or the two texts when they are given. False
+   * when the app has no diff view, which leaves the caller to show the file instead.
+   */
+  openDiff(path: string, texts?: { oldText: string; newText: string }): boolean;
+}
+
+/** What the editor plugin offers the chat. */
+export interface EditorOpener {
+  open(path: string): unknown;
+}
+
+/** What the diff plugin offers the chat. */
+export interface DiffOpener {
+  openFile(path: string): Promise<string | null>;
+  openTexts(name: string, oldText: string, newText: string): Promise<string | null>;
+}
+
+/** Openers for a service started without the editor and diff views, as in tests: nothing opens. */
+const NO_OPENERS: Openers = {
+  openFile: () => {},
+  openDiff: () => false,
+};
+
+/** The editor and diff services as the chat opens things in them. */
+export function serviceOpeners(editor: EditorOpener, diff: DiffOpener): Openers {
+  return {
+    openFile: (path) => {
+      editor.open(path);
+    },
+    openDiff: (path, texts) => {
+      if (texts === undefined) {
+        void diff.openFile(path);
+        return true;
+      }
+      const name = path.split("/").filter((part) => part !== "").pop();
+      void diff.openTexts(name === undefined ? path : name, texts.oldText, texts.newText);
+      return true;
+    },
+  };
+}
+
+/** The wait before an automatic attempt: the first one after the connection was lost, then twice the one before, up to the longest. */
+export function nextRetryDelay(previousMs: number, initialMs: number, maxMs: number): number {
+  if (previousMs === 0) {
+    return Math.min(initialMs, maxMs);
+  }
+  return Math.min(previousMs * 2, maxMs);
+}
+
+/** What a pane's own view lets the service do when a key asks for it. */
+export interface PaneHandle {
+  /** Shows or hides the plan and files. */
+  togglePanel(): void;
+  /** Puts the keyboard in the list of the session's agents; false when there is none to move through. */
+  focusAgents(): boolean;
+}
+
 /** A session some pane shows: how many do, and its chat once the daemon is connected. */
 interface FollowedChat {
   chat: ChatSession | null;
@@ -75,6 +149,7 @@ interface FollowedChat {
 }
 
 export class AgentsService extends Service {
+  private openers: Openers;
   private host: SuiteHost;
   private panes: AgentPanes;
   private workspace: AgentWorkspace;
@@ -85,11 +160,15 @@ export class AgentsService extends Service {
   private address: DaemonAddress | null = null;
   private appName = CLIENT_NAME;
   private followed = new Map<string, FollowedChat>();
+  private paneHandles = new Map<string, PaneHandle>();
   private changes: ChangeSignal = createChangeSignal();
   private timing: AgentsTiming;
   /** Counts connection attempts, so one that gave up cannot adopt its client when it finally answers. */
   private attempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The wait before the next automatic attempt, doubled after each one that fails; 0 while none is under way. */
+  private retryDelayMs = 0;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
   /** Whether the daemon knows this window, so its context can change and the agent can be moved here. */
   private registered = false;
   /** The session the agent was last told to be in, or last found in, for this window. */
@@ -103,8 +182,10 @@ export class AgentsService extends Service {
     panes: AgentPanes,
     workspace: AgentWorkspace,
     timing: AgentsTiming = DEFAULT_TIMING,
+    openers: Openers = NO_OPENERS,
   ) {
     super(ctx, "agents");
+    this.openers = openers;
     this.host = host;
     this.panes = panes;
     this.workspace = workspace;
@@ -112,6 +193,22 @@ export class AgentsService extends Service {
     ctx.effect(() => panes.onPaneSplit((newLeafId, sourceLeafId) => this.paneSplit(newLeafId, sourceLeafId)), "agents.paneSplit");
     ctx.effect(() => workspace.onSelectionChange(() => void this.updateContext()), "agents.worktreeChanged");
     ctx.effect(() => () => this.disconnect(), "agents.disconnect");
+  }
+
+  /** Shows the file at an absolute path in the editor, when an editor plugin is loaded. */
+  openFile(path: string): void {
+    this.openers.openFile(path);
+  }
+
+  /**
+   * Shows how a file changed in a diff pane: against HEAD, or between the two texts a tool call
+   * reported when they are given. Without a diff view the file itself is shown.
+   */
+  openDiff(path: string, texts?: { oldText: string; newText: string }): void {
+    if (this.openers.openDiff(path, texts)) {
+      return;
+    }
+    this.openers.openFile(path);
   }
 
   /** How the connection to the daemon is doing. Reactive. */
@@ -134,6 +231,11 @@ export class AgentsService extends Service {
       selectedId = selected.id;
     }
     return groupSessions(this.sessions(), this.workspace.worktrees(), selectedId);
+  }
+
+  /** The sessions in the same worktree as this one, the tabs of its pane. Reactive. */
+  siblingSessions(sessionId: string): SessionInfo[] {
+    return siblingsOf(this.groups(), sessionId);
   }
 
   /** What the daemon says about a session, or undefined for one it does not list. Reactive. */
@@ -215,6 +317,7 @@ export class AgentsService extends Service {
 
   /** Tries again after the daemon was unavailable. */
   retry(): Promise<void> {
+    this.retryDelayMs = 0;
     this.disconnect();
     this.starting = null;
     return this.ensureStarted();
@@ -261,9 +364,56 @@ export class AgentsService extends Service {
     if (client === null) {
       return null;
     }
-    const chat = new ChatSession(client, sessionId, (source) => this.assetSource(source), { agent });
+    const chat = new ChatSession(client, sessionId, (source) => this.assetSource(source), {
+      agent,
+      openFile: (path) => this.openFile(path),
+      openDiff: (path, texts) => this.openDiff(path, texts),
+    });
     chat.start();
     return chat;
+  }
+
+  /** Lets keys reach the view of a pane; returns the call that takes it back. */
+  registerPane(leafId: string, handle: PaneHandle): () => void {
+    this.paneHandles.set(leafId, handle);
+    return () => {
+      if (this.paneHandles.get(leafId) === handle) {
+        this.paneHandles.delete(leafId);
+      }
+    };
+  }
+
+  /** The view of the focused agent pane, or undefined while another kind of pane has the focus. */
+  focusedPane(): PaneHandle | undefined {
+    const leafId = this.focusedAgentPane();
+    if (leafId === null) {
+      return undefined;
+    }
+    return this.paneHandles.get(leafId);
+  }
+
+  /** Shows the next session of the focused pane's worktree in it, or the previous one; the list wraps around. */
+  stepSession(direction: 1 | -1): void {
+    const leafId = this.focusedAgentPane();
+    if (leafId === null) {
+      return;
+    }
+    const current = this.sessionOfPane(leafId);
+    if (current === null) {
+      return;
+    }
+    const tabs = this.siblingSessions(current);
+    const at = tabs.findIndex((tab) => tab.id === current);
+    if (at < 0 || tabs.length < 2) {
+      return;
+    }
+    const next = tabs[(at + direction + tabs.length) % tabs.length];
+    this.showSession(leafId, next.id);
+  }
+
+  /** Makes one pane show another session, the way a tab does. */
+  showSession(leafId: string, sessionId: string): void {
+    this.panes.setPaneState(leafId, { sessionId });
   }
 
   /**
@@ -346,7 +496,7 @@ export class AgentsService extends Service {
     try {
       await withDeadline(this.open(attempt), this.timing.connectTimeoutMs, "The suite daemon did not answer");
     } catch (error) {
-      this.giveUp(error);
+      this.giveUp(error, this.retryDelayMs > 0);
     }
   }
 
@@ -367,11 +517,39 @@ export class AgentsService extends Service {
     await this.adopt(client, attempt);
   }
 
-  /** Closes whatever connection there is and shows the daemon as unavailable, saying why. */
-  private giveUp(error: unknown): void {
+  /**
+   * Closes whatever connection there is and shows the daemon as unavailable, saying why. A
+   * connection that was lost, and the attempts to get it back, are tried again by themselves, with
+   * longer waits in between; one that never came up waits for the user to press Try again.
+   */
+  private giveUp(error: unknown, retryAutomatically = false): void {
     this.attempt += 1;
     this.disconnect();
-    this.setState({ connection: "unavailable", message: describeError(error) });
+    const state: AgentsState = { connection: "unavailable", message: describeError(error) };
+    if (retryAutomatically) {
+      state.retryAt = Date.now() + this.scheduleRetry();
+    }
+    this.setState(state);
+  }
+
+  /** Starts the wait before the next automatic attempt, and returns how long it is. */
+  private scheduleRetry(): number {
+    this.retryDelayMs = nextRetryDelay(this.retryDelayMs, this.timing.retryInitialMs, this.timing.retryMaxMs);
+    const delay = this.retryDelayMs;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      this.starting = this.connect();
+    }, delay);
+    return delay;
+  }
+
+  /** Stops waiting to try again, as when the user did, or the service is going away. */
+  private clearRetryTimer(): void {
+    if (this.retryTimer === null) {
+      return;
+    }
+    clearTimeout(this.retryTimer);
+    this.retryTimer = null;
   }
 
   /** Makes sure a daemon is running: its address is readable, or `suite up` starts it. */
@@ -398,6 +576,7 @@ export class AgentsService extends Service {
   /** Takes a connected client: follows its state and session list and registers this window. */
   private async adopt(client: SuiteClient, attempt: number): Promise<void> {
     this.client = client;
+    this.retryDelayMs = 0;
     this.sessionList = client.sessions.value;
     this.setState({ connection: connectionOf(client.state.value) });
     client.state.on((state) => this.connectionChanged(client, attempt, state));
@@ -427,7 +606,8 @@ export class AgentsService extends Service {
     }
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      this.giveUp(new Error("The suite daemon stopped answering"));
+      this.retryDelayMs = 0;
+      this.giveUp(new Error("The suite daemon stopped answering"), true);
     }, this.timing.reconnectTimeoutMs);
   }
 
@@ -558,7 +738,10 @@ export class AgentsService extends Service {
       if (entry.chat !== null) {
         continue;
       }
-      entry.chat = new ChatSession(client, sessionId, (source) => this.assetSource(source));
+      entry.chat = new ChatSession(client, sessionId, (source) => this.assetSource(source), {
+        openFile: (path) => this.openFile(path),
+        openDiff: (path, texts) => this.openDiff(path, texts),
+      });
       entry.chat.start();
     }
     this.changes.notify();
@@ -592,6 +775,7 @@ export class AgentsService extends Service {
   /** Closes the connection and stops every chat; the plugin's unloading does this. */
   private disconnect(): void {
     this.clearReconnectTimer();
+    this.clearRetryTimer();
     this.registered = false;
     this.movingTo = null;
     for (const entry of this.followed.values()) {

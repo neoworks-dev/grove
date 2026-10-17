@@ -2,8 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { Context as RootContext, type Context } from "@neoworks/extension-system";
 import { leaves } from "../plugins/layout/layoutTree";
 import { LayoutService } from "../plugins/layout/service";
-import { AGENT_PANE_TYPE, AgentsService, freeAppName, type AgentsTiming } from "../plugins/agents/service";
+import { AGENT_PANE_TYPE, AgentsService, freeAppName, nextRetryDelay, type AgentsTiming, type Openers } from "../plugins/agents/service";
 import { FakeWorkspace, setUpAgents as setUp } from "./support/agentsSetup";
+import type { SessionEvent } from "@suite/protocol/types";
 import { FakeHost, agentItem, sessionInfo } from "./support/fakeSuite";
 import { settle } from "./support/fakeSidecar";
 
@@ -87,7 +88,8 @@ describe("connecting", () => {
 });
 
 /** Short waits, so a daemon that never answers is given up on within a test. */
-const QUICK: AgentsTiming = { connectTimeoutMs: 40, requestTimeoutMs: 20, reconnectTimeoutMs: 40 };
+const QUICK: AgentsTiming = { connectTimeoutMs: 40, requestTimeoutMs: 20, reconnectTimeoutMs: 40, retryInitialMs: 10_000, retryMaxMs: 10_000 };
+const RETRYING: AgentsTiming = { ...QUICK, retryInitialMs: 30, retryMaxMs: 60 };
 
 /** Waits for real time to pass, for the timeouts. */
 function sleep(ms: number): Promise<void> {
@@ -152,6 +154,106 @@ describe("a daemon that is alive but wedged", () => {
     expect(agents.state().connection).toBe("unavailable");
     expect(agents.state().message).toBe("The suite daemon stopped answering");
     expect(host.client.closed).toBe(true);
+  });
+});
+
+describe("showing a change", () => {
+  /** Openers that record what they were asked, and whether a diff view is there to answer. */
+  function recordingOpeners(hasDiff: boolean): { openers: Openers; asked: string[] } {
+    const asked: string[] = [];
+    const openers: Openers = {
+      openFile: (path) => asked.push(`file ${path}`),
+      openDiff: (path, texts) => {
+        if (!hasDiff) {
+          return false;
+        }
+        asked.push(texts === undefined ? `diff ${path}` : `diff ${path} ${texts.oldText}>${texts.newText}`);
+        return true;
+      },
+    };
+    return { openers, asked };
+  }
+
+  test("goes to the diff view, with the two texts when a call reported them", async () => {
+    const { openers, asked } = recordingOpeners(true);
+    const { agents } = await setUp(undefined, openers);
+    agents.openDiff("/repo/a.ts");
+    agents.openDiff("/repo/a.ts", { oldText: "one", newText: "two" });
+    expect(asked).toEqual(["diff /repo/a.ts", "diff /repo/a.ts one>two"]);
+  });
+
+  test("shows the file when the app has no diff view", async () => {
+    const { openers, asked } = recordingOpeners(false);
+    const { agents } = await setUp(undefined, openers);
+    agents.openDiff("/repo/a.ts");
+    expect(asked).toEqual(["file /repo/a.ts"]);
+  });
+
+  test("a chat asks for the one change its calls add up to, else the file against HEAD", async () => {
+    const { openers, asked } = recordingOpeners(true);
+    const { host, agents } = await setUp(undefined, openers);
+    await agents.ensureStarted();
+    agents.follow("a");
+    await settle();
+    const chat = agents.chat("a");
+    const emit = (event: SessionEvent): void => host.client.events[0].emit(event);
+    emit({ type: "tool_call", toolCallId: "1", title: "Edit", kind: "edit", status: "pending" });
+    emit({ type: "tool_call_update", toolCallId: "1", content: [{ type: "diff", path: "/repo/a.ts", oldText: "a", newText: "b" }] });
+    emit({ type: "tool_call", toolCallId: "2", title: "Edit", kind: "edit", status: "pending" });
+    emit({ type: "tool_call_update", toolCallId: "2", content: [{ type: "diff", path: "/repo/a.ts", oldText: "b", newText: "c" }] });
+    chat?.openDiff("/repo/a.ts");
+    emit({ type: "tool_call", toolCallId: "3", title: "Edit", kind: "edit", status: "pending" });
+    emit({ type: "tool_call_update", toolCallId: "3", content: [{ type: "diff", path: "/repo/a.ts", oldText: "zzz", newText: "d" }] });
+    chat?.openDiff("/repo/a.ts");
+    expect(asked).toEqual(["diff /repo/a.ts a>c", "diff /repo/a.ts"]);
+  });
+});
+
+describe("retrying by itself", () => {
+  test("a connection that was lost is tried again, and the daemon being back ends the waiting", async () => {
+    const { host, agents } = await setUp(RETRYING);
+    await agents.ensureStarted();
+    host.client.state.set("reconnecting");
+    await sleep(60);
+    expect(agents.state().connection).toBe("unavailable");
+    expect(agents.state().retryAt).toBeGreaterThan(Date.now() - 100);
+    host.client.state.set("open");
+    await sleep(60);
+    expect(host.calls.filter((call) => call === "connect")).toHaveLength(2);
+    expect(agents.state()).toEqual({ connection: "open" });
+  });
+
+  test("a daemon that never came up is not tried again until the user asks", async () => {
+    const { host, agents } = await setUp(RETRYING);
+    host.running = false;
+    host.startFails = "no suite";
+    await agents.ensureStarted();
+    await sleep(100);
+    expect(host.calls.filter((call) => call === "startDaemon")).toHaveLength(1);
+    expect(agents.state().retryAt).toBeUndefined();
+  });
+
+  test("pressing Try again connects at once and drops the wait", async () => {
+    const { host, agents } = await setUp(RETRYING);
+    await agents.ensureStarted();
+    host.client.state.set("reconnecting");
+    await sleep(60);
+    expect(agents.state().connection).toBe("unavailable");
+    host.client.state.set("open");
+    await agents.retry();
+    expect(agents.state()).toEqual({ connection: "open" });
+    await sleep(80);
+    expect(host.calls.filter((call) => call === "connect")).toHaveLength(2);
+  });
+
+  test("the wait doubles after each attempt that fails, up to the longest", () => {
+    const delays: number[] = [];
+    let delay = 0;
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      delay = nextRetryDelay(delay, 2000, 10_000);
+      delays.push(delay);
+    }
+    expect(delays).toEqual([2000, 4000, 8000, 10_000, 10_000, 10_000]);
   });
 });
 
@@ -250,6 +352,51 @@ describe("panes", () => {
     expect(agents.isShown("a")).toBe(true);
     layout.closeLeaf(leaves(layout.root)[1].id);
     expect(agents.isShown("a")).toBe(false);
+  });
+});
+
+describe("the tabs and keys of a pane", () => {
+  test("the next and previous session step through the worktree's sessions, around the ends", async () => {
+    const { host, layout, agents } = await setUp();
+    await agents.ensureStarted();
+    host.client.sessions.set([
+      sessionInfo({ id: "a", cwd: "/repo", lastActivity: 3 }),
+      sessionInfo({ id: "b", cwd: "/repo", lastActivity: 2 }),
+      sessionInfo({ id: "c", cwd: "/repo", lastActivity: 1 }),
+      sessionInfo({ id: "other", cwd: "/repo/.worktrees/feature", lastActivity: 9 }),
+    ]);
+    agents.openSession("b");
+    const agentPane = leaves(layout.root)[1];
+    agents.stepSession(1);
+    expect(agents.sessionOfPane(agentPane.id)).toBe("c");
+    agents.stepSession(1);
+    expect(agents.sessionOfPane(agentPane.id)).toBe("a");
+    agents.stepSession(-1);
+    expect(agents.sessionOfPane(agentPane.id)).toBe("c");
+  });
+
+  test("a session alone in its worktree has nowhere to step to", async () => {
+    const { host, layout, agents } = await setUp();
+    await agents.ensureStarted();
+    host.client.sessions.set([sessionInfo({ id: "a", cwd: "/repo" })]);
+    agents.openSession("a");
+    agents.stepSession(1);
+    expect(agents.sessionOfPane(leaves(layout.root)[1].id)).toBe("a");
+  });
+
+  test("a pane's view takes keys for the focused pane until it lets go", async () => {
+    const { layout, agents } = await setUp();
+    agents.openSession("a");
+    const [editorPane, agentPane] = leaves(layout.root);
+    let toggled = 0;
+    const release = agents.registerPane(agentPane.id, { togglePanel: () => (toggled += 1), focusAgents: () => true });
+    agents.focusedPane()?.togglePanel();
+    expect(toggled).toBe(1);
+    layout.focus(editorPane.id);
+    expect(agents.focusedPane()).toBeUndefined();
+    layout.focus(agentPane.id);
+    release();
+    expect(agents.focusedPane()).toBeUndefined();
   });
 });
 

@@ -11,6 +11,7 @@ import { nextApprovals, type Approvals, type SessionStatus } from "./status";
 import { SessionFacts } from "./sessionFacts";
 import type { PlanList } from "./plan";
 import type { AgentRow } from "./subagents";
+import { chainedTexts, type CallDiff, type CallFacts } from "./calls";
 import type { Touches } from "./files";
 import type { ChatClient } from "./suiteClient";
 
@@ -18,6 +19,10 @@ import type { ChatClient } from "./suiteClient";
 export interface ChatOptions {
   /** Follow only this agent's work in the session, and not the session's events. */
   agent?: string;
+  /** Shows a file in the editor; without it, a file name in the chat does nothing when pressed. */
+  openFile?: (path: string) => void;
+  /** Shows how a file changed: against HEAD, or between two texts when they are given. */
+  openDiff?: (path: string, texts?: { oldText: string; newText: string }) => void;
 }
 
 export class ChatSession {
@@ -81,6 +86,18 @@ export class ChatSession {
     return this.facts.touches;
   }
 
+  /** What the events say about the tool call whose chat item has this ref, or undefined for anything else. Reactive. */
+  callOf(ref: string): CallFacts | undefined {
+    this.changes.track();
+    return this.facts.calls.byRef.get(ref);
+  }
+
+  /** The file changes the session's tool calls made, in the order the calls came. Reactive. */
+  fileChanges(): CallDiff[] {
+    this.changes.track();
+    return [...this.facts.calls.byRef.values()].flatMap((call) => call.diffs);
+  }
+
   /** The subagents and guests working for the session, finished ones included. Reactive. */
   agentRows(): readonly AgentRow[] {
     this.changes.track();
@@ -122,6 +139,32 @@ export class ChatSession {
   clearError(): void {
     this.failure = null;
     this.changes.notify();
+  }
+
+  /** Shows the file at an absolute path in the editor. */
+  openFile(path: string): void {
+    if (this.options.openFile === undefined) {
+      return;
+    }
+    this.options.openFile(path);
+  }
+
+  /**
+   * Shows how the file at an absolute path changed, in a diff pane when there is one: what the
+   * session's calls made of it when they add up to one change, else the file against HEAD.
+   */
+  openDiff(path: string): void {
+    const texts = chainedTexts(this.fileChanges().filter((change) => change.path === path));
+    this.openDiffBetween(path, texts);
+  }
+
+  /** Shows a diff between two texts of a file, or the file against HEAD when there are none. */
+  openDiffBetween(path: string, texts?: { oldText: string; newText: string }): void {
+    if (this.options.openDiff === undefined) {
+      this.openFile(path);
+      return;
+    }
+    this.options.openDiff(path, texts);
   }
 
   /** Starts following the session's view: a snapshot first, then patches. */

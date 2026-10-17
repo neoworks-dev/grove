@@ -1,7 +1,9 @@
 <!--
-  A session's chat in a pane: the conversation over its composer and the agents list, with the
-  plan and changed files in a column at the right when the pane is wide enough. Pressing an agent
-  in the list shows that agent's own chat in place of the conversation.
+  A session's chat in a pane: the session tabs along the top, the conversation over its composer
+  and the agents list, with the plan and changed files in a column at the right when the pane is
+  wide enough. The edits button shows the column in a narrow pane, where it takes the place of the
+  conversation, and hides it in a wide one. Pressing an agent in the list shows that agent's own
+  chat in place of the conversation.
 -->
 <script lang="ts">
   import { untrack } from "svelte";
@@ -13,6 +15,7 @@
   import type { ChatSession } from "./chatSession";
   import Chat from "./chat/Chat.svelte";
   import Composer from "./Composer.svelte";
+  import SessionTabs from "./SessionTabs.svelte";
   import { FilesModel, type ChangesSource } from "./filesModel";
   import { modelLabel, type AgentRow } from "./subagents";
   import SidePanel from "./SidePanel.svelte";
@@ -23,11 +26,13 @@
     workspace: WorkspaceService;
     changes: ChangesSource;
     chat: ChatSession;
+    /** The pane this is drawn in. */
+    leafId: string;
     /** The pane this is drawn in has the focus. */
     focused: boolean;
   }
 
-  let { agents, workspace, changes, chat, focused }: Props = $props();
+  let { agents, workspace, changes, chat, leafId, focused }: Props = $props();
 
   /** The pane is only worth a column for the plan and files from this width on. */
   const MIN_WIDTH_FOR_SIDE_PANEL = 760;
@@ -44,6 +49,10 @@
   );
 
   let width = $state(0);
+  let composer: ReturnType<typeof Composer> | undefined = $state();
+  let agentsList: ReturnType<typeof AgentsList> | undefined = $state();
+  /** What the user chose for the plan and files column; undefined while the pane's width decides. */
+  let panelChoice = $state<boolean | undefined>(undefined);
   /** The agent whose own chat is shown, and that chat. */
   let viewedAgent = $state.raw<AgentRow | null>(null);
   let agentChat = $state.raw<ChatSession | null>(null);
@@ -51,7 +60,20 @@
   const running = $derived(chat.running());
   const plans = $derived(chat.plans());
   const entries = $derived(files.entries());
-  const sidePanelShown = $derived(width >= MIN_WIDTH_FOR_SIDE_PANEL && (plans.length > 0 || entries.length > 0));
+  const wide = $derived(width >= MIN_WIDTH_FOR_SIDE_PANEL);
+  const hasPanelContent = $derived(plans.length > 0 || entries.length > 0);
+  const sidePanelShown = $derived.by(() => {
+    if (!hasPanelContent) {
+      return false;
+    }
+    if (panelChoice === undefined) {
+      return wide;
+    }
+    return panelChoice;
+  });
+  /** A narrow pane gives the whole pane to the column, since beside the chat it would leave the chat no room. */
+  const panelReplacesChat = $derived(sidePanelShown && !wide);
+  const tabs = $derived(agents.siblingSessions(chat.sessionId));
   const branch = $derived(files.worktree()?.branch ?? null);
 
   // Git is asked when the files the agents touched change or a turn ends, and now and then.
@@ -98,28 +120,54 @@
     return modelLabel(row.model);
   }
 
+  // The pane's keys reach this view through the service.
+  $effect(() =>
+    agents.registerPane(leafId, {
+      togglePanel,
+      focusAgents: () => agentsList?.focus() === true,
+    }),
+  );
+
+  /** The edits button: shows the plan and files, or hides them. */
+  function togglePanel(): void {
+    panelChoice = !sidePanelShown;
+  }
+
   function measured(box: Layout): void {
     width = box.width;
   }
 </script>
 
-<View style={{ flex: 1, minHeight: 0, direction: "row" }} onlayout={measured}>
-  <View style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
-    {#if viewedAgent !== null && agentChat !== null}
-      <AgentChatView
-        chat={agentChat}
-        harness={viewedAgent.harness}
-        model={shownModel(viewedAgent)}
-        task={viewedAgent.task}
-        onback={() => (viewedAgent = null)}
-      />
-    {:else}
-      <Chat session={chat} />
-      <Composer session={chat} {running} {focused} />
+<View style={{ flex: 1, minHeight: 0 }}>
+  <SessionTabs
+    sessions={tabs}
+    current={chat.sessionId}
+    onselect={(sessionId) => agents.showSession(leafId, sessionId)}
+    onnew={() => void agents.newSession()}
+    edits={entries.length}
+    panelShown={sidePanelShown}
+    onpanel={togglePanel}
+  />
+  <View style={{ flex: 1, minHeight: 0, direction: "row" }} onlayout={measured}>
+    {#if !panelReplacesChat}
+      <View style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
+        {#if viewedAgent !== null && agentChat !== null}
+          <AgentChatView
+            chat={agentChat}
+            harness={viewedAgent.harness}
+            model={shownModel(viewedAgent)}
+            task={viewedAgent.task}
+            onback={() => (viewedAgent = null)}
+          />
+        {:else}
+          <Chat session={chat} />
+          <Composer bind:this={composer} session={chat} {running} {focused} />
+        {/if}
+        <AgentsList bind:this={agentsList} {chat} sessions={agents.sessions()} onopen={openAgent} onleave={() => composer?.focus()} />
+      </View>
     {/if}
-    <AgentsList {chat} sessions={agents.sessions()} onopen={openAgent} />
+    {#if sidePanelShown}
+      <SidePanel {chat} {files} {branch} fill={panelReplacesChat} />
+    {/if}
   </View>
-  {#if sidePanelShown}
-    <SidePanel {chat} {files} {branch} />
-  {/if}
 </View>

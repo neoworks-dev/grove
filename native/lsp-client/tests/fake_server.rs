@@ -10,6 +10,7 @@ use std::time::Duration;
 use editor_core::{Buffer, Command, EditorState, Position};
 use lsp_client::client::{Client, Handler, ServerCommand, Status};
 use lsp_client::completion::parse_items;
+use lsp_client::initialize::configuration_for;
 use lsp_client::protocol::{PublishDiagnostics, ResponseError, SyncKind, parse_targets};
 use lsp_client::sync::{did_change_params, did_close_params, did_open_params, did_save_params};
 use lsp_client::uri::uri_from_path;
@@ -36,8 +37,12 @@ impl Handler for Collector {
     /// Answers the configuration request with one object per section asked about, and refuses the rest.
     fn request(&self, method: &str, params: Value) -> Result<Value, ResponseError> {
         if method == "workspace/configuration" {
-            let sections = params["items"].as_array().map(Vec::len).unwrap_or(0);
-            return Ok(json!(vec![json!({ "answered": true }); sections]));
+            let items = params["items"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+            let answers = items.iter().map(|item| match item["section"].as_str() {
+                Some("typescript") => configuration_for("typescript"),
+                _ => json!({ "answered": true }),
+            });
+            return Ok(Value::Array(answers.collect()));
         }
         Err(ResponseError { code: 0, message: "unknown".into() })
     }
@@ -202,6 +207,31 @@ fn completion_hover_and_definition_are_answered_and_parsed() {
 
     let targets = parse_targets(&session.ask("textDocument/definition", session.position_params(0, 0)).unwrap());
     assert_eq!(targets[0].uri, session.uri);
+    session.client.shutdown(WAIT);
+}
+
+#[test]
+fn a_resolved_function_brings_its_documentation_and_its_call_parentheses() {
+    let session = start();
+    session
+        .client
+        .notify_document("textDocument/didOpen", did_open_params(&session.uri, "typescript", 1, "x.al\n"));
+    session.wait_for_status(|status| *status == Status::Ready);
+    // The server has the settings once it has said it was answered.
+    session.wait_for(|heard| match heard {
+        Heard::Notification(method, params) if method == "window/logMessage" => {
+            params["message"].as_str().filter(|message| message.contains("answered")).map(str::to_string)
+        }
+        _ => None,
+    });
+    let answer = session.ask("textDocument/completion", session.position_params(0, 4)).unwrap();
+    let mut alpha = parse_items(&answer).items.remove(0);
+    assert!(alpha.documentation.is_none() && !alpha.is_snippet);
+
+    alpha.merge_resolved(&session.ask("completionItem/resolve", alpha.raw.clone()).unwrap());
+    assert_eq!(alpha.documentation.as_deref(), Some("docs for **alpha**"));
+    assert!(alpha.is_snippet);
+    assert_eq!(alpha.edit.as_ref().unwrap().new_text, "alpha(${1:value})$0");
     session.client.shutdown(WAIT);
 }
 

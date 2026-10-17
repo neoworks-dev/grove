@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use lsp_client::client::{Handler, Status};
 use lsp_client::diagnostics::{DIAGNOSTICS_SOURCE, decorations_for};
+use lsp_client::initialize::configuration_for;
 use lsp_client::protocol::{METHOD_NOT_FOUND, PublishDiagnostics, ResponseError};
 use lsp_client::uri::path_from_uri;
 use serde_json::{Value, json};
@@ -53,8 +54,9 @@ impl Handler for ServerHandler {
     fn request(&self, method: &str, params: Value) -> Result<Value, ResponseError> {
         match method {
             "workspace/configuration" => {
-                let sections = params["items"].as_array().map(Vec::len).unwrap_or(0);
-                Ok(Value::Array(vec![Value::Null; sections]))
+                let items = params["items"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+                let answers = items.iter().map(|item| configuration_for(item["section"].as_str().unwrap_or("")));
+                Ok(Value::Array(answers.collect()))
             }
             "workspace/workspaceFolders" => Ok(self.workspace_folders()),
             "window/workDoneProgress/create" | "client/registerCapability" | "client/unregisterCapability" => {

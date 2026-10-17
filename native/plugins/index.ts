@@ -11,15 +11,23 @@ import { layout } from "./layout";
 import { coreMenu, menus } from "./menus";
 import { panel } from "./panel";
 import { placeholderPanel, placeholderSidebar } from "./placeholders";
+import { palette } from "./palette";
 import { rails } from "./rails";
+import { settingsView } from "./settings";
 import { sidebar } from "./sidebar";
 import { statusbar } from "./statusbar";
+import { coreThemes, theme, themePicker } from "./theme";
 
 export const corePlugins: PluginCatalog = {
   frame,
   header,
   menus,
   "core-menu": coreMenu,
+  theme,
+  "core-themes": coreThemes,
+  "theme-picker": themePicker,
+  palette,
+  "settings-view": settingsView,
   rails,
   sidebar,
   statusbar,

@@ -240,6 +240,9 @@ impl Editor {
             return Outcome::default();
         };
         let arrived_at = Instant::now();
+        // Whatever moves the cursor or changes the text, from a key, a click on the app's own
+        // controls or a jump, leaves the popover behind.
+        self.hide_hover(cx);
         let Some(command) = self.resolve_clipboard(command, cx) else {
             return Outcome::default();
         };

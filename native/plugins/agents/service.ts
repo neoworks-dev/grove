@@ -222,6 +222,20 @@ export class AgentsService extends Service {
   }
 
   /**
+   * Starts a read-only chat of one agent's work in a session (a subagent or a guest), for the
+   * agents list. Null while the daemon is not connected. The caller stops it.
+   */
+  openAgentChat(sessionId: string, agent: string): ChatSession | null {
+    const client = this.client;
+    if (client === null) {
+      return null;
+    }
+    const chat = new ChatSession(client, sessionId, (source) => this.assetSource(source), { agent });
+    chat.start();
+    return chat;
+  }
+
+  /**
    * Shows a session in a pane: the pane that already shows it, else the focused agent pane, else
    * the first agent pane, else a new pane split off the focused one.
    */

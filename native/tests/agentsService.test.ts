@@ -1,54 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { Context as RootContext, type Context } from "@neoworks/extension-system";
-import type { Worktree } from "../../src/shared/types";
 import { leaves } from "../plugins/layout/layoutTree";
 import { LayoutService } from "../plugins/layout/service";
-import { AGENT_PANE_TYPE, AgentsService, freeAppName, type AgentsTiming, type AgentWorkspace } from "../plugins/agents/service";
+import { AGENT_PANE_TYPE, AgentsService, freeAppName, type AgentsTiming } from "../plugins/agents/service";
+import { FakeWorkspace, setUpAgents as setUp } from "./support/agentsSetup";
 import { FakeHost, agentItem, sessionInfo } from "./support/fakeSuite";
 import { settle } from "./support/fakeSidecar";
-
-/** A worktree as the workspace lists it. */
-function worktree(name: string, path: string, isMain = false): Worktree {
-  return { id: name, name, path, branch: name, isMain, isDetached: false, locked: false, dirty: false, portSlot: 0 };
-}
-
-/** A workspace with a repository at `/repo` and one more worktree under `.worktrees`. */
-class FakeWorkspace implements AgentWorkspace {
-  list = [worktree("main", "/repo", true), worktree("feature", "/repo/.worktrees/feature")];
-  selectedId = "main";
-
-  worktrees(): Worktree[] {
-    return this.list;
-  }
-
-  selectedWorktree(): Worktree | null {
-    return this.list.find((candidate) => candidate.id === this.selectedId) ?? null;
-  }
-}
-
-interface Setup {
-  host: FakeHost;
-  layout: LayoutService;
-  workspace: FakeWorkspace;
-  agents: AgentsService;
-}
-
-/** A layout with one editor pane, a workspace, and the agents service over a fake daemon. */
-async function setUp(timing?: AgentsTiming): Promise<Setup> {
-  const root = new RootContext();
-  const host = new FakeHost();
-  const workspace = new FakeWorkspace();
-  let layout!: LayoutService;
-  let agents!: AgentsService;
-  await root.plugin({
-    name: "agents-test",
-    apply: (ctx: Context) => {
-      layout = new LayoutService(ctx, "editor", null);
-      agents = new AgentsService(ctx, host, layout, workspace, timing);
-    },
-  });
-  return { host, layout, workspace, agents };
-}
 
 describe("connecting", () => {
   test("nothing connects until something needs the daemon", async () => {

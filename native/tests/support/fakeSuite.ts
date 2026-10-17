@@ -2,7 +2,17 @@
 // the host answers the daemon's address and start-up from switches, and the client keeps the
 // sessions and views a test sets up and records every call made to it.
 
-import type { ConnectorInfo, SessionInfo, ViewItem, ViewPatch, ViewSnapshot } from "@suite/protocol/types";
+import type {
+  AgentFocus,
+  AgentMove,
+  ConnectorInfo,
+  SessionEvent,
+  SessionEventRecord,
+  SessionInfo,
+  ViewItem,
+  ViewPatch,
+  ViewSnapshot,
+} from "@suite/protocol/types";
 import type { ConnectionState, DaemonAddress, SuiteClient, SuiteConnectOptions, SuiteHost } from "../../plugins/agents/suiteClient";
 
 /** A value that tells its listeners when it changes, as the client's `Watched`. */
@@ -33,8 +43,18 @@ class FakeWatched<Value> {
 /** One view subscription a test can push snapshots and patches into. */
 export interface FakeViewSubscription {
   sessionId: string;
+  /** The agent whose work the view follows, if it is not the session's own. */
+  agent?: string;
   snapshot(snapshot: ViewSnapshot): void;
   patch(patch: ViewPatch): void;
+  stopped: boolean;
+}
+
+/** One event subscription a test can push the session's events into. */
+export interface FakeEventSubscription {
+  sessionId: string;
+  /** Delivers an event as record number `seq` of the session. */
+  emit(event: SessionEvent, seq?: number, ts?: number): void;
   stopped: boolean;
 }
 
@@ -50,6 +70,10 @@ export class FakeClient {
   connectors: ConnectorInfo[] = [];
   presences: PresenceCall[] = [];
   views: FakeViewSubscription[] = [];
+  events: FakeEventSubscription[] = [];
+  focus = new FakeWatched<AgentFocus | undefined>(undefined);
+  moves: AgentMove[] = [];
+  contexts: Record<string, string>[] = [];
   inputs: { session: string; text: string }[] = [];
   cancels: string[] = [];
   actions: { session: string; ref: string; action: string; args?: unknown }[] = [];
@@ -75,6 +99,15 @@ export class FakeClient {
     this.presences.push(presence);
   }
 
+  async setContext(context: Record<string, string>): Promise<void> {
+    this.contexts.push(context);
+  }
+
+  async moveAgent(move: AgentMove): Promise<void> {
+    this.throwIfFailing();
+    this.moves.push(move);
+  }
+
   async createSession(params: { cwd?: string }): Promise<SessionInfo> {
     this.created.push(params);
     const info = sessionInfo({ id: `s_new${this.created.length}`, cwd: params.cwd });
@@ -97,12 +130,34 @@ export class FakeClient {
     this.actions.push({ session, ref, action, args });
   }
 
+  subscribe(
+    sessionId: string,
+    options: { onEvent: (event: SessionEvent, record: SessionEventRecord) => void },
+  ): () => void {
+    let nextSeq = 1;
+    const subscription: FakeEventSubscription = {
+      sessionId,
+      emit: (event, seq, ts) => {
+        const number = seq === undefined ? nextSeq : seq;
+        nextSeq = number + 1;
+        const time = ts === undefined ? 1000 : ts;
+        options.onEvent(event, { session: sessionId, seq: number, ts: time, event });
+      },
+      stopped: false,
+    };
+    this.events.push(subscription);
+    return () => {
+      subscription.stopped = true;
+    };
+  }
+
   subscribeView(
     sessionId: string,
-    options: { onSnapshot: (snapshot: ViewSnapshot) => void; onPatch: (patch: ViewPatch) => void },
+    options: { agent?: string; onSnapshot: (snapshot: ViewSnapshot) => void; onPatch: (patch: ViewPatch) => void },
   ): () => void {
     const subscription: FakeViewSubscription = {
       sessionId,
+      agent: options.agent,
       snapshot: (snapshot) => options.onSnapshot(snapshot),
       patch: (patch) => options.onPatch(patch),
       stopped: false,
@@ -115,6 +170,11 @@ export class FakeClient {
 
   async close(): Promise<void> {
     this.closed = true;
+  }
+
+  /** The event subscriptions that are still followed. */
+  liveEvents(): FakeEventSubscription[] {
+    return this.events.filter((subscription) => !subscription.stopped);
   }
 
   /** The views that are still followed. */

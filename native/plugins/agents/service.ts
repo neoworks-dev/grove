@@ -75,6 +75,7 @@ interface FollowedChat {
 }
 
 export class AgentsService extends Service {
+  private context: Context;
   private host: SuiteHost;
   private panes: AgentPanes;
   private workspace: AgentWorkspace;
@@ -105,6 +106,7 @@ export class AgentsService extends Service {
     timing: AgentsTiming = DEFAULT_TIMING,
   ) {
     super(ctx, "agents");
+    this.context = ctx;
     this.host = host;
     this.panes = panes;
     this.workspace = workspace;
@@ -112,6 +114,15 @@ export class AgentsService extends Service {
     ctx.effect(() => panes.onPaneSplit((newLeafId, sourceLeafId) => this.paneSplit(newLeafId, sourceLeafId)), "agents.paneSplit");
     ctx.effect(() => workspace.onSelectionChange(() => void this.updateContext()), "agents.worktreeChanged");
     ctx.effect(() => () => this.disconnect(), "agents.disconnect");
+  }
+
+  /** Shows the file at an absolute path in the editor, when an editor plugin is loaded. */
+  openFile(path: string): void {
+    const editor = this.context.get("editor");
+    if (!editor) {
+      return;
+    }
+    editor.open(path);
   }
 
   /** How the connection to the daemon is doing. Reactive. */
@@ -261,7 +272,10 @@ export class AgentsService extends Service {
     if (client === null) {
       return null;
     }
-    const chat = new ChatSession(client, sessionId, (source) => this.assetSource(source), { agent });
+    const chat = new ChatSession(client, sessionId, (source) => this.assetSource(source), {
+      agent,
+      openFile: (path) => this.openFile(path),
+    });
     chat.start();
     return chat;
   }
@@ -558,7 +572,9 @@ export class AgentsService extends Service {
       if (entry.chat !== null) {
         continue;
       }
-      entry.chat = new ChatSession(client, sessionId, (source) => this.assetSource(source));
+      entry.chat = new ChatSession(client, sessionId, (source) => this.assetSource(source), {
+        openFile: (path) => this.openFile(path),
+      });
       entry.chat.start();
     }
     this.changes.notify();

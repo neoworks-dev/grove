@@ -19,6 +19,8 @@ import type { ChatClient } from "./suiteClient";
 export interface ChatOptions {
   /** Follow only this agent's work in the session, and not the session's events. */
   agent?: string;
+  /** Shows a file in the editor; without it, a file name in the chat does nothing when pressed. */
+  openFile?: (path: string) => void;
 }
 
 export class ChatSession {
@@ -129,6 +131,14 @@ export class ChatSession {
   clearError(): void {
     this.failure = null;
     this.changes.notify();
+  }
+
+  /** Shows the file at an absolute path in the editor. */
+  openFile(path: string): void {
+    if (this.options.openFile === undefined) {
+      return;
+    }
+    this.options.openFile(path);
   }
 
   /** Starts following the session's view: a snapshot first, then patches. */

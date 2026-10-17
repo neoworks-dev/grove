@@ -3,7 +3,7 @@
 // and a result but not these, which the compact rows, the folded turns and the changed files need.
 // Plain functions, so they are tested without a window.
 
-import type { SessionEventRecord, ToolCallStatus, ToolKind } from "@suite/protocol/types";
+import type { SessionEventRecord, ToolCallContent, ToolCallStatus, ToolKind } from "@suite/protocol/types";
 
 /** One change to one file, as the tool reported it. */
 export interface CallDiff {
@@ -101,19 +101,18 @@ export function applyCall(state: Calls, record: SessionEventRecord): Calls {
 }
 
 /** The file changes among a call's content. */
-function diffsOf(content: readonly { type: string }[]): CallDiff[] {
+function diffsOf(content: readonly ToolCallContent[]): CallDiff[] {
   const diffs: CallDiff[] = [];
   for (const entry of content) {
     if (entry.type !== "diff") {
       continue;
     }
-    const diff = entry as { path: string; oldText?: string; newText: string };
-    if (diff.path === "") {
+    if (entry.path === "") {
       continue;
     }
-    const change: CallDiff = { path: diff.path, newText: diff.newText };
-    if (diff.oldText !== undefined) {
-      change.oldText = diff.oldText;
+    const change: CallDiff = { path: entry.path, newText: entry.newText };
+    if (entry.oldText !== undefined) {
+      change.oldText = entry.oldText;
     }
     diffs.push(change);
   }

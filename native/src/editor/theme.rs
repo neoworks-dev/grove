@@ -7,14 +7,20 @@
 //! ```json
 //! { "background": "#1c1c1e", "foreground": "#fafafa", "currentLine": "#1f1f23",
 //!   "lineNumber": "#52525b", "currentLineNumber": "#a1a1aa", "selection": "#a78bfa40",
-//!   "cursor": "#a78bfa",
+//!   "cursor": "#a78bfa", "error": "#f87171", "warning": "#fbbf24", "info": "#60a5fa",
+//!   "hint": "#a1a1aa", "added": "#4ade80", "modified": "#60a5fa", "deleted": "#f87171",
+//!   "inlay": "#8b8b94", "lineEnd": "#71717a",
 //!   "syntax": { "keyword": "#a78bfa", "title": { "color": "#60a5fa", "bold": true } } }
 //! ```
+//!
+//! The last nine are the colours of decorations (see `editor_core::decorations::Tone`): what
+//! diagnostics, git changes, inlay hints and text after a line end are drawn in.
 //!
 //! Each key of `syntax` is one of `editor_core::syntax::HIGHLIGHT_NAMES`. A name the theme leaves
 //! out takes the colour of its dotted prefix (`function.method` of `function`), and text with
 //! no colour at all is painted in the foreground.
 
+use editor_core::Tone;
 use editor_core::syntax::{HIGHLIGHT_NAMES, HighlightId};
 use serde_json::Value;
 use svelte_gpui::gpui::{Hsla, rgba};
@@ -37,6 +43,17 @@ pub struct EditorTheme {
     pub current_line_number: Hsla,
     pub selection: Hsla,
     pub cursor: Hsla,
+    pub error: Hsla,
+    pub warning: Hsla,
+    pub info: Hsla,
+    pub hint: Hsla,
+    pub added: Hsla,
+    pub modified: Hsla,
+    pub deleted: Hsla,
+    /// Text an inlay adds in a line.
+    pub inlay: Hsla,
+    /// Text added after the end of a line.
+    pub line_end: Hsla,
     /// The style of each highlight, by `HighlightId`.
     syntax: Vec<Option<HighlightStyle>>,
 }
@@ -52,6 +69,15 @@ impl Default for EditorTheme {
             current_line_number: hex(0xa1a1aaff),
             selection: hex(0x3b3b52ff),
             cursor: hex(0xf97316ff),
+            error: hex(0xf87171ff),
+            warning: hex(0xfbbf24ff),
+            info: hex(0x60a5faff),
+            hint: hex(0xa1a1aaff),
+            added: hex(0x4ade80ff),
+            modified: hex(0x60a5faff),
+            deleted: hex(0xf87171ff),
+            inlay: hex(0x8b8b94ff),
+            line_end: hex(0x71717aff),
             syntax: vec![None; HIGHLIGHT_NAMES.len()],
         }
     }
@@ -74,7 +100,31 @@ impl EditorTheme {
             current_line_number: color("currentLineNumber", defaults.current_line_number),
             selection: color("selection", defaults.selection),
             cursor: color("cursor", defaults.cursor),
+            error: color("error", defaults.error),
+            warning: color("warning", defaults.warning),
+            info: color("info", defaults.info),
+            hint: color("hint", defaults.hint),
+            added: color("added", defaults.added),
+            modified: color("modified", defaults.modified),
+            deleted: color("deleted", defaults.deleted),
+            inlay: color("inlay", defaults.inlay),
+            line_end: color("lineEnd", defaults.line_end),
             syntax: syntax_styles(value.get("syntax")),
+        }
+    }
+
+    /// The colour a decoration of a tone is drawn in.
+    pub fn tone(&self, tone: Tone) -> Hsla {
+        match tone {
+            Tone::Error => self.error,
+            Tone::Warning => self.warning,
+            Tone::Info => self.info,
+            Tone::Hint => self.hint,
+            Tone::Added => self.added,
+            Tone::Modified => self.modified,
+            Tone::Deleted => self.deleted,
+            Tone::Inlay => self.inlay,
+            Tone::LineEnd => self.line_end,
         }
     }
 
@@ -157,6 +207,14 @@ mod tests {
         let title = theme.style_of(id("title")).unwrap();
         assert!(title.bold && !title.italic);
         assert!(theme.style_of(id("keyword")).is_none());
+    }
+
+    #[test]
+    fn decoration_colours_come_from_the_prop_by_tone() {
+        let theme = EditorTheme::from_json(&json!({ "error": "#010203", "lineEnd": "#040506" }));
+        assert_eq!(theme.tone(Tone::Error), hex(0x010203ff));
+        assert_eq!(theme.tone(Tone::LineEnd), hex(0x040506ff));
+        assert_eq!(theme.tone(Tone::Added), EditorTheme::default().added);
     }
 
     #[test]

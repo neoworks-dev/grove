@@ -1,54 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { Context as RootContext, type Context } from "@neoworks/extension-system";
-import type { Worktree } from "../../src/shared/types";
 import { leaves } from "../plugins/layout/layoutTree";
 import { LayoutService } from "../plugins/layout/service";
-import { AGENT_PANE_TYPE, AgentsService, freeAppName, type AgentWorkspace } from "../plugins/agents/service";
+import { AGENT_PANE_TYPE, AgentsService, freeAppName, type AgentsTiming } from "../plugins/agents/service";
+import { FakeWorkspace, setUpAgents as setUp } from "./support/agentsSetup";
 import { FakeHost, agentItem, sessionInfo } from "./support/fakeSuite";
 import { settle } from "./support/fakeSidecar";
-
-/** A worktree as the workspace lists it. */
-function worktree(name: string, path: string, isMain = false): Worktree {
-  return { id: name, name, path, branch: name, isMain, isDetached: false, locked: false, dirty: false, portSlot: 0 };
-}
-
-/** A workspace with a repository at `/repo` and one more worktree under `.worktrees`. */
-class FakeWorkspace implements AgentWorkspace {
-  list = [worktree("main", "/repo", true), worktree("feature", "/repo/.worktrees/feature")];
-  selectedId = "main";
-
-  worktrees(): Worktree[] {
-    return this.list;
-  }
-
-  selectedWorktree(): Worktree | null {
-    return this.list.find((candidate) => candidate.id === this.selectedId) ?? null;
-  }
-}
-
-interface Setup {
-  host: FakeHost;
-  layout: LayoutService;
-  workspace: FakeWorkspace;
-  agents: AgentsService;
-}
-
-/** A layout with one editor pane, a workspace, and the agents service over a fake daemon. */
-async function setUp(): Promise<Setup> {
-  const root = new RootContext();
-  const host = new FakeHost();
-  const workspace = new FakeWorkspace();
-  let layout!: LayoutService;
-  let agents!: AgentsService;
-  await root.plugin({
-    name: "agents-test",
-    apply: (ctx: Context) => {
-      layout = new LayoutService(ctx, "editor", null);
-      agents = new AgentsService(ctx, host, layout, workspace);
-    },
-  });
-  return { host, layout, workspace, agents };
-}
 
 describe("connecting", () => {
   test("nothing connects until something needs the daemon", async () => {
@@ -126,6 +83,75 @@ describe("connecting", () => {
     host.calls.length = 0;
     await host.connectOptions[0].address();
     expect(host.calls).toEqual(["address"]);
+  });
+});
+
+/** Short waits, so a daemon that never answers is given up on within a test. */
+const QUICK: AgentsTiming = { connectTimeoutMs: 40, requestTimeoutMs: 20, reconnectTimeoutMs: 40 };
+
+/** Waits for real time to pass, for the timeouts. */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+describe("a daemon that is alive but wedged", () => {
+  test("a connection that is never answered ends as unavailable, not as a wait without end", async () => {
+    const { host, agents } = await setUp(QUICK);
+    host.holdConnect();
+    await agents.ensureStarted();
+    expect(agents.state().connection).toBe("unavailable");
+    expect(agents.state().message).toBe("The suite daemon did not answer");
+  });
+
+  test("a daemon that connects but never lists its sessions ends as unavailable and the client is closed", async () => {
+    const { host, agents } = await setUp(QUICK);
+    host.client.listingHangs = true;
+    await agents.ensureStarted();
+    expect(agents.state().connection).toBe("unavailable");
+    expect(host.client.closed).toBe(true);
+  });
+
+  test("a client that answers after the service gave up is closed, not adopted", async () => {
+    const { host, agents } = await setUp(QUICK);
+    host.holdConnect();
+    await agents.ensureStarted();
+    host.releaseConnect();
+    await sleep(10);
+    expect(host.client.closed).toBe(true);
+    expect(agents.state().connection).toBe("unavailable");
+  });
+
+  test("trying again connects once the daemon answers", async () => {
+    const { host, agents } = await setUp(QUICK);
+    host.holdConnect();
+    await agents.ensureStarted();
+    host.releaseConnect();
+    await sleep(10);
+    host.client.closed = false;
+    await agents.retry();
+    expect(agents.state().connection).toBe("open");
+    expect(host.client.closed).toBe(false);
+  });
+
+  test("the client is asked to give up on a request, and not to wait for the daemon without end", async () => {
+    const { host, agents } = await setUp(QUICK);
+    await agents.ensureStarted();
+    expect(host.connectOptions[0].requestTimeoutMs).toBe(20);
+  });
+
+  test("a connection that stays down is given up on, and one that comes back in time is kept", async () => {
+    const { host, agents } = await setUp(QUICK);
+    await agents.ensureStarted();
+    host.client.state.set("reconnecting");
+    await sleep(10);
+    host.client.state.set("open");
+    await sleep(60);
+    expect(agents.state().connection).toBe("open");
+    host.client.state.set("reconnecting");
+    await sleep(60);
+    expect(agents.state().connection).toBe("unavailable");
+    expect(agents.state().message).toBe("The suite daemon stopped answering");
+    expect(host.client.closed).toBe(true);
   });
 });
 
@@ -224,6 +250,138 @@ describe("panes", () => {
     expect(agents.isShown("a")).toBe(true);
     layout.closeLeaf(leaves(layout.root)[1].id);
     expect(agents.isShown("a")).toBe(false);
+  });
+});
+
+describe("the focused agent pane", () => {
+  test("is none while another kind of pane has the focus, and the pane showing the session when it has", async () => {
+    const { layout, agents } = await setUp();
+    expect(agents.focusedAgentPane()).toBeNull();
+    expect(agents.focusedChat()).toBeUndefined();
+    agents.openSession("a");
+    const [editorPane, agentPane] = leaves(layout.root);
+    expect(agents.focusedAgentPane()).toBe(agentPane.id);
+    layout.focus(editorPane.id);
+    expect(agents.focusedAgentPane()).toBeNull();
+  });
+
+  test("has the conversation its session follows", async () => {
+    const { layout, agents } = await setUp();
+    agents.openSession("a");
+    expect(agents.focusedChat()).toBeUndefined();
+    agents.follow("a");
+    await settle();
+    expect(agents.focusedChat()).toBe(agents.chat("a"));
+    expect(leaves(layout.root)).toHaveLength(2);
+  });
+});
+
+describe("telling the daemon what the window shows", () => {
+  test("a session an agent pane shows moves the agent to this window, once", async () => {
+    const { host, agents } = await setUp();
+    await agents.showing("a");
+    expect(host.client.moves).toEqual([{ app: "grove", session: "a" }]);
+    host.client.focus.set({ session: "a", app: "grove", reason: "user" });
+    await agents.showing("a");
+    expect(host.client.moves).toHaveLength(1);
+    await agents.showing("b");
+    expect(host.client.moves).toEqual([
+      { app: "grove", session: "a" },
+      { app: "grove", session: "b" },
+    ]);
+  });
+
+  test("moves it back when another window or the CLI took it away", async () => {
+    const { host, agents } = await setUp();
+    await agents.showing("a");
+    host.client.focus.set({ session: "a", app: "grove", reason: "user" });
+    host.client.focus.set({ session: "a", app: "cli", reason: "user" });
+    await agents.showing("a");
+    expect(host.client.moves).toHaveLength(2);
+  });
+
+  test("a refused move is kept as the message, and the next one is tried", async () => {
+    const { host, agents } = await setUp();
+    await agents.ensureStarted();
+    host.client.failNext = new Error("unknown app");
+    await agents.showing("a");
+    expect(agents.state().message).toBe("unknown app");
+    await agents.showing("a");
+    expect(host.client.moves).toEqual([{ app: "grove", session: "a" }]);
+  });
+
+  test("a second window moves the agent under its own name", async () => {
+    const { host, agents } = await setUp();
+    host.client.connectors = [{ app: "grove", connected: true }] as never;
+    await agents.showing("a");
+    expect(host.client.moves).toEqual([{ app: "grove-2", session: "a" }]);
+  });
+
+  test("another worktree is told as the window's directory", async () => {
+    const { host, agents, workspace } = await setUp();
+    await agents.ensureStarted();
+    workspace.select("feature");
+    await settle();
+    expect(host.client.contexts).toEqual([{ cwd: "/repo/.worktrees/feature" }]);
+    workspace.select("main");
+    await settle();
+    expect(host.client.contexts).toEqual([{ cwd: "/repo/.worktrees/feature" }, { cwd: "/repo" }]);
+  });
+
+  test("a worktree selected before the daemon is connected is told with the presence", async () => {
+    const { host, agents, workspace } = await setUp();
+    workspace.select("feature");
+    await settle();
+    expect(host.client.contexts).toEqual([]);
+    await agents.ensureStarted();
+    expect(host.client.presences[0].context).toEqual({ cwd: "/repo/.worktrees/feature" });
+  });
+
+  test("the agent moving to a session no pane shows, after /clear, puts it in the pane that showed the last", async () => {
+    const { host, layout, agents } = await setUp();
+    agents.openSession("a");
+    const agentPane = leaves(layout.root)[1].id;
+    await agents.showing("a");
+    host.client.focus.set({ session: "a", app: "grove", reason: "user" });
+    host.client.focus.set({ session: "a2", app: "grove", reason: "session" });
+    expect(agents.sessionOfPane(agentPane)).toBe("a2");
+    await agents.showing("a2");
+    expect(host.client.moves).toHaveLength(1);
+  });
+
+  test("moves the daemon makes on its own, for another app, or before the one asked for are not followed", async () => {
+    const { host, layout, agents } = await setUp();
+    agents.openSession("a");
+    const agentPane = leaves(layout.root)[1].id;
+    host.client.focus.set({ session: "b", app: "grove", reason: "opened" });
+    await agents.showing("a");
+    host.client.focus.set({ session: "old", app: "grove", reason: "session" });
+    expect(agents.sessionOfPane(agentPane)).toBe("a");
+    host.client.focus.set({ session: "a", app: "grove", reason: "user" });
+    host.client.focus.set({ session: "c", app: "grove-2", reason: "user" });
+    host.client.focus.set({ session: "d", app: undefined, reason: "closed" });
+    expect(agents.sessionOfPane(agentPane)).toBe("a");
+  });
+
+  test("a session another pane shows is left alone", async () => {
+    const { host, layout, agents } = await setUp();
+    agents.openSession("a");
+    layout.splitFocused("column");
+    const panes = leaves(layout.root);
+    layout.setPaneState(panes[2].id, { sessionId: "b" });
+    await agents.showing("b");
+    host.client.focus.set({ session: "b", app: "grove", reason: "user" });
+    host.client.focus.set({ session: "a", app: "grove", reason: "user" });
+    expect(agents.sessionOfPane(panes[1].id)).toBe("a");
+    expect(agents.sessionOfPane(panes[2].id)).toBe("b");
+  });
+
+  test("without a pane to put it in, the agent's move is only noted", async () => {
+    const { host, layout, agents } = await setUp();
+    await agents.showing("a");
+    host.client.focus.set({ session: "a", app: "grove", reason: "user" });
+    host.client.focus.set({ session: "z", app: "grove", reason: "session" });
+    expect(leaves(layout.root)).toHaveLength(1);
   });
 });
 

@@ -8,13 +8,13 @@
 // The service follows a session while at least one pane shows it.
 
 import { Service, type Context } from "@neoworks/extension-system";
-import type { ConnectorInfo, SessionInfo } from "@suite/protocol/types";
+import type { AgentFocus, ConnectorInfo, SessionInfo } from "@suite/protocol/types";
 import { createChangeSignal, type ChangeSignal } from "../../kernel/reactive";
 import type { SplitDirection } from "../layout/layoutTree";
 import type { Worktree } from "../../../src/shared/types";
 import { ChatSession } from "./chatSession";
 import { groupSessions, sessionTitle, type SessionGroup } from "./sessions";
-import type { DaemonAddress, SuiteClient, SuiteHost } from "./suiteClient";
+import type { ConnectionState, DaemonAddress, SuiteClient, SuiteHost } from "./suiteClient";
 
 declare module "@neoworks/extension-system" {
   interface Context {
@@ -27,6 +27,18 @@ export const AGENT_PANE_TYPE = "agent";
 
 /** What the client is called in the daemon's hello, and the connector name its windows register under. */
 const CLIENT_NAME = "grove";
+
+/** How long the service waits on the daemon before it says the daemon is unavailable. */
+export interface AgentsTiming {
+  /** The whole start-up: finding the daemon, starting it, connecting and listing sessions. */
+  connectTimeoutMs: number;
+  /** How long one request may wait for an answer. */
+  requestTimeoutMs: number;
+  /** How long a dropped connection may keep trying before the service gives up on it. */
+  reconnectTimeoutMs: number;
+}
+
+const DEFAULT_TIMING: AgentsTiming = { connectTimeoutMs: 20_000, requestTimeoutMs: 8_000, reconnectTimeoutMs: 30_000 };
 
 /** How the connection to the daemon is doing. */
 export interface AgentsState {
@@ -52,6 +64,8 @@ export interface AgentPanes {
 export interface AgentWorkspace {
   worktrees(): Worktree[];
   selectedWorktree(): Worktree | null;
+  /** Calls the listener when another worktree is selected; returns the call that stops it. */
+  onSelectionChange(listener: () => void): () => void;
 }
 
 /** A session some pane shows: how many do, and its chat once the daemon is connected. */
@@ -72,13 +86,31 @@ export class AgentsService extends Service {
   private appName = CLIENT_NAME;
   private followed = new Map<string, FollowedChat>();
   private changes: ChangeSignal = createChangeSignal();
+  private timing: AgentsTiming;
+  /** Counts connection attempts, so one that gave up cannot adopt its client when it finally answers. */
+  private attempt = 0;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Whether the daemon knows this window, so its context can change and the agent can be moved here. */
+  private registered = false;
+  /** The session the agent was last told to be in, or last found in, for this window. */
+  private shownSession: string | null = null;
+  /** The session this window asked the agent to move to, until the daemon says it is there. */
+  private movingTo: string | null = null;
 
-  constructor(ctx: Context, host: SuiteHost, panes: AgentPanes, workspace: AgentWorkspace) {
+  constructor(
+    ctx: Context,
+    host: SuiteHost,
+    panes: AgentPanes,
+    workspace: AgentWorkspace,
+    timing: AgentsTiming = DEFAULT_TIMING,
+  ) {
     super(ctx, "agents");
     this.host = host;
     this.panes = panes;
     this.workspace = workspace;
+    this.timing = timing;
     ctx.effect(() => panes.onPaneSplit((newLeafId, sourceLeafId) => this.paneSplit(newLeafId, sourceLeafId)), "agents.paneSplit");
+    ctx.effect(() => workspace.onSelectionChange(() => void this.updateContext()), "agents.worktreeChanged");
     ctx.effect(() => () => this.disconnect(), "agents.disconnect");
   }
 
@@ -125,6 +157,28 @@ export class AgentsService extends Service {
       return null;
     }
     return sessionId;
+  }
+
+  /** The agent pane that has the focus, or null while another kind of pane has it. Reactive. */
+  focusedAgentPane(): string | null {
+    const leafId = this.panes.focusedLeafId;
+    if (this.panes.paneTypeOf(leafId) !== AGENT_PANE_TYPE) {
+      return null;
+    }
+    return leafId;
+  }
+
+  /** The conversation the focused agent pane shows, or undefined when there is none. Reactive. */
+  focusedChat(): ChatSession | undefined {
+    const leafId = this.focusedAgentPane();
+    if (leafId === null) {
+      return undefined;
+    }
+    const sessionId = this.sessionOfPane(leafId);
+    if (sessionId === null) {
+      return undefined;
+    }
+    return this.chat(sessionId);
   }
 
   /** Whether a pane shows the session. Reactive. */
@@ -199,6 +253,20 @@ export class AgentsService extends Service {
   }
 
   /**
+   * Starts a read-only chat of one agent's work in a session (a subagent or a guest), for the
+   * agents list. Null while the daemon is not connected. The caller stops it.
+   */
+  openAgentChat(sessionId: string, agent: string): ChatSession | null {
+    const client = this.client;
+    if (client === null) {
+      return null;
+    }
+    const chat = new ChatSession(client, sessionId, (source) => this.assetSource(source), { agent });
+    chat.start();
+    return chat;
+  }
+
+  /**
    * Shows a session in a pane: the pane that already shows it, else the focused agent pane, else
    * the first agent pane, else a new pane split off the focused one.
    */
@@ -267,21 +335,43 @@ export class AgentsService extends Service {
     this.panes.setPaneState(newLeafId, { sessionId });
   }
 
-  /** Finds the daemon, starts it when needed, and connects. Every failure ends as the state. */
+  /**
+   * Finds the daemon, starts it when needed, and connects, within the connect timeout. Every
+   * failure ends as the state; a daemon that is alive but does not answer ends as one too.
+   */
   private async connect(): Promise<void> {
+    this.attempt += 1;
+    const attempt = this.attempt;
     this.setState({ connection: "starting" });
     try {
-      await this.reachDaemon();
-      this.setState({ connection: "connecting" });
-      const client = await this.host.connect({
-        client: CLIENT_NAME,
-        address: () => this.readAddress(),
-        onError: (error) => this.fail(error),
-      });
-      await this.adopt(client);
+      await withDeadline(this.open(attempt), this.timing.connectTimeoutMs, "The suite daemon did not answer");
     } catch (error) {
-      this.setState({ connection: "unavailable", message: describeError(error) });
+      this.giveUp(error);
     }
+  }
+
+  /** The steps of one connection attempt; an attempt that was given up on closes its client instead of adopting it. */
+  private async open(attempt: number): Promise<void> {
+    await this.reachDaemon();
+    this.setState({ connection: "connecting" });
+    const client = await this.host.connect({
+      client: CLIENT_NAME,
+      address: () => this.readAddress(),
+      requestTimeoutMs: this.timing.requestTimeoutMs,
+      onError: (error) => this.fail(error),
+    });
+    if (attempt !== this.attempt) {
+      void client.close().catch(() => {});
+      return;
+    }
+    await this.adopt(client, attempt);
+  }
+
+  /** Closes whatever connection there is and shows the daemon as unavailable, saying why. */
+  private giveUp(error: unknown): void {
+    this.attempt += 1;
+    this.disconnect();
+    this.setState({ connection: "unavailable", message: describeError(error) });
   }
 
   /** Makes sure a daemon is running: its address is readable, or `suite up` starts it. */
@@ -306,11 +396,12 @@ export class AgentsService extends Service {
   }
 
   /** Takes a connected client: follows its state and session list and registers this window. */
-  private async adopt(client: SuiteClient): Promise<void> {
+  private async adopt(client: SuiteClient, attempt: number): Promise<void> {
     this.client = client;
     this.sessionList = client.sessions.value;
     this.setState({ connection: connectionOf(client.state.value) });
-    client.state.on((state) => this.setState({ connection: connectionOf(state) }));
+    client.state.on((state) => this.connectionChanged(client, attempt, state));
+    client.focus.on((focus) => this.focusChanged(focus));
     client.sessions.on((sessions) => {
       this.sessionList = sessions;
       this.changes.notify();
@@ -319,6 +410,34 @@ export class AgentsService extends Service {
     this.changes.notify();
     await this.register(client);
     this.startChats();
+  }
+
+  /**
+   * Follows the client's connection. A connection that drops is retried by the client without
+   * end, so the service gives up on it when it has been down for the reconnect timeout.
+   */
+  private connectionChanged(client: SuiteClient, attempt: number, state: ConnectionState): void {
+    if (attempt !== this.attempt || client !== this.client) {
+      return;
+    }
+    this.clearReconnectTimer();
+    this.setState({ connection: connectionOf(state) });
+    if (state !== "reconnecting") {
+      return;
+    }
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.giveUp(new Error("The suite daemon stopped answering"));
+    }, this.timing.reconnectTimeoutMs);
+  }
+
+  /** Stops waiting for a dropped connection to come back. */
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimer === null) {
+      return;
+    }
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
   }
 
   /** Tells the daemon about this window under a name no other window of Grove has taken. */
@@ -333,9 +452,91 @@ export class AgentsService extends Service {
         open: true,
         context: this.presenceContext(),
       });
+      this.registered = true;
     } catch (error) {
       this.fail(error);
     }
+  }
+
+  /** Tells the daemon what this window shows now, after another worktree was selected. */
+  private async updateContext(): Promise<void> {
+    const client = this.client;
+    if (client === null || !this.registered) {
+      return;
+    }
+    try {
+      await client.setContext(this.presenceContext());
+    } catch (error) {
+      this.fail(error);
+    }
+  }
+
+  /**
+   * Tells the daemon an agent pane of this window shows a session: the agent moves here, and the
+   * session becomes the current one for every client. Does nothing when the daemon already has
+   * the agent in this window on that session, and when the daemon is not connected.
+   */
+  async showing(sessionId: string): Promise<void> {
+    await this.ensureStarted();
+    const client = this.client;
+    if (client === null || !this.registered) {
+      return;
+    }
+    this.shownSession = sessionId;
+    const focus = client.focus.value;
+    if (focus !== undefined && focus.app === this.appName && focus.session === sessionId) {
+      return;
+    }
+    this.movingTo = sessionId;
+    try {
+      await client.moveAgent({ app: this.appName, session: sessionId });
+    } catch (error) {
+      this.movingTo = null;
+      this.fail(error);
+    }
+  }
+
+  /**
+   * The agent moved: when it is in this window on a session no pane shows (`/clear` started a
+   * new conversation, or `suite move` chose one), the pane that showed the last one shows it.
+   * Moves that were before the one this window asked for are not news, and neither are the
+   * daemon's own settling moves (its first word after connecting, the agent finding an app
+   * open), which must not take over a pane the user left on another session.
+   */
+  private focusChanged(focus: AgentFocus | undefined): void {
+    if (focus === undefined || focus.app !== this.appName || this.shownSession === null) {
+      return;
+    }
+    if (focus.reason === "initial" || focus.reason === "opened" || focus.reason === "closed") {
+      return;
+    }
+    if (this.movingTo !== null) {
+      if (focus.session === this.movingTo) {
+        this.movingTo = null;
+      }
+      return;
+    }
+    if (focus.session === this.shownSession || this.isShown(focus.session)) {
+      return;
+    }
+    this.followAgentTo(focus.session);
+  }
+
+  /** Shows a session in the pane that showed the one before, else the focused agent pane, else the first. */
+  private followAgentTo(sessionId: string): void {
+    const paneIds = this.panes.leafIds().filter((leafId) => this.panes.paneTypeOf(leafId) === AGENT_PANE_TYPE);
+    let target = paneIds.find((leafId) => this.sessionOfPane(leafId) === this.shownSession);
+    if (target === undefined && paneIds.includes(this.panes.focusedLeafId)) {
+      target = this.panes.focusedLeafId;
+    }
+    if (target === undefined) {
+      target = paneIds[0];
+    }
+    if (target === undefined) {
+      return;
+    }
+    this.shownSession = sessionId;
+    this.panes.setPaneState(target, { sessionId });
   }
 
   /** What the agent is told this window shows: the shown worktree's directory. */
@@ -390,6 +591,9 @@ export class AgentsService extends Service {
 
   /** Closes the connection and stops every chat; the plugin's unloading does this. */
   private disconnect(): void {
+    this.clearReconnectTimer();
+    this.registered = false;
+    this.movingTo = null;
     for (const entry of this.followed.values()) {
       if (entry.chat !== null) {
         entry.chat.stop();
@@ -413,6 +617,23 @@ export class AgentsService extends Service {
   private fail(error: unknown): void {
     this.setState({ ...this.current, message: describeError(error) });
   }
+}
+
+/** Resolves with the promise's result, or rejects with `message` when it takes longer than `timeoutMs`. */
+function withDeadline<Result>(promise: Promise<Result>, timeoutMs: number, message: string): Promise<Result> {
+  return new Promise<Result>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+    promise.then(
+      (result) => {
+        clearTimeout(timer);
+        resolve(result);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 /** The service's connection word for the client's. */

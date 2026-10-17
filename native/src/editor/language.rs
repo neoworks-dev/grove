@@ -77,7 +77,7 @@ impl Editor {
         let Some(capabilities) = self.lsp.capabilities(document) else {
             return;
         };
-        if !capabilities.completion || self.in_vim_command_mode() {
+        if !capabilities.completion {
             return;
         }
         let is_trigger = capabilities.trigger_characters.iter().any(|trigger| trigger.chars().eq([character]));
@@ -92,12 +92,6 @@ impl Editor {
         if opens == Some(true) && is_word_character(character) {
             self.start_completion(Trigger::Typing, cx);
         }
-    }
-
-    /// Whether typed text is not going into the text, as in a vim layer's normal mode. Nothing
-    /// is, until a vim layer says so.
-    fn in_vim_command_mode(&self) -> bool {
-        false
     }
 
     /// Asks the server for items at the cursor and opens the panel when they come.

@@ -342,10 +342,12 @@ impl LspStore {
         }
     }
 
+    /// The shared state, for the server handlers.
     pub(crate) fn inner(&self) -> &Inner {
         &self.inner
     }
 
+    /// The store that owns some shared state.
     pub(crate) fn from_inner(inner: Arc<Inner>) -> LspStore {
         LspStore { inner }
     }

@@ -1,16 +1,13 @@
-// How the explorer shows a file in the editor. The editor plugin offers `ctx.editor.open(path)`
-// on an `editor` service once it has one. Until then the open file is the editor element's
-// `path`, which the editor plugin's shared state holds, so this sets that.
+// How the explorer shows a file: through the editor plugin's `ctx.editor.open(path)`. Without
+// an editor plugin loaded, opening a file does nothing.
 
 import type { Context } from "@neoworks/extension-system";
-import { editorState } from "../editor/editorState.svelte";
 
-/** Shows the file at an absolute path in the editor. */
+/** Shows the file at an absolute path in the editor, if an editor plugin is loaded. */
 export function openInEditor(ctx: Context, absolutePath: string): void {
   const editorService = ctx.get("editor");
-  if (editorService) {
-    editorService.open(absolutePath);
+  if (!editorService) {
     return;
   }
-  editorState.path = absolutePath;
+  editorService.open(absolutePath);
 }

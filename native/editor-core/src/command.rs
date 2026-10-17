@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 use crate::buffer::Position;
 use crate::decorations::Decoration;
 use crate::movement::Motion;
+use crate::vim::types::{
+    AppRequest, LineRange, Operator, ScrollAlign, SearchRequest, SelectionKind, Target, TextObject,
+};
 
 /// One thing the editor can be told to do. On the wire it is a JSON object whose `type` names
 /// the command, such as `{"type": "move_selections", "motion": "left", "extend": true}`.
@@ -77,6 +80,92 @@ pub enum Command {
     /// Replaces everything one source has put on top of the text (errors, blame, a diff) with
     /// `decorations`. An empty list removes the source's. Text and selections are not touched.
     SetDecorations { source: String, decorations: Vec<Decoration> },
+    /// Does nothing. A layer returns it for a key it has used up, so the key is neither typed
+    /// into the text nor passed on to the app.
+    Noop,
+    /// Reports a failure for the person to read, such as an ex command that does not exist.
+    Fail { message: String },
+    /// Asks the app around the editor for something the editor cannot do, such as closing the tab.
+    Request { request: AppRequest },
+    /// Vim's move: every selection's head goes where a motion made `count` times takes it, and
+    /// stays on a character of its line. Extending keeps the anchors, as in visual mode.
+    VimMove {
+        motion: Motion,
+        count: usize,
+        #[serde(default)]
+        extend: bool,
+    },
+    /// Applies an operator at every cursor, to what the target covers there. What it removes or
+    /// copies goes in a register, the unnamed one when none is given.
+    Operate {
+        operator: Operator,
+        target: Target,
+        #[serde(default)]
+        register: Option<char>,
+    },
+    /// Puts a register's text after the cursor, or before it, `count` times. Over a visual
+    /// selection it replaces the selection. A register that stands for the system clipboard
+    /// is filled in by the view, in `clipboard`.
+    Put {
+        #[serde(default)]
+        register: Option<char>,
+        before: bool,
+        count: usize,
+        /// `gp` and `gP`: leave the cursor after the text.
+        #[serde(default)]
+        cursor_after: bool,
+        #[serde(default)]
+        over: Option<SelectionKind>,
+        #[serde(default)]
+        clipboard: Option<String>,
+    },
+    /// Joins a line with the ones after it (`J`), or the lines a visual selection touches.
+    JoinLines {
+        count: usize,
+        #[serde(default)]
+        from_selection: bool,
+    },
+    /// Replaces `count` characters from each cursor with one character (`r`), or every
+    /// character of a visual selection.
+    ReplaceChars {
+        character: char,
+        count: usize,
+        #[serde(default)]
+        over: Option<SelectionKind>,
+    },
+    /// Types over the characters after each cursor, as replace mode does.
+    Overwrite { text: String },
+    /// Opens an empty line below each cursor's line, or above it, with its indentation (`o`, `O`).
+    OpenLine { above: bool },
+    /// Replaces a pattern with text on some lines (`:s`).
+    Substitute { range: LineRange, pattern: String, replacement: String, global: bool },
+    /// Moves every cursor to the next match of a search.
+    VimSearch {
+        request: SearchRequest,
+        count: usize,
+        #[serde(default)]
+        extend: bool,
+    },
+    /// Selects the text object around each cursor (`viw`).
+    SelectObject { object: TextObject, around: bool, count: usize },
+    /// Swaps each selection's anchor and head, so the other end moves (`o` in visual mode).
+    SwapSelectionEnds,
+    /// Moves any cursor that is past the last character of its line back onto it.
+    ClampCursors,
+    /// Opens or closes an undo group: everything done while one is open, such as an insert
+    /// session, is a single step for undo.
+    GroupUndo { open: bool },
+    /// Scrolls the view so the newest cursor's line is at the top, middle or bottom.
+    ScrollTo { align: ScrollAlign },
+    /// Remembers the newest cursor's place under a letter (`m`).
+    SetMark { name: char },
+    /// Goes to a place remembered with `SetMark` (`'` and the backtick).
+    JumpToMark {
+        name: char,
+        linewise: bool,
+        #[serde(default)]
+        extend: bool,
+    },
 }
 
 impl Command {
@@ -84,6 +173,32 @@ impl Command {
     /// when it changed nothing, so Escape in a single plain cursor reaches the app.
     pub fn passes_on_when_unchanged(&self) -> bool {
         *self == Command::CollapseSelections
+    }
+
+    /// Whether the command is one of vim's, which `vim::commands` carries out.
+    pub fn is_vim(&self) -> bool {
+        matches!(
+            self,
+            Command::Noop
+                | Command::Fail { .. }
+                | Command::Request { .. }
+                | Command::VimMove { .. }
+                | Command::Operate { .. }
+                | Command::Put { .. }
+                | Command::JoinLines { .. }
+                | Command::ReplaceChars { .. }
+                | Command::Overwrite { .. }
+                | Command::OpenLine { .. }
+                | Command::Substitute { .. }
+                | Command::VimSearch { .. }
+                | Command::SelectObject { .. }
+                | Command::SwapSelectionEnds
+                | Command::ClampCursors
+                | Command::GroupUndo { .. }
+                | Command::ScrollTo { .. }
+                | Command::SetMark { .. }
+                | Command::JumpToMark { .. }
+        )
     }
 }
 
@@ -104,4 +219,8 @@ pub struct Outcome {
     pub error: Option<String>,
     /// Whether the decorations are different now, so every view of the document has to redraw.
     pub decorations_changed: bool,
+    /// Where the view should scroll the newest cursor's line to.
+    pub scroll: Option<ScrollAlign>,
+    /// What the app is asked to do, as the command made a `Request`.
+    pub request: Option<AppRequest>,
 }

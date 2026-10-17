@@ -9,6 +9,7 @@ pub mod buffer;
 pub mod clipboard;
 pub mod command;
 pub mod decorations;
+pub mod diff;
 pub mod display;
 pub mod documents;
 pub mod edit;

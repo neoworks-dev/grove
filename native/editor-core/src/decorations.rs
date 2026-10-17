@@ -28,6 +28,12 @@ pub enum Tone {
     Inlay,
     /// Text added after the end of a line.
     LineEnd,
+    /// Words that were added inside a changed line, drawn stronger than the line's own tint.
+    AddedWord,
+    /// Words that were removed from a changed line.
+    DeletedWord,
+    /// Rows that stand in for lines the other side of a comparison has, so the two line up.
+    Filler,
 }
 
 /// How a line under a highlighted range is drawn.
@@ -87,7 +93,20 @@ pub enum DecorationKind {
         #[serde(default)]
         placement: Placement,
         tone: Option<Tone>,
+        /// Stretches of the block's lines drawn stronger, such as the words a hunk changed.
+        #[serde(default)]
+        emphasis: Vec<BlockEmphasis>,
     },
+    /// Tints the whole width of every row from `start` to `end`, such as the lines of a hunk.
+    Line { tone: Tone },
+}
+
+/// A stretch of one line of a block, in characters of that line.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlockEmphasis {
+    pub line: usize,
+    pub start: usize,
+    pub end: usize,
 }
 
 /// One decoration as a source sends it: where it is, and what it is. Point kinds (inlays,
@@ -126,6 +145,7 @@ pub struct PlacedBlock<'a> {
     pub placement: Placement,
     pub lines: &'a [String],
     pub tone: Option<Tone>,
+    pub emphasis: &'a [BlockEmphasis],
 }
 
 /// Every source's decorations for one document.
@@ -186,7 +206,7 @@ impl Decorations {
             .placed(buffer, anchors)
             .into_iter()
             .filter_map(|placed| {
-                let DecorationKind::Block { lines, placement, tone } = placed.kind else {
+                let DecorationKind::Block { lines, placement, tone, emphasis } = placed.kind else {
                     return None;
                 };
                 let row = placed.start.row;
@@ -194,7 +214,7 @@ impl Decorations {
                     Placement::Above => row,
                     Placement::Below => row + 1,
                 };
-                Some(PlacedBlock { slot: slot.min(line_count), row, placement: *placement, lines, tone: *tone })
+                Some(PlacedBlock { slot: slot.min(line_count), row, placement: *placement, lines, tone: *tone, emphasis })
             })
             .collect();
         blocks.sort_by_key(|block| block.slot);
@@ -216,6 +236,7 @@ fn pin(decoration: &Decoration, buffer: &Buffer, anchors: &mut Anchors) -> Pinne
         DecorationKind::Gutter { .. } => (Bias::Left, Bias::Right),
         DecorationKind::Inlay { .. } => (Bias::Right, Bias::Right),
         DecorationKind::LineEnd { .. } | DecorationKind::Block { .. } => (Bias::Left, Bias::Left),
+        DecorationKind::Line { .. } => (Bias::Left, Bias::Right),
     };
     Pinned {
         start: anchors.insert(Anchor { offset: start_offset, bias: start_bias }),
@@ -371,7 +392,7 @@ mod tests {
         let block = |row: usize, placement: Placement| Decoration {
             start: at(row, 0),
             end: None,
-            kind: DecorationKind::Block { lines: vec!["x".into()], placement, tone: None },
+            kind: DecorationKind::Block { lines: vec!["x".into()], placement, tone: None, emphasis: Vec::new() },
         };
         let mut state = EditorState::new(Buffer::from_text("a\nb\nc\n"));
         state.set_decorations(

@@ -16,6 +16,22 @@ export function worktree(name: string, path: string, isMain = false): Worktree {
 export class FakeWorkspace implements AgentWorkspace {
   list = [worktree("main", "/repo", true), worktree("feature", "/repo/.worktrees/feature")];
   selectedId = "main";
+  private listeners = new Set<() => void>();
+
+  /** Selects another worktree and tells the listeners, as the workspace does. */
+  select(id: string): void {
+    this.selectedId = id;
+    for (const listener of [...this.listeners]) {
+      listener();
+    }
+  }
+
+  onSelectionChange(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
 
   worktrees(): Worktree[] {
     return this.list;

@@ -40,7 +40,7 @@ export const lsp = {
       service.configure(options).catch((error) => ctx.logger.warn(`lsp: could not apply the settings: ${String(error)}`));
     };
     configure(config);
-    ctx.settings.onLive((change) => configure(change.config as LspOptions));
+    ctx.settings.onLive((change) => configure(change.config as unknown as LspOptions));
     ctx.slots.register("statusbar", { id: "lsp.status", order: 5, component: LspStatusItem, props: { service, align: "right" } });
     ctx.sidecar.on("event:fs-change", (payload) => {
       const root = ctx.workspace.selectedWorktree()?.path;

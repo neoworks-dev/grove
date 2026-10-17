@@ -8,7 +8,7 @@
 // The service follows a session while at least one pane shows it.
 
 import { Service, type Context } from "@neoworks/extension-system";
-import type { ConnectorInfo, SessionInfo } from "@suite/protocol/types";
+import type { AgentFocus, ConnectorInfo, SessionInfo } from "@suite/protocol/types";
 import { createChangeSignal, type ChangeSignal } from "../../kernel/reactive";
 import type { SplitDirection } from "../layout/layoutTree";
 import type { Worktree } from "../../../src/shared/types";
@@ -64,6 +64,8 @@ export interface AgentPanes {
 export interface AgentWorkspace {
   worktrees(): Worktree[];
   selectedWorktree(): Worktree | null;
+  /** Calls the listener when another worktree is selected; returns the call that stops it. */
+  onSelectionChange(listener: () => void): () => void;
 }
 
 /** A session some pane shows: how many do, and its chat once the daemon is connected. */
@@ -88,6 +90,12 @@ export class AgentsService extends Service {
   /** Counts connection attempts, so one that gave up cannot adopt its client when it finally answers. */
   private attempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Whether the daemon knows this window, so its context can change and the agent can be moved here. */
+  private registered = false;
+  /** The session the agent was last told to be in, or last found in, for this window. */
+  private shownSession: string | null = null;
+  /** The session this window asked the agent to move to, until the daemon says it is there. */
+  private movingTo: string | null = null;
 
   constructor(
     ctx: Context,
@@ -102,6 +110,7 @@ export class AgentsService extends Service {
     this.workspace = workspace;
     this.timing = timing;
     ctx.effect(() => panes.onPaneSplit((newLeafId, sourceLeafId) => this.paneSplit(newLeafId, sourceLeafId)), "agents.paneSplit");
+    ctx.effect(() => workspace.onSelectionChange(() => void this.updateContext()), "agents.worktreeChanged");
     ctx.effect(() => () => this.disconnect(), "agents.disconnect");
   }
 
@@ -392,6 +401,7 @@ export class AgentsService extends Service {
     this.sessionList = client.sessions.value;
     this.setState({ connection: connectionOf(client.state.value) });
     client.state.on((state) => this.connectionChanged(client, attempt, state));
+    client.focus.on((focus) => this.focusChanged(focus));
     client.sessions.on((sessions) => {
       this.sessionList = sessions;
       this.changes.notify();
@@ -442,9 +452,91 @@ export class AgentsService extends Service {
         open: true,
         context: this.presenceContext(),
       });
+      this.registered = true;
     } catch (error) {
       this.fail(error);
     }
+  }
+
+  /** Tells the daemon what this window shows now, after another worktree was selected. */
+  private async updateContext(): Promise<void> {
+    const client = this.client;
+    if (client === null || !this.registered) {
+      return;
+    }
+    try {
+      await client.setContext(this.presenceContext());
+    } catch (error) {
+      this.fail(error);
+    }
+  }
+
+  /**
+   * Tells the daemon an agent pane of this window shows a session: the agent moves here, and the
+   * session becomes the current one for every client. Does nothing when the daemon already has
+   * the agent in this window on that session, and when the daemon is not connected.
+   */
+  async showing(sessionId: string): Promise<void> {
+    await this.ensureStarted();
+    const client = this.client;
+    if (client === null || !this.registered) {
+      return;
+    }
+    this.shownSession = sessionId;
+    const focus = client.focus.value;
+    if (focus !== undefined && focus.app === this.appName && focus.session === sessionId) {
+      return;
+    }
+    this.movingTo = sessionId;
+    try {
+      await client.moveAgent({ app: this.appName, session: sessionId });
+    } catch (error) {
+      this.movingTo = null;
+      this.fail(error);
+    }
+  }
+
+  /**
+   * The agent moved: when it is in this window on a session no pane shows (`/clear` started a
+   * new conversation, or `suite move` chose one), the pane that showed the last one shows it.
+   * Moves that were before the one this window asked for are not news, and neither are the
+   * daemon's own settling moves (its first word after connecting, the agent finding an app
+   * open), which must not take over a pane the user left on another session.
+   */
+  private focusChanged(focus: AgentFocus | undefined): void {
+    if (focus === undefined || focus.app !== this.appName || this.shownSession === null) {
+      return;
+    }
+    if (focus.reason === "initial" || focus.reason === "opened" || focus.reason === "closed") {
+      return;
+    }
+    if (this.movingTo !== null) {
+      if (focus.session === this.movingTo) {
+        this.movingTo = null;
+      }
+      return;
+    }
+    if (focus.session === this.shownSession || this.isShown(focus.session)) {
+      return;
+    }
+    this.followAgentTo(focus.session);
+  }
+
+  /** Shows a session in the pane that showed the one before, else the focused agent pane, else the first. */
+  private followAgentTo(sessionId: string): void {
+    const paneIds = this.panes.leafIds().filter((leafId) => this.panes.paneTypeOf(leafId) === AGENT_PANE_TYPE);
+    let target = paneIds.find((leafId) => this.sessionOfPane(leafId) === this.shownSession);
+    if (target === undefined && paneIds.includes(this.panes.focusedLeafId)) {
+      target = this.panes.focusedLeafId;
+    }
+    if (target === undefined) {
+      target = paneIds[0];
+    }
+    if (target === undefined) {
+      return;
+    }
+    this.shownSession = sessionId;
+    this.panes.setPaneState(target, { sessionId });
   }
 
   /** What the agent is told this window shows: the shown worktree's directory. */
@@ -500,6 +592,8 @@ export class AgentsService extends Service {
   /** Closes the connection and stops every chat; the plugin's unloading does this. */
   private disconnect(): void {
     this.clearReconnectTimer();
+    this.registered = false;
+    this.movingTo = null;
     for (const entry of this.followed.values()) {
       if (entry.chat !== null) {
         entry.chat.stop();

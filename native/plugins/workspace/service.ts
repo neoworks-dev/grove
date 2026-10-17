@@ -34,6 +34,9 @@ export class WorkspaceService extends Service {
   private currentState: WorkspaceState = "none";
   private failure: string | null = null;
   private changes: ChangeSignal = createChangeSignal();
+  private selectionListeners = new Set<(worktree: Worktree | null) => void>();
+  /** The directory of the worktree the listeners were last told about. */
+  private announcedPath: string | null = null;
 
   constructor(ctx: Context) {
     super(ctx, "workspace");
@@ -60,6 +63,20 @@ export class WorkspaceService extends Service {
       return null;
     }
     return found;
+  }
+
+  /**
+   * Calls `listener` whenever the selected worktree becomes another one, or none, for plain
+   * code that cannot read the reactive accessors. Stops with the calling plugin, or when the
+   * returned function is called.
+   */
+  onSelectionChange(listener: (worktree: Worktree | null) => void): () => void {
+    return this.ctx.effect(() => {
+      this.selectionListeners.add(listener);
+      return () => {
+        this.selectionListeners.delete(listener);
+      };
+    }, "workspace.onSelectionChange");
   }
 
   /** The branch checked out in the selected worktree, or null. Reactive. */
@@ -135,6 +152,7 @@ export class WorkspaceService extends Service {
     }
     this.selectedId = worktreeId;
     this.changes.notify();
+    this.announceSelection();
     await this.afterSelection();
   }
 
@@ -152,6 +170,7 @@ export class WorkspaceService extends Service {
     this.currentState = "open";
     this.selectedId = await this.rememberedSelection(opened);
     this.changes.notify();
+    this.announceSelection();
     await this.afterSelection();
     await this.ctx.profile.setProjectFolder(opened.info.path);
   }
@@ -201,6 +220,23 @@ export class WorkspaceService extends Service {
       }
     }
     this.changes.notify();
+    this.announceSelection();
+  }
+
+  /** Tells the selection listeners when the selected worktree is another directory than they last heard of. */
+  private announceSelection(): void {
+    const selected = this.selectedWorktree();
+    let path: string | null = null;
+    if (selected !== null) {
+      path = selected.path;
+    }
+    if (path === this.announcedPath) {
+      return;
+    }
+    this.announcedPath = path;
+    for (const listener of [...this.selectionListeners]) {
+      listener(selected);
+    }
   }
 }
 

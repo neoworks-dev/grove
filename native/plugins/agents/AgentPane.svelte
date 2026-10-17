@@ -28,6 +28,13 @@
   const chat = $derived(sessionId === null ? undefined : agents.chat(sessionId));
   const focused = $derived(layout.focusedLeafId === leafId);
 
+  // The daemon is told which session the pane the user is in shows, and moves the agent here with it.
+  $effect(() => {
+    if (focused && sessionId !== null) {
+      void agents.showing(sessionId);
+    }
+  });
+
   // The pane follows its session while it shows it, and the daemon starts when the first pane needs it.
   $effect(() => {
     if (sessionId === null) {

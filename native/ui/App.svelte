@@ -32,11 +32,11 @@
   /** The editor `src/editor/mod.rs` registers, with the events it emits. */
   const Editor = element<{
     path: string;
-    onopened: (event: { path: string; lines: number }) => void;
-    onerror: (event: { path: string; message: string }) => void;
-    onselections: (event: { count: number; row: number; column: number; selected: boolean }) => void;
-    ondirty: (event: { modified: boolean }) => void;
-    onsaved: (event: { path: string }) => void;
+    onopened?: (event: { path: string; lines: number }) => void;
+    onerror?: (event: { path: string; message: string }) => void;
+    onselections?: (event: { count: number; row: number; column: number; selected: boolean }) => void;
+    ondirty?: (event: { modified: boolean }) => void;
+    onsaved?: (event: { path: string }) => void;
   }>("editor");
 
   const layout = new DemoLayout();

@@ -11,7 +11,7 @@ import { nextApprovals, type Approvals, type SessionStatus } from "./status";
 import { SessionFacts } from "./sessionFacts";
 import type { PlanList } from "./plan";
 import type { AgentRow } from "./subagents";
-import type { CallFacts } from "./calls";
+import type { CallDiff, CallFacts } from "./calls";
 import type { Touches } from "./files";
 import type { ChatClient } from "./suiteClient";
 
@@ -88,6 +88,12 @@ export class ChatSession {
   callOf(ref: string): CallFacts | undefined {
     this.changes.track();
     return this.facts.calls.byRef.get(ref);
+  }
+
+  /** The file changes the session's tool calls made, in the order the calls came. Reactive. */
+  fileChanges(): CallDiff[] {
+    this.changes.track();
+    return [...this.facts.calls.byRef.values()].flatMap((call) => call.diffs);
   }
 
   /** The subagents and guests working for the session, finished ones included. Reactive. */

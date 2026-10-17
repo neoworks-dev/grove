@@ -17,6 +17,7 @@ pub mod keymap;
 pub mod movement;
 pub mod selections;
 pub mod state;
+pub mod syntax;
 
 pub use anchor::{Anchor, AnchorId, Bias};
 pub use buffer::{Buffer, LineEnding, Position};

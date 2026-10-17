@@ -100,6 +100,20 @@ pub struct Capabilities {
     pub completion: bool,
     pub completion_resolve: bool,
     pub trigger_characters: Vec<String>,
+    pub signature_help: bool,
+    pub signature_trigger_characters: Vec<String>,
+    pub signature_retrigger_characters: Vec<String>,
+    pub inlay_hints: bool,
+    pub references: bool,
+    pub type_definition: bool,
+    pub implementation: bool,
+    pub rename: bool,
+    /// Whether the server checks a rename with `prepareRename` before it is asked to do it.
+    pub prepare_rename: bool,
+    pub code_action: bool,
+    pub code_action_resolve: bool,
+    pub formatting: bool,
+    pub document_highlight: bool,
 }
 
 impl Capabilities {
@@ -112,10 +126,7 @@ impl Capabilities {
             _ => (None, Value::Null),
         };
         let completion = &capabilities["completionProvider"];
-        let trigger_characters = completion["triggerCharacters"]
-            .as_array()
-            .map(|list| list.iter().filter_map(|entry| entry.as_str().map(str::to_string)).collect())
-            .unwrap_or_default();
+        let signature = &capabilities["signatureHelpProvider"];
         Capabilities {
             sync: match kind {
                 Some(1) => SyncKind::Full,
@@ -128,9 +139,30 @@ impl Capabilities {
             definition: is_provided(&capabilities["definitionProvider"]),
             completion: completion.is_object(),
             completion_resolve: completion["resolveProvider"].as_bool().unwrap_or(false),
-            trigger_characters,
+            trigger_characters: strings_of(&completion["triggerCharacters"]),
+            signature_help: is_provided(signature),
+            signature_trigger_characters: strings_of(&signature["triggerCharacters"]),
+            signature_retrigger_characters: strings_of(&signature["retriggerCharacters"]),
+            inlay_hints: is_provided(&capabilities["inlayHintProvider"]),
+            references: is_provided(&capabilities["referencesProvider"]),
+            type_definition: is_provided(&capabilities["typeDefinitionProvider"]),
+            implementation: is_provided(&capabilities["implementationProvider"]),
+            rename: is_provided(&capabilities["renameProvider"]),
+            prepare_rename: capabilities["renameProvider"]["prepareProvider"].as_bool().unwrap_or(false),
+            code_action: is_provided(&capabilities["codeActionProvider"]),
+            code_action_resolve: capabilities["codeActionProvider"]["resolveProvider"].as_bool().unwrap_or(false),
+            formatting: is_provided(&capabilities["documentFormattingProvider"]),
+            document_highlight: is_provided(&capabilities["documentHighlightProvider"]),
         }
     }
+}
+
+/// The strings in a JSON list, or none for anything else.
+fn strings_of(list: &Value) -> Vec<String> {
+    let Some(entries) = list.as_array() else {
+        return Vec::new();
+    };
+    entries.iter().filter_map(|entry| entry.as_str().map(str::to_string)).collect()
 }
 
 /// Whether a provider entry says the feature exists: `true` or an options object.
@@ -222,6 +254,30 @@ mod tests {
         assert!(detailed.completion && detailed.completion_resolve && detailed.definition);
         assert_eq!(detailed.trigger_characters, vec![".", ":"]);
         assert_eq!(Capabilities::from_json(&json!({})).sync, SyncKind::None);
+    }
+
+    #[test]
+    fn the_features_around_the_cursor_are_read_from_their_providers() {
+        let capabilities = Capabilities::from_json(&json!({
+            "signatureHelpProvider": { "triggerCharacters": ["(", ","], "retriggerCharacters": [")"] },
+            "inlayHintProvider": { "resolveProvider": false },
+            "referencesProvider": true,
+            "renameProvider": { "prepareProvider": true },
+            "codeActionProvider": { "resolveProvider": true },
+            "documentFormattingProvider": true,
+            "documentHighlightProvider": true,
+            "typeDefinitionProvider": true,
+            "implementationProvider": { "workDoneProgress": true },
+        }));
+        assert!(capabilities.signature_help && capabilities.inlay_hints && capabilities.references);
+        assert_eq!(capabilities.signature_trigger_characters, vec!["(", ","]);
+        assert_eq!(capabilities.signature_retrigger_characters, vec![")"]);
+        assert!(capabilities.rename && capabilities.prepare_rename);
+        assert!(capabilities.code_action && capabilities.code_action_resolve);
+        assert!(capabilities.formatting && capabilities.document_highlight);
+        assert!(capabilities.type_definition && capabilities.implementation);
+        let none = Capabilities::from_json(&json!({ "renameProvider": true, "codeActionProvider": false }));
+        assert!(none.rename && !none.prepare_rename && !none.code_action && !none.signature_help);
     }
 
     #[test]

@@ -8,6 +8,6 @@ export const editorPosition = {
   name: "editor-position",
   inject: ["slots"],
   apply(ctx: Context) {
-    ctx.slots.register("statusbar", { id: "editor.position", order: 20, component: EditorPosition });
+    ctx.slots.register("statusbar", { id: "editor.position", order: 20, component: EditorPosition, props: { align: "right" } });
   },
 };

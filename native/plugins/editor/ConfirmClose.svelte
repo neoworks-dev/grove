@@ -18,7 +18,8 @@
     return null;
   });
 
-  const choice = {
+  // Derived so the button colours follow a theme switch.
+  const choice = $derived({
     paddingX: 12,
     paddingY: 6,
     radius: radius.md,
@@ -27,7 +28,7 @@
     color: colors.text,
     borderWidth: 1,
     borderColor: colors.line,
-  } as const;
+  } as const);
 </script>
 
 {#if question}

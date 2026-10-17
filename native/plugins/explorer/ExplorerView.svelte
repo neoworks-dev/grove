@@ -48,14 +48,14 @@
   let nameInput = $state<ReturnType<typeof Input> | undefined>();
   let name = $state("");
 
-  /** The colour a git change gives a file's name and its letter. */
-  const changeColors: Record<DiffChangeType, string> = {
+  /** The colour a git change gives a file's name and its letter. Derived so it follows a theme switch. */
+  const changeColors: Record<DiffChangeType, string> = $derived({
     added: colors.green,
     modified: colors.amber,
     deleted: colors.red,
     renamed: colors.blue,
     untracked: colors.accent,
-  };
+  });
 
   const changeLetters: Record<DiffChangeType, string> = {
     added: "A",

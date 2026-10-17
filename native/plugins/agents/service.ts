@@ -36,9 +36,19 @@ export interface AgentsTiming {
   requestTimeoutMs: number;
   /** How long a dropped connection may keep trying before the service gives up on it. */
   reconnectTimeoutMs: number;
+  /** After giving up on a dropped connection, how long before the first new attempt; each failed attempt doubles it. */
+  retryInitialMs: number;
+  /** The longest the wait between two attempts grows to. */
+  retryMaxMs: number;
 }
 
-const DEFAULT_TIMING: AgentsTiming = { connectTimeoutMs: 20_000, requestTimeoutMs: 8_000, reconnectTimeoutMs: 30_000 };
+const DEFAULT_TIMING: AgentsTiming = {
+  connectTimeoutMs: 20_000,
+  requestTimeoutMs: 8_000,
+  reconnectTimeoutMs: 30_000,
+  retryInitialMs: 2_000,
+  retryMaxMs: 60_000,
+};
 
 /** How the connection to the daemon is doing. */
 export interface AgentsState {
@@ -46,6 +56,8 @@ export interface AgentsState {
   connection: "idle" | "starting" | "connecting" | "open" | "reconnecting" | "unavailable";
   /** Why the daemon is unavailable, or the last failure nobody was waiting for. */
   message?: string;
+  /** While the service waits to try again by itself: when it will, in milliseconds since the epoch. */
+  retryAt?: number;
 }
 
 /** The part of the layout the service drives. */
@@ -66,6 +78,14 @@ export interface AgentWorkspace {
   selectedWorktree(): Worktree | null;
   /** Calls the listener when another worktree is selected; returns the call that stops it. */
   onSelectionChange(listener: () => void): () => void;
+}
+
+/** The wait before an automatic attempt: the first one after the connection was lost, then twice the one before, up to the longest. */
+export function nextRetryDelay(previousMs: number, initialMs: number, maxMs: number): number {
+  if (previousMs === 0) {
+    return Math.min(initialMs, maxMs);
+  }
+  return Math.min(previousMs * 2, maxMs);
 }
 
 /** What a pane's own view lets the service do when a key asks for it. */
@@ -100,6 +120,9 @@ export class AgentsService extends Service {
   /** Counts connection attempts, so one that gave up cannot adopt its client when it finally answers. */
   private attempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The wait before the next automatic attempt, doubled after each one that fails; 0 while none is under way. */
+  private retryDelayMs = 0;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
   /** Whether the daemon knows this window, so its context can change and the agent can be moved here. */
   private registered = false;
   /** The session the agent was last told to be in, or last found in, for this window. */
@@ -240,6 +263,7 @@ export class AgentsService extends Service {
 
   /** Tries again after the daemon was unavailable. */
   retry(): Promise<void> {
+    this.retryDelayMs = 0;
     this.disconnect();
     this.starting = null;
     return this.ensureStarted();
@@ -417,7 +441,7 @@ export class AgentsService extends Service {
     try {
       await withDeadline(this.open(attempt), this.timing.connectTimeoutMs, "The suite daemon did not answer");
     } catch (error) {
-      this.giveUp(error);
+      this.giveUp(error, this.retryDelayMs > 0);
     }
   }
 
@@ -438,11 +462,39 @@ export class AgentsService extends Service {
     await this.adopt(client, attempt);
   }
 
-  /** Closes whatever connection there is and shows the daemon as unavailable, saying why. */
-  private giveUp(error: unknown): void {
+  /**
+   * Closes whatever connection there is and shows the daemon as unavailable, saying why. A
+   * connection that was lost, and the attempts to get it back, are tried again by themselves, with
+   * longer waits in between; one that never came up waits for the user to press Try again.
+   */
+  private giveUp(error: unknown, retryAutomatically = false): void {
     this.attempt += 1;
     this.disconnect();
-    this.setState({ connection: "unavailable", message: describeError(error) });
+    const state: AgentsState = { connection: "unavailable", message: describeError(error) };
+    if (retryAutomatically) {
+      state.retryAt = Date.now() + this.scheduleRetry();
+    }
+    this.setState(state);
+  }
+
+  /** Starts the wait before the next automatic attempt, and returns how long it is. */
+  private scheduleRetry(): number {
+    this.retryDelayMs = nextRetryDelay(this.retryDelayMs, this.timing.retryInitialMs, this.timing.retryMaxMs);
+    const delay = this.retryDelayMs;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      this.starting = this.connect();
+    }, delay);
+    return delay;
+  }
+
+  /** Stops waiting to try again, as when the user did, or the service is going away. */
+  private clearRetryTimer(): void {
+    if (this.retryTimer === null) {
+      return;
+    }
+    clearTimeout(this.retryTimer);
+    this.retryTimer = null;
   }
 
   /** Makes sure a daemon is running: its address is readable, or `suite up` starts it. */
@@ -469,6 +521,7 @@ export class AgentsService extends Service {
   /** Takes a connected client: follows its state and session list and registers this window. */
   private async adopt(client: SuiteClient, attempt: number): Promise<void> {
     this.client = client;
+    this.retryDelayMs = 0;
     this.sessionList = client.sessions.value;
     this.setState({ connection: connectionOf(client.state.value) });
     client.state.on((state) => this.connectionChanged(client, attempt, state));
@@ -498,7 +551,8 @@ export class AgentsService extends Service {
     }
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      this.giveUp(new Error("The suite daemon stopped answering"));
+      this.retryDelayMs = 0;
+      this.giveUp(new Error("The suite daemon stopped answering"), true);
     }, this.timing.reconnectTimeoutMs);
   }
 
@@ -665,6 +719,7 @@ export class AgentsService extends Service {
   /** Closes the connection and stops every chat; the plugin's unloading does this. */
   private disconnect(): void {
     this.clearReconnectTimer();
+    this.clearRetryTimer();
     this.registered = false;
     this.movingTo = null;
     for (const entry of this.followed.values()) {

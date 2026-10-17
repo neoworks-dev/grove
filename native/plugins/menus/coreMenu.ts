@@ -53,6 +53,7 @@ export const CORE_MENU_ITEMS: MenuBarItem[] = [
   item("go", "1-find", 1, "Go to File…", "files.find", "␣ ␣"),
   item("go", "1-find", 2, "Go to Symbol in Editor…", "symbols.open", "␣ s s"),
   item("go", "1-find", 3, "Go to Symbol in Workspace…", "symbols.workspace", "␣ s S"),
+  item("go", "1-find", 4, "Go to Definition", "editor.goToDefinition", "F12"),
   item("go", "2-tabs", 1, "Next Tab", "go.nextTab"),
   item("go", "2-tabs", 2, "Previous Tab", "go.previousTab"),
 

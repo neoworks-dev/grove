@@ -6,8 +6,10 @@
 pub mod actions;
 pub mod client;
 pub mod completion;
+pub mod config;
 pub mod diagnostics;
 pub mod edits;
+pub mod glob;
 pub mod highlights;
 pub mod initialize;
 pub mod inlay;

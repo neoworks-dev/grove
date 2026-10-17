@@ -253,6 +253,29 @@ describe("panes", () => {
   });
 });
 
+describe("the focused agent pane", () => {
+  test("is none while another kind of pane has the focus, and the pane showing the session when it has", async () => {
+    const { layout, agents } = await setUp();
+    expect(agents.focusedAgentPane()).toBeNull();
+    expect(agents.focusedChat()).toBeUndefined();
+    agents.openSession("a");
+    const [editorPane, agentPane] = leaves(layout.root);
+    expect(agents.focusedAgentPane()).toBe(agentPane.id);
+    layout.focus(editorPane.id);
+    expect(agents.focusedAgentPane()).toBeNull();
+  });
+
+  test("has the conversation its session follows", async () => {
+    const { layout, agents } = await setUp();
+    agents.openSession("a");
+    expect(agents.focusedChat()).toBeUndefined();
+    agents.follow("a");
+    await settle();
+    expect(agents.focusedChat()).toBe(agents.chat("a"));
+    expect(leaves(layout.root)).toHaveLength(2);
+  });
+});
+
 describe("new sessions", () => {
   test("start in the shown worktree and open in a pane", async () => {
     const { host, layout, agents, workspace } = await setUp();

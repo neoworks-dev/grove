@@ -42,7 +42,7 @@ export const agents = {
   },
 };
 
-/** Registers the commands for showing the view, starting a session, and what the chat shows, and the keys for the first two. */
+/** Registers the commands for showing the view, starting a session, what the chat shows and the approvals mode, and their keys. */
 function registerCommands(ctx: Context, service: AgentsService): void {
   ctx.commands.register({ id: "agents.show", title: "Show agents", group: "View", run: () => ctx.sidebar.open("agents") });
   ctx.commands.register({
@@ -63,8 +63,29 @@ function registerCommands(ctx: Context, service: AgentsService): void {
     group: "Agents",
     run: () => chatView.toggleThoughts(),
   });
+  ctx.commands.register({
+    id: "agents.cycleApprovals",
+    title: "Agents: next approvals mode (ask, review, edits, auto)",
+    group: "Agents",
+    run: () => void service.focusedChat()?.cycleApprovals(),
+  });
   ctx.keymap.bind([
     { id: "agents.show", keys: "ctrl+shift+a", command: "agents.show", description: "Show agents" },
     { id: "agents.newSession", keys: "ctrl+alt+n", command: "agents.newSession", description: "New agent session" },
+    // Keys other panes use too (Ctrl-O opens a file in the editor): theirs while an agent pane has the focus.
+    {
+      id: "agents.toggleResults",
+      keys: "ctrl+o",
+      command: "agents.toggleResults",
+      description: "Full tool results",
+      when: () => service.focusedAgentPane() !== null,
+    },
+    {
+      id: "agents.toggleThoughts",
+      keys: "ctrl+t",
+      command: "agents.toggleThoughts",
+      description: "The agent's thoughts",
+      when: () => service.focusedAgentPane() !== null,
+    },
   ]);
 }

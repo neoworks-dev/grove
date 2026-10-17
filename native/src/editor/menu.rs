@@ -252,7 +252,10 @@ impl Editor {
         }
         match pending {
             Some(pending) => menu.pending = Some(pending),
-            None => self.features.menu = None,
+            None => {
+                self.features.menu = None;
+                self.notice("No language server is running for this file");
+            }
         }
     }
 

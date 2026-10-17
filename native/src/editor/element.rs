@@ -2,18 +2,25 @@
 //! for the whole viewport rather than one per line: each frame it works out which rows the
 //! scroll offset makes visible, shapes only those, and paints them. GPUI's text system keeps
 //! shaped lines from the previous frame, so rows that did not change are not shaped again.
+//!
+//! Rows here are display rows: the buffer's lines with the rows of blocks (see
+//! `editor_core::display::BlockMap`) between them. Inlays are part of the shaped text of a line.
+//! Other decorations are painted around it: ranges behind and under the text, marks in the gutter,
+//! and text after the end of a line.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::ops::Range;
 
 use svelte_gpui::gpui::{
     App, Bounds, ContentMask, Element, ElementId, ElementInputHandler, Entity, Font, GlobalElementId, Hsla,
-    InspectorElementId, IntoElement, LayoutId, Pixels, ShapedLine, SharedString, Style, TextRun, Window, fill, font,
-    point, px, relative, size,
+    InspectorElementId, IntoElement, LayoutId, Pixels, ShapedLine, SharedString, Style, TextRun, UnderlineStyle,
+    Window, fill, font, point, px, relative, size,
 };
 
 use super::Editor;
 use super::theme::{EditorTheme, HighlightStyle};
-use editor_core::display::DisplayLine;
+use editor_core::decorations::{DecorationKind, GutterMark, Placed, PlacedBlock, Placement, Tone, UnderlineKind};
+use editor_core::display::{BlockMap, BlockSlot, DisplayLine, DisplayRow, InlayText};
 use editor_core::syntax::HighlightSpan;
 use editor_core::{EditorState, Position, Selection};
 
@@ -27,6 +34,22 @@ const CURSOR_WIDTH: Pixels = px(2.0);
 const LINE_ENDING_WIDTH: Pixels = px(7.0);
 
 const UNDERLINE_HEIGHT: Pixels = px(1.5);
+/// How thick the line under a highlighted range is; a squiggle is three times as tall.
+const DECORATION_UNDERLINE_THICKNESS: Pixels = px(1.2);
+/// The width of a changed-lines bar in the gutter, and how far from the window's edge it is.
+const GUTTER_BAR_WIDTH: Pixels = px(3.0);
+const GUTTER_BAR_INSET: Pixels = px(3.0);
+/// The size of a dot in the gutter.
+const GUTTER_DOT_SIZE: Pixels = px(8.0);
+/// The size of the notch that marks deleted lines.
+const GUTTER_NOTCH_WIDTH: Pixels = px(9.0);
+const GUTTER_NOTCH_HEIGHT: Pixels = px(2.0);
+/// Space between the end of a line and the text added after it.
+const LINE_END_GAP: Pixels = px(28.0);
+/// How opaque a tone is when it is a background behind text.
+const BACKGROUND_OPACITY: f32 = 0.18;
+/// How opaque a tone is behind a block's rows.
+const BLOCK_OPACITY: f32 = 0.12;
 
 /// What the last frame drew, kept on the editor so the pointer can be mapped to a position
 /// and the cursor kept in view.
@@ -34,15 +57,30 @@ pub struct Layout {
     pub bounds: Bounds<Pixels>,
     /// Where the text starts, right of the gutter.
     pub text_left: Pixels,
-    /// The first row drawn, and the y of its top, which is above `bounds` while it is
+    /// The first display row drawn, and the y of its top, which is above `bounds` while it is
     /// scrolled partly out.
-    pub first_row: usize,
+    pub first_display_row: usize,
     pub first_row_top: Pixels,
-    /// The rows drawn, from `first_row` on.
-    pub lines: Vec<VisibleLine>,
+    /// Where the blocks are, which turns buffer rows into display rows.
+    pub blocks: BlockMap,
+    /// The display rows drawn, from `first_display_row` on.
+    pub rows: Vec<VisibleRow>,
 }
 
+/// A display row that was drawn.
+pub enum VisibleRow {
+    Text(VisibleLine),
+    /// A row of a block pinned to a buffer row.
+    Block {
+        row: usize,
+        placement: Placement,
+    },
+}
+
+/// A line of the buffer that was drawn.
 pub struct VisibleLine {
+    /// The buffer row.
+    pub row: usize,
     pub display: DisplayLine,
     pub shaped: ShapedLine,
 }
@@ -53,15 +91,36 @@ impl Layout {
         (self.bounds.size.height / LINE_HEIGHT).floor().max(1.0) as usize
     }
 
-    /// The buffer position nearest a point in the window.
+    /// The buffer position nearest a point in the window. A row of a block stands for the line it
+    /// is pinned to.
     pub fn position_for_point(&self, point: svelte_gpui::gpui::Point<Pixels>) -> Position {
         let rows_down = ((point.y - self.first_row_top) / LINE_HEIGHT).floor().max(0.0) as usize;
-        let row = self.first_row + rows_down;
-        let Some(line) = self.lines.get(rows_down) else {
-            return Position { row, column: usize::MAX };
-        };
-        let offset = line.shaped.closest_index_for_x(point.x - self.text_left);
-        Position { row, column: line.display.column_at(offset) }
+        match self.rows.get(rows_down) {
+            Some(VisibleRow::Text(line)) => {
+                let offset = line.shaped.closest_index_for_x(point.x - self.text_left);
+                Position { row: line.row, column: line.display.column_at(offset) }
+            }
+            Some(VisibleRow::Block { row, placement: Placement::Above }) => Position { row: *row, column: 0 },
+            Some(VisibleRow::Block { row, placement: Placement::Below }) => Position { row: *row, column: usize::MAX },
+            None => match self.blocks.row_at(self.first_display_row + rows_down) {
+                DisplayRow::Text(row) => Position { row, column: usize::MAX },
+                DisplayRow::Block { .. } => Position { row: usize::MAX, column: usize::MAX },
+            },
+        }
+    }
+
+    /// The y of the top of the drawn display row at `index` (counted from the first drawn).
+    fn top_of_index(&self, index: usize) -> Pixels {
+        self.first_row_top + LINE_HEIGHT * index as f32
+    }
+
+    /// The drawn line of a buffer row and the y of its top, or none while it is out of view.
+    fn line_of(&self, row: usize) -> Option<(&VisibleLine, Pixels)> {
+        let index = self.blocks.display_row_of(row).checked_sub(self.first_display_row)?;
+        match self.rows.get(index)? {
+            VisibleRow::Text(line) if line.row == row => Some((line, self.top_of_index(index))),
+            _ => None,
+        }
     }
 }
 
@@ -72,17 +131,45 @@ pub struct EditorElement {
 /// One row as this frame paints it.
 struct PaintedRow {
     top: Pixels,
-    number: ShapedLine,
-    number_left: Pixels,
+    /// The line number and where it starts; a row of a block has none.
+    number: Option<(ShapedLine, Pixels)>,
     text: ShapedLine,
     is_cursor_row: bool,
+    /// Behind the whole row, for the rows of a block.
+    tint: Option<Hsla>,
+}
+
+/// A line under a decorated range.
+struct DecorationUnderline {
+    origin: svelte_gpui::gpui::Point<Pixels>,
+    width: Pixels,
+    wavy: bool,
+    color: Hsla,
+}
+
+/// A mark in the gutter.
+enum GutterPaint {
+    Shape { bounds: Bounds<Pixels>, color: Hsla, radius: Pixels },
+    Glyph { shaped: ShapedLine, origin: svelte_gpui::gpui::Point<Pixels> },
+}
+
+/// Text added after the end of a line.
+struct LineEndPaint {
+    shaped: ShapedLine,
+    origin: svelte_gpui::gpui::Point<Pixels>,
 }
 
 pub struct Frame {
     rows: Vec<PaintedRow>,
     gutter_width: Pixels,
     /// Behind the text: the parts of selections in view.
-    highlights: Vec<Bounds<Pixels>>,
+    selections: Vec<Bounds<Pixels>>,
+    /// Behind the text: the ranges decorations colour.
+    range_backgrounds: Vec<(Bounds<Pixels>, Hsla)>,
+    /// Under the text: lines and squiggles decorations draw.
+    decoration_underlines: Vec<DecorationUnderline>,
+    gutter_marks: Vec<GutterPaint>,
+    line_ends: Vec<LineEndPaint>,
     cursors: Vec<Bounds<Pixels>>,
     /// Under the text an input method is composing.
     underlines: Vec<Bounds<Pixels>>,
@@ -97,7 +184,11 @@ impl Frame {
             theme,
             rows: Vec::new(),
             gutter_width: px(0.0),
-            highlights: Vec::new(),
+            selections: Vec::new(),
+            range_backgrounds: Vec::new(),
+            decoration_underlines: Vec::new(),
+            gutter_marks: Vec::new(),
+            line_ends: Vec::new(),
             cursors: Vec::new(),
             underlines: Vec::new(),
         }
@@ -138,8 +229,8 @@ impl Element for EditorElement {
         (window.request_layout(style, [], cx), ())
     }
 
-    /// Shapes the visible rows, works out where the selections and cursors in view are drawn,
-    /// and records the layout on the editor.
+    /// Shapes the visible rows, works out where the selections, cursors and decorations in view
+    /// are drawn, and records the layout on the editor.
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
@@ -159,7 +250,8 @@ impl Element for EditorElement {
         frame
     }
 
-    /// Paints the background, the cursors' lines, the selections, the gutter, the text and the cursors.
+    /// Paints the background, the cursors' lines, decorated ranges, selections, the gutter, the
+    /// text, what is drawn under and after it, and the cursors.
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
@@ -176,17 +268,41 @@ impl Element for EditorElement {
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             let theme = &frame.theme;
             window.paint_quad(fill(bounds, theme.background));
-            for row in frame.rows.iter().filter(|row| row.is_cursor_row) {
+            for row in &frame.rows {
                 let line = Bounds::new(point(bounds.left(), row.top), size(bounds.size.width, LINE_HEIGHT));
-                window.paint_quad(fill(line, theme.current_line));
+                if let Some(tint) = row.tint {
+                    window.paint_quad(fill(line, tint));
+                }
+                if row.is_cursor_row {
+                    window.paint_quad(fill(line, theme.current_line));
+                }
             }
-            for highlight in &frame.highlights {
-                window.paint_quad(fill(*highlight, theme.selection));
+            for (range, color) in &frame.range_backgrounds {
+                window.paint_quad(fill(*range, *color));
+            }
+            for selection in &frame.selections {
+                window.paint_quad(fill(*selection, theme.selection));
+            }
+            for mark in &frame.gutter_marks {
+                paint_gutter_mark(mark, window, cx);
             }
             let text_left = bounds.left() + frame.gutter_width;
             for row in &frame.rows {
-                let _ = row.number.paint(point(row.number_left, row.top), LINE_HEIGHT, window, cx);
+                if let Some((number, number_left)) = &row.number {
+                    let _ = number.paint(point(*number_left, row.top), LINE_HEIGHT, window, cx);
+                }
                 let _ = row.text.paint(point(text_left, row.top), LINE_HEIGHT, window, cx);
+            }
+            for line_end in &frame.line_ends {
+                let _ = line_end.shaped.paint(line_end.origin, LINE_HEIGHT, window, cx);
+            }
+            for underline in &frame.decoration_underlines {
+                let style = UnderlineStyle {
+                    thickness: DECORATION_UNDERLINE_THICKNESS,
+                    color: Some(underline.color),
+                    wavy: underline.wavy,
+                };
+                window.paint_underline(underline.origin, underline.width, &style);
             }
             for underline in &frame.underlines {
                 window.paint_quad(fill(*underline, theme.foreground));
@@ -202,9 +318,74 @@ impl Element for EditorElement {
     }
 }
 
-/// Shapes the rows in view, coloured by their syntax, and works out where the selections and
-/// cursors are drawn, for a state scrolled to `scroll_top` in a box of `bounds`. Also gives the
-/// layout the pointer is mapped through.
+/// Paints one mark in the gutter.
+fn paint_gutter_mark(mark: &GutterPaint, window: &mut Window, cx: &mut App) {
+    match mark {
+        GutterPaint::Shape { bounds, color, radius } => {
+            window.paint_quad(fill(*bounds, *color).corner_radii(*radius));
+        }
+        GutterPaint::Glyph { shaped, origin } => {
+            let _ = shaped.paint(*origin, LINE_HEIGHT, window, cx);
+        }
+    }
+}
+
+/// The decorations a frame needs, sorted out by what they do to the row they are on.
+struct RowDecorations<'a> {
+    /// Inlays by buffer row, ordered by column.
+    inlays: HashMap<usize, Vec<(usize, &'a str, Tone)>>,
+    /// The text after the end of a line, by buffer row.
+    line_ends: HashMap<usize, (&'a str, Tone)>,
+}
+
+impl<'a> RowDecorations<'a> {
+    /// Picks the inlays and line-end text out of the decorations in view. Where several put text
+    /// after one line, the first wins.
+    fn new(decorations: &[Placed<'a>]) -> Self {
+        let mut inlays: HashMap<usize, Vec<(usize, &str, Tone)>> = HashMap::new();
+        let mut line_ends = HashMap::new();
+        for placed in decorations {
+            match placed.kind {
+                DecorationKind::Inlay { text, tone } => {
+                    let tone = tone.unwrap_or(Tone::Inlay);
+                    inlays.entry(placed.start.row).or_default().push((placed.start.column, text.as_str(), tone));
+                }
+                DecorationKind::LineEnd { text, tone } => {
+                    line_ends.entry(placed.start.row).or_insert((text.as_str(), tone.unwrap_or(Tone::LineEnd)));
+                }
+                _ => {}
+            }
+        }
+        for row_inlays in inlays.values_mut() {
+            row_inlays.sort_by_key(|(column, _, _)| *column);
+        }
+        RowDecorations { inlays, line_ends }
+    }
+}
+
+/// The buffer rows that display rows show, as the first and one past the last, or an empty range
+/// when none shows a line.
+fn text_row_range(display_rows: &[DisplayRow]) -> Range<usize> {
+    let mut rows = display_rows.iter().filter_map(|row| match row {
+        DisplayRow::Text(row) => Some(*row),
+        DisplayRow::Block { .. } => None,
+    });
+    let Some(first) = rows.next() else {
+        return 0..0;
+    };
+    first..rows.last().unwrap_or(first) + 1
+}
+
+/// Where the blocks go, for the display map.
+fn block_map(blocks: &[PlacedBlock]) -> BlockMap {
+    let slots: Vec<BlockSlot> =
+        blocks.iter().map(|block| BlockSlot { slot: block.slot, height: block.lines.len() }).collect();
+    BlockMap::new(&slots)
+}
+
+/// Shapes the rows in view, coloured by their syntax, and works out where the selections,
+/// cursors and decorations are drawn, for a state scrolled to `scroll_top` in a box of `bounds`.
+/// Also gives the layout the pointer is mapped through.
 fn build_frame(
     state: &EditorState,
     scroll_top: Pixels,
@@ -218,55 +399,187 @@ fn build_frame(
     let gutter_width = digit_width + GUTTER_PADDING * 2.0;
     let text_left = bounds.left() + gutter_width;
 
-    let first_row = (scroll_top / LINE_HEIGHT).floor() as usize;
-    let first_row_top = bounds.top() - (scroll_top - LINE_HEIGHT * first_row as f32);
+    let blocks = state.decoration_blocks();
+    let blocks_map = block_map(&blocks);
+    let first_display_row = (scroll_top / LINE_HEIGHT).floor() as usize;
+    let first_row_top = bounds.top() - (scroll_top - LINE_HEIGHT * first_display_row as f32);
     let rows_drawn = (bounds.size.height / LINE_HEIGHT).ceil() as usize + 1;
-    let end_row = (first_row + rows_drawn).min(line_count);
-    let visible_selections = state.selections().in_rows(first_row, end_row);
+    let end_display_row = (first_display_row + rows_drawn).min(blocks_map.total_rows(line_count));
+    let display_rows: Vec<DisplayRow> =
+        (first_display_row..end_display_row).map(|row| blocks_map.row_at(row)).collect();
+    let text_rows = text_row_range(&display_rows);
+
+    let visible_selections = state.selections().in_rows(text_rows.start, text_rows.end);
     let cursor_rows: HashSet<usize> = visible_selections
         .iter()
         .filter(|selection| selection.is_empty())
         .map(|selection| selection.head.row)
         .collect();
+    let syntax = state.highlights(text_rows.clone());
+    let decorations = state.decorations_in_rows(text_rows.clone());
+    let row_decorations = RowDecorations::new(&decorations);
 
-    let highlights = state.highlights(first_row..end_row);
-    let mut lines = Vec::with_capacity(end_row.saturating_sub(first_row));
-    let mut rows = Vec::with_capacity(lines.capacity());
-    for row in first_row..end_row {
-        let display = DisplayLine::new(&state.buffer().line(row));
-        let is_cursor_row = cursor_rows.contains(&row);
-        let number_color = if is_cursor_row { theme.current_line_number } else { theme.line_number };
-        let number = shape_plain(window, &(row + 1).to_string(), number_color);
-        let runs = text_runs(&display, &highlights[row - first_row], theme);
-        let text = shape_runs(window, &display.text, &runs);
-        rows.push(PaintedRow {
-            top: first_row_top + LINE_HEIGHT * (row - first_row) as f32,
-            number_left: bounds.left() + GUTTER_PADDING + digit_width - number.width,
-            number,
-            text: text.clone(),
-            is_cursor_row,
-        });
-        lines.push(VisibleLine { display, shaped: text });
+    let mut visible_rows = Vec::with_capacity(display_rows.len());
+    let mut painted_rows = Vec::with_capacity(display_rows.len());
+    let mut line_ends = Vec::new();
+    for (index, display_row) in display_rows.iter().enumerate() {
+        let top = first_row_top + LINE_HEIGHT * index as f32;
+        match *display_row {
+            DisplayRow::Text(row) => {
+                let is_cursor_row = cursor_rows.contains(&row);
+                let number_color = if is_cursor_row { theme.current_line_number } else { theme.line_number };
+                let number = shape_plain(window, &(row + 1).to_string(), number_color);
+                let number_left = bounds.left() + GUTTER_PADDING + digit_width - number.width;
+                let inlays = row_decorations.inlays.get(&row).map(Vec::as_slice).unwrap_or_default();
+                let display = line_with_inlays(&state.buffer().line(row), inlays);
+                let inlay_tones: Vec<Tone> = inlays.iter().map(|(_, _, tone)| *tone).collect();
+                let runs = text_runs(&display, &syntax[row - text_rows.start], &inlay_tones, theme);
+                let text = shape_runs(window, &display.text, &runs);
+                if let Some((line_end_text, tone)) = row_decorations.line_ends.get(&row) {
+                    let shaped = shape_italic(window, line_end_text, theme.tone(*tone));
+                    let origin = point(text_left + text.width + LINE_END_GAP, top);
+                    line_ends.push(LineEndPaint { shaped, origin });
+                }
+                painted_rows.push(PaintedRow {
+                    top,
+                    number: Some((number, number_left)),
+                    text: text.clone(),
+                    is_cursor_row,
+                    tint: None,
+                });
+                visible_rows.push(VisibleRow::Text(VisibleLine { row, display, shaped: text }));
+            }
+            DisplayRow::Block { block, line } => {
+                let placed = &blocks[block];
+                let color = theme.tone(placed.tone.unwrap_or(Tone::Inlay));
+                let text = shape_plain(window, &placed.lines[line], color);
+                painted_rows.push(PaintedRow {
+                    top,
+                    number: None,
+                    text,
+                    is_cursor_row: false,
+                    tint: Some(color.opacity(BLOCK_OPACITY)),
+                });
+                visible_rows.push(VisibleRow::Block { row: placed.row, placement: placed.placement });
+            }
+        }
     }
 
-    let layout = Layout { bounds, text_left, first_row, first_row_top, lines };
+    let layout = Layout { bounds, text_left, first_display_row, first_row_top, blocks: blocks_map, rows: visible_rows };
     let selections = visible_selections.iter().flat_map(|selection| selection_bounds(&layout, selection)).collect();
     let underlines = state.marked_range().map(|(start, end)| underline_bounds(&layout, start, end)).unwrap_or_default();
     let cursors = visible_selections.iter().filter_map(|selection| cursor_bounds(&layout, selection.head)).collect();
-    (layout, Frame { rows, gutter_width, highlights: selections, cursors, underlines, theme: theme.clone() })
+    let (range_backgrounds, decoration_underlines) = range_decorations(&layout, &decorations, theme);
+    let gutter_marks = gutter_marks(&layout, &decorations, theme, window);
+    let frame = Frame {
+        rows: painted_rows,
+        gutter_width,
+        selections,
+        range_backgrounds,
+        decoration_underlines,
+        gutter_marks,
+        line_ends,
+        cursors,
+        underlines,
+        theme: theme.clone(),
+    };
+    (layout, frame)
+}
+
+/// A buffer line laid out with the inlays on it, which must be ordered by column.
+fn line_with_inlays(line: &str, inlays: &[(usize, &str, Tone)]) -> DisplayLine {
+    let texts: Vec<InlayText> = inlays.iter().map(|(column, text, _)| InlayText { column: *column, text }).collect();
+    DisplayLine::with_inlays(line, &texts)
+}
+
+/// The backgrounds and the lines under text that highlight decorations ask for.
+fn range_decorations(
+    layout: &Layout,
+    decorations: &[Placed],
+    theme: &EditorTheme,
+) -> (Vec<(Bounds<Pixels>, Hsla)>, Vec<DecorationUnderline>) {
+    let mut backgrounds = Vec::new();
+    let mut underlines = Vec::new();
+    for placed in decorations {
+        let DecorationKind::Highlight { background, underline } = placed.kind else {
+            continue;
+        };
+        if placed.start == placed.end {
+            continue;
+        }
+        let spans = span_bounds(layout, placed.start, placed.end, px(0.0));
+        if let Some(tone) = background {
+            let color = theme.tone(*tone).opacity(BACKGROUND_OPACITY);
+            backgrounds.extend(spans.iter().map(|span| (*span, color)));
+        }
+        let Some(underline) = underline else {
+            continue;
+        };
+        let wavy = underline.style == UnderlineKind::Squiggle;
+        let height = if wavy { DECORATION_UNDERLINE_THICKNESS * 3.0 } else { DECORATION_UNDERLINE_THICKNESS };
+        for span in &spans {
+            let origin = point(span.left(), span.top() + LINE_HEIGHT - height - px(1.0));
+            underlines.push(DecorationUnderline {
+                origin,
+                width: span.size.width,
+                wavy,
+                color: theme.tone(underline.tone),
+            });
+        }
+    }
+    (backgrounds, underlines)
+}
+
+/// The marks gutter decorations put beside the line numbers on the rows in view.
+fn gutter_marks(layout: &Layout, decorations: &[Placed], theme: &EditorTheme, window: &mut Window) -> Vec<GutterPaint> {
+    let mut marks = Vec::new();
+    let left = layout.bounds.left();
+    for placed in decorations {
+        let DecorationKind::Gutter { mark, tone } = placed.kind else {
+            continue;
+        };
+        let color = theme.tone(tone.unwrap_or(Tone::Info));
+        let rows = match mark {
+            GutterMark::Bar => placed.start.row..placed.end.row + 1,
+            _ => placed.start.row..placed.start.row + 1,
+        };
+        for row in rows {
+            let Some((_, top)) = layout.line_of(row) else {
+                continue;
+            };
+            match mark {
+                GutterMark::Bar => {
+                    let bar = Bounds::new(point(left + GUTTER_BAR_INSET, top), size(GUTTER_BAR_WIDTH, LINE_HEIGHT));
+                    marks.push(GutterPaint::Shape { bounds: bar, color, radius: px(0.0) });
+                }
+                GutterMark::Dot => {
+                    let origin = point(left + GUTTER_BAR_INSET, top + (LINE_HEIGHT - GUTTER_DOT_SIZE) / 2.0);
+                    let dot = Bounds::new(origin, size(GUTTER_DOT_SIZE, GUTTER_DOT_SIZE));
+                    marks.push(GutterPaint::Shape { bounds: dot, color, radius: GUTTER_DOT_SIZE / 2.0 });
+                }
+                GutterMark::Notch => {
+                    let notch = Bounds::new(
+                        point(left + GUTTER_BAR_INSET, top - GUTTER_NOTCH_HEIGHT / 2.0),
+                        size(GUTTER_NOTCH_WIDTH, GUTTER_NOTCH_HEIGHT),
+                    );
+                    marks.push(GutterPaint::Shape { bounds: notch, color, radius: px(0.0) });
+                }
+                GutterMark::Glyph(character) => {
+                    let shaped = shape_plain(window, &character.to_string(), color);
+                    let origin = point(left + (GUTTER_PADDING - shaped.width) / 2.0, top);
+                    marks.push(GutterPaint::Glyph { shaped, origin });
+                }
+            }
+        }
+    }
+    marks
 }
 
 /// Where a cursor is drawn, or none while its row is scrolled out of view.
 pub(super) fn cursor_bounds(layout: &Layout, head: Position) -> Option<Bounds<Pixels>> {
-    let x = x_for(layout, head)?;
-    let top = layout.first_row_top + LINE_HEIGHT * (head.row - layout.first_row) as f32;
+    let (line, top) = layout.line_of(head.row)?;
+    let x = layout.text_left + line.shaped.x_for_index(line.display.offset_of(head.column));
     Some(Bounds::new(point(x, top), size(CURSOR_WIDTH, LINE_HEIGHT)))
-}
-
-/// The x where a position is drawn, or none while its row is out of view.
-fn x_for(layout: &Layout, position: Position) -> Option<Pixels> {
-    let line = layout.lines.get(position.row.checked_sub(layout.first_row)?)?;
-    Some(layout.text_left + line.shaped.x_for_index(line.display.offset_of(position.column)))
 }
 
 /// The highlight behind a selection, one rectangle per visible row it covers. A row the
@@ -289,26 +602,27 @@ fn underline_bounds(layout: &Layout, start: Position, end: Position) -> Vec<Boun
 }
 
 /// One rectangle per visible row a range covers, as tall as a line. A row the range runs past
-/// the end of is widened by `line_ending_width`.
+/// the end of is widened by `line_ending_width`. A range starts after the inlays at its first
+/// column and takes in the ones inside it.
 fn span_bounds(layout: &Layout, start: Position, end: Position, line_ending_width: Pixels) -> Vec<Bounds<Pixels>> {
-    let first = start.row.max(layout.first_row);
-    let last = end.row.min(layout.first_row + layout.lines.len().saturating_sub(1));
     let mut spans = Vec::new();
-    for row in first..=last {
-        let start_column = if row == start.row { start.column } else { 0 };
-        let runs_past_end = row != end.row;
-        let end_column = if runs_past_end { usize::MAX } else { end.column };
-        let Some(left) = x_for(layout, Position { row, column: start_column }) else {
+    for (index, visible) in layout.rows.iter().enumerate() {
+        let VisibleRow::Text(line) = visible else {
             continue;
         };
-        let Some(mut right) = x_for(layout, Position { row, column: end_column }) else {
+        if line.row < start.row || line.row > end.row {
             continue;
-        };
+        }
+        let runs_past_end = line.row != end.row;
+        let left_offset = if line.row == start.row { line.display.range_start_offset(start.column) } else { 0 };
+        let right_offset =
+            if runs_past_end { line.display.text.len() } else { line.display.range_end_offset(end.column) };
+        let left = layout.text_left + line.shaped.x_for_index(left_offset);
+        let mut right = layout.text_left + line.shaped.x_for_index(right_offset);
         if runs_past_end {
             right += line_ending_width;
         }
-        let top = layout.first_row_top + LINE_HEIGHT * (row - layout.first_row) as f32;
-        spans.push(Bounds::new(point(left, top), size(right - left, LINE_HEIGHT)));
+        spans.push(Bounds::new(point(left, layout.top_of_index(index)), size(right - left, LINE_HEIGHT)));
     }
     spans
 }
@@ -316,7 +630,13 @@ fn span_bounds(layout: &Layout, start: Position, end: Position, line_ending_widt
 /// Shapes one line of text in the editor's font, in a single colour.
 fn shape_plain(window: &mut Window, text: &str, color: Hsla) -> ShapedLine {
     let plain = HighlightStyle { color, bold: false, italic: false };
-    shape_runs(window, text, &[text_run(text.len(), plain)])
+    shape_runs(window, text, &[text_run(text.len(), plain, None)])
+}
+
+/// Like `shape_plain`, in italics.
+fn shape_italic(window: &mut Window, text: &str, color: Hsla) -> ShapedLine {
+    let italic = HighlightStyle { color, bold: false, italic: true };
+    shape_runs(window, text, &[text_run(text.len(), italic, None)])
 }
 
 /// Shapes one line of text in the editor's font, in the colours of its runs, which must add up
@@ -325,8 +645,8 @@ fn shape_runs(window: &mut Window, text: &str, runs: &[TextRun]) -> ShapedLine {
     window.text_system().shape_line(SharedString::from(text.to_string()), FONT_SIZE, runs, None)
 }
 
-/// A run of `length` bytes painted in a style.
-fn text_run(length: usize, style: HighlightStyle) -> TextRun {
+/// A run of `length` bytes painted in a style, on a background if it has one.
+fn text_run(length: usize, style: HighlightStyle, background: Option<Hsla>) -> TextRun {
     let mut run_font = editor_font();
     if style.bold {
         run_font = run_font.bold();
@@ -338,33 +658,67 @@ fn text_run(length: usize, style: HighlightStyle) -> TextRun {
         len: length,
         font: run_font,
         color: style.color,
-        background_color: None,
+        background_color: background,
         underline: None,
         strikethrough: None,
     }
 }
 
-/// The runs a row is painted in: each highlighted stretch in its colour and the text between
-/// them in the foreground. Highlights are in columns of the buffer line, so a tab before one is
-/// already accounted for by the display line.
-fn text_runs(display: &DisplayLine, spans: &[HighlightSpan], theme: &EditorTheme) -> Vec<TextRun> {
-    let plain = HighlightStyle { color: theme.foreground, bold: false, italic: false };
-    let mut runs = Vec::with_capacity(spans.len() * 2 + 1);
+/// The byte ranges of a row's drawn text that its syntax highlights colour. Highlights are in
+/// columns of the buffer line, so a tab before one is already accounted for by the display line.
+fn syntax_segments(
+    display: &DisplayLine,
+    spans: &[HighlightSpan],
+    theme: &EditorTheme,
+) -> Vec<(Range<usize>, HighlightStyle)> {
+    let mut segments = Vec::with_capacity(spans.len());
     let mut painted = 0;
     for span in spans {
-        let start = display.offset_of(span.start_column).max(painted);
-        let end = display.offset_of(span.end_column);
+        let start = display.range_start_offset(span.start_column).max(painted);
+        let end = display.range_end_offset(span.end_column);
         if end <= start {
             continue;
         }
-        if start > painted {
-            runs.push(text_run(start - painted, plain));
+        if let Some(style) = theme.style_of(span.id) {
+            segments.push((start..end, style));
         }
-        runs.push(text_run(end - start, theme.style_of(span.id).unwrap_or(plain)));
         painted = end;
     }
-    if painted < display.text.len() || runs.is_empty() {
-        runs.push(text_run(display.text.len() - painted, plain));
+    segments
+}
+
+/// The runs a row is painted in: each highlighted stretch in its colour, each inlay in its
+/// tone on a faint background, and the text between in the foreground.
+fn text_runs(
+    display: &DisplayLine,
+    spans: &[HighlightSpan],
+    inlay_tones: &[Tone],
+    theme: &EditorTheme,
+) -> Vec<TextRun> {
+    let plain = HighlightStyle { color: theme.foreground, bold: false, italic: false };
+    let segments = syntax_segments(display, spans, theme);
+    let inlays = display.inlay_ranges();
+    let mut boundaries = vec![0, display.text.len()];
+    boundaries.extend(segments.iter().flat_map(|(range, _)| [range.start, range.end]));
+    boundaries.extend(inlays.iter().flat_map(|range| [range.start, range.end]));
+    boundaries.sort_unstable();
+    boundaries.dedup();
+    let mut runs = Vec::with_capacity(boundaries.len());
+    for pair in boundaries.windows(2) {
+        let (start, end) = (pair[0], pair[1]);
+        let inlay = inlays.iter().position(|range| range.start <= start && start < range.end);
+        if let Some(index) = inlay {
+            let color = theme.tone(inlay_tones.get(index).copied().unwrap_or(Tone::Inlay));
+            let style = HighlightStyle { color, bold: false, italic: false };
+            runs.push(text_run(end - start, style, Some(color.opacity(BLOCK_OPACITY))));
+            continue;
+        }
+        let segment = segments.iter().find(|(range, _)| range.start <= start && start < range.end);
+        let style = segment.map(|(_, style)| *style).unwrap_or(plain);
+        runs.push(text_run(end - start, style, None));
+    }
+    if runs.is_empty() {
+        runs.push(text_run(0, plain, None));
     }
     runs
 }

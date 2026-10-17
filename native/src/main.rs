@@ -13,6 +13,7 @@
 //! to it (see `sidecar.rs`).
 
 mod editor;
+mod git;
 mod sidecar;
 
 use std::path::PathBuf;
@@ -35,6 +36,7 @@ fn main() {
     let commands = sidecar.commands(commands);
     let documents = SharedDocuments::new(commands.emitter());
     let commands = documents.register(commands);
+    let commands = git::register(commands);
     let elements = Elements::new().register("editor", move |_host, cx| {
         let documents = documents.clone();
         cx.new(|cx| Editor::new(documents, cx))

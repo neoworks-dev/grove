@@ -94,6 +94,8 @@ export const editor = {
       service.setKeymap(live.keymap);
       configure(optionsOf(live));
     });
+    // Drawn between a pane's tabs and its text; plugins such as breadcrumbs register into it.
+    ctx.slots.declare("editor.breadcrumbs", "list");
     ctx.slots.register("main", {
       id: "editor",
       key: "editor",

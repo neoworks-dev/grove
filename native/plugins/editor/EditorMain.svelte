@@ -7,6 +7,7 @@
 <script lang="ts">
   import { element, type ElementMethods } from "@neoworks/svelte-gpui";
   import { Text, View } from "@neoworks/svelte-gpui/ui";
+  import Slot from "../../kernel/slots/Slot.svelte";
   import TabStrip, { type TabEntry } from "../panel/TabStrip.svelte";
   import { activeEditorTheme, type EditorTheme } from "../theme/editorTheme";
   import { colors, fontSize } from "../theme/tokens";
@@ -81,6 +82,7 @@
     <TabStrip tabs={entries} activeId={active ? String(active.id) : ""} onselect={selectTab} onclose={closeTab} />
   {/if}
   {#if active}
+    <Slot name="editor.breadcrumbs" props={{ leafId, documentId: active.id, goto: (line: number, character: number) => void view?.goto(line, character) }} />
     <Editor
       bind:this={view}
       style={{ flex: 1 }}

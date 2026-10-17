@@ -180,6 +180,42 @@ impl Command {
         *self == Command::CollapseSelections
     }
 
+    /// Whether the command can change the text. A read-only view refuses the ones that can, and a
+    /// command nobody has listed as harmless counts as one that can.
+    pub fn changes_text(&self) -> bool {
+        match self {
+            Command::MoveSelections { .. }
+            | Command::AddCursorAbove
+            | Command::AddCursorBelow
+            | Command::SelectNextOccurrence
+            | Command::SelectAll
+            | Command::CollapseSelections
+            | Command::PlaceCursor { .. }
+            | Command::ToggleCursor { .. }
+            | Command::ExtendNewestTo { .. }
+            | Command::SelectWordAt { .. }
+            | Command::Copy
+            | Command::UnmarkText
+            | Command::SetDecorations { .. }
+            | Command::Noop
+            | Command::Fail { .. }
+            | Command::Request { .. }
+            | Command::VimMove { .. }
+            | Command::VimSearch { .. }
+            | Command::SelectObject { .. }
+            | Command::SelectNextMatch { .. }
+            | Command::CollapseToHeads
+            | Command::SwapSelectionEnds
+            | Command::ClampCursors
+            | Command::GroupUndo { .. }
+            | Command::ScrollTo { .. }
+            | Command::SetMark { .. }
+            | Command::JumpToMark { .. } => false,
+            Command::Operate { operator, .. } => *operator != Operator::Yank,
+            _ => true,
+        }
+    }
+
     /// Whether the command is one of vim's, which `vim::commands` carries out.
     pub fn is_vim(&self) -> bool {
         matches!(
@@ -230,4 +266,29 @@ pub struct Outcome {
     pub scroll: Option<ScrollAlign>,
     /// What the app is asked to do, as the command made a `Request`.
     pub request: Option<AppRequest>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::movement::Motion;
+    use crate::vim::types::Target;
+
+    #[test]
+    fn moving_and_copying_leave_the_text_alone_and_typing_and_deleting_do_not() {
+        assert!(!Command::MoveSelections { motion: Motion::Left, extend: true }.changes_text());
+        assert!(!Command::Copy.changes_text());
+        assert!(Command::InsertText { text: "x".into() }.changes_text());
+        assert!(Command::Delete { motion: Motion::Left }.changes_text());
+        assert!(Command::Undo.changes_text());
+        assert!(Command::Save.changes_text());
+    }
+
+    #[test]
+    fn a_yank_leaves_the_text_alone_and_the_other_operators_do_not() {
+        let target = Target::Motion { motion: Motion::WordForward { big: false }, count: 1 };
+        let operate = |operator| Command::Operate { operator, target: target.clone(), register: None };
+        assert!(!operate(Operator::Yank).changes_text());
+        assert!(operate(Operator::Delete).changes_text());
+    }
 }

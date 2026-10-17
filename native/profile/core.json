@@ -10,6 +10,10 @@
   { "id": "layout", "plugin": "layout" },
   { "id": "editor", "plugin": "editor" },
   { "id": "statusbar-position", "plugin": "editor-position" },
+  { "id": "sidecar", "plugin": "sidecar" },
+  { "id": "workspace", "plugin": "workspace" },
+  { "id": "explorer", "plugin": "explorer" },
+  { "id": "worktrees", "plugin": "worktrees" },
   { "id": "placeholder-sidebar", "plugin": "placeholder-sidebar" },
   { "id": "placeholder-panel", "plugin": "placeholder-panel" }
 ]

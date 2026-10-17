@@ -46,8 +46,8 @@ describe("layerProfiles", () => {
 });
 
 describe("loadProfile", () => {
-  /** Files held in memory, with the config directory and the opened folder given. */
-  function memoryFiles(contents: Record<string, string>, folder: string | null): ProfileFiles {
+  /** Files held in memory, with the config directory given. */
+  function memoryFiles(contents: Record<string, string>): ProfileFiles {
     return {
       async readIfExists(path) {
         if (path in contents) {
@@ -57,9 +57,6 @@ describe("loadProfile", () => {
       },
       async configDirectory() {
         return "/config";
-      },
-      async openedFolder() {
-        return folder;
       },
     };
   }
@@ -74,10 +71,9 @@ describe("loadProfile", () => {
       {
         "/config/grove/profile.json": '[{"id":"clock","disabled":true}]',
         "/work/.grove/profile.json": '[{"id":"clock","plugin":"clock","config":{"format":"24h"}}]',
-      },
-      "/work"
+      }
     );
-    const { rows, problems } = await loadProfile(coreRows, files);
+    const { rows, problems } = await loadProfile(coreRows, files, "/work");
     expect(problems).toEqual([]);
     const clock = rows.find((row) => row.id === "clock")!;
     expect(clock.layer).toBe("project");
@@ -87,16 +83,15 @@ describe("loadProfile", () => {
 
   test("skips the project layer when no folder is open", async () => {
     const files = memoryFiles(
-      { "/work/.grove/profile.json": '[{"id":"clock","disabled":true}]', "/config/grove/profile.json": "[]" },
-      null
+      { "/work/.grove/profile.json": '[{"id":"clock","disabled":true}]', "/config/grove/profile.json": "[]" }
     );
-    const { rows } = await loadProfile(coreRows, files);
+    const { rows } = await loadProfile(coreRows, files, null);
     expect(rows.find((row) => row.id === "clock")!.disabled).toBe(false);
   });
 
   test("a broken user file is a problem, and the core rows still load", async () => {
-    const files = memoryFiles({ "/config/grove/profile.json": "not json" }, null);
-    const { rows, problems } = await loadProfile(coreRows, files);
+    const files = memoryFiles({ "/config/grove/profile.json": "not json" });
+    const { rows, problems } = await loadProfile(coreRows, files, null);
     expect(rows.map((row) => row.id)).toEqual(["frame", "clock"]);
     expect(problems[0]).toContain("not valid JSON");
   });

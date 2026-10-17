@@ -4,6 +4,7 @@
 import type { PluginCatalog } from "../kernel/profile";
 import { editor } from "./editor";
 import { editorPosition } from "./editor-position";
+import { explorer } from "./explorer";
 import { brokenEntry, failing } from "./failing";
 import { frame } from "./frame";
 import { header } from "./header";
@@ -13,7 +14,10 @@ import { panel } from "./panel";
 import { placeholderPanel, placeholderSidebar } from "./placeholders";
 import { rails } from "./rails";
 import { sidebar } from "./sidebar";
+import { sidecar } from "./sidecar";
 import { statusbar } from "./statusbar";
+import { workspace } from "./workspace";
+import { worktrees } from "./worktrees";
 
 export const corePlugins: PluginCatalog = {
   frame,
@@ -27,6 +31,10 @@ export const corePlugins: PluginCatalog = {
   layout,
   editor,
   "editor-position": editorPosition,
+  sidecar,
+  workspace,
+  explorer,
+  worktrees,
   "placeholder-sidebar": placeholderSidebar,
   "placeholder-panel": placeholderPanel,
   failing,

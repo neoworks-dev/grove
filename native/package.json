@@ -12,6 +12,8 @@
     "@neoworks/extension-system": "link:@neoworks/extension-system",
     "@neoworks/svelte-gpui": "github:neoworks-dev/svelte-gpui#0a714498b8894ccc7e05a7274d4400994a9d230f",
     "@phosphor-icons/core": "^2.1.1",
+    "@suite/protocol": "link:@suite/protocol",
+    "@suite/sdk": "link:@suite/sdk",
     "esbuild": "^0.24.0",
     "svelte": "^5.57.0"
   }

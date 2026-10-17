@@ -22,9 +22,16 @@
     return kernel.slots.entries("main").find((entry) => entry.key === paneTypeId);
   }
 
-  /** The title a pane type's entry gives it, or the type's name while there is no entry. */
-  function titleFor(paneTypeId: string): string {
+  /**
+   * The title a pane type's entry gives it, or the type's name while there is no entry. An entry
+   * may give a function of the pane's id instead of a string, for a title that follows what that
+   * pane shows, such as the session an agent pane has open.
+   */
+  function titleFor(paneTypeId: string, leafId: string): string {
     const props = entryFor(paneTypeId)?.props;
+    if (props && typeof props.title === "function") {
+      return props.title(leafId);
+    }
     if (props && typeof props.title === "string") {
       return props.title;
     }
@@ -54,7 +61,7 @@
     {#snippet leaf(node)}
       <PaneLeaf
         leafId={node.id}
-        title={titleFor(node.paneTypeId)}
+        title={titleFor(node.paneTypeId, node.id)}
         icon={iconFor(node.paneTypeId)}
         active={layout.focusedLeafId === node.id}
         onclose={closeHandlerFor(node.id)}

@@ -106,11 +106,15 @@ function markOf(file: DiffFile): Mark {
   return file.changeType;
 }
 
-/** The files of a worktree's changes with the same path merged: staged and unstaged edits are one entry. */
+/**
+ * The files of a worktree's changes with the same path merged: a file with staged and unstaged
+ * edits is one entry, the unstaged one, whose diff against HEAD covers both.
+ */
 function mergedChanges(files: readonly DiffFile[]): DiffFile[] {
   const merged = new Map<string, DiffFile>();
   for (const file of files) {
-    if (!merged.has(file.path)) {
+    const known = merged.get(file.path);
+    if (known === undefined || (known.staged && !file.staged)) {
       merged.set(file.path, file);
     }
   }

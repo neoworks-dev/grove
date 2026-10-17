@@ -250,6 +250,7 @@ export class EditorService extends Service {
   private revealing: RevealRequest | null = null;
   private changes: ChangeSignal = createChangeSignal();
   private keymapName: KeymapName = "standard";
+  private pendingSequence: () => boolean = () => false;
   /** What each pane's vim layer last reported, by pane id. */
   private vimStates = new Map<string, VimStatus>();
   private documentListeners = new Set<(event: DocumentEvent) => void>();
@@ -411,6 +412,19 @@ export class EditorService extends Service {
       return null;
     }
     return cursor;
+  }
+
+  /** Where to ask whether the app's keymap is half way through a key sequence, such as after Ctrl+K. */
+  setPendingSequenceSource(source: () => boolean): void {
+    this.pendingSequence = source;
+  }
+
+  /**
+   * Whether the app's keymap waits for the next key of a sequence. The editors then leave every key to
+   * the keymap, since vim would otherwise take the `v` of Ctrl+K V. Reactive.
+   */
+  sequencePending(): boolean {
+    return this.pendingSequence();
   }
 
   /** Which keys the editors understand. Reactive. */

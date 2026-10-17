@@ -130,6 +130,26 @@ describe("a file's diff", () => {
     expect(model.diff()).toBeNull();
   });
 
+  test("a file the agent touched and git sees no change in shows what the agent's calls changed", async () => {
+    const { model, emit } = setUp("/repo");
+    emit({ type: "tool_call", toolCallId: "t", title: "Edit", kind: "edit", status: "pending" });
+    emit({
+      type: "tool_call_update",
+      toolCallId: "t",
+      content: [{ type: "diff", path: "/repo/gone.md", oldText: "one\ntwo\n", newText: "one\n2\n" }],
+    });
+    const [entry] = model.entries();
+    expect(model.canDiff(entry)).toBe(true);
+    await model.showDiff(entry);
+    expect(model.diff()?.path).toBe("gone.md");
+    expect(model.diff()?.lines).toEqual([
+      { kind: "hunk", text: "@@ -1,2 +1,2 @@" },
+      { kind: "context", text: "one", old: 1, new: 1 },
+      { kind: "remove", text: "two", old: 2 },
+      { kind: "add", text: "2", new: 2 },
+    ]);
+  });
+
   test("a failure to read it is kept for the panel to show", async () => {
     const { model, source } = setUp("/repo");
     await model.refresh();

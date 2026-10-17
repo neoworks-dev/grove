@@ -6,7 +6,9 @@ import type { DiffLine } from "@suite/protocol/types";
 import type { DiffFile, Worktree } from "../../../src/shared/types";
 import { createChangeSignal, type ChangeSignal } from "../../kernel/reactive";
 import type { ChatSession } from "./chatSession";
-import { fileEntries, type FileEntry } from "./files";
+import type { CallDiff } from "./calls";
+import { fileEntries, relativize, type FileEntry } from "./files";
+import { diffLinesOf } from "./lineDiff";
 
 /** Where a worktree's changes and their diffs come from. */
 export interface ChangesSource {
@@ -84,9 +86,26 @@ export class FilesModel {
     return this.failure;
   }
 
-  /** Whether a file has a diff to show: git reports a change in it. */
+  /** Whether a file has a diff to show: git reports a change in it, or the session's calls say what they changed. */
   canDiff(entry: FileEntry): boolean {
-    return entry.file !== undefined && this.worktree() !== null;
+    if (entry.file !== undefined && this.worktree() !== null) {
+      return true;
+    }
+    return this.changesTo(entry).length > 0;
+  }
+
+  /** What the session's tool calls changed in a file, from their own old and new text, oldest first. */
+  private changesTo(entry: FileEntry): CallDiff[] {
+    let base = this.sessionDirectory();
+    const worktree = this.worktree();
+    if (worktree !== null) {
+      base = worktree.path;
+    }
+    if (base === undefined) {
+      return [];
+    }
+    const directory = base;
+    return this.chat.fileChanges().filter((change) => relativize(directory, change.path) === entry.rel);
   }
 
   /** Asks git for the changes again; one ask at a time, and one more after it when asked meanwhile. */
@@ -114,10 +133,14 @@ export class FilesModel {
     }
   }
 
-  /** Opens a file's diff in place of the list; a file without one does nothing. */
+  /**
+   * Opens a file's diff in place of the list: git's, or for a file git sees no change in, the
+   * changes the session's calls made to it. A file with neither does nothing.
+   */
   async showDiff(entry: FileEntry): Promise<void> {
     const worktree = this.worktree();
     if (entry.file === undefined || worktree === null) {
+      this.showOwnChanges(entry);
       return;
     }
     try {
@@ -127,6 +150,18 @@ export class FilesModel {
     } catch (error) {
       this.failure = describeError(error);
     }
+    this.signal.notify();
+  }
+
+  /** Shows what the session's calls changed in a file, one change after the other. */
+  private showOwnChanges(entry: FileEntry): void {
+    const changes = this.changesTo(entry);
+    if (changes.length === 0) {
+      return;
+    }
+    const lines = changes.flatMap((change) => diffLinesOf(change.oldText, change.newText));
+    this.failure = null;
+    this.shownDiff = { path: entry.rel, lines: this.withNote(lines) };
     this.signal.notify();
   }
 

@@ -11,6 +11,18 @@ export interface ProfileFiles {
   configDirectory(): Promise<string>;
   /** The folder the app has open, whose `.grove/profile.json` is the project layer; null when none is open. */
   openedFolder(): Promise<string | null>;
+  /** Writes a file, creating its folders first. Only the settings service writes, and only the user profile. */
+  writeText(path: string, text: string): Promise<void>;
+}
+
+export interface LoadedProfile {
+  rows: ResolvedRow[];
+  /** What was wrong with the files, for the log. */
+  problems: string[];
+  /** What was wrong with the user's file, which settings must not overwrite while it is unreadable. */
+  userProblems: string[];
+  /** The layers that went into `rows`, bottom first; the user layer is there even when its file is not. */
+  layers: ProfileLayer[];
 }
 
 /** Where a user's profile lives, under the config directory. */
@@ -28,16 +40,17 @@ export function projectProfilePath(folder: string): string {
  * a layer whose file is missing is skipped silently. A file that cannot be read or parsed
  * becomes a problem and an empty layer, so a bad file never costs the plugins below it.
  */
-export async function loadProfile(
-  coreRows: ProfileRow[],
-  files: ProfileFiles
-): Promise<{ rows: ResolvedRow[]; problems: string[] }> {
+export async function loadProfile(coreRows: ProfileRow[], files: ProfileFiles): Promise<LoadedProfile> {
   const problems: string[] = [];
   const layers: ProfileLayer[] = [{ name: "core", rows: coreRows }];
   const configDirectory = await files.configDirectory();
-  const user = await readLayer("user", userProfilePath(configDirectory), files, problems);
+  const userProblems: string[] = [];
+  const user = await readLayer("user", userProfilePath(configDirectory), files, userProblems);
+  problems.push(...userProblems);
   if (user) {
     layers.push(user);
+  } else {
+    layers.push({ name: "user", rows: [] });
   }
   const folder = await files.openedFolder();
   if (folder !== null) {
@@ -47,7 +60,7 @@ export async function loadProfile(
     }
   }
   const layered = layerProfiles(layers);
-  return { rows: layered.rows, problems: [...problems, ...layered.problems] };
+  return { rows: layered.rows, problems: [...problems, ...layered.problems], userProblems, layers };
 }
 
 /** One layer from a file, or null when the file is absent or unreadable. */

@@ -6,16 +6,20 @@
 <script lang="ts">
   import { Button, Menu, Popover, Text, View } from "@neoworks/svelte-gpui/ui";
   import { colors, fontSize, overlayPanel, radius } from "../theme/tokens";
-  import { itemsForMenu, menuRows, type MenuBarItem, type TopMenu } from "./menuModel";
+  import { itemsForMenu, menuRows, type MenuBarItem, type RowOptions, type TopMenu } from "../menus/menuModel";
 
   interface Props {
     menus: TopMenu[];
     items: MenuBarItem[];
     /** An item was chosen. */
     onrun: (item: MenuBarItem) => void;
+    /** Items for which this returns true are greyed out and cannot be chosen. */
+    isDisabled?: RowOptions["isDisabled"];
+    /** The shortcut to show for an item, when it is not the one in its data. */
+    acceleratorFor?: RowOptions["acceleratorFor"];
   }
 
-  let { menus, items, onrun }: Props = $props();
+  let { menus, items, onrun, isDisabled, acceleratorFor }: Props = $props();
 
   let openMenuId = $state<string | null>(null);
 
@@ -77,7 +81,7 @@
       {/snippet}
       {#snippet children({ close })}
         <Menu
-          items={menuRows(itemsForMenu(items, top.id), choose)}
+          items={menuRows(itemsForMenu(items, top.id), choose, { isDisabled, acceleratorFor })}
           width={224}
           onclose={() => close("select")}
           style={{ background: "transparent" }}

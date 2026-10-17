@@ -52,11 +52,48 @@ function groupHeading(items: readonly MenuBarItem[], group: string): string | un
   return labelled?.groupLabel;
 }
 
+/** What the caller knows about items that the data does not: which cannot run, and their real keys. */
+export interface RowOptions {
+  /** Items for which this returns true are drawn greyed out and cannot be chosen. */
+  isDisabled?: (item: MenuBarItem) => boolean;
+  /**
+   * The shortcut to show for an item: the empty string says it has none, which hides the item's
+   * own `accelerator`, and undefined leaves that hint showing.
+   */
+  acceleratorFor?: (item: MenuBarItem) => string | undefined;
+}
+
+/** The shortcut an item shows, preferring the caller's over the one in the data. */
+function shortcutOf(item: MenuBarItem, options: RowOptions): string | undefined {
+  if (options.acceleratorFor) {
+    const live = options.acceleratorFor(item);
+    if (live === "") {
+      return undefined;
+    }
+    if (live !== undefined) {
+      return live;
+    }
+  }
+  return item.accelerator;
+}
+
+/** Whether the caller says this item cannot run now. */
+function disabledOf(item: MenuBarItem, options: RowOptions): boolean {
+  if (!options.isDisabled) {
+    return false;
+  }
+  return options.isDisabled(item);
+}
+
 /**
  * The rows a `Menu` draws for sorted items: a separator where the group changes, and the
  * group's heading as a disabled row when it has one. `onselect` is called with the chosen item.
  */
-export function menuRows(items: readonly MenuBarItem[], onselect: (item: MenuBarItem) => void): MenuRow[] {
+export function menuRows(
+  items: readonly MenuBarItem[],
+  onselect: (item: MenuBarItem) => void,
+  options: RowOptions = {},
+): MenuRow[] {
   const rows: MenuRow[] = [];
   items.forEach((item, index) => {
     const group = item.group ?? "";
@@ -68,7 +105,13 @@ export function menuRows(items: readonly MenuBarItem[], onselect: (item: MenuBar
     if (heading !== undefined) {
       rows.push({ label: heading.toUpperCase(), disabled: true });
     }
-    rows.push({ label: item.label, shortcut: item.accelerator, onselect: () => onselect(item), value: item.id });
+    rows.push({
+      label: item.label,
+      shortcut: shortcutOf(item, options),
+      disabled: disabledOf(item, options),
+      onselect: () => onselect(item),
+      value: item.id,
+    });
   });
   return rows;
 }

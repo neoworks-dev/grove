@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { CORE_MENUS, CORE_MENU_ITEMS } from "../plugins/header/coreMenu";
-import { itemsForMenu, menuRows, type MenuBarItem } from "../plugins/header/menuModel";
+import { CORE_MENUS, CORE_MENU_ITEMS } from "../plugins/menus/coreMenu";
+import { itemsForMenu, menuRows, type MenuBarItem } from "../plugins/menus/menuModel";
 
 const item = (id: string, group: string, order: number, extra: Partial<MenuBarItem> = {}): MenuBarItem => ({
   id,
@@ -56,5 +56,19 @@ describe("core menu", () => {
   it("has unique item ids", () => {
     const ids = CORE_MENU_ITEMS.map((entry) => entry.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe("menuRows with options", () => {
+  it("greys out items the caller says cannot run", () => {
+    const rows = menuRows([item("a", "1", 1), item("b", "1", 2)], () => {}, { isDisabled: (entry) => entry.id === "b" });
+    expect(rows.map((row) => row.disabled)).toEqual([false, true]);
+  });
+
+  it("shows the live shortcut over the one in the data", () => {
+    const rows = menuRows([item("a", "1", 1, { accelerator: "old" }), item("b", "1", 2, { accelerator: "kept" })], () => {}, {
+      acceleratorFor: (entry) => (entry.id === "a" ? "ctrl+j" : undefined),
+    });
+    expect(rows.map((row) => row.shortcut)).toEqual(["ctrl+j", "kept"]);
   });
 });

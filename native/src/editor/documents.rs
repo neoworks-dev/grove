@@ -14,12 +14,15 @@
 //!   command that moved a selection.
 //!
 //! Commands: `document_open { path }`, `document_close { id }`, `document_list`,
-//! `document_save { id }`.
+//! `document_save { id }`, and `document_set_decorations { id, source, decorations }`, which
+//! replaces what one source has put on top of the text (see `editor_core::decorations` for the
+//! shape of a decoration; an empty list removes the source). The views have to be asked to
+//! redraw afterwards, which is the `refresh` method of the editor element.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use editor_core::{Command, Document, DocumentId, DocumentSummary, Documents, Outcome};
+use editor_core::{Command, Decoration, Document, DocumentId, DocumentSummary, Documents, Outcome};
 use serde_json::{Value, json};
 use svelte_gpui::{CommandError, Commands, Emitter};
 
@@ -99,6 +102,7 @@ impl SharedDocuments {
         let closer = self.clone();
         let lister = self.clone();
         let saver = self.clone();
+        let decorator = self.clone();
         commands
             .command("document_open", move |args| {
                 let path = string_argument(&args, "path")?;
@@ -110,6 +114,23 @@ impl SharedDocuments {
             })
             .command("document_list", move |_| Ok::<_, CommandError>(json!(lister.list())))
             .command("document_save", move |args| saver.save(id_argument(&args)?))
+            .command("document_set_decorations", move |args| decorator.set_decorations(&args))
+    }
+
+    /// Replaces the decorations one source has on a document, from the arguments of
+    /// `document_set_decorations`.
+    fn set_decorations(&self, args: &Value) -> Result<Value, CommandError> {
+        let id = id_argument(args)?;
+        let source = string_argument(args, "source")?;
+        let decorations: Vec<Decoration> = match args.get("decorations") {
+            Some(list) => serde_json::from_value(list.clone())
+                .map_err(|error| CommandError::with_code("InvalidArguments", format!("bad decorations: {error}")))?,
+            None => Vec::new(),
+        };
+        match self.apply(id, &Command::SetDecorations { source, decorations }) {
+            Some(_) => Ok(Value::Null),
+            None => Err(no_document(id)),
+        }
     }
 
     /// Saves a document through the same command Ctrl-S makes, and fails when the write does.
@@ -210,6 +231,27 @@ mod tests {
         documents.save(id).unwrap();
         assert!(!documents.list()[0].dirty);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "Xone\n");
+    }
+
+    #[test]
+    fn a_source_sets_decorations_on_a_document_by_id() {
+        let documents = SharedDocuments::new(Emitter::default());
+        let id = documents.open(&file_with("decorated.rs", "one\ntwo\n")).unwrap().id;
+        let line_end = json!({ "start": { "row": 1, "column": 0 }, "kind": "line_end", "text": "blame" });
+        documents.set_decorations(&json!({ "id": id, "source": "git.blame", "decorations": [line_end] })).unwrap();
+        assert_eq!(documents.lock().get(id).unwrap().state.decoration_count("git.blame"), 1);
+        documents.set_decorations(&json!({ "id": id, "source": "git.blame", "decorations": [] })).unwrap();
+        assert_eq!(documents.lock().get(id).unwrap().state.decoration_count("git.blame"), 0);
+    }
+
+    #[test]
+    fn bad_decorations_and_unknown_documents_are_errors() {
+        let documents = SharedDocuments::new(Emitter::default());
+        let id = documents.open(&file_with("bad.rs", "one\n")).unwrap().id;
+        let bad = json!({ "id": id, "source": "x", "decorations": [{ "kind": "nonsense" }] });
+        assert_eq!(documents.set_decorations(&bad).unwrap_err().code.as_deref(), Some("InvalidArguments"));
+        let missing = json!({ "id": 99, "source": "x", "decorations": [] });
+        assert_eq!(documents.set_decorations(&missing).unwrap_err().code.as_deref(), Some("NoDocument"));
     }
 
     #[test]

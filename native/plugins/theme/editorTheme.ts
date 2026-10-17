@@ -20,6 +20,16 @@ export interface EditorTheme {
   currentLineNumber: string;
   selection: string;
   cursor: string;
+  /** What decorations are drawn in: diagnostics, git changes, inlay hints and text after a line. */
+  error: string;
+  warning: string;
+  info: string;
+  hint: string;
+  added: string;
+  modified: string;
+  deleted: string;
+  inlay: string;
+  lineEnd: string;
   /** Styles by highlight name; a name left out takes its dotted prefix's style, else the foreground. */
   syntax: Record<string, SyntaxStyle>;
 }
@@ -114,6 +124,15 @@ export function editorThemeFor(tokens: ThemeTokens, scheme: "dark" | "light"): E
     currentLineNumber: tokens.muted,
     selection: `${tokens.accent}40`,
     cursor: tokens.accent,
+    error: tokens.red,
+    warning: tokens.amber,
+    info: tokens.blue,
+    hint: tokens.muted,
+    added: tokens.green,
+    modified: tokens.blue,
+    deleted: tokens.red,
+    inlay: tokens.muted,
+    lineEnd: tokens.dim,
     syntax: scheme === "dark" ? DARK_SYNTAX : LIGHT_SYNTAX,
   };
 }

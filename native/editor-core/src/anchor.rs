@@ -61,6 +61,16 @@ impl Anchors {
         self.anchors.remove(&id);
     }
 
+    /// How many anchors are tracked.
+    pub fn len(&self) -> usize {
+        self.anchors.len()
+    }
+
+    /// Whether no anchor is tracked.
+    pub fn is_empty(&self) -> bool {
+        self.anchors.is_empty()
+    }
+
     /// Moves every anchor through a set of edits.
     pub fn apply_edits(&mut self, edits: &Edits) {
         for anchor in self.anchors.values_mut() {

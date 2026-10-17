@@ -244,7 +244,7 @@ impl Editor {
         let Some(head_row) = self.read(|state| state.selections().newest().head.row) else {
             return;
         };
-        let head_top = LINE_HEIGHT * head_row as f32;
+        let head_top = LINE_HEIGHT * layout.blocks.display_row_of(head_row) as f32;
         let head_bottom = head_top + LINE_HEIGHT;
         let view_height = layout.bounds.size.height;
         let scroll_top = self.scroll_top;
@@ -255,12 +255,16 @@ impl Editor {
         }
     }
 
-    /// Scrolls by the wheel's delta, stopping with the last line at the top.
+    /// Scrolls by the wheel's delta, stopping with the last row at the top. Blocks count as rows.
     fn scroll_by(&mut self, delta: Pixels) {
         let Some(line_count) = self.read(|state| state.buffer().line_count()) else {
             return;
         };
-        let last_line_top = LINE_HEIGHT * line_count.saturating_sub(1) as f32;
+        let total_rows = match &self.layout {
+            Some(layout) => layout.blocks.total_rows(line_count),
+            None => line_count,
+        };
+        let last_line_top = LINE_HEIGHT * total_rows.saturating_sub(1) as f32;
         self.set_scroll_top((self.scroll_top - delta).clamp(px(0.0), last_line_top));
     }
 
@@ -325,6 +329,10 @@ impl AppElement for Editor {
         match method {
             "selections" => Ok(self.selections_json()),
             "apply" => self.apply_from_app(args, cx),
+            "refresh" => {
+                cx.notify();
+                Ok(Value::Null)
+            }
             _ => Err(CommandError::with_code("UnknownMethod", format!("the editor has no method {method:?}"))),
         }
     }

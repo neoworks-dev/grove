@@ -5,6 +5,7 @@ use std::time::Instant;
 use crate::anchor::{Anchor, AnchorId, Anchors, Bias};
 use crate::buffer::{Buffer, Position};
 use crate::command::{Command, Outcome};
+use crate::decorations::{Decoration, Decorations, Placed, PlacedBlock};
 use crate::history::History;
 use crate::movement::{Motion, find_next, move_selection, vertical, word_at};
 use crate::selections::{Selection, Selections};
@@ -27,6 +28,8 @@ pub struct EditorState {
     pub(crate) whole_line_copy: Option<String>,
     /// The parse of the text, kept up to date after every command.
     syntax: Syntax,
+    /// What sources have put on top of the text, pinned to anchors.
+    decorations: Decorations,
 }
 
 impl EditorState {
@@ -44,7 +47,34 @@ impl EditorState {
             marked: None,
             whole_line_copy: None,
             syntax,
+            decorations: Decorations::default(),
         }
+    }
+
+    /// Replaces every decoration a source has with `decorations`, pinning them to the text as it
+    /// is now. An empty list removes the source; other sources are untouched.
+    pub fn set_decorations(&mut self, source: &str, decorations: &[Decoration]) {
+        self.decorations.replace(source, decorations, &self.buffer, &mut self.anchors);
+    }
+
+    /// How many decorations a source has.
+    pub fn decoration_count(&self, source: &str) -> usize {
+        self.decorations.count(source)
+    }
+
+    /// The decorations that touch any of `rows`, positioned as the text is now.
+    pub fn decorations_in_rows(&self, rows: std::ops::Range<usize>) -> Vec<Placed<'_>> {
+        self.decorations.placed_in_rows(rows, &self.buffer, &self.anchors)
+    }
+
+    /// The blocks between lines, in the order they are laid out.
+    pub fn decoration_blocks(&self) -> Vec<PlacedBlock<'_>> {
+        self.decorations.blocks(&self.buffer, &self.anchors)
+    }
+
+    /// How many anchors are being kept up to date, which tests use to see none are leaked.
+    pub fn anchor_count(&self) -> usize {
+        self.anchors.len()
     }
 
     /// The highlight runs of each row in `rows`, as character columns of the row.
@@ -112,7 +142,11 @@ impl EditorState {
     /// the typing before it.
     pub fn apply_at(&mut self, command: &Command, now: Instant) -> Outcome {
         let before = self.selections.clone();
-        if !matches!(command, Command::InsertText { .. } | Command::SetMarkedText { .. }) {
+        let continues_typing = matches!(
+            command,
+            Command::InsertText { .. } | Command::SetMarkedText { .. } | Command::SetDecorations { .. }
+        );
+        if !continues_typing {
             self.history.close_group();
         }
         let mut outcome = self.run(command, now);
@@ -141,6 +175,10 @@ impl EditorState {
                 Outcome::default()
             }
             Command::ReplaceRange { start, end, text } => self.replace_range(*start, *end, text, now),
+            Command::SetDecorations { source, decorations } => {
+                self.set_decorations(source, decorations);
+                Outcome { decorations_changed: true, ..Outcome::default() }
+            }
             _ => self.run_navigation(command),
         }
     }

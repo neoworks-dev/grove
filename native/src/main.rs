@@ -14,6 +14,7 @@
 //! to start it (see `suite.rs`).
 
 mod editor;
+mod git;
 mod sidecar;
 mod suite;
 
@@ -38,6 +39,7 @@ fn main() {
     let commands = suite::register(commands);
     let documents = SharedDocuments::new(commands.emitter());
     let commands = documents.register(commands);
+    let commands = git::register(commands);
     let elements = Elements::new().register("editor", move |_host, cx| {
         let documents = documents.clone();
         cx.new(|cx| Editor::new(documents, cx))

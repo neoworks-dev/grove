@@ -10,6 +10,7 @@ import ConfirmClose from "./ConfirmClose.svelte";
 import EditorFileStatus from "./EditorFileStatus.svelte";
 import EditorMain from "./EditorMain.svelte";
 import OpenFile from "./OpenFile.svelte";
+import { debugDecorations, DEBUG_SOURCE } from "./debugDecorations";
 import { gpuiDocumentHost } from "./documentHost";
 import { EditorService } from "./service";
 
@@ -29,6 +30,7 @@ export const editor = {
     ctx.slots.register("overlay", { id: "editor.openFile", order: 11, component: OpenFile, props: { service } });
     registerFileCommands(ctx, service);
     registerEditCommands(ctx, service);
+    registerDebugCommands(ctx, service);
     registerKeys(ctx, service);
     ctx.menus.registerItems([
       { id: "file.open", menuId: "file", label: "Open File…", group: "1-open", order: 0, commandId: "file.open", accelerator: "Ctrl O" },
@@ -63,6 +65,39 @@ function registerEditCommands(ctx: Context, service: EditorService): void {
       run: () => service.sendCommand(type),
     });
   }
+}
+
+/**
+ * The palette-only commands that put one decoration of each kind at the cursor of the active
+ * file, and take them off again. They are for trying the decorations layer by hand: no menu or key.
+ */
+function registerDebugCommands(ctx: Context, service: EditorService): void {
+  ctx.commands.register({
+    id: "debug.addDecorations",
+    title: "Debug: add test decorations at the cursor",
+    group: "Debug",
+    when: () => service.hasActiveTab(),
+    run: async () => {
+      const active = service.active();
+      if (!active) {
+        return;
+      }
+      const cursor = service.cursorOf(active.id) ?? { row: 0, column: 0, count: 1, selected: false };
+      await service.setDecorations(active.path, DEBUG_SOURCE, debugDecorations(cursor));
+    },
+  });
+  ctx.commands.register({
+    id: "debug.clearDecorations",
+    title: "Debug: remove test decorations",
+    group: "Debug",
+    when: () => service.hasActiveTab(),
+    run: async () => {
+      const active = service.active();
+      if (active) {
+        await service.clearDecorations(active.path, DEBUG_SOURCE);
+      }
+    },
+  });
 }
 
 /** Binds the keys for the file commands, and stands the other bindings down while a prompt is open. */

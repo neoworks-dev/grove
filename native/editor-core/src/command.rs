@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::buffer::Position;
+use crate::decorations::Decoration;
 use crate::movement::Motion;
 
 /// One thing the editor can be told to do. On the wire it is a JSON object whose `type` names
@@ -73,6 +74,9 @@ pub enum Command {
     /// Replaces the characters `start..end` (offsets in the text) with text, and puts the
     /// newest cursor after it. This is what an input method asks for when it corrects earlier text.
     ReplaceRange { start: usize, end: usize, text: String },
+    /// Replaces everything one source has put on top of the text (errors, blame, a diff) with
+    /// `decorations`. An empty list removes the source's. Text and selections are not touched.
+    SetDecorations { source: String, decorations: Vec<Decoration> },
 }
 
 impl Command {
@@ -98,4 +102,6 @@ pub struct Outcome {
     pub saved: bool,
     /// Why a save failed.
     pub error: Option<String>,
+    /// Whether the decorations are different now, so every view of the document has to redraw.
+    pub decorations_changed: bool,
 }

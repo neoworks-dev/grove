@@ -112,6 +112,19 @@ describe("editor theme", () => {
     expect(light.syntax.keyword).not.toBe(dark.syntax.keyword);
   });
 
+  test("decoration colours come from the theme's status colours", async () => {
+    const context = await themed();
+    context.theme.select("neoworks");
+    const dark = activeEditorTheme();
+    expect(dark.error).toBe(NEOWORKS_DARK.red);
+    expect(dark.warning).toBe(NEOWORKS_DARK.amber);
+    expect(dark.added).toBe(NEOWORKS_DARK.green);
+    expect(dark.modified).toBe(NEOWORKS_DARK.blue);
+    context.theme.select("neoworks-light");
+    expect(activeEditorTheme().error).toBe(NEOWORKS_LIGHT.red);
+    expect(activeEditorTheme().inlay).toBe(NEOWORKS_LIGHT.muted);
+  });
+
   test("an accent override reaches the cursor and the selection", async () => {
     const context = await themed();
     context.theme.select("neoworks");

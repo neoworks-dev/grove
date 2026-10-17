@@ -3,7 +3,9 @@
   is reachable, and until the pane has a session, it says what is missing instead.
 -->
 <script lang="ts">
+  import { untrack } from "svelte";
   import { Button, Text, View } from "@neoworks/svelte-gpui/ui";
+  import type { ChatSession } from "./chatSession";
   import AgentSession from "./AgentSession.svelte";
   import { clock } from "./clock";
   import type { LayoutService } from "../layout/service";
@@ -87,8 +89,11 @@
       <Text style={{ fontSize: fontSize.xs, color: colors.dim }}>Connecting to the suite daemon…</Text>
     </View>
   {:else}
-    {#key sessionId}
-      <AgentSession {agents} {workspace} {changes} {chat} {leafId} {focused} />
+    <!-- The view is given the chat once, not a way to look it up. Closing the pane next to this one
+         makes the service let go of the session for a moment, and a view that looked the chat up
+         again would find none while it is torn down. A new chat for the session is a new view. -->
+    {#key chat}
+      <AgentSession {agents} {workspace} {changes} chat={untrack(() => chat) as ChatSession} {leafId} {focused} />
     {/key}
   {/if}
 </View>

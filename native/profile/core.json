@@ -1,0 +1,15 @@
+[
+  { "id": "frame", "plugin": "frame" },
+  { "id": "menus", "plugin": "menus" },
+  { "id": "core-menu", "plugin": "core-menu" },
+  { "id": "header", "plugin": "header" },
+  { "id": "rails", "plugin": "rails" },
+  { "id": "sidebar", "plugin": "sidebar", "config": { "open": "explorer" } },
+  { "id": "panel", "plugin": "panel" },
+  { "id": "statusbar", "plugin": "statusbar" },
+  { "id": "layout", "plugin": "layout" },
+  { "id": "editor", "plugin": "editor" },
+  { "id": "statusbar-position", "plugin": "editor-position" },
+  { "id": "placeholder-sidebar", "plugin": "placeholder-sidebar" },
+  { "id": "placeholder-panel", "plugin": "placeholder-panel" }
+]

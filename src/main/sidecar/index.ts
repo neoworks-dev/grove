@@ -62,6 +62,12 @@ process.on('unhandledRejection', (reason) => {
   console.error('Unhandled promise rejection:', reason)
 })
 
+// Electron keeps the main process alive through an uncaught exception, and so does the
+// sidecar: one failed connection in one service must not end every other one.
+process.on('uncaughtException', (error) => {
+  log(`[sidecar] uncaught exception: ${error.stack}`)
+})
+
 main().catch((error: Error) => {
   log(`[sidecar] failed to start: ${error.stack}`)
   process.exit(1)

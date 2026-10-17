@@ -3,6 +3,7 @@
 //! no positions, only what vim means (`Operate { Delete, Motion { WordForward, 2 } }`), and the
 //! rest of this module is the editor state carrying them out at every cursor.
 
+pub(crate) mod block;
 mod changes;
 mod commands;
 mod ex;

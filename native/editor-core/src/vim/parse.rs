@@ -506,6 +506,7 @@ fn parse_simple(keys: &[String]) -> SimpleParse {
         "~" => simple(Simple::ToggleCaseChar),
         "v" => simple(Simple::Visual(SelectionKind::Characters)),
         "V" => simple(Simple::Visual(SelectionKind::Lines)),
+        "C-v" => simple(Simple::Visual(SelectionKind::Block)),
         ":" => simple(Simple::ExCommandLine),
         "C-n" => simple(Simple::NextMatch),
         "C-d" => simple(Simple::Page(PageStep::HalfDown)),

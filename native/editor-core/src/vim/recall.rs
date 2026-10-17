@@ -40,6 +40,10 @@ pub type Overwritten = Vec<(usize, String)>;
 impl EditorState {
     /// Remembers the selection that is about to be left, for `gv` and for `.`.
     pub(crate) fn remember_visual(&mut self, kind: SelectionKind) {
+        if let Some(block) = self.block {
+            self.last_visual = Some(LastVisual { start: block.anchor, end: block.head, kind });
+            return;
+        }
         let all = self.selections.all();
         let first = all[0];
         let last = all[all.len() - 1];
@@ -53,6 +57,12 @@ impl EditorState {
         };
         let start = clamp_to_line(&self.buffer, last.start);
         let end = clamp_to_line(&self.buffer, last.end);
+        if last.kind == SelectionKind::Block {
+            self.block =
+                Some(crate::vim::block::Block { anchor: start, head: end, to_line_end: false, goal_column: None });
+            self.block_apply();
+            return Outcome { reveal_newest: true, changed: true, ..Outcome::default() };
+        }
         self.selections.replace_newest(Selection::spanning(start, end));
         Outcome { reveal_newest: true, changed: true, ..Outcome::default() }
     }
@@ -64,6 +74,14 @@ impl EditorState {
             return Outcome::default();
         };
         let cursor = self.selections.newest().head;
+        if last.kind == SelectionKind::Block {
+            let rows = last.start.row.abs_diff(last.end.row);
+            let columns = last.start.column.abs_diff(last.end.column);
+            let head = clamp_to_line(&self.buffer, Position { row: cursor.row + rows, column: cursor.column + columns });
+            self.block = Some(crate::vim::block::Block { anchor: cursor, head, to_line_end: false, goal_column: None });
+            self.block_apply();
+            return Outcome { changed: true, ..Outcome::default() };
+        }
         let rows = last.end.row - last.start.row;
         let end = if rows == 0 {
             Position { row: cursor.row, column: cursor.column + last.end.column.saturating_sub(last.start.column) }

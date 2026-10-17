@@ -180,7 +180,7 @@ export type KeymapName = "standard" | "vim";
 
 /** What the vim layer reports: its mode, the keys it is waiting on, and the line typed after `:`. */
 export interface VimStatus {
-  /** `NORMAL`, `INSERT`, `VISUAL`, `V-LINE` or `REPLACE`; empty while the keys are the standard ones. */
+  /** `NORMAL`, `INSERT`, `VISUAL`, `V-LINE`, `V-BLOCK` or `REPLACE`; empty while the keys are the standard ones. */
   mode: string;
   pending: string;
   commandLine: string | null;

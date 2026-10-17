@@ -64,6 +64,11 @@ impl EditorState {
                 Outcome::default()
             }
             Command::ScrollTo { align } => Outcome { scroll: Some(*align), ..Outcome::default() },
+            Command::BlockStart => self.block_start(),
+            Command::BlockMove { motion, count } => self.block_move(*motion, *count),
+            Command::BlockSwap => self.block_swap(),
+            Command::BlockEnd { exit } => self.block_end(*exit),
+            Command::BlockInsert { append } => self.block_insert(*append),
             Command::ClearSearchHighlight => {
                 self.memory.search_highlight = false;
                 Outcome::default()

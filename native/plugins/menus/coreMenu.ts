@@ -45,7 +45,7 @@ export const CORE_MENU_ITEMS: MenuBarItem[] = [
   item("view", "3-panels", 3, "Toggle Agent Panel", "view.toggleAgent"),
   item("view", "3-panels", 4, "Focus Mode", "view.focusMode", "␣ z"),
   item("view", "5-general", 1, "Command Palette…", "palette.open", "F1"),
-  item("view", "5-general", 2, "Color Theme…", "theme.switch"),
+  item("view", "5-general", 2, "Color Theme…", "theme.select"),
   item("view", "5-general", 3, "Preferences", "view.preferences", "␣ ,"),
   item("view", "5-general", 4, "Keyboard Shortcuts", "view.keybindings", "␣ k"),
   item("view", "5-general", 5, "Connect Chrome", "view.connectChrome"),

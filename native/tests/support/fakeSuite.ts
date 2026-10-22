@@ -4,6 +4,7 @@
 
 import type {
   AgentFocus,
+  Asset,
   AgentMove,
   ConnectorInfo,
   SessionEvent,
@@ -77,6 +78,8 @@ export class FakeClient {
   inputs: { session: string; text: string }[] = [];
   cancels: string[] = [];
   actions: { session: string; ref: string; action: string; args?: unknown }[] = [];
+  /** The web addresses the chat asked the daemon to download. */
+  fetched: string[] = [];
   created: { cwd?: string }[] = [];
   closed = false;
   /** Makes the next call that talks to the daemon reject with this. */
@@ -128,6 +131,13 @@ export class FakeClient {
   async action(session: string, ref: string, action: string, args?: unknown): Promise<void> {
     this.throwIfFailing();
     this.actions.push({ session, ref, action, args });
+  }
+
+  /** Stores nothing: the asset is named after the address, so a test can tell which it got. */
+  async fetchAsset(url: string): Promise<Asset> {
+    this.throwIfFailing();
+    this.fetched.push(url);
+    return { handle: `asset://fetched-${this.fetched.length}`, path: "/tmp/fetched", name: url, mime: "image/png", size: 0, createdAt: 0 };
   }
 
   subscribe(

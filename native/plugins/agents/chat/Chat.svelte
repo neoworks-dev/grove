@@ -29,19 +29,15 @@
   // The pane shows one session for its whole life: another session gets a new Chat.
   provideChat(untrack(() => session));
 
-  // The chat's own width, which is not the window's once the pane shares it: what a neoui doc is
-  // laid out in, and what the list is built for. Until the pane has been laid out, the window's
-  // width stands in.
+  // What a neoui doc is laid out in: the chat's own width, which is not the window's once the pane
+  // shares it. Until the pane has been laid out, the window's width stands in.
   let paneWidth = $state<number>();
-  const width = $derived.by(() => {
-    if (paneWidth === undefined) {
-      return window.size.width;
-    }
-    return paneWidth;
-  });
   provideColumn({
     get width() {
-      return width;
+      if (paneWidth === undefined) {
+        return window.size.width;
+      }
+      return paneWidth;
     },
   });
 
@@ -63,8 +59,9 @@
 
   let list: { scrollToIndex(index: number, options: { align: "end" }): void } | undefined = $state();
 
-  // The list is built anew when the pane's width changes: a List that is resized keeps stale row
+  // The list is built anew when the window's width changes: a List that is resized keeps stale row
   // heights, so rows overlap (svelte-gpui #31). Until that is fixed, a resize returns the chat to its end.
+  const width = $derived(window.size.width);
 
   // `stickToEnd` follows new items only once the list is at its end, which a session that has just
   // been opened (all its items at once) never is: start such a chat at its end.

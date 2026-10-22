@@ -17,6 +17,20 @@ export function hasButtons(component: Component): boolean {
   }
 }
 
+/** Whether the component is, or contains, a neoui doc: such an item is drawn open, as the result is the point of the call. */
+export function hasDoc(component: Component): boolean {
+  switch (component.type) {
+    case "openui":
+      return true;
+    case "card":
+    case "row":
+    case "stack":
+      return component.children.some(hasDoc);
+    default:
+      return false;
+  }
+}
+
 /** The last part of a path (the whole of anything else). */
 export function baseName(path: string): string {
   const trimmed = path.replace(/[\\/]+$/, "");

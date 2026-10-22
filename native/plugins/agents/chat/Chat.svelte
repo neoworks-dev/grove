@@ -4,11 +4,12 @@
   import { untrack } from "svelte";
   import { window } from "@neoworks/svelte-gpui";
   import { List, Text, View } from "@neoworks/svelte-gpui/ui";
+  import type { Layout } from "@neoworks/svelte-gpui/ui";
   import type { ChatSession } from "../chatSession";
   import { palette } from "../palette";
   import ChangedFiles from "./ChangedFiles.svelte";
   import ChatItem from "./ChatItem.svelte";
-  import { provideChat } from "./context";
+  import { provideChat, provideColumn } from "./context";
   import FoldRow from "./FoldRow.svelte";
   import { chatRows, type ChatRow } from "./turns";
   import { chatView } from "./viewState";
@@ -27,6 +28,23 @@
 
   // The pane shows one session for its whole life: another session gets a new Chat.
   provideChat(untrack(() => session));
+
+  // What a neoui doc is laid out in: the chat's own width, which is not the window's once the pane
+  // shares it. Until the pane has been laid out, the window's width stands in.
+  let paneWidth = $state<number>();
+  provideColumn({
+    get width() {
+      if (paneWidth === undefined) {
+        return window.size.width;
+      }
+      return paneWidth;
+    },
+  });
+
+  /** The pane was laid out or resized. */
+  function measured(box: Layout): void {
+    paneWidth = box.width;
+  }
 
   const items = $derived(chatView.visibleItems(session.items()));
   const rows = $derived(
@@ -64,26 +82,28 @@
     <Text style={{ color: p.muted }}>{emptyText}</Text>
   </View>
 {:else}
-  {#key width}
-    <List bind:this={list} items={rows} key={(entry: ChatRow) => entry.key} stickToEnd style={{ flex: 1, minHeight: 0 }}>
-      {#snippet row(entry: ChatRow)}
-        {#if entry.kind === "item"}
-          <ChatItem item={entry.item} />
-        {:else if entry.kind === "turn"}
-          <FoldRow foldKey={entry.foldKey} open={entry.open} tallies={entry.tallies} messages={entry.messages} steps={entry.steps} />
-        {:else if entry.kind === "run"}
-          <FoldRow foldKey={entry.foldKey} open={entry.open} tallies={entry.tallies} />
-          {#if entry.open}
-            {#each entry.items as item (item.ref)}
-              <ChatItem {item} />
-            {/each}
+  <View style={{ flex: 1, minHeight: 0 }} onresize={measured}>
+    {#key width}
+      <List bind:this={list} items={rows} key={(entry: ChatRow) => entry.key} stickToEnd style={{ flex: 1, minHeight: 0 }}>
+        {#snippet row(entry: ChatRow)}
+          {#if entry.kind === "item"}
+            <ChatItem item={entry.item} />
+          {:else if entry.kind === "turn"}
+            <FoldRow foldKey={entry.foldKey} open={entry.open} tallies={entry.tallies} messages={entry.messages} steps={entry.steps} />
+          {:else if entry.kind === "run"}
+            <FoldRow foldKey={entry.foldKey} open={entry.open} tallies={entry.tallies} />
+            {#if entry.open}
+              {#each entry.items as item (item.ref)}
+                <ChatItem {item} />
+              {/each}
+            {/if}
+          {:else if entry.kind === "files"}
+            <ChangedFiles files={entry.files} />
+          {:else}
+            <WorkingBar {tokens} />
           {/if}
-        {:else if entry.kind === "files"}
-          <ChangedFiles files={entry.files} />
-        {:else}
-          <WorkingBar {tokens} />
-        {/if}
-      {/snippet}
-    </List>
-  {/key}
+        {/snippet}
+      </List>
+    {/key}
+  </View>
 {/if}

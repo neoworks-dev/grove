@@ -262,6 +262,12 @@ export class ChatSession {
     return served;
   }
 
+  /** Shows a message in the pane's error line, for a failure that did not come from the daemon. */
+  reportError(message: string): void {
+    this.failure = message;
+    this.changes.notify();
+  }
+
   /** Hands the view's items out as a new array, so readers see a change. */
   private publish(): void {
     this.currentItems = [...this.view.items];

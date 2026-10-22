@@ -5,7 +5,7 @@
   import { Text, View } from "@neoworks/svelte-gpui/ui";
   import type { ViewItem } from "@suite/protocol/types";
   import { palette } from "../palette";
-  import { hasButtons } from "./components";
+  import { hasButtons, hasDoc } from "./components";
   import { useChat } from "./context";
   import Component from "./Component.svelte";
   import ItemFrame from "./ItemFrame.svelte";
@@ -20,7 +20,7 @@
   const chat = useChat();
 
   const question = $derived(hasButtons(item.component));
-  const open = $derived(chatView.expanded || chatView.isOpened(item.ref));
+  const open = $derived(chatView.expanded || chatView.isOpened(item.ref) || hasDoc(item.component));
   /** The composer is answering this question, so the chat keeps a stub for it. */
   const stub = $derived(chat.isAnswering(item.ref) && !chatView.expanded);
 

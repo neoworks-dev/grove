@@ -8,7 +8,7 @@
 
 import type { Component, DiffComponent, ViewItem } from "@suite/protocol/types";
 import type { CallFacts } from "../calls";
-import { baseName } from "./components";
+import { baseName, hasDoc } from "./components";
 import { diffStats } from "./diff";
 
 /** One tool and how many times a run called it. */
@@ -176,19 +176,19 @@ function pushRuns(rows: ChatRow[], items: readonly ViewItem[], facts: ChatFacts)
 
 /** A call that finished well and changed no file: the kind that disappears into a summary. */
 function isFoldableCall(item: ViewItem, callOf: (ref: string) => CallFacts | undefined): boolean {
-  if (item.kind !== "tool" || item.state !== "done") {
+  if (item.kind !== "tool" || item.state !== "done" || hasDoc(item.component)) {
     return false;
   }
   const call = callOf(item.ref);
   return call !== undefined && call.diffs.length === 0;
 }
 
-/** Whether an item is the turn working rather than talking. */
+/** Whether an item is the turn working rather than talking; a call that drew a neoui doc is not, since the doc is what it is for. */
 function isWork(item: ViewItem, callOf: (ref: string) => CallFacts | undefined): boolean {
   if (item.kind === "agent" || item.kind === "thought") {
     return true;
   }
-  if (item.kind !== "tool" || item.state !== "done") {
+  if (item.kind !== "tool" || item.state !== "done" || hasDoc(item.component)) {
     return false;
   }
   return isPlan(item) || callOf(item.ref) !== undefined;

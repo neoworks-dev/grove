@@ -368,6 +368,7 @@ export class AgentsService extends Service {
       agent,
       openFile: (path) => this.openFile(path),
       openDiff: (path, texts) => this.openDiff(path, texts),
+      directory: () => this.sessionInfo(sessionId)?.cwd,
     });
     chat.start();
     return chat;
@@ -741,6 +742,7 @@ export class AgentsService extends Service {
       entry.chat = new ChatSession(client, sessionId, (source) => this.assetSource(source), {
         openFile: (path) => this.openFile(path),
         openDiff: (path, texts) => this.openDiff(path, texts),
+        directory: () => this.sessionInfo(sessionId)?.cwd,
       });
       entry.chat.start();
     }

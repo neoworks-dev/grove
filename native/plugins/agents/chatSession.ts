@@ -21,6 +21,8 @@ export interface ChatOptions {
   agent?: string;
   /** Shows a file in the editor; without it, a file name in the chat does nothing when pressed. */
   openFile?: (path: string) => void;
+  /** The directory the session works in, which a relative picture path is read from. */
+  directory?: () => string | undefined;
   /** Shows how a file changed: against HEAD, or between two texts when they are given. */
   openDiff?: (path: string, texts?: { oldText: string; newText: string }) => void;
 }
@@ -234,6 +236,21 @@ export class ChatSession {
   /** Reports that a button was pressed in the item `ref`; `args` carries a note for the agent. */
   async action(ref: string, action: string, args?: unknown): Promise<void> {
     await this.guard(this.client.action(this.sessionId, ref, action, args));
+  }
+
+  /** The directory the session works in, or an empty text while it is not known. */
+  directory(): string {
+    const directory = this.options.directory?.();
+    if (directory === undefined) {
+      return "";
+    }
+    return directory;
+  }
+
+  /** Has the daemon download the picture at a web address into its asset store; resolves to the handle. */
+  async fetchAsset(url: string): Promise<string> {
+    const asset = await this.client.fetchAsset(url);
+    return asset.handle;
   }
 
   /** The source an `Image` loads a picture from: the daemon's URL for an asset handle, else the source as it is. */

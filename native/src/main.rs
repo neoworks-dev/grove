@@ -17,6 +17,7 @@
 //! to it (see `sidecar.rs`), and offers the agents plugin the suite daemon's address and a way
 //! to start it (see `suite.rs`).
 
+mod browser;
 mod diff;
 mod editor;
 mod git;
@@ -46,6 +47,7 @@ fn main() {
     let sidecar = Sidecar::start(SidecarConfig::from_environment(), commands.emitter());
     let commands = sidecar.commands(commands);
     let commands = suite::register(commands);
+    let commands = browser::register(commands);
     let documents = SharedDocuments::new(commands.emitter());
     let commands = documents.register(commands);
     let signals = Signals::default();

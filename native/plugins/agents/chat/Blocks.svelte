@@ -1,22 +1,26 @@
 <script lang="ts">
-  // Parsed markdown: paragraphs, headings, lists, quotes, code and rules, drawn row by row
+  // Parsed markdown: paragraphs, headings, lists, quotes, code, rules and neoui docs, drawn row by row
   // (lib/markdown.ts flattens the nesting). Inline styles are nested `Text` runs inside the
   // paragraph's `Text`.
   import { Text, View } from "@neoworks/svelte-gpui/ui";
   import type { Block } from "@suite/protocol/types";
   import { lineHeightOf } from "./components";
+  import { ITEM_INSET } from "./layout";
   import { indentCells, markdownRows, type RowGap } from "./markdown";
   import { palette } from "../palette";
   import CodeBlock from "./CodeBlock.svelte";
+  import OpenUi from "./openui/OpenUi.svelte";
   import Runs from "./Runs.svelte";
 
   interface Props {
     blocks: readonly Block[];
     /** Font size of a paragraph; headings are sized from it. */
     size: number;
+    /** The chat item the blocks are in, which a neoui doc addresses its actions to. */
+    ref?: string;
   }
 
-  let { blocks, size }: Props = $props();
+  let { blocks, size, ref = "" }: Props = $props();
   const p = palette;
 
   const rows = $derived(markdownRows(blocks));
@@ -27,6 +31,11 @@
     if (level <= 1) return Math.round(size * 1.4);
     if (level === 2) return Math.round(size * 1.2);
     return size;
+  }
+
+  /** Pixels the row's quote bars and list markers take from the left. */
+  function indentWidth(row: { indent: number; quote: number }): number {
+    return Math.round(row.indent * charWidth) + row.quote * (2 + p.space.m);
   }
 
   function gapOf(gap: RowGap): number {
@@ -48,6 +57,8 @@
         <Text style={{ flex: 1, minWidth: 0, lineHeight: lineHeightOf(size) }}><Runs spans={row.spans} /></Text>
       {:else if row.kind === "heading"}
         <Text style={{ flex: 1, minWidth: 0, fontSize: headingSize(row.level), fontWeight: "bold", lineHeight: lineHeightOf(headingSize(row.level)) }}><Runs spans={row.spans} /></Text>
+      {:else if row.kind === "openui"}
+        <View style={{ flex: 1, minWidth: 0 }}><OpenUi ui={row.ui} {ref} inset={ITEM_INSET + indentWidth(row)} /></View>
       {:else if row.kind === "code"}
         <View style={{ flex: 1, minWidth: 0 }}><CodeBlock code={row.code} /></View>
       {:else}

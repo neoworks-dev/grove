@@ -1,7 +1,7 @@
 // Parsed markdown as a flat list of rows. Nesting (a list in a list item, a quote around a
 // list) becomes numbers on each row, so the chat draws it without nested components: the host
 // runs the app on a small JavaScript stack, and every level of component nesting spends a lot of it.
-import type { Block, ListBlock, Span } from "@suite/protocol/types";
+import type { Block, ListBlock, Span, UiDoc } from "@suite/protocol/types";
 
 /** How far a row sits below the previous one. */
 export type RowGap = "none" | "tight" | "loose";
@@ -30,6 +30,7 @@ export type MarkdownRow = RowBase &
     | { kind: "heading"; level: number; spans: readonly Span[] }
     | { kind: "code"; code: string }
     | { kind: "rule" }
+    | { kind: "openui"; ui: UiDoc }
   );
 
 interface Context {
@@ -89,6 +90,9 @@ function flatten(blocks: readonly Block[], context: Context, out: MarkdownRow[])
         break;
       case "rule":
         out.push({ ...base, kind: "rule" });
+        break;
+      case "openui":
+        out.push({ ...base, kind: "openui", ui: block.ui });
         break;
       case "quote":
         flatten(block.blocks, { ...context, quote: context.quote + 1 }, out);

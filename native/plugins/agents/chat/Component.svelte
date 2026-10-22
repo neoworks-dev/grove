@@ -1,12 +1,13 @@
 <script lang="ts">
   // One view component, drawn natively: cards, rows, stacks, text, pictures, files, code,
-  // diffs, tables, key-value lists, progress bars, buttons and links. Containers draw their
+  // diffs, tables, key-value lists, progress bars, buttons, links and neoui docs. Containers draw their
   // children with this same component.
   import { clipboard } from "@neoworks/svelte-gpui";
   import { Button, Text, View } from "@neoworks/svelte-gpui/ui";
   import type { Component, Tone } from "@suite/protocol/types";
   import { baseName, gapOf, lineHeightOf, toneColor } from "./components";
   import { fitImage } from "./image";
+  import { ITEM_INSET } from "./layout";
   import { columnWeights } from "./table";
   import { palette } from "../palette";
   import { useChat } from "./context";
@@ -15,6 +16,7 @@
   import CodeBlock from "./CodeBlock.svelte";
   import DiffView from "./DiffView.svelte";
   import ImageView from "./ImageView.svelte";
+  import OpenUi from "./openui/OpenUi.svelte";
 
   interface Props {
     component: Component;
@@ -80,7 +82,7 @@
       fontFamily: component.role === "code" ? "mono" : undefined,
     }}
   >
-    <Blocks blocks={component.blocks} {size} />
+    <Blocks blocks={component.blocks} {size} {ref} />
   </View>
 {:else if component.type === "image"}
   {@const box = component.width && component.height ? fitImage({ width: component.width, height: component.height }, picture) : picture}
@@ -137,6 +139,8 @@
     <Text>{component.label}</Text>
     {#if component.current}<Text style={{ color: p.success }}>✓</Text>{/if}
   </Button>
+{:else if component.type === "openui"}
+  <OpenUi ui={component.ui} {ref} inset={ITEM_INSET} />
 {:else if component.type === "link"}
   <Text>
     <Text style={{ color: p.accent, underline: true }}>{component.text || component.url}</Text>{#if component.text && component.text !== component.url}<Text style={{ color: p.muted }}>{` (${component.url})`}</Text>{/if}

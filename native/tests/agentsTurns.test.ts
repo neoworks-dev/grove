@@ -105,6 +105,24 @@ test("messages with no settled call between them are all the answer", () => {
   expect(fold.kept.map((item) => item.ref)).toEqual(["m2", "m3"]);
 });
 
+const doc: Component = { type: "openui", ui: { id: "0", root: { component: "Card", props: { children: [] } } } };
+
+test("a call whose result is a neoui doc stays in a folded turn, in its place before the answer", () => {
+  const calls = callsOf([started("r", "read"), started("d", "other", undefined, "analytics.revenue")]);
+  const callOf = (ref: string): CallFacts | undefined => calls.byRef.get(ref);
+  const fold = foldTurn([tool("r"), tool("d", "done", doc), agent("m1")], callOf);
+  expect(fold.hidden.map((item) => item.ref)).toEqual(["c-r"]);
+  expect(fold.kept.map((item) => item.ref)).toEqual(["c-d", "m1"]);
+  const rows = chatRows([user("u1"), tool("r"), tool("d", "done", doc), agent("m1")], factsOf(calls));
+  expect(rows.map((row) => row.key)).toEqual(["u1", "turn:u1", "c-d", "m1"]);
+});
+
+test("a doc is never folded into a run of settled calls", () => {
+  const calls = callsOf([started("r", "read"), started("d", "other", undefined, "a.b"), started("s", "read")]);
+  const rows = chatRows([user("u1"), tool("r"), tool("d", "done", doc), tool("s"), agent("m1")], factsOf(calls, false, ["u1"]));
+  expect(rows.map((row) => row.kind)).toEqual(["item", "turn", "item", "item", "item", "item"]);
+});
+
 test("a folded turn lists the files it changed once, with the lines of every change counted", () => {
   const calls = callsOf([
     started("e1", "edit"),

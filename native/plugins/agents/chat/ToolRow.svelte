@@ -1,12 +1,13 @@
 <script lang="ts">
   // A tool call on one line: a caret, the tool's word, and the argument that matters (a file
   // name, a command, a search). A call that changed a file shows the changed lines under it. The
-  // result opens when the line is pressed.
+  // result opens when the line is pressed, and is open from the start when it is a neoui doc.
   import { Text, View } from "@neoworks/svelte-gpui/ui";
   import type { DiffComponent, ViewItem } from "@suite/protocol/types";
   import type { CallFacts } from "../calls";
   import { palette } from "../palette";
   import { argumentOf } from "./callRow";
+  import { hasDoc } from "./components";
   import Component from "./Component.svelte";
   import { useChat } from "./context";
   import { diffStats } from "./diff";
@@ -22,7 +23,7 @@
   const p = palette;
   const chat = useChat();
 
-  const open = $derived(chatView.expanded || chatView.isOpened(item.ref));
+  const open = $derived(chatView.expanded || chatView.isOpened(item.ref) || hasDoc(item.component));
   const argument = $derived(argumentOf(call));
   const diffs = $derived(diffsIn(item.component));
   const added = $derived(diffs.reduce((sum, diff) => sum + diffStats(diff.lines).added, 0));

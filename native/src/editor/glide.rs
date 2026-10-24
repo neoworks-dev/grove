@@ -88,14 +88,21 @@ impl Editor {
     /// Keeps a scroll offset between the top and the last row, which may sit at the top of the view.
     /// Blocks count as rows.
     fn clamp_scroll(&self, top: Pixels) -> Pixels {
-        let Some(line_count) = self.read(|state| state.buffer().line_count()) else {
+        if self.read(|state| state.buffer().line_count()).is_none() {
             return top;
+        }
+        top.clamp(px(0.0), self.furthest_scroll())
+    }
+
+    /// The most the view can scroll: the last row at its top. Blocks count as rows.
+    pub(super) fn furthest_scroll(&self) -> Pixels {
+        let Some(line_count) = self.read(|state| state.buffer().line_count()) else {
+            return px(0.0);
         };
         let total_rows = match &self.layout {
             Some(layout) => layout.blocks.total_rows(line_count),
             None => line_count,
         };
-        let last_line_top = LINE_HEIGHT * total_rows.saturating_sub(1) as f32;
-        top.clamp(px(0.0), last_line_top)
+        LINE_HEIGHT * total_rows.saturating_sub(1) as f32
     }
 }

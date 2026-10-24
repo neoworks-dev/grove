@@ -68,6 +68,8 @@ const ALIASES: &[(&str, &str)] = &[
     ("comment.documentation", "comment.doc"),
     ("conditional", "keyword"),
     ("repeat", "keyword"),
+    ("float", "number"),
+    ("storageclass", "keyword"),
     ("include", "keyword"),
     ("exception", "keyword"),
     ("escape", "string.escape"),

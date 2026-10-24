@@ -137,6 +137,37 @@ fn javascript_highlights() -> String {
     format!("{}\n{}", tree_sitter_javascript::HIGHLIGHT_QUERY, tree_sitter_javascript::JSX_HIGHLIGHT_QUERY)
 }
 
+/// What the C and C++ queries leave out: `true` and `false`.
+const C_FAMILY_EXTRAS: &str = "[(true) (false)] @boolean";
+
+/// C++ namespaces, which its query leaves uncoloured.
+const CPP_EXTRAS: &str = "(namespace_identifier) @module";
+
+/// The numbers of SQL. The grammar's own query tells them apart from strings with Lua patterns,
+/// which the regex engine here does not read, so every literal would be coloured as a string.
+const SQL_EXTRAS: &str = r#"((literal) @number (#match? @number "^[-+]?[0-9]+([.][0-9]*)?$"))"#;
+
+/// The C queries, with `true` and `false` added.
+fn c_highlights() -> String {
+    format!("{}\n{}", tree_sitter_c::HIGHLIGHT_QUERY, C_FAMILY_EXTRAS)
+}
+
+/// C++ is C with more, and its own query only adds to C's.
+fn cpp_highlights() -> String {
+    format!(
+        "{}\n{}\n{}\n{}",
+        tree_sitter_c::HIGHLIGHT_QUERY,
+        tree_sitter_cpp::HIGHLIGHT_QUERY,
+        C_FAMILY_EXTRAS,
+        CPP_EXTRAS
+    )
+}
+
+/// The SQL queries, with numbers told apart from strings.
+fn sql_highlights() -> String {
+    format!("{}\n{}", tree_sitter_sequel::HIGHLIGHTS_QUERY, SQL_EXTRAS)
+}
+
 /// Svelte is HTML with blocks and expressions, so its queries come after HTML's.
 fn svelte_highlights() -> String {
     format!("{}\n{}", tree_sitter_html::HIGHLIGHTS_QUERY, tree_sitter_svelte_ng::HIGHLIGHTS_QUERY)
@@ -255,7 +286,76 @@ fn build_languages() -> Vec<LanguageDefinition> {
     let mut svelte = definition("svelte", &["svelte"], || tree_sitter_svelte_ng::LANGUAGE.into(), svelte_highlights);
     svelte.injections = Some(SVELTE_INJECTIONS);
 
-    vec![javascript, typescript, tsx, rust, json, markdown, markdown_inline, css, html, go, lua, bash, svelte]
+    let mut toml = definition(
+        "toml",
+        &["toml"],
+        || tree_sitter_toml_ng::LANGUAGE.into(),
+        || tree_sitter_toml_ng::HIGHLIGHTS_QUERY.to_string(),
+    );
+    toml.file_names = &["Cargo.lock", "Pipfile", "poetry.lock"];
+
+    let mut yaml = definition(
+        "yaml",
+        &["yaml", "yml"],
+        || tree_sitter_yaml::LANGUAGE.into(),
+        || tree_sitter_yaml::HIGHLIGHTS_QUERY.to_string(),
+    );
+    yaml.aliases = &["yml"];
+
+    let mut python = definition(
+        "python",
+        &["py", "pyi"],
+        || tree_sitter_python::LANGUAGE.into(),
+        || tree_sitter_python::HIGHLIGHTS_QUERY.to_string(),
+    );
+    python.aliases = &["py"];
+
+    let c = definition("c", &["c", "h"], || tree_sitter_c::LANGUAGE.into(), c_highlights);
+
+    let mut cpp =
+        definition("cpp", &["cpp", "cc", "cxx", "hpp", "hh"], || tree_sitter_cpp::LANGUAGE.into(), cpp_highlights);
+    cpp.aliases = &["c++", "cc", "cxx", "hpp"];
+
+    let mut dockerfile = definition(
+        "dockerfile",
+        &["dockerfile"],
+        || tree_sitter_containerfile::LANGUAGE.into(),
+        || tree_sitter_containerfile::HIGHLIGHTS_QUERY.to_string(),
+    );
+    dockerfile.file_names = &["Dockerfile", "Containerfile"];
+    dockerfile.aliases = &["docker", "containerfile"];
+    dockerfile.injections = Some(tree_sitter_containerfile::INJECTIONS_QUERY);
+
+    let sql = definition("sql", &["sql"], || tree_sitter_sequel::LANGUAGE.into(), sql_highlights);
+
+    let mut surrealql = definition("surrealql", &["surql", "surrealql"], tree_sitter_surrealql::language, || {
+        tree_sitter_surrealql::HIGHLIGHTS_QUERY.to_string()
+    });
+    surrealql.aliases = &["surql"];
+
+    vec![
+        javascript,
+        typescript,
+        tsx,
+        rust,
+        json,
+        markdown,
+        markdown_inline,
+        css,
+        html,
+        go,
+        lua,
+        bash,
+        svelte,
+        toml,
+        yaml,
+        python,
+        c,
+        cpp,
+        dockerfile,
+        sql,
+        surrealql,
+    ]
 }
 
 /// The language a file is written in, going by its extension or its name.

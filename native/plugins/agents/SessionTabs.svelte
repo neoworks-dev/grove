@@ -7,9 +7,10 @@
 <script lang="ts">
   import { Button, Icon, Text, View } from "@neoworks/svelte-gpui/ui";
   import type { SessionInfo } from "@suite/protocol/types";
-  import pencil from "@phosphor-icons/core/regular/pencil-simple.svg";
+  import sidebar from "@phosphor-icons/core/regular/sidebar-simple.svg";
   import plus from "@phosphor-icons/core/regular/plus.svg";
-  import Spinner from "./chat/Spinner.svelte";
+  import spinnerIcon from "@phosphor-icons/core/regular/circle-notch.svg";
+  import TabStrip, { type TabEntry } from "../panel/TabStrip.svelte";
   import { palette } from "./palette";
   import { sessionTitle } from "./sessions";
 
@@ -19,6 +20,8 @@
     current: string;
     /** A tab was pressed. */
     onselect: (sessionId: string) => void;
+    /** A tab's close button was pressed. */
+    onclose: (sessionId: string) => void;
     /** The new session button was pressed. */
     onnew: () => void;
     /** How many files the session changed; none hides the edits button. */
@@ -29,48 +32,32 @@
     onpanel: () => void;
   }
 
-  let { sessions, current, onselect, onnew, edits, panelShown, onpanel }: Props = $props();
+  let { sessions, current, onselect, onclose, onnew, edits, panelShown, onpanel }: Props = $props();
 
   const p = palette;
+  /** A tab shows this much of a long title; the rest is in the Agents view. */
+  const TITLE_LENGTH = 32;
+  /** The count on the edits button is set smaller than the palette's code size. */
+  const BADGE_TEXT = 10;
+
+  const entries = $derived(sessions.map(tabOf));
+
+  /** A session as a tab: its title, shortened, and a spinner mark while it runs. */
+  function tabOf(session: SessionInfo): TabEntry {
+    let title = sessionTitle(session);
+    if (title.length > TITLE_LENGTH) {
+      title = `${title.slice(0, TITLE_LENGTH - 1).trimEnd()}…`;
+    }
+    const tab: TabEntry = { id: session.id, title };
+    if (session.state === "running") {
+      tab.icon = spinnerIcon;
+    }
+    return tab;
+  }
 </script>
 
-<View
-  style={{
-    direction: "row",
-    align: "center",
-    gap: p.space.s,
-    paddingX: p.space.m,
-    paddingY: p.space.s,
-    borderBottomWidth: 1,
-    borderColor: p.border,
-  }}
->
-  <View style={{ direction: "row", gap: p.space.s, flex: 1, minWidth: 0, overflow: "hidden" }}>
-    {#each sessions as session (session.id)}
-      {@const selected = session.id === current}
-      <Button
-        onpress={() => onselect(session.id)}
-        style={{
-          direction: "row",
-          align: "center",
-          gap: p.space.s,
-          paddingX: p.space.m,
-          height: 24,
-          radius: 4,
-          shrink: 1,
-          minWidth: 40,
-          maxWidth: 180,
-          background: selected ? p.band : undefined,
-          color: selected ? p.fg : p.muted,
-        }}
-        hover={{ background: p.band, color: p.fg }}
-      >
-        {#if session.state === "running"}
-          <View style={{ color: p.accent, shrink: 0 }}><Spinner /></View>
-        {/if}
-        <Text style={{ truncate: true, minWidth: 0, fontSize: p.text.code }}>{sessionTitle(session)}</Text>
-      </Button>
-    {/each}
+<TabStrip tabs={entries} activeId={current} {onselect} {onclose}>
+  {#snippet trailing()}
     <Button
       onpress={onnew}
       style={{ size: 24, align: "center", justify: "center", radius: 4, shrink: 0, color: p.muted }}
@@ -78,25 +65,40 @@
     >
       <Icon svg={plus} size={12} />
     </Button>
-  </View>
-  {#if edits > 0}
-    <Button
-      onpress={onpanel}
-      style={{
-        direction: "row",
-        align: "center",
-        gap: p.space.s,
-        paddingX: p.space.m,
-        height: 24,
-        radius: 4,
-        shrink: 0,
-        background: panelShown ? p.band : undefined,
-        color: panelShown ? p.accent : p.muted,
-      }}
-      hover={{ background: p.band, color: p.fg }}
-    >
-      <Icon svg={pencil} size={12} />
-      <Text style={{ fontSize: p.text.code }}>Edits {edits}</Text>
-    </Button>
-  {/if}
-</View>
+    {#if edits > 0}
+      <Button
+        onpress={onpanel}
+        style={{
+          size: 24,
+          align: "center",
+          justify: "center",
+          radius: 4,
+          shrink: 0,
+          marginRight: 6,
+          background: panelShown ? p.band : undefined,
+          color: panelShown ? p.fg : p.muted,
+        }}
+        hover={{ background: p.band, color: p.fg }}
+      >
+        <Icon svg={sidebar} size={14} />
+        <View
+          style={{
+            position: "absolute",
+            top: -2,
+            right: -5,
+            minWidth: 14,
+            height: 14,
+            paddingX: 3,
+            radius: 7,
+            align: "center",
+            justify: "center",
+            background: panelShown ? p.fg : p.elevatedBorder,
+            color: panelShown ? p.bg : p.fg,
+          }}
+        >
+          <Text style={{ fontSize: BADGE_TEXT }}>{edits}</Text>
+        </View>
+      </Button>
+    {/if}
+  {/snippet}
+</TabStrip>

@@ -82,9 +82,9 @@ describe("grouping the sessions of the open repository", () => {
 });
 
 describe("what a row says", () => {
-  test("the title on one line, else the start of the id", () => {
+  test("the title on one line, else New chat", () => {
     expect(sessionTitle(sessionInfo({ id: "s_0123456789", title: "  Fix\nthe   build " }))).toBe("Fix the build");
-    expect(sessionTitle(sessionInfo({ id: "s_0123456789" }))).toBe("session s_012345");
+    expect(sessionTitle(sessionInfo({ id: "s_0123456789" }))).toBe("New chat");
   });
 
   test("the preview on one line", () => {

@@ -62,6 +62,32 @@ export function sortNodes(nodes: FileNode[]): FileNode[] {
   });
 }
 
+/** Git changes from the one a folder shows first to the one it shows last, when several lie below it. */
+const CHANGE_STRENGTH: readonly DiffChangeType[] = ["deleted", "modified", "renamed", "added", "untracked"];
+
+/** The letter that says what a git change did to a file. */
+export const CHANGE_LETTERS: Record<DiffChangeType, string> = {
+  added: "A",
+  modified: "M",
+  deleted: "D",
+  renamed: "R",
+  untracked: "U",
+};
+
+/** Whichever of two changes a folder over both shows; an absent one yields to the other. */
+export function strongerChange(first: DiffChangeType | undefined, second: DiffChangeType | undefined): DiffChangeType | undefined {
+  if (first === undefined) {
+    return second;
+  }
+  if (second === undefined) {
+    return first;
+  }
+  if (CHANGE_STRENGTH.indexOf(second) < CHANGE_STRENGTH.indexOf(first)) {
+    return second;
+  }
+  return first;
+}
+
 export class ExplorerModel {
   private directories = new Map<string, FileNode[]>();
   private changes = new Map<string, DiffChangeType>();
@@ -115,20 +141,17 @@ export class ExplorerModel {
   }
 
   /**
-   * The folders that carry a change marker. A folder with a change somewhere below it is
-   * marked only when it is the deepest folder on that path that is showing: while it is
-   * collapsed the marker sits on it, and once it is expanded the marker moves to the folders
-   * and files inside, so the change stays findable without every ancestor lighting up.
+   * The change each folder shows: the strongest change anywhere below it, as VS Code colours
+   * every folder above a changed file, whether the folder is open or not.
    */
-  markedDirectories(expanded: ReadonlySet<string | number>): Set<string> {
-    const marked = new Set<string>();
-    for (const changedPath of this.changes.keys()) {
-      const deepest = deepestShowingAncestor(changedPath, expanded);
-      if (deepest !== null) {
-        marked.add(deepest);
+  directoryChanges(): Map<string, DiffChangeType> {
+    const shown = new Map<string, DiffChangeType>();
+    for (const [changedPath, change] of this.changes) {
+      for (const ancestor of ancestorsOf(changedPath)) {
+        shown.set(ancestor, strongerChange(shown.get(ancestor), change) as DiffChangeType);
       }
     }
-    return marked;
+    return shown;
   }
 
   /**
@@ -149,16 +172,4 @@ export class ExplorerModel {
     }
     return [parent];
   }
-}
-
-/** The deepest folder above a path whose own ancestors are all expanded. */
-function deepestShowingAncestor(relPath: string, expanded: ReadonlySet<string | number>): string | null {
-  let deepest: string | null = null;
-  for (const ancestor of ancestorsOf(relPath)) {
-    deepest = ancestor;
-    if (!expanded.has(ancestor)) {
-      break;
-    }
-  }
-  return deepest;
 }

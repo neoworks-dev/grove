@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Context as RootContext, type Context } from "@neoworks/extension-system";
 import { leaves } from "../plugins/layout/layoutTree";
 import { LayoutService } from "../plugins/layout/service";
-import { AGENT_PANE_TYPE, AgentsService, freeAppName, nextRetryDelay, type AgentsTiming, type Openers } from "../plugins/agents/service";
+import { AGENT_PANE_TYPE, AgentsService, freeAppName, nextRetryDelay, serviceOpeners, type AgentsTiming, type Openers } from "../plugins/agents/service";
 import { FakeWorkspace, setUpAgents as setUp } from "./support/agentsSetup";
 import type { SessionEvent } from "@suite/protocol/types";
 import { FakeHost, agentItem, sessionInfo } from "./support/fakeSuite";
@@ -667,5 +667,23 @@ describe("unloading", () => {
     await plugin.dispose();
     expect(host.client.closed).toBe(true);
     expect(host.client.liveViews()).toHaveLength(0);
+  });
+});
+
+describe("the openers over the editor and diff services", () => {
+  test("a change opens over the file in an editor, against HEAD or against where the agent started", () => {
+    const asked: string[] = [];
+    const openers = serviceOpeners(
+      { open: (path) => asked.push(`file ${path}`) },
+      {
+        async showInEditor(path, base) {
+          asked.push(base === undefined ? `diff ${path}` : `diff ${path} ${base.label}: ${base.text}`);
+          return true;
+        },
+      },
+    );
+    expect(openers.openDiff("/repo/a.ts")).toBe(true);
+    expect(openers.openDiff("/repo/a.ts", { oldText: "one", newText: "two" })).toBe(true);
+    expect(asked).toEqual(["diff /repo/a.ts", "diff /repo/a.ts the agent's start: one"]);
   });
 });

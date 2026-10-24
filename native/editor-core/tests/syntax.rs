@@ -65,18 +65,60 @@ fn files_get_their_language_from_the_extension_or_name() {
         ("run.sh", "bash"),
         (".bashrc", "bash"),
         ("App.svelte", "svelte"),
+        ("Cargo.toml", "toml"),
+        ("ci.yaml", "yaml"),
+        ("ci.yml", "yaml"),
+        ("main.py", "python"),
+        ("main.pyi", "python"),
+        ("main.c", "c"),
+        ("main.h", "c"),
+        ("main.cpp", "cpp"),
+        ("main.cc", "cpp"),
+        ("main.cxx", "cpp"),
+        ("main.hpp", "cpp"),
+        ("main.hh", "cpp"),
+        ("Dockerfile", "dockerfile"),
+        ("build.dockerfile", "dockerfile"),
+        ("Containerfile", "dockerfile"),
+        ("schema.sql", "sql"),
+        ("schema.surql", "surrealql"),
+        ("Makefile", "make"),
+        ("makefile", "make"),
+        ("GNUmakefile", "make"),
+        ("rules.mk", "make"),
+        ("CMakeLists.txt", "cmake"),
+        ("FindThing.cmake", "cmake"),
+        ("theme.scss", "scss"),
+        ("data.xml", "xml"),
+        ("logo.svg", "xml"),
+        ("Info.plist", "xml"),
+        ("types.xsd", "xml"),
+        (".gitignore", "gitignore"),
+        (".dockerignore", "gitignore"),
+        (".ignore", "gitignore"),
+        (".prettierignore", "gitignore"),
+        (".npmignore", "gitignore"),
+        ("config.fish", "fish"),
+        ("run.bash", "bash"),
+        (".bash_profile", "bash"),
+        (".profile", "bash"),
+        ("Taskfile.yml", "yaml"),
+        ("Taskfile.yaml", "yaml"),
+        ("Taskfile.dist.yml", "yaml"),
     ];
     for (path, language) in names {
         let found = language_for_path(Path::new(path));
         assert_eq!(found.map(|found| found.name), Some(language), "{path}");
     }
     assert!(language_for_path(Path::new("notes.txt")).is_none());
-    assert!(language_for_path(Path::new("Makefile")).is_none());
 }
 
 #[test]
 fn code_fences_find_languages_by_name_and_alias() {
     assert_eq!(language_for_name("ts").map(|language| language.name), Some("typescript"));
+    assert_eq!(language_for_name("py").map(|language| language.name), Some("python"));
+    assert_eq!(language_for_name("c++").map(|language| language.name), Some("cpp"));
+    assert_eq!(language_for_name("yml").map(|language| language.name), Some("yaml"));
     assert_eq!(language_for_name("Rust").map(|language| language.name), Some("rust"));
     assert_eq!(language_for_name("shell").map(|language| language.name), Some("bash"));
     assert!(language_for_name("cobol").is_none());
@@ -122,6 +164,279 @@ fn json_markdown_css_go_lua_and_bash_are_highlighted() {
     assert!(has(&state_named("a.lua", "local x = 1\n"), 0, "local", "keyword"));
     assert!(has(&state_named("a.sh", "if true; then echo hi; fi\n"), 0, "if", "keyword"));
     assert!(has(&state_named("a.html", "<div class=\"a\"></div>\n"), 0, "div", "tag"));
+}
+
+/// Asserts that a sample, written to a file of the given name, has each text coloured as the
+/// highlight it is listed with, on the given row.
+fn assert_highlighted(name: &str, text: &str, expected: &[(usize, &str, &str)]) {
+    let state = state_named(name, text);
+    for (row, piece, highlight) in expected {
+        assert!(
+            has(&state, *row, piece, highlight),
+            "{name} row {row}: {piece} as {highlight} in {:?}",
+            pieces(&state, *row)
+        );
+    }
+}
+
+#[test]
+fn toml_is_highlighted() {
+    let text = "# manifest\n[package]\nname = \"grove\"\nedition = 2024\npublish = false\n";
+    assert_highlighted(
+        "Cargo.toml",
+        text,
+        &[
+            (0, "# manifest", "comment"),
+            (1, "package", "type"),
+            (2, "\"grove\"", "string"),
+            (3, "2024", "number"),
+            (4, "false", "boolean"),
+        ],
+    );
+}
+
+#[test]
+fn yaml_is_highlighted() {
+    let text = "# settings\nname: grove\nreplicas: 3\nenabled: true\nimage: \"grove:latest\"\n";
+    assert_highlighted(
+        "ci.yml",
+        text,
+        &[
+            (0, "# settings", "comment"),
+            (1, "name", "property"),
+            (1, "grove", "string"),
+            (2, "3", "number"),
+            (3, "true", "boolean"),
+            (4, "\"grove:latest\"", "string"),
+        ],
+    );
+}
+
+#[test]
+fn python_is_highlighted() {
+    let text = "# count\nimport re\n\ndef main(limit: int) -> None:\n    print(\"hi\", 2.5, True)\n";
+    assert_highlighted(
+        "main.py",
+        text,
+        &[
+            (0, "# count", "comment"),
+            (1, "import", "keyword"),
+            (3, "def", "keyword"),
+            (3, "main", "function"),
+            (3, "int", "type"),
+            (4, "print", "function.builtin"),
+            (4, "\"hi\"", "string"),
+            (4, "2.5", "number"),
+            (4, "True", "constant.builtin"),
+        ],
+    );
+}
+
+#[test]
+fn c_is_highlighted() {
+    let text = "#include <stdio.h>\n/* sums */\nstatic int sum(void) { return 0x10; }\nbool done = true;\n";
+    assert_highlighted(
+        "main.c",
+        text,
+        &[
+            (0, "#include", "keyword"),
+            (1, "/* sums */", "comment"),
+            (2, "static", "keyword"),
+            (2, "int", "type"),
+            (2, "sum", "function"),
+            (2, "return", "keyword"),
+            (2, "0x10", "number"),
+            (3, "true", "boolean"),
+        ],
+    );
+}
+
+#[test]
+fn cpp_is_highlighted_with_the_c_queries_under_it() {
+    let text = "// bag\nnamespace grove {\nclass Bag : public Base {\n    int size() const { return 1; }\n    std::string label = \"bag\";\n};\n}\n";
+    assert_highlighted(
+        "main.cpp",
+        text,
+        &[
+            (0, "// bag", "comment"),
+            (1, "namespace", "keyword"),
+            (1, "grove", "module"),
+            (2, "class", "keyword"),
+            (2, "Bag", "type"),
+            (3, "int", "type"),
+            (3, "return", "keyword"),
+            (3, "1", "number"),
+            (4, "\"bag\"", "string"),
+        ],
+    );
+}
+
+#[test]
+fn dockerfile_is_highlighted_and_its_shell_is_embedded() {
+    let text = "# build\nFROM node:22 AS build\nENV PORT=3000\nRUN npm install && echo \"done\"\nEXPOSE 3000\n";
+    assert_highlighted(
+        "Dockerfile",
+        text,
+        &[
+            (0, "# build", "comment"),
+            (1, "FROM", "keyword"),
+            (2, "PORT", "property"),
+            (3, "RUN", "keyword"),
+            (3, "npm", "function"),
+            (4, "3000", "number"),
+        ],
+    );
+}
+
+#[test]
+fn sql_is_highlighted_and_numbers_are_not_strings() {
+    let text = "-- orders\nSELECT name, COUNT(id) FROM users WHERE age > 18 AND city = 'Berlin' LIMIT 1.5;\n";
+    assert_highlighted(
+        "schema.sql",
+        text,
+        &[
+            (0, "-- orders", "comment"),
+            (1, "SELECT", "keyword"),
+            (1, "COUNT", "function"),
+            (1, "FROM", "keyword"),
+            (1, "18", "number"),
+            (1, "'Berlin'", "string"),
+            (1, "1.5", "number"),
+        ],
+    );
+}
+
+#[test]
+fn surrealql_is_highlighted() {
+    let text = "-- people\nDEFINE FIELD age ON person TYPE int;\nCREATE person SET name = 'Tobie', age = 42, active = true;\nLET $limit = 10;\n";
+    assert_highlighted(
+        "schema.surql",
+        text,
+        &[
+            (0, "-- people", "comment"),
+            (1, "DEFINE", "keyword"),
+            (1, "int", "type"),
+            (2, "'Tobie'", "string"),
+            (2, "42", "number"),
+            (2, "true", "boolean"),
+            (3, "$limit", "variable.builtin"),
+        ],
+    );
+}
+
+#[test]
+fn make_is_highlighted() {
+    let text = "# build\nCC := gcc\nall: app\n\t@echo $(CC)\nifeq ($(DEBUG),1)\nendif\n";
+    assert_highlighted(
+        "Makefile",
+        text,
+        &[(0, "# build", "comment"), (1, "CC", "constant.builtin"), (2, "all", "constant"), (4, "ifeq", "keyword")],
+    );
+}
+
+#[test]
+fn cmake_is_highlighted_with_its_patterns_as_regular_expressions() {
+    let text = "# project\nproject(grove LANGUAGES CXX)\nif(ON)\nendif()\n";
+    assert_highlighted(
+        "CMakeLists.txt",
+        text,
+        &[
+            (0, "# project", "comment"),
+            (1, "project", "function.builtin"),
+            (1, "LANGUAGES", "constant"),
+            (2, "if", "keyword"),
+        ],
+    );
+}
+
+#[test]
+fn scss_is_highlighted_with_the_css_queries_under_it() {
+    let text = "// theme\n$gap: 8px;\n.card {\n  @include card(6px);\n  color: \"red\";\n}\n";
+    assert_highlighted(
+        "theme.scss",
+        text,
+        &[
+            (0, "// theme", "comment"),
+            (1, "$gap", "property"),
+            (1, "8", "number"),
+            (3, "@include", "keyword"),
+            (4, "color", "property"),
+            (4, "\"red\"", "string"),
+        ],
+    );
+}
+
+#[test]
+fn xml_is_highlighted() {
+    let text = "<!-- list -->\n<book id=\"42\">Grove &amp; Trees</book>\n";
+    assert_highlighted(
+        "data.svg",
+        text,
+        &[
+            (0, "<!-- list -->", "comment"),
+            (1, "book", "tag"),
+            (1, "id", "property"),
+            (1, "42", "string"),
+            (1, "&amp;", "constant.builtin"),
+        ],
+    );
+}
+
+#[test]
+fn gitignore_is_highlighted_from_the_vendored_grammar() {
+    let text = "# output\n/target/\n*.log\n!keep.log\n";
+    assert_highlighted(
+        ".gitignore",
+        text,
+        &[
+            (0, "# output", "comment"),
+            (1, "/", "punctuation.delimiter"),
+            (1, "target", "string"),
+            (2, "*", "operator"),
+            (3, "!", "operator"),
+        ],
+    );
+}
+
+#[test]
+fn fish_is_highlighted() {
+    let text = "# greet\nfunction greet\n    echo \"hi $name\"\nend\n";
+    assert_highlighted(
+        "config.fish",
+        text,
+        &[
+            (0, "# greet", "comment"),
+            (1, "function", "keyword"),
+            (1, "greet", "function"),
+            (2, "echo", "function"),
+            (3, "end", "keyword"),
+        ],
+    );
+}
+
+#[test]
+fn a_shebang_names_the_language_of_a_file_without_an_extension() {
+    let cases = [
+        ("#!/bin/bash\necho hi\n", "bash"),
+        ("#!/bin/sh\necho hi\n", "bash"),
+        ("#!/usr/bin/env bash\necho hi\n", "bash"),
+        ("#!/usr/bin/env -S bash -e\necho hi\n", "bash"),
+        ("#!/usr/bin/python3\nprint(1)\n", "python"),
+        ("#!/usr/bin/env fish\necho hi\n", "fish"),
+    ];
+    for (text, language) in cases {
+        let state = state_named("deploy", text);
+        assert_eq!(state.language_name(), Some(language), "{text}");
+    }
+    assert_eq!(state_named("deploy", "echo hi\n").language_name(), None);
+    assert_eq!(state_named("deploy", "#!/usr/bin/env node\n").language_name(), None);
+    assert_eq!(state_named("notes.md", "#!/bin/bash\n").language_name(), Some("markdown"));
+}
+
+#[test]
+fn markdown_fences_highlight_the_new_languages() {
+    let state = state_named("a.md", "```python\ndef main():\n    pass\n```\n");
+    assert!(has(&state, 1, "def", "keyword"));
 }
 
 #[test]

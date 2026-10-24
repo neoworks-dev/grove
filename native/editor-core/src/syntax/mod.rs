@@ -6,6 +6,7 @@
 //! large file reparses a little rather than all of it. Highlights are only read for the rows a
 //! view asks for.
 
+mod gitignore;
 mod highlight;
 mod injections;
 mod languages;
@@ -20,7 +21,7 @@ use crate::buffer::{Buffer, BytePoint, TextChange};
 use injections::{Injection, StaleLayer};
 
 pub use highlight::{HIGHLIGHT_NAMES, HighlightId, HighlightSpan, flatten_captures, highlight_for_capture};
-pub use languages::{LanguageDefinition, all_languages, language_for_name, language_for_path};
+pub use languages::{LanguageDefinition, all_languages, language_for_name, language_for_path, language_for_shebang};
 pub use scopes::Scope;
 
 /// One parse: the whole file in its own language, or the stretch of it that is code in another.
@@ -46,7 +47,7 @@ impl Syntax {
     pub fn new(buffer: &mut Buffer) -> Self {
         buffer.take_changes();
         let mut syntax = Syntax { parser: Parser::new(), root: None, injected: Vec::new() };
-        let Some(language) = buffer.path().and_then(language_for_path) else {
+        let Some(language) = language_of(buffer) else {
             return syntax;
         };
         let Some(tree) = parse(&mut syntax.parser, language, buffer.rope(), &[], None) else {
@@ -135,6 +136,15 @@ impl Syntax {
         }
         layers
     }
+}
+
+/// The language of a buffer: the one its file name says, or else the one a `#!` line on the first
+/// row names.
+fn language_of(buffer: &Buffer) -> Option<&'static LanguageDefinition> {
+    if let Some(language) = buffer.path().and_then(language_for_path) {
+        return Some(language);
+    }
+    language_for_shebang(&buffer.line(0))
 }
 
 /// Parses the text, or the `ranges` of it when there are any, reusing `old_tree` once it has

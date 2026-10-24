@@ -102,10 +102,19 @@ describe("ExplorerService listing", () => {
     expect(service.childrenOf(service.roots()[0])?.map((node) => node.name)).toEqual(["lib", "index.ts"]);
   });
 
-  test("marks the folders that hold a change", async () => {
+  test("the folders above a change show it", async () => {
     const { service } = await bootExplorer();
     await service.show("/work/repo");
-    expect([...service.markedDirectories(new Set())]).toEqual(["src"]);
+    expect([...service.directoryChanges()]).toEqual([["src", "modified"]]);
+  });
+
+  test("the icon set follows the setting", async () => {
+    const { service } = await bootExplorer();
+    expect(service.iconSet().id).toBe("material");
+    service.setIconSet("monochrome");
+    expect(service.iconSet().id).toBe("monochrome");
+    service.setIconSet("not-a-set");
+    expect(service.iconSet().id).toBe("material");
   });
 
   test("another worktree starts from nothing", async () => {

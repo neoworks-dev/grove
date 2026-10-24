@@ -5,51 +5,51 @@
   bar over the list, since it cannot be undone.
 -->
 <script lang="ts">
-  import { Button, Icon, Input, List, Text, View } from "@neoworks/svelte-gpui/ui";
+  import { Button, Icon, Input, Text, View, type TreeRow } from "@neoworks/svelte-gpui/ui";
   import arrowClockwise from "@phosphor-icons/core/regular/arrow-clockwise.svg";
   import arrowCounterClockwise from "@phosphor-icons/core/regular/arrow-counter-clockwise.svg";
   import check from "@phosphor-icons/core/regular/check.svg";
   import minus from "@phosphor-icons/core/regular/minus.svg";
   import plus from "@phosphor-icons/core/regular/plus.svg";
   import { untrack } from "svelte";
-  import type { DiffChangeType } from "../../../src/shared/types";
+  import ChangeTree from "../explorer/ChangeTree.svelte";
+  import type { ChangeTreeNode } from "../explorer/changeTree";
+  import type { FileIconSource } from "../explorer/fileIcons";
   import type { SidecarService } from "../sidecar/service";
   import { colors, fontSize, radius } from "../theme/tokens";
   import type { WorkspaceService } from "../workspace/service";
-  import { commitHint, rowsOf, type ChangeEntry, type ChangeRow } from "./model";
+  import { commitHint, sectionsOf, STAGED_SECTION, type ChangeEntry } from "./model";
   import type { GitChangesService } from "./service";
 
   interface Props {
     changes: GitChangesService;
+    /** Where the tree takes its file icons from. */
+    icons: FileIconSource;
     workspace: WorkspaceService;
     sidecar: SidecarService;
   }
 
-  let { changes, workspace, sidecar }: Props = $props();
+  let { changes, icons, workspace, sidecar }: Props = $props();
 
-  const ROW_HEIGHT = 26;
 
   const running = $derived(sidecar.isRunning());
   const worktree = $derived(workspace.selectedWorktree());
   const groups = $derived(changes.files());
-  const rows = $derived(rowsOf(groups));
+  const sections = $derived(sectionsOf(groups));
   const pending = $derived(changes.pending());
   const notice = $derived(changes.notice());
   const canCommit = $derived(changes.canCommit());
   const openedKey = $derived(changes.openedKey());
+  /** The tree's highlighted row: the file whose diff is open, if any. */
+  const selectedKey = $derived.by(() => {
+    if (openedKey === null) {
+      return undefined;
+    }
+    return openedKey;
+  });
   const branch = $derived(workspace.branch() === null ? "this branch" : (workspace.branch() as string));
 
   let text = $state("");
-  let hoveredKey = $state<string | null>(null);
-
-  /** The colour a change gives a file's letter. Derived so it follows a theme switch. */
-  const letterColors: Record<DiffChangeType, string> = $derived({
-    added: colors.green,
-    modified: colors.amber,
-    deleted: colors.red,
-    renamed: colors.blue,
-    untracked: colors.accent,
-  });
 
   // The files are read when the view appears with a worktree shown, and again when another is.
   $effect(() => {
@@ -76,23 +76,21 @@
     }
   }
 
-  /** Tracks which row the pointer is on, whose buttons show. */
-  function trackHover(key: string, hovered: boolean): void {
-    if (hovered) {
-      hoveredKey = key;
-      return;
-    }
-    if (hoveredKey === key) {
-      hoveredKey = null;
-    }
-  }
-
   /** The files a discard confirmation names, as a sentence. */
   function discardSentence(entries: ChangeEntry[]): string {
     if (entries.length === 1) {
       return `The changes to ${entries[0].name} will be thrown away.`;
     }
     return `The changes to ${entries.length} files will be thrown away.`;
+  }
+
+  const ROW_HEIGHT = 26;
+
+  /** A file's row was pressed: its diff opens. */
+  function openFile(node: ChangeTreeNode<ChangeEntry>): void {
+    if (node.item !== undefined) {
+      void changes.open(node.item);
+    }
   }
 
   const buttonStyle = { size: 22, align: "center", justify: "center", radius: radius.sm, shrink: 0 } as const;
@@ -166,7 +164,7 @@
       </View>
     {/if}
 
-    {#if rows.length === 0}
+    {#if sections.length === 0}
       <View style={{ padding: 12, gap: 6 }}>
         <Text style={{ fontSize: fontSize.xs, color: colors.dim }}>No changes in this worktree.</Text>
         <Button
@@ -178,64 +176,43 @@
         </Button>
       </View>
     {:else}
-      <List items={rows} rowHeight={ROW_HEIGHT} key={(row: ChangeRow) => (row.kind === "header" ? row.id : row.entry.key)} style={{ flex: 1 }}>
-        {#snippet row(item: ChangeRow)}
-          {#if item.kind === "header"}
-            {@const entries = item.id === "staged" ? groups.staged : groups.unstaged}
-            <View style={{ direction: "row", align: "center", gap: 2, height: ROW_HEIGHT, paddingLeft: 12, paddingRight: 6 }}>
-              <Text style={{ flex: 1, minWidth: 0, truncate: true, fontSize: fontSize.xxs, color: colors.dim, uppercase: true }}>
-                {item.title} · {item.count}
-              </Text>
-              {#if item.id === "staged"}
-                <Button style={{ ...buttonStyle, color: colors.dim }} hover={{ background: colors.hover, color: colors.text }} onpress={() => void changes.unstageAll()}>
-                  <Icon svg={minus} size={13} />
-                </Button>
-              {:else}
-                <Button style={{ ...buttonStyle, color: colors.dim }} hover={{ background: colors.redSoft, color: colors.red }} onpress={() => changes.beginDiscard(entries)}>
-                  <Icon svg={arrowCounterClockwise} size={13} />
-                </Button>
-                <Button style={{ ...buttonStyle, color: colors.dim }} hover={{ background: colors.hover, color: colors.text }} onpress={() => void changes.stageAll()}>
-                  <Icon svg={plus} size={13} />
-                </Button>
-              {/if}
-            </View>
-          {:else}
-            {@const entry = item.entry}
-            <View
-              style={{
-                direction: "row",
-                align: "center",
-                gap: 6,
-                height: ROW_HEIGHT,
-                paddingLeft: 12,
-                paddingRight: 6,
-                background: openedKey === entry.key ? colors.elevated : "transparent",
-              }}
-              hover={{ background: colors.hover }}
-              onhover={(hovered: boolean) => trackHover(entry.key, hovered)}
-              onpress={() => void changes.open(entry)}
-            >
-              <Text style={{ shrink: 0, fontSize: fontSize.xs, color: colors.text }}>{entry.name}</Text>
-              <Text style={{ grow: 1, minWidth: 0, truncate: true, fontSize: fontSize.xxs, color: colors.dim }}>{entry.directory}</Text>
-              {#if hoveredKey === entry.key}
-                {#if !entry.staged}
-                  <Button style={{ ...buttonStyle, color: colors.dim }} hover={{ background: colors.redSoft, color: colors.red }} onpress={() => changes.beginDiscard([entry])}>
-                    <Icon svg={arrowCounterClockwise} size={13} />
-                  </Button>
-                  <Button style={{ ...buttonStyle, color: colors.dim }} hover={{ background: colors.hover, color: colors.text }} onpress={() => void changes.stage([entry])}>
-                    <Icon svg={plus} size={13} />
-                  </Button>
-                {:else}
-                  <Button style={{ ...buttonStyle, color: colors.dim }} hover={{ background: colors.hover, color: colors.text }} onpress={() => void changes.unstage([entry])}>
-                    <Icon svg={minus} size={13} />
-                  </Button>
-                {/if}
-              {/if}
-              <Text style={{ width: 14, shrink: 0, fontFamily: "mono", fontSize: fontSize.xxs, color: letterColors[entry.changeType] }}>{entry.letter}</Text>
-            </View>
+      <ChangeTree roots={sections} iconSet={icons.iconSet()} rowHeight={ROW_HEIGHT} selected={selectedKey} onopen={openFile}>
+        {#snippet header(node: ChangeTreeNode<ChangeEntry>, info: TreeRow)}
+          {@const entries = node.key === STAGED_SECTION ? groups.staged : groups.unstaged}
+          <View style={{ direction: "row", align: "center", gap: 2, flex: 1, minWidth: 0, height: "full" }} onpress={() => info.toggle()}>
+            <Text style={{ flex: 1, minWidth: 0, truncate: true, fontSize: fontSize.xxs, color: colors.dim, uppercase: true }}>{node.name}</Text>
+            {#if node.key === STAGED_SECTION}
+              <Button style={{ ...buttonStyle, color: colors.dim }} hover={{ background: colors.hover, color: colors.text }} onpress={() => void changes.unstageAll()}>
+                <Icon svg={minus} size={13} />
+              </Button>
+            {:else}
+              <Button style={{ ...buttonStyle, color: colors.dim }} hover={{ background: colors.redSoft, color: colors.red }} onpress={() => changes.beginDiscard(entries)}>
+                <Icon svg={arrowCounterClockwise} size={13} />
+              </Button>
+              <Button style={{ ...buttonStyle, color: colors.dim }} hover={{ background: colors.hover, color: colors.text }} onpress={() => void changes.stageAll()}>
+                <Icon svg={plus} size={13} />
+              </Button>
+            {/if}
+          </View>
+        {/snippet}
+        {#snippet trailing(node: ChangeTreeNode<ChangeEntry>, hovered: boolean)}
+          {#if hovered && node.item !== undefined}
+            {@const entry = node.item}
+            {#if !entry.staged}
+              <Button style={{ ...buttonStyle, color: colors.dim }} hover={{ background: colors.redSoft, color: colors.red }} onpress={() => changes.beginDiscard([entry])}>
+                <Icon svg={arrowCounterClockwise} size={13} />
+              </Button>
+              <Button style={{ ...buttonStyle, color: colors.dim }} hover={{ background: colors.hover, color: colors.text }} onpress={() => void changes.stage([entry])}>
+                <Icon svg={plus} size={13} />
+              </Button>
+            {:else}
+              <Button style={{ ...buttonStyle, color: colors.dim }} hover={{ background: colors.hover, color: colors.text }} onpress={() => void changes.unstage([entry])}>
+                <Icon svg={minus} size={13} />
+              </Button>
+            {/if}
           {/if}
         {/snippet}
-      </List>
+      </ChangeTree>
     {/if}
   {/if}
 </View>

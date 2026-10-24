@@ -6,20 +6,25 @@
 //! large file reparses a little rather than all of it. Highlights are only read for the rows a
 //! view asks for.
 
+mod external;
 mod gitignore;
 mod highlight;
 mod injections;
 mod languages;
+mod locals;
 mod scopes;
+mod wasm;
 
 use std::ops::Range;
 
 use ropey::Rope;
-use tree_sitter::{InputEdit, Node, Parser, Point, QueryCursor, StreamingIterator, TextProvider, Tree};
+use tree_sitter::{InputEdit, Node, Point, QueryCursor, StreamingIterator, TextProvider, Tree};
 
 use crate::buffer::{Buffer, BytePoint, TextChange};
 use injections::{Injection, StaleLayer};
+use wasm::LayerParser;
 
+pub use external::{GrammarSpec, RejectedGrammar, generation as grammar_generation, set_grammars};
 pub use highlight::{HIGHLIGHT_NAMES, HighlightId, HighlightSpan, flatten_captures, highlight_for_capture};
 pub use languages::{LanguageDefinition, all_languages, language_for_name, language_for_path, language_for_shebang};
 pub use scopes::Scope;
@@ -30,11 +35,15 @@ struct Layer {
     tree: Tree,
     /// The bytes of the text the layer is parsed from.
     range: Range<usize>,
+    /// What the grammar's locals query found, for the grammars that have one.
+    locals: locals::LocalsCache,
 }
 
 /// The syntax of one buffer.
 pub struct Syntax {
-    parser: Parser,
+    parser: LayerParser,
+    /// The grammar generation the file's language was picked in; extensions that bring grammars later change it.
+    generation: u64,
     /// The file's own language, or none when it is not recognised.
     root: Option<Layer>,
     /// Code of other languages inside the file, in order of position and never overlapping.
@@ -46,14 +55,16 @@ impl Syntax {
     /// it when the language is not known. Changes the buffer already holds are folded in.
     pub fn new(buffer: &mut Buffer) -> Self {
         buffer.take_changes();
-        let mut syntax = Syntax { parser: Parser::new(), root: None, injected: Vec::new() };
+        let mut syntax =
+            Syntax { parser: LayerParser::new(), generation: grammar_generation(), root: None, injected: Vec::new() };
         let Some(language) = language_of(buffer) else {
             return syntax;
         };
         let Some(tree) = parse(&mut syntax.parser, language, buffer.rope(), &[], None) else {
             return syntax;
         };
-        syntax.root = Some(Layer { language, tree, range: 0..buffer.rope().len_bytes() });
+        syntax.root =
+            Some(Layer { language, tree, range: 0..buffer.rope().len_bytes(), locals: locals::LocalsCache::default() });
         syntax.injected = syntax.find_injected_layers(buffer.rope(), Vec::new());
         syntax
     }
@@ -61,6 +72,16 @@ impl Syntax {
     /// The name of the language the file is highlighted as, if it is one.
     pub fn language_name(&self) -> Option<&'static str> {
         self.root.as_ref().map(|layer| layer.language.name)
+    }
+
+    /// Whether the grammars handed over since this syntax was made change which language the file is in.
+    pub fn language_may_have_changed(&self, buffer: &Buffer) -> bool {
+        if self.generation == grammar_generation() {
+            return false;
+        }
+        let current = language_of(buffer).map(|language| language as *const LanguageDefinition);
+        let held = self.root.as_ref().map(|layer| layer.language as *const LanguageDefinition);
+        current != held
     }
 
     /// Brings the trees up to date with the changes the buffer has made since they last were.
@@ -77,6 +98,7 @@ impl Syntax {
         }
         if let Some(tree) = parse(&mut self.parser, root.language, buffer.rope(), &[], Some(&root.tree)) {
             root.tree = tree;
+            root.locals.reset();
         }
         root.range = 0..buffer.rope().len_bytes();
         let stale = injections::age_layers(std::mem::take(&mut self.injected), &changes);
@@ -132,7 +154,7 @@ impl Syntax {
             let Some(tree) = parse(&mut self.parser, language, rope, &ranges, old_tree) else {
                 continue;
             };
-            layers.push(Layer { language, tree, range });
+            layers.push(Layer { language, tree, range, locals: locals::LocalsCache::default() });
         }
         layers
     }
@@ -150,7 +172,7 @@ fn language_of(buffer: &Buffer) -> Option<&'static LanguageDefinition> {
 /// Parses the text, or the `ranges` of it when there are any, reusing `old_tree` once it has
 /// been told of the changes since.
 fn parse(
-    parser: &mut Parser,
+    parser: &mut LayerParser,
     language: &LanguageDefinition,
     rope: &Rope,
     ranges: &[tree_sitter::Range],
@@ -159,7 +181,7 @@ fn parse(
     // Compiling the language's queries takes long enough to be felt, so it happens here, when
     // the file is opened, and not when its first rows are painted.
     language.highlight_query();
-    parser.set_language(&language.grammar()).ok()?;
+    let parser = parser.prepared_for(&language.grammar()).ok()?;
     parser.set_included_ranges(ranges).ok()?;
     let mut read = |byte: usize, _: Point| chunk_from(rope, byte);
     parser.parse_with_options(&mut read, old_tree, None)
@@ -227,6 +249,8 @@ fn collect_captures(
         };
         out.push((capture.node.byte_range(), Some(id)));
     }
+    drop(captures);
+    locals::collect_local_captures(layer, rope, bytes, out);
 }
 
 /// Gives a query the text of a node, for predicates such as `#eq?` and `#match?`, straight

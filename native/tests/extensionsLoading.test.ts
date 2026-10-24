@@ -259,7 +259,38 @@ describe("what extensions hand the host", () => {
     const { kernel, handed } = await bootWithHost(disk);
     expect(handed.at(-1)!.servers).toHaveLength(1);
     await kernel.extensions.setEnabled("sample", false);
-    expect(handed.at(-1)).toEqual({ tools: [], servers: [] });
+    expect(handed.at(-1)).toEqual({ tools: [], servers: [], grammars: [] });
+  });
+
+  test("grammars of enabled extensions go to the host with absolute paths", async () => {
+    const disk = new Disk();
+    disk.install("sample", {
+      grammars: [
+        {
+          language: "zig",
+          wasm: "grammars/zig.wasm",
+          highlights: "queries/highlights.scm",
+          locals: "queries/locals.scm",
+          extensions: ["zig"],
+        },
+        { language: "bare", wasm: "bare.wasm", symbol: "bare_lang", fileNames: ["BARE"] },
+      ],
+    });
+    const { kernel, handed } = await bootWithHost(disk);
+    const directory = kernel.extensions.installed()[0].directory;
+    expect(handed.at(-1)!.grammars).toEqual([
+      {
+        language: "zig",
+        wasm: `${directory}/grammars/zig.wasm`,
+        highlights: `${directory}/queries/highlights.scm`,
+        locals: `${directory}/queries/locals.scm`,
+        extensions: ["zig"],
+        fileNames: [],
+      },
+      { language: "bare", symbol: "bare_lang", wasm: `${directory}/bare.wasm`, extensions: [], fileNames: ["BARE"] },
+    ]);
+    await kernel.extensions.setEnabled("sample", false);
+    expect(handed.at(-1)!.grammars).toEqual([]);
   });
 
   test("a recipe that does not provide the server's command is dropped with a problem", async () => {

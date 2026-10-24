@@ -1,12 +1,14 @@
 //! The languages Grove highlights: which file belongs to which grammar, and the queries each
-//! grammar is read with. The grammars are compiled into the app, and their own highlight
-//! queries are used as they ship.
+//! grammar is read with. Most grammars are compiled into the app, and their own highlight
+//! queries are used as they ship. Extensions add more as WebAssembly (see `external`); a
+//! compiled-in language always wins over one of the same name.
 
 use std::path::Path;
 use std::sync::{LazyLock, OnceLock};
 
 use tree_sitter::{Language, Query};
 
+use super::external;
 use super::highlight::{HighlightId, highlight_for_capture};
 
 /// A highlight query together with the highlight each of its captures stands for, so reading
@@ -17,32 +19,57 @@ pub struct HighlightQuery {
     pub highlights: Vec<Option<HighlightId>>,
 }
 
+/// Where a language's grammar and highlight query come from.
+pub(super) enum Grammar {
+    /// Compiled into the app. A language that builds on another has that one's queries first.
+    Compiled { grammar: fn() -> Language, highlights: fn() -> String },
+    /// Loaded from a `.wasm` file an extension brought, with the query it came with.
+    Wasm { language: Language, highlights: String, locals: Option<Query> },
+}
+
 /// One language: how its files are recognised, its grammar, and its queries.
 pub struct LanguageDefinition {
     /// The name the language is known by, such as `rust`.
     pub name: &'static str,
     /// File extensions, without the dot.
-    extensions: &'static [&'static str],
+    pub(super) extensions: &'static [&'static str],
     /// File names that have no extension to go by.
-    file_names: &'static [&'static str],
+    pub(super) file_names: &'static [&'static str],
     /// Whether the language only adds to the colours of the text it is embedded in, instead of
     /// colouring all of it.
     pub overlay: bool,
     /// Other names a markdown code fence may call the language by.
-    aliases: &'static [&'static str],
-    grammar: fn() -> Language,
-    /// The highlight query source: a language that builds on another has that one's queries first.
-    highlights: fn() -> String,
+    pub(super) aliases: &'static [&'static str],
+    pub(super) grammar: Grammar,
     /// Finds code of other languages inside this one, such as a script in a Svelte file.
-    injections: Option<&'static str>,
-    highlight_query: OnceLock<Option<HighlightQuery>>,
-    injection_query: OnceLock<Option<Query>>,
+    pub(super) injections: Option<&'static str>,
+    pub(super) highlight_query: OnceLock<Option<HighlightQuery>>,
+    pub(super) injection_query: OnceLock<Option<Query>>,
 }
 
 impl LanguageDefinition {
     /// The tree-sitter grammar.
     pub fn grammar(&self) -> Language {
-        (self.grammar)()
+        match &self.grammar {
+            Grammar::Compiled { grammar, .. } => grammar(),
+            Grammar::Wasm { language, .. } => language.clone(),
+        }
+    }
+
+    /// The query that finds the scopes, definitions and references of local names, if the grammar came with one.
+    pub(super) fn locals_query(&self) -> Option<&Query> {
+        match &self.grammar {
+            Grammar::Compiled { .. } => None,
+            Grammar::Wasm { locals, .. } => locals.as_ref(),
+        }
+    }
+
+    /// The highlight query's source.
+    fn highlight_source(&self) -> String {
+        match &self.grammar {
+            Grammar::Compiled { highlights, .. } => highlights(),
+            Grammar::Wasm { highlights, .. } => highlights.clone(),
+        }
     }
 
     /// The compiled highlight query, which is built the first time it is asked for. None, with
@@ -56,25 +83,37 @@ impl LanguageDefinition {
         self.injection_query.get_or_init(|| self.compile_injections()).as_ref()
     }
 
-    /// Builds the highlight query from its source.
-    fn compile_highlights(&self) -> Option<HighlightQuery> {
-        let source = (self.highlights)();
-        let query = match Query::new(&self.grammar(), &source) {
-            Ok(query) => query,
-            Err(error) => {
-                eprintln!("highlights for {} do not compile: {error}", self.name);
-                return None;
-            }
-        };
+    /// Builds the highlight query from its source, or says why the grammar rejects it.
+    pub(super) fn try_compile_highlights(&self) -> Result<HighlightQuery, String> {
+        let source = self.highlight_source();
+        let query = Query::new(&self.grammar(), &source).map_err(|error| error.to_string())?;
         let highlights = query.capture_names().iter().map(|name| highlight_for_capture(name)).collect();
-        Some(HighlightQuery { query, highlights })
+        Ok(HighlightQuery { query, highlights })
     }
 
-    /// Builds the injection query from its source.
+    /// Builds the highlight query, which is None, with the reason on stderr, when it does not compile.
+    fn compile_highlights(&self) -> Option<HighlightQuery> {
+        match self.try_compile_highlights() {
+            Ok(compiled) => Some(compiled),
+            Err(error) => {
+                eprintln!("highlights for {} do not compile: {error}", self.name);
+                None
+            }
+        }
+    }
+
+    /// Builds the injection query from its source, if there is one, or says why the grammar rejects it.
+    pub(super) fn try_compile_injections(&self) -> Result<Option<Query>, String> {
+        let Some(source) = self.injections else {
+            return Ok(None);
+        };
+        Query::new(&self.grammar(), source).map(Some).map_err(|error| error.to_string())
+    }
+
+    /// Builds the injection query, which is None, with the reason on stderr, when it does not compile.
     fn compile_injections(&self) -> Option<Query> {
-        let source = self.injections?;
-        match Query::new(&self.grammar(), source) {
-            Ok(query) => Some(query),
+        match self.try_compile_injections() {
+            Ok(compiled) => compiled,
             Err(error) => {
                 eprintln!("injections for {} do not compile: {error}", self.name);
                 None
@@ -83,7 +122,7 @@ impl LanguageDefinition {
     }
 
     /// Whether a name, such as a code fence's info string, refers to this language.
-    fn is_called(&self, name: &str) -> bool {
+    pub(super) fn is_called(&self, name: &str) -> bool {
         self.name.eq_ignore_ascii_case(name) || self.aliases.iter().any(|alias| alias.eq_ignore_ascii_case(name))
     }
 }
@@ -200,8 +239,7 @@ fn definition(
         file_names: &[],
         overlay: false,
         aliases: &[],
-        grammar,
-        highlights,
+        grammar: Grammar::Compiled { grammar, highlights },
         injections: None,
         highlight_query: OnceLock::new(),
         injection_query: OnceLock::new(),
@@ -425,11 +463,15 @@ fn build_languages() -> Vec<LanguageDefinition> {
 pub fn language_for_path(path: &Path) -> Option<&'static LanguageDefinition> {
     let file_name = path.file_name()?.to_str()?;
     let extension = path.extension().and_then(|extension| extension.to_str());
-    LANGUAGES.iter().find(|language| {
+    let matches = |language: &&'static LanguageDefinition| {
         let by_name = language.file_names.contains(&file_name);
         let by_extension = extension.is_some_and(|extension| language.extensions.contains(&extension));
         by_name || by_extension
-    })
+    };
+    if let Some(language) = LANGUAGES.iter().find(|language| matches(language)) {
+        return Some(language);
+    }
+    external::languages().into_iter().find(matches)
 }
 
 /// The language a script says it is written in on its first line, such as `#!/usr/bin/env bash`.
@@ -448,10 +490,18 @@ pub fn language_for_shebang(first_line: &str) -> Option<&'static LanguageDefinit
 
 /// The language a name refers to, such as the one after the backticks of a code fence.
 pub fn language_for_name(name: &str) -> Option<&'static LanguageDefinition> {
-    LANGUAGES.iter().find(|language| language.is_called(name))
+    if let Some(language) = LANGUAGES.iter().find(|language| language.is_called(name)) {
+        return Some(language);
+    }
+    external::languages().into_iter().find(|language| language.is_called(name))
 }
 
-/// Every language, so tests and tools can go through them all.
+/// Whether a compiled-in language has this name, which an extension's grammar cannot take over.
+pub(super) fn is_compiled_in(name: &str) -> bool {
+    LANGUAGES.iter().any(|language| language.is_called(name))
+}
+
+/// Every compiled-in language, so tests and tools can go through them all.
 pub fn all_languages() -> &'static [LanguageDefinition] {
     &LANGUAGES
 }

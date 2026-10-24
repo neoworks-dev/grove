@@ -110,7 +110,12 @@ export class ExtensionsService extends Service {
       return;
     }
     try {
-      await this.toolsHost.registerContributions(contributionsOf(installed));
+      const rejected = await this.toolsHost.registerContributions(contributionsOf(installed));
+      if (Array.isArray(rejected)) {
+        for (const grammar of rejected) {
+          this.ctx.logger.warn(`grammar for ${grammar.language} left out: ${grammar.reason}`);
+        }
+      }
     } catch (error) {
       this.ctx.logger.warn(`could not hand the extensions' tools to the host: ${describeError(error)}`);
     }

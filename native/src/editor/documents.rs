@@ -35,6 +35,9 @@
 //! `document_set_text { id, text }` replaces its text, and `document_text { id }` reads the text
 //! of any document. `document_reload { id }` reads a file's document from disk again.
 //!
+//! `grammars_register { grammars }` hands over the grammars extensions bring (see `grammars`), and
+//! `document-syntax { id }` says a document's highlighting changed because of one.
+//!
 //! `document_scopes { id, row, column }` lists the named scopes (functions, classes, modules)
 //! around a place, outermost first, as `{ kind, name, start, end, startCharacter }` with positions as `{ row, column }` and
 //! `startCharacter` the start's column in UTF-16 units, which the editor element's `goto` takes.
@@ -227,6 +230,15 @@ impl SharedDocuments {
         }
     }
 
+    /// Has every document pick its language again, for grammars that arrived after it was opened,
+    /// and tells the UI which now draw differently.
+    pub fn refresh_syntax(&self) {
+        let mut documents = self.lock();
+        for id in documents.refresh_syntax() {
+            self.emitter.emit("document-syntax", json!({ "id": id }));
+        }
+    }
+
     /// Sends an event to the UI that is about the editor rather than a document.
     pub fn announce(&self, event: &str, payload: Value) {
         self.emitter.emit(event, payload);
@@ -293,6 +305,7 @@ impl SharedDocuments {
         let text_setter = self.clone();
         let reloader = self.clone();
         let scoper = self.clone();
+        let grammarian = self.clone();
         commands
             .command("document_open", move |args| {
                 let path = string_argument(&args, "path")?;
@@ -319,6 +332,7 @@ impl SharedDocuments {
             })
             .command("document_reload", move |args| reloader.reload(id_argument(&args)?))
             .command("document_scopes", move |args| scoper.scopes(&args))
+            .command("grammars_register", move |args| super::grammars::register(&grammarian, &args))
     }
 
     /// The scopes around a place in a document, from the arguments of `document_scopes`.

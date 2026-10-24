@@ -47,13 +47,31 @@ A plugin script calls `definePlugin` from `@grove/extension` with the object for
 A tree-sitter grammar built to WebAssembly, with its queries.
 
 ```json
-{ "language": "toml", "wasm": "grammars/toml.wasm", "highlights": "queries/highlights.scm",
-  "injections": "queries/injections.scm", "extensions": ["toml"], "fileNames": ["Cargo.lock"] }
+{ "language": "zig", "wasm": "grammars/zig.wasm", "highlights": "queries/highlights.scm",
+  "locals": "queries/locals.scm", "extensions": ["zig"], "fileNames": ["build.zig.zon"] }
 ```
 
 `extensions` (without the dot) and `fileNames` say which files the grammar highlights, and at
 least one is needed. `symbol` is the name the grammar exports its language under when it is not
-the language name.
+the language name, the part after `tree_sitter_`. Build the module with `tree-sitter build --wasm`.
+
+Grove hands the enabled grammars to the editor whenever the set of extensions changes, so a grammar
+takes effect at once, in files that are already open too. Each one is compiled when it is handed
+over, and one that cannot be used is left out with the reason in the log, while the rest still work.
+
+A language that Grove has built in always wins. A grammar for `toml`, or one that claims the
+`rs` extension, is left out, so an extension adds languages and never changes the ones Grove ships.
+Two extensions that bring the same language leave the second one out.
+
+The queries are the ones tree-sitter grammars ship, with two differences. Grove reads patterns
+written for the `#match?` predicate as regular expressions, so a query that uses `#lua-match?` has to
+be rewritten (the `grove-zig` sample shows how). Capture names are sorted into the highlights of
+Grove's theme by their longest known prefix, so `@keyword.return` is a keyword and `@variable.member` is a property.
+
+- `highlights` colours the text.
+- `injections` finds code of other languages inside it, which must be languages Grove has or another extension brings.
+- `locals` marks `@local.scope`, `@local.definition` and `@local.reference` captures. A use of a name that resolves
+  to a definition in an enclosing scope is coloured as the definition is, so a parameter looks like one where it is used.
 
 ### `languageServers`
 

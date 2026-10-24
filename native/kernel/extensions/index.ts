@@ -19,4 +19,4 @@ export { DEFAULT_REGISTRY, NpmRegistry } from "./registry";
 export type { FetchFunction, PackageRelease, RegistryPackage } from "./registry";
 export { compareVersions, isNewer, parseVersion } from "./version";
 export { contributionsOf } from "./contributions";
-export type { Contributions, RegisteredServer, RegisteredTool, ToolsHost } from "./contributions";
+export type { Contributions, RegisteredGrammar, RegisteredServer, RegisteredTool, RejectedGrammar, ToolsHost } from "./contributions";

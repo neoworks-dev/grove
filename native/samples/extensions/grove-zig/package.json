@@ -1,0 +1,30 @@
+{
+  "name": "grove-zig",
+  "version": "0.1.0",
+  "description": "A sample Grove extension: syntax highlighting for Zig, from a tree-sitter grammar built to WebAssembly.",
+  "keywords": [
+    "grove-extension"
+  ],
+  "license": "MIT",
+  "files": [
+    "grammars",
+    "queries",
+    "LICENSE",
+    "package.json"
+  ],
+  "grove": {
+    "title": "Zig",
+    "grammars": [
+      {
+        "language": "zig",
+        "wasm": "grammars/zig.wasm",
+        "highlights": "queries/highlights.scm",
+        "locals": "queries/locals.scm",
+        "extensions": [
+          "zig",
+          "zon"
+        ]
+      }
+    ]
+  }
+}

@@ -6,12 +6,15 @@
 -->
 <script lang="ts">
   import { element, type ElementMethods } from "@neoworks/svelte-gpui";
-  import { Text, View } from "@neoworks/svelte-gpui/ui";
+  import { Text, View, type PointerEvent } from "@neoworks/svelte-gpui/ui";
   import Slot from "../../kernel/slots/Slot.svelte";
   import TabStrip, { type TabEntry } from "../panel/TabStrip.svelte";
   import { activeEditorTheme, type EditorTheme } from "../theme/editorTheme";
   import { colors, fontSize } from "../theme/tokens";
   import type { EditorService, EditorViewMethods } from "./service";
+
+  /** How wide the minimap is, in pixels: the strip the editor paints and the view over it that takes the pointer. */
+  const MINIMAP_WIDTH = 90;
 
   interface Props {
     service: EditorService;
@@ -23,7 +26,7 @@
 
   /** The editor `src/editor/mod.rs` registers. */
   const Editor = element<
-    { document: number; pane: string; sequencePending: boolean; theme: EditorTheme; keymap: string; onfocus: () => void; ongoto: (event: GotoEvent) => void },
+    { document: number; pane: string; minimap: number; sequencePending: boolean; theme: EditorTheme; keymap: string; onfocus: () => void; ongoto: (event: GotoEvent) => void },
     EditorViewMethods
   >("editor");
 
@@ -35,6 +38,7 @@
   }
 
   let view = $state<ElementMethods<EditorViewMethods> | null>(null);
+  let draggingMinimap = $state(false);
 
   const tabs = $derived(service.tabsIn(leafId));
   const active = $derived(service.activeIn(leafId));
@@ -71,6 +75,25 @@
     void service.openContextMenu(leafId, event.windowX, event.windowY);
   }
 
+  /** A press on the minimap scrolls the editor there, and holds the pointer so dragging keeps scrolling. */
+  function pressMinimap(event: PointerEvent): void {
+    draggingMinimap = true;
+    void view?.minimapScroll(event.windowY);
+  }
+
+  /** The pointer moves over the minimap while the button is down. */
+  function dragMinimap(event: PointerEvent): void {
+    if (!draggingMinimap) {
+      return;
+    }
+    void view?.minimapScroll(event.windowY);
+  }
+
+  /** The button is released, wherever the pointer is. */
+  function releaseMinimap(): void {
+    draggingMinimap = false;
+  }
+
   /** Shows the tab with this id in this pane. */
   function selectTab(tabId: string): void {
     service.select(leafId, Number(tabId));
@@ -95,11 +118,19 @@
         key={`editor-${leafId}`}
         document={active.id}
         pane={leafId}
+        minimap={MINIMAP_WIDTH}
         sequencePending={service.sequencePending()}
         theme={activeEditorTheme()}
         keymap={service.keymap()}
         onfocus={() => service.focusPane(leafId)}
         ongoto={(event) => void service.reveal(event.path, event.line, event.character)}
+      />
+      <View
+        buttons={["left"]}
+        style={{ position: "absolute", top: 0, right: 0, bottom: 0, width: MINIMAP_WIDTH, cursor: "pointer" }}
+        ondown={pressMinimap}
+        onmove={dragMinimap}
+        onup={releaseMinimap}
       />
     </View>
   {:else}

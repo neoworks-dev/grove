@@ -25,6 +25,7 @@ mod jump_paint;
 mod jump_view;
 mod language;
 mod menu;
+mod minimap;
 mod occurrence_view;
 mod options;
 mod popup;
@@ -145,6 +146,8 @@ pub struct Editor {
     /// Which decoration sources this view draws: the ones that are its own (the `viewId` prop)
     /// and every document-wide one except those the `hideSources` prop names.
     sources: SourceFilter,
+    /// How wide the minimap is, set by the `minimap` prop; zero for none.
+    minimap_width: Pixels,
 }
 
 /// When a keystroke that changed the text arrived, and how long the view took to handle it.
@@ -199,6 +202,7 @@ impl Editor {
             read_only: false,
             scroll_group: String::new(),
             sources: SourceFilter::default(),
+            minimap_width: px(0.0),
         }
     }
 
@@ -469,6 +473,9 @@ impl Editor {
     /// Shift-click extends the newest selection, and a double click selects a word.
     fn press(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) {
         self.jump = None;
+        if self.over_minimap(event.position) {
+            return;
+        }
         let Some(at) = self.position_at(event.position) else {
             return;
         };
@@ -520,6 +527,14 @@ impl Editor {
         };
         self.apply(&Command::ExtendNewestTo { at }, cx);
         true
+    }
+
+    /// Whether a point in the window is on the minimap, which the app handles, not the text.
+    fn over_minimap(&self, point: svelte_gpui::gpui::Point<Pixels>) -> bool {
+        match &self.layout {
+            Some(layout) => layout.over_minimap(point),
+            None => false,
+        }
     }
 
     /// The buffer position under a point in the window, or none before the first frame.
@@ -667,6 +682,10 @@ impl AppElement for Editor {
             cx.notify();
             return;
         }
+        if name == "minimap" {
+            self.set_minimap_width(&value, cx);
+            return;
+        }
         if name == "scrollGroup" {
             self.set_scroll_group(value.as_str().unwrap_or(""), cx);
             return;
@@ -719,6 +738,7 @@ impl AppElement for Editor {
             }
             "goto" => self.goto_from_app(args, cx),
             "contextClick" => self.context_click_from_app(args, cx),
+            "minimapScroll" => self.minimap_scroll_from_app(args, cx),
             "references" => {
                 self.find_references(cx);
                 Ok(Value::Null)

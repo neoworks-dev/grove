@@ -4,6 +4,7 @@
 
 import type { SessionCreateParams, SessionInfo } from "@suite/protocol/types";
 import type { Client, ConnectionState, DaemonAddress } from "@suite/sdk";
+import type { ToolServer } from "./contributions";
 
 /** The calls one chat pane makes for its session. */
 export type ChatClient = Pick<Client, "subscribe" | "subscribeView" | "input" | "cancel" | "action" | "fetchAsset" | "sessionSettings">;
@@ -38,6 +39,8 @@ export interface SuiteHost {
   connect(options: SuiteConnectOptions): Promise<SuiteClient>;
   /** The URL the daemon serves an `asset://` handle from, which holds its token; undefined for any other source. */
   assetUrl(address: DaemonAddress, source: string): string | undefined;
+  /** The server for the tools Grove offers the daemon's agents. */
+  toolServer(): ToolServer;
 }
 
 export type { ConnectionState, DaemonAddress };

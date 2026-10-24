@@ -3,7 +3,7 @@
 // `bun test`, where there is no host to import.
 
 import { FileError, files, invoke } from "@neoworks/svelte-gpui";
-import type { ToolsHost } from "./contributions";
+import type { RejectedGrammar, ToolsHost } from "./contributions";
 import type { ExtensionFiles } from "./store";
 
 /** Whether a file error says the path is not there. */
@@ -64,10 +64,12 @@ export const hostExtensionFiles: ExtensionFiles = {
   },
 };
 
-/** The host's tool installer and language server registry, which take what extensions contribute. */
+/** The host's tool installer, language server registry and grammar registry, which take what extensions contribute. */
 export const hostToolsHost: ToolsHost = {
   async registerContributions(contributions) {
     await invoke("tools_register", { tools: contributions.tools });
     await invoke("lsp_register_servers", { servers: contributions.servers });
+    const answer = await invoke<{ rejected: RejectedGrammar[] }>("grammars_register", { grammars: contributions.grammars });
+    return answer.rejected;
   },
 };

@@ -262,6 +262,18 @@ impl Documents {
         changed
     }
 
+    /// Has every document pick its language again, for grammars that arrived after it was opened.
+    /// Returns the documents whose highlighting changed.
+    pub fn refresh_syntax(&mut self) -> Vec<DocumentId> {
+        let mut changed = Vec::new();
+        for document in &mut self.documents {
+            if document.state.refresh_syntax() {
+                changed.push(document.id);
+            }
+        }
+        changed
+    }
+
     /// Adds a document over a state and gives it the next id.
     fn insert(&mut self, mut state: EditorState) -> DocumentId {
         state.apply_default_indent(self.default_indent);

@@ -41,6 +41,7 @@ function listenToDocuments(handler: (event: DocumentEvent) => void): () => void 
     listen<{ id: number; dirty: boolean }>("document-dirty", (event) => handler({ type: "dirty", ...event })),
     listen<{ id: number }>("document-saved", (event) => handler({ type: "saved", id: event.id })),
     listen<{ id: number }>("document-edited", (event) => handler({ type: "edited", id: event.id })),
+    listen<{ id: number }>("document-syntax", (event) => handler({ type: "syntax", id: event.id })),
     listen<{ id: number; message: string }>("document-error", (event) => handler({ type: "error", ...event })),
     listen<{ message: string }>("editor-notice", (event) => handler({ type: "notice", message: event.message })),
     listen<{ id: number; row: number; column: number; count: number; selected: boolean }>(

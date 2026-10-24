@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Context } from "@neoworks/extension-system";
 import { Context as RootContext } from "@neoworks/extension-system";
-import type { FileChange, LspHost, LspOptions } from "../plugins/lsp/host";
+import type { FileChange, LspHost, LspOptions, ToolProgress } from "../plugins/lsp/host";
 import { entryFor, statusEntries, type ServerSummary } from "../plugins/lsp/servers";
 import { LspService } from "../plugins/lsp/service";
 import { settle } from "./support/fakeSidecar";
@@ -18,6 +18,7 @@ describe("how the status bar words a server", () => {
       text: "rust-analyzer",
       tone: "good",
       restartable: false,
+      action: null,
       detail: "/work/app",
     });
   });
@@ -63,7 +64,30 @@ class FakeLspHost implements LspHost {
   restarted: number[] = [];
   configured: LspOptions[] = [];
   changed: FileChange[][] = [];
+  installed: string[] = [];
+  /** What `installTool` does: resolves by default, and a test swaps in a promise it controls. */
+  installing: (id: string) => Promise<void> = async () => {};
   private handlers: ((servers: ServerSummary[]) => void)[] = [];
+  private progressHandlers: ((progress: ToolProgress) => void)[] = [];
+
+  async installTool(id: string): Promise<void> {
+    this.installed.push(id);
+    await this.installing(id);
+  }
+
+  onToolProgress(handler: (progress: ToolProgress) => void): () => void {
+    this.progressHandlers.push(handler);
+    return () => {
+      this.progressHandlers = this.progressHandlers.filter((candidate) => candidate !== handler);
+    };
+  }
+
+  /** Tells the service how an install is going, as the host's `tool-progress` event does. */
+  progress(progress: ToolProgress): void {
+    for (const handler of this.progressHandlers) {
+      handler(progress);
+    }
+  }
 
   async status(): Promise<ServerSummary[]> {
     return this.servers;
@@ -170,5 +194,73 @@ describe("telling the host about the settings and the files that change", () => 
     service.noteWatchedChange("/work/app", { relPath: "src", type: "unlinkDir" });
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(host.changed).toEqual([]);
+  });
+});
+
+describe("installing a server that is not installed", () => {
+  const missing = (overrides: Partial<ServerSummary> = {}) =>
+    server({ id: 4, name: "taplo", state: "missing", message: "taplo was not found", tool: "taplo", ...overrides });
+
+  test("a missing server Grove has a recipe for offers to install it", () => {
+    const entry = entryFor(missing());
+    expect(entry).toMatchObject({ text: "taplo not installed, press to install", tone: "quiet", action: "install", restartable: true });
+  });
+
+  test("a missing server with no recipe only says it is not installed", () => {
+    expect(entryFor(missing({ tool: null }))).toMatchObject({ text: "taplo not installed", action: "restart" });
+    expect(entryFor(missing({ tool: undefined }))).toMatchObject({ text: "taplo not installed", action: "restart" });
+  });
+
+  test("shows each step while it installs, then starts the server when it is in place", async () => {
+    const host = new FakeLspHost();
+    host.servers = [missing()];
+    let finish!: () => void;
+    host.installing = () => new Promise<void>((resolve) => (finish = resolve));
+    const service = await setUp(host);
+    await settle();
+
+    const running = service.install(4);
+    expect(host.installed).toEqual(["taplo"]);
+    expect(service.entries()[0]).toMatchObject({ text: "Installing taplo: Starting", tone: "busy", action: null });
+    host.progress({ id: "taplo", phase: "output", message: "Downloading taplo-linux-x86_64.gz" });
+    expect(service.entries()[0].text).toBe("Installing taplo: Downloading taplo-linux-x86_64.gz");
+    host.progress({ id: "taplo", phase: "output", message: "Compiling a crate with a very long name indeed" });
+    expect(service.entries()[0].text).toBe("Installing taplo: Compiling a crate with a very long …");
+    expect(service.entries()[0].detail).toBe("Compiling a crate with a very long name indeed");
+
+    await service.install(4);
+    expect(host.installed).toEqual(["taplo"]);
+    finish();
+    await running;
+    expect(host.restarted).toEqual([4]);
+    expect(service.entries()[0].text).toBe("taplo not installed, press to install");
+  });
+
+  test("a failed install says why and pressing again tries again", async () => {
+    const host = new FakeLspHost();
+    host.servers = [missing()];
+    host.installing = async () => {
+      throw new Error("GitHub is limiting requests");
+    };
+    const service = await setUp(host);
+    await settle();
+
+    await service.install(4);
+    expect(service.entries()[0]).toMatchObject({ text: "taplo install failed, press to retry", tone: "bad", action: "install", detail: "GitHub is limiting requests" });
+    expect(host.restarted).toEqual([]);
+
+    host.installing = async () => {};
+    await service.install(4);
+    expect(host.installed).toEqual(["taplo", "taplo"]);
+    expect(host.restarted).toEqual([4]);
+  });
+
+  test("installing a server that has no tool does nothing", async () => {
+    const host = new FakeLspHost();
+    host.servers = [missing({ tool: null })];
+    const service = await setUp(host);
+    await settle();
+    await service.install(4);
+    expect(host.installed).toEqual([]);
   });
 });

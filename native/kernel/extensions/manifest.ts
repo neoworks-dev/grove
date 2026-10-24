@@ -243,8 +243,10 @@ function readLanguageServer(problems: string[]): (entry: unknown, where: string)
       rootMarkers: readStringList(entry, "rootMarkers", where, problems, true),
     };
     const install = readInstall(entry, where, problems);
-    if (install !== null) {
+    if (install !== null && install.binaries.includes(command)) {
       server.install = install;
+    } else if (install !== null) {
+      problems.push(`${where}: its install recipe does not provide "${command}" among its binaries, so Grove cannot offer it`);
     }
     return server;
   };

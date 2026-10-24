@@ -22,6 +22,10 @@ tar = { version = "0.4", default-features = false }
 sha1 = "0.10"
 sha2 = "0.10"
 base64 = "0.22"
+# The tool installer downloads release assets and unpacks zip archives.
+ureq = "2"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+serde = { version = "1", features = ["derive"] }
 
 [patch.crates-io]
 xattr = { git = "https://github.com/neoworks-dev/svelte-gpui", rev = "0a714498b8894ccc7e05a7274d4400994a9d230f" }

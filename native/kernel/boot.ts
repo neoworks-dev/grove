@@ -4,7 +4,7 @@
 
 import { Context } from "@neoworks/extension-system";
 import { CommandsService } from "./commands";
-import { ExtensionsService, type ExtensionFiles, type SharedModules } from "./extensions";
+import { ExtensionsService, type ExtensionFiles, type SharedModules, type ToolsHost } from "./extensions";
 import type { Kernel } from "./kernel";
 import { KeymapService } from "./keymap";
 import { mountHostLogExporter } from "./logging";
@@ -22,7 +22,7 @@ export interface BootOptions {
    * Where installed extensions are read from and what their scripts may `require`. Without it
    * the app runs the core plugins only, as under test.
    */
-  extensions?: { files: ExtensionFiles; modules: SharedModules };
+  extensions?: { files: ExtensionFiles; modules: SharedModules; tools?: ToolsHost };
 }
 
 /**
@@ -40,11 +40,15 @@ export async function bootKernel(options: BootOptions): Promise<Kernel> {
   const catalog: PluginCatalog = { ...options.catalog };
   let extensionFiles: ExtensionFiles | null = null;
   let extensionModules: SharedModules = {};
+  let extensionTools: ToolsHost | null = null;
   if (options.extensions) {
     extensionFiles = options.extensions.files;
     extensionModules = options.extensions.modules;
+    if (options.extensions.tools !== undefined) {
+      extensionTools = options.extensions.tools;
+    }
   }
-  await context.plugin(ExtensionsService, { catalog, files: extensionFiles, modules: extensionModules });
+  await context.plugin(ExtensionsService, { catalog, files: extensionFiles, modules: extensionModules, tools: extensionTools });
   await context.plugin(LoaderService, catalog);
   await context.plugin(SettingsService, { catalog, files: options.files });
   await context.plugin(ProfileService, { coreRows: options.coreRows, files: options.files });

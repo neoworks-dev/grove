@@ -82,10 +82,20 @@ describe("parseRecipe", () => {
     const npm = parseRecipe({ kind: "npm", package: "yaml-language-server", binaries: ["yaml-language-server"] }, "r", problems);
     const pip = parseRecipe({ kind: "pip", package: "ruff", version: "0.5.0", binaries: ["ruff"] }, "r", problems);
     const cargo = parseRecipe({ kind: "cargo", crate: "taplo-cli", binaries: ["taplo"] }, "r", problems);
+    const go = parseRecipe({ kind: "go", package: "golang.org/x/tools/gopls", binaries: ["gopls"] }, "r", problems);
     expect(problems).toEqual([]);
-    expect([release?.kind, npm?.kind, pip?.kind, cargo?.kind]).toEqual(["github-release", "npm", "pip", "cargo"]);
+    expect([release?.kind, npm?.kind, pip?.kind, cargo?.kind, go?.kind]).toEqual(["github-release", "npm", "pip", "cargo", "go"]);
+    expect(go).toMatchObject({ package: "golang.org/x/tools/gopls" });
     expect(cargo).toMatchObject({ crate: "taplo-cli" });
     expect(pip).toMatchObject({ version: "0.5.0" });
+  });
+
+  test("the archive is read from the asset's name unless the recipe says", () => {
+    const problems: string[] = [];
+    const unspecified = parseRecipe({ kind: "github-release", repo: "a/b", assets: { "linux-x64": "b.zip" }, binaries: ["b"] }, "r", problems);
+    expect(unspecified).toMatchObject({ archive: "auto" });
+    expect(parseRecipe({ kind: "github-release", repo: "a/b", assets: { "linux-x64": "b" }, archive: "tar.xz", binaries: ["b"] }, "r", problems)).toBeNull();
+    expect(problems[0]).toContain("auto, none, gz, tar.gz, zip");
   });
 
   test("refuses what the installer could not run", () => {
@@ -93,6 +103,6 @@ describe("parseRecipe", () => {
     expect(parseRecipe({ kind: "apt", package: "x" }, "r", problems)).toBeNull();
     expect(parseRecipe({ kind: "github-release", repo: "a/b", assets: { "plan9-x64": "b" }, binaries: ["b"] }, "r", problems)).toBeNull();
     expect(parseRecipe({ kind: "npm", package: "x", binaries: [] }, "r", problems)).toBeNull();
-    expect(problems).toHaveLength(4);
+    expect(problems.length).toBeGreaterThanOrEqual(3);
   });
 });

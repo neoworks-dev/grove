@@ -31,7 +31,7 @@ mod settings;
 mod state;
 
 use std::path::Path;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
 use editor_core::{DocumentId, EditorState, Position};
@@ -85,12 +85,15 @@ pub(crate) struct Inner {
     settings: Mutex<LspSettings>,
     lint_runs: lint::LintRuns,
     state: Mutex<State>,
+    /// The installer that can provide a server that was not found, once the app has attached it.
+    tools: OnceLock<crate::tools::Tools>,
 }
 
 impl LspStore {
     /// A store that keeps servers told about `documents`, and reports through `emitter` and `signals`.
     pub fn new(documents: SharedDocuments, emitter: Emitter, signals: Signals) -> LspStore {
-        LspStore::with_search_directories(documents, emitter, signals, registry::search_directories())
+        let installed_tools = crate::tools::bin_directory();
+        LspStore::with_search_directories(documents, emitter, signals, registry::search_directories_with(&[installed_tools]))
     }
 
     /// Like `new`, looking for servers in the given directories only.
@@ -109,10 +112,16 @@ impl LspStore {
             settings: Mutex::new(LspSettings::default()),
             lint_runs: lint::LintRuns::default(),
             state: Mutex::new(State::default()),
+            tools: OnceLock::new(),
         };
         let store = LspStore { inner: Arc::new(inner) };
         documents.observe(Arc::new(store.clone()));
         store
+    }
+
+    /// Lets the status say which tool installs a server that was not found.
+    pub fn attach_tools(&self, tools: crate::tools::Tools) {
+        let _ = self.inner.tools.set(tools);
     }
 
     /// Registers the commands the UI reads the servers with and starts them again with.
@@ -122,6 +131,10 @@ impl LspStore {
         let configurer = self.clone();
         let watcher = self.clone();
         commands
+            .command("lsp_register_servers", move |args| {
+                lsp_client::registry::set_extension_servers(server_definitions(&args));
+                Ok::<_, CommandError>(Value::Null)
+            })
             .command("lsp_status", move |_| Ok::<_, CommandError>(reader.summaries()))
             .command("lsp_restart", move |args| {
                 let Some(id) = args.get("id").and_then(Value::as_u64) else {
@@ -336,7 +349,21 @@ impl LspStore {
     /// The servers as the UI sees them.
     pub fn summaries(&self) -> Value {
         let state = self.state();
-        Value::Array(state.servers.iter().map(ServerEntry::summary).collect())
+        Value::Array(state.servers.iter().map(|entry| self.summary_of(entry)).collect())
+    }
+
+    /// One server as the UI sees it. A server that was not found also names the tool that installs it.
+    fn summary_of(&self, entry: &ServerEntry) -> Value {
+        let mut summary = entry.summary();
+        summary["tool"] = Value::Null;
+        if entry.state.name() != "missing" {
+            return summary;
+        }
+        if let Some(tools) = self.inner.tools.get() {
+            let programs: Vec<&str> = entry.spec.candidates.iter().map(|candidate| candidate.program).collect();
+            summary["tool"] = json!(tools.tool_providing(&programs));
+        }
+        summary
     }
 
     /// Tells the UI how the servers are doing.
@@ -520,6 +547,37 @@ fn changes_from(arguments: &Value) -> Vec<(std::path::PathBuf, lsp_client::glob:
         changes.push((std::path::PathBuf::from(path), change));
     }
     changes
+}
+
+/// The language servers extensions bring, from `lsp_register_servers { servers: [{ name, command,
+/// args, languageId, extensions, fileNames, rootMarkers }] }`. An entry that lacks what a server needs is left out.
+fn server_definitions(args: &Value) -> Vec<registry::ServerDefinition> {
+    let text = |entry: &Value, key: &str| entry.get(key).and_then(Value::as_str).map(str::to_string);
+    let list = |entry: &Value, key: &str| -> Vec<String> {
+        let items = entry.get(key).and_then(Value::as_array).cloned().unwrap_or_default();
+        items.iter().filter_map(Value::as_str).map(str::to_string).collect()
+    };
+    let servers = args.get("servers").and_then(Value::as_array).cloned().unwrap_or_default();
+    let mut definitions = Vec::new();
+    for entry in &servers {
+        let (Some(name), Some(command), Some(language_id)) = (text(entry, "name"), text(entry, "command"), text(entry, "languageId")) else {
+            continue;
+        };
+        let (extensions, file_names) = (list(entry, "extensions"), list(entry, "fileNames"));
+        if extensions.is_empty() && file_names.is_empty() {
+            continue;
+        }
+        definitions.push(registry::ServerDefinition {
+            name,
+            command,
+            args: list(entry, "args"),
+            language_id,
+            extensions,
+            file_names,
+            root_markers: list(entry, "rootMarkers"),
+        });
+    }
+    definitions
 }
 
 /// Sends `didOpen` for a document and records that the server has it.

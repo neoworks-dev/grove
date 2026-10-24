@@ -11,12 +11,31 @@ const helloSettings = defineSettings({
     description: "The text the status bar shows.",
     default: "Hello from an extension",
   }),
+  uppercase: setting.boolean({
+    label: "Shout",
+    description: "Show the greeting in capital letters.",
+    default: false,
+  }),
+  tone: setting.enum({
+    label: "Colour",
+    description: "Which of the theme's colours the greeting is drawn in.",
+    default: "accent",
+    options: [
+      { value: "accent", label: "Accent" },
+      { value: "green", label: "Green" },
+      { value: "muted", label: "Muted" },
+    ],
+  }),
 });
 
 definePlugin({
   Config: helloSettings,
   inject: ["slots"],
-  apply(ctx: Context, config: { greeting: string }) {
-    ctx.slots.register("statusbar", { id: "hello.greeting", order: 50, component: Greeting, props: { text: config.greeting } });
+  apply(ctx: Context, config: { greeting: string; uppercase: boolean; tone: string }) {
+    let text = config.greeting;
+    if (config.uppercase) {
+      text = text.toUpperCase();
+    }
+    ctx.slots.register("statusbar", { id: "hello.greeting", order: 50, component: Greeting, props: { text, tone: config.tone } });
   },
 });

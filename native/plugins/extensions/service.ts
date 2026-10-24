@@ -4,11 +4,14 @@
 
 import { createChangeSignal, type ChangeSignal } from "../../kernel/reactive";
 import type { ExtensionsService, NpmRegistry, RegistryPackage } from "../../kernel/extensions";
+import type { SettingsService } from "../../kernel/settings";
 import { buildRows, type Activity, type SearchState, type ViewRow } from "./model";
 
 export class ExtensionBrowser {
   private extensions: ExtensionsService;
   private registry: NpmRegistry;
+  private settings: SettingsService;
+  private openName: string | null = null;
   private foundList: RegistryPackage[] = [];
   private state: SearchState = "idle";
   private error: string | null = null;
@@ -18,9 +21,10 @@ export class ExtensionBrowser {
   private message: string | null = null;
   private changes: ChangeSignal = createChangeSignal();
 
-  constructor(extensions: ExtensionsService, registry: NpmRegistry) {
+  constructor(extensions: ExtensionsService, registry: NpmRegistry, settings: SettingsService) {
     this.extensions = extensions;
     this.registry = registry;
+    this.settings = settings;
   }
 
   /** The rows the view draws. Reactive. */
@@ -33,7 +37,19 @@ export class ExtensionBrowser {
       searchError: this.error,
       latest: this.latestVersions,
       activity: this.activities,
+      settings: this.settings.entries(),
+      openSettings: this.openName,
     });
+  }
+
+  /** Opens an extension's settings form under its row, or closes it when it is the one open. */
+  toggleSettings(name: string): void {
+    if (this.openName === name) {
+      this.openName = null;
+    } else {
+      this.openName = name;
+    }
+    this.changes.notify();
   }
 
   /** The last failure of an install, update or removal, until it is dismissed. Reactive. */

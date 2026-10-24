@@ -21,6 +21,7 @@ mod browser;
 mod data;
 mod diff;
 mod editor;
+mod extensions;
 mod git;
 mod lsp;
 mod sidecar;
@@ -49,6 +50,7 @@ fn main() {
     let commands = sidecar.commands(commands);
     let commands = suite::register(commands);
     let commands = data::register(commands);
+    let commands = extensions::register(commands);
     let commands = browser::register(commands);
     let documents = SharedDocuments::new(commands.emitter());
     let commands = documents.register(commands);

@@ -38,6 +38,24 @@ export const hostExtensionFiles: ExtensionFiles = {
     }
   },
 
+  async removeDirectory(path) {
+    try {
+      await files.remove(path, { recursive: true });
+    } catch (error) {
+      if (!isMissing(error)) {
+        throw error;
+      }
+    }
+  },
+
+  async installTarball(directory, name, tarball, hashes) {
+    return invoke<{ version: string }>(
+      "install_extension",
+      { directory, name, integrity: hashes.integrity, shasum: hashes.shasum },
+      tarball,
+    );
+  },
+
   async writeText(path, text) {
     const separator = path.lastIndexOf("/");
     await files.mkdir(path.slice(0, separator), { recursive: true });

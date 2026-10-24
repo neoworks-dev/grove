@@ -138,3 +138,25 @@ bun scripts/buildExtension.mjs samples/extensions/grove-hello
 builds every plugin that names a `source` into its `main`, leaving the shared modules external.
 `samples/extensions/grove-hello` is a complete extension. To try it, build it and copy the
 directory (with `dist/` and `package.json`) into `<data>/extensions/`.
+
+## The extensions view
+
+The extensions view is on the rail (Ctrl+Shift+X). It lists the installed extensions, with buttons
+to switch each one off or on, to update it when npm has a newer version, and to remove it, and it
+searches npm for packages with the `grove-extension` keyword. Installing from a search result
+loads the plugins at once, with no restart. A change to an extension leaves its settings alone.
+
+The search and the download go through svelte-gpui's `fetch`, and the `registry` setting of the
+`extensions-view` row says which registry that is (npm's own by default). No `npm` binary is
+involved. The host checks the tarball against the hash the registry published before it unpacks
+it, refuses a package that is not the one asked for or has no `grove` field, and replaces the old
+install only when the new one has passed (`src/extensions.rs`).
+
+To try an extension without publishing it, `scripts/mockRegistry.mjs` packs directories with
+`npm pack` and serves them from the endpoints Grove uses:
+
+```text
+bun scripts/mockRegistry.mjs 4873 samples/extensions/grove-hello samples/extensions/grove-night-theme
+```
+
+then give the `extensions-view` row `{"registry": "http://127.0.0.1:4873"}` in the user profile.

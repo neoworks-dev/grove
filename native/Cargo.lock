@@ -2415,12 +2415,17 @@ name = "grove_native"
 version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
+ "base64",
  "editor-core",
+ "flate2",
  "futures",
  "lsp-client",
  "parking_lot",
  "serde_json",
+ "sha1",
+ "sha2 0.10.9",
  "svelte_gpui_host",
+ "tar",
 ]
 
 [[package]]
@@ -5605,6 +5610,16 @@ dependencies = [
  "core-foundation-sys",
  "libc",
  "objc",
+]
+
+[[package]]
+name = "tar"
+version = "0.4.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f6221d9a6003c78398e3b239969f352578258df48c8eb051caadae0015bc840"
+dependencies = [
+ "filetime",
+ "libc",
 ]
 
 [[package]]

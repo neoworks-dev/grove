@@ -16,7 +16,17 @@ import type {
   ThemeContribution,
   ToolContribution,
 } from "./manifest";
-import { readDisabled, readInstalled, statePath, stateText, type ExtensionFiles, type InstalledExtension } from "./store";
+import {
+  directoryNameOf,
+  extensionsDirectory,
+  readDisabled,
+  readInstalled,
+  statePath,
+  stateText,
+  type ExtensionFiles,
+  type InstalledExtension,
+  type TarballHashes,
+} from "./store";
 
 declare module "@neoworks/extension-system" {
   interface Context {
@@ -125,15 +135,49 @@ export class ExtensionsService extends Service {
 
   /** Switches an extension on or off, remembers it, and has the profile reload so its plugins mount or unmount. */
   async setEnabled(extensionName: string, enabled: boolean): Promise<void> {
-    if (this.files === null) {
-      throw new Error("this app has nowhere to keep extensions");
-    }
-    const disabled = (await readDisabled(this.files)).filter((name) => name !== extensionName);
+    const files = this.requireFiles();
+    const disabled = (await readDisabled(files)).filter((name) => name !== extensionName);
     if (!enabled) {
       disabled.push(extensionName);
     }
-    const data = await this.files.dataDirectory();
-    await this.files.writeText(statePath(data), stateText(disabled));
+    const data = await files.dataDirectory();
+    await files.writeText(statePath(data), stateText(disabled));
+    await this.reloadAll();
+  }
+
+  /** The extension files, or a thrown sentence when the app has nowhere to keep extensions. */
+  private requireFiles(): ExtensionFiles {
+    if (this.files === null) {
+      throw new Error("this app has nowhere to keep extensions");
+    }
+    return this.files;
+  }
+
+  /**
+   * Installs an extension from its tarball, or replaces an installed one with it, and has the
+   * profile reload so a new plugin mounts and an updated one is mounted again. An update keeps the
+   * extension switched on or off as it was. Resolves with the version now installed.
+   */
+  async installPackage(name: string, tarball: ArrayBuffer, hashes: TarballHashes): Promise<string> {
+    const files = this.requireFiles();
+    const data = await files.dataDirectory();
+    const directory = `${extensionsDirectory(data)}/${directoryNameOf(name)}`;
+    const installed = await files.installTarball(directory, name, tarball, hashes);
+    this.forget(name);
+    await this.reloadAll();
+    return installed.version;
+  }
+
+  /** Deletes an installed extension and what it contributed, and forgets that it was switched off. */
+  async remove(name: string): Promise<void> {
+    const files = this.requireFiles();
+    const data = await files.dataDirectory();
+    await files.removeDirectory(`${extensionsDirectory(data)}/${directoryNameOf(name)}`);
+    const disabled = await readDisabled(files);
+    if (disabled.includes(name)) {
+      await files.writeText(statePath(data), stateText(disabled.filter((entry) => entry !== name)));
+    }
+    this.forget(name);
     await this.reloadAll();
   }
 

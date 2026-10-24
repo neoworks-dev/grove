@@ -14,6 +14,22 @@ export interface ExtensionFiles {
   listDirectories(path: string): Promise<string[]>;
   /** Writes a file, creating its folders first. */
   writeText(path: string, text: string): Promise<void>;
+  /** Deletes a directory and everything in it; nothing happens when it is not there. */
+  removeDirectory(path: string): Promise<void>;
+  /**
+   * Checks a package's tarball against the hash the registry published, and unpacks it as the
+   * extension's directory in place of any earlier install. Rejects with the reason when the
+   * download is damaged or is not the extension asked for, and then leaves the old install alone.
+   */
+  installTarball(directory: string, name: string, tarball: ArrayBuffer, hashes: TarballHashes): Promise<{ version: string }>;
+}
+
+/** What the registry says a tarball hashes to; at least one is needed. */
+export interface TarballHashes {
+  /** `sha512-<base64>`. */
+  integrity: string | null;
+  /** Hex SHA-1, which old registries publish instead. */
+  shasum: string | null;
 }
 
 /** An extension found on disk, usable or not. */
@@ -79,7 +95,8 @@ export async function readInstalled(files: ExtensionFiles): Promise<InstalledExt
   const disabled = await readDisabled(files);
   const names = await files.listDirectories(root);
   const installed: InstalledExtension[] = [];
-  for (const directoryName of names.sort()) {
+  // Names starting with a dot are an install in progress, not an extension.
+  for (const directoryName of names.filter((name) => !name.startsWith(".")).sort()) {
     installed.push(await readOne(files, `${root}/${directoryName}`, directoryName, disabled));
   }
   return installed;

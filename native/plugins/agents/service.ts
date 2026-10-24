@@ -98,8 +98,8 @@ export interface EditorOpener {
 
 /** What the diff plugin offers the chat. */
 export interface DiffOpener {
-  openFile(path: string): Promise<string | null>;
-  openTexts(name: string, oldText: string, newText: string): Promise<string | null>;
+  /** Shows how a file differs from HEAD, or from a text a caller names, drawn over the file in an editor. */
+  showInEditor(path: string, base?: { text: string; label: string }): Promise<boolean>;
 }
 
 /** Openers for a service started without the editor and diff views, as in tests: nothing opens. */
@@ -116,11 +116,10 @@ export function serviceOpeners(editor: EditorOpener, diff: DiffOpener): Openers 
     },
     openDiff: (path, texts) => {
       if (texts === undefined) {
-        void diff.openFile(path);
+        void diff.showInEditor(path);
         return true;
       }
-      const name = path.split("/").filter((part) => part !== "").pop();
-      void diff.openTexts(name === undefined ? path : name, texts.oldText, texts.newText);
+      void diff.showInEditor(path, { text: texts.oldText, label: "the agent's start" });
       return true;
     },
   };

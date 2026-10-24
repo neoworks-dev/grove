@@ -8,7 +8,7 @@ import { Service, type Context } from "@neoworks/extension-system";
 import type { DiffFile } from "../../../src/shared/types";
 import { createChangeSignal, type ChangeSignal } from "../../kernel/reactive";
 import type { DiffHost } from "../diff/diffHost";
-import type { DiffBase, DiffMode } from "../diff/model";
+import type { DiffBase } from "../diff/model";
 import { diffBaseOf, groupChanges, type ChangeEntry, type ChangeGroups } from "./model";
 
 declare module "@neoworks/extension-system" {
@@ -22,7 +22,8 @@ const REFRESH_DELAY_MS = 300;
 
 /** What the service asks of the diff plugin. */
 export interface ChangesDiffs {
-  openFile(path: string, base: DiffBase, mode?: DiffMode): Promise<string | null>;
+  /** Shows how a file differs from a base, drawn over the file in an editor pane. */
+  showInEditor(path: string, base: DiffBase): Promise<boolean>;
   /** Reads the git side of every open diff again, after the index changed. */
   refreshAll(): Promise<void>;
   /** Hears of hunks staged or unstaged from a diff. Returns the function that stops. */
@@ -217,7 +218,7 @@ export class GitChangesService extends Service {
     return ok;
   }
 
-  /** Opens the diff of a file: against the index when unstaged, as it would be committed when staged. */
+  /** Shows a file's changes over the file in an editor: against the index when unstaged, against HEAD when staged. */
   async open(entry: ChangeEntry): Promise<void> {
     const worktree = this.ctx.workspace.selectedWorktree();
     if (worktree === null) {
@@ -225,7 +226,7 @@ export class GitChangesService extends Service {
     }
     this.openedEntryKey = entry.key;
     this.changes.notify();
-    await this.deps.diffs.openFile(`${worktree.path}/${entry.path}`, diffBaseOf(entry));
+    await this.deps.diffs.showInEditor(`${worktree.path}/${entry.path}`, diffBaseOf(entry));
   }
 
   /** Runs an action in the shown worktree, then reads the changes and the open diffs again. Resolves to whether it worked. */

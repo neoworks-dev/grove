@@ -14,9 +14,11 @@
     label?: string;
     options: { value: string; label: string }[];
     onchange: (value: string) => void;
+    /** The width of the button in pixels; the settings page's wide one when left out. */
+    width?: number;
   }
 
-  let { value, label, options, onchange }: Props = $props();
+  let { value, label, options, onchange, width = 264 }: Props = $props();
 
   let open = $state(false);
 
@@ -43,7 +45,7 @@
   {#snippet trigger({ toggle })}
     <Button
       style={{
-        width: 264,
+        width,
         direction: "row",
         align: "center",
         gap: 8,

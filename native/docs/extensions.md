@@ -160,3 +160,14 @@ bun scripts/mockRegistry.mjs 4873 samples/extensions/grove-hello samples/extensi
 ```
 
 then give the `extensions-view` row `{"registry": "http://127.0.0.1:4873"}` in the user profile.
+
+## Configuring an extension
+
+An installed extension's row in the extensions view has a Settings button when any of its
+plugins declares settings, or its manifest does. It opens a form under the row with one block for
+each plugin, built from the plugin's `Config` with the same field rows the settings page uses, and
+one for the settings the manifest declares. A change is written to the user's profile as an
+override on that plugin's row (`<package>:<id>`), exactly as on the settings page, so the page and
+the view always agree. A field marked `live` reaches the plugin while it runs, and any other field
+mounts the plugin again. Reset takes an override back out. A plugin that failed to load still
+lists its settings, with the reason it failed, so a bad value can be put right.

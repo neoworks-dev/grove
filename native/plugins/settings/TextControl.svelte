@@ -13,10 +13,26 @@
     /** Draws a swatch of the colour in the text. */
     swatch?: boolean;
     placeholder?: string;
+    /** The width of the text box in pixels; a wide box for the settings page when left out. */
+    width?: number;
     oncommit: (text: string) => void;
   }
 
-  let { value, numeric = false, swatch = false, placeholder, oncommit }: Props = $props();
+  let { value, numeric = false, swatch = false, placeholder, width, oncommit }: Props = $props();
+
+  /** The text box's width, narrower by the swatch when there is one. */
+  const boxWidth = $derived(widthOf());
+
+  function widthOf(): number {
+    let full = 264;
+    if (width !== undefined) {
+      full = width;
+    }
+    if (swatch) {
+      return full - 26;
+    }
+    return full;
+  }
 
   let draft = $state("");
 
@@ -38,7 +54,7 @@
     oninput={(text) => (draft = text)}
     oncommit={(text) => oncommit(text)}
     style={{
-      width: swatch ? 238 : 264,
+      width: boxWidth,
       paddingX: 10,
       paddingY: 6,
       radius: radius.md,

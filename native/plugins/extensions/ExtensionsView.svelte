@@ -10,14 +10,17 @@
   import magnifyingGlass from "@phosphor-icons/core/regular/magnifying-glass.svg";
   import { untrack } from "svelte";
   import { colors, fontSize, radius } from "../theme/tokens";
+  import type { SettingsService } from "../../kernel/settings";
+  import FieldRow from "../settings/FieldRow.svelte";
   import type { ExtensionBrowser } from "./service";
   import type { InstalledRow, ResultRow, ViewRow } from "./model";
 
   interface Props {
     browser: ExtensionBrowser;
+    settings: SettingsService;
   }
 
-  let { browser }: Props = $props();
+  let { browser, settings }: Props = $props();
 
   const rows = $derived(browser.rows());
   const notice = $derived(browser.notice());
@@ -177,9 +180,34 @@
               {#if entry.update !== null}
                 {@render action(`Update to ${entry.update}`, () => void browser.update(entry.name))}
               {/if}
+              {#if entry.sections.length > 0}
+                {@render action("Settings", () => browser.toggleSettings(entry.name))}
+              {/if}
               {@render action(toggleLabel(entry), () => void browser.setEnabled(entry.name, !entry.enabled))}
               {@render dangerAction("Remove", () => void browser.remove(entry.name))}
             </View>
+          {/if}
+          {#if entry.settingsOpen}
+            {#each entry.sections as section (section.rowId)}
+              <View style={{ gap: 2, paddingTop: 8 }}>
+                <Text style={{ fontSize: fontSize.xxs, color: colors.dim, uppercase: true }}>{section.title}</Text>
+                {#if section.failure !== null}
+                  <Text style={{ fontSize: fontSize.xxs, color: colors.red }}>{section.failure}</Text>
+                {/if}
+                {#each section.fields as [fieldName, field] (fieldName)}
+                  <FieldRow
+                    compact
+                    name={fieldName}
+                    {field}
+                    value={section.values[fieldName]}
+                    modified={section.overridden.includes(fieldName)}
+                    choices={field.type === "enum" ? settings.optionsOf(field) : []}
+                    onset={(value) => settings.set(section.rowId, fieldName, value)}
+                    onreset={() => settings.reset(section.rowId, fieldName)}
+                  />
+                {/each}
+              </View>
+            {/each}
           {/if}
         </View>
       {:else}

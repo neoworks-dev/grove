@@ -28,14 +28,14 @@ export const extensionsView = {
       registryUrl = change.config.registry as string;
     });
     const registry = new NpmRegistry({ baseUrl: () => registryUrl, fetch: (url, init) => fetch(url, init) });
-    const browser = new ExtensionBrowser(ctx.extensions, registry);
+    const browser = new ExtensionBrowser(ctx.extensions, registry, ctx.settings);
     ctx.sidebar.registerView({
       id: "extensions",
       title: "Extensions",
       icon: puzzlePiece,
       order: 5,
       component: ExtensionsView,
-      props: { browser },
+      props: { browser, settings: ctx.settings },
     });
     ctx.commands.register({
       id: "extensions.show",

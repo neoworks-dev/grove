@@ -439,7 +439,7 @@ impl Editor {
         let Some(layout) = &self.layout else {
             return;
         };
-        if !layout.over_text(point) {
+        if layout.over_minimap(point) || !layout.over_text(point) {
             self.rest = None;
             self.hide_hover(cx);
             return;

@@ -158,6 +158,8 @@ export interface EditorViewMethods {
   signature(): Promise<void>;
   /** Formats the document. */
   format(): Promise<void>;
+  /** Scrolls so the row under a pointer at this y in the window, over the minimap, is in the middle of the editor. */
+  minimapScroll(windowY: number): Promise<void>;
   /** Puts the cursor at a line and UTF-16 column, counted from zero, and scrolls to it. */
   goto(line: number, character: number): Promise<void>;
   /**

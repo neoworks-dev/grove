@@ -20,6 +20,7 @@ use svelte_gpui::gpui::{
 use super::Editor;
 use super::indent_paint::{self, GuideLine};
 use super::jump_paint::{self, JumpPaint};
+use super::minimap::{self, MinimapPaint};
 use super::options::EditorOptions;
 use super::popup;
 use super::theme::{EditorTheme, HighlightStyle};
@@ -75,6 +76,8 @@ pub struct Layout {
     pub blocks: BlockMap,
     /// The display rows drawn, from `first_display_row` on.
     pub rows: Vec<VisibleRow>,
+    /// Where the minimap is, while there is one, so a press on it is not taken for one on the text.
+    pub minimap: Option<Bounds<Pixels>>,
 }
 
 /// A display row that was drawn.
@@ -116,6 +119,14 @@ impl Layout {
                 DisplayRow::Text(row) => Position { row, column: usize::MAX },
                 DisplayRow::Block { .. } => Position { row: usize::MAX, column: usize::MAX },
             },
+        }
+    }
+
+    /// Whether a point in the window is on the minimap.
+    pub fn over_minimap(&self, point: svelte_gpui::gpui::Point<Pixels>) -> bool {
+        match self.minimap {
+            Some(strip) => strip.contains(&point),
+            None => false,
         }
     }
 
@@ -200,6 +211,8 @@ pub struct Frame {
     vim: VimPaint,
     /// What a jump in progress adds: labels, and the matches they stand for.
     jump: JumpPaint,
+    /// The overview of the whole buffer at the right edge, when the view has one.
+    minimap: Option<MinimapPaint>,
     /// The colours this frame is painted with.
     theme: EditorTheme,
     /// How long the frame took to prepare, for `GROVE_LATENCY`.
@@ -224,6 +237,7 @@ impl Frame {
             prepaint_took: std::time::Duration::ZERO,
             vim: VimPaint::default(),
             jump: JumpPaint::default(),
+            minimap: None,
         }
     }
 }
@@ -282,8 +296,14 @@ impl Element for EditorElement {
         let options = editor.documents.options();
         let jump = editor.jump.as_ref();
         let sources = editor.sources.clone();
-        let built = editor
-            .read(|state| build_frame(state, scroll_top, bounds, window, &theme, &status, options, jump, &sources));
+        let minimap_width = editor.minimap_width;
+        let furthest_scroll = editor.furthest_scroll();
+        let built = editor.read(|state| {
+            let (mut layout, mut frame) =
+                build_frame(state, scroll_top, bounds, window, &theme, &status, options, jump, &sources);
+            attach_minimap(&mut layout, &mut frame, state, minimap_width, scroll_top, furthest_scroll);
+            (layout, frame)
+        });
         let Some((layout, mut frame)) = built else {
             return Frame::empty(theme);
         };
@@ -373,6 +393,9 @@ impl Element for EditorElement {
                 window.paint_quad(fill(*cursor, cursor_color));
             }
             jump_paint::paint_over_text(&frame.jump, theme, window, cx);
+            if let Some(minimap) = &frame.minimap {
+                minimap::paint(minimap, theme, window);
+            }
             vim_paint::paint_command_line(&frame.vim, theme, window, cx);
         });
         self.report_latency(frame, paint_started, cx);
@@ -558,7 +581,15 @@ fn build_frame(
         }
     }
 
-    let layout = Layout { bounds, text_left, first_display_row, first_row_top, blocks: blocks_map, rows: visible_rows };
+    let layout = Layout {
+        bounds,
+        text_left,
+        first_display_row,
+        first_row_top,
+        blocks: blocks_map,
+        rows: visible_rows,
+        minimap: None,
+    };
     let selections = visible_selections
         .iter()
         .flat_map(|selection| vim_paint::selection_spans(&layout, selection, status.selection))
@@ -590,10 +621,29 @@ fn build_frame(
         underlines,
         vim,
         jump: jump_paint,
+        minimap: None,
         theme: theme.clone(),
         prepaint_took: std::time::Duration::ZERO,
     };
     (layout, frame)
+}
+
+/// Gives a frame the minimap, when the view has one and is wide enough to share, and records where
+/// it is on the layout so the pointer can tell it from the text.
+fn attach_minimap(
+    layout: &mut Layout,
+    frame: &mut Frame,
+    state: &EditorState,
+    width: Pixels,
+    scroll_top: Pixels,
+    furthest_scroll: Pixels,
+) {
+    let Some(strip) = minimap::strip_bounds(layout.bounds, width) else {
+        return;
+    };
+    layout.minimap = Some(strip);
+    let view_height = layout.bounds.size.height;
+    frame.minimap = Some(minimap::build(state, strip, scroll_top, furthest_scroll, view_height, &frame.theme));
 }
 
 /// How opaque a tone is as a background behind text: the words a diff changed stand out from the rest.

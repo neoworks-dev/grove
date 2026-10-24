@@ -4,6 +4,7 @@
 
 import type {
   AgentFocus,
+  AppPresence,
   Asset,
   AgentMove,
   ConnectorInfo,
@@ -14,6 +15,7 @@ import type {
   ViewPatch,
   ViewSnapshot,
 } from "@suite/protocol/types";
+import type { AppTool, ToolServer } from "../../plugins/agents/contributions";
 import type { ConnectionState, DaemonAddress, SuiteClient, SuiteConnectOptions, SuiteHost } from "../../plugins/agents/suiteClient";
 
 /** A value that tells its listeners when it changes, as the client's `Watched`. */
@@ -60,10 +62,7 @@ export interface FakeEventSubscription {
 }
 
 /** What a presence call sent. */
-export interface PresenceCall {
-  app: string;
-  context?: Record<string, string>;
-}
+export type PresenceCall = AppPresence;
 
 export class FakeClient {
   state = new FakeWatched<ConnectionState>("open");
@@ -206,6 +205,7 @@ export class FakeClient {
 /** The host the service connects through: what the address and start-up do is set by the test. */
 export class FakeHost implements SuiteHost {
   client = new FakeClient();
+  tools = new FakeToolServer();
   /** Whether a daemon is running; `startDaemon` makes it so unless `startFails` is set. */
   running = true;
   startFails: string | null = null;
@@ -253,6 +253,10 @@ export class FakeHost implements SuiteHost {
     return this.client as unknown as SuiteClient;
   }
 
+  toolServer(): ToolServer {
+    return this.tools;
+  }
+
   assetUrl(address: DaemonAddress, source: string): string | undefined {
     if (!source.startsWith("asset://")) {
       return undefined;
@@ -281,4 +285,32 @@ export function agentItem(ref: string, text: string): ViewItem {
     kind: "agent",
     component: { type: "text", blocks: [{ type: "paragraph", spans: [{ text }] }] },
   };
+}
+
+/** The host's tool server, with the tools it was given and a way to call them as the gateway does. */
+export class FakeToolServer implements ToolServer {
+  /** The tool lists the service asked to serve, oldest first. */
+  served: (readonly AppTool[])[] = [];
+  /** Makes the next `serve` reject with this. */
+  failNext: Error | null = null;
+
+  async serve(tools: readonly AppTool[]): Promise<{ url: string; headers: Record<string, string> }> {
+    if (this.failNext !== null) {
+      const error = this.failNext;
+      this.failNext = null;
+      throw error;
+    }
+    this.served.push(tools);
+    return { url: `http://127.0.0.1:1/mcp?v=${this.served.length}`, headers: { Authorization: "Bearer token" } };
+  }
+
+  /** Calls a tool of the latest list as the gateway's `tools/call` does. */
+  call(name: string, args: Record<string, unknown>): Promise<string> {
+    const latest = this.served[this.served.length - 1];
+    const tool = latest.find((candidate) => candidate.name === name);
+    if (tool === undefined) {
+      throw new Error(`no tool ${name}`);
+    }
+    return tool.run(args);
+  }
 }

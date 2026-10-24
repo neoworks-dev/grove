@@ -8,6 +8,8 @@ import robot from "@phosphor-icons/core/regular/robot.svg";
 import AgentPane from "./AgentPane.svelte";
 import { sidecarChanges } from "./changesSource";
 import { chatView } from "./chat/viewState";
+import { groveComponents } from "./groveComponents";
+import { groveTools } from "./groveTools";
 import { AGENT_PANE_TYPE, AgentsService, serviceOpeners } from "./service";
 import SessionsView from "./SessionsView.svelte";
 import { createSuiteHost } from "./suiteHost";
@@ -17,6 +19,8 @@ export const agents = {
   inject: ["slots", "sidebar", "workspace", "commands", "keymap", "layout", "sidecar", "editor", "diff", "explorer"],
   apply(ctx: Context) {
     const service = new AgentsService(ctx, createSuiteHost(), ctx.layout, ctx.workspace, undefined, serviceOpeners(ctx.editor, ctx.diff));
+    ctx.effect(() => service.registerTools(groveTools(service)), "agents.tools");
+    ctx.effect(() => service.registerComponents(groveComponents), "agents.components");
     ctx.slots.register("main", {
       id: "agent",
       key: AGENT_PANE_TYPE,

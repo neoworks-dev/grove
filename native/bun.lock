@@ -13,6 +13,9 @@
         "esbuild": "^0.24.0",
         "svelte": "^5.57.0",
       },
+      "devDependencies": {
+        "@neoworks/neoui": "link:@neoworks/neoui",
+      },
     },
   },
   "packages": {
@@ -77,6 +80,8 @@
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
     "@neoworks/extension-system": ["@neoworks/extension-system@link:@neoworks/extension-system", {}],
+
+    "@neoworks/neoui": ["@neoworks/neoui@link:@neoworks/neoui", {}],
 
     "@neoworks/svelte-gpui": ["@neoworks/svelte-gpui@github:neoworks-dev/svelte-gpui#f0488f5", { "peerDependencies": { "svelte": "^5.57.0" } }, "neoworks-dev-svelte-gpui-f0488f5", "sha512-2rfBVWG25xr80kgPIc44I+jeSsoBeAulkXp8FqBl6Vf+vmiyDL/bEjco3hZq9R0UBaqrB8nWuu8jtK30k000uw=="],
 

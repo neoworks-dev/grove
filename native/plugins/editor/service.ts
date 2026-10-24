@@ -259,6 +259,7 @@ export class EditorService extends Service {
   private changes: ChangeSignal = createChangeSignal();
   private keymapName: KeymapName = "standard";
   private pendingSequence: () => boolean = () => false;
+  private leaderBound: () => boolean = () => false;
   /** What each pane's vim layer last reported, by pane id. */
   private vimStates = new Map<string, VimStatus>();
   private documentListeners = new Set<(event: DocumentEvent) => void>();
@@ -439,6 +440,16 @@ export class EditorService extends Service {
     this.pendingSequence = source;
   }
 
+  /** Where to ask whether any key binding starts with the leader key, which vim's normal mode then leaves to the keymap. */
+  setLeaderKeySource(source: () => boolean): void {
+    this.leaderBound = source;
+  }
+
+  /** Whether the editors leave a bare space in vim's normal mode to the keymap, because a binding starts with it. Reactive. */
+  leaderKeyBound(): boolean {
+    return this.leaderBound();
+  }
+
   /**
    * Whether the app's keymap waits for the next key of a sequence. The editors then leave every key to
    * the keymap, since vim would otherwise take the `v` of Ctrl+K V. Reactive.
@@ -470,6 +481,18 @@ export class EditorService extends Service {
       return { mode: "", pending: "", commandLine: null };
     }
     return status;
+  }
+
+  /**
+   * Whether a bare space may start a leader sequence now: the focused pane is an editor on vim's keys,
+   * in normal mode with nothing half typed. In any other state the editor takes the space. Reactive.
+   */
+  acceptsLeaderKey(): boolean {
+    if (this.keymap() !== "vim" || !this.hasFocusedView() || this.prompt() !== null) {
+      return false;
+    }
+    const status = this.vimStatus();
+    return status.mode === "NORMAL" && status.pending === "" && status.commandLine === null;
   }
 
   /** Closes a document, throwing its unsaved changes away without asking, as `:q!` does. */

@@ -7,7 +7,7 @@
 import { Service, type Context } from "@neoworks/extension-system";
 import { createChangeSignal, type ChangeSignal } from "../../kernel/reactive";
 import type { Command } from "../../kernel/commands";
-import type { Searchable } from "./fuzzy";
+import { rankItems, type Searchable } from "./fuzzy";
 
 declare module "@neoworks/extension-system" {
   interface Context {
@@ -123,6 +123,11 @@ export class PaletteService extends Service {
         extra: `${command.group ?? ""} ${command.keywords ?? ""} ${command.id}`,
         keys: this.ctx.keymap.keysFor(command.id),
       }));
+  }
+
+  /** The items that match the query, best first, by the matcher the palette ranks with. For pickers other plugins draw. */
+  rank<T extends Searchable>(items: T[], query: string): T[] {
+    return rankItems(items, query);
   }
 
   /** Acts on the item chosen in the card: a picker resolves with it, a command list runs the command. */

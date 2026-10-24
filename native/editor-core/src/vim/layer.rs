@@ -92,6 +92,8 @@ pub struct VimLayer {
     last_macro: Option<char>,
     /// How many macros are being played, one inside another, which is limited.
     macro_depth: usize,
+    /// Whether the app has a leader sequence bound, so a bare space in normal mode is left to it.
+    leader_key: bool,
 }
 
 impl Default for VimLayer {
@@ -118,6 +120,7 @@ impl VimLayer {
             macro_recording: None,
             last_macro: None,
             macro_depth: 0,
+            leader_key: false,
         }
     }
 }
@@ -179,6 +182,10 @@ impl InputLayer for VimLayer {
         }
     }
 
+    fn set_leader_key(&mut self, enabled: bool) {
+        self.leader_key = enabled;
+    }
+
     fn status(&self) -> InputStatus {
         let mode = match self.mode {
             Mode::Normal => "NORMAL",
@@ -210,6 +217,11 @@ impl VimLayer {
         let token = token_of(key);
         if token == "C-a" && self.keys.is_empty() {
             return vec![Command::Noop];
+        }
+        if token == "space" && self.leader_key && self.mode == Mode::Normal && self.keys.is_empty() {
+            // The leader key: no commands, so the key reaches the app's keymap, which starts a leader
+            // sequence. Space still moves right after an operator or a count.
+            return Vec::new();
         }
         let ours = !key.modifiers.control || CONTROL_KEYS.contains(&token.as_str());
         let alt_only = key.modifiers.alt && !key.modifiers.control;

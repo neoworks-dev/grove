@@ -16,5 +16,8 @@
     "@suite/sdk": "link:@suite/sdk",
     "esbuild": "^0.24.0",
     "svelte": "^5.57.0"
+  },
+  "devDependencies": {
+    "@neoworks/neoui": "link:@neoworks/neoui"
   }
 }

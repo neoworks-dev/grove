@@ -311,10 +311,7 @@ impl Element for EditorElement {
         let popovers = self.editor.update(cx, |editor, cx| {
             let popovers = popup::build(&entity, editor, &layout, &theme, bounds, window, cx);
             editor.layout = Some(layout);
-            if let Some(row) = editor.pending_center.take() {
-                editor.center_on(row);
-                cx.notify();
-            }
+            editor.center_pending_row(cx);
             editor.hints_may_be_stale(cx);
             popovers
         });

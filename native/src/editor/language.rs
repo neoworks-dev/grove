@@ -643,6 +643,17 @@ impl Editor {
         };
         self.apply(&Command::PlaceCursor { at }, cx);
         self.center_on(at.row);
+        self.pending_center = Some(at.row);
+        cx.notify();
+    }
+
+    /// Centres the row `go_to` asked for, now that a frame has laid the shown document out. Does
+    /// nothing, and draws no extra frame, when no `go_to` is waiting.
+    pub(super) fn center_pending_row(&mut self, cx: &mut Context<Self>) {
+        let Some(row) = self.pending_center.take() else {
+            return;
+        };
+        self.center_on(row);
         cx.notify();
     }
 

@@ -15,7 +15,8 @@
 //!
 //! The host also runs the sidecar, Grove's main process under Bun, and relays the UI's calls
 //! to it (see `sidecar.rs`), and offers the agents plugin the suite daemon's address and a way
-//! to start it (see `suite.rs`).
+//! to start it (see `suite.rs`), and a tool server the daemon's agents call back into (see
+//! `tools.rs`).
 
 mod browser;
 mod data;
@@ -27,6 +28,7 @@ mod lsp;
 mod ripgrep;
 mod sidecar;
 mod suite;
+mod agent_tools;
 mod terminal;
 mod tools;
 
@@ -54,6 +56,7 @@ fn main() {
     let commands = data::register(commands);
     let commands = extensions::register(commands);
     let commands = browser::register(commands);
+    let commands = agent_tools::register(commands);
     let documents = SharedDocuments::new(commands.emitter());
     let commands = documents.register(commands);
     let signals = Signals::default();

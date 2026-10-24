@@ -90,6 +90,10 @@ pub struct Editor {
     pane: String,
     /// Whether the app's keymap waits for the next key of a sequence, which it must get, not this view.
     sequence_pending: bool,
+    /// Whether the app has a leader key sequence bound, which the input layer then leaves a bare space for.
+    leader_key: bool,
+    /// A row to scroll to the middle once the view has been laid out, asked for before it was.
+    pending_center: Option<usize>,
     /// How far the text is scrolled, in pixels from the top of the first line. Each view of a
     /// document scrolls on its own.
     scroll_top: Pixels,
@@ -176,6 +180,8 @@ impl Editor {
             announced_status: None,
             pane: String::new(),
             sequence_pending: false,
+            leader_key: false,
+            pending_center: None,
             scroll_top: px(0.0),
             scroll_animation: None,
             layout: None,
@@ -215,6 +221,7 @@ impl Editor {
         self.scroll_top = self.remembered_scroll_top(document);
         self.scroll_animation = None;
         self.layout = None;
+        self.pending_center = None;
         self.dragging = false;
         let view = cx.entity_id();
         self.view = Some(view);
@@ -448,6 +455,7 @@ impl Editor {
             "vim" => Box::new(VimLayer::new()),
             _ => Box::new(StandardKeymap),
         };
+        self.input.set_leader_key(self.leader_key);
         self.announce_status();
     }
 
@@ -694,9 +702,16 @@ impl AppElement for Editor {
             self.sequence_pending = value.as_bool().unwrap_or(false);
             return;
         }
+        if name == "leaderKey" {
+            self.leader_key = value.as_bool().unwrap_or(false);
+            self.input.set_leader_key(self.leader_key);
+            return;
+        }
         if name == "pane" {
             self.pane = value.as_str().unwrap_or("").to_string();
             self.announced_status = None;
+            // Tells the app the mode right away, so it knows what a first key does before one is pressed.
+            self.announce_status();
             return;
         }
         if name == "keymap" {

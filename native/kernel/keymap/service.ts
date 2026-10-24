@@ -141,6 +141,11 @@ export class KeymapService extends Service {
     return this.resolvedBindings();
   }
 
+  /** Whether some binding starts with the leader key, which is space. Reactive. */
+  hasLeaderBindings(): boolean {
+    return this.effective().some((binding) => binding.sequence.leader);
+  }
+
   /** The keys a command answers to, as keycap labels, one per step; empty when it has none. Reactive. */
   keysFor(commandId: string): string[] {
     const binding = this.effective().find((candidate) => candidate.command === commandId);
@@ -152,6 +157,12 @@ export class KeymapService extends Service {
       return ["␣", ...labels];
     }
     return labels;
+  }
+
+  /** Whether a sequence is begun and not finished, including a leader sequence that has no steps yet. Reactive. */
+  isPending(): boolean {
+    this.changes.track();
+    return this.pendingState.active;
   }
 
   /** The steps of a sequence begun and not finished, for a which-key hint. Reactive. */

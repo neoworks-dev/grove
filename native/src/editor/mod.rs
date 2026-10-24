@@ -97,6 +97,9 @@ pub struct Editor {
     scroll_animation: Option<ScrollAnimation>,
     /// What the last frame drew; none before the first.
     layout: Option<Layout>,
+    /// A row to centre once the next frame has laid the shown document out. Going to a place in a
+    /// file that was just opened happens before that: the last layout is the previous file's.
+    pending_center: Option<usize>,
     /// The last text this editor copied. The system clipboard only takes text from a window that
     /// has focus, so where it refuses, a paste still gets this.
     last_copied: Option<String>,
@@ -178,6 +181,7 @@ impl Editor {
             sequence_pending: false,
             scroll_top: px(0.0),
             scroll_animation: None,
+            pending_center: None,
             layout: None,
             last_copied: None,
             dragging: false,

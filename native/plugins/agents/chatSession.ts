@@ -4,7 +4,7 @@
 // pane shows the session and stops it when the last pane lets go. A chat can also follow one
 // agent's work in the session (a subagent or a guest), read-only, for the agents list.
 
-import type { ViewItem } from "@suite/protocol/types";
+import type { HarnessSettings as OfferedHarness, SessionEventRecord, ViewItem } from "@suite/protocol/types";
 import { ViewState } from "@suite/sdk";
 import { createChangeSignal, type ChangeSignal } from "../../kernel/reactive";
 import { nextApprovals, type Approvals, type SessionStatus } from "./status";
@@ -32,6 +32,10 @@ export class ChatSession {
   private client: ChatClient;
   private view = new ViewState();
   private currentItems: readonly ViewItem[] = [];
+  /** The view's items before the setting notices are taken out. */
+  private viewItems: readonly ViewItem[] = [];
+  private offeredHarnesses: readonly OfferedHarness[] = [];
+  private offeredTimer: ReturnType<typeof setTimeout> | undefined;
   private failure: string | null = null;
   private stopFollowing: (() => void) | null = null;
   private stopEvents: (() => void) | null = null;
@@ -131,6 +135,60 @@ export class ChatSession {
     return this.currentItems;
   }
 
+  /** What each harness offers to set (models, efforts), as the daemon last said; empty until asked. Reactive. */
+  offered(): readonly OfferedHarness[] {
+    this.changes.track();
+    return this.offeredHarnesses;
+  }
+
+  /** Asks the daemon what the session's harnesses offer to set. A failure leaves the last answer. */
+  async loadOffered(): Promise<void> {
+    try {
+      const reply = await this.client.sessionSettings(this.sessionId);
+      // The same answer again would rebuild every open list for nothing.
+      if (JSON.stringify(reply.harnesses) === JSON.stringify(this.offeredHarnesses)) {
+        return;
+      }
+      this.offeredHarnesses = reply.harnesses;
+      this.changes.notify();
+    } catch {
+      return;
+    }
+  }
+
+  /** Asks for the offers once the events that came in together are folded, as a replay brings many. */
+  private askOffered(): void {
+    if (this.offeredTimer !== undefined) {
+      return;
+    }
+    this.offeredTimer = setTimeout(() => {
+      this.offeredTimer = undefined;
+      void this.loadOffered();
+    }, 0);
+  }
+
+  /**
+   * The harness the session runs on: the one the daemon marks current, else what the events said
+   * last. A session that never switched has no event naming its harness. Reactive.
+   */
+  harness(): string {
+    const current = this.offered().find((entry) => entry.current);
+    if (current !== undefined) {
+      return current.name;
+    }
+    return this.status().harness;
+  }
+
+  /** Moves the session onto another harness, without a picker in the chat. */
+  async setHarness(name: string): Promise<void> {
+    await this.send(`/harness ${name}`);
+  }
+
+  /** Sets one of the current harness's options (`model`, `effort`, `mode`) to a value. */
+  async setOption(option: "model" | "effort" | "mode", value: string): Promise<void> {
+    await this.send(`/${option} ${this.harness()} ${value}`);
+  }
+
   /** Why the daemon last refused a call, or null. Reactive. */
   error(): string | null {
     this.changes.track();
@@ -208,14 +266,47 @@ export class ChatSession {
     if (this.options.agent !== undefined) {
       return;
     }
+    this.askOffered();
+    // The history arrives one event per message, and folding each one in redraws the pane: a long
+    // session took seconds to open. So the replay is kept until it is over and folded in at once.
+    let replay: SessionEventRecord[] | undefined = [];
     this.stopEvents = this.client.subscribe(this.sessionId, {
       onEvent: (_event, record) => {
-        if (this.facts.apply(record)) {
-          this.changes.notify();
+        if (replay !== undefined) {
+          replay.push(record);
+          return;
         }
+        this.applyRecords([record]);
+      },
+      onLive: () => {
+        if (replay === undefined) {
+          return;
+        }
+        const records = replay;
+        replay = undefined;
+        this.applyRecords(records);
       },
       onError: (error) => this.fail(error),
     });
+  }
+
+  /** Folds events into the session's facts, and redraws once if any of them changed something. */
+  private applyRecords(records: readonly SessionEventRecord[]): void {
+    const notices = this.facts.settingNotices;
+    let changed = false;
+    for (const record of records) {
+      if (this.facts.apply(record)) {
+        changed = true;
+      }
+    }
+    if (!changed) {
+      return;
+    }
+    if (this.facts.settingNotices !== notices) {
+      this.currentItems = this.withoutSettingNotices(this.viewItems);
+      this.askOffered();
+    }
+    this.changes.notify();
   }
 
   /** Sends what the user typed to the session's agent, commands such as `/model` included. */
@@ -270,8 +361,18 @@ export class ChatSession {
 
   /** Hands the view's items out as a new array, so readers see a change. */
   private publish(): void {
-    this.currentItems = [...this.view.items];
+    this.viewItems = [...this.view.items];
+    this.currentItems = this.withoutSettingNotices(this.viewItems);
     this.changes.notify();
+  }
+
+  /** The items without the notices that announce a setting change, which the composer shows instead. */
+  private withoutSettingNotices(items: readonly ViewItem[]): readonly ViewItem[] {
+    const hidden = this.facts.settingNotices;
+    if (hidden.size === 0) {
+      return items;
+    }
+    return items.filter((item) => item.kind !== "notice" || !hidden.has(item.ref));
   }
 
   /** Awaits a call to the daemon and keeps its failure for the pane to show. */

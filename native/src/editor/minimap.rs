@@ -37,6 +37,8 @@ const PLAIN_OPACITY: f32 = 0.45;
 /// How opaque the band over the rows in view is, and its edges.
 const BAND_OPACITY: f32 = 0.10;
 const BAND_EDGE_OPACITY: f32 = 0.22;
+/// How opaque the strip's background is over the text under it.
+const BACKGROUND_OPACITY: f32 = 0.8;
 /// How opaque the line between the text and the strip is.
 const DIVIDER_OPACITY: f32 = 0.10;
 
@@ -245,9 +247,9 @@ fn block_color(id: Option<HighlightId>, theme: &EditorTheme) -> svelte_gpui::gpu
     }
 }
 
-/// Paints the strip: its background over whatever the text drew under it, the blocks, and the band.
+/// Paints the strip: its half-transparent background over whatever the text drew under it, the blocks, and the band.
 pub fn paint(minimap: &MinimapPaint, theme: &EditorTheme, window: &mut Window) {
-    window.paint_quad(fill(minimap.strip, theme.background));
+    window.paint_quad(fill(minimap.strip, theme.background.opacity(BACKGROUND_OPACITY)));
     let divider = Bounds::new(minimap.strip.origin, size(px(1.0), minimap.strip.size.height));
     window.paint_quad(fill(divider, theme.foreground.opacity(DIVIDER_OPACITY)));
     for (bounds, color) in &minimap.blocks {

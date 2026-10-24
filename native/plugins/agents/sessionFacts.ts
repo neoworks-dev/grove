@@ -15,6 +15,8 @@ export class SessionFacts {
   touches: Touches = NO_TOUCHES;
   agents: readonly AgentRow[] = [];
   calls: Calls = noCalls();
+  /** The refs of the chat notices that announce a setting change (`n<seq>`, as the daemon names them). */
+  settingNotices: ReadonlySet<string> = new Set();
   private lastSeq = 0;
 
   /**
@@ -22,7 +24,7 @@ export class SessionFacts {
    * replayed, so the fold starts over. Returns whether anything it keeps changed.
    */
   apply(record: SessionEventRecord): boolean {
-    const before = [this.status, this.plans, this.touches, this.agents, this.calls];
+    const before = [this.status, this.plans, this.touches, this.agents, this.calls, this.settingNotices];
     if (record.seq <= this.lastSeq) {
       this.reset();
     }
@@ -34,7 +36,10 @@ export class SessionFacts {
     this.touches = applyTouch(this.touches, record);
     this.agents = applyAgentEvent(this.agents, record);
     this.calls = applyCall(this.calls, record);
-    const after = [this.status, this.plans, this.touches, this.agents, this.calls];
+    if (record.event.type === "setting_changed") {
+      this.settingNotices = new Set([...this.settingNotices, `n${record.seq}`]);
+    }
+    const after = [this.status, this.plans, this.touches, this.agents, this.calls, this.settingNotices];
     return before.some((value, index) => value !== after[index]);
   }
 
@@ -45,6 +50,7 @@ export class SessionFacts {
     this.touches = NO_TOUCHES;
     this.agents = [];
     this.calls = noCalls();
+    this.settingNotices = new Set();
     this.lastSeq = 0;
   }
 }

@@ -118,7 +118,7 @@ describe("the agents list", () => {
 describe("the files panel", () => {
   const touch = (path: string, tags: string[]): Touched => ({ path, tags });
 
-  test("git's changes come first, tagged by who touched them, then files only an agent touched", () => {
+  test("only the files an agent touched are listed, marked by git and tagged by who touched them", () => {
     const entries = fileEntries(
       "/repo",
       [
@@ -127,17 +127,16 @@ describe("the files panel", () => {
         { path: "new.txt", changeType: "untracked", staged: false },
         { path: "b.ts", oldPath: "old.ts", changeType: "renamed", staged: true },
       ],
-      [touch("/repo/src/a.ts", ["agent", "claude"]), touch("/repo/committed.md", ["agent"])],
+      [touch("/repo/src/a.ts", ["agent", "claude"]), touch("/repo/b.ts", ["agent"]), touch("/repo/committed.md", ["agent"])],
     );
     expect(entries.map((entry) => [entry.rel, entry.mark, entry.tags])).toEqual([
       ["src/a.ts", "modified", ["agent", "claude"]],
-      ["new.txt", "untracked", []],
-      ["b.ts", "renamed", []],
+      ["b.ts", "renamed", ["agent"]],
       ["committed.md", "clean", ["agent"]],
     ]);
-    expect(entries[2].orig).toBe("old.ts");
-    expect(entries[3].file).toBeUndefined();
-    expect(entries.map((entry) => glyphOfMark(entry.mark))).toEqual(["M", "?", "R", "·"]);
+    expect(entries[1].orig).toBe("old.ts");
+    expect(entries[2].file).toBeUndefined();
+    expect(entries.map((entry) => glyphOfMark(entry.mark))).toEqual(["M", "R", "·"]);
   });
 
   test("outside a repository only the touched files are listed", () => {

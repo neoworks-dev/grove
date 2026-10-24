@@ -4,6 +4,8 @@
 
 import type { DiffChangeType, DiffFile } from "../../../src/shared/types";
 import type { DiffBase } from "../diff/model";
+import { buildChangeTree, type ChangeTreeNode } from "../explorer/changeTree";
+import { CHANGE_LETTERS } from "../explorer/model";
 
 /** One file in one of the two lists. A file with staged and unstaged changes is an entry in each. */
 export interface ChangeEntry {
@@ -27,19 +29,6 @@ export interface ChangeGroups {
   staged: ChangeEntry[];
   unstaged: ChangeEntry[];
 }
-
-/** A row of the list: a section heading, or a file. */
-export type ChangeRow =
-  | { kind: "header"; id: "staged" | "unstaged"; title: string; count: number }
-  | { kind: "file"; entry: ChangeEntry };
-
-const LETTERS: Record<DiffChangeType, string> = {
-  added: "A",
-  modified: "M",
-  deleted: "D",
-  renamed: "R",
-  untracked: "U",
-};
 
 /** Sorts the changed files into the staged and the unstaged list, each by path. */
 export function groupChanges(files: DiffFile[]): ChangeGroups {
@@ -71,7 +60,7 @@ function entryOf(file: DiffFile): ChangeEntry {
     name,
     directory,
     changeType: file.changeType,
-    letter: LETTERS[file.changeType],
+    letter: CHANGE_LETTERS[file.changeType],
     staged: file.staged,
   };
   if (file.oldPath !== undefined) {
@@ -80,18 +69,32 @@ function entryOf(file: DiffFile): ChangeEntry {
   return entry;
 }
 
-/** The rows of the list: each section with files in it, under its heading. */
-export function rowsOf(groups: ChangeGroups): ChangeRow[] {
-  const rows: ChangeRow[] = [];
+/** The id of the staged section's node, and of the unstaged one's. */
+export const STAGED_SECTION = "staged";
+export const UNSTAGED_SECTION = "unstaged";
+
+/** One section of the list: a heading node over the tree of its files. */
+function sectionOf(id: string, title: string, entries: ChangeEntry[]): ChangeTreeNode<ChangeEntry> {
+  const children = buildChangeTree(
+    entries.map((entry) => ({ path: entry.path, change: entry.changeType, item: entry })),
+    `${id}:`,
+  );
+  return { key: id, name: `${title} · ${entries.length}`, relPath: "", isDir: true, section: true, children };
+}
+
+/**
+ * The tree the view shows: each section with files in it, as a heading over its folders. A file's
+ * key is `staged:<path>` or `unstaged:<path>`, the same as its entry's key.
+ */
+export function sectionsOf(groups: ChangeGroups): ChangeTreeNode<ChangeEntry>[] {
+  const sections: ChangeTreeNode<ChangeEntry>[] = [];
   if (groups.staged.length > 0) {
-    rows.push({ kind: "header", id: "staged", title: "Staged Changes", count: groups.staged.length });
-    rows.push(...groups.staged.map((entry) => ({ kind: "file" as const, entry })));
+    sections.push(sectionOf(STAGED_SECTION, "Staged Changes", groups.staged));
   }
   if (groups.unstaged.length > 0) {
-    rows.push({ kind: "header", id: "unstaged", title: "Changes", count: groups.unstaged.length });
-    rows.push(...groups.unstaged.map((entry) => ({ kind: "file" as const, entry })));
+    sections.push(sectionOf(UNSTAGED_SECTION, "Changes", groups.unstaged));
   }
-  return rows;
+  return sections;
 }
 
 /**

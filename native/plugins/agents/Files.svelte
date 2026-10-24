@@ -1,52 +1,38 @@
 <!--
-  The files panel: what git says changed in the session's worktree, plus the files the agent and
-  its guests touched, tagged by who. Pressing a file shows its diff in a diff pane.
+  The files panel: the files the session's agent and its guests changed, as a folder tree with the
+  explorer's icons and git colours. Pressing a file shows its diff in a diff pane.
   Ported from neoworks-harness apps/gui (plugins/files).
 -->
 <script lang="ts">
   import { Button, Scroll, Text, View } from "@neoworks/svelte-gpui/ui";
+  import ChangeTree from "../explorer/ChangeTree.svelte";
+  import { buildChangeTree, type ChangeTreeNode } from "../explorer/changeTree";
+  import type { FileIconSource } from "../explorer/fileIcons";
   import DiffView from "./chat/DiffView.svelte";
-  import { glyphOfMark, type FileEntry, type Mark } from "./files";
+  import { changeOfMark, type FileEntry } from "./files";
   import type { FilesModel } from "./filesModel";
   import { palette } from "./palette";
 
-  let { files, branch }: { files: FilesModel; branch: string | null } = $props();
+  let { files, branch, icons }: { files: FilesModel; branch: string | null; icons: FileIconSource } = $props();
 
   const p = palette;
 
   const entries = $derived(files.entries());
   const diff = $derived(files.diff());
   const error = $derived(files.error());
+  const roots = $derived(buildChangeTree(entries.map((entry) => ({ path: entry.rel, change: changeOfMark(entry.mark), item: entry }))));
 
-  /** The colour of a file's margin letter and name. */
-  function colorOf(mark: Mark): string {
-    switch (mark) {
-      case "added":
-        return p.success;
-      case "deleted":
-        return p.danger;
-      case "modified":
-      case "renamed":
-        return p.accent;
-      default:
-        return p.muted;
-    }
+  /** The guests that changed a file, when it was not only the session's own agent. */
+  function guestsOf(entry: FileEntry): string {
+    const guests = entry.tags.filter((tag) => tag !== "agent");
+    return guests.join(", ");
   }
 
-  /** The name of a file, with where a renamed one came from. */
-  function nameOf(entry: FileEntry): string {
-    if (entry.orig === undefined) {
-      return entry.rel;
+  /** A file's row was pressed: its diff opens in a diff pane. */
+  function openFile(node: ChangeTreeNode<FileEntry>): void {
+    if (node.item !== undefined) {
+      files.open(node.item);
     }
-    return `${entry.orig} → ${entry.rel}`;
-  }
-
-  /** The who-changed-it note after a name, or nothing. */
-  function tagsOf(entry: FileEntry): string {
-    if (entry.tags.length === 0) {
-      return "";
-    }
-    return ` (${entry.tags.join(", ")})`;
   }
 </script>
 
@@ -76,19 +62,16 @@
     {#if error !== null}
       <Text style={{ color: p.danger }}>{error}</Text>
     {/if}
-    <Scroll style={{ flex: 1, minHeight: 0 }}>
-      <View>
-        {#each entries as entry (entry.rel)}
-          <View
-            onpress={() => files.open(entry)}
-            hover={{ background: p.surface }}
-            style={{ direction: "row", gap: p.space.m, paddingY: 1, cursor: "pointer" }}
-          >
-            <Text style={{ width: 12, color: colorOf(entry.mark) }}>{glyphOfMark(entry.mark)}</Text>
-            <Text style={{ flex: 1, minWidth: 0, truncate: true, color: colorOf(entry.mark) }}>{nameOf(entry)}{tagsOf(entry)}</Text>
-          </View>
-        {/each}
-      </View>
-    </Scroll>
+    {#if roots.length === 0}
+      <Text style={{ color: p.muted }}>The agent has not changed any files yet.</Text>
+    {:else}
+      <ChangeTree {roots} iconSet={icons.iconSet()} onopen={openFile}>
+        {#snippet trailing(node: ChangeTreeNode<FileEntry>)}
+          {#if node.item !== undefined && guestsOf(node.item) !== ""}
+            <Text style={{ shrink: 0, color: p.muted }}>{guestsOf(node.item)}</Text>
+          {/if}
+        {/snippet}
+      </ChangeTree>
+    {/if}
   </View>
 {/if}

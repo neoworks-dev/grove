@@ -10,7 +10,7 @@ import { GitChangesService } from "./service";
 
 export const gitChanges = {
   name: "git-changes",
-  inject: ["sidebar", "sidecar", "workspace", "diff", "editor", "commands", "keymap"],
+  inject: ["sidebar", "sidecar", "workspace", "diff", "editor", "commands", "keymap", "explorer"],
   apply(ctx: Context) {
     const service = new GitChangesService(ctx, {
       diffs: ctx.diff,
@@ -24,7 +24,7 @@ export const gitChanges = {
       icon: gitBranch,
       order: 2,
       component: GitChangesView,
-      props: { changes: service, workspace: ctx.workspace, sidecar: ctx.sidecar },
+      props: { changes: service, icons: ctx.explorer, workspace: ctx.workspace, sidecar: ctx.sidecar },
     });
     ctx.commands.register({
       id: "gitChanges.show",

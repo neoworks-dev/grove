@@ -161,6 +161,8 @@ export class AgentsService extends Service {
   private appName = CLIENT_NAME;
   private followed = new Map<string, FollowedChat>();
   private paneHandles = new Map<string, PaneHandle>();
+  /** Sessions whose tab the user closed, for this run of the app. */
+  private closedTabs: ReadonlySet<string> = new Set();
   private changes: ChangeSignal = createChangeSignal();
   private timing: AgentsTiming;
   /** Counts connection attempts, so one that gave up cannot adopt its client when it finally answers. */
@@ -235,7 +237,43 @@ export class AgentsService extends Service {
 
   /** The sessions in the same worktree as this one, the tabs of its pane. Reactive. */
   siblingSessions(sessionId: string): SessionInfo[] {
-    return siblingsOf(this.groups(), sessionId);
+    this.changes.track();
+    return siblingsOf(this.groups(), sessionId).filter((info) => info.id === sessionId || !this.closedTabs.has(info.id));
+  }
+
+  /**
+   * Takes a session's tab out of the strip; the session itself stays in the daemon and in the
+   * Agents view, where opening it brings the tab back. A pane showing it moves to the next tab,
+   * or to a new session when it was the last.
+   */
+  closeTab(leafId: string, sessionId: string): void {
+    const tabs = this.siblingSessions(sessionId);
+    this.closedTabs = new Set([...this.closedTabs, sessionId]);
+    this.changes.notify();
+    if (this.sessionOfPane(leafId) !== sessionId) {
+      return;
+    }
+    const at = tabs.findIndex((tab) => tab.id === sessionId);
+    let next = tabs[at + 1];
+    if (next === undefined) {
+      next = tabs[at - 1];
+    }
+    if (next === undefined) {
+      void this.newSession();
+      return;
+    }
+    this.showSession(leafId, next.id);
+  }
+
+  /** Puts a closed session's tab back, as opening it does. */
+  private reopenTab(sessionId: string): void {
+    if (!this.closedTabs.has(sessionId)) {
+      return;
+    }
+    const reopened = new Set(this.closedTabs);
+    reopened.delete(sessionId);
+    this.closedTabs = reopened;
+    this.changes.notify();
   }
 
   /** What the daemon says about a session, or undefined for one it does not list. Reactive. */
@@ -414,6 +452,7 @@ export class AgentsService extends Service {
 
   /** Makes one pane show another session, the way a tab does. */
   showSession(leafId: string, sessionId: string): void {
+    this.reopenTab(sessionId);
     this.panes.setPaneState(leafId, { sessionId });
   }
 
@@ -422,6 +461,7 @@ export class AgentsService extends Service {
    * the first agent pane, else a new pane split off the focused one.
    */
   openSession(sessionId: string): void {
+    this.reopenTab(sessionId);
     const paneIds = this.panes.leafIds().filter((leafId) => this.panes.paneTypeOf(leafId) === AGENT_PANE_TYPE);
     const showing = paneIds.find((leafId) => this.sessionOfPane(leafId) === sessionId);
     if (showing !== undefined) {

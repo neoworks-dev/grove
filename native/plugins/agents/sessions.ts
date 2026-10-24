@@ -155,13 +155,16 @@ export function siblingsOf(groups: readonly SessionGroup[], sessionId: string): 
   return [];
 }
 
-/** The session's title on one line, else "session " and the start of its id. */
+/** What a session is called until it has a title of its own. */
+export const UNTITLED_SESSION = "New chat";
+
+/** The session's title on one line, else "New chat". */
 export function sessionTitle(info: SessionInfo): string {
   const title = info.title?.trim();
   if (title) {
     return title.split(/\s+/).join(" ");
   }
-  return `session ${info.id.slice(0, 8)}`;
+  return UNTITLED_SESSION;
 }
 
 /** The latest thing said, on one line. */

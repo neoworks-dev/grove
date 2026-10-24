@@ -70,23 +70,34 @@ describe("ExplorerModel git changes", () => {
     expect(model.changeOf("a.ts")).toBeUndefined();
   });
 
-  test("a collapsed folder carries the marker of a change inside it", () => {
+  test("every folder above a changed file shows its change", () => {
     const model = new ExplorerModel();
     model.setChanges([{ path: "src/lib/a.ts", changeType: "modified" }]);
-    expect([...model.markedDirectories(new Set())]).toEqual(["src"]);
+    expect([...model.directoryChanges()]).toEqual([
+      ["src", "modified"],
+      ["src/lib", "modified"],
+    ]);
   });
 
-  test("the marker moves down to the deepest folder showing as its ancestors expand", () => {
+  test("a folder shows the strongest change below it", () => {
     const model = new ExplorerModel();
-    model.setChanges([{ path: "src/lib/a.ts", changeType: "modified" }]);
-    expect([...model.markedDirectories(new Set(["src"]))]).toEqual(["src/lib"]);
-    expect([...model.markedDirectories(new Set(["src", "src/lib"]))]).toEqual(["src/lib"]);
+    model.setChanges([
+      { path: "src/new.ts", changeType: "untracked" },
+      { path: "src/lib/a.ts", changeType: "modified" },
+      { path: "src/lib/b.ts", changeType: "added" },
+      { path: "docs/gone.md", changeType: "deleted" },
+      { path: "docs/new.md", changeType: "untracked" },
+    ]);
+    const shown = model.directoryChanges();
+    expect(shown.get("src")).toBe("modified");
+    expect(shown.get("src/lib")).toBe("modified");
+    expect(shown.get("docs")).toBe("deleted");
   });
 
   test("a change at the root marks no folder", () => {
     const model = new ExplorerModel();
     model.setChanges([{ path: "README.md", changeType: "modified" }]);
-    expect(model.markedDirectories(new Set()).size).toBe(0);
+    expect(model.directoryChanges().size).toBe(0);
   });
 });
 

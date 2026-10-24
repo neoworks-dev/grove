@@ -12,6 +12,7 @@
   import { colors, fontSize, radius } from "../theme/tokens";
   import type { WorkspaceService } from "../workspace/service";
   import type { ChangesSource } from "./filesModel";
+  import type { FileIconSource } from "../explorer/fileIcons";
   import type { AgentsService } from "./service";
 
   interface Props {
@@ -20,11 +21,13 @@
     workspace: WorkspaceService;
     /** Where the files panel reads the worktree's changes from. */
     changes: ChangesSource;
+    /** Where the files panel takes its file icons from. */
+    icons: FileIconSource;
     /** The pane this is drawn in. */
     leafId?: string;
   }
 
-  let { agents, layout, workspace, changes, leafId = "main" }: Props = $props();
+  let { agents, layout, workspace, changes, icons, leafId = "main" }: Props = $props();
 
   const sessionId = $derived(agents.sessionOfPane(leafId));
   const connection = $derived(agents.state());
@@ -93,7 +96,7 @@
          makes the service let go of the session for a moment, and a view that looked the chat up
          again would find none while it is torn down. A new chat for the session is a new view. -->
     {#key chat}
-      <AgentSession {agents} {workspace} {changes} chat={untrack(() => chat) as ChatSession} {leafId} {focused} />
+      <AgentSession {agents} {workspace} {changes} {icons} chat={untrack(() => chat) as ChatSession} {leafId} {focused} />
     {/key}
   {/if}
 </View>

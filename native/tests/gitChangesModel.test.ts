@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { DiffFile } from "../../src/shared/types";
-import { commitHint, diffBaseOf, groupChanges, rowsOf } from "../plugins/git-changes/model";
+import { commitHint, diffBaseOf, groupChanges, sectionsOf } from "../plugins/git-changes/model";
 
 const files: DiffFile[] = [
   { path: "src/b.rs", changeType: "modified", staged: true },
@@ -34,21 +34,24 @@ describe("grouping changes", () => {
   });
 });
 
-describe("the rows of the list", () => {
-  test("each list has a heading with its count, and an empty list has none", () => {
-    const rows = rowsOf(groupChanges(files));
-    expect(rows.map((row) => (row.kind === "header" ? `${row.title} ${row.count}` : row.entry.name))).toEqual([
-      "Staged Changes 2",
-      "a.md",
-      "b.rs",
-      "Changes 3",
-      "new.txt",
-      "old.ts",
-      "b.rs",
+describe("the sections tree", () => {
+  test("each list is a heading with its count over its folders, and an empty list has none", () => {
+    const sections = sectionsOf(groupChanges(files));
+    expect(sections.map((section) => [section.key, section.name, section.section])).toEqual([
+      ["staged", "Staged Changes · 2", true],
+      ["unstaged", "Changes · 3", true],
     ]);
-    expect(rowsOf({ staged: [], unstaged: [] })).toEqual([]);
-    const onlyUnstaged = rowsOf(groupChanges([{ path: "x", changeType: "modified", staged: false }]));
-    expect(onlyUnstaged[0]).toMatchObject({ kind: "header", id: "unstaged" });
+    expect(sections[0].children.map((node) => node.name)).toEqual(["src", "a.md"]);
+    expect(sections[0].children[0].children.map((node) => node.key)).toEqual(["staged:src/b.rs"]);
+    expect(sectionsOf({ staged: [], unstaged: [] })).toEqual([]);
+    const onlyUnstaged = sectionsOf(groupChanges([{ path: "x", changeType: "modified", staged: false }]));
+    expect(onlyUnstaged[0]).toMatchObject({ key: "unstaged", section: true });
+  });
+
+  test("a file keeps its entry's key, so the opened file can be found in the tree", () => {
+    const groups = groupChanges(files);
+    const keys = sectionsOf(groups)[1].children.map((node) => node.key);
+    expect(keys).toContain(groups.unstaged.find((entry) => entry.path === "new.txt")!.key);
   });
 });
 

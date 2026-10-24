@@ -2,15 +2,30 @@
 
 import type { Context } from "@neoworks/extension-system";
 import folder from "@phosphor-icons/core/regular/folder.svg";
+import { defineSettings, setting } from "../../kernel/settings";
 import ExplorerView from "./ExplorerView.svelte";
+import { DEFAULT_ICON_SET_ID, ICON_SETS } from "./fileIcons";
 import { openInEditor } from "./openInEditor";
 import { ExplorerService } from "./service";
 
+export const explorerSettings = defineSettings({
+  iconSet: setting.enum({
+    label: "File icons",
+    description: "The icons the explorer draws files and folders with.",
+    default: DEFAULT_ICON_SET_ID,
+    options: ICON_SETS.map((set) => ({ value: set.id, label: set.label })),
+    live: true,
+  }),
+});
+
 export const explorer = {
   name: "explorer",
-  inject: ["sidebar", "sidecar", "workspace", "commands", "keymap"],
-  apply(ctx: Context) {
+  Config: explorerSettings,
+  inject: ["sidebar", "sidecar", "workspace", "commands", "keymap", "settings"],
+  apply(ctx: Context, config: { iconSet: string }) {
     const service = new ExplorerService(ctx, { openInEditor: (absolutePath) => openInEditor(ctx, absolutePath) });
+    service.setIconSet(config.iconSet);
+    ctx.settings.onLive((change) => service.setIconSet(change.config.iconSet as string));
     ctx.sidebar.registerView({
       id: "explorer",
       title: "Explorer",

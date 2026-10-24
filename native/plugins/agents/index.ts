@@ -14,7 +14,7 @@ import { createSuiteHost } from "./suiteHost";
 
 export const agents = {
   name: "agents",
-  inject: ["slots", "sidebar", "workspace", "commands", "keymap", "layout", "sidecar", "editor", "diff"],
+  inject: ["slots", "sidebar", "workspace", "commands", "keymap", "layout", "sidecar", "editor", "diff", "explorer"],
   apply(ctx: Context) {
     const service = new AgentsService(ctx, createSuiteHost(), ctx.layout, ctx.workspace, undefined, serviceOpeners(ctx.editor, ctx.diff));
     ctx.slots.register("main", {
@@ -24,10 +24,12 @@ export const agents = {
       props: {
         title: (leafId: string) => service.paneTitle(leafId),
         icon: robot,
+        header: false,
         agents: service,
         layout: ctx.layout,
         workspace: ctx.workspace,
         changes: sidecarChanges(ctx.sidecar),
+        icons: ctx.explorer,
       },
     });
     ctx.sidebar.registerView({
@@ -39,8 +41,24 @@ export const agents = {
       props: { agents: service, workspace: ctx.workspace },
     });
     registerCommands(ctx, service);
+    openChatOnStart(ctx, service);
   },
 };
+
+/**
+ * Opens a fresh chat beside the editor once the first repository is open, as Grove's default
+ * layout. The pane closes like any other; the editor keeps the focus.
+ */
+function openChatOnStart(ctx: Context, service: AgentsService): void {
+  const stop = ctx.workspace.onSelectionChange((worktree: unknown) => {
+    if (worktree === null) {
+      return;
+    }
+    stop();
+    const editorLeafId = ctx.layout.focusedLeafId;
+    void service.newSession().then(() => ctx.layout.focus(editorLeafId));
+  });
+}
 
 /** Registers the commands for showing the view, starting a session, what the chat shows and the approvals mode, and their keys. */
 function registerCommands(ctx: Context, service: AgentsService): void {

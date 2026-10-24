@@ -646,9 +646,11 @@ impl Editor {
         cx.notify();
     }
 
-    /// Scrolls so a row is in the middle of the view, as far as the text allows.
-    fn center_on(&mut self, row: usize) {
+    /// Scrolls so a row is in the middle of the view, as far as the text allows. A view that has not
+    /// been laid out yet, such as one that was just given another document, does it after its next frame.
+    pub(super) fn center_on(&mut self, row: usize) {
         let Some(layout) = &self.layout else {
+            self.pending_center = Some(row);
             return;
         };
         let row_top = super::element::LINE_HEIGHT * layout.blocks.display_row_of(row) as f32;

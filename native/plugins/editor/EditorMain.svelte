@@ -26,7 +26,7 @@
 
   /** The editor `src/editor/mod.rs` registers. */
   const Editor = element<
-    { document: number; pane: string; viewId: string; hideSources: string[]; minimap: number; sequencePending: boolean; theme: EditorTheme; keymap: string; onfocus: () => void; ongoto: (event: GotoEvent) => void },
+    { document: number; pane: string; viewId: string; hideSources: string[]; minimap: number; sequencePending: boolean; leaderKey: boolean; theme: EditorTheme; keymap: string; onfocus: () => void; ongoto: (event: GotoEvent) => void },
     EditorViewMethods
   >("editor");
 
@@ -122,6 +122,7 @@
         hideSources={service.hiddenSourcesIn(leafId, active.id)}
         minimap={MINIMAP_WIDTH}
         sequencePending={service.sequencePending()}
+        leaderKey={service.leaderKeyBound()}
         theme={activeEditorTheme()}
         keymap={service.keymap()}
         onfocus={() => service.focusPane(leafId)}

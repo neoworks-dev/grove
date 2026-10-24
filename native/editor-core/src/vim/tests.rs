@@ -970,3 +970,29 @@ fn escape_in_normal_mode_clears_the_search_highlight() {
     vim.keys(":noh<CR>");
     assert!(!vim.state.memory.search_highlight);
 }
+
+#[test]
+fn a_bare_space_in_normal_mode_is_left_to_the_app_when_it_has_a_leader_key() {
+    let mut vim = Vim::new("¦abc");
+    vim.layer.set_leader_key(true);
+    assert!(vim.layer.translate(&named_key("Space"), &CONTEXT).is_empty());
+    assert_eq!(vim.heads(), vec![at(0, 0)]);
+    // Space is still a motion once something else has begun the command.
+    check_with_leader("¦abc", "d<Space>", "bc", (0, 0));
+    check_with_leader("¦abcdef", "2<Space>x", "abdef", (0, 2));
+    check_with_leader("¦abc", "v<Space>d", "c", (0, 0));
+}
+
+#[test]
+fn space_moves_right_when_the_app_has_no_leader_key() {
+    check("¦abc", "<Space>", "abc", (0, 1));
+}
+
+/// Like `check`, with the app's leader key bound.
+fn check_with_leader(marked: &str, typed: &str, expected_text: &str, expected_cursor: (usize, usize)) {
+    let mut vim = Vim::new(marked);
+    vim.layer.set_leader_key(true);
+    vim.keys(typed);
+    assert_eq!(vim.text(), expected_text, "text after {typed:?} in {marked:?}");
+    assert_eq!(vim.heads(), vec![at(expected_cursor.0, expected_cursor.1)], "cursor after {typed:?} in {marked:?}");
+}

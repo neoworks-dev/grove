@@ -44,6 +44,10 @@ pub trait InputLayer {
     fn status(&self) -> InputStatus {
         InputStatus::default()
     }
+
+    /// Whether the app has a leader key sequence bound, which a modal layer then leaves a bare space
+    /// for instead of using it as a motion. A layer without modes ignores it.
+    fn set_leader_key(&mut self, _enabled: bool) {}
 }
 
 /// The cursor a layer asks for.

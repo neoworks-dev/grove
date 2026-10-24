@@ -86,7 +86,10 @@ export const editor = {
   apply(ctx: Context, config: EditorConfig) {
     const service = new EditorService(ctx, gpuiDocumentHost(), ctx.layout);
     service.setKeymap(config.keymap);
-    service.setPendingSequenceSource(() => ctx.keymap.pendingSteps().length > 0);
+    service.setPendingSequenceSource(() => ctx.keymap.isPending());
+    // In vim's normal mode space is the leader key; the editor leaves it to the keymap then.
+    service.setLeaderKeySource(() => ctx.keymap.hasLeaderBindings());
+    ctx.keymap.allowBareKeys(() => service.acceptsLeaderKey());
     const configure = (options: EditorOptions) => {
       service.configure(options).catch((error) => ctx.logger.warn(`editor: could not apply the settings: ${String(error)}`));
     };

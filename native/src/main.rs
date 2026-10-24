@@ -24,6 +24,7 @@ mod editor;
 mod extensions;
 mod git;
 mod lsp;
+mod ripgrep;
 mod sidecar;
 mod suite;
 mod terminal;
@@ -62,6 +63,7 @@ fn main() {
     lsp.attach_tools(tools);
     let commands = lsp.register(commands);
     let commands = git::register(commands);
+    let commands = ripgrep::register(commands);
     let commands = diff::register(commands, documents.clone());
     let terminals = Terminals::new(commands.emitter());
     let commands = terminals.register(commands);

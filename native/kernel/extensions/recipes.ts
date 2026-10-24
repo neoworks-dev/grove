@@ -10,8 +10,8 @@ export const PLATFORMS = ["linux-x64", "linux-arm64", "macos-x64", "macos-arm64"
 
 export type PlatformKey = (typeof PLATFORMS)[number];
 
-/** How a downloaded release asset holds the tool. */
-export type ArchiveKind = "none" | "gz" | "tar.gz" | "tar.xz" | "zip";
+/** How a downloaded release asset holds the tool; `auto` reads it from the asset's file name. */
+export type ArchiveKind = "auto" | "none" | "gz" | "tar.gz" | "zip";
 
 /** A binary taken from a GitHub release. `{version}` in an asset name stands for the release tag without its `v`. */
 export interface GithubReleaseRecipe {
@@ -22,6 +22,7 @@ export interface GithubReleaseRecipe {
   tag?: string;
   /** The asset to download for each platform; a platform with no entry cannot install the tool. */
   assets: Partial<Record<PlatformKey, string>>;
+  /** How the asset holds the tool; read from the asset's name when left out. */
   archive: ArchiveKind;
   /** The executables the tool provides, found by name inside the extracted files. */
   binaries: string[];
@@ -52,9 +53,18 @@ export interface CargoRecipe {
   binaries: string[];
 }
 
-export type InstallRecipe = GithubReleaseRecipe | NpmRecipe | PipRecipe | CargoRecipe;
+/** A Go program built with `go install` into a directory of its own, which needs the Go toolchain. */
+export interface GoRecipe {
+  kind: "go";
+  /** The package path, such as `golang.org/x/tools/gopls`. */
+  package: string;
+  version?: string;
+  binaries: string[];
+}
 
-const ARCHIVE_KINDS: ArchiveKind[] = ["none", "gz", "tar.gz", "tar.xz", "zip"];
+export type InstallRecipe = GithubReleaseRecipe | NpmRecipe | PipRecipe | CargoRecipe | GoRecipe;
+
+const ARCHIVE_KINDS: ArchiveKind[] = ["auto", "none", "gz", "tar.gz", "zip"];
 
 /** Reads a recipe, or returns null after adding what is wrong with it to `problems`. */
 export function parseRecipe(value: unknown, where: string, problems: string[]): InstallRecipe | null {
@@ -74,6 +84,9 @@ export function parseRecipe(value: unknown, where: string, problems: string[]): 
   }
   if (kind === "cargo") {
     return parsePackageRecipe(value, "cargo", "crate", where, problems);
+  }
+  if (kind === "go") {
+    return parsePackageRecipe(value, "go", "package", where, problems);
   }
   if (kind !== undefined) {
     problems.push(`${where}: unknown recipe kind "${kind}"`);
@@ -136,10 +149,10 @@ function parseAssets(value: unknown, where: string, problems: string[]): Partial
   return assets;
 }
 
-/** The archive kind, `none` when left out, or null for one Grove cannot unpack. */
+/** The archive kind, `auto` when left out, or null for one Grove cannot unpack. */
 function parseArchive(value: unknown, where: string, problems: string[]): ArchiveKind | null {
   if (value === undefined) {
-    return "none";
+    return "auto";
   }
   if (typeof value === "string" && ARCHIVE_KINDS.includes(value as ArchiveKind)) {
     return value as ArchiveKind;
@@ -148,10 +161,10 @@ function parseArchive(value: unknown, where: string, problems: string[]): Archiv
   return null;
 }
 
-/** An npm, pip or cargo recipe, which differ only in what the package field is called. */
+/** An npm, pip, cargo or go recipe, which differ only in what the package field is called. */
 function parsePackageRecipe(
   value: Record<string, unknown>,
-  kind: "npm" | "pip" | "cargo",
+  kind: "npm" | "pip" | "cargo" | "go",
   packageField: string,
   where: string,
   problems: string[],

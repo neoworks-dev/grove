@@ -2,7 +2,7 @@
 // runtime: it installs the DOM globals that runtime reads at module scope.
 import { start } from "@neoworks/svelte-gpui";
 import { bootKernel } from "../kernel/boot";
-import { hostExtensionFiles } from "../kernel/extensions/hostStore";
+import { hostExtensionFiles, hostToolsHost } from "../kernel/extensions/hostStore";
 import { hostProfileFiles } from "../kernel/hostFiles";
 import Root from "../kernel/Root.svelte";
 import { corePlugins } from "../plugins";
@@ -14,7 +14,7 @@ const boot = bootKernel({
   catalog: corePlugins,
   coreRows,
   files: hostProfileFiles,
-  extensions: { files: hostExtensionFiles, modules: extensionModules },
+  extensions: { files: hostExtensionFiles, modules: extensionModules, tools: hostToolsHost },
 });
 
 start(Root, { boot }, { window: { title: "Grove", width: 1100, height: 760 } });

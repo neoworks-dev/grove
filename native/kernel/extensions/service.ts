@@ -8,6 +8,7 @@ import { Service, type Context, type Plugin } from "@neoworks/extension-system";
 import type { PluginCatalog, ProfileRow } from "../profile";
 import { createChangeSignal, type ChangeSignal } from "../reactive";
 import { defineSettings } from "../settings";
+import { contributionsOf, type ToolsHost } from "./contributions";
 import { evaluateExtensionScript, type SharedModules } from "./evaluate";
 import type {
   ExtensionManifest,
@@ -41,6 +42,8 @@ export interface ExtensionsConfig {
   files: ExtensionFiles | null;
   /** What scripts may `require`. */
   modules: SharedModules;
+  /** Where the language servers and tools extensions contribute are handed to; null when the app has none. */
+  tools?: ToolsHost | null;
 }
 
 /** A part an extension contributes, with the extension it came from. */
@@ -50,6 +53,7 @@ export class ExtensionsService extends Service {
   private catalog: PluginCatalog;
   private files: ExtensionFiles | null;
   private modules: SharedModules;
+  private toolsHost: ToolsHost | null = null;
   private installedList: InstalledExtension[] = [];
   private rowList: ProfileRow[] = [];
   private catalogKeys = new Set<string>();
@@ -64,6 +68,9 @@ export class ExtensionsService extends Service {
     this.catalog = config.catalog;
     this.files = config.files;
     this.modules = config.modules;
+    if (config.tools !== undefined) {
+      this.toolsHost = config.tools;
+    }
   }
 
   /**
@@ -93,7 +100,20 @@ export class ExtensionsService extends Service {
         this.ctx.logger.warn(problem);
       }
     }
+    await this.registerWithHost(installed);
     this.changes.notify();
+  }
+
+  /** Tells the host which language servers and tools the enabled extensions bring. A host that fails to take them is logged, and the plugins are not held up. */
+  private async registerWithHost(installed: InstalledExtension[]): Promise<void> {
+    if (this.toolsHost === null) {
+      return;
+    }
+    try {
+      await this.toolsHost.registerContributions(contributionsOf(installed));
+    } catch (error) {
+      this.ctx.logger.warn(`could not hand the extensions' tools to the host: ${describeError(error)}`);
+    }
   }
 
   /** The profile rows of the enabled extensions' plugins, ready to be a layer of the profile. */

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Context } from "@neoworks/extension-system";
 import { bootKernel } from "../kernel/boot";
-import { evaluateExtensionScript } from "../kernel/extensions";
+import { evaluateExtensionScript, type Contributions, type ToolsHost } from "../kernel/extensions";
 import { defineSettings, setting } from "../kernel/settings";
 import type { SlotEntry } from "../kernel/slots";
 import { theme } from "../plugins/theme";
@@ -205,5 +205,92 @@ describe("evaluateExtensionScript", () => {
   test("a plugin assigned to module.exports counts too", () => {
     const plugin = evaluateExtensionScript("module.exports = { apply() {} }", "x/y.js", {});
     expect(typeof (plugin as { apply: unknown }).apply).toBe("function");
+  });
+});
+
+describe("what extensions hand the host", () => {
+  const TAPLO_RECIPE = {
+    kind: "github-release",
+    repo: "tamasfe/taplo",
+    assets: { "linux-x64": "taplo-linux-x86_64.gz" },
+    binaries: ["taplo"],
+  };
+
+  /** A kernel with a fake host that remembers what it was handed. */
+  async function bootWithHost(disk: Disk) {
+    const handed: Contributions[] = [];
+    const tools: ToolsHost = {
+      registerContributions: async (contributions) => {
+        handed.push(contributions);
+      },
+    };
+    const kernel = await bootKernel({
+      catalog: { frame } as never,
+      coreRows: [{ id: "frame", plugin: "frame" }],
+      files: disk.profileFiles(),
+      extensions: { files: disk.extensionFiles(), modules, tools },
+    });
+    await kernel.loaded;
+    return { kernel, handed };
+  }
+
+  test("language servers and tools of enabled extensions go to the host with an id of their own", async () => {
+    const disk = new Disk();
+    disk.install("sample", {
+      languageServers: [
+        { id: "taplo", name: "Taplo", command: "taplo", args: ["lsp", "stdio"], languageId: "toml", extensions: ["toml"], install: TAPLO_RECIPE },
+        { id: "plain", command: "plain-ls", languageId: "plain", fileNames: ["PLAIN"] },
+      ],
+      tools: [{ id: "fmt", name: "Formatter", install: { kind: "npm", package: "fmt", binaries: ["fmt"] } }],
+    });
+    const { handed } = await bootWithHost(disk);
+    const last = handed.at(-1)!;
+    expect(last.tools.map((tool) => tool.id)).toEqual(["sample:fmt", "sample:taplo"]);
+    expect(last.tools[1]).toMatchObject({ source: "sample", install: { kind: "github-release" } });
+    expect(last.servers.map((server) => [server.name, server.command, server.extensions, server.fileNames])).toEqual([
+      ["Taplo", "taplo", ["toml"], []],
+      ["plain", "plain-ls", [], ["PLAIN"]],
+    ]);
+  });
+
+  test("a disabled extension's servers and tools are taken away again", async () => {
+    const disk = new Disk();
+    disk.install("sample", { languageServers: [{ id: "taplo", command: "taplo", languageId: "toml", extensions: ["toml"], install: TAPLO_RECIPE }] });
+    const { kernel, handed } = await bootWithHost(disk);
+    expect(handed.at(-1)!.servers).toHaveLength(1);
+    await kernel.extensions.setEnabled("sample", false);
+    expect(handed.at(-1)).toEqual({ tools: [], servers: [] });
+  });
+
+  test("a recipe that does not provide the server's command is dropped with a problem", async () => {
+    const disk = new Disk();
+    disk.install("sample", {
+      languageServers: [{ id: "taplo", command: "taplo-lsp", languageId: "toml", extensions: ["toml"], install: TAPLO_RECIPE }],
+    });
+    const { kernel, handed } = await bootWithHost(disk);
+    expect(handed.at(-1)!.tools).toEqual([]);
+    expect(handed.at(-1)!.servers).toHaveLength(1);
+    expect(kernel.extensions.installed()[0].problems[0]).toContain('does not provide "taplo-lsp"');
+  });
+
+  test("a host that cannot take them is logged and the plugins still load", async () => {
+    const disk = new Disk();
+    disk.install("sample", STATUS_PLUGIN, { "dist/item.js": STATUS_SCRIPT });
+    const kernel = await bootKernel({
+      catalog: { frame } as never,
+      coreRows: [{ id: "frame", plugin: "frame" }],
+      files: disk.profileFiles(),
+      extensions: {
+        files: disk.extensionFiles(),
+        modules,
+        tools: {
+          registerContributions: async () => {
+            throw new Error("host went away");
+          },
+        },
+      },
+    });
+    await kernel.loaded;
+    expect(kernel.slots.entries("statusbar")).toHaveLength(1);
   });
 });

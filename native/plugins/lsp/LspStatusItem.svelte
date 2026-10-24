@@ -1,6 +1,6 @@
 <!--
   The language servers in the status bar: one entry for each, with a dot that says how it is
-  doing. A server that is down can be pressed to start it again. Nothing shows while no server
+  doing. A server that is down can be pressed to start it again, and one that is not installed to install it. Nothing shows while no server
   runs, as in a folder of files none serves.
 -->
 <script lang="ts">
@@ -35,7 +35,9 @@
         style={{ paddingX: 4, radius: radius.sm, transition: 120, direction: "row", align: "center", gap: 5 }}
         hover={{ background: colors.hover, color: colors.text }}
         onpress={() => {
-          if (entry.restartable) {
+          if (entry.action === "install") {
+            void service.install(entry.id);
+          } else if (entry.action === "restart") {
             void service.restart(entry.id);
           }
         }}

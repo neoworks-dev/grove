@@ -27,6 +27,7 @@ mod lsp;
 mod sidecar;
 mod suite;
 mod terminal;
+mod tools;
 
 use std::path::PathBuf;
 
@@ -55,7 +56,10 @@ fn main() {
     let documents = SharedDocuments::new(commands.emitter());
     let commands = documents.register(commands);
     let signals = Signals::default();
+    let tools = tools::Tools::new(commands.emitter());
+    let commands = tools.register(commands);
     let lsp = LspStore::new(documents.clone(), commands.emitter(), signals.clone());
+    lsp.attach_tools(tools);
     let commands = lsp.register(commands);
     let commands = git::register(commands);
     let commands = diff::register(commands, documents.clone());

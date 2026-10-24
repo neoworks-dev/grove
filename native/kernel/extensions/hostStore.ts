@@ -3,6 +3,7 @@
 // `bun test`, where there is no host to import.
 
 import { FileError, files, invoke } from "@neoworks/svelte-gpui";
+import type { ToolsHost } from "./contributions";
 import type { ExtensionFiles } from "./store";
 
 /** Whether a file error says the path is not there. */
@@ -60,5 +61,13 @@ export const hostExtensionFiles: ExtensionFiles = {
     const separator = path.lastIndexOf("/");
     await files.mkdir(path.slice(0, separator), { recursive: true });
     await files.writeText(path, text);
+  },
+};
+
+/** The host's tool installer and language server registry, which take what extensions contribute. */
+export const hostToolsHost: ToolsHost = {
+  async registerContributions(contributions) {
+    await invoke("tools_register", { tools: contributions.tools });
+    await invoke("lsp_register_servers", { servers: contributions.servers });
   },
 };

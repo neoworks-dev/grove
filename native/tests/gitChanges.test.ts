@@ -59,9 +59,9 @@ async function setUp(state: { files: DiffFile[] }, overrides: Record<string, Rou
     openFiles: new Map(),
   };
   const diffs: ChangesDiffs = {
-    async openFile(path, base) {
+    async showInEditor(path, base) {
       spies.opened.push({ path, base });
-      return "leaf";
+      return true;
     },
     async refreshAll() {
       spies.refreshedAll += 1;

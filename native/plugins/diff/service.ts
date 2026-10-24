@@ -1,5 +1,7 @@
-// The `diff` service: diff views in panes of their own, and the hunk actions that work on the
-// editor's cursor. A diff view is one or two editors over documents, with the difference drawn as
+// The `diff` service: diff views in panes of their own, diffs drawn over a file in an ordinary
+// editor pane (see `inline.ts`), and the hunk actions that work on the editor's cursor.
+//
+// A diff view is one or two editors over documents, with the difference drawn as
 // decorations by the host (see `src/diff.rs`): inline, one editor over the new text with the removed
 // lines as blocks; or split, an editor for the old text beside one for the new, with fillers so
 // the rows of a hunk line up. The right side is the file's own document, so it can be edited and
@@ -12,6 +14,7 @@ import { Service, type Context } from "@neoworks/extension-system";
 import { createChangeSignal, type ChangeSignal } from "../../kernel/reactive";
 import type { DocumentEvent, EditorService, EditorViewMethods } from "../editor/service";
 import type { DiffHost, GitBase } from "./diffHost";
+import { InlineDiffs, type InlineView } from "./inline";
 import {
   baseLabel,
   fileName,
@@ -30,6 +33,7 @@ import {
 
 export { baseLabel, fileName, hunkPosition, stepHunkRow } from "./model";
 export type { DiffBase, DiffMode, DiffOpenRequest, DiffRequest, Hunk } from "./model";
+export type { InlineView } from "./inline";
 
 declare module "@neoworks/extension-system" {
   interface Context {
@@ -124,6 +128,8 @@ export class DiffService extends Service {
   /** The mode a diff opens in. */
   private defaultMode: DiffMode = "inline";
   private indexListeners = new Set<() => void>();
+  /** The diffs drawn over files in editor panes. */
+  private inline: InlineDiffs;
 
   constructor(
     ctx: Context,
@@ -133,6 +139,11 @@ export class DiffService extends Service {
     options: DiffOptions = {},
   ) {
     super(ctx, "diff");
+    this.inline = new InlineDiffs(editor, host, {
+      changed: () => this.changes.notify(),
+      say: (text) => this.say(text),
+      warn: (message) => ctx.logger.warn(message),
+    });
     ctx.effect(() => editor.onDocumentEvent((event) => this.handleDocumentEvent(event)), "diff.documents");
     ctx.effect(() => panes.onPaneClosed((leafId) => this.background(this.paneClosed(leafId), "closing a pane")), "diff.paneClosed");
     ctx.effect(() => panes.onPaneSplit((newLeafId, sourceLeafId) => this.paneSplit(newLeafId, sourceLeafId)), "diff.paneSplit");
@@ -168,7 +179,49 @@ export class DiffService extends Service {
     return leafId;
   }
 
-  /** Shows how a file in the working tree differs from a base, HEAD by default. */
+  /**
+   * Shows how a file differs from a base in an editor pane, drawn over the file itself, with the
+   * file opened there if it is not. Falls back to a diff pane when there is no editor pane to
+   * draw it in. Resolves to whether it was drawn in an editor.
+   */
+  async showInEditor(path: string, base: DiffBase = "head"): Promise<boolean> {
+    if (await this.inline.show(path, base)) {
+      return true;
+    }
+    await this.openFile(path, base);
+    return false;
+  }
+
+  /** Shows the focused editor's file against HEAD over the file, or takes the diff off when it shows. */
+  async toggleInEditor(): Promise<void> {
+    const active = this.editor.active();
+    if (active === null || active.path === "") {
+      this.say("Open a file to see its changes.");
+      return;
+    }
+    const leafId = this.panes.focusedLeafId;
+    if (this.inline.viewOf(leafId, active.id) !== undefined) {
+      await this.inline.hide(leafId, active.id);
+      return;
+    }
+    await this.inline.show(active.path, "head");
+  }
+
+  /** Takes the diff off the file the focused editor shows. */
+  async hideInEditor(): Promise<void> {
+    const active = this.editor.active();
+    if (active !== null) {
+      await this.inline.hide(this.panes.focusedLeafId, active.id);
+    }
+  }
+
+  /** The diff an editor pane shows over a document, or undefined. Reactive. */
+  inlineView(leafId: string, documentId: number): InlineView | undefined {
+    this.changes.track();
+    return this.inline.viewOf(leafId, documentId);
+  }
+
+  /** Shows how a file in the working tree differs from a base, HEAD by default, in a diff pane. */
   openFile(path: string, base: DiffBase = "head", mode?: DiffMode): Promise<string | null> {
     return this.open({ kind: "file", path, base }, mode);
   }
@@ -220,7 +273,8 @@ export class DiffService extends Service {
 
   /** Reads the git side of every open diff again, such as after a commit. */
   async refreshAll(): Promise<void> {
-    await Promise.all([...this.records.keys()].map((leafId) => this.reloadBase(leafId)));
+    const reloads = [...this.records.keys()].map((leafId) => this.reloadBase(leafId));
+    await Promise.all([...reloads, this.inline.reloadAll()]);
   }
 
   /** The mode diffs open in. Reactive. */
@@ -676,15 +730,14 @@ export class DiffService extends Service {
     });
   }
 
-  /** Moves the editor's cursor to the next or previous change against HEAD. */
+  /** Moves the editor's cursor to the next or previous change: of the diff drawn over the file, else against HEAD. */
   private async stepEditor(step: 1 | -1): Promise<void> {
     const active = this.editor.active();
     if (active === null || active.path === "") {
       return;
     }
     await this.attempt(async () => {
-      const base = await this.host.baseText(active.path, "head");
-      const hunks = await this.host.hunks(active.id, base.text);
+      const hunks = await this.hunksOfEditor(active.id, active.path);
       const row = stepHunkRow(hunks, this.rowOf(active.id), step);
       if (row === null) {
         this.say("There are no changes.");
@@ -693,6 +746,16 @@ export class DiffService extends Service {
       await this.editor.applyToFocused({ type: "place_cursor", at: { row, column: 0 } });
       await this.editor.applyToFocused({ type: "scroll_to", align: "center" });
     });
+  }
+
+  /** The hunks the focused editor's document has: those of the diff drawn over it, else against HEAD. */
+  private async hunksOfEditor(documentId: number, path: string): Promise<Hunk[]> {
+    const shown = this.inline.viewOf(this.panes.focusedLeafId, documentId);
+    if (shown !== undefined) {
+      return shown.hunks;
+    }
+    const base = await this.host.baseText(path, "head");
+    return this.host.hunks(documentId, base.text);
   }
 
   /** Stages a hunk from a diff pane and shows the result. */
@@ -724,8 +787,17 @@ export class DiffService extends Service {
       this.say("Open a file to revert its changes.");
       return;
     }
+    const shown = this.inline.viewOf(this.panes.focusedLeafId, active.id);
+    let base: GitBase = "head";
+    if (shown !== undefined) {
+      if (shown.gitBase === null) {
+        this.say("Only a diff against HEAD or the index can be reverted.");
+        return;
+      }
+      base = shown.gitBase;
+    }
     const row = this.rowOf(active.id);
-    await this.attempt(() => this.host.revertHunk(active.id, "head", row), "Reverted the hunk.");
+    await this.attempt(() => this.host.revertHunk(active.id, base, row), "Reverted the hunk.");
   }
 
   /** The index changed: open diffs read it again and the listeners hear of it. */
@@ -773,6 +845,7 @@ export class DiffService extends Service {
     if (event.type === "edited") {
       this.clearPreview(event.id);
       this.scheduleReapply(event.id);
+      this.inline.onEdited(event.id);
       return;
     }
     if (event.type === "selections") {
@@ -789,6 +862,7 @@ export class DiffService extends Service {
     }
     if (event.type === "closed") {
       this.previews.delete(event.id);
+      this.inline.onDocumentClosed(event.id);
     }
   }
 
@@ -825,12 +899,14 @@ export class DiffService extends Service {
       for (const leafId of [...this.records.keys()]) {
         this.background(this.reloadBase(leafId), "reading the changes again");
       }
+      this.background(this.inline.reloadAll(), "reading the changes again");
     }, FILES_CHANGED_DELAY_MS);
   }
 
   /** Stops the timers that are pending. */
   private cancelTimers(): void {
     clearTimeout(this.filesTimer);
+    this.inline.cancelTimers();
     for (const record of this.records.values()) {
       clearTimeout(record.reapplyTimer);
     }
@@ -838,6 +914,7 @@ export class DiffService extends Service {
 
   /** A pane closed: its diff lets go of its documents. */
   private async paneClosed(leafId: string): Promise<void> {
+    this.inline.onPaneClosed(leafId);
     await this.discardRecord(leafId);
   }
 

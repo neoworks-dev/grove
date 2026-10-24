@@ -97,6 +97,8 @@ export class FakeDiffHost implements DiffHost {
   index = new Map<string, string>();
   found: Hunk[] = [];
   calls: string[] = [];
+  /** The decoration source of each `apply`, in order. */
+  sources: string[] = [];
   failWith: string | null = null;
   /** While set, `apply` waits for it, so a test can do something while a drawing is in flight. */
   gate: Promise<void> | null = null;
@@ -116,6 +118,7 @@ export class FakeDiffHost implements DiffHost {
     if (this.gate !== null) {
       await this.gate;
     }
+    this.sources.push(options.source);
     this.calls.push(`apply ${options.mode} new=${options.newId} old=${options.oldId === undefined ? "-" : options.oldId} "${options.oldText}"`);
     return this.found;
   }

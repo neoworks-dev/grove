@@ -163,6 +163,9 @@ describe("showing a change", () => {
     const asked: string[] = [];
     const openers: Openers = {
       openFile: (path) => asked.push(`file ${path}`),
+      revealFile: async (path, line) => {
+        asked.push(`reveal ${path}:${line}`);
+      },
       openDiff: (path, texts) => {
         if (!hasDiff) {
           return false;
@@ -674,7 +677,7 @@ describe("the openers over the editor and diff services", () => {
   test("a change opens over the file in an editor, against HEAD or against where the agent started", () => {
     const asked: string[] = [];
     const openers = serviceOpeners(
-      { open: (path) => asked.push(`file ${path}`) },
+      { open: (path) => asked.push(`file ${path}`), reveal: async () => {} },
       {
         async showInEditor(path, base) {
           asked.push(base === undefined ? `diff ${path}` : `diff ${path} ${base.label}: ${base.text}`);

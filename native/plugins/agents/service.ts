@@ -8,11 +8,12 @@
 // The service follows a session while at least one pane shows it.
 
 import { Service, type Context } from "@neoworks/extension-system";
-import type { AgentFocus, ConnectorInfo, SessionInfo } from "@suite/protocol/types";
+import type { AgentFocus, AppPresence, ConnectorInfo, SessionInfo } from "@suite/protocol/types";
 import { createChangeSignal, type ChangeSignal } from "../../kernel/reactive";
 import type { SplitDirection } from "../layout/layoutTree";
 import type { Worktree } from "../../../src/shared/types";
 import { ChatSession } from "./chatSession";
+import { NamedRegistry, type AppComponent, type AppTool } from "./contributions";
 import { groupSessions, sessionTitle, siblingsOf, type SessionGroup } from "./sessions";
 import type { ConnectionState, DaemonAddress, SuiteClient, SuiteHost } from "./suiteClient";
 
@@ -84,6 +85,8 @@ export interface AgentWorkspace {
 export interface Openers {
   /** Shows the file at an absolute path in the editor. */
   openFile(path: string): void;
+  /** Shows the file at an absolute path with the cursor on a line, counted from one. Resolves once it is shown. */
+  revealFile(path: string, line: number): Promise<void>;
   /**
    * Shows a diff in a pane: the file against HEAD, or the two texts when they are given. False
    * when the app has no diff view, which leaves the caller to show the file instead.
@@ -94,6 +97,8 @@ export interface Openers {
 /** What the editor plugin offers the chat. */
 export interface EditorOpener {
   open(path: string): unknown;
+  /** Opens a file and puts the cursor at a line and UTF-16 column, both counted from zero. */
+  reveal(path: string, line: number, character: number): Promise<void>;
 }
 
 /** What the diff plugin offers the chat. */
@@ -105,6 +110,7 @@ export interface DiffOpener {
 /** Openers for a service started without the editor and diff views, as in tests: nothing opens. */
 const NO_OPENERS: Openers = {
   openFile: () => {},
+  revealFile: async () => {},
   openDiff: () => false,
 };
 
@@ -113,6 +119,9 @@ export function serviceOpeners(editor: EditorOpener, diff: DiffOpener): Openers 
   return {
     openFile: (path) => {
       editor.open(path);
+    },
+    revealFile: (path, line) => {
+      return editor.reveal(path, Math.max(0, line - 1), 0);
     },
     openDiff: (path, texts) => {
       if (texts === undefined) {
@@ -158,6 +167,11 @@ export class AgentsService extends Service {
   private sessionList: readonly SessionInfo[] = [];
   private address: DaemonAddress | null = null;
   private appName = CLIENT_NAME;
+  /** The neoui components Grove offers the agent, and the tools their buttons call. */
+  private components = new NamedRegistry<AppComponent>("component");
+  private tools = new NamedRegistry<AppTool>("tool");
+  /** Whether a tool list was ever sent, so that taking the last tool away is sent too. */
+  private toolsServed = false;
   private followed = new Map<string, FollowedChat>();
   private paneHandles = new Map<string, PaneHandle>();
   /** Sessions whose tab the user closed, for this run of the app. */
@@ -193,7 +207,43 @@ export class AgentsService extends Service {
     this.timing = timing;
     ctx.effect(() => panes.onPaneSplit((newLeafId, sourceLeafId) => this.paneSplit(newLeafId, sourceLeafId)), "agents.paneSplit");
     ctx.effect(() => workspace.onSelectionChange(() => void this.updateContext()), "agents.worktreeChanged");
+    ctx.effect(() => this.components.onChange(() => void this.resendPresence()), "agents.componentsChanged");
+    ctx.effect(() => this.tools.onChange(() => void this.resendPresence()), "agents.toolsChanged");
     ctx.effect(() => () => this.disconnect(), "agents.disconnect");
+  }
+
+  /**
+   * Offers the agent neoui components, written `grove.<Name>`, and sends the daemon the new set
+   * when this window is connected. Returns the call that takes them away again.
+   */
+  registerComponents(components: Record<string, AppComponent>): () => void {
+    return this.components.add(components);
+  }
+
+  /** Offers tools to the agent and to the buttons of the components, as `grove.<name>`. Returns the call that takes them away. */
+  registerTools(tools: readonly AppTool[]): () => void {
+    const byName: Record<string, AppTool> = {};
+    for (const tool of tools) {
+      byName[tool.name] = tool;
+    }
+    return this.tools.add(byName);
+  }
+
+  /** Shows the file at an absolute path in the editor with the cursor on a line, counted from one. */
+  revealFile(path: string, line: number): Promise<void> {
+    return this.openers.revealFile(path, line);
+  }
+
+  /** The absolute path a tool call names: a relative one is taken from the shown worktree. Throws when there is none to take it from. */
+  resolvePath(path: string): string {
+    if (path.startsWith("/")) {
+      return path;
+    }
+    const selected = this.workspace.selectedWorktree();
+    if (selected === null) {
+      throw new Error(`no repository is open to resolve ${path} in`);
+    }
+    return `${selected.path}/${path}`;
   }
 
   /** Shows the file at an absolute path in the editor, when an editor plugin is loaded. */
@@ -665,14 +715,57 @@ export class AgentsService extends Service {
     try {
       const connectors = await client.listConnectors();
       this.appName = freeAppName(connectors);
-      await client.setPresence({
-        app: this.appName,
-        kind: "app",
-        title: "Grove",
-        open: true,
-        context: this.presenceContext(),
-      });
+      await client.setPresence(await this.presence());
       this.registered = true;
+    } catch (error) {
+      this.fail(error);
+    }
+  }
+
+  /**
+   * The presence of this window. Components and tools are keyed by the app id, so only the
+   * window that holds the plain `grove` id offers them: the agent always writes `grove.<Name>`.
+   */
+  private async presence(): Promise<AppPresence> {
+    const presence: AppPresence = {
+      app: this.appName,
+      kind: "app",
+      title: "Grove",
+      open: true,
+      context: this.presenceContext(),
+    };
+    if (this.appName !== CLIENT_NAME) {
+      return presence;
+    }
+    const components = this.components.all();
+    if (Object.keys(components).length > 0) {
+      presence.components = components;
+    }
+    const tools = this.tools.values();
+    if (tools.length > 0 || this.toolsServed) {
+      await this.serveTools(presence, tools);
+    }
+    return presence;
+  }
+
+  /** Has the host list the tools and puts the endpoint in the presence; a host that cannot leaves the window without tools. */
+  private async serveTools(presence: AppPresence, tools: AppTool[]): Promise<void> {
+    try {
+      presence.mcp = await this.host.toolServer().serve(tools);
+      this.toolsServed = true;
+    } catch (error) {
+      this.fail(error);
+    }
+  }
+
+  /** Sends the presence again after the components or tools changed, when the daemon knows this window. */
+  private async resendPresence(): Promise<void> {
+    const client = this.client;
+    if (client === null || !this.registered) {
+      return;
+    }
+    try {
+      await client.setPresence(await this.presence());
     } catch (error) {
       this.fail(error);
     }

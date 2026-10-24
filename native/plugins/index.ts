@@ -2,6 +2,7 @@
 // bundle, so every core plugin is imported here and the profile selects and configures them.
 
 import type { PluginCatalog } from "../kernel/profile";
+import { contentSearch } from "./content-search";
 import { diff } from "./diff";
 import { editor } from "./editor";
 import { editorContextMenu } from "./editor-context-menu";
@@ -10,6 +11,7 @@ import { explorer } from "./explorer";
 import { agents } from "./agents";
 import { breadcrumbs } from "./breadcrumbs";
 import { brokenEntry, failing } from "./failing";
+import { filePicker } from "./file-picker";
 import { frame } from "./frame";
 import { gitChanges } from "./git-changes";
 import { gitGutter } from "./git-gutter";
@@ -19,9 +21,11 @@ import { lsp } from "./lsp";
 import { coreMenu, menus } from "./menus";
 import { panel } from "./panel";
 import { promptBlame } from "./prompt-blame";
+import { picker } from "./picker";
 import { placeholderPanel } from "./placeholders";
 import { palette } from "./palette";
 import { rails } from "./rails";
+import { ripgrep } from "./ripgrep";
 import { settingsView } from "./settings";
 import { sidebar } from "./sidebar";
 import { sidecar } from "./sidecar";
@@ -41,6 +45,10 @@ export const corePlugins: PluginCatalog = {
   "core-themes": coreThemes,
   "theme-picker": themePicker,
   palette,
+  picker,
+  ripgrep,
+  "file-picker": filePicker,
+  "content-search": contentSearch,
   "settings-view": settingsView,
   "which-key": whichKey,
   rails,

@@ -366,6 +366,42 @@ describe("vim keys", () => {
     expect(setup.editor.vimStatus().mode).toBe("");
   });
 
+  test("a bare space is the leader key only in vim's normal mode with nothing half typed", async () => {
+    const setup = await setUp();
+    const pane = setup.layout.focusedLeafId;
+    setup.editor.registerView(pane, { apply: async () => ({ changed: false }), refresh: async () => {} });
+    const mode = (name: string, pending = "", commandLine: string | null = null) =>
+      setup.host.emit({ type: "mode", pane, mode: name, pending, commandLine });
+    // The standard keys type a space.
+    mode("NORMAL");
+    expect(setup.editor.acceptsLeaderKey()).toBe(false);
+    setup.editor.setKeymap("vim");
+    mode("NORMAL");
+    expect(setup.editor.acceptsLeaderKey()).toBe(true);
+    mode("INSERT");
+    expect(setup.editor.acceptsLeaderKey()).toBe(false);
+    mode("VISUAL");
+    expect(setup.editor.acceptsLeaderKey()).toBe(false);
+    mode("NORMAL", "2d");
+    expect(setup.editor.acceptsLeaderKey()).toBe(false);
+    mode("NORMAL", "", "/needle");
+    expect(setup.editor.acceptsLeaderKey()).toBe(false);
+  });
+
+  test("a pane without an editor view leaves space alone", async () => {
+    const setup = await setUp();
+    setup.editor.setKeymap("vim");
+    setup.host.emit({ type: "mode", pane: setup.layout.focusedLeafId, mode: "NORMAL", pending: "", commandLine: null });
+    expect(setup.editor.acceptsLeaderKey()).toBe(false);
+  });
+
+  test("the editors are told a leader key exists when the keymap says so", async () => {
+    const setup = await setUp();
+    expect(setup.editor.leaderKeyBound()).toBe(false);
+    setup.editor.setLeaderKeySource(() => true);
+    expect(setup.editor.leaderKeyBound()).toBe(true);
+  });
+
   test("the status shows the mode of the focused pane, not of the one that changed last", async () => {
     const setup = await setUp();
     setup.editor.setKeymap("vim");

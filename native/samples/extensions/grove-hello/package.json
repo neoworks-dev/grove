@@ -1,0 +1,35 @@
+{
+  "name": "grove-hello",
+  "version": "0.1.0",
+  "description": "A sample Grove extension: a greeting in the status bar, with a setting for the text.",
+  "keywords": [
+    "grove-extension"
+  ],
+  "license": "MIT",
+  "files": [
+    "dist",
+    "package.json"
+  ],
+  "grove": {
+    "title": "Hello",
+    "plugins": [
+      {
+        "id": "hello",
+        "title": "Greeting",
+        "description": "Shows a greeting in the status bar.",
+        "source": "src/hello.ts",
+        "main": "dist/hello.js"
+      }
+    ],
+    "settings": {
+      "repeat": {
+        "type": "number",
+        "label": "Repeat",
+        "description": "How many times the greeting is said. Declared in the manifest, with no plugin to read it.",
+        "default": 1,
+        "min": 1,
+        "max": 5
+      }
+    }
+  }
+}

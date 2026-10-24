@@ -87,6 +87,7 @@ const ALIASES: &[(&str, &str)] = &[
     ("text.strong", "emphasis.strong"),
     ("type.qualifier", "keyword"),
     ("string.special.key", "property"),
+    ("variable.member", "property"),
     ("string.special.symbol", "string.special"),
 ];
 

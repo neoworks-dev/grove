@@ -18,6 +18,7 @@ mod element;
 mod feature_popups;
 mod features;
 mod glide;
+mod grammars;
 mod hints;
 mod hover;
 mod indent_paint;

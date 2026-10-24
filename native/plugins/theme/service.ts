@@ -6,7 +6,7 @@
 import { Service, type Context } from "@neoworks/extension-system";
 import { createChangeSignal, type ChangeSignal } from "../../kernel/reactive";
 import { setActiveTokens } from "./active";
-import { DEFAULT_THEME_ID, NEOWORKS_DARK, type ThemeDefinition, type ThemeTokens } from "./palette";
+import { DEFAULT_THEME_ID, NEOWORKS_DARK, NEOWORKS_LIGHT, type ThemeDefinition, type ThemeTokens } from "./palette";
 
 declare module "@neoworks/extension-system" {
   interface Context {
@@ -39,6 +39,18 @@ export class ThemeService extends Service {
         this.refresh();
       };
     }, `theme.registerTheme(${theme.id})`);
+  }
+
+  /**
+   * Adds a theme that sets only some colours, as an extension's theme does; the others come from
+   * Grove's own palette of the same scheme.
+   */
+  registerPartialTheme(theme: Omit<ThemeDefinition, "tokens"> & { tokens: Partial<ThemeTokens> }): () => void {
+    let base = NEOWORKS_DARK;
+    if (theme.scheme === "light") {
+      base = NEOWORKS_LIGHT;
+    }
+    return this.registerTheme({ ...theme, tokens: { ...base, ...theme.tokens } });
   }
 
   /** The registered themes, in registration order. Reactive. */

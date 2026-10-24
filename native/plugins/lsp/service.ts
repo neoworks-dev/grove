@@ -4,8 +4,8 @@
 
 import { Service, type Context } from "@neoworks/extension-system";
 import { createChangeSignal, type ChangeSignal } from "../../kernel/reactive";
-import type { FileChange, LspHost, LspOptions } from "./host";
-import { statusEntries, type ServerSummary, type StatusEntry } from "./servers";
+import type { FileChange, LspHost, LspOptions, ToolProgress } from "./host";
+import { statusEntries, type ServerSummary, type StatusEntry, type ToolInstall } from "./servers";
 
 declare module "@neoworks/extension-system" {
   interface Context {
@@ -26,6 +26,7 @@ export class LspService extends Service {
   private pendingChanges: FileChange[] = [];
   private changeTimer: ReturnType<typeof setTimeout> | undefined;
   private current: ServerSummary[] = [];
+  private installs = new Map<string, ToolInstall>();
   private changes: ChangeSignal = createChangeSignal();
 
   constructor(
@@ -34,6 +35,7 @@ export class LspService extends Service {
   ) {
     super(ctx, "lsp");
     ctx.effect(() => host.onStatus((servers) => this.replace(servers)), "lsp.status");
+    ctx.effect(() => host.onToolProgress((progress) => this.noteProgress(progress)), "lsp.toolProgress");
     void host.status().then((servers) => this.replace(servers), () => {});
     ctx.effect(() => () => clearTimeout(this.changeTimer), "lsp.fileChanges");
   }
@@ -77,7 +79,62 @@ export class LspService extends Service {
 
   /** The servers as status bar entries. Reactive. */
   entries(): StatusEntry[] {
-    return statusEntries(this.servers());
+    return statusEntries(this.servers(), this.installTracker());
+  }
+
+  /** How installs are going, by tool; read under the same signal as the servers. */
+  private installTracker(): ReadonlyMap<string, ToolInstall> {
+    this.changes.track();
+    return this.installs;
+  }
+
+  /**
+   * Installs the tool a missing server needs, and starts the server once it is in place. The status
+   * bar shows each step meanwhile, and a failure with its reason, from which pressing again retries.
+   */
+  async install(serverId: number): Promise<void> {
+    const server = this.current.find((candidate) => candidate.id === serverId);
+    if (server === undefined || server.tool === undefined || server.tool === null) {
+      return;
+    }
+    const tool = server.tool;
+    const existing = this.installs.get(tool);
+    if (existing !== undefined && existing.state === "installing") {
+      return;
+    }
+    this.installs.set(tool, { state: "installing", message: "Starting" });
+    this.changes.notify();
+    try {
+      await this.host.installTool(tool);
+    } catch (error) {
+      this.installs.set(tool, { state: "failed", message: describeError(error) });
+      this.changes.notify();
+      return;
+    }
+    this.installs.delete(tool);
+    this.changes.notify();
+    await this.restartServersOf(tool);
+  }
+
+  /** Starts again every server that was waiting for a tool. */
+  private async restartServersOf(tool: string): Promise<void> {
+    for (const server of this.current) {
+      if (server.state === "missing" && server.tool === tool) {
+        await this.host.restart(server.id);
+      }
+    }
+  }
+
+  /** Keeps the step an install is on, for the status bar. */
+  private noteProgress(progress: ToolProgress): void {
+    const install = this.installs.get(progress.id);
+    if (install === undefined || install.state !== "installing") {
+      return;
+    }
+    if (progress.phase === "started" || progress.phase === "output") {
+      this.installs.set(progress.id, { state: "installing", message: progress.message });
+      this.changes.notify();
+    }
   }
 
   /** Starts a server that is not running again. */
@@ -90,4 +147,11 @@ export class LspService extends Service {
     this.current = servers;
     this.changes.notify();
   }
+}
+
+function describeError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
 }

@@ -130,6 +130,16 @@ impl EditorState {
         self.syntax.scopes_at(&self.buffer, byte)
     }
 
+    /// Picks the text's language again when grammars extensions brought since it was opened claim
+    /// its file. Says whether the highlighting changed.
+    pub fn refresh_syntax(&mut self) -> bool {
+        if !self.syntax.language_may_have_changed(&self.buffer) {
+            return false;
+        }
+        self.syntax = Syntax::new(&mut self.buffer);
+        true
+    }
+
     /// The name of the language the text is highlighted as, if it is recognised.
     pub fn language_name(&self) -> Option<&'static str> {
         self.syntax.language_name()

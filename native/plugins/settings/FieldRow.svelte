@@ -22,9 +22,11 @@
     onset: (value: SettingValue) => Promise<void>;
     /** Removes the user's override. */
     onreset: () => Promise<void>;
+    /** Stacks the control under the text, for a narrow place such as the sidebar. */
+    compact?: boolean;
   }
 
-  let { name, field, value, modified, choices, onset, onreset }: Props = $props();
+  let { name, field, value, modified, choices, onset, onreset, compact = false }: Props = $props();
 
   let problem = $state<string | null>(null);
 
@@ -65,9 +67,39 @@
   }
 
   const hint = $derived(field.live ? "Applies at once" : "Reloads the plugin");
+
+  /** The layout of the whole row: text beside the control, or the control under the text. */
+  const rowStyle = $derived(rowStyleOf());
+
+  function rowStyleOf() {
+    if (compact) {
+      return { gap: 8, paddingY: 10, borderBottomWidth: 1, borderColor: colors.lineFaint };
+    }
+    return { direction: "row" as const, align: "center" as const, gap: 24, paddingY: 12, borderBottomWidth: 1, borderColor: colors.lineFaint };
+  }
+
+  /** The width of a dropdown: the page's wide one, or what fits the sidebar. */
+  const choiceWidth = $derived(compactChoiceWidth());
+
+  function compactChoiceWidth(): number {
+    if (compact) {
+      return 148;
+    }
+    return 264;
+  }
+
+  /** The width of a text box: the page's wide one, or what fits the sidebar. */
+  const textWidth = $derived(compactWidth());
+
+  function compactWidth(): number | undefined {
+    if (compact) {
+      return 148;
+    }
+    return undefined;
+  }
 </script>
 
-<View style={{ direction: "row", align: "center", gap: 24, paddingY: 12, borderBottomWidth: 1, borderColor: colors.lineFaint }}>
+<View style={rowStyle}>
   <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
     <View style={{ direction: "row", align: "center", gap: 8 }}>
       <Text style={{ fontSize: fontSize.sm, color: colors.text }}>{field.label}</Text>
@@ -87,13 +119,14 @@
     {#if field.type === "boolean"}
       <ToggleSwitch on={value === true} label={`Toggle ${field.label}`} onchange={(on) => attempt(() => onset(on))} />
     {:else if field.type === "enum"}
-      <ChoiceSelect value={String(value)} label={`Choose ${field.label}`} options={choices} onchange={(choice) => attempt(() => onset(choice))} />
+      <ChoiceSelect value={String(value)} label={`Choose ${field.label}`} options={choices} width={choiceWidth} onchange={(choice) => attempt(() => onset(choice))} />
     {:else}
       <TextControl
         value={String(value)}
         numeric={field.type === "number"}
         swatch={field.type === "color"}
         placeholder={placeholderOf()}
+        width={textWidth}
         oncommit={saveText}
       />
     {/if}

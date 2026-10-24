@@ -18,6 +18,7 @@
 //! to start it (see `suite.rs`).
 
 mod browser;
+mod data;
 mod diff;
 mod editor;
 mod git;
@@ -47,6 +48,7 @@ fn main() {
     let sidecar = Sidecar::start(SidecarConfig::from_environment(), commands.emitter());
     let commands = sidecar.commands(commands);
     let commands = suite::register(commands);
+    let commands = data::register(commands);
     let commands = browser::register(commands);
     let documents = SharedDocuments::new(commands.emitter());
     let commands = documents.register(commands);

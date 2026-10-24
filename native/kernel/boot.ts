@@ -4,6 +4,7 @@
 
 import { Context } from "@neoworks/extension-system";
 import { CommandsService } from "./commands";
+import { ExtensionsService, type ExtensionFiles, type SharedModules } from "./extensions";
 import type { Kernel } from "./kernel";
 import { KeymapService } from "./keymap";
 import { mountHostLogExporter } from "./logging";
@@ -17,6 +18,11 @@ export interface BootOptions {
   /** The core layer of the profile. */
   coreRows: ProfileRow[];
   files: ProfileFiles;
+  /**
+   * Where installed extensions are read from and what their scripts may `require`. Without it
+   * the app runs the core plugins only, as under test.
+   */
+  extensions?: { files: ExtensionFiles; modules: SharedModules };
 }
 
 /**
@@ -30,8 +36,17 @@ export async function bootKernel(options: BootOptions): Promise<Kernel> {
   await context.plugin(CommandsService);
   await context.plugin(KeymapService);
   await context.plugin(SlotsService);
-  await context.plugin(LoaderService, options.catalog);
-  await context.plugin(SettingsService, { catalog: options.catalog, files: options.files });
+  // Extension plugins are added to this copy, so the bundle's own catalog is never changed.
+  const catalog: PluginCatalog = { ...options.catalog };
+  let extensionFiles: ExtensionFiles | null = null;
+  let extensionModules: SharedModules = {};
+  if (options.extensions) {
+    extensionFiles = options.extensions.files;
+    extensionModules = options.extensions.modules;
+  }
+  await context.plugin(ExtensionsService, { catalog, files: extensionFiles, modules: extensionModules });
+  await context.plugin(LoaderService, catalog);
+  await context.plugin(SettingsService, { catalog, files: options.files });
   await context.plugin(ProfileService, { coreRows: options.coreRows, files: options.files });
 
   // No folder is open yet, so this is the core and user layers. Opening a folder adds the
@@ -45,6 +60,7 @@ export async function bootKernel(options: BootOptions): Promise<Kernel> {
     loader: context.loader,
     profile: context.profile,
     settings: context.settings,
+    extensions: context.extensions,
     loaded,
     reportError(source, error) {
       context.logger(source).error(error);

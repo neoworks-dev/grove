@@ -14,4 +14,7 @@ export type { InstallRecipe, PlatformKey } from "./recipes";
 export { ExtensionsService } from "./service";
 export type { Contributed, ExtensionsConfig } from "./service";
 export { directoryNameOf, extensionsDirectory, readInstalled } from "./store";
-export type { ExtensionFiles, InstalledExtension } from "./store";
+export type { ExtensionFiles, InstalledExtension, TarballHashes } from "./store";
+export { DEFAULT_REGISTRY, NpmRegistry } from "./registry";
+export type { FetchFunction, PackageRelease, RegistryPackage } from "./registry";
+export { compareVersions, isNewer, parseVersion } from "./version";

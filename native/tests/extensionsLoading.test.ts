@@ -1,61 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import type { Context } from "@neoworks/extension-system";
 import { bootKernel } from "../kernel/boot";
-import { evaluateExtensionScript, type ExtensionFiles } from "../kernel/extensions";
+import { evaluateExtensionScript } from "../kernel/extensions";
 import { defineSettings, setting } from "../kernel/settings";
-import type { ProfileFiles } from "../kernel/profile";
 import type { SlotEntry } from "../kernel/slots";
 import { theme } from "../plugins/theme";
+import { Disk } from "./support/fakeExtensionDisk";
 
 const component = (() => {}) as unknown as SlotEntry["component"];
-
-/** An in-memory disk: every path that was written or given, with its text. */
-class Disk {
-  files = new Map<string, string>();
-
-  /** The extension store over the disk, with `/data` as the data directory. */
-  extensionFiles(): ExtensionFiles {
-    return {
-      dataDirectory: async () => "/data",
-      readIfExists: async (path) => this.files.get(path) ?? null,
-      listDirectories: async (path) => this.directoriesIn(path),
-      writeText: async (path, text) => {
-        this.files.set(path, text);
-      },
-    };
-  }
-
-  /** The profile files over the disk, with `/config` as the config directory. */
-  profileFiles(): ProfileFiles {
-    return {
-      readIfExists: async (path) => this.files.get(path) ?? null,
-      configDirectory: async () => "/config",
-      writeText: async (path, text) => {
-        this.files.set(path, text);
-      },
-    };
-  }
-
-  /** Installs an extension: its package.json and the files beside it. */
-  install(directory: string, grove: unknown, files: Record<string, string> = {}, name = directory): void {
-    const root = `/data/extensions/${directory}`;
-    this.files.set(`${root}/package.json`, JSON.stringify({ name, version: "1.0.0", grove }));
-    for (const [path, text] of Object.entries(files)) {
-      this.files.set(`${root}/${path}`, text);
-    }
-  }
-
-  /** The names of the directories right under a path. */
-  private directoriesIn(path: string): string[] {
-    const names = new Set<string>();
-    for (const file of this.files.keys()) {
-      if (file.startsWith(`${path}/`)) {
-        names.add(file.slice(path.length + 1).split("/")[0]);
-      }
-    }
-    return [...names].filter((name) => !name.includes("."));
-  }
-}
 
 /** Plugin scripts the way the build leaves them: asking the app for what they share. */
 const STATUS_SCRIPT = `

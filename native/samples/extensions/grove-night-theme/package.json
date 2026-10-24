@@ -1,0 +1,12 @@
+{
+  "name": "grove-night-theme",
+  "version": "0.2.0",
+  "description": "A sample Grove extension with one colour theme, a dark blue night sky.",
+  "keywords": ["grove-extension", "theme"],
+  "license": "MIT",
+  "files": ["themes", "package.json"],
+  "grove": {
+    "title": "Night Sky",
+    "themes": [{ "id": "night-sky", "name": "Night Sky", "scheme": "dark", "file": "themes/night-sky.json" }]
+  }
+}

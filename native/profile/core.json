@@ -27,6 +27,7 @@
   { "id": "workspace", "plugin": "workspace" },
   { "id": "explorer", "plugin": "explorer" },
   { "id": "worktrees", "plugin": "worktrees" },
+  { "id": "extensions-view", "plugin": "extensions-view" },
   { "id": "agents", "plugin": "agents" },
   { "id": "terminal", "plugin": "terminal" },
   { "id": "placeholder-panel", "plugin": "placeholder-panel" }

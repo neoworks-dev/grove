@@ -21,7 +21,7 @@ export interface ProfileServiceConfig {
 }
 
 export class ProfileService extends Service {
-  static inject = ["loader", "settings"];
+  static inject = ["loader", "settings", "extensions"];
 
   private coreRows: ProfileRow[];
   private files: ProfileFiles;
@@ -31,6 +31,7 @@ export class ProfileService extends Service {
     super(ctx, "profile");
     this.coreRows = config.coreRows;
     this.files = config.files;
+    ctx.extensions.setApplier(() => this.reload());
   }
 
   /** The folder whose profile is the project layer, or null when none is open. */
@@ -43,7 +44,8 @@ export class ProfileService extends Service {
    * with the files are logged and never stop the profile from applying.
    */
   async reload(): Promise<void> {
-    const profile = await loadProfile(this.coreRows, this.files, this.folder);
+    await this.ctx.extensions.refresh();
+    const profile = await loadProfile(this.coreRows, this.files, this.folder, this.ctx.extensions.rows());
     for (const problem of profile.problems) {
       this.ctx.logger.warn(problem);
     }

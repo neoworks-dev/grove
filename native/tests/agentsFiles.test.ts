@@ -64,6 +64,13 @@ describe("the worktree a session works in", () => {
   });
 });
 
+/** The agent changes a file, once the session's replay is over. */
+async function touchFile(emit: (event: SessionEvent) => void, path: string): Promise<void> {
+  // Events before the subscription is live are the replay, which is folded in when it ends.
+  await Promise.resolve();
+  emit({ type: "tool_call_update", toolCallId: `touch ${path}`, content: [{ type: "diff", path, newText: "" }] });
+}
+
 describe("the files panel's entries", () => {
   test("list what git reports and what the agents touched, tagged", async () => {
     const { model, emit } = setUp("/repo");
@@ -74,6 +81,17 @@ describe("the files panel's entries", () => {
       ["src/a.ts", "modified", ["agent"]],
       ["notes.md", "clean", ["agent"]],
     ]);
+  });
+
+  test("leave out what git reports in files the agents did not touch", async () => {
+    const { model, source, emit } = setUp("/repo");
+    source.files = [
+      { path: "src/a.ts", changeType: "modified", staged: false },
+      { path: "by-hand.ts", changeType: "untracked", staged: false },
+    ];
+    await touchFile(emit, "/repo/src/a.ts");
+    await model.refresh();
+    expect(model.entries().map((entry) => entry.rel)).toEqual(["src/a.ts"]);
   });
 
   test("ask git for the session's worktree, and none at all outside one", async () => {
@@ -103,7 +121,8 @@ describe("the files panel's entries", () => {
 
 describe("a file's diff", () => {
   test("opens in place of the list and closes back to it", async () => {
-    const { model } = setUp("/repo");
+    const { model, emit } = setUp("/repo");
+    await touchFile(emit, "/repo/src/a.ts");
     await model.refresh();
     const [entry] = model.entries();
     expect(model.canDiff(entry)).toBe(true);
@@ -114,7 +133,8 @@ describe("a file's diff", () => {
   });
 
   test("says so when the file has nothing to show", async () => {
-    const { model, source } = setUp("/repo");
+    const { model, source, emit } = setUp("/repo");
+    await touchFile(emit, "/repo/src/a.ts");
     await model.refresh();
     source.lines = [];
     await model.showDiff(model.entries()[0]);
@@ -123,6 +143,8 @@ describe("a file's diff", () => {
 
   test("a file only an agent touched has none", async () => {
     const { model, emit } = setUp("/repo");
+    // Events before the subscription is live are the replay, which is folded in when it ends.
+    await Promise.resolve();
     emit({ type: "tool_call_update", toolCallId: "t", content: [{ type: "diff", path: "/repo/gone.md", newText: "" }] });
     const [entry] = model.entries();
     expect(model.canDiff(entry)).toBe(false);
@@ -132,6 +154,8 @@ describe("a file's diff", () => {
 
   test("a file the agent touched and git sees no change in shows what the agent's calls changed", async () => {
     const { model, emit } = setUp("/repo");
+    // Events before the subscription is live are the replay, which is folded in when it ends.
+    await Promise.resolve();
     emit({ type: "tool_call", toolCallId: "t", title: "Edit", kind: "edit", status: "pending" });
     emit({
       type: "tool_call_update",
@@ -161,7 +185,8 @@ describe("a file's diff", () => {
   });
 
   test("a failure to read it is kept for the panel to show", async () => {
-    const { model, source } = setUp("/repo");
+    const { model, source, emit } = setUp("/repo");
+    await touchFile(emit, "/repo/src/a.ts");
     await model.refresh();
     source.failing = "cannot read";
     await model.showDiff(model.entries()[0]);

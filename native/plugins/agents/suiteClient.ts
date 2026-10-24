@@ -6,7 +6,7 @@ import type { SessionCreateParams, SessionInfo } from "@suite/protocol/types";
 import type { Client, ConnectionState, DaemonAddress } from "@suite/sdk";
 
 /** The calls one chat pane makes for its session. */
-export type ChatClient = Pick<Client, "subscribe" | "subscribeView" | "input" | "cancel" | "action" | "fetchAsset">;
+export type ChatClient = Pick<Client, "subscribe" | "subscribeView" | "input" | "cancel" | "action" | "fetchAsset" | "sessionSettings">;
 
 /** The client as the plugin's service uses it: the chat calls and the session list. */
 export type SuiteClient = ChatClient &

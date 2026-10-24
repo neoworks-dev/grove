@@ -6,6 +6,7 @@
 <script lang="ts">
   import { View } from "@neoworks/svelte-gpui/ui";
   import type { ChatSession } from "./chatSession";
+  import type { FileIconSource } from "../explorer/fileIcons";
   import Files from "./Files.svelte";
   import type { FilesModel } from "./filesModel";
   import { palette } from "./palette";
@@ -15,11 +16,12 @@
     chat: ChatSession;
     files: FilesModel;
     branch: string | null;
+    icons: FileIconSource;
     /** The column takes all the room it has, instead of its own width. */
     fill?: boolean;
   }
 
-  let { chat, files, branch, fill = false }: Props = $props();
+  let { chat, files, branch, icons, fill = false }: Props = $props();
 
   const p = palette;
 
@@ -33,7 +35,7 @@
     shrink: 0,
     gap: p.space.l,
     padding: p.space.m,
-    background: p.surface,
+    background: p.bg,
     borderLeftWidth: fill ? 0 : 1,
     borderColor: p.border,
   }}
@@ -41,5 +43,5 @@
   {#if !diffOpen}
     <Plan plans={chat.plans()} />
   {/if}
-  <Files {files} {branch} />
+  <Files {files} {branch} {icons} />
 </View>

@@ -1,0 +1,44 @@
+version: "3"
+
+# Grove native: a Svelte bundle (built by bun) that the Rust host (GPUI) runs.
+
+tasks:
+  install:
+    desc: Install the JS dependencies
+    cmds:
+      - bun install
+
+  bundle:
+    desc: Bundle the Svelte side into dist/grove-native.js
+    cmds:
+      - bun run build
+
+  host:
+    desc: Build the Rust host in release mode, seeding target/ from svelte-gpui on first use
+    cmds:
+      - bun run host
+
+  build:
+    desc: Build the bundle and the host
+    cmds:
+      - task: bundle
+      - task: host
+
+  run:
+    desc: Build everything, then start the app
+    deps: [build]
+    cmds:
+      - ./target/release/grove_native --bundle dist/grove-native.js {{.CLI_ARGS}}
+
+  dev:
+    desc: Start the app and reload it whenever a source file changes
+    deps: [host]
+    cmds:
+      - bun build.mjs --watch &
+      - ./target/release/grove_native --bundle dist/grove-native.js --watch {{.CLI_ARGS}}
+
+  test:
+    desc: Run the JS tests and the Rust tests
+    cmds:
+      - bun run test
+      - cargo test --workspace

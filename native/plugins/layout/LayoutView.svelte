@@ -47,6 +47,15 @@
     return undefined;
   }
 
+  /** Whether a pane type wants the header; its entry says `header: false` to go without. */
+  function headerFor(paneTypeId: string): boolean {
+    const props = entryFor(paneTypeId)?.props;
+    if (props && props.header === false) {
+      return false;
+    }
+    return true;
+  }
+
   /** The close handler for a pane: none while it is the only one, so the last pane has no button. */
   function closeHandlerFor(leafId: string): (() => void) | undefined {
     if (layout.leafCount() <= 1) {
@@ -63,6 +72,7 @@
         leafId={node.id}
         title={titleFor(node.paneTypeId, node.id)}
         icon={iconFor(node.paneTypeId)}
+        header={headerFor(node.paneTypeId)}
         active={layout.focusedLeafId === node.id}
         onclose={closeHandlerFor(node.id)}
         ondroppane={(draggedLeafId, zone) => layout.dropPane(draggedLeafId, node.id, zone)}

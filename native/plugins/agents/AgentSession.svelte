@@ -9,6 +9,7 @@
   import { untrack } from "svelte";
   import { View } from "@neoworks/svelte-gpui/ui";
   import type { Layout } from "@neoworks/svelte-gpui/ui";
+  import type { FileIconSource } from "../explorer/fileIcons";
   import type { WorkspaceService } from "../workspace/service";
   import AgentChatView from "./AgentChatView.svelte";
   import AgentsList from "./AgentsList.svelte";
@@ -25,6 +26,7 @@
     agents: AgentsService;
     workspace: WorkspaceService;
     changes: ChangesSource;
+    icons: FileIconSource;
     chat: ChatSession;
     /** The pane this is drawn in. */
     leafId: string;
@@ -32,7 +34,7 @@
     focused: boolean;
   }
 
-  let { agents, workspace, changes, chat, leafId, focused }: Props = $props();
+  let { agents, workspace, changes, icons, chat, leafId, focused }: Props = $props();
 
   /** The pane is only worth a column for the plan and files from this width on. */
   const MIN_WIDTH_FOR_SIDE_PANEL = 760;
@@ -143,6 +145,7 @@
     sessions={tabs}
     current={chat.sessionId}
     onselect={(sessionId) => agents.showSession(leafId, sessionId)}
+    onclose={(sessionId) => agents.closeTab(leafId, sessionId)}
     onnew={() => void agents.newSession()}
     edits={entries.length}
     panelShown={sidePanelShown}
@@ -167,7 +170,7 @@
       </View>
     {/if}
     {#if sidePanelShown}
-      <SidePanel {chat} {files} {branch} fill={panelReplacesChat} />
+      <SidePanel {chat} {files} {branch} {icons} fill={panelReplacesChat} />
     {/if}
   </View>
 </View>

@@ -5,9 +5,13 @@ import { build } from "@neoworks/svelte-gpui/build";
 
 const here = (path) => fileURLToPath(new URL(path, import.meta.url));
 
+// `--watch` rebuilds on every source change; a host started with `--watch` reloads each build.
+const watch = process.argv.includes("--watch");
+
 await build({
   entry: here("./ui/main.ts"),
   outfile: here("./dist/grove-native.js"),
+  watch,
 });
 
 // Images the app shows by path are resolved against the bundle's directory.

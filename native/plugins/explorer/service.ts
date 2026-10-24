@@ -7,6 +7,7 @@
 import { Service, type Context } from "@neoworks/extension-system";
 import type { DiffChangeType, DiffFile, FileNode } from "../../../src/shared/types";
 import { createChangeSignal, type ChangeSignal } from "../../kernel/reactive";
+import { DEFAULT_ICON_SET_ID, iconSetOf, type IconSet } from "./fileIcons";
 import { ExplorerModel, joinPath, parentOf, type FileSystemChange } from "./model";
 
 declare module "@neoworks/extension-system" {
@@ -40,6 +41,7 @@ export class ExplorerService extends Service {
   readonly model = new ExplorerModel();
   private options: ExplorerOptions;
   private worktreeId: string | null = null;
+  private iconSetId = DEFAULT_ICON_SET_ID;
   private loading = false;
   /** Why the root could not be listed. */
   private failure: string | null = null;
@@ -57,6 +59,18 @@ export class ExplorerService extends Service {
     this.options = options;
     ctx.sidecar.on("event:fs-change", (payload) => this.noteChange(payload as FileSystemChange));
     ctx.effect(() => () => clearTimeout(this.refreshTimer), "explorer refresh timer");
+  }
+
+  /** The icon set the tree draws its files and folders with. Reactive. */
+  iconSet(): IconSet {
+    this.changes.track();
+    return iconSetOf(this.iconSetId);
+  }
+
+  /** Switches the tree to another icon set, by its id. */
+  setIconSet(iconSetId: string): void {
+    this.iconSetId = iconSetId;
+    this.changes.notify();
   }
 
   /** What the view should draw. Reactive. */
@@ -120,10 +134,10 @@ export class ExplorerService extends Service {
     return this.model.changeOf(relPath);
   }
 
-  /** The folders that carry a change marker given what is expanded. Reactive. */
-  markedDirectories(expanded: ReadonlySet<string | number>): Set<string> {
+  /** The change each folder shows, from what lies below it. Reactive. */
+  directoryChanges(): Map<string, DiffChangeType> {
     this.changes.track();
-    return this.model.markedDirectories(expanded);
+    return this.model.directoryChanges();
   }
 
   /** The edit waiting for a name or a confirmation, or null. Reactive. */

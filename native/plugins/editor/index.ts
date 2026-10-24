@@ -102,7 +102,7 @@ export const editor = {
       id: "editor",
       key: "editor",
       component: EditorMain,
-      props: { title: "Editor", service },
+      props: { title: "Editor", header: false, service },
     });
     ctx.slots.register("statusbar", { id: "editor.mode", order: 5, component: EditorModeStatus, props: { service } });
     ctx.slots.register("statusbar", { id: "editor.file", order: 10, component: EditorFileStatus, props: { service } });

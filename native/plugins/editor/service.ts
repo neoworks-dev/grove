@@ -241,11 +241,16 @@ interface PaneTabs {
   active: number | null;
 }
 
+/** What a pane hides when nothing asked it to; one array, so a view does not see a new value each time. */
+const NO_SOURCES: string[] = [];
+
 export class EditorService extends Service {
   private documentsById = new Map<number, BufferInfo>();
   private paneTabs = new Map<string, PaneTabs>();
   private viewsByLeaf = new Map<string, EditorViewMethods>();
   private cursorsById = new Map<number, CursorInfo>();
+  /** The decoration sources a pane leaves out, by `leafId:documentId`. */
+  private hiddenSources = new Map<string, string[]>();
   private promptState: Prompt | null = null;
   private answerClose: ((choice: CloseChoice) => void) | null = null;
   private messageText = "";
@@ -279,6 +284,18 @@ export class EditorService extends Service {
 
   /** Like `open`, and resolves to the document's id once it is shown, or null when it could not be opened. */
   async openPath(path: string): Promise<number | null> {
+    const shown = await this.openPathIn(path);
+    if (shown === null) {
+      return null;
+    }
+    return shown.documentId;
+  }
+
+  /**
+   * Like `openPath`, and resolves to the pane that shows the document as well, or `leafId` null
+   * when there is no editor pane to show it in. Null when the file could not be opened.
+   */
+  async openPathIn(path: string): Promise<{ documentId: number; leafId: string | null } | null> {
     let summary: DocumentSummary;
     try {
       summary = await this.host.open(path);
@@ -289,12 +306,12 @@ export class EditorService extends Service {
     this.adopt(summary);
     const leafId = this.targetLeafId();
     if (leafId === null) {
-      return summary.id;
+      return { documentId: summary.id, leafId: null };
     }
     this.showIn(leafId, summary.id, true);
     this.panes.focus(leafId);
     this.setMessage("");
-    return summary.id;
+    return { documentId: summary.id, leafId };
   }
 
   /**
@@ -589,7 +606,7 @@ export class EditorService extends Service {
   }
 
   /** Asks every mounted editor to draw again. One that is being unmounted cannot, and that does not stop the others. */
-  private async refreshViews(): Promise<void> {
+  async refreshViews(): Promise<void> {
     const refreshes = [...this.viewsByLeaf.values()].map(async (view) => {
       try {
         await view.refresh();
@@ -598,6 +615,30 @@ export class EditorService extends Service {
       }
     });
     await Promise.all(refreshes);
+  }
+
+  /**
+   * Sets which decoration sources a pane leaves out when it shows a document, such as the git bars
+   * under a diff that draws its own. An empty list shows them again.
+   */
+  hideSources(leafId: string, documentId: number, sources: string[]): void {
+    const key = `${leafId}:${documentId}`;
+    if (sources.length === 0) {
+      this.hiddenSources.delete(key);
+    } else {
+      this.hiddenSources.set(key, sources);
+    }
+    this.changes.notify();
+  }
+
+  /** The decoration sources a pane leaves out for a document. Reactive. */
+  hiddenSourcesIn(leafId: string, documentId: number): string[] {
+    this.changes.track();
+    const sources = this.hiddenSources.get(`${leafId}:${documentId}`);
+    if (sources === undefined) {
+      return NO_SOURCES;
+    }
+    return sources;
   }
 
   /** Removes everything a source has put on a file's text. */
@@ -857,7 +898,17 @@ export class EditorService extends Service {
     }
     this.documentsById.delete(documentId);
     this.cursorsById.delete(documentId);
+    this.dropHiddenSources((key) => key.endsWith(`:${documentId}`));
     this.changes.notify();
+  }
+
+  /** Forgets the hidden sources whose key a test picks out, for a document or a pane that is gone. */
+  private dropHiddenSources(picks: (key: string) => boolean): void {
+    for (const key of [...this.hiddenSources.keys()]) {
+      if (picks(key)) {
+        this.hiddenSources.delete(key);
+      }
+    }
   }
 
   /** Asks what to do with unsaved changes. Resolves to true once it is fine to close the document. */
@@ -909,6 +960,7 @@ export class EditorService extends Service {
   /** A pane closed: documents only it showed move to a pane that is still there, so none is lost from view. */
   private paneClosed(leafId: string): void {
     this.vimStates.delete(leafId);
+    this.dropHiddenSources((key) => key.startsWith(`${leafId}:`));
     const closed = this.paneTabs.get(leafId);
     if (!closed) {
       return;

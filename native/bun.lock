@@ -6,7 +6,7 @@
       "name": "grove-native",
       "dependencies": {
         "@neoworks/extension-system": "link:@neoworks/extension-system",
-        "@neoworks/svelte-gpui": "github:neoworks-dev/svelte-gpui#0a714498b8894ccc7e05a7274d4400994a9d230f",
+        "@neoworks/svelte-gpui": "github:neoworks-dev/svelte-gpui#f0488f588912e2e47b245ab0445b8ff5e5c83ea5",
         "@phosphor-icons/core": "^2.1.1",
         "@suite/protocol": "link:@suite/protocol",
         "@suite/sdk": "link:@suite/sdk",
@@ -78,7 +78,7 @@
 
     "@neoworks/extension-system": ["@neoworks/extension-system@link:@neoworks/extension-system", {}],
 
-    "@neoworks/svelte-gpui": ["@neoworks/svelte-gpui@github:neoworks-dev/svelte-gpui#0a71449", { "peerDependencies": { "svelte": "^5.57.0" } }, "neoworks-dev-svelte-gpui-0a71449", "sha512-WLhhdNRfEnpsacY+LDGjOAsralCMCEwJKwk/Vn/ebIY/UYZh3Uo2G6B8OQr12t/Umq54V+opQa8Xp4QBOVQ51Q=="],
+    "@neoworks/svelte-gpui": ["@neoworks/svelte-gpui@github:neoworks-dev/svelte-gpui#f0488f5", { "peerDependencies": { "svelte": "^5.57.0" } }, "neoworks-dev-svelte-gpui-f0488f5", "sha512-2rfBVWG25xr80kgPIc44I+jeSsoBeAulkXp8FqBl6Vf+vmiyDL/bEjco3hZq9R0UBaqrB8nWuu8jtK30k000uw=="],
 
     "@phosphor-icons/core": ["@phosphor-icons/core@2.1.1", "", {}, "sha512-v4ARvrip4qBCImOE5rmPUylOEK4iiED9ZyKjcvzuezqMaiRASCHKcRIuvvxL/twvLpkfnEODCOJp5dM4eZilxQ=="],
 

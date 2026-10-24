@@ -1,6 +1,6 @@
 <!--
-  The bar above an editor: the file's path inside the worktree, then the functions, classes and
-  modules around the cursor, outermost first. Pressing a scope puts the cursor at its start;
+  The focused editor's place in the status bar, after its file: the file's path inside the
+  worktree, then the functions, classes and modules around the cursor, outermost first. Pressing a scope puts the cursor at its start;
   pressing a step of the path shows it in the explorer.
 -->
 <script lang="ts">
@@ -14,6 +14,7 @@
   import puzzle from "@phosphor-icons/core/regular/puzzle-piece.svg";
   import type { CommandsService } from "../../kernel/commands/service";
   import type { EditorService } from "../editor/service";
+  import type { LayoutService } from "../layout/service";
   import { colors, fontSize } from "../theme/tokens";
   import type { WorkspaceService } from "../workspace/service";
   import { iconNameOf, pathSteps, type Scope } from "./model";
@@ -24,14 +25,10 @@
     editor: EditorService;
     workspace: WorkspaceService;
     commands: CommandsService;
-    /** The pane this bar is drawn in, and the document its editor shows. */
-    leafId: string;
-    documentId: number;
-    /** Puts the pane's cursor at a line and UTF-16 column and scrolls to it. */
-    goto: (line: number, character: number) => void;
+    layout: LayoutService;
   }
 
-  let { breadcrumbs, editor, workspace, commands, leafId, documentId, goto }: Props = $props();
+  let { breadcrumbs, editor, workspace, commands, layout }: Props = $props();
 
   const icons: Record<string, string> = {
     cube,
@@ -42,15 +39,19 @@
     function: fn,
   };
 
-  const buffer = $derived(editor.tabsIn(leafId).find((tab) => tab.id === documentId));
+  const leafId = $derived(layout.focusedLeafId);
+  const buffer = $derived(editor.activeIn(leafId));
   const worktree = $derived(workspace.selectedWorktree());
-  const steps = $derived(pathSteps(buffer === undefined ? "" : buffer.path, worktree === null ? null : worktree.path));
-  const scopes = $derived(breadcrumbs.scopesOf(documentId));
+  const steps = $derived(pathSteps(buffer === null ? "" : buffer.path, worktree === null ? null : worktree.path));
+  const scopes = $derived(buffer === null ? [] : breadcrumbs.scopesOf(buffer.id));
 
   /** Puts the cursor at the start of a scope. */
   function jumpTo(scope: Scope): void {
+    if (buffer === null) {
+      return;
+    }
     editor.focusPane(leafId);
-    goto(scope.start.row, scope.startCharacter);
+    void editor.reveal(buffer.path, scope.start.row, scope.startCharacter);
   }
 
   /** Shows a step of the path in the explorer. */
@@ -64,15 +65,11 @@
     style={{
       direction: "row",
       align: "center",
-      height: 24,
-      shrink: 0,
-      paddingX: 8,
+      minWidth: 0,
       gap: 2,
       overflow: "hidden",
-      fontSize: fontSize.xs,
+      fontSize: fontSize.xxs,
       color: colors.dim,
-      borderBottomWidth: 1,
-      borderColor: colors.line,
     }}
   >
     {#each steps as step, index (step.relativePath)}

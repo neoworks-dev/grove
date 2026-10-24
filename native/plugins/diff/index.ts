@@ -1,10 +1,12 @@
 // The diff plugin: the `diff` service, the `diff` pane type, and the commands and keys that move
 // between changes and stage, unstage, revert or preview the hunk under the cursor. Hunks are
-// the ones of a file against HEAD or the index, in a diff pane or in a normal editor.
+// the ones of a file against HEAD or the index. A file's changes are drawn over the file in an
+// ordinary editor pane, with a strip of buttons over it, or in a diff pane of their own.
 
 import type { Context } from "@neoworks/extension-system";
 import gitDiff from "@phosphor-icons/core/regular/git-diff.svg";
 import DiffNotice from "./DiffNotice.svelte";
+import InlineDiffBar from "./InlineDiffBar.svelte";
 import DiffPane from "./DiffPane.svelte";
 import { gpuiDiffHost } from "./diffHost";
 import { DIFF_PANE_TYPE, DiffService } from "./service";
@@ -28,6 +30,7 @@ export const diff = {
         layout: ctx.layout,
       },
     });
+    ctx.slots.register("editor.breadcrumbs", { id: "diff.inline", order: 10, component: InlineDiffBar, props: { diff: service, editor: ctx.editor } });
     ctx.slots.register("statusbar", { id: "diff.notice", order: 20, component: DiffNotice, props: { diff: service } });
     registerCommands(ctx, service);
   },
@@ -44,7 +47,28 @@ function registerCommands(ctx: Context, service: DiffService): void {
     id: "diff.openFile",
     title: "Diff: show this file's changes",
     group: "Git",
-    keywords: "changes compare head",
+    keywords: "changes compare head inline",
+    when: hasFile,
+    run: async () => {
+      const active = ctx.editor.active();
+      if (active !== null) {
+        await service.showInEditor(active.path, "head");
+      }
+    },
+  });
+  ctx.commands.register({
+    id: "diff.toggleInline",
+    title: "Diff: show or hide this file's changes",
+    group: "Git",
+    keywords: "changes compare head inline toggle",
+    when: hasFile,
+    run: () => service.toggleInEditor(),
+  });
+  ctx.commands.register({
+    id: "diff.openPane",
+    title: "Diff: open this file's changes in a pane",
+    group: "Git",
+    keywords: "changes compare head split side by side",
     when: hasFile,
     run: async () => {
       const active = ctx.editor.active();

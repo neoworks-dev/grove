@@ -13,6 +13,10 @@ export interface Palette {
   bg: string;
   /** Cards and code, set into the pane. */
   surface: string;
+  /** Things that float above the pane, such as the composer. */
+  elevated: string;
+  /** The edge of something elevated, a step stronger than `border`. */
+  elevatedBorder: string;
   border: string;
   accent: string;
   muted: string;
@@ -60,6 +64,8 @@ export function paletteFrom(tokens: ThemeTokens): Palette {
     fg: tokens.text,
     bg: tokens.surface,
     surface: tokens.input,
+    elevated: tokens.elevated,
+    elevatedBorder: tokens.lineStrong,
     border: tokens.line,
     accent: tokens.accent,
     muted: tokens.muted,

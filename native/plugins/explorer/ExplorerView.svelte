@@ -10,10 +10,7 @@
   import { Button, ContextMenu, Icon, Input, Text, Tree, View, type MenuItem, type PointerEvent, type TreeRow } from "@neoworks/svelte-gpui/ui";
   import arrowClockwise from "@phosphor-icons/core/regular/arrow-clockwise.svg";
   import arrowsInLineVertical from "@phosphor-icons/core/regular/arrows-in-line-vertical.svg";
-  import file from "@phosphor-icons/core/regular/file.svg";
   import filePlus from "@phosphor-icons/core/regular/file-plus.svg";
-  import folder from "@phosphor-icons/core/regular/folder.svg";
-  import folderOpen from "@phosphor-icons/core/regular/folder-open.svg";
   import folderPlus from "@phosphor-icons/core/regular/folder-plus.svg";
   import { tick, untrack } from "svelte";
   import { useKernel } from "../../kernel/kernel";
@@ -21,7 +18,10 @@
   import { colors, fontSize, radius } from "../theme/tokens";
   import type { WorkspaceService } from "../workspace/service";
   import type { DiffChangeType, FileNode } from "../../../src/shared/types";
-  import { ancestorsOf, parentOf } from "./model";
+  import FileIconView from "./FileIconView.svelte";
+  import { iconForFile, iconForFolder, type FileIcon } from "./fileIcons";
+  import { changeColor } from "./changeColors";
+  import { ancestorsOf, CHANGE_LETTERS, parentOf } from "./model";
   import type { ExplorerService } from "./service";
 
   interface Props {
@@ -47,23 +47,6 @@
   let menu = $state<{ openAt(x: number, y: number, items?: MenuItem[]): void } | undefined>();
   let nameInput = $state<ReturnType<typeof Input> | undefined>();
   let name = $state("");
-
-  /** The colour a git change gives a file's name and its letter. Derived so it follows a theme switch. */
-  const changeColors: Record<DiffChangeType, string> = $derived({
-    added: colors.green,
-    modified: colors.amber,
-    deleted: colors.red,
-    renamed: colors.blue,
-    untracked: colors.accent,
-  });
-
-  const changeLetters: Record<DiffChangeType, string> = {
-    added: "A",
-    modified: "M",
-    deleted: "D",
-    renamed: "R",
-    untracked: "U",
-  };
 
   // Another worktree starts a fresh tree; the same one, shown again, reads again.
   $effect(() => {
@@ -96,21 +79,32 @@
     untrack(() => void revealPath(target));
   });
 
-  const markedDirectories = $derived(explorer.markedDirectories(expanded));
+  const directoryChanges = $derived(explorer.directoryChanges());
+  const iconSet = $derived(explorer.iconSet());
 
-  /** The colour of an entry's name: its change, or a folder's tint when something below it changed. */
-  function nameColor(node: FileNode): string {
+  /** The git change an entry shows: its own, or for a folder the strongest one below it. */
+  function shownChange(node: FileNode): DiffChangeType | undefined {
     if (node.isDir) {
-      if (markedDirectories.has(node.relPath)) {
-        return colors.amber;
-      }
-      return colors.muted;
+      return directoryChanges.get(node.relPath);
     }
-    const change = explorer.changeOf(node.relPath);
+    return explorer.changeOf(node.relPath);
+  }
+
+  /** The colour of an entry's name: its change's colour, as in VS Code, else the quiet text colour. */
+  function nameColor(node: FileNode): string {
+    const change = shownChange(node);
     if (change === undefined) {
       return colors.muted;
     }
-    return changeColors[change];
+    return changeColor(change);
+  }
+
+  /** The icon an entry gets from the active set. */
+  function iconOf(node: FileNode, expandedNow: boolean): FileIcon {
+    if (node.isDir) {
+      return iconForFolder(iconSet, node.name, expandedNow);
+    }
+    return iconForFile(iconSet, node.name);
   }
 
   /** The directory a new entry goes in when made from this entry, opening the entry when it is a folder. */
@@ -382,10 +376,10 @@
             ondown={(event: PointerEvent) => openMenu(event, node, info)}
             onpress={(event: PointerEvent) => pressRow(event, node, info)}
           >
-            <Icon svg={node.isDir ? (info.expanded ? folderOpen : folder) : file} size={14} color={nameColor(node)} />
+            <FileIconView icon={iconOf(node, info.expanded)} size={14} fallbackColor={nameColor(node)} />
             <Text style={{ flex: 1, minWidth: 0, truncate: true, color: nameColor(node) }}>{node.name}</Text>
             {#if change !== undefined && !node.isDir}
-              <Text style={{ shrink: 0, fontFamily: "mono", fontSize: fontSize.xxs, color: changeColors[change] }}>{changeLetters[change]}</Text>
+              <Text style={{ shrink: 0, fontFamily: "mono", fontSize: fontSize.xxs, color: changeColor(change) }}>{CHANGE_LETTERS[change]}</Text>
             {/if}
           </View>
         {/snippet}

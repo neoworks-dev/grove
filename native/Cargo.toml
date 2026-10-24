@@ -11,11 +11,11 @@ members = ["editor-core", "lsp-client"]
 editor-core = { path = "editor-core" }
 lsp-client = { path = "lsp-client" }
 # Pinned to the same commit as the runtime in package.json, so the protocol matches.
-svelte_gpui_host = { git = "https://github.com/neoworks-dev/svelte-gpui", rev = "0a714498b8894ccc7e05a7274d4400994a9d230f" }
+svelte_gpui_host = { git = "https://github.com/neoworks-dev/svelte-gpui", rev = "f0488f588912e2e47b245ab0445b8ff5e5c83ea5" }
 serde_json = "1"
 alacritty_terminal = "0.26"
 parking_lot = "0.12"
 futures = "0.3"
 
 [patch.crates-io]
-xattr = { git = "https://github.com/neoworks-dev/svelte-gpui", rev = "0a714498b8894ccc7e05a7274d4400994a9d230f" }
+xattr = { git = "https://github.com/neoworks-dev/svelte-gpui", rev = "f0488f588912e2e47b245ab0445b8ff5e5c83ea5" }

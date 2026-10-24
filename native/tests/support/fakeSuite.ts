@@ -142,7 +142,7 @@ export class FakeClient {
 
   subscribe(
     sessionId: string,
-    options: { onEvent: (event: SessionEvent, record: SessionEventRecord) => void },
+    options: { onEvent: (event: SessionEvent, record: SessionEventRecord) => void; onLive?: (session: SessionInfo) => void },
   ): () => void {
     let nextSeq = 1;
     const subscription: FakeEventSubscription = {
@@ -156,6 +156,8 @@ export class FakeClient {
       stopped: false,
     };
     this.events.push(subscription);
+    // As the daemon does: what is emitted before this is the replay, what comes after is live.
+    queueMicrotask(() => options.onLive?.({ id: sessionId, cwd: "/", createdAt: 0, lastActivity: 0, lastSeq: nextSeq - 1, state: "idle", queued: 0 }));
     return () => {
       subscription.stopped = true;
     };

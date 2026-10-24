@@ -1,10 +1,10 @@
-// The files panel's data: what git says changed in the session's worktree, plus what the agent
-// and its guests touched this session (from the diffs of their tool calls), tagged by who.
+// The files panel's data: the files the agent and its guests changed this session (from the diffs
+// of their tool calls), tagged by who and marked with what git says about each.
 // Plain functions, so they are tested without a window. Ported from neoworks-harness apps/gui
 // (plugins/files/files.ts), with the changes read from Grove's sidecar instead of `git status`.
 
 import type { SessionEventRecord } from "@suite/protocol/types";
-import type { DiffFile } from "../../../src/shared/types";
+import type { DiffChangeType, DiffFile } from "../../../src/shared/types";
 
 /** What a file shows: git's change, or `clean` for one an agent touched that git sees no difference in. */
 export type Mark = "modified" | "added" | "deleted" | "renamed" | "untracked" | "clean";
@@ -138,28 +138,47 @@ function tagsFor(rel: string, base: string, touched: readonly Touched[]): string
 }
 
 /**
- * Git's changes, then the files only an agent touched. `base` is the worktree's directory, which
- * paths in the agents' diffs are made relative to; `changes` is undefined outside a repository.
+ * The files the session's agents touched, each marked with what git says about it. A touched file
+ * git sees no change in (committed since, or reverted) is `clean`. Files changed by hand or by
+ * other sessions are not listed. `base` is the worktree's directory, which paths in the agents'
+ * diffs are made relative to; `changes` is undefined outside a repository.
  */
 export function fileEntries(base: string, changes: readonly DiffFile[] | undefined, touched: readonly Touched[]): FileEntry[] {
-  const entries: FileEntry[] = [];
+  const gitFiles = new Map<string, DiffFile>();
   if (changes !== undefined) {
     for (const file of mergedChanges(changes)) {
-      const entry: FileEntry = { rel: file.path, mark: markOf(file), tags: tagsFor(file.path, base, touched), file };
-      if (file.oldPath !== undefined) {
-        entry.orig = file.oldPath;
-      }
-      entries.push(entry);
+      gitFiles.set(file.path, file);
     }
   }
-  for (const entry of touched) {
-    const rel = relativize(base, entry.path);
+  const entries: FileEntry[] = [];
+  for (const touch of touched) {
+    const rel = relativize(base, touch.path);
     if (entries.some((listed) => listed.rel === rel)) {
       continue;
     }
-    entries.push({ rel, mark: "clean", tags: entry.tags });
+    entries.push(entryOf(rel, tagsFor(rel, base, touched), gitFiles.get(rel)));
   }
   return entries;
+}
+
+/** The entry for a touched file: marked by git's change when it has one. */
+function entryOf(rel: string, tags: string[], file: DiffFile | undefined): FileEntry {
+  if (file === undefined) {
+    return { rel, mark: "clean", tags };
+  }
+  const entry: FileEntry = { rel, mark: markOf(file), tags, file };
+  if (file.oldPath !== undefined) {
+    entry.orig = file.oldPath;
+  }
+  return entry;
+}
+
+/** The git change a mark stands for, or undefined for `clean`. */
+export function changeOfMark(mark: Mark): DiffChangeType | undefined {
+  if (mark === "clean") {
+    return undefined;
+  }
+  return mark;
 }
 
 /** One letter for the margin: M, A, D, R, ? or a dot for a file git sees no change in. */

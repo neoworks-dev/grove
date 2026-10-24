@@ -6,12 +6,19 @@
   // running. The field has the keyboard while its pane is the focused one.
   import { untrack } from "svelte";
   import { clipboard } from "@neoworks/svelte-gpui";
-  import { Input, Overlay, Scroll, Text, View } from "@neoworks/svelte-gpui/ui";
+  import { Button, Icon, Input, Overlay, Scroll, Text, View } from "@neoworks/svelte-gpui/ui";
+  import gauge from "@phosphor-icons/core/regular/gauge.svg";
+  import arrowUp from "@phosphor-icons/core/regular/arrow-up.svg";
+  import stopIcon from "@phosphor-icons/core/regular/stop.svg";
   import type { KeyEvent, Layout } from "@neoworks/svelte-gpui/ui";
   import type { ChatSession } from "./chatSession";
   import CommandMenu from "./CommandMenu.svelte";
   import { ComposerModel } from "./composerModel";
   import ComposerControls from "./ComposerControls.svelte";
+  import { approvalsChoices, approvalsIcon, harnessChoices, harnessLabel, modeLine, optionChoices, optionLabel } from "./composerControls";
+  import HarnessIcon from "./HarnessIcon.svelte";
+  import { currentSettings } from "./status";
+  import ControlSelect from "./ControlSelect.svelte";
   import { createHistoryStore } from "./historyStore";
   import { palette } from "./palette";
   import PromptPanel from "./PromptPanel.svelte";
@@ -31,6 +38,8 @@
   /** The field grows with its text up to this many pixels, then scrolls. */
   const MAX_INPUT_HEIGHT = 200;
   const LINE_HEIGHT = 20;
+  /** Model names run long (`openrouter/deepseek/deepseek-v4.1-flash`), so their list is wider than the others. */
+  const MODEL_LIST_WIDTH = 360;
 
   // The composer belongs to the session its pane shows: another session gets a new Composer.
   const model = new ComposerModel(
@@ -53,6 +62,15 @@
   const showPanel = $derived(model.engaged());
   const menuVisible = $derived(model.menuVisible());
   const notice = $derived(model.notice());
+  const status = $derived(session.status());
+  const approvals = $derived(status.approvals);
+  const harness = $derived(session.harness());
+  const settings = $derived(currentSettings({ ...status, harness }));
+  const offered = $derived(session.offered());
+  const modelLabel = $derived(optionLabel(offered, harness, "model", settings.model));
+  const effortLabel = $derived(optionLabel(offered, harness, "thought_level", settings.effort));
+  const efforts = $derived(optionChoices(offered, harness, "thought_level"));
+  const empty = $derived(model.text.trim() === "");
 
   // What was sent in this session before is what Up walks back through.
   $effect(() => {
@@ -166,6 +184,24 @@
     }
   }
 
+  /** Asks the daemon to switch the approvals mode. */
+  function setApprovals(value: string): void {
+    void session.send(`/approvals ${value}`);
+  }
+
+  /** The small round send and stop button, in the given fill and icon colour. */
+  function roundButton(background: string, color: string) {
+    return { width: 24, height: 24, radius: 12, align: "center", justify: "center", background, color } as const;
+  }
+
+  /** The send button: a neutral fill while there is nothing to send, the accent once there is. */
+  function sendButton(nothingToSend: boolean) {
+    if (nothingToSend) {
+      return roundButton(p.band, p.muted);
+    }
+    return roundButton(p.accent, p.bg);
+  }
+
   function layout(box: Layout): void {
     width = box.width;
   }
@@ -178,7 +214,7 @@
   }
 </script>
 
-<View style={{ background: p.band, paddingX: p.space.l, paddingY: p.space.m, gap: p.space.s }}>
+<View style={{ paddingX: p.space.l, paddingY: p.space.m, gap: p.space.s }}>
   {#if error !== null}
     <View style={{ direction: "row", gap: p.space.m }} onpress={() => session.clearError()}>
       <Text style={{ flex: 1, minWidth: 0, color: p.danger }}>{error}</Text>
@@ -194,19 +230,18 @@
       </Text>
     {/if}
     <View
-      style={{ direction: "row", gap: p.space.m, padding: p.space.m, radius: 6, borderWidth: 1, borderColor: p.border, background: p.bg }}
+      style={{ gap: p.space.s, padding: p.space.m, radius: 8, borderWidth: 1, borderColor: p.elevatedBorder, background: p.elevated }}
       onpress={() => input?.focus()}
     >
-      <Text style={{ color: p.accent, lineHeight: LINE_HEIGHT, fontWeight: 600 }}>›</Text>
-      <View style={{ flex: 1, minWidth: 0 }} onlayout={layout}>
+      <View style={{ minWidth: 0, paddingX: p.space.s }} onlayout={layout}>
         <Scroll bind:this={scroller} style={{ maxHeight: MAX_INPUT_HEIGHT }}>
           <View onlayout={grown}>
             <Input
               bind:this={input}
               bind:value={model.text}
               multiline
-              rows={1}
-              placeholder={running ? "The agent is working. Esc cancels the turn." : "Message the agent ( / commands · ↑↓ history )"}
+              rows={2}
+              placeholder={running ? "The marmot is working. Esc cancels the turn." : "What are we doing today?"}
               style={{ color: p.fg, lineHeight: LINE_HEIGHT }}
               oninput={() => model.typed()}
               onkey={key}
@@ -217,6 +252,49 @@
           <Overlay side="top" align="start" offset={p.space.m} matchWidth>
             <CommandMenu {model} onchosen={() => input?.focus()} />
           </Overlay>
+        {/if}
+      </View>
+      <View style={{ direction: "row", align: "center", gap: p.space.s }}>
+          <ControlSelect
+            value={harness}
+            options={harnessChoices(offered, harness)}
+            shown={harnessLabel(offered, harness)}
+            onopen={() => void session.loadOffered()}
+            onchange={(name) => void session.setHarness(name)}
+          >
+            {#snippet icon()}<HarnessIcon harness={harness} size={12} />{/snippet}
+          </ControlSelect>
+          <ControlSelect
+            value={settings.model ?? ""}
+            options={optionChoices(offered, harness, "model")}
+            shown={modelLabel ?? "Model"}
+            width={MODEL_LIST_WIDTH}
+            onopen={() => void session.loadOffered()}
+            onchange={(value) => void session.setOption("model", value)}
+          />
+          <ControlSelect value={approvals} options={approvalsChoices()} shown={modeLine(approvals)} onchange={setApprovals}>
+            {#snippet icon()}<Icon svg={approvalsIcon(approvals)} size={12} />{/snippet}
+          </ControlSelect>
+        <View style={{ flex: 1, minWidth: 0 }} />
+        {#if (efforts.length > 0 || effortLabel !== undefined)}
+          <ControlSelect
+            value={settings.effort ?? ""}
+            options={efforts}
+            shown={effortLabel ?? "Effort"}
+            onopen={() => void session.loadOffered()}
+            onchange={(value) => void session.setOption("effort", value)}
+          >
+            {#snippet icon()}<Icon svg={gauge} size={12} />{/snippet}
+          </ControlSelect>
+        {/if}
+        {#if running}
+          <Button onpress={() => void session.cancel()} style={roundButton(p.band, p.fg)} hover={{ background: p.border }}>
+            <Icon svg={stopIcon} size={12} />
+          </Button>
+        {:else}
+          <Button onpress={() => model.submit()} style={sendButton(empty)} hover={{ background: empty ? p.border : p.accent }}>
+            <Icon svg={arrowUp} size={12} />
+          </Button>
         {/if}
       </View>
     </View>

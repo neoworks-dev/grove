@@ -1,6 +1,7 @@
 <!--
   A leaf of the split tree: a rounded panel with a header (the title, which picks the pane up,
-  and its close button) over the pane's own content. Another pane dragged over it shows where it
+  and its close button) over the pane's own content. A pane type that says `header: false` has
+  no header; such a pane is closed by key and cannot be dragged. Another pane dragged over it shows where it
   would land, in the middle to replace this one or on an edge to split it, by the zones in
   `paneDragCore.ts`. The focused pane shows a faint line of light along its bottom edge.
 -->
@@ -26,13 +27,15 @@
     icon?: string;
     /** This is the focused pane. */
     active?: boolean;
+    /** Draws the header with the title and close button; a pane type can do without it. */
+    header?: boolean;
     onclose?: () => void;
     /** Another pane was dropped here, on `zone`. */
     ondroppane?: (draggedLeafId: string, zone: DropZone) => void;
     children: Snippet;
   }
 
-  let { leafId, title, icon, active = false, onclose, ondroppane, children }: Props = $props();
+  let { leafId, title, icon, active = false, header = true, onclose, ondroppane, children }: Props = $props();
 
   let zone = $state<DropZone | null>(null);
   let targetRect = $state<Rect>({ left: 0, top: 0, width: 0, height: 0 });
@@ -64,6 +67,7 @@
   ondrop={onDrop}
   style={{ ...pane, flex: 1, minWidth: 0, minHeight: 0 }}
 >
+  {#if header}
   <Draggable
     data={{ leafId }}
     style={{ direction: "row", align: "center", height: 28, shrink: 0, paddingLeft: 12, paddingRight: 4, gap: 6, cursor: "grab" }}
@@ -72,6 +76,7 @@
     <Text style={{ flex: 1, minWidth: 0, truncate: true, fontSize: fontSize.xs, color: colors.muted }}>{title}</Text>
     {#if onclose}<PaneControls {onclose} />{/if}
   </Draggable>
+  {/if}
   <View style={{ flex: 1, minHeight: 0 }}>
     {@render children()}
   </View>

@@ -5451,7 +5451,7 @@ dependencies = [
 [[package]]
 name = "svelte_gpui_host"
 version = "0.0.1"
-source = "git+https://github.com/neoworks-dev/svelte-gpui?rev=f16ffabd405f651dfa33ab180cc921af8e6ed142#f16ffabd405f651dfa33ab180cc921af8e6ed142"
+source = "git+https://github.com/neoworks-dev/svelte-gpui?rev=f0488f588912e2e47b245ab0445b8ff5e5c83ea5#f0488f588912e2e47b245ab0445b8ff5e5c83ea5"
 dependencies = [
  "futures",
  "gpui",
@@ -7378,7 +7378,7 @@ checksum = "ea6fc2961e4ef194dcbfe56bb845534d0dc8098940c7e5c012a258bfec6701bd"
 [[package]]
 name = "xattr"
 version = "0.2.3"
-source = "git+https://github.com/neoworks-dev/svelte-gpui?rev=f16ffabd405f651dfa33ab180cc921af8e6ed142#f16ffabd405f651dfa33ab180cc921af8e6ed142"
+source = "git+https://github.com/neoworks-dev/svelte-gpui?rev=f0488f588912e2e47b245ab0445b8ff5e5c83ea5#f0488f588912e2e47b245ab0445b8ff5e5c83ea5"
 dependencies = [
  "libc",
 ]

@@ -91,10 +91,11 @@ tools directory and puts the directory first on the language server lookup path.
 
 | `kind` | Fields |
 |---|---|
-| `github-release` | `repo`, `tag` (the latest when left out), `assets` (an asset name for each of `linux-x64`, `linux-arm64`, `macos-x64`, `macos-arm64`, `windows-x64`, `windows-arm64`), `archive` (`none`, `gz`, `tar.gz`, `tar.xz` or `zip`), `binaries` |
+| `github-release` | `repo`, `tag` (the latest when left out), `assets` (an asset name for each of `linux-x64`, `linux-arm64`, `macos-x64`, `macos-arm64`, `windows-x64`, `windows-arm64`), `archive` (`auto`, which reads the asset name and is the default, `none`, `gz`, `tar.gz` or `zip`), `binaries` |
 | `npm` | `package`, `version`, `binaries` |
 | `pip` | `package`, `version`, `binaries` |
 | `cargo` | `crate`, `version`, `binaries` |
+| `go` | `package`, `version`, `binaries` (built with `go install`, which needs the Go toolchain) |
 
 ## Where extensions live
 

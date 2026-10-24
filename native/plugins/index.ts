@@ -7,6 +7,7 @@ import { editor } from "./editor";
 import { editorContextMenu } from "./editor-context-menu";
 import { editorPosition } from "./editor-position";
 import { explorer } from "./explorer";
+import { extensionsView } from "./extensions";
 import { agents } from "./agents";
 import { breadcrumbs } from "./breadcrumbs";
 import { brokenEntry, failing } from "./failing";
@@ -61,6 +62,7 @@ export const corePlugins: PluginCatalog = {
   workspace,
   explorer,
   worktrees,
+  "extensions-view": extensionsView,
   agents,
   terminal,
   "placeholder-panel": placeholderPanel,

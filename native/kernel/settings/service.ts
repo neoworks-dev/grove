@@ -83,7 +83,8 @@ export class SettingsService extends Service {
   private catalog: PluginCatalog;
   private files: ProfileFiles;
   private loader: LoaderService;
-  private coreLayer: ProfileLayer = { name: "core", rows: [] };
+  /** The layers below the user's: core, and the installed extensions' plugins. */
+  private baseLayers: ProfileLayer[] = [{ name: "core", rows: [] }];
   private projectLayer: ProfileLayer | undefined;
   private userRows: ProfileRow[] = [];
   private userProblems: string[] = [];
@@ -105,7 +106,7 @@ export class SettingsService extends Service {
    * and again whenever the project folder changes. The settings entries follow at once.
    */
   setProfile(profile: LoadedProfile): void {
-    this.coreLayer = profile.layers[0];
+    this.baseLayers = profile.layers.filter((layer) => layer.name !== "user" && layer.name !== "project");
     this.projectLayer = profile.layers.find((layer) => layer.name === "project");
     const userLayer = profile.layers.find((layer) => layer.name === "user");
     this.userRows = [];
@@ -234,7 +235,7 @@ export class SettingsService extends Service {
     if (!row) {
       throw new Error(`no profile row "${rowId}"`);
     }
-    const coreRow = layerProfiles([this.coreLayer]).rows.find((candidate) => candidate.id === rowId);
+    const coreRow = layerProfiles(this.baseLayers).rows.find((candidate) => candidate.id === rowId);
     return { rowId, plugin: row.plugin, coreRow, fields: this.schemaOf(row.plugin)?.fields };
   }
 
@@ -264,7 +265,7 @@ export class SettingsService extends Service {
 
   /** The profile's rows with the current user layer in place. */
   private layeredRows(): ResolvedRow[] {
-    const layers: ProfileLayer[] = [this.coreLayer, { name: "user", rows: this.userRows }];
+    const layers: ProfileLayer[] = [...this.baseLayers, { name: "user", rows: this.userRows }];
     if (this.projectLayer) {
       layers.push(this.projectLayer);
     }

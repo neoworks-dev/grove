@@ -17,6 +17,17 @@ export interface LspHost {
   configure(options: LspOptions): Promise<void>;
   /** Tells the host that files changed on disk, so servers that asked to hear of it do. */
   filesChanged(changes: FileChange[]): Promise<void>;
+  /** Installs a tool and resolves when it is in place; rejects with the reason it could not be. */
+  installTool(id: string): Promise<void>;
+  /** Hears how installs are going. Returns the function that stops it. */
+  onToolProgress(handler: (progress: ToolProgress) => void): () => void;
+}
+
+/** A step of an install, as the host's `tool-progress` event says it. */
+export interface ToolProgress {
+  id: string;
+  phase: "started" | "output" | "finished" | "failed";
+  message: string;
 }
 
 /** The switches of the language features, as the settings have them. */
@@ -46,5 +57,9 @@ export function gpuiLspHost(): LspHost {
     filesChanged: async (changes) => {
       await invoke("lsp_files_changed", { changes });
     },
+    installTool: async (id) => {
+      await invoke("tools_install", { id });
+    },
+    onToolProgress: (handler) => listen<ToolProgress>("tool-progress", handler),
   };
 }

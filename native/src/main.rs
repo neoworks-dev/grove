@@ -18,13 +18,16 @@
 //! to start it (see `suite.rs`).
 
 mod browser;
+mod data;
 mod diff;
 mod editor;
+mod extensions;
 mod git;
 mod lsp;
 mod sidecar;
 mod suite;
 mod terminal;
+mod tools;
 
 use std::path::PathBuf;
 
@@ -47,11 +50,16 @@ fn main() {
     let sidecar = Sidecar::start(SidecarConfig::from_environment(), commands.emitter());
     let commands = sidecar.commands(commands);
     let commands = suite::register(commands);
+    let commands = data::register(commands);
+    let commands = extensions::register(commands);
     let commands = browser::register(commands);
     let documents = SharedDocuments::new(commands.emitter());
     let commands = documents.register(commands);
     let signals = Signals::default();
+    let tools = tools::Tools::new(commands.emitter());
+    let commands = tools.register(commands);
     let lsp = LspStore::new(documents.clone(), commands.emitter(), signals.clone());
+    lsp.attach_tools(tools);
     let commands = lsp.register(commands);
     let commands = git::register(commands);
     let commands = diff::register(commands, documents.clone());

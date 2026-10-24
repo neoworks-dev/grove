@@ -34,17 +34,22 @@ export function projectProfilePath(folder: string): string {
 }
 
 /**
- * Reads the layers and stacks them. The project layer is the `folder`'s profile, skipped when
+ * Reads the layers and stacks them: core, then the installed extensions' plugins, then the user's
+ * file, then the project. The project layer is the `folder`'s profile, skipped when
  * no folder is open (null), and a layer whose file is missing is skipped silently. A file that cannot be read or parsed
  * becomes a problem and an empty layer, so a bad file never costs the plugins below it.
  */
 export async function loadProfile(
   coreRows: ProfileRow[],
   files: ProfileFiles,
-  folder: string | null
+  folder: string | null,
+  extensionRows: ProfileRow[] = []
 ): Promise<LoadedProfile> {
   const problems: string[] = [];
   const layers: ProfileLayer[] = [{ name: "core", rows: coreRows }];
+  if (extensionRows.length > 0) {
+    layers.push({ name: "extensions", rows: extensionRows });
+  }
   const configDirectory = await files.configDirectory();
   const userProblems: string[] = [];
   const user = await readLayer("user", userProfilePath(configDirectory), files, userProblems);

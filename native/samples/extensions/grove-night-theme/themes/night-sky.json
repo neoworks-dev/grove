@@ -1,0 +1,16 @@
+{
+  "tokens": {
+    "canvas": "#0b1020",
+    "elevated": "#1b2440",
+    "surface": "#10172b",
+    "raised": "#141c34",
+    "hover": "#18213d",
+    "input": "#080c18",
+    "line": "#222c4a",
+    "lineStrong": "#34426b",
+    "accent": "#7aa2f7",
+    "focusRing": "#7aa2f78c",
+    "blue": "#7aa2f7",
+    "blueGlow": "#7aa2f726"
+  }
+}

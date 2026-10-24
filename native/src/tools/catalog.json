@@ -1,0 +1,147 @@
+[
+  {
+    "id": "rust-analyzer",
+    "name": "rust-analyzer",
+    "description": "The Rust language server.",
+    "install": {
+      "kind": "github-release",
+      "repo": "rust-lang/rust-analyzer",
+      "assets": {
+        "linux-x64": "rust-analyzer-x86_64-unknown-linux-gnu.gz",
+        "linux-arm64": "rust-analyzer-aarch64-unknown-linux-gnu.gz",
+        "macos-x64": "rust-analyzer-x86_64-apple-darwin.gz",
+        "macos-arm64": "rust-analyzer-aarch64-apple-darwin.gz"
+      },
+      "binaries": ["rust-analyzer"]
+    }
+  },
+  {
+    "id": "vtsls",
+    "name": "vtsls",
+    "description": "The TypeScript and JavaScript language server, built on VS Code's TypeScript support.",
+    "install": { "kind": "npm", "package": "@vtsls/language-server", "binaries": ["vtsls"] }
+  },
+  {
+    "id": "gopls",
+    "name": "gopls",
+    "description": "The Go language server. It is built with the Go toolchain, which it needs to run too.",
+    "install": { "kind": "go", "package": "golang.org/x/tools/gopls", "binaries": ["gopls"] }
+  },
+  {
+    "id": "pyright",
+    "name": "Pyright",
+    "description": "The Python language server and type checker.",
+    "install": { "kind": "npm", "package": "pyright", "binaries": ["pyright", "pyright-langserver"] }
+  },
+  {
+    "id": "lua-language-server",
+    "name": "lua-language-server",
+    "description": "The Lua language server.",
+    "install": {
+      "kind": "github-release",
+      "repo": "LuaLS/lua-language-server",
+      "assets": {
+        "linux-x64": "lua-language-server-{version}-linux-x64.tar.gz",
+        "linux-arm64": "lua-language-server-{version}-linux-arm64.tar.gz",
+        "macos-x64": "lua-language-server-{version}-darwin-x64.tar.gz",
+        "macos-arm64": "lua-language-server-{version}-darwin-arm64.tar.gz"
+      },
+      "binaries": ["lua-language-server"]
+    }
+  },
+  {
+    "id": "vscode-langservers-extracted",
+    "name": "VS Code language servers",
+    "description": "The JSON, CSS, HTML and ESLint language servers that VS Code ships, packaged on their own.",
+    "install": {
+      "kind": "npm",
+      "package": "vscode-langservers-extracted",
+      "binaries": [
+        "vscode-json-language-server",
+        "vscode-css-language-server",
+        "vscode-html-language-server",
+        "vscode-eslint-language-server"
+      ]
+    }
+  },
+  {
+    "id": "svelte-language-server",
+    "name": "Svelte language server",
+    "description": "The language server for Svelte components.",
+    "install": { "kind": "npm", "package": "svelte-language-server", "binaries": ["svelteserver"] }
+  },
+  {
+    "id": "taplo",
+    "name": "Taplo",
+    "description": "The TOML language server and formatter.",
+    "install": {
+      "kind": "github-release",
+      "repo": "tamasfe/taplo",
+      "assets": {
+        "linux-x64": "taplo-linux-x86_64.gz",
+        "linux-arm64": "taplo-linux-aarch64.gz",
+        "macos-x64": "taplo-darwin-x86_64.gz",
+        "macos-arm64": "taplo-darwin-aarch64.gz"
+      },
+      "binaries": ["taplo"]
+    }
+  },
+  {
+    "id": "yaml-language-server",
+    "name": "YAML language server",
+    "description": "The YAML language server, with schema support.",
+    "install": { "kind": "npm", "package": "yaml-language-server", "binaries": ["yaml-language-server"] }
+  },
+  {
+    "id": "clangd",
+    "name": "clangd",
+    "description": "The C and C++ language server from the LLVM project.",
+    "install": {
+      "kind": "github-release",
+      "repo": "clangd/clangd",
+      "assets": {
+        "linux-x64": "clangd-linux-{version}.zip",
+        "macos-x64": "clangd-mac-{version}.zip",
+        "macos-arm64": "clangd-mac-{version}.zip"
+      },
+      "binaries": ["clangd"]
+    }
+  },
+  {
+    "id": "dockerfile-language-server",
+    "name": "Dockerfile language server",
+    "description": "The language server for Dockerfiles and Containerfiles.",
+    "install": { "kind": "npm", "package": "dockerfile-language-server-nodejs", "binaries": ["docker-langserver"] }
+  },
+  {
+    "id": "sqls",
+    "name": "sqls",
+    "description": "The SQL language server, which talks to a database for completion.",
+    "install": {
+      "kind": "github-release",
+      "repo": "sqls-server/sqls",
+      "assets": {
+        "linux-x64": "sqls-linux-{version}.zip",
+        "macos-x64": "sqls-darwin-{version}.zip",
+        "macos-arm64": "sqls-darwin-{version}.zip"
+      },
+      "binaries": ["sqls"]
+    }
+  },
+  {
+    "id": "surrealql-language-server",
+    "name": "SurrealQL language server",
+    "description": "SurrealDB's own language server for SurrealQL.",
+    "install": {
+      "kind": "github-release",
+      "repo": "surrealdb/surrealql-language-server",
+      "assets": {
+        "linux-x64": "surrealql-language-server-linux-amd64",
+        "linux-arm64": "surrealql-language-server-linux-arm64",
+        "macos-arm64": "surrealql-language-server-macos-arm64"
+      },
+      "archive": "none",
+      "binaries": ["surrealql-language-server"]
+    }
+  }
+]

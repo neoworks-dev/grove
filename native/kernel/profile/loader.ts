@@ -29,6 +29,8 @@ export interface RowReport {
 
 interface MountedRow {
   row: ResolvedRow;
+  /** The plugin that was mounted, so a row whose catalog entry was replaced, as when an extension is updated, mounts again. */
+  plugin: Plugin;
   /** What `ctx.plugin` returned: awaitable, and the handle for disposing. */
   fiber: Fiber & PromiseLike<Fiber>;
   /** The fiber itself, which is what `internal/status` events carry. */
@@ -104,7 +106,7 @@ export class LoaderService extends Service {
     const unloading: Promise<void>[] = [];
     for (const [id, mounted] of [...this.mounted]) {
       const next = wanted.get(id);
-      if (next && !next.disabled && sameRow(mounted.row, next)) {
+      if (next && !next.disabled && sameRow(mounted.row, next) && mounted.plugin === this.catalog[next.plugin]) {
         continue;
       }
       this.mounted.delete(id);
@@ -128,7 +130,7 @@ export class LoaderService extends Service {
       this.fail(row, describeError(error));
       return;
     }
-    const mounted: MountedRow = { row, fiber, base: Object.getPrototypeOf(fiber) };
+    const mounted: MountedRow = { row, plugin, fiber, base: Object.getPrototypeOf(fiber) };
     this.mounted.set(row.id, mounted);
     await this.settle(mounted);
   }

@@ -90,6 +90,7 @@ export type DocumentEvent =
   | { type: "dirty"; id: number; dirty: boolean }
   | { type: "saved"; id: number }
   | { type: "edited"; id: number }
+  | { type: "syntax"; id: number }
   | { type: "error"; id: number; message: string }
   | { type: "selections"; id: number; row: number; column: number; count: number; selected: boolean }
   | { type: "mode"; pane: string; mode: string; pending: string; commandLine: string | null }
@@ -1006,6 +1007,10 @@ export class EditorService extends Service {
       return;
     }
     if (event.type === "edited") {
+      return;
+    }
+    if (event.type === "syntax") {
+      void this.refreshViews();
       return;
     }
     if (event.type === "error" || event.type === "notice") {

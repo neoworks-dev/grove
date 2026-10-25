@@ -173,6 +173,7 @@ describe("showing a change", () => {
         asked.push(texts === undefined ? `diff ${path}` : `diff ${path} ${texts.oldText}>${texts.newText}`);
         return true;
       },
+      openGithubItem: async () => false,
     };
     return { openers, asked };
   }
@@ -684,6 +685,7 @@ describe("the openers over the editor and diff services", () => {
           return true;
         },
       },
+      { openItem: async () => null },
     );
     expect(openers.openDiff("/repo/a.ts")).toBe(true);
     expect(openers.openDiff("/repo/a.ts", { oldText: "one", newText: "two" })).toBe(true);

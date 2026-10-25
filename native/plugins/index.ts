@@ -15,6 +15,7 @@ import { brokenEntry, failing } from "./failing";
 import { filePicker } from "./file-picker";
 import { frame } from "./frame";
 import { gitChanges } from "./git-changes";
+import { github } from "./github";
 import { gitGutter } from "./git-gutter";
 import { header } from "./header";
 import { layout } from "./layout";
@@ -72,6 +73,7 @@ export const corePlugins: PluginCatalog = {
   worktrees,
   "extensions-view": extensionsView,
   agents,
+  github,
   terminal,
   "placeholder-panel": placeholderPanel,
   failing,

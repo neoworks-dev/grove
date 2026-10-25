@@ -22,6 +22,7 @@ import { lsp } from "./lsp";
 import { coreMenu, menus } from "./menus";
 import { panel } from "./panel";
 import { promptBlame } from "./prompt-blame";
+import { reviewComments } from "./review-comments";
 import { picker } from "./picker";
 import { placeholderPanel } from "./placeholders";
 import { palette } from "./palette";
@@ -63,6 +64,7 @@ export const corePlugins: PluginCatalog = {
   "editor-position": editorPosition,
   diff,
   "git-gutter": gitGutter,
+  "review-comments": reviewComments,
   "prompt-blame": promptBlame,
   lsp,
   "git-changes": gitChanges,

@@ -78,6 +78,16 @@ pub struct Layout {
     pub rows: Vec<VisibleRow>,
     /// Where the minimap is, while there is one, so a press on it is not taken for one on the text.
     pub minimap: Option<Bounds<Pixels>>,
+    /// The blocks that have a key, and the display rows they are on.
+    pub keyed_blocks: Vec<KeyedBlock>,
+}
+
+/// A block the app named, and where it is: the app puts its own widget over its rows.
+#[derive(Clone, Debug, PartialEq)]
+pub struct KeyedBlock {
+    pub key: String,
+    /// The display rows the block covers.
+    pub rows: Range<usize>,
 }
 
 /// A display row that was drawn.
@@ -311,6 +321,7 @@ impl Element for EditorElement {
         let popovers = self.editor.update(cx, |editor, cx| {
             let popovers = popup::build(&entity, editor, &layout, &theme, bounds, window, cx);
             editor.layout = Some(layout);
+            editor.report_places();
             editor.center_pending_row(cx);
             editor.hints_may_be_stale(cx);
             popovers
@@ -582,6 +593,7 @@ fn build_frame(
         }
     }
 
+    let keyed = keyed_blocks(&blocks, &blocks_map);
     let layout = Layout {
         bounds,
         text_left,
@@ -590,6 +602,7 @@ fn build_frame(
         blocks: blocks_map,
         rows: visible_rows,
         minimap: None,
+        keyed_blocks: keyed,
     };
     let selections = visible_selections
         .iter()
@@ -627,6 +640,21 @@ fn build_frame(
         prepaint_took: std::time::Duration::ZERO,
     };
     (layout, frame)
+}
+
+/// The blocks that have a key, with the display rows each covers.
+fn keyed_blocks(blocks: &[PlacedBlock], map: &BlockMap) -> Vec<KeyedBlock> {
+    let mut keyed = Vec::new();
+    for (index, block) in blocks.iter().enumerate() {
+        let Some(key) = block.key else {
+            continue;
+        };
+        let Some(rows) = map.rows_of(index) else {
+            continue;
+        };
+        keyed.push(KeyedBlock { key: key.to_string(), rows });
+    }
+    keyed
 }
 
 /// Gives a frame the minimap, when the view has one and is wide enough to share, and records where

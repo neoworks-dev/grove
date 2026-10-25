@@ -10,7 +10,7 @@
 
 import { Service, type Context } from "@neoworks/extension-system";
 import { createChangeSignal, type ChangeSignal } from "../../kernel/reactive";
-import type { Decoration } from "./decorations";
+import type { Decoration, TextPosition } from "./decorations";
 
 export type {
   BlockDecoration,
@@ -169,6 +169,8 @@ export interface EditorViewMethods {
    * such as a test's stand-in, leaves it out.
    */
   contextClick?(x: number, y: number): Promise<{ selected: boolean }>;
+  /** Every selection, as the positions of its two ends. A view that cannot say, such as a test's stand-in, leaves it out. */
+  selections?(): Promise<EditorSelection[]>;
 }
 
 /** A right press in an editor, where a menu of its actions is to open. */
@@ -179,6 +181,12 @@ export interface ContextMenuRequest {
   y: number;
   /** Whether text is selected, which cut and copy act on. */
   hasSelection: boolean;
+}
+
+/** A selection as the positions of its two ends, counted from zero; the ends are equal for a bare cursor. */
+export interface EditorSelection {
+  anchor: TextPosition;
+  head: TextPosition;
 }
 
 /** A place to put the cursor once the document that has it is shown. */
@@ -663,6 +671,32 @@ export class EditorService extends Service {
       return NO_SOURCES;
     }
     return sources;
+  }
+
+  /** The newest selection of a pane's editor, or null when the pane has none or cannot say. */
+  async selectionOf(leafId: string): Promise<EditorSelection | null> {
+    const view = this.viewsByLeaf.get(leafId);
+    if (view === undefined || view.selections === undefined) {
+      return null;
+    }
+    const selections = await view.selections();
+    if (selections.length === 0) {
+      return null;
+    }
+    return selections[selections.length - 1];
+  }
+
+  /** Gives a pane's editor the keyboard, such as after a field drawn over it is done. */
+  focusView(leafId: string): void {
+    const view = this.viewsByLeaf.get(leafId);
+    if (view === undefined) {
+      return;
+    }
+    // The element a pane mounts has `focus`; a test's stand-in may not.
+    const focusable = view as { focus?: () => void };
+    if (focusable.focus !== undefined) {
+      focusable.focus();
+    }
   }
 
   /** Removes everything a source has put on a file's text. */

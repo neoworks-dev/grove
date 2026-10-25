@@ -24,6 +24,14 @@ export interface InlineView {
   gitBase: GitBase | null;
 }
 
+/** A diff drawn over a file in a pane: which pane and document, and what it found. */
+export interface InlineEntry {
+  leafId: string;
+  documentId: number;
+  path: string;
+  hunks: Hunk[];
+}
+
 /** What the inline diffs need from the editor. */
 type InlineEditor = Pick<EditorService, "openPathIn" | "hideSources" | "setDecorationsOf" | "refreshViews">;
 
@@ -109,6 +117,16 @@ export class InlineDiffs {
     } catch (error) {
       this.hooks.warn(`diff: could not take a diff off document ${documentId}: ${describeError(error)}`);
     }
+  }
+
+  /** Every diff drawn over a file in a pane, with the file it is of and the changes found. */
+  entries(): InlineEntry[] {
+    return [...this.overlays.values()].map((overlay) => ({
+      leafId: overlay.leafId,
+      documentId: overlay.documentId,
+      path: overlay.path,
+      hunks: overlay.hunks,
+    }));
   }
 
   /** The diff a pane shows over a document, or undefined. */

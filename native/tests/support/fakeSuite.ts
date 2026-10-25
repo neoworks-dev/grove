@@ -74,7 +74,7 @@ export class FakeClient {
   focus = new FakeWatched<AgentFocus | undefined>(undefined);
   moves: AgentMove[] = [];
   contexts: Record<string, string>[] = [];
-  inputs: { session: string; text: string }[] = [];
+  inputs: { session: string; text: string; shown?: string }[] = [];
   cancels: string[] = [];
   actions: { session: string; ref: string; action: string; args?: unknown }[] = [];
   /** The web addresses the chat asked the daemon to download. */
@@ -117,9 +117,13 @@ export class FakeClient {
     return info;
   }
 
-  async input(session: string, text: string): Promise<void> {
+  async input(session: string, text: string, options: { shown?: string } = {}): Promise<void> {
     this.throwIfFailing();
-    this.inputs.push({ session, text });
+    if (options.shown === undefined) {
+      this.inputs.push({ session, text });
+      return;
+    }
+    this.inputs.push({ session, text, shown: options.shown });
   }
 
   async cancel(session: string): Promise<void> {

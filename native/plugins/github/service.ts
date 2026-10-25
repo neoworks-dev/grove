@@ -180,7 +180,8 @@ function describe(error: unknown): string {
 export class GithubService extends Service {
   private records = new Map<string, PaneRecord>();
   private changes: ChangeSignal = createChangeSignal();
-  private focusCounter = 0;
+  /** The panes whose search box was asked to take the keyboard and has not yet. */
+  private focusPending = new Set<string>();
   /** The repository of the open folder, once `gh` has said which it is. */
   private folderRepo: { directory: string; repo: string } | null = null;
   private resolving: Promise<string> | null = null;
@@ -221,10 +222,16 @@ export class GithubService extends Service {
     return "Issues";
   }
 
-  /** A number that goes up each time something asks for the search box to take the keyboard. Reactive. */
-  focusRequest(): number {
+  /** Whether a pane's search box was asked to take the keyboard and has not yet. Reactive. */
+  focusRequested(leafId: string): boolean {
     this.changes.track();
-    return this.focusCounter;
+    return this.focusPending.has(leafId);
+  }
+
+  /** The pane's search box has taken the keyboard, so the request is done. */
+  focusServed(leafId: string): void {
+    this.focusPending.delete(leafId);
+    this.changes.notify();
   }
 
   /** Shows a list in a GitHub pane, opening one when there is none. */
@@ -271,7 +278,11 @@ export class GithubService extends Service {
       return;
     }
     this.deps.layout.focus(leafId);
-    this.focusCounter += 1;
+    // The box is only in the list's toolbar, so a pane on an item goes back to its list.
+    if (this.placeOf(leafId).view === "item") {
+      this.place(leafId, { ...this.placeOf(leafId), view: "list", item: null });
+    }
+    this.focusPending.add(leafId);
     this.changes.notify();
     await this.ensureLoaded(leafId);
   }

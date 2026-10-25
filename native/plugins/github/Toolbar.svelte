@@ -17,8 +17,10 @@
 
   interface Props {
     view: GithubView;
-    /** Changes the number each time the box should take the keyboard. */
-    focusRequest: number;
+    /** Whether the box was asked to take the keyboard. */
+    focusRequested: boolean;
+    /** The box has taken the keyboard. */
+    onfocused: () => void;
     onkind: (kind: ItemKind) => void;
     onfilter: (filter: ListFilter) => void;
     /** What was typed and submitted: the pane decides whether it is a search or a jump. */
@@ -28,7 +30,7 @@
     onbrowser: () => void;
   }
 
-  let { view, focusRequest, onkind, onfilter, onsubmit, onback, onreload, onbrowser }: Props = $props();
+  let { view, focusRequested, onfocused, onkind, onfilter, onsubmit, onback, onreload, onbrowser }: Props = $props();
 
   let text = $state("");
   let field: Input | undefined = $state();
@@ -46,8 +48,11 @@
 
   // A command asks for the box.
   $effect(() => {
-    if (focusRequest > 0) {
-      untrack(() => field?.focus());
+    if (focusRequested && field !== undefined) {
+      untrack(() => {
+        field?.focus();
+        onfocused();
+      });
     }
   });
 

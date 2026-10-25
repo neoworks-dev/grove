@@ -25,7 +25,7 @@
   let { github, icons, leafId = "main" }: Props = $props();
 
   const view = $derived(github.view(leafId));
-  const focusRequest = $derived(github.focusRequest());
+  const focusRequested = $derived(github.focusRequested(leafId));
 
   // A pane restored with the layout, or just split off another, reads what it shows.
   $effect(() => {
@@ -50,7 +50,8 @@
 <View style={{ flex: 1, minHeight: 0, background: colors.surface }}>
   <Toolbar
     {view}
-    {focusRequest}
+    {focusRequested}
+    onfocused={() => github.focusServed(leafId)}
     onkind={(kind: ItemKind) => void github.setListKind(leafId, kind)}
     onfilter={(filter: ListFilter) => void github.setFilter(leafId, filter)}
     onsubmit={submit}

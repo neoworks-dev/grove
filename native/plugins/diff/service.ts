@@ -14,7 +14,7 @@ import { Service, type Context } from "@neoworks/extension-system";
 import { createChangeSignal, type ChangeSignal } from "../../kernel/reactive";
 import type { DocumentEvent, EditorService, EditorViewMethods } from "../editor/service";
 import type { DiffHost, GitBase } from "./diffHost";
-import { InlineDiffs, type InlineView } from "./inline";
+import { InlineDiffs, type InlineEntry, type InlineView } from "./inline";
 import {
   baseLabel,
   fileName,
@@ -33,7 +33,7 @@ import {
 
 export { baseLabel, fileName, hunkPosition, stepHunkRow } from "./model";
 export type { DiffBase, DiffMode, DiffOpenRequest, DiffRequest, Hunk } from "./model";
-export type { InlineView } from "./inline";
+export type { InlineEntry, InlineView } from "./inline";
 
 declare module "@neoworks/extension-system" {
   interface Context {
@@ -130,6 +130,7 @@ export class DiffService extends Service {
   private indexListeners = new Set<() => void>();
   /** The diffs drawn over files in editor panes. */
   private inline: InlineDiffs;
+  private inlineListeners = new Set<() => void>();
 
   constructor(
     ctx: Context,
@@ -140,7 +141,12 @@ export class DiffService extends Service {
   ) {
     super(ctx, "diff");
     this.inline = new InlineDiffs(editor, host, {
-      changed: () => this.changes.notify(),
+      changed: () => {
+        this.changes.notify();
+        for (const listener of [...this.inlineListeners]) {
+          listener();
+        }
+      },
       say: (text) => this.say(text),
       warn: (message) => ctx.logger.warn(message),
     });
@@ -213,6 +219,25 @@ export class DiffService extends Service {
     if (active !== null) {
       await this.inline.hide(this.panes.focusedLeafId, active.id);
     }
+  }
+
+  /** Every diff drawn over a file in an editor pane. Reactive. */
+  inlineViews(): InlineEntry[] {
+    this.changes.track();
+    return this.inline.entries();
+  }
+
+  /** Hears when a diff over a file appears, goes or is worked out again. Returns the function that stops it. */
+  onInlineChanged(listener: () => void): () => void {
+    this.inlineListeners.add(listener);
+    return () => {
+      this.inlineListeners.delete(listener);
+    };
+  }
+
+  /** Tells the person something in the status bar, as the diff's own actions do. */
+  tell(text: string): void {
+    this.say(text);
   }
 
   /** The diff an editor pane shows over a document, or undefined. Reactive. */

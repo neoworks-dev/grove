@@ -690,3 +690,67 @@ describe("the openers over the editor and diff services", () => {
     expect(asked).toEqual(["diff /repo/a.ts", "diff /repo/a.ts the agent's start: one"]);
   });
 });
+
+describe("sending a review", () => {
+  test("goes to the session whose agent touched the files, even when another is focused or newer", async () => {
+    const { host, agents, layout } = await setUp();
+    await agents.ensureStarted();
+    host.client.sessions.set([
+      sessionInfo({ id: "old", cwd: "/repo", lastActivity: 1 }),
+      sessionInfo({ id: "new", cwd: "/repo", lastActivity: 9 }),
+    ]);
+    agents.follow("old");
+    await settle();
+    host.client.events[0].emit({
+      type: "tool_call_update",
+      toolCallId: "t",
+      content: [{ type: "diff", path: "/repo/src/a.ts", oldText: "a", newText: "b" }],
+    });
+    agents.openSession("new");
+    expect(layout.focusedLeafId).not.toBe("");
+    expect(agents.reviewSessionFor("/repo", ["/repo/src/a.ts"])).toBe("old");
+  });
+
+  test("falls back to the session in the focused agent pane", async () => {
+    const { host, agents } = await setUp();
+    await agents.ensureStarted();
+    host.client.sessions.set([
+      sessionInfo({ id: "a", cwd: "/repo", lastActivity: 9 }),
+      sessionInfo({ id: "b", cwd: "/repo", lastActivity: 1 }),
+    ]);
+    agents.openSession("b");
+    await settle();
+    expect(agents.reviewSessionFor("/repo", ["/repo/src/a.ts"])).toBe("b");
+  });
+
+  test("then to the session of the worktree that was active last, and never one of another worktree", async () => {
+    const { host, agents } = await setUp();
+    await agents.ensureStarted();
+    host.client.sessions.set([
+      sessionInfo({ id: "a", cwd: "/repo", lastActivity: 3 }),
+      sessionInfo({ id: "b", cwd: "/repo/src", lastActivity: 7 }),
+      sessionInfo({ id: "c", cwd: "/repo/.worktrees/feature", lastActivity: 99 }),
+      sessionInfo({ id: "d", cwd: "/repository", lastActivity: 99 }),
+    ]);
+    expect(agents.reviewSessionFor("/repo", ["/repo/x.ts"])).toBe("b");
+    expect(agents.reviewSessionFor("/repo/.worktrees/feature", [])).toBe("c");
+    expect(agents.reviewSessionFor("/elsewhere", [])).toBeNull();
+  });
+
+  test("sends the text to the agent with the line the chat shows in its place", async () => {
+    const { host, agents } = await setUp();
+    await agents.ensureStarted();
+    host.client.sessions.set([sessionInfo({ id: "a", cwd: "/repo" })]);
+    await agents.sendReview("a", "the whole review", "Review: 2 comments on 1 file");
+    expect(host.client.inputs).toEqual([{ session: "a", text: "the whole review", shown: "Review: 2 comments on 1 file" }]);
+    agents.follow("a");
+    await settle();
+    await agents.sendReview("a", "again", "Review: 1 comment on 1 file");
+    expect(host.client.inputs[1]).toEqual({ session: "a", text: "again", shown: "Review: 1 comment on 1 file" });
+  });
+
+  test("says so when the daemon is not connected", async () => {
+    const { agents } = await setUp();
+    await expect(agents.sendReview("a", "text", "shown")).rejects.toThrow("not connected");
+  });
+});

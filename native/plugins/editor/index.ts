@@ -101,6 +101,8 @@ export const editor = {
     });
     // Drawn between a pane's tabs and its text; plugins such as breadcrumbs register into it.
     ctx.slots.declare("editor.breadcrumbs", "list");
+    // Drawn over the text of a pane's editor; entries position themselves where the editor says its keyed blocks are.
+    ctx.slots.declare("editor.overlay", "list");
     ctx.slots.register("main", {
       id: "editor",
       key: "editor",

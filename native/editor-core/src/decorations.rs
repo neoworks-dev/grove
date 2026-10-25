@@ -100,6 +100,10 @@ pub enum DecorationKind {
         /// Stretches of the block's lines drawn stronger, such as the words a hunk changed.
         #[serde(default)]
         emphasis: Vec<BlockEmphasis>,
+        /// A name the app can find the block by: the editor reports where keyed blocks are drawn,
+        /// so the app can put its own widget over their rows.
+        #[serde(default)]
+        key: Option<String>,
     },
     /// Tints the whole width of every row from `start` to `end`, such as the lines of a hunk.
     Line { tone: Tone },
@@ -156,6 +160,7 @@ pub struct PlacedBlock<'a> {
     pub lines: &'a [String],
     pub tone: Option<Tone>,
     pub emphasis: &'a [BlockEmphasis],
+    pub key: Option<&'a str>,
 }
 
 /// The prefix of a source that belongs to one view: `view:<view id>:<name>`. Only the view with
@@ -250,7 +255,7 @@ impl Decorations {
             .placed_for(buffer, anchors, filter)
             .into_iter()
             .filter_map(|placed| {
-                let DecorationKind::Block { lines, placement, tone, emphasis } = placed.kind else {
+                let DecorationKind::Block { lines, placement, tone, emphasis, key } = placed.kind else {
                     return None;
                 };
                 let row = placed.start.row;
@@ -265,6 +270,7 @@ impl Decorations {
                     lines,
                     tone: *tone,
                     emphasis,
+                    key: key.as_deref(),
                 })
             })
             .collect();
@@ -516,7 +522,13 @@ mod tests {
             start: at(row, 0),
             end: None,
             tooltip: None,
-            kind: DecorationKind::Block { lines: vec!["x".into()], placement, tone: None, emphasis: Vec::new() },
+            kind: DecorationKind::Block {
+                lines: vec!["x".into()],
+                placement,
+                tone: None,
+                emphasis: Vec::new(),
+                key: None,
+            },
         };
         let mut state = EditorState::new(Buffer::from_text("a\nb\nc\n"));
         state.set_decorations(
@@ -542,6 +554,17 @@ mod tests {
         assert_eq!(parsed[2].kind, DecorationKind::Gutter { mark: GutterMark::Bar, tone: Some(Tone::Added) });
         assert_eq!(parsed[3].kind, DecorationKind::Gutter { mark: GutterMark::Glyph('!'), tone: None });
         assert_eq!(parsed[0].tooltip, None);
+    }
+
+    #[test]
+    fn a_block_can_carry_a_key_the_app_finds_it_by() {
+        let json = r#"{"start": {"row": 3, "column": 0}, "kind": "block", "lines": ["", ""], "key": "comment:3"}"#;
+        let parsed: Decoration = serde_json::from_str(json).unwrap();
+        let mut state = EditorState::new(Buffer::from_text("a\nb\nc\nd\ne\n"));
+        state.set_decorations("review", &[parsed]);
+        let blocks = state.decoration_blocks_for(&SourceFilter::default());
+        assert_eq!(blocks[0].key, Some("comment:3"));
+        assert_eq!(blocks[0].slot, 4);
     }
 
     #[test]

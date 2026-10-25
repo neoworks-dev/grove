@@ -157,6 +157,11 @@ export function serviceOpeners(editor: EditorOpener, diff: DiffOpener, github: G
   };
 }
 
+/** Whether a directory is a worktree's root or inside it. */
+function isWithin(worktreePath: string, directory: string): boolean {
+  return directory === worktreePath || directory.startsWith(`${worktreePath}/`);
+}
+
 /** The wait before an automatic attempt: the first one after the connection was lost, then twice the one before, up to the longest. */
 export function nextRetryDelay(previousMs: number, initialMs: number, maxMs: number): number {
   if (previousMs === 0) {
@@ -356,6 +361,71 @@ export class AgentsService extends Service {
   /** What the daemon says about a session, or undefined for one it does not list. Reactive. */
   sessionInfo(sessionId: string): SessionInfo | undefined {
     return this.sessions().find((session) => session.id === sessionId);
+  }
+
+  /**
+   * The session a review of a worktree's files goes to: the one whose agent touched one of the
+   * files, else the one in the focused agent pane, else the one in the worktree that was active
+   * last. Null when no session works in the worktree.
+   */
+  reviewSessionFor(worktreePath: string, paths: readonly string[]): string | null {
+    const working = this.sessions().filter((info) => this.worktreePathOf(info.cwd) === worktreePath);
+    for (const info of working) {
+      if (this.touchedAny(info.id, paths)) {
+        return info.id;
+      }
+    }
+    const focusedLeaf = this.focusedAgentPane();
+    if (focusedLeaf !== null) {
+      const focusedSession = this.sessionOfPane(focusedLeaf);
+      if (focusedSession !== null) {
+        return focusedSession;
+      }
+    }
+    if (working.length === 0) {
+      return null;
+    }
+    const latest = [...working].sort((first, second) => second.lastActivity - first.lastActivity);
+    return latest[0].id;
+  }
+
+  /** The root of the worktree a directory belongs to: the innermost one that holds it, or null when none does. */
+  private worktreePathOf(directory: string): string | null {
+    let found: string | null = null;
+    for (const candidate of this.workspace.worktrees()) {
+      const holds = isWithin(candidate.path, directory);
+      if (holds && (found === null || candidate.path.length > found.length)) {
+        found = candidate.path;
+      }
+    }
+    return found;
+  }
+
+  /** Whether the session's agents changed one of the files, as far as the pane following it has heard. */
+  private touchedAny(sessionId: string, paths: readonly string[]): boolean {
+    const chat = this.chat(sessionId);
+    if (chat === undefined) {
+      return false;
+    }
+    const touched = chat.touches().touched;
+    return paths.some((path) => touched.some((entry) => entry.path === path));
+  }
+
+  /**
+   * Sends a session's agent a review: `text` is what the agent reads and `shown` what the chat
+   * displays in its place. Rejects when the daemon is not connected or the session is unknown.
+   */
+  async sendReview(sessionId: string, text: string, shown: string): Promise<void> {
+    const chat = this.chat(sessionId);
+    if (chat !== undefined) {
+      await chat.send(text, shown);
+      return;
+    }
+    const client = this.client;
+    if (client === null) {
+      throw new Error("The agents are not connected.");
+    }
+    await client.input(sessionId, text, { shown } as Parameters<SuiteClient["input"]>[2]);
   }
 
   /** Whether the session is running a turn. Reactive. */

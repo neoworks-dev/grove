@@ -219,6 +219,13 @@ impl BlockMap {
         }
     }
 
+    /// The display rows of the block at `index` in the list the map was made from, or none for a
+    /// block of no height.
+    pub fn rows_of(&self, index: usize) -> Option<std::ops::Range<usize>> {
+        let span = self.spans.iter().find(|span| span.index == index)?;
+        Some(span.first_row..span.first_row + span.height)
+    }
+
     /// How many display rows there are for a buffer of `line_count` lines.
     pub fn total_rows(&self, line_count: usize) -> usize {
         match self.spans.last() {
@@ -381,6 +388,14 @@ mod tests {
         assert_eq!(blocks.row_at(2), DisplayRow::Block { block: 2, line: 0 });
         assert_eq!(blocks.row_at(3), DisplayRow::Block { block: 2, line: 1 });
         assert_eq!(blocks.row_at(4), DisplayRow::Text(1));
+    }
+
+    #[test]
+    fn a_block_knows_which_display_rows_are_its_own() {
+        let blocks = map(&[(1, 2), (1, 0), (3, 1)]);
+        assert_eq!(blocks.rows_of(0), Some(1..3));
+        assert_eq!(blocks.rows_of(1), None);
+        assert_eq!(blocks.rows_of(2), Some(5..6));
     }
 
     #[test]

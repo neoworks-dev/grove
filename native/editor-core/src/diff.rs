@@ -399,7 +399,7 @@ fn block_at(
 ) -> Decoration {
     let (row, placement) =
         if slot < shown_rows { (slot, Placement::Above) } else { (shown_rows.saturating_sub(1), Placement::Below) };
-    let kind = DecorationKind::Block { lines, placement, tone: Some(tone), emphasis };
+    let kind = DecorationKind::Block { lines, placement, tone: Some(tone), emphasis, key: None };
     Decoration { start: row_start(row), end: None, tooltip: None, kind }
 }
 

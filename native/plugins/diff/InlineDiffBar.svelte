@@ -12,6 +12,7 @@
   import plus from "@phosphor-icons/core/regular/plus.svg";
   import x from "@phosphor-icons/core/regular/x.svg";
   import type { EditorService } from "../editor/service";
+  import Slot from "../../kernel/slots/Slot.svelte";
   import { colors, fontSize, iconButton, iconButtonHover, radius } from "../theme/tokens";
   import { hunkPosition } from "./model";
   import type { DiffService } from "./service";
@@ -73,6 +74,7 @@
       Changes vs {view.baseLabel}
     </Text>
     <View style={{ flex: 1 }} />
+    <Slot name="diff.inline.actions" props={{ leafId, documentId, path: view.path }} />
     <Text style={{ shrink: 0, fontSize: fontSize.xxs, color: colors.dim }}>{hunkPosition(view.hunks, cursorRow)}</Text>
     <Tooltip text="Previous change (Alt+Up)" side="bottom" align="center">
       <Button style={{ ...iconButton, size: 22 }} hover={iconButtonHover} onpress={() => act(() => diff.stepChange(-1))}>

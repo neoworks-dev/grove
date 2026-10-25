@@ -153,6 +153,8 @@ pub struct Editor {
     sources: SourceFilter,
     /// How wide the minimap is, set by the `minimap` prop; zero for none.
     minimap_width: Pixels,
+    /// What the app was last told about where rows and keyed blocks are, so it hears of changes only.
+    reported_places: Value,
 }
 
 /// When a keystroke that changed the text arrived, and how long the view took to handle it.
@@ -210,6 +212,7 @@ impl Editor {
             scroll_group: String::new(),
             sources: SourceFilter::default(),
             minimap_width: px(0.0),
+            reported_places: Value::Null,
         }
     }
 
@@ -536,6 +539,41 @@ impl Editor {
         };
         self.apply(&Command::ExtendNewestTo { at }, cx);
         true
+    }
+
+    /// Tells the app where the lines and the keyed blocks are drawn, when that is not what it was last told,
+    /// so it can lay its own widgets over them. Tops are in pixels from the top of the view.
+    fn report_places(&mut self) {
+        let Some(layout) = &self.layout else {
+            return;
+        };
+        let origin = layout.bounds.top();
+        let mut rows = Vec::new();
+        for (index, visible) in layout.rows.iter().enumerate() {
+            if let element::VisibleRow::Text(line) = visible {
+                rows.push(json!({ "row": line.row, "top": f32::from(layout.top_of_index(index) - origin) }));
+            }
+        }
+        let mut blocks = Vec::new();
+        for keyed in &layout.keyed_blocks {
+            let rows_down = keyed.rows.start as f32 - layout.first_display_row as f32;
+            let top = layout.first_row_top - origin + element::LINE_HEIGHT * rows_down;
+            let height = element::LINE_HEIGHT * keyed.rows.len() as f32;
+            if top + height > px(0.0) && top < layout.bounds.size.height {
+                blocks.push(json!({ "key": keyed.key, "top": f32::from(top), "height": f32::from(height) }));
+            }
+        }
+        let places = json!({
+            "textLeft": f32::from(layout.text_left - layout.bounds.left()),
+            "lineHeight": f32::from(element::LINE_HEIGHT),
+            "rows": rows,
+            "blocks": blocks,
+        });
+        if places == self.reported_places {
+            return;
+        }
+        self.reported_places = places.clone();
+        self.host.emit("places", places);
     }
 
     /// Whether a point in the window is on the minimap, which the app handles, not the text.

@@ -44,6 +44,8 @@ export const agents = {
       component: SessionsView,
       props: { agents: service, workspace: ctx.workspace },
     });
+    // Under the list of files; a plugin adds what belongs to the session's changes, such as sending a review.
+    ctx.slots.declare("agents.files.review", "list");
     registerCommands(ctx, service);
     openChatOnStart(ctx, service);
   },

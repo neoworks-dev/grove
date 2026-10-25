@@ -26,7 +26,7 @@
 
   /** The editor `src/editor/mod.rs` registers. */
   const Editor = element<
-    { document: number; pane: string; viewId: string; hideSources: string[]; minimap: number; sequencePending: boolean; leaderKey: boolean; theme: EditorTheme; keymap: string; onfocus: () => void; ongoto: (event: GotoEvent) => void },
+    { document: number; pane: string; viewId: string; hideSources: string[]; minimap: number; sequencePending: boolean; leaderKey: boolean; theme: EditorTheme; keymap: string; onfocus: () => void; ongoto: (event: GotoEvent) => void; onplaces: (event: PlacesEvent) => void },
     EditorViewMethods
   >("editor");
 
@@ -37,7 +37,16 @@
     character: number;
   }
 
+  /** Where the editor says its lines and the blocks a plugin keyed are drawn, in pixels from the top left of the editor. */
+  interface PlacesEvent {
+    textLeft: number;
+    lineHeight: number;
+    rows: { row: number; top: number }[];
+    blocks: { key: string; top: number; height: number }[];
+  }
+
   let view = $state<ElementMethods<EditorViewMethods> | null>(null);
+  let places = $state<PlacesEvent>({ textLeft: 0, lineHeight: 21, rows: [], blocks: [] });
   let draggingMinimap = $state(false);
 
   const tabs = $derived(service.tabsIn(leafId));
@@ -69,6 +78,11 @@
     service.finishReveal(request);
     void view.goto(request.line, request.character);
   });
+
+  /** The editor reports where its lines and keyed blocks are, so plugins can lay widgets over them. */
+  function placeRows(event: PlacesEvent): void {
+    places = event;
+  }
 
   /** A right press in the editor: the cursor goes there and the context menu opens. */
   function pressEditor(event: { windowX: number; windowY: number }): void {
@@ -127,7 +141,9 @@
         keymap={service.keymap()}
         onfocus={() => service.focusPane(leafId)}
         ongoto={(event) => void service.reveal(event.path, event.line, event.character)}
+        onplaces={placeRows}
       />
+      <Slot name="editor.overlay" props={{ leafId, documentId: active.id, places, rightInset: MINIMAP_WIDTH }} />
       <View
         buttons={["left"]}
         style={{ position: "absolute", top: 0, right: 0, bottom: 0, width: MINIMAP_WIDTH, cursor: "pointer" }}

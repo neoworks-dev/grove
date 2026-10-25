@@ -30,6 +30,8 @@ export const diff = {
         layout: ctx.layout,
       },
     });
+    // Drawn in the strip over a diff in an editor; a plugin adds what belongs to the file's changes.
+    ctx.slots.declare("diff.inline.actions", "list");
     ctx.slots.register("editor.breadcrumbs", { id: "diff.inline", order: 10, component: InlineDiffBar, props: { diff: service, editor: ctx.editor } });
     ctx.slots.register("statusbar", { id: "diff.notice", order: 20, component: DiffNotice, props: { diff: service } });
     registerCommands(ctx, service);

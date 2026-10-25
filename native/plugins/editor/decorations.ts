@@ -10,7 +10,7 @@ export interface TextPosition {
 }
 
 /** What a decoration means; the theme turns it into a colour. */
-export type Tone = "error" | "warning" | "info" | "hint" | "added" | "modified" | "deleted" | "inlay" | "line_end";
+export type Tone = "error" | "warning" | "info" | "hint" | "added" | "modified" | "deleted" | "inlay" | "line_end" | "filler";
 
 /** A mark beside the line numbers: a bar along the rows, a dot, a notch for deleted lines, or one character. */
 export type GutterMark = "bar" | "dot" | "notch" | { glyph: string };
@@ -56,6 +56,8 @@ export interface BlockDecoration {
   lines: string[];
   placement?: "above" | "below";
   tone?: Tone;
+  /** A name the editor reports the block's place under, so a plugin can put its own widget over its rows. */
+  key?: string;
 }
 
 export type Decoration =

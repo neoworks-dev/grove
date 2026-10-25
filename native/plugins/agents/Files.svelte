@@ -5,6 +5,7 @@
 -->
 <script lang="ts">
   import { Button, Scroll, Text, View } from "@neoworks/svelte-gpui/ui";
+  import Slot from "../../kernel/slots/Slot.svelte";
   import ChangeTree from "../explorer/ChangeTree.svelte";
   import { buildChangeTree, type ChangeTreeNode } from "../explorer/changeTree";
   import type { FileIconSource } from "../explorer/fileIcons";
@@ -17,6 +18,13 @@
 
   const p = palette;
 
+  const worktreePath = $derived.by(() => {
+    const worktree = files.worktree();
+    if (worktree === null) {
+      return null;
+    }
+    return worktree.path;
+  });
   const entries = $derived(files.entries());
   const diff = $derived(files.diff());
   const error = $derived(files.error());
@@ -58,6 +66,7 @@
       {#if branch !== null}
         <Text style={{ color: p.muted, flex: 1, minWidth: 0, truncate: true }}>· {branch}</Text>
       {/if}
+      <Slot name="agents.files.review" props={{ worktreePath }} />
     </View>
     {#if error !== null}
       <Text style={{ color: p.danger }}>{error}</Text>

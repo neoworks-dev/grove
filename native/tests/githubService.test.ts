@@ -203,6 +203,29 @@ describe("lists", () => {
   });
 });
 
+describe("going to an item by number", () => {
+  test("the command opens a pane and asks its search box for the keyboard, once", async () => {
+    const setup = await setUp();
+    setup.gh.answers.set("search/issues", searchAnswer(1, "x"));
+    await setup.github.focusSearch();
+    const leafId = githubLeaf(setup);
+    expect(setup.github.focusRequested(leafId)).toBe(true);
+    setup.github.focusServed(leafId);
+    expect(setup.github.focusRequested(leafId)).toBe(false);
+  });
+
+  test("a pane that shows an item goes back to its list, where the box is", async () => {
+    const setup = await setUp();
+    setup.gh.answers.set("search/issues", searchAnswer(1, "x"));
+    setup.gh.answers.set("issues/5/comments", printed(""));
+    setup.gh.answers.set("repos/neoworks-dev/grove/issues/5 --jq", pageAnswer(5));
+    const leafId = (await setup.github.openItem({ repo: null, number: 5, kind: "issue" }))!;
+    await setup.github.focusSearch();
+    expect(setup.github.view(leafId).place.view).toBe("list");
+    expect(setup.github.focusRequested(leafId)).toBe(true);
+  });
+});
+
 describe("when GitHub cannot be read", () => {
   test("a login that is missing is shown in place of the list", async () => {
     const setup = await setUp();

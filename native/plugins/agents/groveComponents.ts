@@ -9,10 +9,13 @@ import type { AppComponent } from "./contributions";
 /** Which tool a card's button calls to show a file in the editor; see `groveTools.ts`. */
 export const OPEN_FILE_TOOL = "grove.openFile";
 
+/** Which tool the cards' "Open in Grove" buttons call to show an issue or pull request in the GitHub pane; see `groveTools.ts`. */
+export const OPEN_ISSUE_TOOL = "grove.openIssue";
+
 /** A GitHub issue: where it is, what it says, and its state. */
 const issueCard: AppComponent = {
   description:
-    "A GitHub issue as a card: title, open or closed, labels, a short excerpt and a link. Use it when you tell the user about an issue instead of describing it in prose. Fetch the data with `gh issue view`; state is `open` or `closed`, body is an excerpt of a few lines.",
+    "A GitHub issue as a card: title, open or closed, labels, a short excerpt, a link, and a button that opens it in Grove's GitHub pane. Use it when you tell the user about an issue instead of describing it in prose. Fetch the data with `gh issue view`; state is `open` or `closed`, body is an excerpt of a few lines.",
   params: {
     repo: "string",
     number: "number",
@@ -38,14 +41,17 @@ const issueCard: AppComponent = {
       <If when={comments != null}><KV key="Comments" value={comments}/></If>
     </KeyValue>
   </If>
-  <If when={url}><Buttons><Button href={url}>Open on GitHub</Button></Buttons></If>
+  <Buttons>
+    <Button hx-post="${OPEN_ISSUE_TOOL}" hx-vals={{ repo: repo, number: number, kind: "issue" }}>Open in Grove</Button>
+    <If when={url}><Button variant="secondary" href={url}>Open on GitHub</Button></If>
+  </Buttons>
 </Card>`,
 };
 
 /** A GitHub pull request: branches, size, checks and review next to its state. */
 const prCard: AppComponent = {
   description:
-    "A GitHub pull request as a card: title, open, draft, merged or closed, the branches, size, checks, review and a link. Use it when you tell the user about a pull request instead of describing it in prose. Fetch the data with `gh pr view`; state is `open`, `draft`, `merged` or `closed`, checks is `passing`, `failing` or `pending`, review is `approved`, `changes requested` or `required`.",
+    "A GitHub pull request as a card: title, open, draft, merged or closed, the branches, size, checks, review, a link, and a button that opens it in Grove's GitHub pane. Use it when you tell the user about a pull request instead of describing it in prose. Fetch the data with `gh pr view`; state is `open`, `draft`, `merged` or `closed`, checks is `passing`, `failing` or `pending`, review is `approved`, `changes requested` or `required`.",
   params: {
     repo: "string",
     number: "number",
@@ -84,7 +90,10 @@ const prCard: AppComponent = {
       <If when={review == "required"}><KV key="Review" value="Waiting for review" tone="muted"/></If>
     </KeyValue>
   </If>
-  <If when={url}><Buttons><Button href={url}>Open on GitHub</Button></Buttons></If>
+  <Buttons>
+    <Button hx-post="${OPEN_ISSUE_TOOL}" hx-vals={{ repo: repo, number: number, kind: "pull" }}>Open in Grove</Button>
+    <If when={url}><Button variant="secondary" href={url}>Open on GitHub</Button></If>
+  </Buttons>
 </Card>`,
 };
 

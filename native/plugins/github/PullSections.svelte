@@ -13,6 +13,7 @@
   import type { ChangeTreeNode } from "../explorer/changeTree";
   import type { FileIconSource } from "../explorer/fileIcons";
   import { colors, fontSize } from "../theme/tokens";
+  import Markdown from "./Markdown.svelte";
   import { checksSummary, type Check, type CheckState, type PullFile, type Review } from "./model";
   import { agoOf, checkCountWord, checkWord, reviewWord } from "./present";
   import { pullFileTree } from "./tree";
@@ -103,7 +104,7 @@
       <Text style={{ fontSize: fontSize.xs, color: colors.dim }}>No checks ran on this pull request.</Text>
     {:else}
       <Text style={{ fontSize: fontSize.xs, color: toneOf(summary) }}>{checkWord(summary)}: {checkCountWord(checks.length)}</Text>
-      {#each checks as check (check.name)}
+      {#each checks as check}
         <View style={{ direction: "row", align: "center", gap: 6, color: toneOf(check.state) }}>
           <Icon svg={iconOf(check.state)} size={14} />
           <Text style={{ flex: 1, minWidth: 0, truncate: true, fontSize: fontSize.xs, color: colors.text }}>{check.name}</Text>
@@ -128,7 +129,7 @@
             <Text style={{ color: colors.dim }}> {agoOf(review.submittedAt, now)}</Text>
           </Text>
           {#if review.body.trim() !== ""}
-            <Text style={{ fontSize: fontSize.xs, color: colors.muted }}>{review.body}</Text>
+            <Markdown text={review.body} empty="" />
           {/if}
         </View>
       {/each}

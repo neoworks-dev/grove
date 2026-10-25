@@ -2,8 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { Context as RootContext, type Context } from "@neoworks/extension-system";
 import { checkComponents, Program, type UiNode } from "@neoworks/neoui";
 import { EditorService, type DocumentEvent, type DocumentHost, type DocumentSummary } from "../plugins/editor/service";
-import { groveComponents } from "../plugins/agents/groveComponents";
+import { OPEN_ISSUE_TOOL, groveComponents } from "../plugins/agents/groveComponents";
 import { groveTools } from "../plugins/agents/groveTools";
+import { GithubClient, type GhRunner } from "../plugins/github/client";
+import { GITHUB_PANE_TYPE, GithubService } from "../plugins/github/service";
 import { LayoutService } from "../plugins/layout/service";
 import { AgentsService, serviceOpeners } from "../plugins/agents/service";
 import { FakeHost } from "./support/fakeSuite";
@@ -56,7 +58,7 @@ describe("the components Grove registers", () => {
     expect(presence.app).toBe("grove");
     expect(Object.keys(presence.components ?? {}).sort()).toEqual(["ExplainCard", "IssueCard", "PrCard"]);
     expect(presence.mcp).toEqual({ url: "http://127.0.0.1:1/mcp?v=1", headers: { Authorization: "Bearer token" } });
-    expect(host.tools.served[0].map((tool) => tool.name)).toEqual(["openFile"]);
+    expect(host.tools.served[0].map((tool) => tool.name)).toEqual(["openFile", "openIssue"]);
   });
 
   test("every body passes the daemon's own registration check", () => {
@@ -140,7 +142,8 @@ describe("drawing the cards", () => {
     expect(errors).toBeUndefined();
     expect(tagLabels(root)).toEqual(["Open", "bug", "area:panes"]);
     const buttons = nodesOf(root as UiNode).filter((node) => node.component === "Button");
-    expect(buttons.map((node) => node.props["url"])).toEqual([issue.url]);
+    expect(buttons.map((node) => node.props["label"])).toEqual(["Open in Grove", "Open on GitHub"]);
+    expect(buttons.map((node) => node.props["url"])).toEqual([undefined, issue.url]);
     const header = nodesOf(root as UiNode).find((node) => node.component === "Header");
     expect(header?.props).toEqual({ title: "Tab strip overflow", subtitle: "neoworks-dev/grove #12" });
   });
@@ -151,7 +154,9 @@ describe("drawing the cards", () => {
     expect(errors).toBeUndefined();
     const components = nodesOf(root as UiNode).map((node) => node.component);
     expect(components).not.toContain("KeyValue");
-    expect(components).not.toContain("Button");
+    // Without an address there is nothing to open on GitHub, but the item can still be opened in Grove.
+    const labels = nodesOf(root as UiNode).filter((node) => node.component === "Button").map((node) => node.props["label"]);
+    expect(labels).toEqual(["Open in Grove"]);
   });
 
   test("a pull request shows each state, its branches and its size", () => {
@@ -184,6 +189,28 @@ describe("drawing the cards", () => {
     ]);
     const text = nodesOf(root as UiNode).find((node) => node.component === "Text");
     expect(text?.props["text"]).toBe("`513-cards` into `main`");
+    const labels = nodesOf(root as UiNode).filter((node) => node.component === "Button").map((node) => node.props["label"]);
+    expect(labels).toEqual(["Open in Grove", "Open on GitHub"]);
+  });
+
+  test("pressing Open in Grove calls the open-issue tool with the card's repository, number and kind", async () => {
+    const calls: { tool: string; args: Record<string, unknown> }[] = [];
+    for (const [name, kind] of [["IssueCard", "issue"], ["PrCard", "pull"]]) {
+      const component = groveComponents[name];
+      const program = new Program("test", {
+        markdown: (text: string) => [{ type: "paragraph", text }] as never,
+        callTool: async (tool: string, args: Record<string, unknown>) => {
+          calls.push({ tool, args });
+          return null;
+        },
+      });
+      const params = { repo: "neoworks-dev/grove", number: 514, title: "T", state: "open", head: "h", base: "main" };
+      program.useBody(component.neoui, params, Object.keys(component.params), false);
+      const button = nodesOf(program.doc().root as UiNode).find((node) => node.props["label"] === "Open in Grove");
+      await program.press(button?.key as string);
+      program.dispose();
+      expect(calls[calls.length - 1]).toEqual({ tool: OPEN_ISSUE_TOOL, args: { repo: "neoworks-dev/grove", number: 514, kind } });
+    }
   });
 
   test("an explanation of code shows the snippet and a button that calls the open-file tool", () => {
@@ -257,7 +284,7 @@ describe("the open-file tool", () => {
         const layout = new LayoutService(ctx, "editor", null);
         editor = new EditorService(ctx, new PathHost(), layout);
         const diff = { showInEditor: async () => true };
-        agents = new AgentsService(ctx, host, layout, new FakeWorkspace(), undefined, serviceOpeners(editor, diff));
+        agents = new AgentsService(ctx, host, layout, new FakeWorkspace(), undefined, serviceOpeners(editor, diff, { openItem: async () => null }));
       },
     });
     agents.registerTools(groveTools(agents));
@@ -283,5 +310,89 @@ describe("the open-file tool", () => {
   test("a call without a path fails with a message the agent can read", async () => {
     const { host } = await setUpWithEditor();
     await expect(host.tools.call("openFile", {})).rejects.toThrow("openFile needs a path");
+  });
+});
+
+/** A `gh` that answers an issue's page and nothing else, for the tool to read through. */
+const issueGh: GhRunner = async ({ args }) => {
+  if (args[0] === "auth") {
+    return { stdout: "", error: null };
+  }
+  if (args[1] === "repos/other/thing/issues/9") {
+    const page = { number: 9, title: "Crash on save", state: "open", body: "It crashes.", user: "ada", assignees: [], labels: [], comments: 0, pull: false };
+    return { stdout: JSON.stringify(page), error: null };
+  }
+  if (args[1] === "repos/other/thing/issues/9/comments?per_page=100") {
+    return { stdout: "", error: null };
+  }
+  return { stdout: "", error: { kind: "failed", message: `nothing answers ${args.join(" ")}`, code: 1 } };
+};
+
+describe("the open-issue tool", () => {
+  /** The agents service over the real GitHub service and layout, so a call goes all the way to the pane. */
+  async function setUpWithGithub(): Promise<{ host: FakeHost; layout: LayoutService; github: GithubService; agents: AgentsService }> {
+    const root = new RootContext();
+    const host = new FakeHost();
+    let layout!: LayoutService;
+    let github!: GithubService;
+    let agents!: AgentsService;
+    await root.plugin({
+      name: "github-tool-test",
+      apply: (ctx: Context) => {
+        layout = new LayoutService(ctx, "editor", null);
+        github = new GithubService(ctx, {
+          client: new GithubClient(issueGh),
+          workspace: { selectedWorktree: () => null, repo: () => null, onSelectionChange: () => () => {} },
+          layout,
+          diffs: { showInEditor: async () => true, openTexts: async () => null, headText: async () => ({ exists: false, text: "" }) },
+          openUrl: () => {},
+        });
+        const editor = new EditorService(ctx, new PathHost(), layout);
+        agents = new AgentsService(ctx, host, layout, new FakeWorkspace(), undefined, serviceOpeners(editor, { showInEditor: async () => true }, github));
+      },
+    });
+    agents.registerTools(groveTools(agents));
+    await agents.ensureStarted();
+    return { host, layout, github, agents };
+  }
+
+  test("a call opens a GitHub pane on the item, in the repository the card names", async () => {
+    const { host, layout, github } = await setUpWithGithub();
+    const result = await host.tools.call("openIssue", { repo: "other/thing", number: 9, kind: "issue" });
+    expect(result).toBe("Opened issue other/thing#9 in Grove");
+    const leaves = layout.leafIds().filter((leafId) => layout.paneTypeOf(leafId) === GITHUB_PANE_TYPE);
+    expect(leaves).toHaveLength(1);
+    const view = github.view(leaves[0]);
+    expect(view.repo).toBe("other/thing");
+    expect(view.place.item).toEqual({ kind: "issue", number: 9 });
+    expect(view.item.detail?.title).toBe("Crash on save");
+    expect(layout.focusedLeafId).toBe(leaves[0]);
+  });
+
+  test("a second call reuses the pane", async () => {
+    const { host, layout } = await setUpWithGithub();
+    await host.tools.call("openIssue", { repo: "other/thing", number: 9, kind: "issue" });
+    await host.tools.call("openIssue", { repo: "other/thing", number: 9 });
+    expect(layout.leafIds().filter((leafId) => layout.paneTypeOf(leafId) === GITHUB_PANE_TYPE)).toHaveLength(1);
+  });
+
+  test("a call without a kind says it was looked up", async () => {
+    const { host } = await setUpWithGithub();
+    expect(await host.tools.call("openIssue", { repo: "other/thing", number: 9 })).toBe("Opened other/thing#9 in Grove");
+  });
+
+  test("a call that names no repository, a bad number or an unknown kind fails with a message the agent can read", async () => {
+    const { host } = await setUpWithGithub();
+    await expect(host.tools.call("openIssue", { number: 9 })).rejects.toThrow("owner/name");
+    await expect(host.tools.call("openIssue", { repo: "not a repo", number: 9 })).rejects.toThrow("owner/name");
+    await expect(host.tools.call("openIssue", { repo: "a/b", number: 0 })).rejects.toThrow("number");
+    await expect(host.tools.call("openIssue", { repo: "a/b", number: 1.5 })).rejects.toThrow("number");
+    await expect(host.tools.call("openIssue", { repo: "a/b", number: 1, kind: "discussion" })).rejects.toThrow("issue or pull");
+  });
+
+  test("an app without a GitHub pane says so instead of pretending", async () => {
+    const { host, agents } = await setUpWithCards();
+    await agents.ensureStarted();
+    await expect(host.tools.call("openIssue", { repo: "a/b", number: 1, kind: "issue" })).rejects.toThrow("no GitHub pane");
   });
 });

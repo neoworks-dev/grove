@@ -16,9 +16,9 @@ import { createSuiteHost } from "./suiteHost";
 
 export const agents = {
   name: "agents",
-  inject: ["slots", "sidebar", "workspace", "commands", "keymap", "layout", "sidecar", "editor", "diff", "explorer"],
+  inject: ["slots", "sidebar", "workspace", "commands", "keymap", "layout", "sidecar", "editor", "diff", "explorer", "github"],
   apply(ctx: Context) {
-    const service = new AgentsService(ctx, createSuiteHost(), ctx.layout, ctx.workspace, undefined, serviceOpeners(ctx.editor, ctx.diff));
+    const service = new AgentsService(ctx, createSuiteHost(), ctx.layout, ctx.workspace, undefined, serviceOpeners(ctx.editor, ctx.diff, ctx.github));
     ctx.effect(() => service.registerTools(groveTools(service)), "agents.tools");
     ctx.effect(() => service.registerComponents(groveComponents), "agents.components");
     ctx.slots.register("main", {

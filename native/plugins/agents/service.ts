@@ -92,6 +92,18 @@ export interface Openers {
    * when the app has no diff view, which leaves the caller to show the file instead.
    */
   openDiff(path: string, texts?: { oldText: string; newText: string }): boolean;
+  /**
+   * Shows an issue or a pull request in a GitHub pane. `repo` is `owner/name`; `kind` null looks
+   * up which the number is. False when the app has no GitHub pane or none could be made.
+   */
+  openGithubItem(request: GithubItemRequest): Promise<boolean>;
+}
+
+/** An issue or pull request the chat asks to be shown in Grove. */
+export interface GithubItemRequest {
+  repo: string;
+  number: number;
+  kind: "issue" | "pull" | null;
 }
 
 /** What the editor plugin offers the chat. */
@@ -107,15 +119,22 @@ export interface DiffOpener {
   showInEditor(path: string, base?: { text: string; label: string }): Promise<boolean>;
 }
 
+/** What the GitHub plugin offers the chat. */
+export interface GithubOpener {
+  /** Shows an item in a GitHub pane; resolves to the pane, or null when none could be made. */
+  openItem(request: GithubItemRequest): Promise<string | null>;
+}
+
 /** Openers for a service started without the editor and diff views, as in tests: nothing opens. */
 const NO_OPENERS: Openers = {
   openFile: () => {},
   revealFile: async () => {},
   openDiff: () => false,
+  openGithubItem: async () => false,
 };
 
-/** The editor and diff services as the chat opens things in them. */
-export function serviceOpeners(editor: EditorOpener, diff: DiffOpener): Openers {
+/** The editor, diff and GitHub services as the chat opens things in them. */
+export function serviceOpeners(editor: EditorOpener, diff: DiffOpener, github: GithubOpener): Openers {
   return {
     openFile: (path) => {
       editor.open(path);
@@ -130,6 +149,10 @@ export function serviceOpeners(editor: EditorOpener, diff: DiffOpener): Openers 
       }
       void diff.showInEditor(path, { text: texts.oldText, label: "the agent's start" });
       return true;
+    },
+    openGithubItem: async (request) => {
+      const leafId = await github.openItem(request);
+      return leafId !== null;
     },
   };
 }
@@ -232,6 +255,11 @@ export class AgentsService extends Service {
   /** Shows the file at an absolute path in the editor with the cursor on a line, counted from one. */
   revealFile(path: string, line: number): Promise<void> {
     return this.openers.revealFile(path, line);
+  }
+
+  /** Shows an issue or a pull request in a GitHub pane; false when the app has none. */
+  openGithubItem(request: GithubItemRequest): Promise<boolean> {
+    return this.openers.openGithubItem(request);
   }
 
   /** The absolute path a tool call names: a relative one is taken from the shown worktree. Throws when there is none to take it from. */

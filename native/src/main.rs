@@ -23,6 +23,7 @@ mod data;
 mod diff;
 mod editor;
 mod extensions;
+mod gh;
 mod git;
 mod lsp;
 mod ripgrep;
@@ -65,6 +66,7 @@ fn main() {
     let lsp = LspStore::new(documents.clone(), commands.emitter(), signals.clone());
     lsp.attach_tools(tools);
     let commands = lsp.register(commands);
+    let commands = gh::register(commands);
     let commands = git::register(commands);
     let commands = ripgrep::register(commands);
     let commands = diff::register(commands, documents.clone());

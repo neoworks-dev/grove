@@ -15,6 +15,9 @@ import { chainedTexts, type CallDiff, type CallFacts } from "./calls";
 import type { Touches } from "./files";
 import type { ChatClient } from "./suiteClient";
 
+/** What the client's `input` takes beside the text. */
+type InputOptions = NonNullable<Parameters<ChatClient["input"]>[2]>;
+
 /** What a chat follows beyond the session's own view. */
 export interface ChatOptions {
   /** Follow only this agent's work in the session, and not the session's events. */
@@ -309,9 +312,18 @@ export class ChatSession {
     this.changes.notify();
   }
 
-  /** Sends what the user typed to the session's agent, commands such as `/model` included. */
-  async send(text: string): Promise<void> {
-    await this.guard(this.client.input(this.sessionId, text));
+  /**
+   * Sends what the user typed to the session's agent, commands such as `/model` included. `shown`
+   * is what the chat displays in place of a text written for the agent; a daemon that does not
+   * read it shows the text itself.
+   */
+  async send(text: string, shown?: string): Promise<void> {
+    if (shown === undefined) {
+      await this.guard(this.client.input(this.sessionId, text));
+      return;
+    }
+    const options: InputOptions & { shown: string } = { shown };
+    await this.guard(this.client.input(this.sessionId, text, options));
   }
 
   /** Cancels the turn that is running. Inputs queued behind it still run. */

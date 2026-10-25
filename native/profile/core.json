@@ -34,6 +34,7 @@
   { "id": "extensions-view", "plugin": "extensions-view" },
   { "id": "agents", "plugin": "agents" },
   { "id": "github", "plugin": "github" },
+  { "id": "review-comments", "plugin": "review-comments" },
   { "id": "terminal", "plugin": "terminal" },
   { "id": "placeholder-panel", "plugin": "placeholder-panel" }
 ]

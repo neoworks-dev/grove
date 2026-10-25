@@ -33,11 +33,14 @@
   let text = $state("");
   let field: Input | undefined = $state();
 
+  // A primitive, so the effect below runs when the search changes and not each time the view is read again.
+  const searched = $derived(view.place.search);
+
   // The box shows the search the list was last asked for, and follows a pane restored with one.
   $effect(() => {
-    const searched = view.place.search;
+    const asked = searched;
     untrack(() => {
-      text = searched;
+      text = asked;
     });
   });
 

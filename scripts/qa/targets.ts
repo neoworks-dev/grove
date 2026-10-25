@@ -1,99 +1,42 @@
-// How a QA command says what it means to act on.
+// What a command acts on, as typed on the command line.
 //
-// The driver is invoked once per action and keeps nothing between calls, so a
-// target has to be expressible as a string on a command line. Bare text is the
-// common case — the accessible name a person would read off the screen — and
-// the prefixed forms exist for what has no name: a divider, a canvas, a point.
+//   Problems          the text on screen that reads "Problems", found by reading
+//                     a screenshot (see ocr.ts)
+//   text=Problems     the same, spelled out when the text looks like a point
+//   at=820,460        a point in the window, for what shows no text: a divider,
+//                     an icon, a spot in the editor
+//
+// A text target that matches several places takes `--nth <n>` (1 is the first,
+// top to bottom); the error lists where each match is.
 
-export type Target =
-  | { kind: 'ref'; ref: string }
-  | { kind: 'leaf'; leafId: string }
-  | { kind: 'gutter'; splitId: string; index: number }
-  | { kind: 'name'; name: string; role?: string }
-  | { kind: 'text'; text: string }
-  | { kind: 'testid'; testId: string }
-  | { kind: 'css'; selector: string }
-  | { kind: 'point'; x: number; y: number }
+export type Target = { kind: 'point'; x: number; y: number } | { kind: 'text'; text: string }
 
-/** The roles a bare name is looked for in, in this order. */
-export const NAME_ROLES = [
-  'button',
-  'tab',
-  'treeitem',
-  'link',
-  'menuitem',
-  'option',
-  'row',
-  'checkbox',
-  'textbox'
-]
-
-/**
- * Read a target off the command line.
- *
- * Throws rather than guessing when a prefixed form is malformed: a click that
- * silently lands somewhere else is worse than one that does not happen.
- */
+/** Parses one target. */
 export function parseTarget(input: string): Target {
-  const trimmed = input.trim()
-  if (trimmed.length === 0) throw new Error('empty target')
-
-  const separator = trimmed.indexOf('=')
-  if (separator === -1) return bareTarget(trimmed)
-
-  const prefix = trimmed.slice(0, separator)
-  const value = trimmed.slice(separator + 1)
-  if (prefix === 'text') return { kind: 'text', text: requireValue(value, 'text') }
-  if (prefix === 'testid') return { kind: 'testid', testId: requireValue(value, 'testid') }
-  if (prefix === 'css') return { kind: 'css', selector: requireValue(value, 'css') }
-  if (prefix === 'at') return pointTarget(value)
-  if (prefix === 'role') return roleTarget(value)
-  // An unprefixed name can contain '=' — "width = 40" is a plausible label.
-  return bareTarget(trimmed)
-}
-
-/**
- * A ref, a pane, a gutter — or otherwise an accessible name.
- *
- * The three structural forms are the ids `probe` prints, and they are shaped
- * distinctly enough (`e12`, `leaf-3`, `split-1:0`) that no label a person reads
- * off the screen can be mistaken for one.
- */
-function bareTarget(input: string): Target {
-  if (/^e[0-9]+$/.test(input)) return { kind: 'ref', ref: input }
-  if (/^leaf-[0-9]+$/.test(input)) return { kind: 'leaf', leafId: input }
-  const gutter = /^(split-[0-9]+):([0-9]+)$/.exec(input)
-  if (gutter) return { kind: 'gutter', splitId: gutter[1], index: Number(gutter[2]) }
-  return { kind: 'name', name: input }
-}
-
-/** `role=button:Save` — a name looked for in one role rather than all of them. */
-function roleTarget(value: string): Target {
-  const separator = value.indexOf(':')
-  if (separator === -1) throw new Error(`role target needs a name: role=${value}:<name>`)
-  const role = value.slice(0, separator)
-  const name = value.slice(separator + 1)
-  if (role.length === 0 || name.length === 0) {
-    throw new Error(`role target needs both parts: role=<role>:<name>, got role=${value}`)
+  const value = input.trim()
+  if (value.length === 0) {
+    throw new Error('a target is empty')
   }
-  return { kind: 'name', name, role }
-}
-
-/** `at=820,460` — a point in the window, for what has no element to name. */
-function pointTarget(value: string): Target {
-  const parts = value.split(',')
-  if (parts.length !== 2) throw new Error(`point target is at=<x>,<y>, got at=${value}`)
-  const x = Number(parts[0])
-  const y = Number(parts[1])
-  if (!Number.isFinite(x) || !Number.isFinite(y)) {
-    throw new Error(`point target needs two numbers, got at=${value}`)
+  if (value.startsWith('at=')) {
+    return parsePoint(value.slice(3))
   }
-  return { kind: 'point', x, y }
+  if (value.startsWith('text=')) {
+    const text = value.slice(5).trim()
+    if (text.length === 0) {
+      throw new Error('text= target is empty')
+    }
+    return { kind: 'text', text }
+  }
+  return { kind: 'text', text: value }
 }
 
-function requireValue(value: string, prefix: string): string {
-  if (value.length === 0) throw new Error(`${prefix} target is empty`)
-  return value
+/** `820,460` as a point, or an error that says what a point looks like. */
+function parsePoint(input: string): Target {
+  const parts = input.split(',').map((part) => Number(part.trim()))
+  if (parts.length !== 2 || parts.some((part) => !Number.isFinite(part))) {
+    throw new Error(`a point is two numbers, at=x,y — got at=${input}`)
+  }
+  return { kind: 'point', x: Math.round(parts[0]), y: Math.round(parts[1]) }
 }
 
 /** A rectangle of the window, for a screenshot of part of it. */
@@ -104,12 +47,7 @@ export interface Region {
   height: number
 }
 
-/**
- * `820,460,300,200` — where to crop a screenshot, as x,y,width,height.
- *
- * `probe` prints a position and a size for every element, so the numbers to
- * crop around are already in front of whoever is asking.
- */
+/** `820,460,300,200` — where to crop a screenshot, as x,y,width,height. */
 export function parseRegion(input: string): Region {
   const parts = input.split(',').map((part) => Number(part.trim()))
   if (parts.length !== 4 || parts.some((part) => !Number.isFinite(part))) {
@@ -124,15 +62,8 @@ export function parseRegion(input: string): Region {
 
 /** How a target reads back in an error or a log line. */
 export function describeTarget(target: Target): string {
-  if (target.kind === 'ref') return target.ref
-  if (target.kind === 'leaf') return `pane ${target.leafId}`
-  if (target.kind === 'gutter') return `gutter ${target.splitId}:${target.index}`
-  if (target.kind === 'name') {
-    if (target.role === undefined) return `"${target.name}"`
-    return `${target.role} "${target.name}"`
+  if (target.kind === 'text') {
+    return `"${target.text}"`
   }
-  if (target.kind === 'text') return `text "${target.text}"`
-  if (target.kind === 'testid') return `testid ${target.testId}`
-  if (target.kind === 'css') return `css ${target.selector}`
   return `point ${target.x},${target.y}`
 }

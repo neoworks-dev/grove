@@ -3,7 +3,9 @@
 // A pane's place (which list, which filter, which item) is kept in the layout's pane state, so it
 // is saved with the layout and a split of a GitHub pane starts where its source was. What was read
 // from GitHub for it is kept here, in a record per pane, with a change signal; state is plain
-// fields, never `$state`. Everything is read: nothing here writes to GitHub.
+// fields, never `$state`. Writes (a comment, closing or reopening) are asked for first and run
+// once the pane confirms; the answer is folded into the record, so the page changes only where
+// the write did.
 //
 // Other plugins show an item with `ctx.github.openItem({ repo, number, kind })`.
 
@@ -63,6 +65,17 @@ export interface ListLoad {
   message: string;
 }
 
+/** A write the pane has asked for and is waiting for the person to confirm. */
+export type PendingWrite = { kind: "comment"; body: string } | { kind: "state"; state: "open" | "closed" };
+
+/** Where an item's writes stand: what waits for a confirmation, whether one is running, and why the last failed. */
+export interface WriteState {
+  pending: PendingWrite | null;
+  running: boolean;
+  /** The sentence for the last write that failed, empty otherwise. */
+  message: string;
+}
+
 /** What an item's page holds; the parts after `detail` are read once the head of the page is up. */
 export interface ItemLoad {
   status: LoadStatus;
@@ -75,6 +88,9 @@ export interface ItemLoad {
   files: PullFile[];
   reviews: Review[];
   checks: Check[];
+  /** The comment being written, kept here so it survives the pane redrawing. */
+  draft: string;
+  write: WriteState;
 }
 
 /** Why GitHub cannot be read at all, which the pane shows in place of its content. */
@@ -161,6 +177,8 @@ function emptyItem(): ItemLoad {
     files: [],
     reviews: [],
     checks: [],
+    draft: "",
+    write: { pending: null, running: false, message: "" },
   };
 }
 
@@ -374,6 +392,129 @@ export class GithubService extends Service {
       record.item.extrasMessage = describe(error);
       this.changes.notify();
     }
+  }
+
+  /** Keeps what is being written in the comment box. */
+  setDraft(leafId: string, text: string): void {
+    const record = this.recordOf(leafId);
+    record.item = { ...record.item, draft: text };
+    this.changes.notify();
+  }
+
+  /** Asks the pane to confirm posting the draft as a comment; nothing is sent until `confirmWrite`. */
+  askToComment(leafId: string): void {
+    const draft = this.recordOf(leafId).item.draft;
+    if (draft.trim() === "") {
+      return;
+    }
+    this.ask(leafId, { kind: "comment", body: draft });
+  }
+
+  /** Asks the pane to confirm closing or reopening the shown item; nothing is sent until `confirmWrite`. */
+  askToSetState(leafId: string, state: "open" | "closed"): void {
+    this.ask(leafId, { kind: "state", state });
+  }
+
+  /** Drops the write that waited for a confirmation, and the message of one that failed. */
+  cancelWrite(leafId: string): void {
+    const record = this.recordOf(leafId);
+    if (record.item.write.running) {
+      return;
+    }
+    this.setWrite(record, { pending: null, running: false, message: "" });
+  }
+
+  /** Sends the write that was asked for and folds GitHub's answer into the page, leaving the rest of it as it was. */
+  async confirmWrite(leafId: string): Promise<void> {
+    const record = this.recordOf(leafId);
+    const { pending, running } = record.item.write;
+    const detail = record.item.detail;
+    if (pending === null || running || detail === null) {
+      return;
+    }
+    const generation = record.itemGeneration;
+    this.setWrite(record, { pending, running: true, message: "" });
+    try {
+      await this.send(record, detail, pending);
+    } catch (error) {
+      if (generation !== record.itemGeneration) {
+        return;
+      }
+      this.setWrite(record, { pending: null, running: false, message: this.failureOf(error).message });
+    }
+  }
+
+  /** Puts a write up for confirmation, unless one is already running. */
+  private ask(leafId: string, pending: PendingWrite): void {
+    const record = this.recordOf(leafId);
+    if (record.item.write.running || record.item.detail === null) {
+      return;
+    }
+    this.setWrite(record, { pending, running: false, message: "" });
+  }
+
+  /** Replaces the write state of a pane's item and tells the views. */
+  private setWrite(record: PaneRecord, write: WriteState): void {
+    record.item = { ...record.item, write };
+    this.changes.notify();
+  }
+
+  /** Runs one confirmed write against GitHub and folds the result into the record. */
+  private async send(record: PaneRecord, detail: ItemDetail | PullDetail, pending: PendingWrite): Promise<void> {
+    const generation = record.itemGeneration;
+    const idle: WriteState = { pending: null, running: false, message: "" };
+    if (pending.kind === "comment") {
+      const comment = await this.deps.client.postComment(detail.repo, detail.number, pending.body);
+      if (generation !== record.itemGeneration) {
+        return;
+      }
+      this.foldComment(record, comment, pending.body, idle);
+      return;
+    }
+    const updated = await this.deps.client.setItemState(detail.repo, detail.number, pending.state);
+    if (generation !== record.itemGeneration) {
+      return;
+    }
+    this.foldState(record, updated, idle);
+  }
+
+  /** Adds a posted comment to the page and to the list's count, and empties the box if it still holds what was sent. */
+  private foldComment(record: PaneRecord, comment: Comment, sent: string, write: WriteState): void {
+    const item = record.item;
+    if (item.detail === null) {
+      return;
+    }
+    let draft = item.draft;
+    if (draft === sent) {
+      draft = "";
+    }
+    const detail = { ...item.detail, comments: item.detail.comments + 1 };
+    record.item = { ...item, detail, comments: [...item.comments, comment], draft, write };
+    this.updateListRow(record, detail.number, (row) => ({ ...row, comments: row.comments + 1 }));
+    this.changes.notify();
+  }
+
+  /** Takes the state GitHub gives for an item after a close or reopen into the page and the list's row. */
+  private foldState(record: PaneRecord, updated: ItemDetail, write: WriteState): void {
+    const item = record.item;
+    if (item.detail === null) {
+      return;
+    }
+    const detail = { ...item.detail, state: updated.state, updatedAt: updated.updatedAt };
+    record.item = { ...item, detail, write };
+    this.updateListRow(record, detail.number, (row) => ({ ...row, state: updated.state, updatedAt: updated.updatedAt }));
+    this.changes.notify();
+  }
+
+  /** Changes the row of the list that shows an item, when the list has it. */
+  private updateListRow(record: PaneRecord, number: number, change: (row: ItemSummary) => ItemSummary): void {
+    const rows = record.list.items.map((row) => {
+      if (row.number === number) {
+        return change(row);
+      }
+      return row;
+    });
+    record.list = { ...record.list, items: rows };
   }
 
   /** The place a pane is at, from its pane state. */

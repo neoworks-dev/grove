@@ -1,7 +1,8 @@
 <!--
   A GitHub pane: the issues or pull requests of a repository as a list, or one of them as a page.
-  Everything is read through the person's own `gh` login, and nothing is written to GitHub. The
-  pane's place is in the layout's pane state, so a restored layout comes back to the same list or item.
+  Everything goes through the person's own `gh` login, and a write waits for a confirmation in the
+  pane before it is sent. The pane's place is in the layout's pane state, so a restored layout comes
+  back to the same list or item.
 -->
 <script lang="ts">
   import { View } from "@neoworks/svelte-gpui/ui";
@@ -67,6 +68,11 @@
       {icons}
       onbrowser={() => github.openInBrowser(leafId)}
       onfile={(file: PullFile) => void github.openFile(leafId, file)}
+      ondraft={(text: string) => github.setDraft(leafId, text)}
+      oncomment={() => github.askToComment(leafId)}
+      onstate={(state: "open" | "closed") => github.askToSetState(leafId, state)}
+      onconfirm={() => void github.confirmWrite(leafId)}
+      oncancel={() => github.cancelWrite(leafId)}
     />
   {:else}
     <ItemList list={view.list} kind={view.place.listKind} onopen={(item: ItemSummary) => void github.showItem(leafId, item)} />

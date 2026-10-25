@@ -1,6 +1,7 @@
 // The GitHub plugin: the `github` service, the `github` pane type in the `main` slot, and the
 // commands that open the lists of issues and pull requests or an item by number. The pane reads
-// GitHub through the person's `gh` login (see `client.ts` and `src/gh.rs`) and writes nothing.
+// GitHub through the person's `gh` login (see `client.ts` and `src/gh.rs`) and writes to it once the
+// person has confirmed.
 
 import type { Context } from "@neoworks/extension-system";
 import githubLogo from "@phosphor-icons/core/regular/github-logo.svg";

@@ -443,3 +443,134 @@ describe("a pull request's files", () => {
     ]);
   });
 });
+
+describe("writes", () => {
+  /** The calls the fake `gh` got that change something. */
+  function writes(setup: Setup): string[][] {
+    return setup.gh.calls.filter((args) => args.includes("POST") || args.includes("PATCH") || args.includes("PUT"));
+  }
+
+  /** An issue page read into a pane, with a search that lists it. */
+  async function issuePane(setup: Setup, extra: Record<string, unknown> = {}): Promise<string> {
+    setup.gh.answers.set("search/issues", searchAnswer(5, "Item 5"));
+    setup.gh.answers.set("issues/5/comments", printed('{"id":1,"body":"Me too","created_at":"t","user":"bob"}\n'));
+    setup.gh.answers.set("repos/neoworks-dev/grove/issues/5 --jq", pageAnswer(5, { comments: 1, ...extra }));
+    const leafId = (await setup.github.openList("issue"))!;
+    await setup.github.showItem(leafId, setup.github.view(leafId).list.items[0]);
+    return leafId;
+  }
+
+  test("asking to comment sends nothing until it is confirmed", async () => {
+    const setup = await setUp();
+    const leafId = await issuePane(setup);
+    setup.github.setDraft(leafId, "Looks right to me");
+    setup.github.askToComment(leafId);
+    expect(setup.github.view(leafId).item.write.pending).toEqual({ kind: "comment", body: "Looks right to me" });
+    expect(writes(setup)).toEqual([]);
+  });
+
+  test("an empty draft cannot be asked for", async () => {
+    const setup = await setUp();
+    const leafId = await issuePane(setup);
+    setup.github.setDraft(leafId, "  \n ");
+    setup.github.askToComment(leafId);
+    expect(setup.github.view(leafId).item.write.pending).toBeNull();
+  });
+
+  test("a confirmed comment is posted and appended, and the rest of the page is not read again", async () => {
+    const setup = await setUp();
+    const leafId = await issuePane(setup);
+    setup.gh.answers.set(
+      "issues/5/comments -X POST",
+      printed('{"id":2,"body":"Looks right to me","created_at":"2026-10-25T10:00:00Z","user":"moritz"}'),
+    );
+    const readsBefore = setup.gh.calls.length;
+    setup.github.setDraft(leafId, "Looks right to me");
+    setup.github.askToComment(leafId);
+    await setup.github.confirmWrite(leafId);
+    const view = setup.github.view(leafId);
+    expect(view.item.comments.map((comment) => comment.body)).toEqual(["Me too", "Looks right to me"]);
+    expect(view.item.detail?.comments).toBe(2);
+    expect(view.list.items[0].comments).toBe(1);
+    expect(view.item.draft).toBe("");
+    expect(view.item.write).toEqual({ pending: null, running: false, message: "" });
+    // Exactly the one write: no search, no page, no comment list.
+    expect(setup.gh.calls.slice(readsBefore)).toHaveLength(1);
+    expect(writes(setup)).toHaveLength(1);
+  });
+
+  test("cancelling drops the write and keeps the draft", async () => {
+    const setup = await setUp();
+    const leafId = await issuePane(setup);
+    setup.github.setDraft(leafId, "Never mind");
+    setup.github.askToComment(leafId);
+    setup.github.cancelWrite(leafId);
+    expect(setup.github.view(leafId).item.write.pending).toBeNull();
+    expect(setup.github.view(leafId).item.draft).toBe("Never mind");
+    await setup.github.confirmWrite(leafId);
+    expect(writes(setup)).toEqual([]);
+  });
+
+  test("a comment GitHub refuses stays in the box, with the reason shown", async () => {
+    const setup = await setUp();
+    const leafId = await issuePane(setup);
+    setup.gh.answers.set("issues/5/comments -X POST", { stdout: "", error: { kind: "failed", message: "gh: Forbidden (HTTP 403)", code: 1 } });
+    setup.github.setDraft(leafId, "Hello");
+    setup.github.askToComment(leafId);
+    await setup.github.confirmWrite(leafId);
+    const item = setup.github.view(leafId).item;
+    expect(item.comments).toHaveLength(1);
+    expect(item.draft).toBe("Hello");
+    expect(item.write.pending).toBeNull();
+    expect(item.write.message).toContain("403");
+  });
+
+  test("closing is confirmed, then the page and the list's row say closed", async () => {
+    const setup = await setUp();
+    const leafId = await issuePane(setup);
+    setup.gh.answers.set("repos/neoworks-dev/grove/issues/5 -X PATCH", pageAnswer(5, { state: "closed", comments: 1, updated_at: "2026-10-25T11:00:00Z" }));
+    setup.github.askToSetState(leafId, "closed");
+    expect(writes(setup)).toEqual([]);
+    await setup.github.confirmWrite(leafId);
+    const view = setup.github.view(leafId);
+    expect(view.item.detail?.state).toBe("closed");
+    expect(view.item.detail?.updatedAt).toBe("2026-10-25T11:00:00Z");
+    expect(view.list.items[0].state).toBe("closed");
+    expect(view.item.comments).toHaveLength(1);
+    expect(writes(setup)[0]).toContain("state=closed");
+  });
+
+  test("reopening sends state open", async () => {
+    const setup = await setUp();
+    const leafId = await issuePane(setup, { state: "closed" });
+    setup.gh.answers.set("repos/neoworks-dev/grove/issues/5 -X PATCH", pageAnswer(5, { state: "open", comments: 1 }));
+    setup.github.askToSetState(leafId, "open");
+    await setup.github.confirmWrite(leafId);
+    expect(setup.github.view(leafId).item.detail?.state).toBe("open");
+    expect(writes(setup)[0]).toContain("state=open");
+  });
+
+  test("an answer that arrives after the pane moved to another item changes nothing", async () => {
+    const setup = await setUp();
+    const leafId = await issuePane(setup);
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    setup.gh.answers.set("issues/5/comments -X POST", async () => {
+      await held;
+      return printed('{"id":2,"body":"late","created_at":"t","user":"moritz"}');
+    });
+    setup.github.setDraft(leafId, "late");
+    setup.github.askToComment(leafId);
+    const sending = setup.github.confirmWrite(leafId);
+    await settle();
+    setup.gh.answers.set("issues/6/comments", printed(""));
+    setup.gh.answers.set("repos/neoworks-dev/grove/issues/6 --jq", pageAnswer(6));
+    await setup.github.showReference(leafId, { repo: null, number: 6, kind: "issue" });
+    release();
+    await sending;
+    expect(setup.github.view(leafId).item.detail?.number).toBe(6);
+    expect(setup.github.view(leafId).item.comments).toEqual([]);
+  });
+});

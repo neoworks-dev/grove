@@ -1,6 +1,6 @@
-// Reads GitHub through the `gh` command line, as the person who is logged in to it. Every call is
-// a `gh api` run by the Rust host (`src/gh.rs`), with `--jq` cutting each answer down to the fields
-// the pane shows, so a pull request's patches never travel. The runner is a parameter so the
+// Reads and writes GitHub through the `gh` command line, as the person who is logged in to it. Every
+// call is a `gh api` run by the Rust host (`src/gh.rs`), with `--jq` cutting each answer down to the
+// fields the pane shows, so a pull request's patches never travel. The runner is a parameter so the
 // client runs under `bun test` with a fake.
 
 import {
@@ -58,6 +58,9 @@ const ITEM_FIELDS =
   "{number, title, state, draft, body, comments, created_at, updated_at, html_url, merged, additions, deletions, changed_files, " +
   "user: .user.login, assignees: [.assignees[].login], labels: [.labels[] | {name, color}], " +
   "pull: ((.pull_request != null) or (.head != null)), head: {ref: .head.ref, sha: .head.sha}, base: {ref: .base.ref, sha: .base.sha}}";
+
+/** The fields of a comment, as the list of comments and a new comment both print them. */
+const COMMENT_FIELDS = "{id, body, created_at, user: .user.login}";
 
 export class GithubClient {
   private authenticated = false;
@@ -122,7 +125,7 @@ export class GithubClient {
 
   /** The comments under an issue or a pull request, oldest first. */
   async fetchComments(repo: string, number: number): Promise<Comment[]> {
-    const text = await this.paged(`repos/${repo}/issues/${number}/comments`, "{id, body, created_at, user: .user.login}");
+    const text = await this.paged(`repos/${repo}/issues/${number}/comments`, COMMENT_FIELDS);
     return parseComments(parseLines(text));
   }
 
@@ -168,6 +171,24 @@ export class GithubClient {
       }
       throw error;
     }
+  }
+
+  /** Posts a comment under an issue or a pull request and returns it as GitHub stored it. */
+  async postComment(repo: string, number: number, body: string): Promise<Comment> {
+    await this.checkAccess();
+    const text = await this.api(
+      `repos/${repo}/issues/${number}/comments`,
+      ["-X", "POST", "-f", `body=${body}`],
+      COMMENT_FIELDS,
+    );
+    return parseComments([parseObject(text)])[0];
+  }
+
+  /** Closes or reopens an issue or a pull request, and returns its page as GitHub has it now. */
+  async setItemState(repo: string, number: number, state: "open" | "closed"): Promise<ItemDetail> {
+    await this.checkAccess();
+    const text = await this.api(`repos/${repo}/issues/${number}`, ["-X", "PATCH", "-f", `state=${state}`], ITEM_FIELDS);
+    return parseDetail(repo, parseObject(text));
   }
 
   /** A `gh api` call whose answer is cut down by a `--jq` program. Parameters go in the path, since `-f` would make it a POST. */

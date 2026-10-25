@@ -1,28 +1,37 @@
 <!--
   One issue or pull request: its title and state, who opened it, its labels, its body as markdown,
-  for a pull request the branches, checks, reviews and files, and then the comments.
+  for a pull request the branches, checks, reviews and files, and then the comments and a box to
+  write one. Closing, reopening and commenting ask for a confirmation in a bar at the foot first.
 -->
 <script lang="ts">
-  import { Button, Icon, Scroll, Text, View } from "@neoworks/svelte-gpui/ui";
+  import { Button, Icon, Input, Scroll, Text, View } from "@neoworks/svelte-gpui/ui";
   import arrowSquareOut from "@phosphor-icons/core/regular/arrow-square-out.svg";
   import type { FileIconSource } from "../explorer/fileIcons";
   import { colors, fontSize, radius } from "../theme/tokens";
   import LabelPill from "./LabelPill.svelte";
   import Markdown from "./Markdown.svelte";
   import type { PullDetail, PullFile } from "./model";
-  import { agoOf, commentCount } from "./present";
+  import { agoOf, commentCount, stateActionLabel } from "./present";
   import PullSections from "./PullSections.svelte";
   import type { ItemLoad } from "./service";
   import StateTag from "./StateTag.svelte";
+  import WriteBar from "./WriteBar.svelte";
 
   interface Props {
     item: ItemLoad;
     icons: FileIconSource;
     onbrowser: () => void;
     onfile: (file: PullFile) => void;
+    ondraft: (text: string) => void;
+    /** The comment box's button: asks to post the draft. */
+    oncomment: () => void;
+    /** The close or reopen button: asks to put the item in this state. */
+    onstate: (state: "open" | "closed") => void;
+    onconfirm: () => void;
+    oncancel: () => void;
   }
 
-  let { item, icons, onbrowser, onfile }: Props = $props();
+  let { item, icons, onbrowser, onfile, ondraft, oncomment, onstate, onconfirm, oncancel }: Props = $props();
 
   const now = Date.now();
   const detail = $derived(item.detail);
@@ -32,6 +41,23 @@
     }
     return null;
   });
+  const stateLabel = $derived.by(() => {
+    if (detail === null) {
+      return null;
+    }
+    return stateActionLabel(detail.kind, detail.state);
+  });
+
+  /** Asks to close the item when it is open, and to reopen it when it is closed. */
+  function toggleState(): void {
+    if (detail !== null && detail.state === "closed") {
+      onstate("open");
+      return;
+    }
+    onstate("closed");
+  }
+  const writing = $derived(item.write.pending !== null || item.write.running);
+  const canComment = $derived(item.draft.trim() !== "" && !writing && item.extras !== "loading");
 </script>
 
 {#if item.status === "error"}
@@ -43,6 +69,7 @@
     <Text style={{ fontSize: fontSize.xs, color: colors.dim }}>Loading…</Text>
   </View>
 {:else}
+  <View style={{ flex: 1, minHeight: 0 }}>
   <Scroll style={{ flex: 1, minHeight: 0 }}>
     <View style={{ gap: 14, padding: 16 }}>
       <View style={{ gap: 8 }}>
@@ -60,6 +87,16 @@
             <Icon svg={arrowSquareOut} size={12} />
             <Text>Open on GitHub</Text>
           </Button>
+          {#if stateLabel !== null}
+            <Button
+              style={{ height: 22, paddingX: 8, align: "center", radius: radius.sm, color: colors.dim, fontSize: fontSize.xs }}
+              hover={{ background: colors.hover, color: colors.text }}
+              disabled={writing}
+              onpress={toggleState}
+            >
+              <Text>{stateLabel}</Text>
+            </Button>
+          {/if}
         </View>
         <Text style={{ fontSize: fontSize.xs, color: colors.muted }}>
           {detail.author} opened this {agoOf(detail.createdAt, now)}, {commentCount(detail.comments)}
@@ -110,7 +147,29 @@
             <Markdown text={comment.body} empty="" />
           </View>
         {/each}
+        <View style={{ gap: 8, padding: 12, radius: radius.md, borderWidth: 1, borderColor: colors.line, background: colors.input }}>
+          <Input
+            value={item.draft}
+            multiline
+            rows={3}
+            placeholder="Leave a comment"
+            oninput={ondraft}
+            style={{ fontSize: fontSize.sm, color: colors.text }}
+          />
+          <View style={{ direction: "row", justify: "end" }}>
+            <Button
+              style={{ height: 26, paddingX: 10, align: "center", radius: radius.sm, fontSize: fontSize.xs, fontWeight: "bold", background: colors.accent, color: colors.inverse }}
+              disabledStyle={{ background: colors.elevated, color: colors.dim }}
+              disabled={!canComment}
+              onpress={oncomment}
+            >
+              <Text>Comment</Text>
+            </Button>
+          </View>
+        </View>
       </View>
     </View>
   </Scroll>
+  <WriteBar write={item.write} repo={detail.repo} number={detail.number} kind={detail.kind} {onconfirm} {oncancel} />
+  </View>
 {/if}

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { parseMarkdown } from "../plugins/github/markdown";
 import type { PullFile } from "../plugins/github/model";
-import { agoOf, commentCount, labelColors } from "../plugins/github/present";
+import { agoOf, commentCount, commentPreview, labelColors, stateActionLabel, writeConfirmLabel, writeQuestion } from "../plugins/github/present";
 import { changeOf, pullFileTree } from "../plugins/github/tree";
 
 /** A changed file. */
@@ -78,5 +78,29 @@ describe("words and colours", () => {
     expect(labelColors("d73a4a", "#999999")).toEqual({ text: "#d73a4a", background: "#d73a4a2e" });
     expect(labelColors("0e0e10", "#999999").text).toBe("#999999");
     expect(labelColors("zz", "#999999").text).toBe("#999999");
+  });
+});
+
+describe("confirming a write", () => {
+  test("the question names what is about to be sent and where", () => {
+    expect(writeQuestion({ kind: "comment", body: "hi" }, "o/r", 5, "issue")).toBe("Post this comment on o/r#5?");
+    expect(writeQuestion({ kind: "state", state: "closed" }, "o/r", 5, "pull")).toBe("Close pull request o/r#5?");
+    expect(writeQuestion({ kind: "state", state: "open" }, "o/r", 5, "issue")).toBe("Reopen issue o/r#5?");
+  });
+
+  test("the button says what it does", () => {
+    expect(writeConfirmLabel({ kind: "comment", body: "hi" }, "issue")).toBe("Post comment");
+    expect(writeConfirmLabel({ kind: "state", state: "closed" }, "issue")).toBe("Close issue");
+  });
+
+  test("a merged pull request offers neither close nor reopen", () => {
+    expect(stateActionLabel("pull", "merged")).toBeNull();
+    expect(stateActionLabel("pull", "open")).toBe("Close pull request");
+    expect(stateActionLabel("issue", "closed")).toBe("Reopen issue");
+  });
+
+  test("a comment is previewed by its first line, cut to fit", () => {
+    expect(commentPreview("one\ntwo", 80)).toBe("one");
+    expect(commentPreview("abcdefghij", 5)).toBe("abcd…");
   });
 });

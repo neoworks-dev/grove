@@ -162,3 +162,45 @@ describe("reading", () => {
     expect(error.message).toContain("host gone");
   });
 });
+
+describe("writes", () => {
+  test("a comment is posted with the body as a field, and read back as the comment GitHub stored", async () => {
+    const fake = fakeGh((args) => {
+      if (args[0] === "auth") {
+        return printed("");
+      }
+      return printed('{"id":77,"body":"Line one\\nLine two","created_at":"2026-10-25T10:00:00Z","user":"moritz"}');
+    });
+    const comment = await new GithubClient(fake.run).postComment("o/r", 5, "Line one\nLine two");
+    expect(comment).toEqual({ id: 77, author: "moritz", body: "Line one\nLine two", createdAt: "2026-10-25T10:00:00Z" });
+    const write = fake.calls.find((call) => call.args[0] === "api")!.args;
+    expect(write.slice(0, 5)).toEqual(["api", "repos/o/r/issues/5/comments", "-X", "POST", "-f"]);
+    expect(write[5]).toBe("body=Line one\nLine two");
+  });
+
+  test("closing patches the issue's state and returns the page as it is now", async () => {
+    const page = { number: 5, title: "T", state: "closed", user: "ada", comments: 0, updated_at: "2026-10-25T10:00:00Z" };
+    const fake = fakeGh((args) => {
+      if (args[0] === "auth") {
+        return printed("");
+      }
+      return printed(JSON.stringify(page));
+    });
+    const detail = await new GithubClient(fake.run).setItemState("o/r", 5, "closed");
+    expect(detail.state).toBe("closed");
+    const write = fake.calls.find((call) => call.args[0] === "api")!.args;
+    expect(write.slice(0, 6)).toEqual(["api", "repos/o/r/issues/5", "-X", "PATCH", "-f", "state=closed"]);
+  });
+
+  test("a write that GitHub refuses fails with the reason", async () => {
+    const fake = fakeGh((args) => {
+      if (args[0] === "auth") {
+        return printed("");
+      }
+      return failed("gh: Resource not accessible by personal access token (HTTP 403)");
+    });
+    const error = await new GithubClient(fake.run).postComment("o/r", 5, "hi").catch((caught) => caught);
+    expect(error).toBeInstanceOf(GithubError);
+    expect(error.message).toContain("403");
+  });
+});

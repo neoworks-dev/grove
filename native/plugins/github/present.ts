@@ -1,7 +1,8 @@
 // How the GitHub pane words and colours things, as pure functions so they run under `bun test`.
 
 import { relativeTime } from "../git-gutter/changes";
-import type { CheckState, ItemState, ReviewState } from "./model";
+import type { CheckState, ItemKind, ItemState, ReviewState } from "./model";
+import type { PendingWrite } from "./service";
 
 /** The word an item's tag says. */
 export function stateWord(state: ItemState): string {
@@ -88,4 +89,54 @@ export function labelColors(hex: string, fallbackText: string): { text: string; 
     text = fallbackText;
   }
   return { text, background: `#${hex}2e` };
+}
+
+/** "issue" or "pull request", for sentences about an item. */
+export function kindNoun(kind: ItemKind): string {
+  if (kind === "pull") {
+    return "pull request";
+  }
+  return "issue";
+}
+
+/** The label of the button that asks to close or reopen an item, or null when it cannot be done (a merged pull request). */
+export function stateActionLabel(kind: ItemKind, state: ItemState): string | null {
+  if (state === "merged") {
+    return null;
+  }
+  if (state === "closed") {
+    return `Reopen ${kindNoun(kind)}`;
+  }
+  return `Close ${kindNoun(kind)}`;
+}
+
+/** The question a confirmation asks before a write runs. */
+export function writeQuestion(pending: PendingWrite, repo: string, number: number, kind: ItemKind): string {
+  if (pending.kind === "comment") {
+    return `Post this comment on ${repo}#${number}?`;
+  }
+  if (pending.state === "closed") {
+    return `Close ${kindNoun(kind)} ${repo}#${number}?`;
+  }
+  return `Reopen ${kindNoun(kind)} ${repo}#${number}?`;
+}
+
+/** The label of the button that confirms a write. */
+export function writeConfirmLabel(pending: PendingWrite, kind: ItemKind): string {
+  if (pending.kind === "comment") {
+    return "Post comment";
+  }
+  if (pending.state === "closed") {
+    return `Close ${kindNoun(kind)}`;
+  }
+  return `Reopen ${kindNoun(kind)}`;
+}
+
+/** The first line of a comment, cut to a length that fits a confirmation. */
+export function commentPreview(body: string, limit: number): string {
+  const firstLine = body.trim().split("\n")[0];
+  if (firstLine.length <= limit) {
+    return firstLine;
+  }
+  return `${firstLine.slice(0, limit - 1)}…`;
 }

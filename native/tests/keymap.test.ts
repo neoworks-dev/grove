@@ -165,6 +165,20 @@ describe("KeymapService", () => {
     expect(context.keymap.nextKeys()).toEqual([]);
   });
 
+  test("a key that leads to more keys names their group, and the typed keys are kept for the hint", async () => {
+    const { context } = await bootedContext();
+    context.keymap.bind([
+      { id: "open", keys: "ctrl+k g c", command: "open", group: "Git", description: "Open" },
+      { id: "save", keys: "ctrl+k g s", command: "save", group: "Git", description: "Save" },
+    ]);
+    expect(context.keymap.pendingKeys()).toEqual([]);
+    context.keymap.dispatch(press("k", { ctrl: true }));
+    expect(context.keymap.pendingKeys()).toEqual(["Ctrl+k"]);
+    expect(context.keymap.nextKeys()).toEqual([{ key: "g", continues: true, group: "Git" }]);
+    context.keymap.dispatch(press("g"));
+    expect(context.keymap.pendingKeys()).toEqual(["Ctrl+k", "g"]);
+  });
+
   test("a wrong second key ends the sequence without running anything", async () => {
     const { context, ran } = await bootedContext();
     context.keymap.bind({ id: "open", keys: "ctrl+k f2", command: "open" });

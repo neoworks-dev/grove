@@ -46,7 +46,7 @@ export interface AppEnvironmentOptions {
   checkout: string
   paths: SessionPaths
   display: string
-  /** The `suite` executable the app starts its daemon with. */
+  /** The `neo` executable the app starts its daemon with. */
   suite: string
 }
 
@@ -87,9 +87,9 @@ export function appEnvironment(
     // The binary has the checkout it was built in compiled into it; a host
     // copied from another checkout would otherwise run that one's sidecar.
     GROVE_SIDECAR: join(checkout, 'src', 'main', 'sidecar', 'index.ts'),
-    GROVE_SUITE: suite,
-    SUITE_SOCKET: join(paths.runtime, 'suite', 'bus.sock'),
-    SUITE_DATA_DIR: join(paths.profile, 'data', 'suite'),
+    GROVE_NEO: suite,
+    NEO_SOCKET: join(paths.runtime, 'neo', 'bus.sock'),
+    NEO_DATA_DIR: join(paths.profile, 'data', 'neo'),
     GROVE_REPO: paths.demoRepo,
     GROVE_OPEN: join(paths.demoRepo, 'README.md'),
     // `gh` keeps its login under XDG_CONFIG_HOME, which has just moved; without

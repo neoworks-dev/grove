@@ -13,14 +13,14 @@ const userEnvironment = {
   HYPRLAND_INSTANCE_SIGNATURE: 'abc',
   XDG_CONFIG_HOME: '/home/someone/.config',
   XDG_RUNTIME_DIR: '/run/user/1000',
-  SUITE_SOCKET: '/run/user/1000/suite/bus.sock'
+  NEO_SOCKET: '/run/user/1000/neo/bus.sock'
 }
 
 const environment = appEnvironment(userEnvironment, {
   checkout,
   paths,
   display: ':7',
-  suite: '/work/neoworks-harness/bin/suite'
+  suite: '/work/neoworks-harness/bin/neo'
 })
 
 describe('appEnvironment', () => {
@@ -32,7 +32,7 @@ describe('appEnvironment', () => {
       'XDG_CACHE_HOME',
       'TMPDIR',
       'GROVE_SIDECAR_DATA',
-      'SUITE_DATA_DIR'
+      'NEO_DATA_DIR'
     ]
     for (const name of moved) {
       expect(environment[name].startsWith(paths.profile)).toBe(true)
@@ -40,13 +40,13 @@ describe('appEnvironment', () => {
   })
 
   test('gives the session its own daemon socket, never the user\'s', () => {
-    expect(environment.SUITE_SOCKET).not.toBe(userEnvironment.SUITE_SOCKET)
-    expect(environment.SUITE_SOCKET.startsWith(paths.runtime)).toBe(true)
+    expect(environment.NEO_SOCKET).not.toBe(userEnvironment.NEO_SOCKET)
+    expect(environment.NEO_SOCKET.startsWith(paths.runtime)).toBe(true)
     expect(environment.XDG_RUNTIME_DIR).toBe(paths.runtime)
   })
 
   test('keeps the daemon socket short enough for a Unix socket path', () => {
-    expect(environment.SUITE_SOCKET.length).toBeLessThan(100)
+    expect(environment.NEO_SOCKET.length).toBeLessThan(100)
   })
 
   test('opens the window on the session display over X11, not on the user\'s desktop', () => {

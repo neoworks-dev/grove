@@ -392,32 +392,32 @@ function wireSandboxRemote(demoRoot: string): void {
 // ------------------------------------------------------------------ daemon
 
 /**
- * The `suite` executable, found the way the app finds it (`native/src/suite.rs`):
- * GROVE_SUITE, then SUITE_ROOT, then a neoworks-harness checkout beside this one.
+ * The `neo` executable, found the way the app finds it (`native/src/suite.rs`):
+ * GROVE_NEO, then NEO_ROOT, then a neoworks-harness checkout beside this one.
  */
 function findSuite(): string {
-  const explicit = process.env.GROVE_SUITE
+  const explicit = process.env.GROVE_NEO
   if (explicit !== undefined && explicit.length > 0) {
     return explicit
   }
-  const root = process.env.SUITE_ROOT
+  const root = process.env.NEO_ROOT
   if (root !== undefined && root.length > 0) {
-    return join(root, 'bin', 'suite')
+    return join(root, 'bin', 'neo')
   }
   let directory = repoRoot
   while (directory !== dirname(directory)) {
-    const sibling = join(directory, 'neoworks-harness', 'bin', 'suite')
+    const sibling = join(directory, 'neoworks-harness', 'bin', 'neo')
     if (existsSync(sibling)) {
       return sibling
     }
     directory = dirname(directory)
   }
-  return 'suite'
+  return 'neo'
 }
 
 /** Starts the session's own suite daemon; says so and goes on without one when it cannot. */
 function startDaemon(environment: Record<string, string>): boolean {
-  const started = spawnSync(environment.GROVE_SUITE, ['up'], { env: environment, encoding: 'utf8' })
+  const started = spawnSync(environment.GROVE_NEO, ['up'], { env: environment, encoding: 'utf8' })
   writeFileSync(paths.daemonLog, `${started.stdout}${started.stderr}`, 'utf8')
   if (started.status !== 0) {
     console.warn(`the suite daemon did not start, see ${paths.daemonLog}`)
@@ -434,7 +434,7 @@ function stopDaemon(): void {
     display: '',
     suite: findSuite()
   })
-  spawnSync(environment.GROVE_SUITE, ['down'], { env: environment, stdio: 'ignore' })
+  spawnSync(environment.GROVE_NEO, ['down'], { env: environment, stdio: 'ignore' })
 }
 
 // ----------------------------------------------------------------- acting

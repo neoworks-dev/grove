@@ -131,7 +131,7 @@ exercising — the composer, the transcript, the review flow. They also cost rea
 tokens on the user's account. Keep prompts tiny ("add a comment to README.md"),
 start one session rather than five, and read `qa logs` rather than re-running to
 see the same thing twice. The daemon's own log is
-`.grove-qa/profile/data/suite/daemon.log`.
+`.grove-qa/profile/data/neo/daemon.log`.
 
 ## When something goes wrong
 

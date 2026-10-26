@@ -52,6 +52,8 @@ export interface NextKey {
   description?: string;
   /** Whether more keys follow it. */
   continues: boolean;
+  /** When more keys follow, the group of the bindings it leads to, such as `Git`. */
+  group?: string;
 }
 
 export class KeymapService extends Service {
@@ -191,12 +193,28 @@ export class KeymapService extends Service {
       const continues = binding.sequence.steps.length > prefix.length + 1;
       const known = byKey.get(key);
       if (known === undefined) {
-        byKey.set(key, { key, description: continues ? undefined : binding.description, continues });
+        byKey.set(key, nextKeyOf(key, binding, continues));
       } else if (continues) {
         known.continues = true;
+        if (known.group === undefined) {
+          known.group = binding.group;
+        }
       }
     }
     return [...byKey.values()];
+  }
+
+  /** The keys of the half-typed sequence as keycap labels, the leader as `␣`; empty when none is pending. Reactive. */
+  pendingKeys(): string[] {
+    this.changes.track();
+    if (!this.pendingState.active) {
+      return [];
+    }
+    const labels = this.pendingState.steps.map(stepLabel);
+    if (this.pendingState.leader) {
+      return ["␣", ...labels];
+    }
+    return labels;
   }
 
   /** Drops a half-typed sequence. */
@@ -371,4 +389,12 @@ export class KeymapService extends Service {
     this.cancelPending();
     return true;
   }
+}
+
+/** The which-key entry for a key: a group when more keys follow it, else what its binding does. */
+function nextKeyOf(key: string, binding: ResolvedBinding, continues: boolean): NextKey {
+  if (continues) {
+    return { key, continues, group: binding.group };
+  }
+  return { key, continues, description: binding.description };
 }

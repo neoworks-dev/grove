@@ -1,6 +1,6 @@
 ---
 name: grove-debug
-description: Use Grove the way a person does — launch a session on a virtual display, click, drag, type, look at screenshots, read its state and logs, and file what you find as GitHub issues. Use when the cause of a UI or agent bug isn't clear from the code, or a fix didn't work; when exploring the app for bugs and rough edges; and whenever driving the built app through `bun run qa`.
+description: Use Grove native the way a person does — launch it on a headless display, click, drag, type, look at screenshots, read its logs, and file what you find as GitHub issues. Use when the cause of a UI or agent bug isn't clear from the code, or a fix didn't work; when exploring the app for bugs and rough edges; to show a change working before and after; and whenever driving the app through `bun run qa`.
 ---
 
 # Using Grove, and finding out what is wrong with it
@@ -9,275 +9,170 @@ This is the harness for the job an end-to-end spec cannot do: sitting down with
 the app and finding out what is wrong with it. Not "does the button dispatch the
 action" — whether the thing is any good to use.
 
-It is also the debugger, for when a bug is known and the question is _why_. When
-the user has said what happens, that is the reproduction: take it as given and
-look for the cause. Come here when the code doesn't make the cause clear, or a
-fix based on reading it didn't work — guessing from source has been wrong often
-enough that a second guess isn't worth it. It launches an instance of its own;
-never launch or restart the user's.
+It is also the debugger, for when a bug is known and the question is _why_, and
+the way a change is shown to work: once before, with the bug, and once after.
+It launches an instance of its own; never launch or restart the user's.
 
-Everything is `bun run qa <command>`. `bun run qa help` lists it.
+The app is Grove native: `native/target/release/grove_native` running the
+bundle in `native/dist/`. Everything is `bun run qa <command>`, and
+`bun run qa help` lists it.
 
 ## A session
 
 ```bash
-bun run qa start            # display, built app, isolated profile, CDP port
-bun run qa probe            # is it up, and what is on screen
-bun run qa stop             # the app, everything it spawned, and the display
+bun run qa start            # headless display, the app, its own profile and daemon
+bun run qa screenshot       # what is on screen; read the PNG with the Read tool
+bun run qa stop             # the app, everything it spawned, the daemon, the display
 ```
 
-`start` reuses the last build. `--build` rebuilds first, `--fresh` throws the
-profile and the demo repo away and makes new ones. Start-up takes about half a
-minute: the app builds an nvim runtime on a cold profile.
+`start` rebuilds the bundle every time (a second), so the session runs the
+checkout's UI as it is. The Rust host is only rebuilt with `--build`, which takes
+minutes; a worktree without `native/target` gets the main checkout's copied in
+first, so GPUI is not compiled again. Run `bun install` in `native/` once per
+worktree. `--fresh` throws the profile and the demo repo away. `restart` is
+`stop` then `start`, with the same flags.
 
-The session runs on a virtual X display (`:90`–`:99`), not the desktop. When the
-display is Xvnc, `start` opens a `vncviewer` on it so the user can watch the run;
-it closes with `stop`. `--no-viewer` leaves it closed.
+The display is a headless gamescope: its own Xwayland on the GPU, which nobody
+sees and which never touches the user's desktop or compositor. Xvfb and Xvnc do
+not work for native, because GPUI's Vulkan surface cannot present without DRI3
+and the window stays black. There is no viewer to watch a run.
 
-The profile is `.grove-test/`, the same isolated one the e2e suite and
-`scripts/test-env.ts` use — the user's own `~/.config/grove` is never opened, so
-an instance they are running keeps its sessions while this one runs beside it.
+Everything the session writes is under `.grove-qa/` in the checkout: the profile
+(`profile/`, with config, data, state, cache and temp), the demo repo
+(`profile/demo`), screenshots (`shots/`), and the logs. Sockets go in a short
+directory under `$XDG_RUNTIME_DIR/grove-qa-<hash>`. The session starts its own
+suite daemon on that socket and stops it with `stop`, so agents run there and
+never in the user's daemon. `--no-daemon` skips it.
 
-One exception, worth knowing: `gh` is pointed at the real `~/.config/gh`,
-because the GitHub surfaces are untestable logged out. The demo repo's remote is
+One exception, worth knowing: `gh` is pointed at the real `~/.config/gh`, because
+the GitHub surfaces are untestable logged out. The demo repo's remote is
 `neoworks-dev/grove-qa-sandbox`, a scratch repository — issues, branches and
 pull requests you make in **there** are expected and disposable. Never push
 anything to `neoworks-dev/grove` itself except an issue.
 
 ## Seeing
 
-`probe` is the loop. It prints the app as the tree of panes it is:
-
 ```bash
-bun run qa probe                    # everything
-bun run qa probe separator          # only elements matching a name, role or ref
+bun run qa screenshot opened-explorer                 # the window, 1440x900
+bun run qa screenshot tab-strip --crop 300,40,560,30  # one part of it
+bun run qa probe                                      # up or not, and its errors
+bun run qa probe "New chat"                           # where that text is on screen
+bun run qa wait "Problems" [--gone]                   # until it shows, or goes
 ```
 
-```
-grove  1512x982  view=code  worktree=…/demo/repo
-focus=leaf-2 (nvim)  tab=README.md  errors=0
+A screenshot is how you see the app: there is no element tree to print. Read
+the file with the Read tool, in the session. Never open it in a viewer or a
+browser. Its pixels are window coordinates, so a position you read off it is a
+position you can click.
 
-split-1  row  20% 60% 20%
-├─ leaf-1  explorer  248x946  fixed=248px
-│       treeitem "README.md" e1 · treeitem "src" e2
-│  split-1:0  ↔ gutter
-├─ leaf-2  nvim  "Editor"  912x946  ★focus
-│       canvas e3
-│  split-1:1  ↔ gutter
-└─ leaf-3  agent  "Agent"  352x946
-        textbox "Ask anything" e4 · button "Send" e5 (disabled)
+`--crop x,y,w,h` is how you look closer. A crop of the row you doubt beats a whole
+window you hunt through.
 
-overlays (menus, modals, the top bar — outside the pane tree)
-  button "Code" e9 · button "Review" e10
-```
+Taking one when nothing has happened since the last is refused: two photographs
+of the same screen cannot differ. When the app changed by itself (it finished
+loading, an agent answered), add `--again`. Every action also takes
+`--screenshot <label>`, which photographs the result once it has settled.
 
-Everything in it is a target. `e3` is an element, `leaf-2` is a pane, and
-`split-1:0` is the gutter between two of them. Refs stay valid until the screen
-changes under them; a stale one is an error telling you to probe again, never a
-click somewhere unintended.
-
-The header is the session: which view, which worktree, which pane has focus,
-which file the editor is on, how many agent sessions and how many errors. Errors
-are listed under the tree when there are any, boot failures included.
-
-### The screenshot is for what only a picture shows
-
-```bash
-bun run qa screenshot opened-explorer               # the window
-bun run qa screenshot tab-strip --crop 400,40,520,60  # one part of it
-bun run qa screenshot agent-pane --of leaf-13         # one pane
-```
-
-Alignment, overlap, a label running under an icon, a panel that went blank, a
-colour that is wrong. **Not** for finding out what is open or what to click —
-`probe` says that exactly, and a picture costs you a thousand times as much to be
-told it approximately.
-
-`--crop x,y,w,h` is how you look closer. `probe` prints a position and a size for
-every element, so the numbers are already in front of you, and a crop of the row
-you are doubting beats a whole window you have to hunt through.
-
-When you do take one, **read the file** — with the Read tool, in this session.
-Never open it in a viewer or a browser: there is no desktop here, nobody is
-watching one, and the run has nothing to do with the machine it was started from.
-Every screenshot is also drawn into the transcript the person watching this run
-is reading, so the path you print is the picture they see, and one you did not
-look at tells you nothing.
-
-Taking one when nothing has happened since the last is refused. Two photographs
-of the same screen cannot differ; re-read the first, or `probe`.
-
-Anything transient has to be photographed in the same connection that produced
-it, which is what `--screenshot <label>` on an action is for:
-
-```bash
-bun run qa click "Open a pane here" --screenshot pane-picker
-```
-
-The driver connects per command, and a menu, picker or popover **closes when it
-disconnects** — a separate `qa screenshot` afterwards photographs a screen your
-click never produced.
+`probe <text>` finds text by reading a screenshot with tesseract, and prints its
+box and centre. That is also how text targets work (below), so when a click
+misses, `probe` the same text to see where the harness thought it was.
 
 ## Acting
 
 ```bash
-bun run qa click "New session"            # also dblclick, rightclick
-bun run qa drag split-1:0 at=520,300      # press, move, release
-bun run qa type "some text"               # into whatever has focus
-bun run qa press Escape                   # chords: Control+s, Shift+Tab
-bun run qa press g g                      # several presses in order
-bun run qa scroll -400 --at e8
-bun run qa wait "Commit" [--gone]
+bun run qa click "Problems"                # also dblclick, rightclick
+bun run qa click at=550,300                # a point in the window
+bun run qa drag at=864,200 at=640,200      # press, move in steps, release
+bun run qa type "some text"                # into whatever has the keyboard
+bun run qa press Escape                    # chords: Control+s, Shift+Tab
+bun run qa press G o                       # several presses in order
+bun run qa scroll -400 --at at=600,300
 ```
 
 A target is one of:
 
-| form                                                     | means                                                |
-| -------------------------------------------------------- | ---------------------------------------------------- |
-| `New session`                                            | the accessible name, in the roles a person clicks    |
-| `e14`                                                    | an element from the last `probe`                     |
-| `leaf-3`                                                 | a pane — clicking one focuses it                     |
-| `split-1:0`                                              | the gutter between two panes, for a resize           |
-| `at=820,460`                                             | a point in the window, for what has no element       |
-| `role=button:Save`                                       | a name, in one role, when the bare name is ambiguous |
-| `text=Skip` / `testid=agent-mode-trigger` / `css=.thing` | when nothing else fits                               |
+| form            | means                                                        |
+| --------------- | ------------------------------------------------------------ |
+| `Problems`      | the text on screen that reads that, one word or a phrase      |
+| `text=at=1,2`   | the same, spelled out when the text looks like something else |
+| `at=820,460`    | a point in the window, for what shows no text                 |
 
-Two things about dragging. A gutter is grabbed a quarter of the way along it, not
-in the middle — the middle is where the `+` that opens a pane lives, and pressing
-there opens the picker instead of dragging. And the move is stepped, so a handler
-that accumulates `pointermove` deltas sees the whole drag.
+Text that is on screen more than once is an error listing every match; pick one
+with `--nth <n>`, counted top to bottom. Text is matched exactly first, and then
+ignoring case and punctuation. Small or low-contrast text can be misread; when
+it is not found, take a screenshot and use the point instead.
 
-That quarter-way rule applies to an element — a gutter id, a ref, a selector —
-and **not** to `at=x,y`, which presses exactly where you said. So a drag from a
-gutter's midpoint read off a screenshot does nothing, while `split-1:0` resizes.
-It is the app's behaviour, not a flaky harness: name the gutter, and keep `at=`
-for the destination and for surfaces that have no element at all.
+Points are for everything without words: icons, the editor's text area, and
+split dividers. To resize a split, drag from a point on the divider a quarter of
+the way along it, not the middle: the middle is where its `+` lives, and pressing
+there opens a pane picker instead of dragging. The drag moves in steps, so a
+handler that sums pointer movement sees the whole of it.
 
-### Opening a pane
-
-Finding the affordance that opens a pane costs a dozen actions and is almost
-never what you were sent to test. Ask for the pane instead:
-
-```bash
-bun run qa panes                    # every pane type, and whether one is open
-bun run qa pane github              # reveal it, wherever it belongs
-bun run qa pane terminal --split column   # in a new window below the focused one
-bun run qa pane diff --in leaf-2    # swap it into that pane
-bun run qa pane github --close
-```
-
-Each of these prints the tree it produced, so you can see where the pane landed.
-
-This is a shortcut past the UI, not a replacement for it: the rail, the `+` on a
-gutter and the per-pane `…` menu are themselves worth testing, and testing them
-means clicking them.
+Keys go to whatever has the keyboard, as they would for a person: click into the
+editor before typing into it, and into the composer before typing a prompt.
 
 ## The editor
 
-The editor is a canvas. Its text is not in the DOM, so `probe` shows you one
-element and nothing about the buffer. Drive it as a person does, with the
-keyboard, and read it back through nvim itself:
+The editor is drawn by GPUI, and its text is only on screen. Drive it with the
+keyboard and look at it:
 
 ```bash
-bun run qa click "README.md"
-bun run qa press G o                                     # open a line below
+bun run qa dblclick README.md        # open it from the explorer
+bun run qa click at=550,300          # put the keyboard in the editor
+bun run qa press G o                 # open a line below the last
 bun run qa type "something"
-bun run qa press Escape
-bun run qa nvim 'return vim.api.nvim_buf_get_lines(0, 0, -1, false)'
-bun run qa nvim 'return vim.api.nvim_buf_get_name(0)'
+bun run qa press Escape --screenshot edited
 ```
-
-Wait for the status bar between opening a file and typing into it. The tab
-appears before nvim owns the buffer, and keys that arrive early are motions
-rather than text.
 
 ## Agent sessions
 
-Grove runs Claude agents inside itself, and they are worth exercising — the
-composer, the transcript, the review flow. They also cost real tokens on the
-user's account. Keep prompts tiny ("add a comment to README.md"), start one
-session rather than five, and read `bun run qa logs` and the transcript rather
-than re-running to see the same thing twice.
+Grove runs agents through the session's own suite daemon, and they are worth
+exercising — the composer, the transcript, the review flow. They also cost real
+tokens on the user's account. Keep prompts tiny ("add a comment to README.md"),
+start one session rather than five, and read `qa logs` rather than re-running to
+see the same thing twice. The daemon's own log is
+`.grove-qa/profile/data/suite/daemon.log`.
 
 ## When something goes wrong
 
 ```bash
-bun run qa logs                 # both halves of the app: renderer, then main
-bun run qa logs --renderer 100  # what the page logged, plus what CDP saw it do
-bun run qa logs --main 100      # git, nvim, the agents, the plugin host
-bun run qa eval '<one expression in the renderer>'
+bun run qa logs                 # the end of the app's log
+bun run qa logs 300 --errors    # only the lines that report a failure
 ```
 
-Two halves, and a fault usually needs both. The renderer's log is a ring buffer
-kept inside the page, so it survives between commands and carries what Chromium
-reports as well as what the app printed — failed requests and uncaught throws
-included. Everything the main process does is only ever in its own output.
-
-`eval` takes an **expression**, not statements. Wrap locals in an IIFE. It
-reaches `window.__grove_debug` (`store`, `layout`, `panes`, `views`, `review`,
-`keymap`, `agentSessions`) and `window.workbench.*`, which is the same IPC
-surface the UI calls.
-
-An agent session's append-only event log is the source of truth its transcript
-is folded from — the fastest answer to "what did the harness actually emit, and
-in what order?", which the rendered fold cannot give you:
-
-```bash
-jq -r '[.seq, .type] | @tsv' .grove-test/config/grove/agents/<sessionId>/events.jsonl
-```
+The app's log is `.grove-qa/app.log`: the host, the UI's console and the
+sidecar's stderr, in the order they happened. `probe` counts the errors in it.
 
 If the app stops responding, `qa probe` says whether it is still running at all;
-`qa stop` and `qa start` is always safe — the profile survives it.
+`qa restart` is always safe, and the profile survives it.
 
-## Pinning a bug down: expect, record, replay
+## Showing a change works
 
-Every action is recorded as the Playwright code that repeats it, and prints that
-line as `recorded: …`. The element is named the way Playwright would name it — a
-role and a name, a test id — never by the ref you typed, and the action ran
-through that locator, so what was recorded is what happened.
-
-When you have found something, say what should be true instead:
+Every change is shown twice, with a screenshot each time: before it, showing the
+bug or the missing feature, and after it, showing it work. Run the same steps on
+both builds and keep the shots, then put them on the issue:
 
 ```bash
-bun run qa expect inside-window testid=agent-mode-menu     # nothing runs off an edge
-bun run qa expect not-clipped e14                          # its text fits it
-bun run qa expect not-overlapping e14 e15
-bun run qa expect visible "Commit"                         # also: gone
-bun run qa expect eval 'window.__grove_debug.store.activeTabPath' '"README.md"'
-bun run qa expect no-errors                                # nothing logged since the recording began
+bun run qa evidence --issue 23 --body evidence.md \
+  --screenshot .grove-qa/shots/004-before.png \
+  --screenshot .grove-qa/shots/009-after.png
 ```
 
-Write the check the way the app **should** be — it answers `FAIL` while the bug
-is there, with the numbers (`runs off the 1439x899 window: right by 212px`) and
-a screenshot. The geometry decides; the screenshot is for a person.
+The comment is for someone who was not in the session: say what changed, what
+each screenshot shows, and how it was produced.
 
-`qa recording` shows what has been recorded. `qa start` begins a new recording,
-and so does `qa recording clear` — but what was cleared still happened to the
-app, and a replay starts from a fresh profile. A bug worth pinning down is worth
-a `qa start --fresh` and the few actions that reach it, rather than a clear
-after an hour of wandering.
-
-`qa finding` turns the recording into `tests/e2e/repro/<issue>-….e2e.ts` and
-puts a copy on the issue. For a bug somebody else filed, reproduce it the same
-way and `qa repro <issue>` attaches the spec as a comment (`--no-post` to only
-write the file). Then:
+## Handing it to a model
 
 ```bash
-bun run qa replay 271              # build, fresh profile, run the steps and checks
-bun run qa replay 271 --no-build   # against the last build
-bun run qa replay 271 --debug      # paused at the start: playwright cli attach, and look
+bun run qa explore                 # the whole app
+bun run qa explore panes           # a charter from charters/
+bun run qa explore "the GitHub pane" --dry-run
+bun run qa charters
 ```
 
-Fails while the bug is there, passes once it is fixed — the same command is
-the reproduction and the verification, and the screenshots it prints go straight
-into `qa evidence`. Replay it right after filing: a repro that passes on the
-broken build is missing its setup, and is worth fixing before anyone relies on
-it. The spec is committed with the fix, where it stays as the regression test.
-
-Not recorded: `probe`, `screenshot`, `logs`, `nvim` and plain `eval` — they
-look without changing anything. An `eval` that does change the app (calling
-`window.workbench.*`) is not replayed either; do it through the UI if the repro
-needs it.
+`explore` starts a Claude Code instance on the running session, which drives it
+with the harness and files what it finds. `--dry-run` writes the report without
+filing anything.
 
 ## What to report
 
@@ -295,8 +190,9 @@ Everything that made the app worse to use, not just what crashed:
 "I did not understand this" is a finding. Write it down rather than working it
 out and moving on; the next person will not work it out either.
 
-Not findings: anything you caused by driving the harness wrong, a stale ref, or
-something the demo repo simply does not have.
+Not findings: anything you caused by driving the harness wrong, a click that
+missed because the text was read wrong, or something the demo repo simply does
+not have.
 
 ## Filing it
 

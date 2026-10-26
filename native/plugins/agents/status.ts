@@ -69,7 +69,8 @@ export function applyStatusEvent(status: SessionStatus, record: SessionEventReco
 
 /** The status after a harness's option was set; options the status does not show change nothing. */
 function applySetting(status: SessionStatus, harness: string, option: string, value: string): SessionStatus {
-  if (harness === "suite") {
+  // The daemon logs its own options under "daemon"; sessions from before neo's rename say "suite".
+  if (harness === "daemon" || harness === "suite") {
     return applySuiteSetting(status, option, value);
   }
   if (option !== "model" && option !== "effort" && option !== "mode") {

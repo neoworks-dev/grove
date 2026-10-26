@@ -37,6 +37,12 @@ describe("the session facts", () => {
     expect(facts.status.running).toBe(false);
   });
 
+  test("the daemon's approvals setting is kept under its name since neo's rename", () => {
+    const facts = new SessionFacts();
+    facts.apply(record({ type: "setting_changed", harness: "daemon", option: "approvals", value: "review" }, 1));
+    expect(facts.status.approvals).toBe("review");
+  });
+
   test("an event that changes nothing reports no change", () => {
     const facts = new SessionFacts();
     expect(facts.apply(record({ type: "agent_message_chunk", text: "x" } as SessionEvent, 1))).toBe(false);

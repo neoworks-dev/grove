@@ -6,12 +6,12 @@
 //! - `suite_address` reads `daemon.json` next to the daemon's socket, which holds the loopback
 //!   URL and token of the running daemon. It is read fresh on every call, since both change when
 //!   the daemon restarts. It fails with the code `NotRunning` when there is no daemon.
-//! - `suite_up` runs `suite up`, which starts the daemon in the background if it is not running,
-//!   the same way `suite gui` does.
+//! - `suite_up` runs `neo up`, which starts the daemon in the background if it is not running,
+//!   the same way `neo gui` does.
 //!
-//! `GROVE_SUITE` names the `suite` executable. Without it, `$SUITE_ROOT/bin/suite` is used, then
+//! `GROVE_NEO` names the `neo` executable. Without it, `$NEO_ROOT/bin/neo` is used, then
 //! a `neoworks-harness` checkout next to this one (as the build assumes for its TypeScript
-//! client), then `suite` on `PATH`.
+//! client), then `neo` on `PATH`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -26,17 +26,17 @@ pub fn register(commands: Commands) -> Commands {
         .command("suite_up", |_| start_daemon())
 }
 
-/// The daemon's Unix socket: `$SUITE_SOCKET`, else `$XDG_RUNTIME_DIR/suite/bus.sock`, else
-/// `/tmp/suite-<uid>/bus.sock`. The daemon and the suite's clients resolve it the same way.
+/// The daemon's Unix socket: `$NEO_SOCKET`, else `$XDG_RUNTIME_DIR/neo/bus.sock`, else
+/// `/tmp/neo-<uid>/bus.sock`. The daemon and the suite's clients resolve it the same way.
 fn socket_path(getenv: impl Fn(&str) -> Option<String>, uid: u32) -> PathBuf {
     let set = |name: &str| getenv(name).filter(|value| !value.is_empty());
-    if let Some(socket) = set("SUITE_SOCKET") {
+    if let Some(socket) = set("NEO_SOCKET") {
         return socket.into();
     }
     if let Some(directory) = set("XDG_RUNTIME_DIR") {
-        return PathBuf::from(directory).join("suite").join("bus.sock");
+        return PathBuf::from(directory).join("neo").join("bus.sock");
     }
-    PathBuf::from(format!("/tmp/suite-{uid}")).join("bus.sock")
+    PathBuf::from(format!("/tmp/neo-{uid}")).join("bus.sock")
 }
 
 /// The effective user id. std has no `getuid`; on Linux the owner of `/proc/self` is this
@@ -84,30 +84,30 @@ fn address(path: &Path, is_alive: impl Fn(u64) -> bool) -> Result<Value, Command
     Ok(json!({ "url": url, "token": token }))
 }
 
-/// Where the `suite` executable is: the places listed in the module docs, first match wins.
+/// Where the `neo` executable is: the places listed in the module docs, first match wins.
 fn find_suite(
     getenv: impl Fn(&str) -> Option<String>,
     exists: impl Fn(&Path) -> bool,
     manifest_directory: &Path,
 ) -> PathBuf {
     let set = |name: &str| getenv(name).filter(|value| !value.is_empty());
-    if let Some(explicit) = set("GROVE_SUITE") {
+    if let Some(explicit) = set("GROVE_NEO") {
         return explicit.into();
     }
-    if let Some(root) = set("SUITE_ROOT") {
-        return PathBuf::from(root).join("bin").join("suite");
+    if let Some(root) = set("NEO_ROOT") {
+        return PathBuf::from(root).join("bin").join("neo");
     }
     for ancestor in manifest_directory.ancestors() {
-        let sibling = ancestor.join("neoworks-harness").join("bin").join("suite");
+        let sibling = ancestor.join("neoworks-harness").join("bin").join("neo");
         if exists(&sibling) {
             return sibling;
         }
     }
-    PathBuf::from("suite")
+    PathBuf::from("neo")
 }
 
-/// Starts the daemon with `suite up`, waiting until it answers. Fails with the code `SuiteMissing`
-/// when there is no `suite` to run and `StartFailed`, carrying what `suite` said, when it fails.
+/// Starts the daemon with `neo up`, waiting until it answers. Fails with the code `SuiteMissing`
+/// when there is no `neo` to run and `StartFailed`, carrying what `neo` said, when it fails.
 fn start_daemon() -> Result<Value, CommandError> {
     let executable =
         find_suite(|name| std::env::var(name).ok(), |path| path.exists(), Path::new(env!("CARGO_MANIFEST_DIR")));
@@ -140,11 +140,11 @@ mod tests {
 
     #[test]
     fn socket_path_prefers_the_explicit_socket_then_the_runtime_directory() {
-        let both = [("SUITE_SOCKET", "/a/b.sock"), ("XDG_RUNTIME_DIR", "/run/u")];
+        let both = [("NEO_SOCKET", "/a/b.sock"), ("XDG_RUNTIME_DIR", "/run/u")];
         assert_eq!(socket_path(environment(&both), 7), PathBuf::from("/a/b.sock"));
         let runtime = [("XDG_RUNTIME_DIR", "/run/u")];
-        assert_eq!(socket_path(environment(&runtime), 7), PathBuf::from("/run/u/suite/bus.sock"));
-        assert_eq!(socket_path(environment(&[]), 7), PathBuf::from("/tmp/suite-7/bus.sock"));
+        assert_eq!(socket_path(environment(&runtime), 7), PathBuf::from("/run/u/neo/bus.sock"));
+        assert_eq!(socket_path(environment(&[]), 7), PathBuf::from("/tmp/neo-7/bus.sock"));
     }
 
     #[test]
@@ -177,21 +177,21 @@ mod tests {
     #[test]
     fn finds_suite_by_explicit_name_then_root_then_a_sibling_checkout() {
         let nowhere = |_: &Path| false;
-        let explicit = [("GROVE_SUITE", "/x/suite"), ("SUITE_ROOT", "/y")];
+        let explicit = [("GROVE_NEO", "/x/neo"), ("NEO_ROOT", "/y")];
         assert_eq!(
             find_suite(environment(&explicit), nowhere, Path::new("/w/grove/native")),
-            PathBuf::from("/x/suite")
+            PathBuf::from("/x/neo")
         );
-        let root = [("SUITE_ROOT", "/y")];
+        let root = [("NEO_ROOT", "/y")];
         assert_eq!(
             find_suite(environment(&root), nowhere, Path::new("/w/grove/native")),
-            PathBuf::from("/y/bin/suite")
+            PathBuf::from("/y/bin/neo")
         );
-        let sibling_exists = |path: &Path| path == Path::new("/w/neoworks-harness/bin/suite");
+        let sibling_exists = |path: &Path| path == Path::new("/w/neoworks-harness/bin/neo");
         assert_eq!(
             find_suite(environment(&[]), sibling_exists, Path::new("/w/grove/.worktrees/457/native")),
-            PathBuf::from("/w/neoworks-harness/bin/suite")
+            PathBuf::from("/w/neoworks-harness/bin/neo")
         );
-        assert_eq!(find_suite(environment(&[]), nowhere, Path::new("/w/grove/native")), PathBuf::from("suite"));
+        assert_eq!(find_suite(environment(&[]), nowhere, Path::new("/w/grove/native")), PathBuf::from("neo"));
     }
 }

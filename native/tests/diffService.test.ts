@@ -57,7 +57,7 @@ describe("the staged changes", () => {
     expect(setup.editor.activeTabIn(leafId)).toMatchObject({ kind: "diff", path: "", title: "a.rs" });
     expect(await setup.editor.textOf(documentId)).toBe("mid\n");
     expect(setup.host.calls).toEqual([`apply inline new=${documentId} old=- "old\n"`]);
-    expect(setup.diff.inlineView(leafId, documentId)).toMatchObject({ path: FILE, baseLabel: "HEAD", staged: true, gitBase: null });
+    expect(setup.diff.inlineView(leafId, documentId)).toMatchObject({ path: FILE, baseLabel: "HEAD", newLabel: "Index", staged: true, gitBase: null });
     expect(setup.diff.hasFocusedStagedDiff()).toBe(true);
   });
 
@@ -110,7 +110,7 @@ describe("a file that is gone", () => {
     const { leafId, documentId } = focused(setup);
     expect(await setup.editor.textOf(documentId)).toBe("");
     expect(setup.host.calls).toEqual([`apply inline new=${documentId} old=- "was here\n"`]);
-    expect(setup.diff.inlineView(leafId, documentId)).toMatchObject({ path: "/repo/gone.rs", gitBase: null, staged: false });
+    expect(setup.diff.inlineView(leafId, documentId)).toMatchObject({ path: "/repo/gone.rs", newLabel: "Working tree (deleted)", gitBase: null, staged: false });
   });
 
   test("shows nothing when its base does not have it either", async () => {

@@ -15,14 +15,19 @@ import { baseLabel, type DiffBase, type DiffMode, type Hunk } from "./model";
 /** How long edits are gathered before the difference is worked out again. */
 const REAPPLY_DELAY_MS = 120;
 
-/** The decoration sources a pane leaves out while it shows a diff: the git bars, which the diff draws itself. */
-const REPLACED_SOURCES = ["git.changes"];
+/**
+ * The decoration sources a diff tab leaves out: the git bars, which the diff draws itself, and
+ * the blame of the cursor's line by git and by the agents, which is noise beside a diff.
+ */
+const REPLACED_SOURCES = ["git.changes", "git.blame", "agent.blame"];
 
 /** What a pane that shows a diff over a document tells the person. */
 export interface InlineView {
   path: string;
   /** What the old side is called: "HEAD", "Index" or what a caller named it. */
   baseLabel: string;
+  /** What the new side is called: "Working tree" for a file, "Index" for the staged changes, "After" for a text. */
+  newLabel: string;
   hunks: Hunk[];
   /** The git base the hunk actions can read again, or null when the old side is a text or the diff is of the staged changes. */
   gitBase: GitBase | null;
@@ -263,7 +268,8 @@ export class InlineDiffs {
       overlay.oldIdText = overlay.oldText;
     }
     if (overlay.oldId !== null) {
-      this.editor.setCompanion(overlay.leafId, overlay.documentId, overlay.oldId);
+      const labels: [string, string] = [oldLabelOf(overlay), newLabelOf(overlay)];
+      this.editor.setCompanion(overlay.leafId, overlay.documentId, { documentId: overlay.oldId, labels });
     }
     return overlay.oldId;
   }
@@ -285,16 +291,12 @@ export class InlineDiffs {
       return undefined;
     }
     const staged = overlay.base === "staged";
-    let label = baseLabel(overlay.base);
-    if (staged) {
-      label = baseLabel("head");
-    }
     // Hunks are staged and reverted on the file's own document, which a gone file has not.
     let gitBase: GitBase | null = null;
     if (overlay.newText === null) {
       gitBase = gitBaseOf(overlay.base);
     }
-    return { path: overlay.path, baseLabel: label, hunks: overlay.hunks, gitBase, staged, mode: overlay.mode };
+    return { path: overlay.path, baseLabel: oldLabelOf(overlay), newLabel: newLabelOf(overlay), hunks: overlay.hunks, gitBase, staged, mode: overlay.mode };
   }
 
   /** Works the difference out again after the document's text changed, once the edits stop. */
@@ -469,6 +471,28 @@ function lastSegment(path: string): string {
 /** The name a pane's diff decorations are drawn under. It belongs to the pane's diff tab alone. */
 function sourceOf(leafId: string): string {
   return `view:${viewIdOf(leafId, "diff")}:diff`;
+}
+
+/** What an overlay's old side is called: its base, where the staged changes' base is HEAD. */
+function oldLabelOf(overlay: Overlay): string {
+  if (overlay.base === "staged") {
+    return baseLabel("head");
+  }
+  return baseLabel(overlay.base);
+}
+
+/** What an overlay's new side is called: the file in the working tree, the index, a text a caller gave, or a file that is gone. */
+function newLabelOf(overlay: Overlay): string {
+  if (overlay.newText === null) {
+    return "Working tree";
+  }
+  if (overlay.base === "staged") {
+    return "Index";
+  }
+  if (typeof overlay.base === "object") {
+    return "After";
+  }
+  return "Working tree (deleted)";
 }
 
 /** Whether two bases name the same old side. */

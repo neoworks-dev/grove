@@ -27,7 +27,7 @@
 
   /** The editor `src/editor/mod.rs` registers. */
   const Editor = element<
-    { document: number; pane: string; viewId: string; hideSources: string[]; companion: number | null; minimap: number; sequencePending: boolean; leaderKey: boolean; theme: EditorTheme; keymap: string; onfocus: () => void; ongoto: (event: GotoEvent) => void; onplaces: (event: PlacesEvent) => void },
+    { document: number; pane: string; viewId: string; hideSources: string[]; companion: number | null; sideLabels: string[]; minimap: number; sequencePending: boolean; leaderKey: boolean; theme: EditorTheme; keymap: string; onfocus: () => void; ongoto: (event: GotoEvent) => void; onplaces: (event: PlacesEvent) => void },
     EditorViewMethods
   >("editor");
 
@@ -53,6 +53,20 @@
   const tabs = $derived(service.tabsIn(leafId));
   const active = $derived(service.activeTabIn(leafId));
   const entries = $derived<TabEntry[]>(tabs.map(entryOf));
+  /** The document drawn left of the active one, as a diff side by side has; null otherwise. */
+  const companion = $derived.by(() => {
+    if (!active) {
+      return null;
+    }
+    return service.companionOf(leafId, active.id, active.kind);
+  });
+  /** How wide the minimap is: side by side has none, so nothing over its place takes the pointer. */
+  const minimapWidth = $derived.by(() => {
+    if (companion === null) {
+      return MINIMAP_WIDTH;
+    }
+    return 0;
+  });
 
   /** A tab as the tab strip draws it: a diff tab has the diff icon in front of its file's name. */
   function entryOf(tab: TabInfo): TabEntry {
@@ -143,7 +157,8 @@
         pane={leafId}
         viewId={viewIdOf(leafId, active.kind)}
         hideSources={service.hiddenSourcesIn(leafId, active.id, active.kind)}
-        companion={service.companionOf(leafId, active.id, active.kind)}
+        companion={companion}
+        sideLabels={service.sideLabelsOf(leafId, active.id, active.kind)}
         minimap={MINIMAP_WIDTH}
         sequencePending={service.sequencePending()}
         leaderKey={service.leaderKeyBound()}
@@ -153,14 +168,16 @@
         ongoto={(event) => void service.reveal(event.path, event.line, event.character)}
         onplaces={placeRows}
       />
-      <Slot name="editor.overlay" props={{ leafId, documentId: active.id, tabKind: active.kind, places, rightInset: MINIMAP_WIDTH }} />
-      <View
-        buttons={["left"]}
-        style={{ position: "absolute", top: 0, right: 0, bottom: 0, width: MINIMAP_WIDTH, cursor: "pointer" }}
-        ondown={pressMinimap}
-        onmove={dragMinimap}
-        onup={releaseMinimap}
-      />
+      <Slot name="editor.overlay" props={{ leafId, documentId: active.id, tabKind: active.kind, places, rightInset: minimapWidth }} />
+      {#if companion === null}
+        <View
+          buttons={["left"]}
+          style={{ position: "absolute", top: 0, right: 0, bottom: 0, width: MINIMAP_WIDTH, cursor: "pointer" }}
+          ondown={pressMinimap}
+          onmove={dragMinimap}
+          onup={releaseMinimap}
+        />
+      {/if}
     </View>
   {:else}
     <View style={{ flex: 1, align: "center", justify: "center", gap: 4 }}>

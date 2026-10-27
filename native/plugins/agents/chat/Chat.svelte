@@ -7,6 +7,7 @@
   import type { Layout } from "@neoworks/svelte-gpui/ui";
   import type { ChatSession } from "../chatSession";
   import { palette } from "../palette";
+  import AgentPart from "./AgentPart.svelte";
   import ChangedFiles from "./ChangedFiles.svelte";
   import ChatItem from "./ChatItem.svelte";
   import { provideChat, provideColumn } from "./context";
@@ -80,6 +81,8 @@
           {@const chatRow = entry}
           {#if chatRow.kind === "item"}
             <ChatItem item={chatRow.item} />
+          {:else if chatRow.kind === "part"}
+            <AgentPart item={chatRow.item} component={chatRow.component} first={chatRow.first} last={chatRow.last} />
           {:else if chatRow.kind === "turn"}
             <FoldRow foldKey={chatRow.foldKey} open={chatRow.open} tallies={chatRow.tallies} messages={chatRow.messages} steps={chatRow.steps} />
           {:else if chatRow.kind === "run"}

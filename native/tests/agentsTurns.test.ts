@@ -207,3 +207,29 @@ test("the daemon's notices about apps connecting and the agent moving are left o
   const rows = chatRows([connected, moved, ...items], factsOf(noCalls()));
   expect(rows.map((row) => row.key)).toEqual(["n1", "u1", "m1"]);
 });
+
+/** A reply of several paragraphs. */
+const longReply = (ref: string, paragraphs: string[]): ViewItem => ({
+  ref,
+  kind: "agent",
+  component: { type: "text", blocks: paragraphs.map((words) => ({ type: "paragraph", spans: [{ text: words }] })) },
+});
+
+test("a reply of several blocks is a row per block, so the list builds only what is near the window", () => {
+  const rows = chatRows([user("u1"), longReply("m1", ["one", "two", "three"])], factsOf(noCalls()));
+  expect(rows.map((row) => row.key)).toEqual(["u1", "m1", "m1#1", "m1#2"]);
+  const parts = rows.filter((row) => row.kind === "part");
+  expect(parts.map((row) => [row.first, row.last])).toEqual([[true, false], [false, false], [false, true]]);
+  expect(parts.map((row) => row.component.blocks)).toEqual([["one"], ["two"], ["three"]].map(([words]) => [{ type: "paragraph", spans: [{ text: words }] }]));
+});
+
+test("a reply that did not change keeps its rows, so the list draws none of them again", () => {
+  const reply = longReply("m1", ["one", "two"]);
+  const first = chatRows([user("u1"), reply], factsOf(noCalls()));
+  const again = chatRows([user("u1"), reply, user("u2")], factsOf(noCalls()));
+  expect(again[1]).toBe(first[1]);
+  expect(again[2]).toBe(first[2]);
+  const grown = chatRows([user("u1"), longReply("m1", ["one", "two", "three"])], factsOf(noCalls()));
+  expect(grown[1]).not.toBe(first[1]);
+  expect(grown.map((row) => row.key)).toEqual(["u1", "m1", "m1#1", "m1#2"]);
+});

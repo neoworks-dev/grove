@@ -83,6 +83,9 @@ pub struct Editor {
     /// The old side of a side-by-side diff, set by the `companion` prop: drawn read-only left of
     /// the document, scrolled with it. The diff's fillers keep the two sides' rows level.
     companion: Option<DocumentId>,
+    /// What the two sides of a side-by-side diff are called, set by the `sideLabels` prop as
+    /// `[old, new]`: each is drawn over its side, where its text starts. Empty draws none.
+    side_labels: Vec<String>,
     /// This view's entity, once it has been listed in `VIEWS`.
     view: Option<EntityId>,
     focus: FocusHandle,
@@ -181,6 +184,7 @@ impl Editor {
             documents,
             document: None,
             companion: None,
+            side_labels: Vec::new(),
             view: None,
             focus: cx.focus_handle(),
             input: Box::new(StandardKeymap),
@@ -739,6 +743,12 @@ impl AppElement for Editor {
         }
         if name == "companion" {
             self.companion = value.as_u64();
+            cx.notify();
+            return;
+        }
+        if name == "sideLabels" {
+            let labels = value.as_array().into_iter().flatten().filter_map(Value::as_str);
+            self.side_labels = labels.map(str::to_string).collect();
             cx.notify();
             return;
         }

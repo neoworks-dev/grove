@@ -252,6 +252,12 @@ export type Prompt = { kind: "confirm-close"; documentId: number; title: string 
 /** What a tab shows of its document: the text itself, or how it differs from a base. */
 export type TabKind = "file" | "diff";
 
+/** A document a tab draws read-only left of its own, and what the two sides are called, left first. */
+export interface Companion {
+  documentId: number;
+  labels: [string, string];
+}
+
 /** One tab of a pane. A pane has at most one tab of each kind for a document. */
 interface PaneTab {
   documentId: number;
@@ -313,7 +319,7 @@ export class EditorService extends Service {
   /** The decoration sources a pane's tab leaves out, by `leafId:tabKey`. */
   private hiddenSources = new Map<string, string[]>();
   /** The document a pane's tab draws read-only beside its own, by `leafId:tabKey`: the old side of a side-by-side diff. */
-  private companions = new Map<string, number>();
+  private companions = new Map<string, Companion>();
   private diffTabListeners = new Set<(leafId: string, documentId: number) => void>();
   private promptState: Prompt | null = null;
   private answerClose: ((choice: CloseChoice) => void) | null = null;
@@ -793,14 +799,14 @@ export class EditorService extends Service {
 
   /**
    * Sets the document a pane's tab draws read-only to the left of its own, scrolled with it, such
-   * as the old side of a side-by-side diff; null takes it away.
+   * as the old side of a side-by-side diff, with what each side is called; null takes it away.
    */
-  setCompanion(leafId: string, documentId: number, companionId: number | null, kind: TabKind = "diff"): void {
+  setCompanion(leafId: string, documentId: number, companion: Companion | null, kind: TabKind = "diff"): void {
     const key = `${leafId}:${tabKey(documentId, kind)}`;
-    if (companionId === null) {
+    if (companion === null) {
       this.companions.delete(key);
     } else {
-      this.companions.set(key, companionId);
+      this.companions.set(key, companion);
     }
     this.changes.notify();
   }
@@ -812,7 +818,17 @@ export class EditorService extends Service {
     if (companion === undefined) {
       return null;
     }
-    return companion;
+    return companion.documentId;
+  }
+
+  /** What the two sides of a pane's tab are called, `[left, right]`, when it draws a companion; empty otherwise. Reactive. */
+  sideLabelsOf(leafId: string, documentId: number, kind: TabKind): string[] {
+    this.changes.track();
+    const companion = this.companions.get(`${leafId}:${tabKey(documentId, kind)}`);
+    if (companion === undefined) {
+      return [];
+    }
+    return [...companion.labels];
   }
 
   /** The newest selection of a pane's editor, or null when the pane has none or cannot say. */

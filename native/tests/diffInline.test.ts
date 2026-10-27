@@ -64,6 +64,7 @@ describe("a diff tab in an editor pane", () => {
     expect(setup.diff.inlineView(leafId, documentId)).toEqual({
       path: FILE,
       baseLabel: "HEAD",
+      newLabel: "Working tree",
       hunks: setup.host.found,
       gitBase: "head",
       staged: false,
@@ -84,12 +85,12 @@ describe("a diff tab in an editor pane", () => {
     expect(setup.diff.inlineView(leafId, documentId)).toBeDefined();
   });
 
-  test("the diff tab leaves out the git bars the diff replaces, and closing its only tab closes the document", async () => {
+  test("the diff tab leaves out the git bars the diff replaces and the blame, and closing its only tab closes the document", async () => {
     const setup = await setUp();
     await setup.diff.showInEditor(FILE);
     const leafId = setup.layout.focusedLeafId;
     const documentId = setup.editor.active()?.id as number;
-    expect(setup.editor.hiddenSourcesIn(leafId, documentId, "diff")).toEqual(["git.changes"]);
+    expect(setup.editor.hiddenSourcesIn(leafId, documentId, "diff")).toEqual(["git.changes", "git.blame", "agent.blame"]);
     await setup.diff.hideInEditor();
     await settle(5);
     expect(setup.editor.hiddenSourcesIn(leafId, documentId, "diff")).toEqual([]);
@@ -116,7 +117,7 @@ describe("a diff tab in an editor pane", () => {
     const shown = tab as { leafId: string; documentId: number };
     expect(setup.editor.activeTabIn(shown.leafId)).toMatchObject({ id: shown.documentId, kind: "diff", path: "" });
     expect(setup.host.calls).toEqual([`apply inline new=${shown.documentId} old=- "one\n"`]);
-    expect(setup.diff.inlineView(shown.leafId, shown.documentId)).toMatchObject({ baseLabel: "Before the agent", gitBase: null });
+    expect(setup.diff.inlineView(shown.leafId, shown.documentId)).toMatchObject({ baseLabel: "Before the agent", newLabel: "After", gitBase: null });
   });
 
   test("an unstaged file is compared with the index, and a text is what the caller gave", async () => {
@@ -174,7 +175,7 @@ describe("a diff tab in an editor pane", () => {
     const documentId = setup.editor.active()?.id as number;
     expect(setup.host.calls).toHaveLength(2);
     expect(setup.editor.tabsIn(leafId)).toHaveLength(1);
-    expect(setup.editor.hiddenSourcesIn(leafId, documentId, "diff")).toEqual(["git.changes"]);
+    expect(setup.editor.hiddenSourcesIn(leafId, documentId, "diff")).toEqual(["git.changes", "git.blame", "agent.blame"]);
   });
 
   test("the toggle opens the focused file's diff tab, and from there goes back to the file", async () => {
@@ -205,9 +206,11 @@ describe("a diff tab side by side", () => {
     expect(setup.host.calls[1]).toBe(`apply split new=${documentId} old=${oldId} "old\n"`);
     expect(setup.diff.inlineView(leafId, documentId)?.mode).toBe("split");
     expect(setup.editor.companionOf(leafId, documentId, "file")).toBeNull();
+    expect(setup.editor.sideLabelsOf(leafId, documentId, "diff")).toEqual(["HEAD", "Working tree"]);
 
     await setup.diff.toggleMode();
     expect(setup.editor.companionOf(leafId, documentId, "diff")).toBeNull();
+    expect(setup.editor.sideLabelsOf(leafId, documentId, "diff")).toEqual([]);
     expect(setup.documents.summaries.has(oldId)).toBe(false);
     expect(setup.host.calls[2]).toBe(`apply inline new=${documentId} old=- "old\n"`);
   });

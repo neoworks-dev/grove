@@ -75,18 +75,23 @@ export function stepHunkRow(hunks: Hunk[], row: number, step: 1 | -1): number | 
   return before[before.length - 1];
 }
 
-/** "2 of 5", or "No changes" when there are none, for the diff tab's strip. */
+/** "2 of 5" for the hunk a row is in, for the diff tab's strip; empty when the row is in none. */
 export function hunkPosition(hunks: Hunk[], row: number): string {
-  if (hunks.length === 0) {
-    return "No changes";
-  }
   const containing = hunkAtRow(hunks, row);
   if (containing === null) {
-    if (hunks.length === 1) {
-      return "1 change";
-    }
-    return `${hunks.length} changes`;
+    return "";
   }
   const ordered = [...hunks].sort((first, second) => first.newStart - second.newStart);
   return `${ordered.indexOf(containing) + 1} of ${hunks.length}`;
+}
+
+/** How many lines the hunks add and remove; a changed line counts as one of each. */
+export function lineCounts(hunks: Hunk[]): { added: number; removed: number } {
+  let added = 0;
+  let removed = 0;
+  for (const hunk of hunks) {
+    added += hunk.newLen;
+    removed += hunk.oldLen;
+  }
+  return { added, removed };
 }

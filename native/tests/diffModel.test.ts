@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { baseLabel, hunkAtRow, hunkPosition, stepHunkRow, type Hunk } from "../plugins/diff/model";
+import { baseLabel, hunkAtRow, hunkPosition, lineCounts, stepHunkRow, type Hunk } from "../plugins/diff/model";
 
 const hunks: Hunk[] = [
   { oldStart: 2, oldLen: 1, newStart: 2, newLen: 1 },
@@ -42,8 +42,13 @@ describe("stepping between hunks", () => {
 describe("the header's words", () => {
   test("say where the cursor is among the changes", () => {
     expect(hunkPosition(hunks, 8)).toBe("2 of 3");
-    expect(hunkPosition(hunks, 5)).toBe("3 changes");
-    expect(hunkPosition([], 0)).toBe("No changes");
+    expect(hunkPosition(hunks, 5)).toBe("");
+    expect(hunkPosition([], 0)).toBe("");
+  });
+
+  test("count the lines added and removed, a changed line as one of each", () => {
+    expect(lineCounts(hunks)).toEqual({ added: 4, removed: 3 });
+    expect(lineCounts([])).toEqual({ added: 0, removed: 0 });
   });
 
   test("name the base", () => {

@@ -63,6 +63,10 @@ const WORD_OPACITY: f32 = 0.38;
 const FILLER_OPACITY: f32 = 0.07;
 /// How wide the line between the two sides of a side-by-side diff is.
 const DIVIDER_WIDTH: Pixels = px(1.0);
+/// How tall the band over each side of a side-by-side diff is, which has the side's name.
+const LABEL_BAND_HEIGHT: Pixels = px(24.0);
+/// The size of a side's name.
+const LABEL_FONT_SIZE: Pixels = px(12.0);
 
 /// What the last frame drew, kept on the editor so the pointer can be mapped to a position
 /// and the cursor kept in view.
@@ -197,6 +201,12 @@ enum GutterPaint {
     Glyph { shaped: ShapedLine, origin: svelte_gpui::gpui::Point<Pixels> },
 }
 
+/// The name of one side of a side-by-side diff, and the band over that side it is drawn in.
+struct SideLabel {
+    band: Bounds<Pixels>,
+    shaped: ShapedLine,
+}
+
 /// Text added after the end of a line.
 struct LineEndPaint {
     shaped: ShapedLine,
@@ -208,6 +218,8 @@ pub struct Frame {
     bounds: Bounds<Pixels>,
     /// The old side of a side-by-side diff, painted left of this one, when the view has one.
     companion: Option<Box<Frame>>,
+    /// What this side of a side-by-side diff is called, drawn in a band above `bounds`.
+    label: Option<SideLabel>,
     rows: Vec<PaintedRow>,
     gutter_width: Pixels,
     /// Behind the text: the parts of selections in view.
@@ -242,6 +254,7 @@ impl Frame {
             theme,
             bounds: Bounds::default(),
             companion: None,
+            label: None,
             rows: Vec::new(),
             gutter_width: px(0.0),
             selections: Vec::new(),
@@ -318,12 +331,24 @@ impl Element for EditorElement {
         let furthest_scroll = editor.furthest_scroll();
         let mut own_bounds = bounds;
         let mut companion = None;
+        let mut own_label = None;
         if let Some(companion_id) = editor.companion {
-            let (left, right) = split_bounds(bounds);
+            let (mut left, right) = split_bounds(bounds);
             own_bounds = right;
+            let mut companion_label = None;
+            if let [old_label, new_label] = editor.side_labels.as_slice() {
+                let (left_band, left_body) = take_label_band(left);
+                let (right_band, right_body) = take_label_band(right);
+                left = left_body;
+                own_bounds = right_body;
+                companion_label =
+                    Some(SideLabel { band: left_band, shaped: shape_label(window, old_label, theme.hint) });
+                own_label = Some(SideLabel { band: right_band, shaped: shape_label(window, new_label, theme.hint) });
+            }
             companion = editor.read_document(companion_id, |state| {
-                let (_, frame) =
+                let (_, mut frame) =
                     build_frame(state, scroll_top, left, window, &theme, &status, options, None, &sources, false);
+                frame.label = companion_label;
                 Box::new(frame)
             });
         }
@@ -341,6 +366,7 @@ impl Element for EditorElement {
             return Frame::empty(theme);
         };
         frame.companion = companion;
+        frame.label = own_label;
         let entity = self.editor.clone();
         let popovers = self.editor.update(cx, |editor, cx| {
             let popovers = popup::build(&entity, editor, &layout, &theme, bounds, window, cx);
@@ -392,6 +418,9 @@ impl Element for EditorElement {
 /// Paints one frame inside its box: the cursors' lines, decorated ranges, selections, the gutter,
 /// the text, what is drawn under and after it, and the cursors.
 fn paint_frame(frame: &Frame, focused: bool, window: &mut Window, cx: &mut App) {
+    if let Some(label) = &frame.label {
+        paint_side_label(label, frame.gutter_width, &frame.theme, window, cx);
+    }
     let bounds = frame.bounds;
     window.with_content_mask(Some(ContentMask { bounds }), |window| {
         let theme = &frame.theme;
@@ -453,6 +482,33 @@ fn paint_frame(frame: &Frame, focused: bool, window: &mut Window, cx: &mut App) 
         }
         vim_paint::paint_command_line(&frame.vim, theme, window, cx);
     });
+}
+
+/// Takes the band a side's name is drawn in off the top of the side's box: answers the band, and
+/// the box below it that the side's text is drawn in.
+fn take_label_band(bounds: Bounds<Pixels>) -> (Bounds<Pixels>, Bounds<Pixels>) {
+    let height = LABEL_BAND_HEIGHT.min(bounds.size.height);
+    let band = Bounds::new(bounds.origin, size(bounds.size.width, height));
+    let body =
+        Bounds::new(point(bounds.left(), bounds.top() + height), size(bounds.size.width, bounds.size.height - height));
+    (band, body)
+}
+
+/// Paints a side's name in its band, where the side's text starts, with a line under the band.
+fn paint_side_label(label: &SideLabel, gutter_width: Pixels, theme: &EditorTheme, window: &mut Window, cx: &mut App) {
+    let band = label.band;
+    window.with_content_mask(Some(ContentMask { bounds: band }), |window| {
+        let _ = label.shaped.paint(point(band.left() + gutter_width, band.top()), band.size.height, window, cx);
+    });
+    let rule = Bounds::new(point(band.left(), band.bottom() - DIVIDER_WIDTH), size(band.size.width, DIVIDER_WIDTH));
+    window.paint_quad(fill(rule, theme.indent_guide));
+}
+
+/// Shapes the name of a side of a side-by-side diff in the editor's font, smaller than the text.
+fn shape_label(window: &mut Window, text: &str, color: Hsla) -> ShapedLine {
+    let plain = HighlightStyle { color, bold: false, italic: false };
+    let run = text_run(text.len(), plain, None);
+    window.text_system().shape_line(SharedString::from(text.to_string()), LABEL_FONT_SIZE, &[run], None)
 }
 
 /// Splits the element's box for a side-by-side diff: the old side on the left, the document on
@@ -689,6 +745,7 @@ fn build_frame(
     let frame = Frame {
         bounds,
         companion: None,
+        label: None,
         rows: painted_rows,
         gutter_width,
         selections,

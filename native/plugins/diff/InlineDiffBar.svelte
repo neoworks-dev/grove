@@ -1,7 +1,8 @@
 <!--
   The strip over an editor pane's diff tab: what the file is compared with, where the cursor is
-  among the changes, and the buttons that move between and act on them. It draws nothing over a
-  file's own tab.
+  among the changes, how many lines they add and remove, and the buttons that move between and
+  act on them. It draws nothing over a file's own tab; the editor names the halves of a
+  side-by-side diff itself.
 -->
 <script lang="ts">
   import { Button, Icon, Text, Tooltip, View } from "@neoworks/svelte-gpui/ui";
@@ -16,7 +17,7 @@
   import type { EditorService } from "../editor/service";
   import Slot from "../../kernel/slots/Slot.svelte";
   import { colors, fontSize, iconButton, iconButtonHover, radius } from "../theme/tokens";
-  import { hunkPosition } from "./model";
+  import { hunkPosition, lineCounts } from "./model";
   import type { DiffService } from "./service";
 
   interface Props {
@@ -36,6 +37,20 @@
       return 0;
     }
     return cursor.row;
+  });
+  /** Which change the cursor is in, as "2 of 5"; empty outside them. */
+  const position = $derived.by(() => {
+    if (view === undefined) {
+      return "";
+    }
+    return hunkPosition(view.hunks, cursorRow);
+  });
+  /** The lines the diff adds and removes. */
+  const counts = $derived.by(() => {
+    if (view === undefined) {
+      return { added: 0, removed: 0 };
+    }
+    return lineCounts(view.hunks);
   });
 
   /** The look of a text button of the strip. */
@@ -67,7 +82,15 @@
     </Text>
     <View style={{ flex: 1 }} />
     <Slot name="diff.inline.actions" props={{ leafId, documentId, path: view.path }} />
-    <Text style={{ shrink: 0, fontSize: fontSize.xxs, color: colors.dim }}>{hunkPosition(view.hunks, cursorRow)}</Text>
+    {#if view.hunks.length === 0}
+      <Text style={{ shrink: 0, fontSize: fontSize.xxs, color: colors.dim }}>No changes</Text>
+    {:else}
+      {#if position !== ""}
+        <Text style={{ shrink: 0, fontSize: fontSize.xxs, color: colors.dim }}>{position}</Text>
+      {/if}
+      <Text style={{ shrink: 0, fontSize: fontSize.xxs, fontFamily: "mono", color: colors.green }}>+{counts.added}</Text>
+      <Text style={{ shrink: 0, fontSize: fontSize.xxs, fontFamily: "mono", color: colors.red }}>−{counts.removed}</Text>
+    {/if}
     <Tooltip text="Previous change (Alt+Up)" side="bottom" align="center">
       <Button style={{ ...iconButton, size: 22 }} hover={iconButtonHover} onpress={() => act(() => diff.stepChange(-1))}>
         <Icon svg={arrowUp} size={13} />

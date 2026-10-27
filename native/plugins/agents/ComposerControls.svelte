@@ -11,9 +11,11 @@
     session: ChatSession;
     /** A short message from the composer, such as "copied". */
     notice?: string;
+    /** A draft is put aside, and Ctrl-S brings it back. */
+    stashed?: boolean;
   }
 
-  let { session, notice }: Props = $props();
+  let { session, notice, stashed = false }: Props = $props();
 
   const p = palette;
   const usage = $derived(usageLine(session.status()));
@@ -21,8 +23,11 @@
 
 <View style={{ direction: "row", align: "center", gap: p.space.s, paddingX: p.space.s }}>
   <Text style={{ color: p.muted, fontSize: p.text.code, shrink: 0, nowrap: true }}>{usage}</Text>
+  {#if stashed}
+    <Text style={{ color: p.accent, fontSize: p.text.code, shrink: 0, nowrap: true }}>draft put aside · Ctrl-S brings it back</Text>
+  {/if}
   <View style={{ flex: 1, minWidth: 0 }} />
   {#if notice !== undefined}
-    <Text style={{ color: p.accent, fontSize: p.text.code }}>{notice}</Text>
+    <Text style={{ color: p.accent, fontSize: p.text.code, flex: 4, minWidth: 0, truncate: true, textAlign: "right" }}>{notice}</Text>
   {/if}
 </View>

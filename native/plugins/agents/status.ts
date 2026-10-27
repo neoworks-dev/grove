@@ -44,7 +44,7 @@ export interface SessionStatus {
 
 /** The status of a session nothing has happened in. */
 export function initialStatus(): SessionStatus {
-  return { running: false, harness: "pi", approvals: "ask", settings: {} };
+  return { running: false, harness: "neo", approvals: "ask", settings: {} };
 }
 
 /** The status after one more event. Returns the same object when the event changes nothing. */

@@ -2,7 +2,12 @@
   // What a call changed, under its row: the changed lines on their red and green bands, cut to a
   // few until the call is opened. The row above names the file, so no file name heads the lines.
   import { Text, View } from "@neoworks/svelte-gpui/ui";
-  import type { DiffComponent } from "@suite/protocol/types";
+  import type { DiffComponent, DiffLine } from "@suite/protocol/types";
+  import { activeEditorTheme } from "../../theme/editorTheme";
+  import type { Run } from "../highlight";
+  import { chatHighlighter } from "../highlightHost";
+  import CodeText from "./CodeText.svelte";
+  import { highlightDiffLines } from "./highlightedLines";
   import { lineHeightOf } from "./components";
   import { clip } from "./diff";
   import { diffColors } from "./diffColors";
@@ -17,6 +22,23 @@
   const colors = $derived(diffColors(p));
   const lineHeight = $derived(lineHeightOf(p.text.code));
   const clipped = $derived(clip(diff.lines.filter((line) => line.kind !== "hunk"), PREVIEW_DIFF_LINES));
+
+  /** The runs of the shown lines in the file's syntax colours; none until the host answers or for a language it does not know. */
+  let highlighted = $state.raw<ReadonlyMap<DiffLine, readonly Run[]> | undefined>();
+  $effect(() => {
+    const shown = clipped.shown;
+    const path = diff.path;
+    const syntax = activeEditorTheme().syntax;
+    let current = true;
+    void highlightDiffLines(chatHighlighter, shown, path, syntax).then((runs) => {
+      if (current) {
+        highlighted = runs;
+      }
+    });
+    return () => {
+      current = false;
+    };
+  });
 
   /** The colour behind a line: red or green for a change, none for context. */
   function background(kind: string): string | undefined {
@@ -45,7 +67,11 @@
   {#each clipped.shown as line}
     <View style={{ direction: "row", paddingX: p.space.s, background: background(line.kind) }}>
       <Text style={{ width: 14, fontFamily: "mono", fontSize: p.text.code, lineHeight, color: p.muted }}>{sign(line.kind)}</Text>
-      <Text pre style={{ flex: 1, minWidth: 0, truncate: true, fontFamily: "mono", fontSize: p.text.code, lineHeight }}>{line.text}</Text>
+      <CodeText
+        text={line.text}
+        runs={highlighted?.get(line)}
+        style={{ flex: 1, minWidth: 0, truncate: true, fontFamily: "mono", fontSize: p.text.code, lineHeight }}
+      />
     </View>
   {/each}
   {#if clipped.hidden > 0}

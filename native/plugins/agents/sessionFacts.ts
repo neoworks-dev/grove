@@ -2,11 +2,13 @@
 // plans of its agents, the files they touched and the subagents working for it. One fold over the
 // event log, which the daemon replays from the start whenever a session is followed.
 
-import type { SessionEventRecord } from "@suite/protocol/types";
+import type { SessionEventRecord, TodoItem } from "@suite/protocol/types";
+import { applyBackground, noBackground, type Background } from "./background";
 import { applyCall, noCalls, type Calls } from "./calls";
 import { NO_TOUCHES, applyTouch, type Touches } from "./files";
 import { applyPlan, type PlanList } from "./plan";
 import { applyStatusEvent, initialStatus, type SessionStatus } from "./status";
+import type { OfferedCommand } from "./slashCommands";
 import { applyAgentEvent, type AgentRow } from "./subagents";
 
 export class SessionFacts {
@@ -17,6 +19,12 @@ export class SessionFacts {
   calls: Calls = noCalls();
   /** The refs of the chat notices that announce a setting change (`n<seq>`, as the daemon names them). */
   settingNotices: ReadonlySet<string> = new Set();
+  /** The slash commands each harness listed (`commands_available`), by harness name; the latest listing replaces the earlier. */
+  harnessCommands: ReadonlyMap<string, readonly OfferedCommand[]> = new Map();
+  /** The shared todo list, as the newest `todos` event left it. */
+  todos: readonly TodoItem[] = [];
+  /** The commands the agents ran, and the ones that went to the background. */
+  background: Background = noBackground();
   private lastSeq = 0;
 
   /**
@@ -24,7 +32,7 @@ export class SessionFacts {
    * replayed, so the fold starts over. Returns whether anything it keeps changed.
    */
   apply(record: SessionEventRecord): boolean {
-    const before = [this.status, this.plans, this.touches, this.agents, this.calls, this.settingNotices];
+    const before = [this.status, this.plans, this.touches, this.agents, this.calls, this.settingNotices, this.harnessCommands, this.todos, this.background];
     if (record.seq <= this.lastSeq) {
       this.reset();
     }
@@ -39,7 +47,14 @@ export class SessionFacts {
     if (record.event.type === "setting_changed") {
       this.settingNotices = new Set([...this.settingNotices, `n${record.seq}`]);
     }
-    const after = [this.status, this.plans, this.touches, this.agents, this.calls, this.settingNotices];
+    if (record.event.type === "commands_available") {
+      this.harnessCommands = new Map(this.harnessCommands).set(record.event.harness, record.event.commands);
+    }
+    this.background = applyBackground(this.background, record);
+    if (record.event.type === "todos") {
+      this.todos = record.event.items;
+    }
+    const after = [this.status, this.plans, this.touches, this.agents, this.calls, this.settingNotices, this.harnessCommands, this.todos, this.background];
     return before.some((value, index) => value !== after[index]);
   }
 
@@ -51,6 +66,9 @@ export class SessionFacts {
     this.agents = [];
     this.calls = noCalls();
     this.settingNotices = new Set();
+    this.harnessCommands = new Map();
+    this.todos = [];
+    this.background = noBackground();
     this.lastSeq = 0;
   }
 }

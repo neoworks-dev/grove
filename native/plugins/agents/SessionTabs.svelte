@@ -24,7 +24,7 @@
     onclose: (sessionId: string) => void;
     /** The new session button was pressed. */
     onnew: () => void;
-    /** How many files the session changed; none hides the edits button. */
+    /** How many files the session changed and todos it has; none hides the button for the side panel. */
     edits: number;
     /** The plan and the files are showing. */
     panelShown: boolean;

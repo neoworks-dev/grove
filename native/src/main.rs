@@ -18,13 +18,16 @@
 //! to start it (see `suite.rs`), and a tool server the daemon's agents call back into (see
 //! `tools.rs`).
 
+mod background;
 mod browser;
+mod clipboard;
 mod data;
 mod diff;
 mod editor;
 mod extensions;
 mod gh;
 mod git;
+mod highlight;
 mod lsp;
 mod ripgrep;
 mod sidecar;
@@ -69,6 +72,9 @@ fn main() {
     let commands = gh::register(commands);
     let commands = git::register(commands);
     let commands = ripgrep::register(commands);
+    let commands = background::register(commands);
+    let commands = clipboard::register(commands);
+    let commands = highlight::register(commands);
     let commands = diff::register(commands, documents.clone());
     let terminals = Terminals::new(commands.emitter());
     let commands = terminals.register(commands);

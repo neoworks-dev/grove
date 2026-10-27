@@ -22,6 +22,8 @@
 
   const p = palette;
   const chat = useChat();
+  /** Rows the label of a call that has run is cut to; a running call stays on one. */
+  const LABEL_ROWS = 2;
 
   const open = $derived(chatView.expanded || chatView.isOpened(item.ref) || hasDoc(item.component));
   const argument = $derived(argumentOf(call));
@@ -76,6 +78,8 @@
         <Text style={{ width: 10, color: p.muted, fontFamily: "mono", fontSize: p.text.code }}>{open ? "⌄" : "›"}</Text>
         {#if running}
           <View style={{ color: p.accent }}><Spinner /></View>
+        {:else}
+          <Text style={{ color: failed ? p.danger : p.success, fontSize: p.text.code, shrink: 0 }}>●</Text>
         {/if}
         <Text style={{ fontFamily: "mono", fontSize: p.text.code, fontWeight: "bold", color: wordColor }}>{toolWord(call)}</Text>
       </View>
@@ -90,7 +94,7 @@
           {/if}
         </View>
       {:else}
-        <Text style={{ fontFamily: "mono", fontSize: p.text.code, color: p.muted, flex: 1, minWidth: 0, truncate: true }}>{argument.text}</Text>
+        <Text style={{ fontFamily: "mono", fontSize: p.text.code, color: p.muted, flex: 1, minWidth: 0, maxLines: running ? undefined : LABEL_ROWS, truncate: running }}>{argument.text}</Text>
       {/if}
       {#if added > 0}
         <Text style={{ fontFamily: "mono", fontSize: p.text.code, color: p.success, shrink: 0 }}>+{added}</Text>

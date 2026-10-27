@@ -13,9 +13,12 @@
   import type { WorkspaceService } from "../workspace/service";
   import AgentChatView from "./AgentChatView.svelte";
   import AgentsList from "./AgentsList.svelte";
+  import BackgroundCommands from "./BackgroundCommands.svelte";
+  import { createBackgroundIo } from "./backgroundIo";
   import type { ChatSession } from "./chatSession";
   import Chat from "./chat/Chat.svelte";
   import Composer from "./Composer.svelte";
+  import SecretPrompt from "./SecretPrompt.svelte";
   import SessionTabs from "./SessionTabs.svelte";
   import { FilesModel, type ChangesSource } from "./filesModel";
   import { modelLabel, type AgentRow } from "./subagents";
@@ -63,7 +66,9 @@
   const plans = $derived(chat.plans());
   const entries = $derived(files.entries());
   const wide = $derived(width >= MIN_WIDTH_FOR_SIDE_PANEL);
-  const hasPanelContent = $derived(plans.length > 0 || entries.length > 0);
+  const secretRequest = $derived(agents.secretRequestFor(chat.sessionId));
+  const todos = $derived(chat.todos());
+  const hasPanelContent = $derived(plans.length > 0 || entries.length > 0 || todos.length > 0);
   const sidePanelShown = $derived.by(() => {
     if (!hasPanelContent) {
       return false;
@@ -77,6 +82,11 @@
   const panelReplacesChat = $derived(sidePanelShown && !wide);
   const tabs = $derived(agents.siblingSessions(chat.sessionId));
   const branch = $derived(files.worktree()?.branch ?? null);
+
+  // The output files of background commands are read while the pane shows the session.
+  $effect(() => {
+    chat.followBackground(createBackgroundIo());
+  });
 
   // Git is asked when the files the agents touched change or a turn ends, and now and then.
   $effect(() => {
@@ -147,7 +157,7 @@
     onselect={(sessionId) => agents.showSession(leafId, sessionId)}
     onclose={(sessionId) => agents.closeTab(leafId, sessionId)}
     onnew={() => void agents.newSession()}
-    edits={entries.length}
+    edits={entries.length + todos.length}
     panelShown={sidePanelShown}
     onpanel={togglePanel}
   />
@@ -164,7 +174,11 @@
           />
         {:else}
           <Chat session={chat} />
-          <Composer bind:this={composer} session={chat} {running} {focused} />
+          {#if secretRequest !== undefined}
+            <SecretPrompt request={secretRequest} onanswer={(value) => agents.answerSecret(secretRequest.id, value)} />
+          {/if}
+          <Composer bind:this={composer} session={chat} {running} focused={focused && secretRequest === undefined} />
+          <BackgroundCommands {chat} />
         {/if}
         <AgentsList bind:this={agentsList} {chat} sessions={agents.sessions()} onopen={openAgent} onleave={() => composer?.focus()} />
       </View>

@@ -174,6 +174,7 @@ describe("showing a change", () => {
         return true;
       },
       openGithubItem: async () => false,
+      listFiles: async () => [],
     };
     return { openers, asked };
   }
@@ -463,7 +464,7 @@ describe("telling the daemon what the window shows", () => {
 
   test("a second window moves the agent under its own name", async () => {
     const { host, agents } = await setUp();
-    host.client.connectors = [{ app: "grove", connected: true }] as never;
+    host.client.connectors.value = [{ app: "grove", connected: true }] as never;
     await agents.showing("a");
     expect(host.client.moves).toEqual([{ app: "grove-2", session: "a" }]);
   });

@@ -141,6 +141,7 @@ export class DiffService extends Service {
   ) {
     super(ctx, "diff");
     this.inline = new InlineDiffs(editor, host, {
+      mode: () => this.defaultMode,
       changed: () => {
         this.changes.notify();
         for (const listener of [...this.inlineListeners]) {
@@ -370,8 +371,22 @@ export class DiffService extends Service {
     await this.applyDiff(leafId);
   }
 
-  /** Switches the focused diff pane between inline and side by side. */
+  /** Sets the mode a new diff opens in, as the settings say. */
+  configure(mode: DiffMode): void {
+    this.defaultMode = mode;
+    this.changes.notify();
+  }
+
+  /** Switches the focused diff tab, or else the focused diff pane, between inline and side by side. */
   async toggleMode(leafId: string = this.panes.focusedLeafId): Promise<void> {
+    const active = this.editor.activeTabIn(leafId);
+    if (active !== null && active.kind === "diff") {
+      const shown = this.inline.viewOf(leafId, active.id);
+      if (shown !== undefined) {
+        await this.inline.setMode(leafId, active.id, otherMode(shown.mode));
+      }
+      return;
+    }
     const record = this.records.get(leafId);
     if (record === undefined) {
       return;
@@ -387,6 +402,13 @@ export class DiffService extends Service {
   hasFocusedDiff(): boolean {
     this.changes.track();
     return this.records.has(this.panes.focusedLeafId);
+  }
+
+  /** Whether the focused pane shows a diff tab. Reactive. */
+  hasFocusedDiffTab(): boolean {
+    this.changes.track();
+    const active = this.editor.activeTabIn(this.panes.focusedLeafId);
+    return active !== null && active.kind === "diff";
   }
 
   /** Moves the cursor to the next (1) or previous (-1) change, in the focused diff or else the focused editor. */
@@ -1089,6 +1111,14 @@ function withActions(request: DiffRequest, view: DiffView): DiffView {
     canUnstage: isFile && base === "staged",
     canRevert: view.editable && isFile && (base === "head" || base === "index"),
   };
+}
+
+/** Side by side for an inline diff, inline for a side-by-side one. */
+function otherMode(mode: DiffMode): DiffMode {
+  if (mode === "split") {
+    return "inline";
+  }
+  return "split";
 }
 
 /** An error as the sentence to show for it. */

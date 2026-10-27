@@ -1,23 +1,41 @@
 // The diff plugin: the `diff` service, the `diff` pane type, and the commands and keys that move
 // between changes and stage, unstage, revert or preview the hunk under the cursor. Hunks are
-// the ones of a file against HEAD or the index. A file's changes are drawn over the file in an
-// ordinary editor pane, with a strip of buttons over it, or in a diff pane of their own.
+// the ones of a file against HEAD or the index. A file's changes are a diff tab of an ordinary
+// editor pane, inline or side by side as the `mode` setting says, with a strip of buttons over it.
 
 import type { Context } from "@neoworks/extension-system";
 import gitDiff from "@phosphor-icons/core/regular/git-diff.svg";
+import { defineSettings, setting } from "../../kernel/settings";
 import DiffNotice from "./DiffNotice.svelte";
 import InlineDiffBar from "./InlineDiffBar.svelte";
 import DiffPane from "./DiffPane.svelte";
 import { gpuiDiffHost } from "./diffHost";
+import type { DiffMode } from "./model";
 import { DIFF_PANE_TYPE, DiffService } from "./service";
+
+export const diffSettings = defineSettings({
+  mode: setting.enum({
+    label: "Diff layout",
+    description: "How a diff tab starts: the removed lines between the new ones, or the old text beside the new.",
+    default: "inline",
+    live: true,
+    options: [
+      { value: "inline", label: "Inline" },
+      { value: "split", label: "Side by side" },
+    ],
+  }),
+});
 
 export const diff = {
   name: "diff",
-  inject: ["slots", "commands", "keymap", "editor", "layout", "sidecar"],
-  apply(ctx: Context) {
+  Config: diffSettings,
+  inject: ["slots", "commands", "keymap", "editor", "layout", "sidecar", "settings"],
+  apply(ctx: Context, config: { mode: DiffMode }) {
     const service = new DiffService(ctx, ctx.editor, ctx.layout, gpuiDiffHost(), {
       onFilesChanged: (handler) => ctx.sidecar.on("event:fs-change", handler),
     });
+    service.configure(config.mode);
+    ctx.settings.onLive((change) => service.configure((change.config as unknown as { mode: DiffMode }).mode));
     ctx.slots.register("main", {
       id: "diff",
       key: DIFF_PANE_TYPE,
@@ -83,7 +101,7 @@ function registerCommands(ctx: Context, service: DiffService): void {
     id: "diff.toggleMode",
     title: "Diff: switch between inline and side by side",
     group: "Git",
-    when: () => service.hasFocusedDiff(),
+    when: () => service.hasFocusedDiff() || service.hasFocusedDiffTab(),
     run: () => service.toggleMode(),
   });
   ctx.commands.register({ id: "diff.nextChange", title: "Git: go to next change", group: "Git", when: inDiffOrFile, run: () => service.stepChange(1) });

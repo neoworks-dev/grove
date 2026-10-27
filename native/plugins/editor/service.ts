@@ -312,6 +312,8 @@ export class EditorService extends Service {
   private cursorsById = new Map<number, CursorInfo>();
   /** The decoration sources a pane's tab leaves out, by `leafId:tabKey`. */
   private hiddenSources = new Map<string, string[]>();
+  /** The document a pane's tab draws read-only beside its own, by `leafId:tabKey`: the old side of a side-by-side diff. */
+  private companions = new Map<string, number>();
   private diffTabListeners = new Set<(leafId: string, documentId: number) => void>();
   private promptState: Prompt | null = null;
   private answerClose: ((choice: CloseChoice) => void) | null = null;
@@ -789,6 +791,30 @@ export class EditorService extends Service {
     return sources;
   }
 
+  /**
+   * Sets the document a pane's tab draws read-only to the left of its own, scrolled with it, such
+   * as the old side of a side-by-side diff; null takes it away.
+   */
+  setCompanion(leafId: string, documentId: number, companionId: number | null, kind: TabKind = "diff"): void {
+    const key = `${leafId}:${tabKey(documentId, kind)}`;
+    if (companionId === null) {
+      this.companions.delete(key);
+    } else {
+      this.companions.set(key, companionId);
+    }
+    this.changes.notify();
+  }
+
+  /** The document a pane's tab draws beside its own, or null. Reactive. */
+  companionOf(leafId: string, documentId: number, kind: TabKind): number | null {
+    this.changes.track();
+    const companion = this.companions.get(`${leafId}:${tabKey(documentId, kind)}`);
+    if (companion === undefined) {
+      return null;
+    }
+    return companion;
+  }
+
   /** The newest selection of a pane's editor, or null when the pane has none or cannot say. */
   async selectionOf(leafId: string): Promise<EditorSelection | null> {
     const view = this.viewsByLeaf.get(leafId);
@@ -1103,6 +1129,7 @@ export class EditorService extends Service {
       }
     }
     this.hiddenSources.delete(`${leafId}:${tabKey(removed.documentId, removed.kind)}`);
+    this.companions.delete(`${leafId}:${tabKey(removed.documentId, removed.kind)}`);
     this.changes.notify();
     if (removed.kind === "diff") {
       for (const listener of [...this.diffTabListeners]) {
@@ -1184,6 +1211,11 @@ export class EditorService extends Service {
   private paneClosed(leafId: string): void {
     this.vimStates.delete(leafId);
     this.dropHiddenSources((key) => key.startsWith(`${leafId}:`));
+    for (const key of [...this.companions.keys()]) {
+      if (key.startsWith(`${leafId}:`)) {
+        this.companions.delete(key);
+      }
+    }
     const closed = this.paneTabs.get(leafId);
     if (!closed) {
       return;

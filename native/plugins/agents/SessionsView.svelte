@@ -9,6 +9,7 @@
   import { colors, fontSize, radius } from "../theme/tokens";
   import type { WorkspaceService } from "../workspace/service";
   import Spinner from "./chat/Spinner.svelte";
+  import SessionDetails from "./SessionDetails.svelte";
   import { age, previewOf, sessionTitle, type SessionGroup, type SessionRowData } from "./sessions";
   import type { AgentsService } from "./service";
 
@@ -135,5 +136,6 @@
         {/if}
       {/snippet}
     </List>
+    <SessionDetails {agents} />
   {/if}
 </View>

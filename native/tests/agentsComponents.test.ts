@@ -85,7 +85,7 @@ describe("the components Grove registers", () => {
 
   test("a second window offers neither components nor tools, since the names belong to the app id", async () => {
     const { host, agents } = await setUpWithCards();
-    host.client.connectors = [{ app: "grove", kind: "app", connected: true, v: 1, tools: [] }];
+    host.client.connectors.value = [{ app: "grove", kind: "app", connected: true, v: 1, tools: [] }];
     await agents.ensureStarted();
     const presence = host.client.presences[0];
     expect(presence.app).toBe("grove-2");

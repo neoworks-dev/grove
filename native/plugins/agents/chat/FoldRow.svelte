@@ -46,6 +46,7 @@
     style={{ direction: "row", align: "center", gap: p.space.m, paddingX: p.space.l, cursor: "pointer" }}
   >
     <Text style={{ width: 10, color: p.muted, fontFamily: "mono", fontSize: p.text.code, shrink: 0 }}>{open ? "⌄" : "›"}</Text>
+    <Text style={{ color: p.success, fontSize: p.text.code, shrink: 0 }}>●</Text>
     <Tallies {tallies} />
     {#if messages > 0}
       <Text style={{ fontFamily: "mono", fontSize: p.text.code, color: p.muted, shrink: 0 }}>{messageLabel(messages)}</Text>

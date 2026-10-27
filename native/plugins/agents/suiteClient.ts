@@ -7,13 +7,13 @@ import type { Client, ConnectionState, DaemonAddress } from "@suite/sdk";
 import type { ToolServer } from "./contributions";
 
 /** The calls one chat pane makes for its session. */
-export type ChatClient = Pick<Client, "subscribe" | "subscribeView" | "input" | "cancel" | "action" | "fetchAsset" | "sessionSettings">;
+export type ChatClient = Pick<Client, "subscribe" | "subscribeView" | "input" | "cancel" | "unqueue" | "action" | "fetchAsset" | "putAsset" | "sessionSettings">;
 
 /** The client as the plugin's service uses it: the chat calls and the session list. */
 export type SuiteClient = ChatClient &
   Pick<
     Client,
-    "state" | "sessions" | "focus" | "listSessions" | "listConnectors" | "setPresence" | "setContext" | "moveAgent" | "close"
+    "state" | "sessions" | "connectors" | "onSecretRequest" | "answerSecret" | "focus" | "listSessions" | "listConnectors" | "setPresence" | "setContext" | "moveAgent" | "close"
   > & {
     createSession(params: SessionCreateParams): Promise<SessionInfo>;
   };

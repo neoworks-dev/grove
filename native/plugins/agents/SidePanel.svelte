@@ -11,6 +11,7 @@
   import type { FilesModel } from "./filesModel";
   import { palette } from "./palette";
   import Plan from "./Plan.svelte";
+  import Todos from "./Todos.svelte";
 
   interface Props {
     chat: ChatSession;
@@ -41,6 +42,7 @@
   }}
 >
   {#if !diffOpen}
+    <Todos {chat} />
     <Plan plans={chat.plans()} />
   {/if}
   <Files {files} {branch} {icons} />

@@ -12,7 +12,11 @@
   import stopIcon from "@phosphor-icons/core/regular/stop.svg";
   import type { KeyEvent, Layout } from "@neoworks/svelte-gpui/ui";
   import type { ChatSession } from "./chatSession";
+  import AttachedImages from "./AttachedImages.svelte";
+  import { createClipboardAccess } from "./clipboardAccess";
   import CommandMenu from "./CommandMenu.svelte";
+  import MentionMenu from "./MentionMenu.svelte";
+  import type { Candidate } from "./mention";
   import { ComposerModel } from "./composerModel";
   import ComposerControls from "./ComposerControls.svelte";
   import { approvalsChoices, approvalsIcon, harnessChoices, harnessLabel, modeLine, optionChoices, optionLabel } from "./composerControls";
@@ -22,6 +26,7 @@
   import { createHistoryStore } from "./historyStore";
   import { palette } from "./palette";
   import PromptPanel from "./PromptPanel.svelte";
+  import QueuedMessages from "./QueuedMessages.svelte";
 
   interface Props {
     session: ChatSession;
@@ -47,6 +52,7 @@
     {
       history: createHistoryStore(),
       copyToClipboard: (text) => void clipboard.write(text),
+      clipboard: createClipboardAccess(),
     },
   );
 
@@ -61,7 +67,9 @@
   const promptRef = $derived(prompt?.ref);
   const showPanel = $derived(model.engaged());
   const menuVisible = $derived(model.menuVisible());
+  const mentionVisible = $derived(model.mentionVisible());
   const notice = $derived(model.notice());
+  const waiting = $derived(session.waiting());
   const status = $derived(session.status());
   const approvals = $derived(status.approvals);
   const harness = $derived(session.harness());
@@ -70,7 +78,8 @@
   const modelLabel = $derived(optionLabel(offered, harness, "model", settings.model));
   const effortLabel = $derived(optionLabel(offered, harness, "thought_level", settings.effort));
   const efforts = $derived(optionChoices(offered, harness, "thought_level"));
-  const empty = $derived(model.text.trim() === "");
+  const attachments = $derived(model.attachments());
+  const empty = $derived(model.text.trim() === "" && attachments.length === 0);
 
   // What was sent in this session before is what Up walks back through.
   $effect(() => {
@@ -118,6 +127,16 @@
   /** Up and Down move the menu's highlight while it is open, else walk the history. */
   function arrow(event: KeyEvent): void {
     const older = event.key === "ArrowUp";
+    if (older && model.text.trim() === "" && session.waiting().length > 0) {
+      event.preventDefault();
+      // Messages another app queued are not ours to take back: then Up walks the history as usual.
+      void model.takeBackWaiting().then((took) => {
+        if (!took) {
+          model.walkHistory("older", columns, event.alt);
+        }
+      });
+      return;
+    }
     if (model.menuVisible()) {
       model.moveMenu(older ? -1 : 1);
     } else {
@@ -135,6 +154,19 @@
   /** Enter sends, Tab completes a command, Up and Down walk, Shift-Tab changes approvals, Esc closes or cancels. */
   function key(event: KeyEvent): void {
     const plain = !event.ctrl && !event.alt && !event.meta;
+    if (model.mentionVisible() && plain && !event.shift && mentionKey(event)) {
+      return;
+    }
+    if (event.ctrl && !event.alt && !event.meta && event.key.toLowerCase() === "s") {
+      event.preventDefault();
+      model.swapStash();
+      return;
+    }
+    if (event.ctrl && !event.alt && !event.meta && event.key.toLowerCase() === "v") {
+      event.preventDefault();
+      void paste();
+      return;
+    }
     if (event.key === "Enter") {
       if (event.alt || event.shift) {
         return;
@@ -164,6 +196,47 @@
     if (event.key === "Escape") {
       escape(event);
     }
+  }
+
+  /** Up and Down move the `@` list, Tab and Enter put the highlighted file in the draft. Returns whether the key was used. */
+  function mentionKey(event: KeyEvent): boolean {
+    if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+      model.moveMention(event.key === "ArrowUp" ? -1 : 1);
+    } else if (event.key === "Tab" || event.key === "Enter") {
+      acceptMention();
+    } else {
+      return false;
+    }
+    event.preventDefault();
+    return true;
+  }
+
+  /** Ctrl+V: an image on the clipboard is attached; any other text is pasted at the cursor. */
+  async function paste(): Promise<void> {
+    const selection = input?.getSelection();
+    const text = await model.paste();
+    if (text === undefined || text === "") {
+      return;
+    }
+    let start = model.text.length;
+    let end = start;
+    if (selection !== null && selection !== undefined) {
+      start = Math.min(selection.start, selection.end);
+      end = Math.max(selection.start, selection.end);
+    }
+    const cursor = model.insertText(text, start, end);
+    setTimeout(() => input?.select(cursor, cursor), 0);
+  }
+
+  /** Puts a file of the `@` list in the draft, and the cursor after it. */
+  function acceptMention(candidate?: Candidate): void {
+    const cursor = model.acceptMention(candidate);
+    if (cursor === undefined) {
+      return;
+    }
+    input?.focus();
+    // The field takes the new text before it can place the cursor in it.
+    setTimeout(() => input?.select(cursor, cursor), 0);
   }
 
   /** Stops the turn that is running and sends what was typed, which would otherwise wait behind it. */
@@ -229,9 +302,16 @@
         {prompt.title || "A question"} is waiting. Stop typing to answer it, Esc puts it aside.
       </Text>
     {/if}
+    {#if waiting.length > 0}
+      <QueuedMessages {waiting} />
+    {/if}
+    {#if attachments.length > 0}
+      <AttachedImages {attachments} ondetach={(id) => model.detach(id)} />
+    {/if}
     <View
       style={{ gap: p.space.s, padding: p.space.m, radius: 8, borderWidth: 1, borderColor: p.elevatedBorder, background: p.elevated }}
       onpress={() => input?.focus()}
+      ondrop={(drop) => model.dropped(drop.paths)}
     >
       <View style={{ minWidth: 0, paddingX: p.space.s }} onlayout={layout}>
         <Scroll bind:this={scroller} style={{ maxHeight: MAX_INPUT_HEIGHT }}>
@@ -244,11 +324,16 @@
               placeholder={running ? "The marmot is working. Esc cancels the turn." : "What are we doing today?"}
               style={{ color: p.fg, lineHeight: LINE_HEIGHT }}
               oninput={() => model.typed()}
+              onselect={(selection) => model.moved(selection.end)}
               onkey={key}
             />
           </View>
         </Scroll>
-        {#if menuVisible}
+        {#if mentionVisible}
+          <Overlay side="top" align="start" offset={p.space.m} matchWidth>
+            <MentionMenu {model} onchosen={acceptMention} />
+          </Overlay>
+        {:else if menuVisible}
           <Overlay side="top" align="start" offset={p.space.m} matchWidth>
             <CommandMenu {model} onchosen={() => input?.focus()} />
           </Overlay>
@@ -299,5 +384,5 @@
       </View>
     </View>
   {/if}
-  <ComposerControls {session} {notice} />
+  <ComposerControls {session} {notice} stashed={model.hasStash()} />
 </View>

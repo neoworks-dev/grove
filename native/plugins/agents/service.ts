@@ -8,7 +8,7 @@
 // The service follows a session while at least one pane shows it.
 
 import { Service, type Context } from "@neoworks/extension-system";
-import type { AgentFocus, AppPresence, ConnectorInfo, SessionInfo } from "@suite/protocol/types";
+import type { AgentFocus, AppPresence, ConnectorInfo, SecretRequest, SessionInfo } from "@suite/protocol/types";
 import { createChangeSignal, type ChangeSignal } from "../../kernel/reactive";
 import type { SplitDirection } from "../layout/layoutTree";
 import type { Worktree } from "../../../src/shared/types";
@@ -97,6 +97,8 @@ export interface Openers {
    * up which the number is. False when the app has no GitHub pane or none could be made.
    */
   openGithubItem(request: GithubItemRequest): Promise<boolean>;
+  /** Every file below a directory, relative to it, for `@` mentions; empty when there is no way to list them. */
+  listFiles(directory: string): Promise<readonly string[]>;
 }
 
 /** An issue or pull request the chat asks to be shown in Grove. */
@@ -131,11 +133,23 @@ const NO_OPENERS: Openers = {
   revealFile: async () => {},
   openDiff: () => false,
   openGithubItem: async () => false,
+  listFiles: async () => [],
 };
 
-/** The editor, diff and GitHub services as the chat opens things in them. */
-export function serviceOpeners(editor: EditorOpener, diff: DiffOpener, github: GithubOpener): Openers {
+/** What the ripgrep service lists for `@` mentions. */
+export interface FileLister {
+  listFiles(directory: string): Promise<{ files: readonly string[] }>;
+}
+
+/** The editor, diff, GitHub and ripgrep services as the chat opens things in them. */
+export function serviceOpeners(editor: EditorOpener, diff: DiffOpener, github: GithubOpener, ripgrep?: FileLister): Openers {
   return {
+    listFiles: async (directory) => {
+      if (ripgrep === undefined) {
+        return [];
+      }
+      return (await ripgrep.listFiles(directory)).files;
+    },
     openFile: (path) => {
       editor.open(path);
     },
@@ -193,6 +207,10 @@ export class AgentsService extends Service {
   private starting: Promise<void> | null = null;
   private current: AgentsState = { connection: "idle" };
   private sessionList: readonly SessionInfo[] = [];
+  private connectorList: readonly ConnectorInfo[] = [];
+  /** What the daemon asks this window for in secret, such as an API key typed for `/login`; never logged or kept past its answer. */
+  private secretRequests: readonly SecretRequest[] = [];
+  private stopSecrets: (() => void) | null = null;
   private address: DaemonAddress | null = null;
   private appName = CLIENT_NAME;
   /** The neoui components Grove offers the agent, and the tools their buttons call. */
@@ -305,6 +323,32 @@ export class AgentsService extends Service {
   sessions(): readonly SessionInfo[] {
     this.changes.track();
     return this.sessionList;
+  }
+
+  /** The oldest question the daemon has asked this window for a secret in the session, or undefined. Reactive. */
+  secretRequestFor(sessionId: string): SecretRequest | undefined {
+    this.changes.track();
+    return this.secretRequests.find((request) => request.session === sessionId);
+  }
+
+  /** Answers a secret question with what was typed, or with nothing when the user gave up. The value goes to the daemon and nowhere else. */
+  answerSecret(id: string, value?: string): void {
+    this.secretRequests = this.secretRequests.filter((request) => request.id !== id);
+    this.changes.notify();
+    if (this.client === null) {
+      return;
+    }
+    try {
+      this.client.answerSecret(id, value);
+    } catch (error) {
+      this.fail(error);
+    }
+  }
+
+  /** Every connector the daemon knows: apps, and the language servers and MCP servers it runs. Reactive. */
+  connectors(): readonly ConnectorInfo[] {
+    this.changes.track();
+    return this.connectorList;
   }
 
   /** The sessions of the open repository grouped by worktree, the shown worktree first. Reactive. */
@@ -466,6 +510,28 @@ export class AgentsService extends Service {
       return undefined;
     }
     return this.chat(sessionId);
+  }
+
+  /** The conversation of the focused agent pane, else of the first agent pane there is, or undefined when no pane shows one. Reactive. */
+  shownChat(): ChatSession | undefined {
+    const focused = this.focusedChat();
+    if (focused !== undefined) {
+      return focused;
+    }
+    for (const leafId of this.panes.leafIds()) {
+      if (this.panes.paneTypeOf(leafId) !== AGENT_PANE_TYPE) {
+        continue;
+      }
+      const sessionId = this.sessionOfPane(leafId);
+      if (sessionId === null) {
+        continue;
+      }
+      const chat = this.chat(sessionId);
+      if (chat !== undefined) {
+        return chat;
+      }
+    }
+    return undefined;
   }
 
   /** Whether a pane shows the session. Reactive. */
@@ -773,6 +839,15 @@ export class AgentsService extends Service {
       this.sessionList = sessions;
       this.changes.notify();
     });
+    this.stopSecrets = client.onSecretRequest((request) => {
+      this.secretRequests = [...this.secretRequests.filter((known) => known.id !== request.id), request];
+      this.changes.notify();
+    });
+    this.connectorList = client.connectors.value;
+    client.connectors.on((connectors) => {
+      this.connectorList = connectors;
+      this.changes.notify();
+    });
     this.sessionList = await client.listSessions();
     this.changes.notify();
     await this.register(client);
@@ -973,6 +1048,8 @@ export class AgentsService extends Service {
         openFile: (path) => this.openFile(path),
         openDiff: (path, texts) => this.openDiff(path, texts),
         directory: () => this.sessionInfo(sessionId)?.cwd,
+        waiting: () => this.sessionInfo(sessionId)?.waiting,
+        listFiles: (directory) => this.openers.listFiles(directory),
       });
       entry.chat.start();
     }
@@ -1010,6 +1087,10 @@ export class AgentsService extends Service {
     this.clearRetryTimer();
     this.registered = false;
     this.movingTo = null;
+    // The daemon drops a question when its client goes, so none is kept for the next connection.
+    this.stopSecrets?.();
+    this.stopSecrets = null;
+    this.secretRequests = [];
     for (const entry of this.followed.values()) {
       if (entry.chat !== null) {
         entry.chat.stop();

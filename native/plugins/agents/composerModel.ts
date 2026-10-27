@@ -16,17 +16,51 @@ import {
   TYPING_PAUSE_MS,
   type Prompt,
 } from "./prompt";
-import { SLASH_COMMANDS, completion, isSlashWord, matchingCommands, moveSelection, type SlashCommand } from "./slashCommands";
+import {
+  commandsFor,
+  completion,
+  isSlashWord,
+  lookupCommand,
+  matchingCommands,
+  moveSelection,
+  type SlashCommand,
+} from "./slashCommands";
+import { isImagePath, pastedImagePaths, withAttachment, type Attachment } from "./attachments";
+import { accept, candidatesFor, entriesOf, mentionAt, type Candidate, type Mention } from "./mention";
+import { todoText } from "./todos";
 
 /** What the composer needs from the outside. */
 export interface ComposerDeps {
   history: HistoryStore;
   /** Puts text on the system clipboard, for the `copy:` buttons of a question. */
   copyToClipboard: (text: string) => void;
+  /** Reads the system clipboard for Ctrl+V; without it nothing is pasted. */
+  clipboard?: ClipboardAccess;
+}
+
+/** A draft put aside: its text and its images. */
+interface Stash {
+  text: string;
+  attachments: Attachment[];
+}
+
+/** What pasting needs from the system. */
+export interface ClipboardAccess {
+  /** Saves the clipboard's image to a file and gives its path, or null when it holds none. */
+  image(): Promise<string | null>;
+  text(): Promise<string>;
+  /** Whether a file exists, so a pasted path that names nothing is pasted as text. */
+  exists(path: string): Promise<boolean>;
 }
 
 /** How long "copied" stays in the composer's status line. */
 const COPIED_NOTICE_MS = 1500;
+
+/** How long the hint `/help` leaves in the status line stays. */
+const HELP_NOTICE_MS = 6000;
+
+/** How long a listing of the session's files is reused for `@` mentions. */
+const FILES_FRESH_MS = 10_000;
 
 export class ComposerModel {
   private chat: ChatSession;
@@ -36,6 +70,17 @@ export class ComposerModel {
   private highlighted = 0;
   /** The text the menu was closed (Esc) for; typing more opens it again. */
   private closedMenuFor: string | undefined;
+  /** The text the `@` list was closed (Esc) for; typing more opens it again. */
+  private closedMentionFor: string | undefined;
+  /** Where the input's cursor is; undefined means the end, as after a completion or a history step. */
+  private cursor: number | undefined;
+  /** The session's files and folders for `@` mentions, and when they were listed. */
+  private entries: string[] = [];
+  private filesLoadedAt = 0;
+  private loadingFiles = false;
+  private attached: Attachment[] = [];
+  /** The draft put aside with Ctrl-S. */
+  private stash: Stash | undefined;
   /** Questions put aside with Esc; they stay in the chat. */
   private dismissed: ReadonlySet<string> = new Set();
   /** The question has the input's place now. */
@@ -105,7 +150,12 @@ export class ComposerModel {
     if (this.isEngaged || !isSlashWord(this.draft) || this.closedMenuFor === this.draft) {
       return false;
     }
-    return matchingCommands(this.draft, SLASH_COMMANDS).length > 0;
+    return matchingCommands(this.draft, this.allCommands()).length > 0;
+  }
+
+  /** Every command the session answers: ours, then those its harness lists. Reactive. */
+  private allCommands(): SlashCommand[] {
+    return commandsFor(this.chat.harness(), this.chat.harnessCommands());
   }
 
   /** The commands the menu lists; none while it is closed. Reactive. */
@@ -113,7 +163,7 @@ export class ComposerModel {
     if (!this.menuVisible()) {
       return [];
     }
-    return matchingCommands(this.draft, SLASH_COMMANDS);
+    return matchingCommands(this.draft, this.allCommands());
   }
 
   /** Moves the menu's highlight, wrapping around. */
@@ -152,7 +202,125 @@ export class ComposerModel {
     }
     this.draft = "";
     this.changes.notify();
-    this.send(`/${command.name}`);
+    this.run(command, "");
+  }
+
+  /** Runs a command with its arguments: the pane's own, or sent to the daemon like any text. */
+  private run(command: SlashCommand, args: string): void {
+    if (command.local) {
+      this.runLocal(command.name, args);
+      return;
+    }
+    this.send(`/${command.name}${args}`);
+  }
+
+  /** A command the pane handles itself; `text` is what was typed after its name. */
+  private runLocal(name: string, text: string): void {
+    if (name === "todo") {
+      this.addTodo(text);
+      return;
+    }
+    if (name === "help") {
+      // The menu lists every command when only the slash is typed.
+      this.draft = "/";
+      this.closedMenuFor = undefined;
+      this.say("Tab completes · Enter runs · Esc closes", HELP_NOTICE_MS);
+    }
+  }
+
+  /** `/todo <text>`: a new item on the shared list; without text it says how to use it. */
+  private addTodo(text: string): void {
+    const item = todoText(`/todo ${text}`);
+    if (item === "") {
+      this.say("usage: /todo <what to do>", HELP_NOTICE_MS);
+      return;
+    }
+    void this.chat.changeTodos({ action: "add", text: item });
+  }
+
+  // ---- @ mentions ----
+
+  /** The input's cursor moved, as the input reports it; the mention is the word the cursor is in. */
+  moved(cursor: number): void {
+    if (cursor === this.cursor) {
+      return;
+    }
+    this.cursor = cursor;
+    this.changes.notify();
+  }
+
+  /** The `@word` at the cursor, while nothing else has the input: no question, no `/` menu, not closed with Esc. Reactive. */
+  private mention(): Mention | undefined {
+    this.changes.track();
+    if (this.isEngaged || this.menuVisible() || this.closedMentionFor === this.draft) {
+      return undefined;
+    }
+    let cursor = this.draft.length;
+    if (this.cursor !== undefined) {
+      cursor = Math.min(this.cursor, this.draft.length);
+    }
+    return mentionAt(this.draft, cursor);
+  }
+
+  /** The files the `@word` could be; none while no mention is being typed. Reactive. */
+  mentionMatches(): Candidate[] {
+    const mention = this.mention();
+    if (mention === undefined) {
+      return [];
+    }
+    this.loadFiles();
+    return candidatesFor(this.entries, mention.query);
+  }
+
+  /** Whether the `@` list is open. Reactive. */
+  mentionVisible(): boolean {
+    return this.mentionMatches().length > 0;
+  }
+
+  /** Moves the list's highlight, wrapping around. */
+  moveMention(delta: number): void {
+    this.highlighted = moveSelection(this.highlighted, delta, this.mentionMatches().length);
+    this.changes.notify();
+  }
+
+  /**
+   * Puts the picked (else the highlighted) file in the draft in place of the `@word`, and returns
+   * where the cursor goes; undefined when the list is closed.
+   */
+  acceptMention(candidate?: Candidate): number | undefined {
+    const mention = this.mention();
+    const matches = this.mentionMatches();
+    if (mention === undefined || matches.length === 0) {
+      return undefined;
+    }
+    let pick = candidate;
+    if (pick === undefined) {
+      pick = matches[Math.min(this.highlighted, matches.length - 1)];
+    }
+    let cursor = this.draft.length;
+    if (this.cursor !== undefined) {
+      cursor = Math.min(this.cursor, this.draft.length);
+    }
+    const accepted = accept(this.draft, cursor, mention, pick);
+    this.draft = accepted.text;
+    this.cursor = accepted.cursor;
+    this.highlighted = 0;
+    this.changes.notify();
+    return accepted.cursor;
+  }
+
+  /** Lists the session's files for the mentions, again when the last listing is old. */
+  private loadFiles(): void {
+    if (this.loadingFiles || Date.now() - this.filesLoadedAt < FILES_FRESH_MS) {
+      return;
+    }
+    this.loadingFiles = true;
+    void this.chat.projectFiles().then((files) => {
+      this.loadingFiles = false;
+      this.filesLoadedAt = Date.now();
+      this.entries = entriesOf(files);
+      this.changes.notify();
+    });
   }
 
   // ---- sending ----
@@ -165,20 +333,190 @@ export class ComposerModel {
       return;
     }
     const text = this.draft.trim();
-    if (text === "") {
+    if (text === "" && this.attached.length === 0) {
       return;
     }
     this.draft = "";
     this.changes.notify();
+    const typedCommand = lookupCommand(text, this.allCommands());
+    if (typedCommand !== undefined && typedCommand.local) {
+      this.runLocal(typedCommand.name, text.replace(/^\/\S+/, ""));
+      return;
+    }
     this.send(text);
   }
 
   /** Sends text to the agent and keeps it in the history. */
   private send(text: string): void {
-    if (this.walk.push(text)) {
+    if (text !== "" && this.walk.push(text)) {
       void this.deps.history.append(this.chat.sessionId, text);
     }
-    void this.chat.send(text);
+    // The images go with a message, not with a command.
+    let images: string[] = [];
+    if (!text.startsWith("/")) {
+      images = this.attached.map((attachment) => attachment.path);
+      this.attached = [];
+    }
+    void this.chat.send(text, undefined, images);
+    // What was written in its place is out: the draft put aside comes back.
+    if (this.draft.trim() === "" && this.attached.length === 0 && this.stash !== undefined && !text.startsWith("/")) {
+      this.swapStash();
+    }
+  }
+
+  // ---- the draft put aside ----
+
+  /** Whether a draft is put aside (Ctrl-S). Reactive. */
+  hasStash(): boolean {
+    this.changes.track();
+    return this.stash !== undefined;
+  }
+
+  /**
+   * Ctrl-S: the draft and its images go aside and the input is free for another message, or the
+   * draft put aside comes back, trading places with what is in the input now.
+   */
+  swapStash(): void {
+    const current = { text: this.draft, attachments: this.attached };
+    let aside: Stash | undefined;
+    if (current.text.trim() !== "" || current.attachments.length > 0) {
+      aside = current;
+    }
+    const back = this.stash;
+    this.stash = aside;
+    this.draft = "";
+    this.attached = [];
+    if (back !== undefined) {
+      this.draft = back.text;
+      this.attached = back.attachments;
+    }
+    this.cursor = undefined;
+    this.highlighted = 0;
+    this.walk.reset();
+    this.changes.notify();
+  }
+
+  // ---- attached images ----
+
+  /** The images attached to the draft, which go with the next message. Reactive. */
+  attachments(): readonly Attachment[] {
+    this.changes.track();
+    return this.attached;
+  }
+
+  /** Attaches the image at an absolute path; one attached already is not added again. */
+  attach(path: string): void {
+    this.attached = withAttachment(this.attached, path);
+    this.changes.notify();
+    void this.chat.assetForFile(path).then((source) => this.previewed(path, source));
+  }
+
+  /** The preview of an attached image has a URL to load from. */
+  private previewed(path: string, source: string | undefined): void {
+    if (source === undefined) {
+      return;
+    }
+    this.attached = this.attached.map((attachment) => {
+      if (attachment.path === path) {
+        return { ...attachment, source };
+      }
+      return attachment;
+    });
+    this.changes.notify();
+  }
+
+  /** Takes one image off the draft. */
+  detach(id: number): void {
+    this.attached = this.attached.filter((attachment) => attachment.id !== id);
+    this.changes.notify();
+  }
+
+  /**
+   * Ctrl+V: attaches the clipboard's image, or the image files its text names. Returns the text
+   * to paste into the draft when the clipboard holds neither, and undefined when it was attached.
+   */
+  async paste(): Promise<string | undefined> {
+    const clipboard = this.deps.clipboard;
+    if (clipboard === undefined) {
+      return "";
+    }
+    const image = await clipboard.image();
+    if (image !== null) {
+      this.attach(image);
+      return undefined;
+    }
+    const text = await clipboard.text();
+    const named = pastedImagePaths(text);
+    if (named === undefined) {
+      return text;
+    }
+    const existing: string[] = [];
+    for (const path of named) {
+      if (await clipboard.exists(path)) {
+        existing.push(path);
+      }
+    }
+    if (existing.length === 0) {
+      return text;
+    }
+    for (const path of existing) {
+      this.attach(path);
+    }
+    return undefined;
+  }
+
+  /** Attaches the image files among dropped paths; returns how many were images. */
+  dropped(paths: readonly string[]): number {
+    const images = paths.filter(isImagePath);
+    for (const path of images) {
+      this.attach(path);
+    }
+    return images.length;
+  }
+
+  /**
+   * Puts text in the draft in place of the selection `start` to `end`, and returns where the
+   * cursor goes.
+   */
+  insertText(text: string, start: number, end: number): number {
+    this.draft = this.draft.slice(0, start) + text + this.draft.slice(end);
+    this.cursor = start + text.length;
+    this.walk.reset();
+    this.changes.notify();
+    return this.cursor;
+  }
+
+  // ---- the queue ----
+
+  /**
+   * Up in an empty editor with messages waiting: takes them back out of the queue into the editor,
+   * one per paragraph, before whatever was typed meanwhile. Returns whether any came back.
+   */
+  async takeBackWaiting(): Promise<boolean> {
+    if (this.chat.waiting().length === 0) {
+      return false;
+    }
+    const inputs = await this.chat.unqueue();
+    if (inputs.length === 0) {
+      return false;
+    }
+    for (const input of inputs) {
+      if (input.images === undefined) {
+        continue;
+      }
+      for (const path of input.images) {
+        this.attached = withAttachment(this.attached, path);
+      }
+    }
+    const parts = inputs.map((input) => input.text);
+    const typed = this.draft.trim();
+    if (typed !== "") {
+      parts.push(typed);
+    }
+    this.draft = parts.join("\n\n");
+    this.walk.reset();
+    this.changes.notify();
+    return true;
   }
 
   // ---- history ----
@@ -342,6 +680,8 @@ export class ComposerModel {
     const prompt = this.prompt();
     if (this.menuVisible()) {
       this.closedMenuFor = this.draft;
+    } else if (this.mentionVisible()) {
+      this.closedMentionFor = this.draft;
     } else if (this.noteText !== undefined) {
       this.noteText = undefined;
     } else if (prompt !== undefined) {

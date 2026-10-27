@@ -8,6 +8,7 @@ import type {
   Asset,
   AgentMove,
   ConnectorInfo,
+  SecretRequest,
   SessionEvent,
   SessionEventRecord,
   SessionInfo,
@@ -67,14 +68,14 @@ export type PresenceCall = AppPresence;
 export class FakeClient {
   state = new FakeWatched<ConnectionState>("open");
   sessions = new FakeWatched<SessionInfo[]>([]);
-  connectors: ConnectorInfo[] = [];
+  connectors = new FakeWatched<ConnectorInfo[]>([]);
   presences: PresenceCall[] = [];
   views: FakeViewSubscription[] = [];
   events: FakeEventSubscription[] = [];
   focus = new FakeWatched<AgentFocus | undefined>(undefined);
   moves: AgentMove[] = [];
   contexts: Record<string, string>[] = [];
-  inputs: { session: string; text: string; shown?: string }[] = [];
+  inputs: { session: string; text: string; shown?: string; images?: string[] }[] = [];
   cancels: string[] = [];
   actions: { session: string; ref: string; action: string; args?: unknown }[] = [];
   /** The web addresses the chat asked the daemon to download. */
@@ -94,7 +95,7 @@ export class FakeClient {
   }
 
   async listConnectors(): Promise<ConnectorInfo[]> {
-    return this.connectors;
+    return this.connectors.value;
   }
 
   async setPresence(presence: PresenceCall): Promise<void> {
@@ -117,19 +118,57 @@ export class FakeClient {
     return info;
   }
 
-  async input(session: string, text: string, options: { shown?: string } = {}): Promise<void> {
+  async input(session: string, text: string, options: { shown?: string; images?: string[] } = {}): Promise<void> {
     this.throwIfFailing();
-    if (options.shown === undefined) {
-      this.inputs.push({ session, text });
-      return;
+    const input: { session: string; text: string; shown?: string; images?: string[] } = { session, text };
+    if (options.shown !== undefined) {
+      input.shown = options.shown;
     }
-    this.inputs.push({ session, text, shown: options.shown });
+    if (options.images !== undefined) {
+      input.images = options.images;
+    }
+    this.inputs.push(input);
   }
 
   async cancel(session: string): Promise<void> {
     this.throwIfFailing();
     this.cancels.push(session);
   }
+
+  private secretListeners = new Set<(request: SecretRequest) => void>();
+  /** The answers given to secret questions; a missing value is a question given up. */
+  secretAnswers: { id: string; value?: string }[] = [];
+
+  onSecretRequest(callback: (request: SecretRequest) => void): () => void {
+    this.secretListeners.add(callback);
+    return () => {
+      this.secretListeners.delete(callback);
+    };
+  }
+
+  /** The daemon asks this client for a secret. */
+  askSecret(request: SecretRequest): void {
+    for (const listener of [...this.secretListeners]) {
+      listener(request);
+    }
+  }
+
+  answerSecret(id: string, value?: string): void {
+    this.secretAnswers.push(value === undefined ? { id } : { id, value });
+  }
+
+  /** What `unqueue` hands back: the messages this app has waiting. */
+  unqueued: { app: string; text: string; images?: string[] }[] = [];
+
+  async unqueue(session: string): Promise<{ app: string; text: string; images?: string[] }[]> {
+    this.throwIfFailing();
+    this.unqueueCalls.push(session);
+    const inputs = this.unqueued;
+    this.unqueued = [];
+    return inputs;
+  }
+
+  unqueueCalls: string[] = [];
 
   async action(session: string, ref: string, action: string, args?: unknown): Promise<void> {
     this.throwIfFailing();

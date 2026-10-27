@@ -4,16 +4,22 @@
 // pane shows the session and stops it when the last pane lets go. A chat can also follow one
 // agent's work in the session (a subagent or a guest), read-only, for the agents list.
 
-import type { HarnessSettings as OfferedHarness, SessionEventRecord, ViewItem } from "@suite/protocol/types";
+import type { HarnessSettings as OfferedHarness, SessionEventRecord, TodoItem, ViewItem, WaitingInput } from "@suite/protocol/types";
+import type { TodoChange } from "./todos";
+import { isFollowed, listedJobs, readOutputInto, type BackgroundIo, type BackgroundJob } from "./background";
 import { ViewState } from "@suite/sdk";
 import { createChangeSignal, type ChangeSignal } from "../../kernel/reactive";
 import { nextApprovals, type Approvals, type SessionStatus } from "./status";
 import { SessionFacts } from "./sessionFacts";
 import type { PlanList } from "./plan";
+import type { OfferedCommand } from "./slashCommands";
 import type { AgentRow } from "./subagents";
 import { chainedTexts, type CallDiff, type CallFacts } from "./calls";
 import type { Touches } from "./files";
 import type { ChatClient } from "./suiteClient";
+
+/** How often the output files of background commands are read. */
+const BACKGROUND_POLL_MS = 1000;
 
 /** What the client's `input` takes beside the text. */
 type InputOptions = NonNullable<Parameters<ChatClient["input"]>[2]>;
@@ -24,6 +30,10 @@ export interface ChatOptions {
   agent?: string;
   /** Shows a file in the editor; without it, a file name in the chat does nothing when pressed. */
   openFile?: (path: string) => void;
+  /** Every file below a directory, relative to it, for `@` mentions; without it nothing is offered. */
+  listFiles?: (directory: string) => Promise<readonly string[]>;
+  /** What the daemon lists as waiting behind the running turn, oldest first; reactive when it reads the session list. */
+  waiting?: () => readonly WaitingInput[] | undefined;
   /** The directory the session works in, which a relative picture path is read from. */
   directory?: () => string | undefined;
   /** Shows how a file changed: against HEAD, or between two texts when they are given. */
@@ -46,6 +56,10 @@ export class ChatSession {
   private options: ChatOptions;
   private facts = new SessionFacts();
   private answering: ReadonlySet<string> = new Set();
+  private backgroundIo: BackgroundIo | undefined;
+  private backgroundTimer: ReturnType<typeof setInterval> | undefined;
+  /** The time the list of background commands was last judged by, so its lingering rows expire. */
+  private clockMs = Date.now();
   private changes: ChangeSignal = createChangeSignal();
 
   /** `assetSources` turns an `asset://` handle into the URL the daemon serves it from, if it can. */
@@ -81,6 +95,91 @@ export class ChatSession {
   /** The approvals mode the session is in. Reactive. */
   approvals(): Approvals {
     return this.status().approvals;
+  }
+
+  /** The slash commands the harness the session runs on listed for itself. Reactive. */
+  harnessCommands(): readonly OfferedCommand[] {
+    this.changes.track();
+    const listed = this.facts.harnessCommands.get(this.harness());
+    if (listed === undefined) {
+      return [];
+    }
+    return listed;
+  }
+
+  /** The background commands to list: running ones, and ones that ended a moment ago. Reactive. */
+  backgroundJobs(): BackgroundJob[] {
+    this.changes.track();
+    return listedJobs(this.facts.background.jobs, this.clockMs);
+  }
+
+  /** Starts following the output files of background commands; without this they are not read. */
+  followBackground(io: BackgroundIo): void {
+    this.backgroundIo = io;
+    this.startBackgroundTimer();
+  }
+
+  /** Reads the output files every so often, until `stop`. */
+  private startBackgroundTimer(): void {
+    if (this.backgroundTimer !== undefined || this.backgroundIo === undefined) {
+      return;
+    }
+    this.backgroundTimer = setInterval(() => void this.pollBackground(Date.now()), BACKGROUND_POLL_MS);
+  }
+
+  /** Reads what the followed commands wrote since last time, and redraws when that changed what is listed. */
+  async pollBackground(nowMs: number): Promise<void> {
+    const io = this.backgroundIo;
+    const before = listedJobs(this.facts.background.jobs, this.clockMs);
+    this.clockMs = nowMs;
+    if (io === undefined || this.facts.background.jobs.size === 0) {
+      return;
+    }
+    let changed = false;
+    const jobs = new Map(this.facts.background.jobs);
+    for (const job of this.facts.background.jobs.values()) {
+      if (!isFollowed(job)) {
+        continue;
+      }
+      const read = readOutputInto(job, await io.readOutput(job.path), nowMs);
+      if (read !== job) {
+        jobs.set(job.id, read);
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.facts.background = { commands: this.facts.background.commands, jobs };
+    }
+    const after = listedJobs(this.facts.background.jobs, nowMs);
+    const listedChanged = after.length !== before.length;
+    if (changed || listedChanged || after.some((job) => job.endedMs === undefined)) {
+      this.changes.notify();
+    }
+  }
+
+  /** Stops a background command; the file it writes then ends with its exit code. */
+  async stopJob(id: string): Promise<void> {
+    const job = this.facts.background.jobs.get(id);
+    if (job === undefined || this.backgroundIo === undefined) {
+      return;
+    }
+    try {
+      await this.backgroundIo.stop(job.path);
+    } catch (error) {
+      this.fail(error);
+      this.changes.notify();
+    }
+  }
+
+  /** The shared todo list the user and every agent change. Reactive. */
+  todos(): readonly TodoItem[] {
+    this.changes.track();
+    return this.facts.todos;
+  }
+
+  /** Asks the daemon to change the shared todo list as the user; the list here follows when its event comes. */
+  async changeTodos(change: TodoChange): Promise<void> {
+    await this.guard(this.client.action(this.sessionId, "todos", "neo.todos", change));
   }
 
   /** The todo lists of the session's agents. Reactive. */
@@ -232,6 +331,7 @@ export class ChatSession {
 
   /** Starts following the session's view: a snapshot first, then patches. */
   start(): void {
+    this.startBackgroundTimer();
     if (this.stopFollowing !== null) {
       return;
     }
@@ -253,6 +353,10 @@ export class ChatSession {
 
   /** Stops following the session. */
   stop(): void {
+    if (this.backgroundTimer !== undefined) {
+      clearInterval(this.backgroundTimer);
+      this.backgroundTimer = undefined;
+    }
     if (this.stopEvents !== null) {
       this.stopEvents();
       this.stopEvents = null;
@@ -315,15 +419,58 @@ export class ChatSession {
   /**
    * Sends what the user typed to the session's agent, commands such as `/model` included. `shown`
    * is what the chat displays in place of a text written for the agent; a daemon that does not
-   * read it shows the text itself.
+   * read it shows the text itself. `images` are absolute paths of pictures that go with the text.
    */
-  async send(text: string, shown?: string): Promise<void> {
-    if (shown === undefined) {
+  async send(text: string, shown?: string, images: readonly string[] = []): Promise<void> {
+    if (shown === undefined && images.length === 0) {
       await this.guard(this.client.input(this.sessionId, text));
       return;
     }
-    const options: InputOptions & { shown: string } = { shown };
+    const options: InputOptions & { shown?: string } = {};
+    if (shown !== undefined) {
+      options.shown = shown;
+    }
+    if (images.length > 0) {
+      options.images = [...images];
+    }
     await this.guard(this.client.input(this.sessionId, text, options));
+  }
+
+  /** The files below the session's directory, which an `@` mention can name. Empty while the directory is not known. */
+  async projectFiles(): Promise<readonly string[]> {
+    const directory = this.directory();
+    if (this.options.listFiles === undefined || directory === "") {
+      return [];
+    }
+    try {
+      return await this.options.listFiles(directory);
+    } catch {
+      return [];
+    }
+  }
+
+  /** The messages sent while a turn runs, which wait for it, oldest first. Reactive. */
+  waiting(): readonly WaitingInput[] {
+    this.changes.track();
+    if (this.options.waiting === undefined) {
+      return [];
+    }
+    const listed = this.options.waiting();
+    if (listed === undefined) {
+      return [];
+    }
+    return listed;
+  }
+
+  /** Takes this app's waiting messages back out of the queue, oldest first, to edit them. Empty when it fails. */
+  async unqueue(): Promise<readonly WaitingInput[]> {
+    try {
+      return await this.client.unqueue(this.sessionId);
+    } catch (error) {
+      this.fail(error);
+      this.changes.notify();
+      return [];
+    }
   }
 
   /** Cancels the turn that is running. Inputs queued behind it still run. */
@@ -354,6 +501,16 @@ export class ChatSession {
   async fetchAsset(url: string): Promise<string> {
     const asset = await this.client.fetchAsset(url);
     return asset.handle;
+  }
+
+  /** Has the daemon copy the picture file at an absolute path into its asset store; resolves to the URL it is served from, or undefined when it cannot. */
+  async assetForFile(path: string): Promise<string | undefined> {
+    try {
+      const asset = await this.client.putAsset({ path });
+      return this.assetSources(asset.handle);
+    } catch {
+      return undefined;
+    }
   }
 
   /** The source an `Image` loads a picture from: the daemon's URL for an asset handle, else the source as it is. */

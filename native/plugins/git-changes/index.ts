@@ -1,6 +1,6 @@
 // The git-changes plugin: the Git changes view in the rail, listing what is staged and what is
-// not, with the commit box, and the `gitChanges` service behind it. A file's diff opens in a
-// diff pane.
+// not, with the commit box, and the `gitChanges` service behind it. A file's diff opens as a
+// diff tab of the editor.
 
 import type { Context } from "@neoworks/extension-system";
 import gitBranch from "@phosphor-icons/core/regular/git-branch.svg";

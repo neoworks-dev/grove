@@ -133,7 +133,7 @@ export class FilesModel {
     }
   }
 
-  /** Shows how a file changed in a diff pane: the session's own change to it, else the file against HEAD. */
+  /** Shows how a file changed in a diff tab: the session's own change to it, else the file against HEAD. */
   open(entry: FileEntry): void {
     let base = this.sessionDirectory();
     const worktree = this.worktree();

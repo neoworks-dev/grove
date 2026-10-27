@@ -1,6 +1,6 @@
 <script lang="ts">
   // What a folded turn changed, one row per file: the calls are detail and the files are the
-  // outcome. Pressing a file shows how it changed in a diff pane, or the file when there is no diff view.
+  // outcome. Pressing a file shows how it changed in a diff tab, or the file when there is no diff view.
   import { Text, View } from "@neoworks/svelte-gpui/ui";
   import { palette } from "../palette";
   import { shortDirectory } from "./callRow";

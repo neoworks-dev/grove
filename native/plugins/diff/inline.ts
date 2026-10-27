@@ -4,6 +4,9 @@
 // and the git bars that the diff replaces are left out of the diff tab. The old text is HEAD, the
 // index or a text a caller names, and it is read again when the file changes on disk or something
 // is staged. The diff goes when its tab closes.
+//
+// Two diffs of a file cannot show the file's own document: the staged changes, whose new side is
+// the index, and a file that is gone. Those show a document of the new text that belongs to no file.
 
 import { viewIdOf, type EditorService } from "../editor/service";
 import type { DiffHost, GitBase } from "./diffHost";
@@ -21,8 +24,10 @@ export interface InlineView {
   /** What the old side is called: "HEAD", "Index" or what a caller named it. */
   baseLabel: string;
   hunks: Hunk[];
-  /** The git base the hunk actions can read again, or null when the old side is a text. */
+  /** The git base the hunk actions can read again, or null when the old side is a text or the diff is of the staged changes. */
   gitBase: GitBase | null;
+  /** Whether it is the staged changes, the index against HEAD, whose hunks can be unstaged. */
+  staged: boolean;
   /** Inline, or side by side with the old text left of the document. */
   mode: DiffMode;
 }
@@ -64,9 +69,10 @@ interface Overlay {
   leafId: string;
   documentId: number;
   path: string;
-  /** A base that is never `staged`, which the inline diff draws as HEAD. */
   base: DiffBase;
   oldText: string;
+  /** The text the tab's document was made with when it belongs to no file; null for a file's own document. */
+  newText: string | null;
   hunks: Hunk[];
   mode: DiffMode;
   /** The document of the old text, which the tab draws beside the document in split mode; null inline. */
@@ -91,40 +97,96 @@ export class InlineDiffs {
   ) {}
 
   /**
-   * Shows how a file differs from a base in an editor pane: the file is opened there if it is not,
-   * and its changes are drawn over it. Resolves to false when there is no editor pane to show it in
-   * or the file cannot be read, which leaves it to the caller to show the diff another way.
+   * Shows how a file differs from a base in a diff tab of an editor pane. The tab shows the file's
+   * own document, except for the staged changes and a file that is gone. Resolves to false when
+   * there is no editor pane to show it in, or nothing to show.
    */
-  async show(path: string, wanted: DiffBase): Promise<boolean> {
+  async show(path: string, base: DiffBase): Promise<boolean> {
+    if (base === "staged") {
+      return (await this.showStaged(path)) !== null;
+    }
     const documentId = await this.editor.openDocument(path);
     if (documentId === null) {
-      return false;
+      return (await this.showGone(path, base)) !== null;
     }
-    return (await this.showDocument(documentId, path, drawnBase(wanted))) !== null;
+    return (await this.showDocument(documentId, path, base, null)) !== null;
   }
 
   /**
    * Shows how a text differs from an old one in a diff tab: the new text is a document that
-   * belongs to no file, and `name`'s extension says what language it is. Resolves to the tab, or
-   * null when there is no editor pane to show it in.
+   * belongs to no file, and `name`'s extension says what language it is. The same two texts shown
+   * again reuse that document. Resolves to the tab, or null when there is no editor pane to show it in.
    */
-  async showTexts(name: string, oldText: string, newText: string, label: string): Promise<DiffTab | null> {
-    const documentId = await this.editor.openText(name, newText);
+  showTexts(name: string, oldText: string, newText: string, label: string): Promise<DiffTab | null> {
+    return this.showDetached(name, { text: oldText, label }, newText);
+  }
+
+  /** Shows the staged changes of a file: the index's text, against HEAD. */
+  private async showStaged(path: string): Promise<DiffTab | null> {
+    let index: string;
+    try {
+      index = (await this.host.baseText(path, "index")).text;
+    } catch (error) {
+      this.hooks.say(describeError(error));
+      return null;
+    }
+    return this.showDetached(path, "staged", index);
+  }
+
+  /** Shows a file that cannot be opened, as a deleted one cannot, as nothing against its base. Null when the base has no such file either. */
+  private async showGone(path: string, base: DiffBase): Promise<DiffTab | null> {
+    const gitBase = gitBaseOf(base);
+    if (gitBase === null) {
+      return this.showDetached(path, base, "");
+    }
+    try {
+      const known = await this.host.baseText(path, gitBase);
+      if (!known.exists) {
+        return null;
+      }
+    } catch {
+      return null;
+    }
+    return this.showDetached(path, base, "");
+  }
+
+  /** Shows a diff whose new side is a text that belongs to no file, in the document an earlier showing of it made, else a new one. */
+  private async showDetached(path: string, base: DiffBase, newText: string): Promise<DiffTab | null> {
+    const known = this.findDetached(path, base, newText);
+    let documentId: number | null;
+    if (known === undefined) {
+      documentId = await this.editor.openText(lastSegment(path), newText);
+    } else {
+      documentId = known.documentId;
+    }
     if (documentId === null) {
       return null;
     }
-    return this.showDocument(documentId, name, { text: oldText, label });
+    return this.showDocument(documentId, path, base, newText);
+  }
+
+  /** The overlay whose document has the new side of this diff. A staged diff's text is read again anyway, so only its path has to match. */
+  private findDetached(path: string, base: DiffBase, newText: string): Overlay | undefined {
+    for (const overlay of this.overlays.values()) {
+      if (overlay.newText === null || overlay.path !== path || !sameBase(overlay.base, base)) {
+        continue;
+      }
+      if (base === "staged" || overlay.newText === newText) {
+        return overlay;
+      }
+    }
+    return undefined;
   }
 
   /** Gives a document a diff tab and draws its changes there. Resolves to the tab, or null when it could not be shown. */
-  private async showDocument(documentId: number, path: string, base: DiffBase): Promise<DiffTab | null> {
+  private async showDocument(documentId: number, path: string, base: DiffBase, newText: string | null): Promise<DiffTab | null> {
     const leafId = this.editor.showDiffTab(documentId);
     if (leafId === null) {
       return null;
     }
     const key = keyOf(leafId, documentId);
     const known = this.overlays.get(key);
-    const overlay = this.makeOverlay(leafId, documentId, path, base);
+    const overlay = this.makeOverlay(leafId, documentId, path, base, newText);
     if (known !== undefined) {
       // The tab shows the new base in the mode it was in, with the old side's document it had.
       clearTimeout(known.reapplyTimer);
@@ -222,7 +284,17 @@ export class InlineDiffs {
     if (overlay === undefined) {
       return undefined;
     }
-    return { path: overlay.path, baseLabel: baseLabel(overlay.base), hunks: overlay.hunks, gitBase: gitBaseOf(overlay.base), mode: overlay.mode };
+    const staged = overlay.base === "staged";
+    let label = baseLabel(overlay.base);
+    if (staged) {
+      label = baseLabel("head");
+    }
+    // Hunks are staged and reverted on the file's own document, which a gone file has not.
+    let gitBase: GitBase | null = null;
+    if (overlay.newText === null) {
+      gitBase = gitBaseOf(overlay.base);
+    }
+    return { path: overlay.path, baseLabel: label, hunks: overlay.hunks, gitBase, staged, mode: overlay.mode };
   }
 
   /** Works the difference out again after the document's text changed, once the edits stop. */
@@ -272,13 +344,14 @@ export class InlineDiffs {
   }
 
   /** A new overlay, with nothing read yet. */
-  private makeOverlay(leafId: string, documentId: number, path: string, base: DiffBase): Overlay {
+  private makeOverlay(leafId: string, documentId: number, path: string, base: DiffBase, newText: string | null): Overlay {
     return {
       leafId,
       documentId,
       path,
       base,
       oldText: "",
+      newText,
       hunks: [],
       mode: this.hooks.mode(),
       oldId: null,
@@ -289,18 +362,31 @@ export class InlineDiffs {
     };
   }
 
-  /** Reads the old text of an overlay from its base. */
+  /** Reads the old text of an overlay from its base, and the index's text into a staged diff's document. */
   private async read(overlay: Overlay): Promise<void> {
     this.nextGeneration += 1;
     const generation = this.nextGeneration;
     overlay.generation = generation;
+    if (overlay.base === "staged") {
+      await this.readIndex(overlay, generation);
+    }
     const oldText = await this.oldTextOf(overlay.path, overlay.base);
     if (overlay.generation === generation) {
       overlay.oldText = oldText;
     }
   }
 
-  /** The old text a base names. */
+  /** Puts the index's text of a staged diff's file into its document, when it changed. */
+  private async readIndex(overlay: Overlay, generation: number): Promise<void> {
+    const index = await this.host.baseText(overlay.path, "index");
+    if (overlay.generation !== generation || index.text === overlay.newText) {
+      return;
+    }
+    overlay.newText = index.text;
+    await this.editor.setText(overlay.documentId, index.text);
+  }
+
+  /** The old text a base names: HEAD for the staged changes. */
   private async oldTextOf(path: string, base: DiffBase): Promise<string> {
     if (typeof base === "object") {
       return base.text;
@@ -385,12 +471,12 @@ function sourceOf(leafId: string): string {
   return `view:${viewIdOf(leafId, "diff")}:diff`;
 }
 
-/** The base an inline diff draws: the staged diff is the index against HEAD, which the file itself cannot show, so HEAD stands in. */
-function drawnBase(base: DiffBase): DiffBase {
-  if (base === "staged") {
-    return "head";
+/** Whether two bases name the same old side. */
+function sameBase(first: DiffBase, second: DiffBase): boolean {
+  if (typeof first === "string" || typeof second === "string") {
+    return first === second;
   }
-  return base;
+  return first.text === second.text && first.label === second.label;
 }
 
 /** The git base an overlay's old side is, when it is one. */

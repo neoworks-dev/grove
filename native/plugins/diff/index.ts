@@ -1,17 +1,15 @@
-// The diff plugin: the `diff` service, the `diff` pane type, and the commands and keys that move
-// between changes and stage, unstage, revert or preview the hunk under the cursor. Hunks are
-// the ones of a file against HEAD or the index. A file's changes are a diff tab of an ordinary
-// editor pane, inline or side by side as the `mode` setting says, with a strip of buttons over it.
+// The diff plugin: the `diff` service, and the commands and keys that move between changes and
+// stage, unstage, revert or preview the hunk under the cursor. Hunks are the ones of a file
+// against HEAD or the index. A diff is a tab of an ordinary editor pane, inline or side by side as
+// the `mode` setting says, with a strip of buttons over it.
 
 import type { Context } from "@neoworks/extension-system";
-import gitDiff from "@phosphor-icons/core/regular/git-diff.svg";
 import { defineSettings, setting } from "../../kernel/settings";
 import DiffNotice from "./DiffNotice.svelte";
 import InlineDiffBar from "./InlineDiffBar.svelte";
-import DiffPane from "./DiffPane.svelte";
 import { gpuiDiffHost } from "./diffHost";
 import type { DiffMode } from "./model";
-import { DIFF_PANE_TYPE, DiffService } from "./service";
+import { DiffService } from "./service";
 
 export const diffSettings = defineSettings({
   mode: setting.enum({
@@ -36,18 +34,6 @@ export const diff = {
     });
     service.configure(config.mode);
     ctx.settings.onLive((change) => service.configure((change.config as unknown as { mode: DiffMode }).mode));
-    ctx.slots.register("main", {
-      id: "diff",
-      key: DIFF_PANE_TYPE,
-      component: DiffPane,
-      props: {
-        title: (leafId: string) => service.paneTitle(leafId),
-        icon: gitDiff,
-        diff: service,
-        editor: ctx.editor,
-        layout: ctx.layout,
-      },
-    });
     // Drawn in the strip over a diff in an editor; a plugin adds what belongs to the file's changes.
     ctx.slots.declare("diff.inline.actions", "list");
     ctx.slots.register("editor.breadcrumbs", { id: "diff.inline", order: 10, component: InlineDiffBar, props: { diff: service, editor: ctx.editor } });
@@ -62,7 +48,7 @@ function registerCommands(ctx: Context, service: DiffService): void {
     const active = ctx.editor.active();
     return active !== null && active.path !== "";
   };
-  const inDiffOrFile = () => service.hasFocusedDiff() || hasFile();
+  const inDiffOrFile = () => service.hasFocusedDiffTab() || hasFile();
   ctx.commands.register({
     id: "diff.openFile",
     title: "Diff: show this file's changes",
@@ -85,23 +71,11 @@ function registerCommands(ctx: Context, service: DiffService): void {
     run: () => service.toggleInEditor(),
   });
   ctx.commands.register({
-    id: "diff.openPane",
-    title: "Diff: open this file's changes in a pane",
-    group: "Git",
-    keywords: "changes compare head split side by side",
-    when: hasFile,
-    run: async () => {
-      const active = ctx.editor.active();
-      if (active !== null) {
-        await service.openFile(active.path, "head");
-      }
-    },
-  });
-  ctx.commands.register({
     id: "diff.toggleMode",
     title: "Diff: switch between inline and side by side",
     group: "Git",
-    when: () => service.hasFocusedDiff() || service.hasFocusedDiffTab(),
+    keywords: "split side by side inline",
+    when: () => service.hasFocusedDiffTab(),
     run: () => service.toggleMode(),
   });
   ctx.commands.register({ id: "diff.nextChange", title: "Git: go to next change", group: "Git", when: inDiffOrFile, run: () => service.stepChange(1) });
@@ -117,7 +91,7 @@ function registerCommands(ctx: Context, service: DiffService): void {
     id: "git.unstageHunk",
     title: "Git: unstage hunk at cursor",
     group: "Git",
-    when: () => service.hasFocusedDiff(),
+    when: () => service.hasFocusedStagedDiff(),
     run: () => service.unstageHunk(),
   });
   ctx.commands.register({ id: "git.revertHunk", title: "Git: revert hunk at cursor", group: "Git", when: inDiffOrFile, run: () => service.revertHunk() });

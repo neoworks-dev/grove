@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Context as RootContext, type Context } from "@neoworks/extension-system";
-import { DIFF_PANE_TYPE, DiffService } from "../plugins/diff/service";
+import { DiffService } from "../plugins/diff/service";
 import { EditorService } from "../plugins/editor/service";
 import { LayoutService } from "../plugins/layout/service";
 import { FakeDiffHost, FakeDocuments } from "./support/fakeDiffHost";
@@ -52,16 +52,23 @@ function afterReapplyDelay(): Promise<void> {
 }
 
 describe("a diff tab in an editor pane", () => {
-  test("opens a diff tab of the file in the editor pane and draws the difference on it, with no diff pane", async () => {
+  test("opens a diff tab of the file in the editor pane and draws the difference on it, with no other pane", async () => {
     const setup = await setUp();
     expect(await setup.diff.showInEditor(FILE)).toBe(true);
     const leafId = setup.layout.focusedLeafId;
     const documentId = setup.editor.active()?.id as number;
-    expect(setup.layout.leafIds().filter((id) => setup.layout.paneTypeOf(id) === DIFF_PANE_TYPE)).toEqual([]);
+    expect(setup.layout.leafIds()).toEqual([leafId]);
     expect(setup.editor.tabsIn(leafId).map((tab) => tab.key)).toEqual([`${documentId}:diff`]);
     expect(setup.host.calls).toEqual([`apply inline new=${documentId} old=- "old\n"`]);
     expect(setup.host.sources).toEqual([`view:${leafId}~diff:diff`]);
-    expect(setup.diff.inlineView(leafId, documentId)).toEqual({ path: FILE, baseLabel: "HEAD", hunks: setup.host.found, gitBase: "head", mode: "inline" });
+    expect(setup.diff.inlineView(leafId, documentId)).toEqual({
+      path: FILE,
+      baseLabel: "HEAD",
+      hunks: setup.host.found,
+      gitBase: "head",
+      staged: false,
+      mode: "inline",
+    });
   });
 
   test("the file's own tab beside it shows no diff and keeps the git bars", async () => {
@@ -112,18 +119,15 @@ describe("a diff tab in an editor pane", () => {
     expect(setup.diff.inlineView(shown.leafId, shown.documentId)).toMatchObject({ baseLabel: "Before the agent", gitBase: null });
   });
 
-  test("an unstaged file is compared with the index, a staged one with HEAD, and a text is what the caller gave", async () => {
+  test("an unstaged file is compared with the index, and a text is what the caller gave", async () => {
     const setup = await setUp();
     await setup.diff.showInEditor(FILE, "index");
     const leafId = setup.layout.focusedLeafId;
     const documentId = setup.editor.active()?.id as number;
     expect(setup.host.calls[0]).toContain('"mid\n"');
     expect(setup.diff.inlineView(leafId, documentId)?.baseLabel).toBe("Index");
-    await setup.diff.showInEditor(FILE, "staged");
-    expect(setup.host.calls[1]).toContain('"old\n"');
-    expect(setup.diff.inlineView(leafId, documentId)?.baseLabel).toBe("HEAD");
     await setup.diff.showInEditor(FILE, { text: "first\n", label: "the agent's start" });
-    expect(setup.host.calls[2]).toContain('"first\n"');
+    expect(setup.host.calls[1]).toContain('"first\n"');
     expect(setup.diff.inlineView(leafId, documentId)).toMatchObject({ baseLabel: "the agent's start", gitBase: null });
   });
 
@@ -160,13 +164,6 @@ describe("a diff tab in an editor pane", () => {
     expect(setup.diff.inlineView(leafId, documentId)).toBeUndefined();
     expect(setup.diff.inlineViews()).toEqual([]);
     expect(setup.editor.hiddenSourcesIn(leafId, documentId, "diff")).toEqual([]);
-  });
-
-  test("a file that cannot be opened shows no diff, and no diff pane either", async () => {
-    const setup = await setUp();
-    setup.host.head.set("/repo/gone.rs", "was here\n");
-    expect(await setup.diff.showInEditor("/repo/gone.rs")).toBe(false);
-    expect(setup.layout.leafIds().filter((id) => setup.layout.paneTypeOf(id) === DIFF_PANE_TYPE)).toEqual([]);
   });
 
   test("showing it again for a file already showing it draws once more in the same tab", async () => {

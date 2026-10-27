@@ -309,7 +309,7 @@ export class AgentsService extends Service {
   }
 
   /**
-   * Shows how a file changed in a diff pane: against HEAD, or between the two texts a tool call
+   * Shows how a file changed in a diff tab: against HEAD, or between the two texts a tool call
    * reported when they are given. Without a diff view the file itself is shown.
    */
   openDiff(path: string, texts?: { oldText: string; newText: string }): void {

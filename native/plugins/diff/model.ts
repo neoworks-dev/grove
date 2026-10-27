@@ -9,7 +9,7 @@ export interface Hunk {
   newLen: number;
 }
 
-/** How a diff is laid out: one editor over the new text, or an editor for each text side by side. */
+/** How a diff is laid out: the removed lines between the new ones, or the old text beside the new. */
 export type DiffMode = "inline" | "split";
 
 /**
@@ -19,63 +19,7 @@ export type DiffMode = "inline" | "split";
  */
 export type DiffBase = "head" | "index" | "staged" | { text: string; label: string };
 
-/** A diff of one file in the working tree against a base. */
-export interface FileDiffRequest {
-  kind: "file";
-  path: string;
-  base: DiffBase;
-}
-
-/** A diff of two texts that belong to no file. `name` says what language they are. */
-export interface TextsDiffRequest {
-  kind: "texts";
-  name: string;
-  label: string;
-  oldText: string;
-  newText: string;
-}
-
-export type DiffRequest = FileDiffRequest | TextsDiffRequest;
-
-/** What `open` takes: a request, or just a file, which is compared with HEAD unless a base says otherwise. */
-export type DiffOpenRequest = DiffRequest | { path: string; base?: DiffBase };
-
-/** The request a call asked for, with a file's base filled in. */
-export function normalizeRequest(request: DiffOpenRequest): DiffRequest {
-  if ("kind" in request) {
-    return request;
-  }
-  let base: DiffBase = "head";
-  if (request.base !== undefined) {
-    base = request.base;
-  }
-  return { kind: "file", path: request.path, base };
-}
-
-/** What a pane keeps in its state: the diff it shows and how. */
-export interface DiffPaneState {
-  request: DiffRequest;
-  mode: DiffMode;
-}
-
-/** The last part of a path. */
-export function fileName(path: string): string {
-  const parts = path.split("/");
-  return parts[parts.length - 1];
-}
-
-/** Whether two requests ask for the same diff, so an open pane can be reused. */
-export function sameRequest(first: DiffRequest, second: DiffRequest): boolean {
-  if (first.kind === "file" && second.kind === "file") {
-    return first.path === second.path && baseLabel(first.base) === baseLabel(second.base);
-  }
-  if (first.kind === "texts" && second.kind === "texts") {
-    return first.name === second.name && first.oldText === second.oldText && first.newText === second.newText;
-  }
-  return false;
-}
-
-/** What the old side is called in the pane's header. */
+/** What the old side is called in the diff tab's strip. */
 export function baseLabel(base: DiffBase): string {
   if (base === "head") {
     return "HEAD";
@@ -87,14 +31,6 @@ export function baseLabel(base: DiffBase): string {
     return "Staged";
   }
   return base.label;
-}
-
-/** The name of the file a request is about, for the pane's title. */
-export function requestTitle(request: DiffRequest): string {
-  if (request.kind === "file") {
-    return fileName(request.path);
-  }
-  return fileName(request.name);
 }
 
 /** The hunk a row of the new text belongs to. A deletion belongs to the row after it. */
@@ -139,7 +75,7 @@ export function stepHunkRow(hunks: Hunk[], row: number, step: 1 | -1): number | 
   return before[before.length - 1];
 }
 
-/** "2 of 5", or "No changes" when there are none, for the pane's header. */
+/** "2 of 5", or "No changes" when there are none, for the diff tab's strip. */
 export function hunkPosition(hunks: Hunk[], row: number): string {
   if (hunks.length === 0) {
     return "No changes";

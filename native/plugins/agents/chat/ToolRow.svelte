@@ -43,7 +43,7 @@
     return p.muted;
   });
 
-  /** Shows a change in a diff pane, from the two texts the call reported. */
+  /** Shows a change in a diff tab, from the two texts the call reported. */
   function showDiff(diff: DiffComponent): void {
     const path = diff.path ?? "";
     const change = call.diffs.find((entry) => entry.path === path);

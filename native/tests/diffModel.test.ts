@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { baseLabel, hunkAtRow, hunkPosition, sameRequest, stepHunkRow, type Hunk } from "../plugins/diff/model";
+import { baseLabel, hunkAtRow, hunkPosition, stepHunkRow, type Hunk } from "../plugins/diff/model";
 
 const hunks: Hunk[] = [
   { oldStart: 2, oldLen: 1, newStart: 2, newLen: 1 },
@@ -51,15 +51,5 @@ describe("the header's words", () => {
     expect(baseLabel("index")).toBe("Index");
     expect(baseLabel("staged")).toBe("Staged");
     expect(baseLabel({ text: "x", label: "Before the agent" })).toBe("Before the agent");
-  });
-});
-
-describe("telling requests apart", () => {
-  test("the same file against the same base is the same diff", () => {
-    const head = { kind: "file", path: "/a.rs", base: "head" } as const;
-    expect(sameRequest(head, { kind: "file", path: "/a.rs", base: "head" })).toBe(true);
-    expect(sameRequest(head, { kind: "file", path: "/a.rs", base: "index" })).toBe(false);
-    expect(sameRequest(head, { kind: "file", path: "/b.rs", base: "head" })).toBe(false);
-    expect(sameRequest(head, { kind: "texts", name: "a.rs", label: "x", oldText: "", newText: "" })).toBe(false);
   });
 });

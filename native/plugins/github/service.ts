@@ -117,7 +117,7 @@ export interface GithubLayout {
 export interface GithubDiffs {
   /** Shows how a file differs from a text, drawn over the file in an editor. */
   showInEditor(path: string, base: { text: string; label: string }): Promise<boolean>;
-  /** Shows how two texts differ in a diff pane. */
+  /** Shows how two texts differ in a diff tab. */
   openTexts(name: string, oldText: string, newText: string, label: string): Promise<string | null>;
   /** A file as HEAD has it in the checked out repository. */
   headText(path: string): Promise<{ exists: boolean; text: string }>;
@@ -358,8 +358,8 @@ export class GithubService extends Service {
 
   /**
    * Shows one file of the pull request a pane shows. When the open folder has that repository at
-   * the pull request's head, the file opens in the editor with its changes drawn over it;
-   * otherwise the two versions open in a diff pane, since the file here is not the pull request's.
+   * the pull request's head, the file's diff tab shows its changes;
+   * otherwise a diff tab shows the two versions, since the file here is not the pull request's.
    */
   async openFile(leafId: string, file: PullFile): Promise<void> {
     const record = this.recordOf(leafId);

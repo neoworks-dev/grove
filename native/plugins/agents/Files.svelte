@@ -1,6 +1,6 @@
 <!--
   The files panel: the files the session's agent and its guests changed, as a folder tree with the
-  explorer's icons and git colours. Pressing a file shows its diff in a diff pane.
+  explorer's icons and git colours. Pressing a file shows its diff in a diff tab.
   Ported from neoworks-harness apps/gui (plugins/files).
 -->
 <script lang="ts">
@@ -36,7 +36,7 @@
     return guests.join(", ");
   }
 
-  /** A file's row was pressed: its diff opens in a diff pane. */
+  /** A file's row was pressed: its diff opens in a diff tab. */
   function openFile(node: ChangeTreeNode<FileEntry>): void {
     if (node.item !== undefined) {
       files.open(node.item);

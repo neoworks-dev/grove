@@ -9,6 +9,7 @@
   import arrowDown from "@phosphor-icons/core/regular/arrow-down.svg";
   import arrowUp from "@phosphor-icons/core/regular/arrow-up.svg";
   import columns from "@phosphor-icons/core/regular/columns.svg";
+  import minus from "@phosphor-icons/core/regular/minus.svg";
   import plus from "@phosphor-icons/core/regular/plus.svg";
   import rows from "@phosphor-icons/core/regular/rows.svg";
   import x from "@phosphor-icons/core/regular/x.svg";
@@ -62,7 +63,7 @@
     }}
   >
     <Text style={{ shrink: 0, paddingX: 6, radius: radius.sm, background: colors.raised, fontSize: fontSize.xxs, color: colors.muted }}>
-      Changes vs {view.baseLabel}
+      {#if view.staged}Staged changes{:else}Changes{/if} vs {view.baseLabel}
     </Text>
     <View style={{ flex: 1 }} />
     <Slot name="diff.inline.actions" props={{ leafId, documentId, path: view.path }} />
@@ -85,6 +86,12 @@
       <Button style={textButton} hover={{ background: colors.redSoft, color: colors.red }} onpress={() => act(() => diff.revertHunk())}>
         <Icon svg={arrowCounterClockwise} size={12} />
         <Text>Revert</Text>
+      </Button>
+    {/if}
+    {#if view.staged}
+      <Button style={textButton} hover={{ background: colors.hover, color: colors.text }} onpress={() => act(() => diff.unstageHunk())}>
+        <Icon svg={minus} size={12} />
+        <Text>Unstage</Text>
       </Button>
     {/if}
     <Tooltip text={view.mode === "split" ? "Inline" : "Side by side"} side="bottom" align="center">

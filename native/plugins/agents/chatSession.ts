@@ -316,7 +316,7 @@ export class ChatSession {
   }
 
   /**
-   * Shows how the file at an absolute path changed, in a diff pane when there is one: what the
+   * Shows how the file at an absolute path changed, in a diff tab when there is a diff view: what the
    * session's calls made of it when they add up to one change, else the file against HEAD.
    */
   openDiff(path: string): void {

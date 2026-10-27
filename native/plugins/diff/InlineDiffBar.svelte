@@ -1,7 +1,7 @@
 <!--
-  The strip over an editor pane that shows a diff over its file: what the file is compared with,
-  where the cursor is among the changes, and the buttons that move between and act on them. It
-  draws nothing for a document the pane shows without a diff.
+  The strip over an editor pane's diff tab: what the file is compared with, where the cursor is
+  among the changes, and the buttons that move between and act on them. It draws nothing over a
+  file's own tab.
 -->
 <script lang="ts">
   import { Button, Icon, Text, Tooltip, View } from "@neoworks/svelte-gpui/ui";
@@ -101,7 +101,7 @@
         </Button>
       </Tooltip>
     {/if}
-    <Tooltip text="Hide the changes" side="bottom" align="center">
+    <Tooltip text="Close the diff" side="bottom" align="center">
       <Button style={{ ...iconButton, size: 22 }} hover={iconButtonHover} onpress={() => act(() => diff.hideInEditor())}>
         <Icon svg={x} size={13} />
       </Button>

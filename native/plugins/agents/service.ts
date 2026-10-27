@@ -28,9 +28,6 @@ declare module "@neoworks/extension-system" {
 /** The pane type of an agent chat, the key of its entry in the `main` slot. */
 export const AGENT_PANE_TYPE = "agent";
 
-/** The editor's pane type (`EDITOR_PANE_TYPE` of the editor plugin), which an edit's diff pane splits off. */
-const EDITOR_PANE_TYPE = "editor";
-
 /** What the client is called in the daemon's hello, and the connector name its windows register under. */
 const CLIENT_NAME = "grove";
 
@@ -323,19 +320,33 @@ export class AgentsService extends Service {
   }
 
   /**
-   * Shows an edit the agent asks about as a diff in the editor. A diff pane splits off an editor
-   * pane rather than the chat, and the keyboard goes back to where it was, so the question can
-   * be answered at once. Returns the function that takes the diff away again.
+   * Shows an edit a session's agent asks about as a diff tab in the editor. Opening it focuses the
+   * editor, so the focus then goes to the pane that shows the session, where the question is
+   * answered. Returns the function that takes the diff away again.
    */
-  showEditQuestion(question: EditQuestion): () => void {
-    const focused = this.panes.focusedLeafId;
-    const editorLeafId = this.panes.leafIds().find((leafId) => this.panes.paneTypeOf(leafId) === EDITOR_PANE_TYPE);
-    if (editorLeafId !== undefined) {
-      this.panes.focus(editorLeafId);
-    }
+  showEditQuestion(sessionId: string, question: EditQuestion): () => void {
     const shown = this.openers.showEditQuestion(question);
-    void shown.opened.then(() => this.panes.focus(focused));
+    void shown.opened.then(() => {
+      const chatLeafId = this.paneOfSession(sessionId);
+      if (chatLeafId !== null) {
+        this.panes.focus(chatLeafId);
+      }
+    });
     return () => shown.close();
+  }
+
+  /** The pane that shows a session's chat, the focused one when several do, or null when none does. */
+  private paneOfSession(sessionId: string): string | null {
+    const showing = this.panes
+      .leafIds()
+      .filter((leafId) => this.panes.paneTypeOf(leafId) === AGENT_PANE_TYPE && this.sessionOfPane(leafId) === sessionId);
+    if (showing.includes(this.panes.focusedLeafId)) {
+      return this.panes.focusedLeafId;
+    }
+    if (showing.length === 0) {
+      return null;
+    }
+    return showing[0];
   }
 
   /** How the connection to the daemon is doing. Reactive. */
@@ -1072,7 +1083,7 @@ export class AgentsService extends Service {
       entry.chat = new ChatSession(client, sessionId, (source) => this.assetSource(source), {
         openFile: (path) => this.openFile(path),
         openDiff: (path, texts) => this.openDiff(path, texts),
-        showEditQuestion: (question) => this.showEditQuestion(question),
+        showEditQuestion: (question) => this.showEditQuestion(sessionId, question),
         directory: () => this.sessionInfo(sessionId)?.cwd,
         waiting: () => this.sessionInfo(sessionId)?.waiting,
         listFiles: (directory) => this.openers.listFiles(directory),

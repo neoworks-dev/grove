@@ -249,10 +249,57 @@ export type CloseChoice = "save" | "discard" | "cancel";
 /** A question the shell is waiting on, drawn by an overlay. */
 export type Prompt = { kind: "confirm-close"; documentId: number; title: string } | { kind: "open-file" };
 
-/** The tabs of one pane: documents in the order they were opened there, and the one shown. */
+/** What a tab shows of its document: the text itself, or how it differs from a base. */
+export type TabKind = "file" | "diff";
+
+/** One tab of a pane. A pane has at most one tab of each kind for a document. */
+interface PaneTab {
+  documentId: number;
+  kind: TabKind;
+}
+
+/** A tab as the tab strip and other plugins see it: its document, what it shows of it, and the key that names it in its pane. */
+export interface TabInfo extends BufferInfo {
+  kind: TabKind;
+  key: string;
+}
+
+/** The tabs of one pane: in the order they were opened there, and the one shown. */
 interface PaneTabs {
-  tabs: number[];
-  active: number | null;
+  tabs: PaneTab[];
+  active: PaneTab | null;
+}
+
+/** The key that names a tab in its pane, such as `7` for a file and `7:diff` for its diff. */
+export function tabKey(documentId: number, kind: TabKind): string {
+  if (kind === "diff") {
+    return `${documentId}:diff`;
+  }
+  return String(documentId);
+}
+
+/** The document and kind a tab key names. */
+function parseTabKey(key: string): PaneTab {
+  if (key.endsWith(":diff")) {
+    return { documentId: Number(key.slice(0, -":diff".length)), kind: "diff" };
+  }
+  return { documentId: Number(key), kind: "file" };
+}
+
+/**
+ * The id of the editor view that draws a pane's tab of a kind. A diff tab has a view of its own,
+ * so decorations a source puts under `view:<id>:` show on the diff tab alone.
+ */
+export function viewIdOf(leafId: string, kind: TabKind): string {
+  if (kind === "diff") {
+    return `${leafId}~diff`;
+  }
+  return leafId;
+}
+
+/** Whether two tabs are the same tab. */
+function sameTab(first: PaneTab, second: PaneTab): boolean {
+  return first.documentId === second.documentId && first.kind === second.kind;
 }
 
 /** What a pane hides when nothing asked it to; one array, so a view does not see a new value each time. */
@@ -263,8 +310,9 @@ export class EditorService extends Service {
   private paneTabs = new Map<string, PaneTabs>();
   private viewsByLeaf = new Map<string, EditorViewMethods>();
   private cursorsById = new Map<number, CursorInfo>();
-  /** The decoration sources a pane leaves out, by `leafId:documentId`. */
+  /** The decoration sources a pane's tab leaves out, by `leafId:tabKey`. */
   private hiddenSources = new Map<string, string[]>();
+  private diffTabListeners = new Set<(leafId: string, documentId: number) => void>();
   private promptState: Prompt | null = null;
   private answerClose: ((choice: CloseChoice) => void) | null = null;
   private messageText = "";
@@ -327,6 +375,30 @@ export class EditorService extends Service {
     this.panes.focus(leafId);
     this.setMessage("");
     return { documentId: summary.id, leafId };
+  }
+
+  /**
+   * Shows a document's diff tab in the pane an opened document goes to, giving it one if it has
+   * none, and gives that pane the focus. Resolves to the pane, or null when there is no editor
+   * pane. What the tab compares with is the diff plugin's business.
+   */
+  showDiffTab(documentId: number): string | null {
+    const leafId = this.targetLeafId();
+    if (leafId === null) {
+      return null;
+    }
+    this.showIn(leafId, documentId, true, "diff");
+    this.panes.focus(leafId);
+    this.setMessage("");
+    return leafId;
+  }
+
+  /** Hears when a pane's diff tab goes, closed or with its document. Returns the function that stops it. */
+  onDiffTabClosed(listener: (leafId: string, documentId: number) => void): () => void {
+    this.diffTabListeners.add(listener);
+    return () => {
+      this.diffTabListeners.delete(listener);
+    };
   }
 
   /**
@@ -427,35 +499,54 @@ export class EditorService extends Service {
     return this.activeIn(this.panes.focusedLeafId);
   }
 
-  /** The document a pane shows, or null. Reactive. */
+  /** The document a pane shows, whichever kind of tab shows it, or null. Reactive. */
   activeIn(leafId: string): BufferInfo | null {
     this.changes.track();
-    const activeId = this.paneTabs.get(leafId)?.active;
-    if (activeId === undefined || activeId === null) {
+    const active = this.paneTabs.get(leafId)?.active;
+    if (active === undefined || active === null) {
       return null;
     }
-    const info = this.documentsById.get(activeId);
+    const info = this.documentsById.get(active.documentId);
     if (!info) {
       return null;
     }
     return info;
   }
 
+  /** The tab a pane shows, or null. Reactive. */
+  activeTabIn(leafId: string): TabInfo | null {
+    this.changes.track();
+    const active = this.paneTabs.get(leafId)?.active;
+    if (active === undefined || active === null) {
+      return null;
+    }
+    return this.tabInfoOf(active);
+  }
+
   /** The tabs of a pane, in order. Reactive. */
-  tabsIn(leafId: string): BufferInfo[] {
+  tabsIn(leafId: string): TabInfo[] {
     this.changes.track();
     const pane = this.paneTabs.get(leafId);
     if (!pane) {
       return [];
     }
-    const tabs: BufferInfo[] = [];
-    for (const id of pane.tabs) {
-      const info = this.documentsById.get(id);
-      if (info) {
+    const tabs: TabInfo[] = [];
+    for (const tab of pane.tabs) {
+      const info = this.tabInfoOf(tab);
+      if (info !== null) {
         tabs.push(info);
       }
     }
     return tabs;
+  }
+
+  /** What is known about a tab's document, with the tab's kind and key; null for a document that is gone. */
+  private tabInfoOf(tab: PaneTab): TabInfo | null {
+    const info = this.documentsById.get(tab.documentId);
+    if (!info) {
+      return null;
+    }
+    return { ...info, kind: tab.kind, key: tabKey(tab.documentId, tab.kind) };
   }
 
   /** Where the newest cursor of a document is, or null before it has moved. Reactive. */
@@ -678,8 +769,8 @@ export class EditorService extends Service {
    * Sets which decoration sources a pane leaves out when it shows a document, such as the git bars
    * under a diff that draws its own. An empty list shows them again.
    */
-  hideSources(leafId: string, documentId: number, sources: string[]): void {
-    const key = `${leafId}:${documentId}`;
+  hideSources(leafId: string, documentId: number, sources: string[], kind: TabKind = "file"): void {
+    const key = `${leafId}:${tabKey(documentId, kind)}`;
     if (sources.length === 0) {
       this.hiddenSources.delete(key);
     } else {
@@ -688,10 +779,10 @@ export class EditorService extends Service {
     this.changes.notify();
   }
 
-  /** The decoration sources a pane leaves out for a document. Reactive. */
-  hiddenSourcesIn(leafId: string, documentId: number): string[] {
+  /** The decoration sources a pane's tab of a document leaves out. Reactive. */
+  hiddenSourcesIn(leafId: string, documentId: number, kind: TabKind = "file"): string[] {
     this.changes.track();
-    const sources = this.hiddenSources.get(`${leafId}:${documentId}`);
+    const sources = this.hiddenSources.get(`${leafId}:${tabKey(documentId, kind)}`);
     if (sources === undefined) {
       return NO_SOURCES;
     }
@@ -771,15 +862,22 @@ export class EditorService extends Service {
     };
   }
 
-  /** Shows a document the pane already has a tab for, and gives that pane the focus. */
-  select(leafId: string, documentId: number): void {
-    const pane = this.paneTabs.get(leafId);
-    if (!pane || !pane.tabs.includes(documentId)) {
+  /** Shows a document's tab of a kind that the pane already has, and gives that pane the focus. */
+  select(leafId: string, documentId: number, kind: TabKind = "file"): void {
+    const tab = this.findTab(leafId, { documentId, kind });
+    if (tab === null) {
       return;
     }
-    pane.active = documentId;
+    const pane = this.paneTabs.get(leafId) as PaneTabs;
+    pane.active = tab;
     this.panes.focus(leafId);
     this.setMessage("");
+  }
+
+  /** Like `select`, for the tab a key names, as the tab strip has it. */
+  selectKey(leafId: string, key: string): void {
+    const tab = parseTabKey(key);
+    this.select(leafId, tab.documentId, tab.kind);
   }
 
   /** Moves to the next tab of the focused pane (1) or the previous one (-1), wrapping at the ends. */
@@ -788,7 +886,8 @@ export class EditorService extends Service {
     if (!pane || pane.tabs.length < 2 || pane.active === null) {
       return;
     }
-    const position = pane.tabs.indexOf(pane.active);
+    const active = pane.active;
+    const position = pane.tabs.findIndex((tab) => sameTab(tab, active));
     const next = (position + step + pane.tabs.length) % pane.tabs.length;
     pane.active = pane.tabs[next];
     this.changes.notify();
@@ -800,29 +899,35 @@ export class EditorService extends Service {
   }
 
   /**
-   * Closes a pane's tab. The document stays open while another pane has a tab for it; closing
-   * its last tab closes the document, and asks first when it has unsaved changes. Resolves to
-   * false when the person chose to keep it.
+   * Closes a pane's tab of a document. The document stays open while it has another tab, in this
+   * pane or another; closing its last tab closes the document, and asks first when it has unsaved
+   * changes. Resolves to false when the person chose to keep it.
    */
-  async closeTab(leafId: string, documentId: number): Promise<boolean> {
-    const pane = this.paneTabs.get(leafId);
-    if (!pane || !pane.tabs.includes(documentId)) {
+  async closeTab(leafId: string, documentId: number, kind: TabKind = "file"): Promise<boolean> {
+    const tab = this.findTab(leafId, { documentId, kind });
+    if (tab === null) {
       return false;
     }
-    if (this.isShownElsewhere(documentId, leafId)) {
-      this.removeTab(leafId, documentId);
+    if (this.hasOtherTab(leafId, tab)) {
+      this.removeTab(leafId, tab);
       return true;
     }
     return this.close(documentId);
   }
 
+  /** Like `closeTab`, for the tab a key names, as the tab strip has it. */
+  closeKey(leafId: string, key: string): Promise<boolean> {
+    const tab = parseTabKey(key);
+    return this.closeTab(leafId, tab.documentId, tab.kind);
+  }
+
   /** Closes the focused pane's active tab, as the Close Tab menu item does. */
   async closeActiveTab(): Promise<boolean> {
-    const active = this.active();
+    const active = this.activeTabIn(this.panes.focusedLeafId);
     if (!active) {
       return false;
     }
-    return this.closeTab(this.panes.focusedLeafId, active.id);
+    return this.closeTab(this.panes.focusedLeafId, active.id, active.kind);
   }
 
   /**
@@ -928,60 +1033,92 @@ export class EditorService extends Service {
     return editorPane;
   }
 
-  /** Gives a pane a tab for a document, and shows it there when `activate` is set. */
-  private showIn(leafId: string, documentId: number, activate: boolean): void {
+  /** Gives a pane a tab of a kind for a document, and shows it there when `activate` is set. */
+  private showIn(leafId: string, documentId: number, activate: boolean, kind: TabKind = "file"): void {
     let pane = this.paneTabs.get(leafId);
     if (!pane) {
       pane = { tabs: [], active: null };
       this.paneTabs.set(leafId, pane);
     }
-    if (!pane.tabs.includes(documentId)) {
-      pane.tabs.push(documentId);
+    let tab = this.findTab(leafId, { documentId, kind });
+    if (tab === null) {
+      tab = { documentId, kind };
+      pane.tabs.push(tab);
     }
     if (activate || pane.active === null) {
-      pane.active = documentId;
+      pane.active = tab;
     }
     this.changes.notify();
   }
 
-  /** Whether a pane other than `leafId` has a tab for the document. */
-  private isShownElsewhere(documentId: number, leafId: string): boolean {
+  /** The pane's tab that is the same as `wanted`, or null when it has none. */
+  private findTab(leafId: string, wanted: PaneTab): PaneTab | null {
+    const pane = this.paneTabs.get(leafId);
+    if (!pane) {
+      return null;
+    }
+    const found = pane.tabs.find((tab) => sameTab(tab, wanted));
+    if (found === undefined) {
+      return null;
+    }
+    return found;
+  }
+
+  /** Whether the tab's document has a tab other than it, in its pane or another. */
+  private hasOtherTab(leafId: string, tab: PaneTab): boolean {
     for (const [otherLeafId, pane] of this.paneTabs) {
-      if (otherLeafId !== leafId && pane.tabs.includes(documentId)) {
+      const others = pane.tabs.filter((other) => other.documentId === tab.documentId && !(otherLeafId === leafId && sameTab(other, tab)));
+      if (others.length > 0) {
         return true;
       }
     }
     return false;
   }
 
-  /** Takes a tab out of a pane; if it was the shown one, the tab beside it is shown instead. */
-  private removeTab(leafId: string, documentId: number): void {
+  /** Whether a pane other than `leafId` has a tab for the document. */
+  private isShownElsewhere(documentId: number, leafId: string): boolean {
+    for (const [otherLeafId, pane] of this.paneTabs) {
+      if (otherLeafId !== leafId && pane.tabs.some((tab) => tab.documentId === documentId)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Takes a tab out of a pane; if it was the shown one, the tab beside it is shown instead. A diff tab's listeners hear it went. */
+  private removeTab(leafId: string, removed: PaneTab): void {
     const pane = this.paneTabs.get(leafId);
     if (!pane) {
       return;
     }
-    const position = pane.tabs.indexOf(documentId);
+    const position = pane.tabs.findIndex((tab) => sameTab(tab, removed));
     if (position === -1) {
       return;
     }
     pane.tabs.splice(position, 1);
-    if (pane.active === documentId) {
+    if (pane.active !== null && sameTab(pane.active, removed)) {
       pane.active = null;
       if (pane.tabs.length > 0) {
         pane.active = pane.tabs[Math.min(position, pane.tabs.length - 1)];
       }
     }
+    this.hiddenSources.delete(`${leafId}:${tabKey(removed.documentId, removed.kind)}`);
     this.changes.notify();
+    if (removed.kind === "diff") {
+      for (const listener of [...this.diffTabListeners]) {
+        listener(leafId, removed.documentId);
+      }
+    }
   }
 
-  /** Forgets a document that is closed, taking its tab out of every pane. */
+  /** Forgets a document that is closed, taking its tabs out of every pane. */
   private forget(documentId: number): void {
     for (const leafId of [...this.paneTabs.keys()]) {
-      this.removeTab(leafId, documentId);
+      this.removeTab(leafId, { documentId, kind: "diff" });
+      this.removeTab(leafId, { documentId, kind: "file" });
     }
     this.documentsById.delete(documentId);
     this.cursorsById.delete(documentId);
-    this.dropHiddenSources((key) => key.endsWith(`:${documentId}`));
     this.changes.notify();
   }
 
@@ -1028,7 +1165,7 @@ export class EditorService extends Service {
     return active.id;
   }
 
-  /** A pane was split: the new one shows what the old one shows. */
+  /** A pane was split: the new one shows the file the old one shows. A diff stays with its pane. */
   private paneSplit(newLeafId: string, sourceLeafId: string): void {
     if (this.panes.paneTypeOf(newLeafId) !== EDITOR_PANE_TYPE) {
       return;
@@ -1037,10 +1174,13 @@ export class EditorService extends Service {
     if (sourceActive === undefined || sourceActive === null) {
       return;
     }
-    this.showIn(newLeafId, sourceActive, true);
+    this.showIn(newLeafId, sourceActive.documentId, true);
   }
 
-  /** A pane closed: documents only it showed move to a pane that is still there, so none is lost from view. */
+  /**
+   * A pane closed: documents only it showed move to a pane that is still there, so none is lost
+   * from view. They move as files; the diff plugin takes the pane's diffs away with it.
+   */
   private paneClosed(leafId: string): void {
     this.vimStates.delete(leafId);
     this.dropHiddenSources((key) => key.startsWith(`${leafId}:`));
@@ -1054,9 +1194,9 @@ export class EditorService extends Service {
       this.changes.notify();
       return;
     }
-    for (const documentId of closed.tabs) {
-      if (!this.isShownElsewhere(documentId, leafId)) {
-        this.showIn(survivor, documentId, false);
+    for (const tab of closed.tabs) {
+      if (!this.isShownElsewhere(tab.documentId, leafId)) {
+        this.showIn(survivor, tab.documentId, false);
       }
     }
     this.changes.notify();

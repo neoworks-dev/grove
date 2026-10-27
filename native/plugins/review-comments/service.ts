@@ -7,7 +7,7 @@
 import { Service, type Context } from "@neoworks/extension-system";
 import { createChangeSignal, type ChangeSignal } from "../../kernel/reactive";
 import type { DiffService, InlineEntry } from "../diff/service";
-import type { Decoration, EditorService } from "../editor/service";
+import { viewIdOf, type Decoration, type EditorService } from "../editor/service";
 import {
   DRAFT_ROWS,
   cardRows,
@@ -175,8 +175,8 @@ export class ReviewCommentsService extends Service {
   /** Whether the pane that has the focus shows a diff, so a comment can be started in it. Reactive. */
   canComment(): boolean {
     const leafId = this.panes.focusedLeafId;
-    const active = this.editor.activeIn(leafId);
-    if (active === null) {
+    const active = this.editor.activeTabIn(leafId);
+    if (active === null || active.kind !== "diff") {
       return false;
     }
     return this.shownFile(leafId, active.id) !== undefined;
@@ -235,8 +235,8 @@ export class ReviewCommentsService extends Service {
   /** Starts a comment on the lines the focused pane's selection covers, or on the cursor's line. */
   async beginAtSelection(): Promise<void> {
     const leafId = this.panes.focusedLeafId;
-    const active = this.editor.activeIn(leafId);
-    if (active === null || this.shownFile(leafId, active.id) === undefined) {
+    const active = this.editor.activeTabIn(leafId);
+    if (active === null || active.kind !== "diff" || this.shownFile(leafId, active.id) === undefined) {
       this.diff.tell("Show a file's changes to comment on them.");
       return;
     }
@@ -634,7 +634,7 @@ export class ReviewCommentsService extends Service {
 
   /** Puts a file's blocks on its document in a pane, unless they are what is there already. */
   private async drawFile(key: string, shown: InlineEntry): Promise<void> {
-    const source = `view:${shown.leafId}:review`;
+    const source = `view:${viewIdOf(shown.leafId, "diff")}:review`;
     const decorations = this.blocksOf(shown);
     const json = JSON.stringify(decorations);
     const before = this.drawn.get(key);

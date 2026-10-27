@@ -5,7 +5,6 @@ import type { EditDiffOpener } from "../../plugins/agents/editDiffs";
 
 export const noEditDiffs: Omit<EditDiffOpener, "showInEditor"> = {
   hideFromFile: async () => {},
-  openTexts: async () => null,
-  closePane: () => {},
-  diffPaneIds: () => [],
+  showTextsInEditor: async () => null,
+  closeDiffTab: async () => {},
 };

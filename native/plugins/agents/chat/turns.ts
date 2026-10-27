@@ -6,7 +6,7 @@
 // Plain functions, so they are tested without a window. Ported from Grove's own agent pane
 // (lib/agents/turns.ts, toolRuns.ts and changedFiles.ts).
 
-import type { Component, DiffComponent, ViewItem } from "@suite/protocol/types";
+import type { Component, DiffComponent, TextComponent, ViewItem } from "@suite/protocol/types";
 import type { CallFacts } from "../calls";
 import { baseName, hasDoc } from "./components";
 import { diffStats } from "./diff";
@@ -30,6 +30,12 @@ export interface ChangedFile {
 
 export type ChatRow =
   | { kind: "item"; key: string; item: ViewItem }
+  /**
+   * One top-level block of an agent's reply. A reply is drawn as a row per block, so the list builds
+   * only the part of a long reply that is near the window. The first part carries the item's label
+   * and bullet, the last the room below it.
+   */
+  | { kind: "part"; key: string; item: ViewItem; component: TextComponent; first: boolean; last: boolean }
   /** The line a folded turn is reduced to. */
   | { kind: "turn"; key: string; foldKey: string; open: boolean; tallies: Tally[]; messages: number; steps: number }
   /** What a folded turn changed. */
@@ -108,7 +114,7 @@ export function chatRows(shown: readonly ViewItem[], facts: ChatFacts): ChatRow[
   sections.forEach((section, index) => {
     const inFlight = facts.running && index === sections.length - 1;
     if (section.header !== undefined) {
-      rows.push({ kind: "item", key: section.header.ref, item: section.header });
+      pushItems(rows, [section.header]);
     }
     if (inFlight) {
       pushItems(rows, section.body);
@@ -144,11 +150,56 @@ function pushSettled(rows: ChatRow[], section: Section, facts: ChatFacts): void 
   pushItems(rows, fold.kept);
 }
 
-/** Every item as a row of its own. */
+/** Every item as a row of its own, or a reply as its parts. */
 function pushItems(rows: ChatRow[], items: readonly ViewItem[]): void {
   for (const item of items) {
-    rows.push({ kind: "item", key: item.ref, item });
+    rows.push(...rowsOfItem(item));
   }
+}
+
+/**
+ * The part rows of each reply that has been split, by the reply's item. The daemon's view replaces an
+ * item whenever it changes, so a reply that did not change keeps its rows, and the list draws none of
+ * them again.
+ */
+const partRows = new WeakMap<ViewItem, ChatRow[]>();
+
+/** The rows of one item: a reply in markdown gets a row per top-level block, anything else one row. */
+function rowsOfItem(item: ViewItem): ChatRow[] {
+  const component = item.component;
+  if (item.kind !== "agent" || component.type !== "text" || component.blocks.length < 2) {
+    return [{ kind: "item", key: item.ref, item }];
+  }
+  const known = partRows.get(item);
+  if (known !== undefined) {
+    return known;
+  }
+  const parts = partsOf(item, component);
+  partRows.set(item, parts);
+  return parts;
+}
+
+/** A reply's blocks as rows, each with the reply's text style and one block. */
+function partsOf(item: ViewItem, component: TextComponent): ChatRow[] {
+  const count = component.blocks.length;
+  return component.blocks.map(
+    (block, index): ChatRow => ({
+      kind: "part",
+      key: partKey(item, index),
+      item,
+      component: { ...component, blocks: [block] },
+      first: index === 0,
+      last: index === count - 1,
+    }),
+  );
+}
+
+/** A part's key. The first part has the item's own, which keeps its row when a reply grows past one block. */
+function partKey(item: ViewItem, index: number): string {
+  if (index === 0) {
+    return item.ref;
+  }
+  return `${item.ref}#${index}`;
 }
 
 /** The items as rows, with each run of settled calls folded into a row. */
@@ -169,7 +220,7 @@ function pushRuns(rows: ChatRow[], items: readonly ViewItem[], facts: ChatFacts)
       continue;
     }
     flush();
-    rows.push({ kind: "item", key: item.ref, item });
+    pushItems(rows, [item]);
   }
   flush();
 }

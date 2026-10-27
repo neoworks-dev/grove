@@ -179,7 +179,7 @@
       <ChangeTree roots={sections} iconSet={icons.iconSet()} rowHeight={ROW_HEIGHT} selected={selectedKey} onopen={openFile}>
         {#snippet header(node: ChangeTreeNode<ChangeEntry>, info: TreeRow)}
           {@const entries = node.key === STAGED_SECTION ? groups.staged : groups.unstaged}
-          <View style={{ direction: "row", align: "center", gap: 2, flex: 1, minWidth: 0, height: "full" }} onpress={() => info.toggle()}>
+          <View style={{ direction: "row", align: "center", gap: 2, minWidth: 0, height: ROW_HEIGHT }} onpress={() => info.toggle()}>
             <Text style={{ flex: 1, minWidth: 0, truncate: true, fontSize: fontSize.xxs, color: colors.dim, uppercase: true }}>{node.name}</Text>
             {#if node.key === STAGED_SECTION}
               <Button style={{ ...buttonStyle, color: colors.dim }} hover={{ background: colors.hover, color: colors.text }} onpress={() => void changes.unstageAll()}>

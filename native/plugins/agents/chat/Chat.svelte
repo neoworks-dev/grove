@@ -72,19 +72,25 @@
     {#key width}
       <List items={rows} key={(entry: ChatRow) => entry.key} stickToEnd style={{ flex: 1, minHeight: 0 }}>
         {#snippet row(entry: ChatRow)}
-          {#if entry.kind === "item"}
-            <ChatItem item={entry.item} />
-          {:else if entry.kind === "turn"}
-            <FoldRow foldKey={entry.foldKey} open={entry.open} tallies={entry.tallies} messages={entry.messages} steps={entry.steps} />
-          {:else if entry.kind === "run"}
-            <FoldRow foldKey={entry.foldKey} open={entry.open} tallies={entry.tallies} />
-            {#if entry.open}
-              {#each entry.items as item (item.ref)}
+          <!--
+            The list hands a row anew whenever it measures one, though the row is the same. Read
+            through a derived, which only passes on a different row, the row's parts are not drawn
+            again: a long reply would otherwise lay out its markdown again on every resize.
+          -->
+          {@const chatRow = entry}
+          {#if chatRow.kind === "item"}
+            <ChatItem item={chatRow.item} />
+          {:else if chatRow.kind === "turn"}
+            <FoldRow foldKey={chatRow.foldKey} open={chatRow.open} tallies={chatRow.tallies} messages={chatRow.messages} steps={chatRow.steps} />
+          {:else if chatRow.kind === "run"}
+            <FoldRow foldKey={chatRow.foldKey} open={chatRow.open} tallies={chatRow.tallies} />
+            {#if chatRow.open}
+              {#each chatRow.items as item (item.ref)}
                 <ChatItem {item} />
               {/each}
             {/if}
-          {:else if entry.kind === "files"}
-            <ChangedFiles files={entry.files} />
+          {:else if chatRow.kind === "files"}
+            <ChangedFiles files={chatRow.files} />
           {:else}
             <WorkingBar {tokens} />
           {/if}

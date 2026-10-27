@@ -11,7 +11,8 @@
   import TabStrip, { type TabEntry } from "../panel/TabStrip.svelte";
   import { activeEditorTheme, type EditorTheme } from "../theme/editorTheme";
   import { colors, fontSize } from "../theme/tokens";
-  import type { EditorService, EditorViewMethods } from "./service";
+  import gitDiff from "@phosphor-icons/core/regular/git-diff.svg";
+  import { viewIdOf, type EditorService, type EditorViewMethods, type TabInfo } from "./service";
 
   /** How wide the minimap is, in pixels: the strip the editor paints and the view over it that takes the pointer. */
   const MINIMAP_WIDTH = 90;
@@ -50,8 +51,16 @@
   let draggingMinimap = $state(false);
 
   const tabs = $derived(service.tabsIn(leafId));
-  const active = $derived(service.activeIn(leafId));
-  const entries = $derived<TabEntry[]>(tabs.map((tab) => ({ id: String(tab.id), title: tab.title, dirty: tab.dirty })));
+  const active = $derived(service.activeTabIn(leafId));
+  const entries = $derived<TabEntry[]>(tabs.map(entryOf));
+
+  /** A tab as the tab strip draws it: a diff tab has the diff icon in front of its file's name. */
+  function entryOf(tab: TabInfo): TabEntry {
+    if (tab.kind === "diff") {
+      return { id: tab.key, title: tab.title, icon: gitDiff, dirty: tab.dirty };
+    }
+    return { id: tab.key, title: tab.title, dirty: tab.dirty };
+  }
 
   // Commands reach the editor through the service while it is mounted.
   $effect(() => {
@@ -108,23 +117,23 @@
     draggingMinimap = false;
   }
 
-  /** Shows the tab with this id in this pane. */
-  function selectTab(tabId: string): void {
-    service.select(leafId, Number(tabId));
+  /** Shows the tab with this key in this pane. */
+  function selectTab(key: string): void {
+    service.selectKey(leafId, key);
   }
 
-  /** Closes the tab with this id in this pane, asking about unsaved changes first. */
-  function closeTab(tabId: string): void {
-    void service.closeTab(leafId, Number(tabId));
+  /** Closes the tab with this key in this pane, asking about unsaved changes first. */
+  function closeTab(key: string): void {
+    void service.closeKey(leafId, key);
   }
 </script>
 
 <View style={{ flex: 1, minHeight: 0 }}>
   {#if entries.length > 0}
-    <TabStrip tabs={entries} activeId={active ? String(active.id) : ""} onselect={selectTab} onclose={closeTab} />
+    <TabStrip tabs={entries} activeId={active ? active.key : ""} onselect={selectTab} onclose={closeTab} />
   {/if}
   {#if active}
-    <Slot name="editor.breadcrumbs" props={{ leafId, documentId: active.id, goto: (line: number, character: number) => void view?.goto(line, character) }} />
+    <Slot name="editor.breadcrumbs" props={{ leafId, documentId: active.id, tabKind: active.kind, goto: (line: number, character: number) => void view?.goto(line, character) }} />
     <View style={{ flex: 1, minHeight: 0 }} buttons={["right"]} ondown={pressEditor}>
       <Editor
         bind:this={view}
@@ -132,8 +141,8 @@
         key={`editor-${leafId}`}
         document={active.id}
         pane={leafId}
-        viewId={leafId}
-        hideSources={service.hiddenSourcesIn(leafId, active.id)}
+        viewId={viewIdOf(leafId, active.kind)}
+        hideSources={service.hiddenSourcesIn(leafId, active.id, active.kind)}
         minimap={MINIMAP_WIDTH}
         sequencePending={service.sequencePending()}
         leaderKey={service.leaderKeyBound()}
@@ -143,7 +152,7 @@
         ongoto={(event) => void service.reveal(event.path, event.line, event.character)}
         onplaces={placeRows}
       />
-      <Slot name="editor.overlay" props={{ leafId, documentId: active.id, places, rightInset: MINIMAP_WIDTH }} />
+      <Slot name="editor.overlay" props={{ leafId, documentId: active.id, tabKind: active.kind, places, rightInset: MINIMAP_WIDTH }} />
       <View
         buttons={["left"]}
         style={{ position: "absolute", top: 0, right: 0, bottom: 0, width: MINIMAP_WIDTH, cursor: "pointer" }}

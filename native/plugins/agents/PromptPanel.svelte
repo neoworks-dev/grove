@@ -6,6 +6,7 @@
   (plugins/composer).
 -->
 <script lang="ts">
+  import { untrack } from "svelte";
   import { Button, Input, Scroll, Text, View } from "@neoworks/svelte-gpui/ui";
   import type { KeyEvent } from "@neoworks/svelte-gpui/ui";
   import type { ComposerModel } from "./composerModel";
@@ -35,16 +36,25 @@
   let root: ReturnType<typeof View> | undefined = $state();
   let noteInput: ReturnType<typeof Input> | undefined = $state();
 
-  // The keys go to the panel while its pane has the focus, as when the focus comes back from the
-  // diff of the edit being asked about; when the note field opens they go there, and back after it.
-  $effect(() => {
-    if (!paneFocused) {
-      return;
-    }
+  /** Gives the keys to the panel, or to the note field while it is open. */
+  function takeKeys(): void {
     if (note === undefined) {
       root?.focus();
     } else {
       noteInput?.focus();
+    }
+  }
+
+  // The keys go to the panel when it appears; when the note field opens they go there, and back after it.
+  $effect(() => {
+    takeKeys();
+  });
+
+  // They come back to it whenever its pane gets the focus again, as after the diff of the edit
+  // being asked about opened in the editor.
+  $effect(() => {
+    if (paneFocused) {
+      untrack(takeKeys);
     }
   });
 

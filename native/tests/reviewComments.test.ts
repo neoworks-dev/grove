@@ -114,7 +114,7 @@ async function setUp(files: MemoryFiles = new MemoryFiles(), show = true): Promi
 
 /** The blocks the review put on the pane's document. */
 function blocksOf(setup: Setup): BlockDecoration[] {
-  const decorations = setup.documents.decorations.get(`${setup.documentId}/view:${setup.leafId}:review`);
+  const decorations = setup.documents.decorations.get(`${setup.documentId}/view:${setup.leafId}~diff:review`);
   if (decorations === undefined) {
     return [];
   }

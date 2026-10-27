@@ -6,7 +6,7 @@
 -->
 <script lang="ts">
   import { Button, Input, Scroll, Text, View, type KeyEvent } from "@neoworks/svelte-gpui/ui";
-  import type { EditorService } from "../editor/service";
+  import type { EditorService, TabKind } from "../editor/service";
   import { colors, fontSize, radius } from "../theme/tokens";
   import { DRAFT_ROWS, EDITOR_LINE_HEIGHT, wrapText } from "./model";
   import { rowOfBlockKey, type ReviewCommentsService } from "./service";
@@ -25,9 +25,11 @@
     };
     /** Space kept free at the right edge, for the minimap. */
     rightInset: number;
+    /** What the pane's tab shows of the document; comments are offered on a diff tab only. */
+    tabKind: TabKind;
   }
 
-  let { review, leafId, documentId, places, rightInset }: Props = $props();
+  let { review, leafId, documentId, places, rightInset, tabKind }: Props = $props();
 
   /** The height of the card's header row; the card's border takes the rest of a row. */
   const HEADER_HEIGHT = EDITOR_LINE_HEIGHT - 2;
@@ -37,6 +39,9 @@
 
   let hoveredRow = $state<number | null>(null);
   const commentable = $derived.by(() => {
+    if (tabKind !== "diff") {
+      return [];
+    }
     const rows = new Set(review.rowsFor(leafId, documentId));
     return places.rows.filter((place) => rows.has(place.row));
   });

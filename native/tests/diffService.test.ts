@@ -115,7 +115,7 @@ describe("opening a diff", () => {
 
   test("two texts can be compared without a file", async () => {
     const setup = await setUp();
-    const leafId = (await setup.diff.openTexts("b.rs", "one\n", "two\n", "Before the agent")) as string;
+    const leafId = (await setup.diff.open({ kind: "texts", name: "b.rs", oldText: "one\n", newText: "two\n", label: "Before the agent" })) as string;
     const view = setup.diff.view(leafId);
     expect(view?.baseLabel).toBe("Before the agent");
     expect(view?.editable).toBe(false);

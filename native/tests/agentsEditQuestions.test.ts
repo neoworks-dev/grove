@@ -67,25 +67,24 @@ describe("the edit questions", () => {
 });
 
 /** A diff opener that records what it was asked to do. */
-function recordingOpener(existingPanes: string[] = []): EditDiffOpener & { calls: string[] } {
+function recordingOpener(): EditDiffOpener & { calls: string[] } {
   const calls: string[] = [];
   return {
     calls,
     showInEditor: async (path, base) => {
-      calls.push(`inline ${path} against ${base.text.trim()}`);
+      calls.push(`file ${path} against ${base.text.trim()}`);
       return true;
     },
     hideFromFile: async (path) => {
       calls.push(`hide ${path}`);
     },
-    openTexts: async (name, oldText, newText) => {
+    showTextsInEditor: async (name, oldText, newText) => {
       calls.push(`texts ${name} ${oldText.trim()}>${newText.trim()}`);
-      return "diff-1";
+      return { leafId: "editor", documentId: 7 };
     },
-    closePane: (leafId) => {
-      calls.push(`close ${leafId}`);
+    closeDiffTab: async (tab) => {
+      calls.push(`close ${tab.leafId}:${tab.documentId}`);
     },
-    diffPaneIds: () => existingPanes,
   };
 }
 
@@ -96,30 +95,21 @@ const question = (written: boolean): EditQuestion => ({
 });
 
 describe("showing an edit question", () => {
-  test("an edit not written yet is a diff pane of the two texts, closed again afterwards", async () => {
+  test("an edit not written yet is a diff tab of the two texts, closed again afterwards", async () => {
     const diff = recordingOpener();
     const shown = showEditQuestion(diff, question(false));
     await shown.opened;
     shown.close();
     await Promise.resolve();
-    expect(diff.calls).toEqual(["texts a.ts one>two", "close diff-1"]);
+    expect(diff.calls).toEqual(["texts a.ts one>two", "close editor:7"]);
   });
 
-  test("a written edit is drawn over the file, and taken off it afterwards", async () => {
+  test("a written edit is the file's diff tab, closed again afterwards", async () => {
     const diff = recordingOpener();
     const shown = showEditQuestion(diff, question(true));
     await shown.opened;
     shown.close();
     await Promise.resolve();
-    expect(diff.calls).toEqual(["inline /repo/a.ts against one", "hide /repo/a.ts"]);
-  });
-
-  test("a diff pane that was open before stays open", async () => {
-    const diff = recordingOpener(["diff-1"]);
-    const shown = showEditQuestion(diff, question(false));
-    await shown.opened;
-    shown.close();
-    await Promise.resolve();
-    expect(diff.calls).toEqual(["texts a.ts one>two"]);
+    expect(diff.calls).toEqual(["file /repo/a.ts against one", "hide /repo/a.ts"]);
   });
 });

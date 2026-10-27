@@ -1,5 +1,5 @@
-// The `diff` service: diff views in panes of their own, diffs drawn over a file in an ordinary
-// editor pane (see `inline.ts`), and the hunk actions that work on the editor's cursor.
+// The `diff` service: diff tabs in an ordinary editor pane (see `inline.ts`), diff views in panes
+// of their own, and the hunk actions that work on the editor's cursor.
 //
 // A diff view is one or two editors over documents, with the difference drawn as
 // decorations by the host (see `src/diff.rs`): inline, one editor over the new text with the removed
@@ -7,14 +7,14 @@
 // the rows of a hunk line up. The right side is the file's own document, so it can be edited and
 // saved as in any editor. State is plain fields with a change signal, never `$state`.
 //
-// Other plugins open a diff with `ctx.diff.open({ path, base: "head" })`, or of two texts with
-// `ctx.diff.openTexts(...)`.
+// Other plugins open a diff tab with `ctx.diff.showInEditor(path, base)`, or of two texts with
+// `ctx.diff.showTextsInEditor(...)`.
 
 import { Service, type Context } from "@neoworks/extension-system";
 import { createChangeSignal, type ChangeSignal } from "../../kernel/reactive";
 import type { DocumentEvent, EditorService, EditorViewMethods } from "../editor/service";
 import type { DiffHost, GitBase } from "./diffHost";
-import { InlineDiffs, type InlineEntry, type InlineView } from "./inline";
+import { InlineDiffs, type DiffTab, type InlineEntry, type InlineView } from "./inline";
 import {
   baseLabel,
   fileName,
@@ -33,7 +33,7 @@ import {
 
 export { baseLabel, fileName, hunkPosition, stepHunkRow } from "./model";
 export type { DiffBase, DiffMode, DiffOpenRequest, DiffRequest, Hunk } from "./model";
-export type { InlineEntry, InlineView } from "./inline";
+export type { DiffTab, InlineEntry, InlineView } from "./inline";
 
 declare module "@neoworks/extension-system" {
   interface Context {
@@ -62,7 +62,6 @@ export interface DiffPaneHost {
   setPaneState(leafId: string, patch: Record<string, unknown>): void;
   splitFocused(direction: "row" | "column", paneTypeId?: string): void;
   focus(leafId: string): void;
-  closeLeaf(leafId: string): void;
   onPaneClosed(listener: (leafId: string) => void): () => void;
   onPaneSplit(listener: (newLeafId: string, sourceLeafId: string) => void): () => void;
 }
@@ -152,6 +151,10 @@ export class DiffService extends Service {
       warn: (message) => ctx.logger.warn(message),
     });
     ctx.effect(() => editor.onDocumentEvent((event) => this.handleDocumentEvent(event)), "diff.documents");
+    ctx.effect(
+      () => editor.onDiffTabClosed((leafId, documentId) => this.background(this.inline.hide(leafId, documentId), "closing a diff")),
+      "diff.tabs",
+    );
     ctx.effect(() => panes.onPaneClosed((leafId) => this.background(this.paneClosed(leafId), "closing a pane")), "diff.paneClosed");
     ctx.effect(() => panes.onPaneSplit((newLeafId, sourceLeafId) => this.paneSplit(newLeafId, sourceLeafId)), "diff.paneSplit");
     if (options.onFilesChanged) {
@@ -187,60 +190,54 @@ export class DiffService extends Service {
   }
 
   /**
-   * Shows how a file differs from a base in an editor pane, drawn over the file itself, with the
-   * file opened there if it is not. Falls back to a diff pane when there is no editor pane to
-   * draw it in. Resolves to whether it was drawn in an editor.
+   * Shows how a file differs from a base in a diff tab of an editor pane, the file opened there if
+   * it is not. Resolves to whether it could be shown.
    */
   async showInEditor(path: string, base: DiffBase = "head"): Promise<boolean> {
-    if (await this.inline.show(path, base)) {
-      return true;
-    }
-    await this.openFile(path, base);
-    return false;
+    return this.inline.show(path, base);
   }
 
-  /** Shows the focused editor's file against HEAD over the file, or takes the diff off when it shows. */
+  /** Shows how two texts differ in a diff tab. `name`'s extension says what language they are. Resolves to the tab, or null. */
+  showTextsInEditor(name: string, oldText: string, newText: string, label = "Before"): Promise<DiffTab | null> {
+    return this.inline.showTexts(name, oldText, newText, label);
+  }
+
+  /** From the focused pane's file, opens its diff against HEAD; from its diff tab, goes back to the file. */
   async toggleInEditor(): Promise<void> {
-    const active = this.editor.active();
-    if (active === null || active.path === "") {
-      this.say("Open a file to see its changes.");
+    const leafId = this.panes.focusedLeafId;
+    const active = this.editor.activeTabIn(leafId);
+    if (active !== null && active.kind === "diff") {
+      await this.closeDiffTab({ leafId, documentId: active.id });
+      this.editor.select(leafId, active.id);
       return;
     }
-    const leafId = this.panes.focusedLeafId;
-    if (this.inline.viewOf(leafId, active.id) !== undefined) {
-      await this.inline.hide(leafId, active.id);
+    if (active === null || active.path === "") {
+      this.say("Open a file to see its changes.");
       return;
     }
     await this.inline.show(active.path, "head");
   }
 
-  /** Takes the diff off the file the focused editor shows. */
+  /** Closes the focused pane's diff tab, when that is the tab it shows. */
   async hideInEditor(): Promise<void> {
-    const active = this.editor.active();
-    if (active !== null) {
-      await this.inline.hide(this.panes.focusedLeafId, active.id);
+    const leafId = this.panes.focusedLeafId;
+    const active = this.editor.activeTabIn(leafId);
+    if (active !== null && active.kind === "diff") {
+      await this.closeDiffTab({ leafId, documentId: active.id });
     }
   }
 
-  /** Takes the diff off a file in every editor pane that draws one over it. */
+  /** Closes every diff tab of a file. */
   async hideFromFile(path: string): Promise<void> {
     const shown = this.inline.entries().filter((entry) => entry.path === path);
     for (const entry of shown) {
-      await this.inline.hide(entry.leafId, entry.documentId);
+      await this.closeDiffTab(entry);
     }
   }
 
-  /** Closes a diff pane. A pane that shows something else by now is left alone. */
-  closePane(leafId: string): void {
-    if (!this.paneIds().includes(leafId)) {
-      return;
-    }
-    this.panes.closeLeaf(leafId);
-  }
-
-  /** The panes that are diff panes. */
-  diffPaneIds(): string[] {
-    return this.paneIds();
+  /** Closes a diff tab, which takes its diff away; a document that has no other tab closes with it. */
+  async closeDiffTab(tab: DiffTab): Promise<void> {
+    await this.editor.closeTab(tab.leafId, tab.documentId, "diff");
   }
 
   /** Every diff drawn over a file in an editor pane. Reactive. */
@@ -262,9 +259,13 @@ export class DiffService extends Service {
     this.say(text);
   }
 
-  /** The diff an editor pane shows over a document, or undefined. Reactive. */
+  /** The diff an editor pane shows of a document, or undefined unless the pane shows that document's diff tab. Reactive. */
   inlineView(leafId: string, documentId: number): InlineView | undefined {
     this.changes.track();
+    const active = this.editor.activeTabIn(leafId);
+    if (active === null || active.kind !== "diff" || active.id !== documentId) {
+      return undefined;
+    }
     return this.inline.viewOf(leafId, documentId);
   }
 
@@ -273,9 +274,13 @@ export class DiffService extends Service {
     return this.open({ kind: "file", path, base }, mode);
   }
 
-  /** Shows how two texts differ. `name`'s extension says what language they are. */
-  openTexts(name: string, oldText: string, newText: string, label = "Before", mode?: DiffMode): Promise<string | null> {
-    return this.open({ kind: "texts", name, label, oldText, newText }, mode);
+  /** Shows how two texts differ in a diff tab, and resolves to its pane. `name`'s extension says what language they are. */
+  async openTexts(name: string, oldText: string, newText: string, label = "Before"): Promise<string | null> {
+    const tab = await this.showTextsInEditor(name, oldText, newText, label);
+    if (tab === null) {
+      return null;
+    }
+    return tab.leafId;
   }
 
   /** What a diff pane draws, or undefined while it has nothing to show. Reactive. */
@@ -797,7 +802,7 @@ export class DiffService extends Service {
 
   /** The hunks the focused editor's document has: those of the diff drawn over it, else against HEAD. */
   private async hunksOfEditor(documentId: number, path: string): Promise<Hunk[]> {
-    const shown = this.inline.viewOf(this.panes.focusedLeafId, documentId);
+    const shown = this.inlineView(this.panes.focusedLeafId, documentId);
     if (shown !== undefined) {
       return shown.hunks;
     }
@@ -830,17 +835,21 @@ export class DiffService extends Service {
   /** Puts back the lines of the hunk under the cursor of the active editor, as HEAD has them. */
   private async revertInEditor(): Promise<void> {
     const active = this.editor.active();
-    if (active === null || active.path === "") {
+    if (active === null) {
       this.say("Open a file to revert its changes.");
       return;
     }
-    const shown = this.inline.viewOf(this.panes.focusedLeafId, active.id);
+    const shown = this.inlineView(this.panes.focusedLeafId, active.id);
+    if (shown !== undefined && shown.gitBase === null) {
+      this.say("Only a diff of a file against HEAD or the index can be reverted.");
+      return;
+    }
+    if (active.path === "") {
+      this.say("Open a file to revert its changes.");
+      return;
+    }
     let base: GitBase = "head";
-    if (shown !== undefined) {
-      if (shown.gitBase === null) {
-        this.say("Only a diff against HEAD or the index can be reverted.");
-        return;
-      }
+    if (shown !== undefined && shown.gitBase !== null) {
       base = shown.gitBase;
     }
     const row = this.rowOf(active.id);

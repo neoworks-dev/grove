@@ -1,10 +1,11 @@
-// A diff drawn over a file in an ordinary editor pane, instead of in a pane of its own. The
-// difference is put on the file's own document as decorations that belong to that pane alone, so
-// the same file in another pane stays as it was, and the git bars that the diff replaces are left
-// out of the pane while it shows. The old text is HEAD, the index or a text a caller names, and it
-// is read again when the file changes on disk or something is staged.
+// A diff as a tab of an ordinary editor pane: the same editor, showing the file's own document (or,
+// for two texts, a document that belongs to no file) with the difference put on it as decorations
+// that belong to that pane's diff tab alone. The file's own tab and other panes stay as they were,
+// and the git bars that the diff replaces are left out of the diff tab. The old text is HEAD, the
+// index or a text a caller names, and it is read again when the file changes on disk or something
+// is staged. The diff goes when its tab closes.
 
-import type { EditorService } from "../editor/service";
+import { viewIdOf, type EditorService } from "../editor/service";
 import type { DiffHost, GitBase } from "./diffHost";
 import { baseLabel, type DiffBase, type Hunk } from "./model";
 
@@ -32,8 +33,14 @@ export interface InlineEntry {
   hunks: Hunk[];
 }
 
+/** A diff tab: the pane it is in and the document it shows. */
+export interface DiffTab {
+  leafId: string;
+  documentId: number;
+}
+
 /** What the inline diffs need from the editor. */
-type InlineEditor = Pick<EditorService, "openPathIn" | "hideSources" | "setDecorationsOf" | "refreshViews">;
+type InlineEditor = Pick<EditorService, "openDocument" | "openText" | "showDiffTab" | "hideSources" | "setDecorationsOf" | "refreshViews">;
 
 /** What the inline diffs tell the service that owns them. */
 export interface InlineHooks {
@@ -77,31 +84,52 @@ export class InlineDiffs {
    * or the file cannot be read, which leaves it to the caller to show the diff another way.
    */
   async show(path: string, wanted: DiffBase): Promise<boolean> {
-    const shown = await this.editor.openPathIn(path);
-    if (shown === null || shown.leafId === null) {
+    const documentId = await this.editor.openDocument(path);
+    if (documentId === null) {
       return false;
     }
-    const base = drawnBase(wanted);
-    const key = keyOf(shown.leafId, shown.documentId);
+    return (await this.showDocument(documentId, path, drawnBase(wanted))) !== null;
+  }
+
+  /**
+   * Shows how a text differs from an old one in a diff tab: the new text is a document that
+   * belongs to no file, and `name`'s extension says what language it is. Resolves to the tab, or
+   * null when there is no editor pane to show it in.
+   */
+  async showTexts(name: string, oldText: string, newText: string, label: string): Promise<DiffTab | null> {
+    const documentId = await this.editor.openText(name, newText);
+    if (documentId === null) {
+      return null;
+    }
+    return this.showDocument(documentId, name, { text: oldText, label });
+  }
+
+  /** Gives a document a diff tab and draws its changes there. Resolves to the tab, or null when it could not be shown. */
+  private async showDocument(documentId: number, path: string, base: DiffBase): Promise<DiffTab | null> {
+    const leafId = this.editor.showDiffTab(documentId);
+    if (leafId === null) {
+      return null;
+    }
+    const key = keyOf(leafId, documentId);
     const known = this.overlays.get(key);
     if (known !== undefined) {
       clearTimeout(known.reapplyTimer);
     }
-    const overlay = this.makeOverlay(shown.leafId, shown.documentId, path, base);
+    const overlay = this.makeOverlay(leafId, documentId, path, base);
     this.overlays.set(key, overlay);
-    this.editor.hideSources(shown.leafId, shown.documentId, REPLACED_SOURCES);
+    this.editor.hideSources(leafId, documentId, REPLACED_SOURCES, "diff");
     try {
       await this.read(overlay);
     } catch (error) {
-      await this.hide(shown.leafId, shown.documentId);
+      await this.hide(leafId, documentId);
       this.hooks.say(describeError(error));
-      return false;
+      return null;
     }
     await this.draw(overlay);
-    return true;
+    return { leafId, documentId };
   }
 
-  /** Takes the diff off a pane's document. */
+  /** Takes the diff off a pane's document, once its diff tab is gone. */
   async hide(leafId: string, documentId: number): Promise<void> {
     const key = keyOf(leafId, documentId);
     const overlay = this.overlays.get(key);
@@ -110,7 +138,6 @@ export class InlineDiffs {
     }
     clearTimeout(overlay.reapplyTimer);
     this.overlays.delete(key);
-    this.editor.hideSources(leafId, documentId, []);
     this.hooks.changed();
     try {
       await this.editor.setDecorationsOf(documentId, sourceOf(leafId), []);
@@ -276,9 +303,9 @@ function keyOf(leafId: string, documentId: number): string {
   return `${leafId}:${documentId}`;
 }
 
-/** The name a pane's diff decorations are drawn under. It belongs to the pane alone. */
+/** The name a pane's diff decorations are drawn under. It belongs to the pane's diff tab alone. */
 function sourceOf(leafId: string): string {
-  return `view:${leafId}:diff`;
+  return `view:${viewIdOf(leafId, "diff")}:diff`;
 }
 
 /** The base an inline diff draws: the staged diff is the index against HEAD, which the file itself cannot show, so HEAD stands in. */

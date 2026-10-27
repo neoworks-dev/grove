@@ -10,6 +10,7 @@
   import arrowUp from "@phosphor-icons/core/regular/arrow-up.svg";
   import columns from "@phosphor-icons/core/regular/columns.svg";
   import plus from "@phosphor-icons/core/regular/plus.svg";
+  import rows from "@phosphor-icons/core/regular/rows.svg";
   import x from "@phosphor-icons/core/regular/x.svg";
   import type { EditorService } from "../editor/service";
   import Slot from "../../kernel/slots/Slot.svelte";
@@ -45,16 +46,6 @@
     void action();
   }
 
-  /** Opens the same comparison in a diff pane, beside the editor, and takes the strip's diff off. */
-  function openPane(): void {
-    if (view === undefined || view.gitBase === null) {
-      return;
-    }
-    const path = view.path;
-    const base = view.gitBase;
-    void diff.hideInEditor();
-    void diff.openFile(path, base);
-  }
 </script>
 
 {#if view !== undefined}
@@ -95,12 +86,12 @@
         <Icon svg={arrowCounterClockwise} size={12} />
         <Text>Revert</Text>
       </Button>
-      <Tooltip text="Side by side" side="bottom" align="center">
-        <Button style={{ ...iconButton, size: 22 }} hover={iconButtonHover} onpress={openPane}>
-          <Icon svg={columns} size={13} />
-        </Button>
-      </Tooltip>
     {/if}
+    <Tooltip text={view.mode === "split" ? "Inline" : "Side by side"} side="bottom" align="center">
+      <Button style={{ ...iconButton, size: 22 }} hover={iconButtonHover} onpress={() => act(() => diff.toggleMode(leafId))}>
+        <Icon svg={view.mode === "split" ? rows : columns} size={13} />
+      </Button>
+    </Tooltip>
     <Tooltip text="Close the diff" side="bottom" align="center">
       <Button style={{ ...iconButton, size: 22 }} hover={iconButtonHover} onpress={() => act(() => diff.hideInEditor())}>
         <Icon svg={x} size={13} />

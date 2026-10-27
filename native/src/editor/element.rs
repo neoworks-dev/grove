@@ -61,6 +61,8 @@ const BLOCK_OPACITY: f32 = 0.12;
 const WORD_OPACITY: f32 = 0.38;
 /// How opaque the filler rows of a side-by-side diff are.
 const FILLER_OPACITY: f32 = 0.07;
+/// How wide the line between the two sides of a side-by-side diff is.
+const DIVIDER_WIDTH: Pixels = px(1.0);
 
 /// What the last frame drew, kept on the editor so the pointer can be mapped to a position
 /// and the cursor kept in view.
@@ -202,6 +204,10 @@ struct LineEndPaint {
 }
 
 pub struct Frame {
+    /// The box the frame is painted in: the whole element, or one side of a side-by-side diff.
+    bounds: Bounds<Pixels>,
+    /// The old side of a side-by-side diff, painted left of this one, when the view has one.
+    companion: Option<Box<Frame>>,
     rows: Vec<PaintedRow>,
     gutter_width: Pixels,
     /// Behind the text: the parts of selections in view.
@@ -234,6 +240,8 @@ impl Frame {
     fn empty(theme: EditorTheme) -> Frame {
         Frame {
             theme,
+            bounds: Bounds::default(),
+            companion: None,
             rows: Vec::new(),
             gutter_width: px(0.0),
             selections: Vec::new(),
@@ -308,15 +316,27 @@ impl Element for EditorElement {
         let sources = editor.sources.clone();
         let minimap_width = editor.minimap_width;
         let furthest_scroll = editor.furthest_scroll();
+        let mut own_bounds = bounds;
+        let mut companion = None;
+        if let Some(companion_id) = editor.companion {
+            let (left, right) = split_bounds(bounds);
+            own_bounds = right;
+            companion = editor.read_document(companion_id, |state| {
+                let (_, frame) =
+                    build_frame(state, scroll_top, left, window, &theme, &status, options, None, &sources, false);
+                Box::new(frame)
+            });
+        }
         let built = editor.read(|state| {
             let (mut layout, mut frame) =
-                build_frame(state, scroll_top, bounds, window, &theme, &status, options, jump, &sources);
+                build_frame(state, scroll_top, own_bounds, window, &theme, &status, options, jump, &sources, true);
             attach_minimap(&mut layout, &mut frame, state, minimap_width, scroll_top, furthest_scroll);
             (layout, frame)
         });
         let Some((layout, mut frame)) = built else {
             return Frame::empty(theme);
         };
+        frame.companion = companion;
         let entity = self.editor.clone();
         let popovers = self.editor.update(cx, |editor, cx| {
             let popovers = popup::build(&entity, editor, &layout, &theme, bounds, window, cx);
@@ -350,68 +370,95 @@ impl Element for EditorElement {
         let focused = focus.is_focused(window);
         window.handle_input(&focus, ElementInputHandler::new(bounds, self.editor.clone()), cx);
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
-            let theme = &frame.theme;
-            window.paint_quad(fill(bounds, theme.background));
-            for row in &frame.rows {
-                let line = Bounds::new(point(bounds.left(), row.top), size(bounds.size.width, LINE_HEIGHT));
-                if let Some(tint) = row.tint {
-                    window.paint_quad(fill(line, tint));
-                }
-                for (span, color) in &row.emphasis {
-                    window.paint_quad(fill(*span, *color));
-                }
-                if row.is_cursor_row {
-                    window.paint_quad(fill(line, theme.current_line));
-                }
-            }
-            indent_paint::paint_guides(&frame.guides, theme, window);
-            for (range, color) in &frame.range_backgrounds {
-                window.paint_quad(fill(*range, *color));
-            }
-            for selection in &frame.selections {
-                window.paint_quad(fill(*selection, theme.selection));
-            }
-            jump_paint::paint_behind_text(&frame.jump, theme, window);
-            vim_paint::paint_behind_text(&frame.vim, theme, focused, window);
-            for mark in &frame.gutter_marks {
-                paint_gutter_mark(mark, window, cx);
-            }
-            let text_left = bounds.left() + frame.gutter_width;
-            for row in &frame.rows {
-                if let Some((number, number_left)) = &row.number {
-                    let _ = number.paint(point(*number_left, row.top), LINE_HEIGHT, window, cx);
-                }
-                let _ = row.text.paint(point(text_left, row.top), LINE_HEIGHT, window, cx);
-            }
-            for line_end in &frame.line_ends {
-                let _ = line_end.shaped.paint(line_end.origin, LINE_HEIGHT, window, cx);
-            }
-            for underline in &frame.decoration_underlines {
-                let style = UnderlineStyle {
-                    thickness: DECORATION_UNDERLINE_THICKNESS,
-                    color: Some(underline.color),
-                    wavy: underline.wavy,
-                };
-                window.paint_underline(underline.origin, underline.width, &style);
-            }
-            for underline in &frame.underlines {
-                window.paint_quad(fill(*underline, theme.foreground));
-            }
-            let mut cursor_color = theme.cursor;
-            if !focused {
-                cursor_color.a = 0.4;
-            }
-            for cursor in &frame.cursors {
-                window.paint_quad(fill(*cursor, cursor_color));
-            }
-            jump_paint::paint_over_text(&frame.jump, theme, window, cx);
-            if let Some(minimap) = &frame.minimap {
-                minimap::paint(minimap, theme, window);
-            }
-            vim_paint::paint_command_line(&frame.vim, theme, window, cx);
+            window.paint_quad(fill(bounds, frame.theme.background));
         });
+        if let Some(companion) = &frame.companion {
+            paint_frame(companion, focused, window, cx);
+            let divider = Bounds::new(
+                point(frame.bounds.left() - DIVIDER_WIDTH, bounds.top()),
+                size(DIVIDER_WIDTH, bounds.size.height),
+            );
+            window.paint_quad(fill(divider, frame.theme.indent_guide));
+        }
+        paint_frame(frame, focused, window, cx);
         self.report_latency(frame, paint_started, cx);
     }
+}
+
+/// Paints one frame inside its box: the cursors' lines, decorated ranges, selections, the gutter,
+/// the text, what is drawn under and after it, and the cursors.
+fn paint_frame(frame: &Frame, focused: bool, window: &mut Window, cx: &mut App) {
+    let bounds = frame.bounds;
+    window.with_content_mask(Some(ContentMask { bounds }), |window| {
+        let theme = &frame.theme;
+        for row in &frame.rows {
+            let line = Bounds::new(point(bounds.left(), row.top), size(bounds.size.width, LINE_HEIGHT));
+            if let Some(tint) = row.tint {
+                window.paint_quad(fill(line, tint));
+            }
+            for (span, color) in &row.emphasis {
+                window.paint_quad(fill(*span, *color));
+            }
+            if row.is_cursor_row {
+                window.paint_quad(fill(line, theme.current_line));
+            }
+        }
+        indent_paint::paint_guides(&frame.guides, theme, window);
+        for (range, color) in &frame.range_backgrounds {
+            window.paint_quad(fill(*range, *color));
+        }
+        for selection in &frame.selections {
+            window.paint_quad(fill(*selection, theme.selection));
+        }
+        jump_paint::paint_behind_text(&frame.jump, theme, window);
+        vim_paint::paint_behind_text(&frame.vim, theme, focused, window);
+        for mark in &frame.gutter_marks {
+            paint_gutter_mark(mark, window, cx);
+        }
+        let text_left = bounds.left() + frame.gutter_width;
+        for row in &frame.rows {
+            if let Some((number, number_left)) = &row.number {
+                let _ = number.paint(point(*number_left, row.top), LINE_HEIGHT, window, cx);
+            }
+            let _ = row.text.paint(point(text_left, row.top), LINE_HEIGHT, window, cx);
+        }
+        for line_end in &frame.line_ends {
+            let _ = line_end.shaped.paint(line_end.origin, LINE_HEIGHT, window, cx);
+        }
+        for underline in &frame.decoration_underlines {
+            let style = UnderlineStyle {
+                thickness: DECORATION_UNDERLINE_THICKNESS,
+                color: Some(underline.color),
+                wavy: underline.wavy,
+            };
+            window.paint_underline(underline.origin, underline.width, &style);
+        }
+        for underline in &frame.underlines {
+            window.paint_quad(fill(*underline, theme.foreground));
+        }
+        let mut cursor_color = theme.cursor;
+        if !focused {
+            cursor_color.a = 0.4;
+        }
+        for cursor in &frame.cursors {
+            window.paint_quad(fill(*cursor, cursor_color));
+        }
+        jump_paint::paint_over_text(&frame.jump, theme, window, cx);
+        if let Some(minimap) = &frame.minimap {
+            minimap::paint(minimap, theme, window);
+        }
+        vim_paint::paint_command_line(&frame.vim, theme, window, cx);
+    });
+}
+
+/// Splits the element's box for a side-by-side diff: the old side on the left, the document on
+/// the right, with the divider between them.
+fn split_bounds(bounds: Bounds<Pixels>) -> (Bounds<Pixels>, Bounds<Pixels>) {
+    let half = (bounds.size.width / 2.0).floor();
+    let left = Bounds::new(bounds.origin, size(half - DIVIDER_WIDTH, bounds.size.height));
+    let right =
+        Bounds::new(point(bounds.left() + half, bounds.top()), size(bounds.size.width - half, bounds.size.height));
+    (left, right)
 }
 
 impl EditorElement {
@@ -503,7 +550,9 @@ fn block_map(blocks: &[PlacedBlock]) -> BlockMap {
 
 /// Shapes the rows in view, coloured by their syntax, and works out where the selections,
 /// cursors and decorations are drawn, for a state scrolled to `scroll_top` in a box of `bounds`.
-/// Also gives the layout the pointer is mapped through.
+/// Also gives the layout the pointer is mapped through. A frame that is not `active`, such as the
+/// old side of a side-by-side diff, has no cursors or selections, only the text and its decorations.
+#[allow(clippy::too_many_arguments)]
 fn build_frame(
     state: &EditorState,
     scroll_top: Pixels,
@@ -514,6 +563,7 @@ fn build_frame(
     options: EditorOptions,
     jump: Option<&JumpSession>,
     sources: &SourceFilter,
+    active: bool,
 ) -> (Layout, Frame) {
     let line_count = state.buffer().line_count();
     let digits = line_count.max(1).to_string().len();
@@ -531,7 +581,10 @@ fn build_frame(
         (first_display_row..end_display_row).map(|row| blocks_map.row_at(row)).collect();
     let text_rows = text_row_range(&display_rows);
 
-    let visible_selections = state.selections().in_rows(text_rows.start, text_rows.end);
+    let mut visible_selections = state.selections().in_rows(text_rows.start, text_rows.end);
+    if !active {
+        visible_selections = &[];
+    }
     let cursor_rows: HashSet<usize> = visible_selections
         .iter()
         .filter(|selection| selection.is_empty())
@@ -608,10 +661,17 @@ fn build_frame(
         .iter()
         .flat_map(|selection| vim_paint::selection_spans(&layout, selection, status.selection))
         .collect();
-    let underlines = state.marked_range().map(|(start, end)| underline_bounds(&layout, start, end)).unwrap_or_default();
     let character_width = vim_paint::character_width(window, theme.foreground);
-    let (cursors, block_cursors) = vim_paint::cursor_bounds_for(&layout, visible_selections, status, character_width);
-    let vim = VimPaint { block_cursors, command_line: vim_paint::command_line(&layout, status, theme, window) };
+    let mut underlines = Vec::new();
+    let mut cursors = Vec::new();
+    let mut vim = VimPaint::default();
+    if active {
+        underlines = state.marked_range().map(|(start, end)| underline_bounds(&layout, start, end)).unwrap_or_default();
+        let (cursor_bounds, block_cursors) =
+            vim_paint::cursor_bounds_for(&layout, visible_selections, status, character_width);
+        cursors = cursor_bounds;
+        vim = VimPaint { block_cursors, command_line: vim_paint::command_line(&layout, status, theme, window) };
+    }
     let (range_backgrounds, decoration_underlines) = range_decorations(&layout, &decorations, theme);
     let mut guides = Vec::new();
     if options.indent_guides {
@@ -623,6 +683,8 @@ fn build_frame(
         jump_paint = jump_paint::build(session, &layout, theme, character_width, window);
     }
     let frame = Frame {
+        bounds,
+        companion: None,
         rows: painted_rows,
         gutter_width,
         selections,

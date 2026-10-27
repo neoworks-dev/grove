@@ -7,7 +7,7 @@
 
 import { viewIdOf, type EditorService } from "../editor/service";
 import type { DiffHost, GitBase } from "./diffHost";
-import { baseLabel, type DiffBase, type Hunk } from "./model";
+import { baseLabel, type DiffBase, type DiffMode, type Hunk } from "./model";
 
 /** How long edits are gathered before the difference is worked out again. */
 const REAPPLY_DELAY_MS = 120;
@@ -23,6 +23,8 @@ export interface InlineView {
   hunks: Hunk[];
   /** The git base the hunk actions can read again, or null when the old side is a text. */
   gitBase: GitBase | null;
+  /** Inline, or side by side with the old text left of the document. */
+  mode: DiffMode;
 }
 
 /** A diff drawn over a file in a pane: which pane and document, and what it found. */
@@ -40,10 +42,15 @@ export interface DiffTab {
 }
 
 /** What the inline diffs need from the editor. */
-type InlineEditor = Pick<EditorService, "openDocument" | "openText" | "showDiffTab" | "hideSources" | "setDecorationsOf" | "refreshViews">;
+type InlineEditor = Pick<
+  EditorService,
+  "openDocument" | "openText" | "setText" | "releaseDocument" | "showDiffTab" | "hideSources" | "setCompanion" | "setDecorationsOf" | "refreshViews"
+>;
 
-/** What the inline diffs tell the service that owns them. */
+/** What the inline diffs ask of and tell the service that owns them. */
 export interface InlineHooks {
+  /** The mode a new diff tab starts in, as the settings say. */
+  mode(): DiffMode;
   /** Something a view reads changed. */
   changed(): void;
   /** A sentence for the person. */
@@ -61,6 +68,11 @@ interface Overlay {
   base: DiffBase;
   oldText: string;
   hunks: Hunk[];
+  mode: DiffMode;
+  /** The document of the old text, which the tab draws beside the document in split mode; null inline. */
+  oldId: number | null;
+  /** The old text that document has, so it is only written again when the old text changed. */
+  oldIdText: string;
   /** The drawing in progress, which the next one waits for. */
   drawing: Promise<void>;
   /** The newest reading of the old text, so one that is overtaken drops what it read. */
@@ -112,10 +124,14 @@ export class InlineDiffs {
     }
     const key = keyOf(leafId, documentId);
     const known = this.overlays.get(key);
-    if (known !== undefined) {
-      clearTimeout(known.reapplyTimer);
-    }
     const overlay = this.makeOverlay(leafId, documentId, path, base);
+    if (known !== undefined) {
+      // The tab shows the new base in the mode it was in, with the old side's document it had.
+      clearTimeout(known.reapplyTimer);
+      overlay.mode = known.mode;
+      overlay.oldId = known.oldId;
+      overlay.oldIdText = known.oldIdText;
+    }
     this.overlays.set(key, overlay);
     this.editor.hideSources(leafId, documentId, REPLACED_SOURCES, "diff");
     try {
@@ -139,11 +155,55 @@ export class InlineDiffs {
     clearTimeout(overlay.reapplyTimer);
     this.overlays.delete(key);
     this.hooks.changed();
+    await this.releaseOldSide(overlay);
     try {
       await this.editor.setDecorationsOf(documentId, sourceOf(leafId), []);
     } catch (error) {
       this.hooks.warn(`diff: could not take a diff off document ${documentId}: ${describeError(error)}`);
     }
+  }
+
+  /** Shows a pane's diff of a document inline or side by side. */
+  async setMode(leafId: string, documentId: number, mode: DiffMode): Promise<void> {
+    const overlay = this.overlays.get(keyOf(leafId, documentId));
+    if (overlay === undefined || overlay.mode === mode) {
+      return;
+    }
+    overlay.mode = mode;
+    this.hooks.changed();
+    await this.draw(overlay);
+  }
+
+  /** Closes the document of an overlay's old side, which only side by side has. */
+  private async releaseOldSide(overlay: Overlay): Promise<void> {
+    const oldId = overlay.oldId;
+    if (oldId === null) {
+      return;
+    }
+    overlay.oldId = null;
+    overlay.oldIdText = "";
+    this.editor.setCompanion(overlay.leafId, overlay.documentId, null);
+    try {
+      await this.editor.releaseDocument(oldId);
+    } catch (error) {
+      this.hooks.warn(`diff: could not close the old side's document: ${describeError(error)}`);
+    }
+  }
+
+  /** Gives an overlay the document of its old text for side by side, with the text it has now. Resolves to its id, or null when it could not be made. */
+  private async oldSideOf(overlay: Overlay): Promise<number | null> {
+    if (overlay.oldId === null) {
+      overlay.oldId = await this.editor.openText(lastSegment(overlay.path), overlay.oldText);
+      overlay.oldIdText = overlay.oldText;
+    }
+    if (overlay.oldId !== null && overlay.oldIdText !== overlay.oldText) {
+      await this.editor.setText(overlay.oldId, overlay.oldText);
+      overlay.oldIdText = overlay.oldText;
+    }
+    if (overlay.oldId !== null) {
+      this.editor.setCompanion(overlay.leafId, overlay.documentId, overlay.oldId);
+    }
+    return overlay.oldId;
   }
 
   /** Every diff drawn over a file in a pane, with the file it is of and the changes found. */
@@ -162,7 +222,7 @@ export class InlineDiffs {
     if (overlay === undefined) {
       return undefined;
     }
-    return { path: overlay.path, baseLabel: baseLabel(overlay.base), hunks: overlay.hunks, gitBase: gitBaseOf(overlay.base) };
+    return { path: overlay.path, baseLabel: baseLabel(overlay.base), hunks: overlay.hunks, gitBase: gitBaseOf(overlay.base), mode: overlay.mode };
   }
 
   /** Works the difference out again after the document's text changed, once the edits stop. */
@@ -176,24 +236,25 @@ export class InlineDiffs {
     }
   }
 
-  /** A document closed: the diffs over it go with it. */
+  /** A document closed: the diffs over it go with it, and so do their old sides' documents. */
   onDocumentClosed(documentId: number): void {
-    for (const overlay of [...this.overlays.values()]) {
-      if (overlay.documentId === documentId) {
-        clearTimeout(overlay.reapplyTimer);
-        this.overlays.delete(keyOf(overlay.leafId, overlay.documentId));
-      }
-    }
-    this.hooks.changed();
+    this.drop((overlay) => overlay.documentId === documentId);
   }
 
-  /** A pane closed: the diffs it showed go with it. */
+  /** A pane closed: the diffs it showed go with it, and so do their old sides' documents. */
   onPaneClosed(leafId: string): void {
+    this.drop((overlay) => overlay.leafId === leafId);
+  }
+
+  /** Forgets the overlays a test picks out, closing their old sides' documents. */
+  private drop(picks: (overlay: Overlay) => boolean): void {
     for (const overlay of [...this.overlays.values()]) {
-      if (overlay.leafId === leafId) {
-        clearTimeout(overlay.reapplyTimer);
-        this.overlays.delete(keyOf(overlay.leafId, overlay.documentId));
+      if (!picks(overlay)) {
+        continue;
       }
+      clearTimeout(overlay.reapplyTimer);
+      this.overlays.delete(keyOf(overlay.leafId, overlay.documentId));
+      void this.releaseOldSide(overlay);
     }
     this.hooks.changed();
   }
@@ -219,6 +280,9 @@ export class InlineDiffs {
       base,
       oldText: "",
       hunks: [],
+      mode: this.hooks.mode(),
+      oldId: null,
+      oldIdText: "",
       drawing: Promise.resolve(),
       generation: 0,
       reapplyTimer: undefined,
@@ -278,13 +342,21 @@ export class InlineDiffs {
     if (!this.isCurrent(overlay)) {
       return;
     }
-    const hunks = await this.host.apply({
-      newId: overlay.documentId,
-      oldText: overlay.oldText,
-      mode: "inline",
-      source: sourceOf(overlay.leafId),
-    });
+    const options = { newId: overlay.documentId, oldText: overlay.oldText, source: sourceOf(overlay.leafId) };
+    let hunks: Hunk[];
+    if (overlay.mode === "split") {
+      const oldId = await this.oldSideOf(overlay);
+      if (oldId === null) {
+        return;
+      }
+      hunks = await this.host.apply({ ...options, oldId, mode: "split" });
+    } else {
+      await this.releaseOldSide(overlay);
+      hunks = await this.host.apply({ ...options, mode: "inline" });
+    }
     if (!this.isCurrent(overlay)) {
+      // The tab went while this drew; an old side made meanwhile goes with it.
+      await this.releaseOldSide(overlay);
       return;
     }
     overlay.hunks = hunks;
@@ -301,6 +373,11 @@ export class InlineDiffs {
 /** Names an overlay by its pane and document. */
 function keyOf(leafId: string, documentId: number): string {
   return `${leafId}:${documentId}`;
+}
+
+/** The last part of a path, which names the old side's document and picks its language. */
+function lastSegment(path: string): string {
+  return path.slice(path.lastIndexOf("/") + 1);
 }
 
 /** The name a pane's diff decorations are drawn under. It belongs to the pane's diff tab alone. */

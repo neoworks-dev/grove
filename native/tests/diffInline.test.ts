@@ -61,7 +61,7 @@ describe("a diff tab in an editor pane", () => {
     expect(setup.editor.tabsIn(leafId).map((tab) => tab.key)).toEqual([`${documentId}:diff`]);
     expect(setup.host.calls).toEqual([`apply inline new=${documentId} old=- "old\n"`]);
     expect(setup.host.sources).toEqual([`view:${leafId}~diff:diff`]);
-    expect(setup.diff.inlineView(leafId, documentId)).toEqual({ path: FILE, baseLabel: "HEAD", hunks: setup.host.found, gitBase: "head" });
+    expect(setup.diff.inlineView(leafId, documentId)).toEqual({ path: FILE, baseLabel: "HEAD", hunks: setup.host.found, gitBase: "head", mode: "inline" });
   });
 
   test("the file's own tab beside it shows no diff and keeps the git bars", async () => {
@@ -192,6 +192,51 @@ describe("a diff tab in an editor pane", () => {
     await settle(5);
     expect(setup.editor.activeTabIn(leafId)?.kind).toBe("file");
     expect(setup.diff.inlineViews()).toEqual([]);
+  });
+});
+
+describe("a diff tab side by side", () => {
+  test("the old text is a document the tab draws beside the file, and going back inline closes it", async () => {
+    const setup = await setUp();
+    await setup.diff.showInEditor(FILE);
+    const leafId = setup.layout.focusedLeafId;
+    const documentId = setup.editor.active()?.id as number;
+    await setup.diff.toggleMode();
+    const oldId = setup.editor.companionOf(leafId, documentId, "diff") as number;
+    expect(oldId).not.toBeNull();
+    expect(await setup.editor.textOf(oldId)).toBe("old\n");
+    expect(setup.host.calls[1]).toBe(`apply split new=${documentId} old=${oldId} "old\n"`);
+    expect(setup.diff.inlineView(leafId, documentId)?.mode).toBe("split");
+    expect(setup.editor.companionOf(leafId, documentId, "file")).toBeNull();
+
+    await setup.diff.toggleMode();
+    expect(setup.editor.companionOf(leafId, documentId, "diff")).toBeNull();
+    expect(setup.documents.summaries.has(oldId)).toBe(false);
+    expect(setup.host.calls[2]).toBe(`apply inline new=${documentId} old=- "old\n"`);
+  });
+
+  test("a diff tab opens side by side when the setting says so", async () => {
+    const setup = await setUp();
+    setup.diff.configure("split");
+    await setup.diff.showInEditor(FILE);
+    const leafId = setup.layout.focusedLeafId;
+    const documentId = setup.editor.active()?.id as number;
+    expect(setup.diff.inlineView(leafId, documentId)?.mode).toBe("split");
+    expect(setup.editor.companionOf(leafId, documentId, "diff")).not.toBeNull();
+  });
+
+  test("closing the tab closes the old side's document too", async () => {
+    const setup = await setUp();
+    setup.diff.configure("split");
+    await setup.editor.openPath(FILE);
+    await setup.diff.showInEditor(FILE);
+    const leafId = setup.layout.focusedLeafId;
+    const documentId = setup.editor.active()?.id as number;
+    const oldId = setup.editor.companionOf(leafId, documentId, "diff") as number;
+    await setup.editor.closeTab(leafId, documentId, "diff");
+    await settle(5);
+    expect(setup.documents.summaries.has(oldId)).toBe(false);
+    expect(setup.documents.summaries.has(documentId)).toBe(true);
   });
 });
 

@@ -80,6 +80,9 @@ pub struct Editor {
     documents: SharedDocuments,
     /// The document this view shows, set by the `document` prop; none shows an empty view.
     document: Option<DocumentId>,
+    /// The old side of a side-by-side diff, set by the `companion` prop: drawn read-only left of
+    /// the document, scrolled with it. The diff's fillers keep the two sides' rows level.
+    companion: Option<DocumentId>,
     /// This view's entity, once it has been listed in `VIEWS`.
     view: Option<EntityId>,
     focus: FocusHandle,
@@ -177,6 +180,7 @@ impl Editor {
         Editor {
             documents,
             document: None,
+            companion: None,
             view: None,
             focus: cx.focus_handle(),
             input: Box::new(StandardKeymap),
@@ -240,6 +244,12 @@ impl Editor {
     /// document. The documents are locked while it runs, so keep it short.
     fn read<R>(&self, read: impl FnOnce(&EditorState) -> R) -> Option<R> {
         let id = self.document?;
+        self.read_document(id, read)
+    }
+
+    /// Reads the state of any open document, such as the old side of a side-by-side diff. None
+    /// when it is not open.
+    fn read_document<R>(&self, id: DocumentId, read: impl FnOnce(&EditorState) -> R) -> Option<R> {
         let documents = self.documents.lock();
         let document = documents.get(id)?;
         Some(read(&document.state))
@@ -584,9 +594,13 @@ impl Editor {
         }
     }
 
-    /// The buffer position under a point in the window, or none before the first frame.
+    /// The buffer position under a point in the window, or none before the first frame and on the
+    /// old side of a side-by-side diff, which is left of the document's own box.
     fn position_at(&self, point: svelte_gpui::gpui::Point<Pixels>) -> Option<Position> {
         let layout = self.layout.as_ref()?;
+        if point.x < layout.bounds.left() {
+            return None;
+        }
         Some(layout.position_for_point(point))
     }
 
@@ -720,6 +734,11 @@ impl AppElement for Editor {
         }
         if name == "viewId" {
             self.sources.view = value.as_str().unwrap_or("").to_string();
+            cx.notify();
+            return;
+        }
+        if name == "companion" {
+            self.companion = value.as_u64();
             cx.notify();
             return;
         }

@@ -177,6 +177,23 @@ impl Documents {
         Ok(())
     }
 
+    /// Brings a document up to date with its file after another program changed it, keeping
+    /// its cursors and history. A document with unsaved changes is left alone, so they are not
+    /// lost. Says whether the text changed.
+    pub fn sync_with_disk(&mut self, id: DocumentId) -> io::Result<bool> {
+        let Some(document) = self.get_mut(id) else {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "this document is not open"));
+        };
+        let Some(path) = document.path().filter(|_| !document.detached).map(Path::to_path_buf) else {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "this document has no file"));
+        };
+        if document.state.is_modified() {
+            return Ok(false);
+        }
+        let text = std::fs::read_to_string(&path)?;
+        Ok(document.state.take_disk_text(&text))
+    }
+
     /// The id of the document that has a file open, if there is one.
     pub fn find_by_path(&self, path: &Path) -> Option<DocumentId> {
         let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());

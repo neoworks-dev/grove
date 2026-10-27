@@ -228,3 +228,40 @@ fn reloading_reads_the_file_again_and_forgets_the_edits() {
     assert!(!documents.get(id).unwrap().state.is_modified());
     assert!(documents.reload(99).is_err());
 }
+
+#[test]
+fn syncing_takes_the_new_text_and_keeps_the_cursor_and_history() {
+    let path = file_with("sync.rs", "one\ntwo\nthree\n");
+    let mut documents = Documents::new();
+    let id = documents.open(&path).unwrap().id;
+    documents.apply(id, &Command::PlaceCursor { at: Position { row: 2, column: 2 } }).unwrap();
+    std::fs::write(&path, "one\nTWO and more\nthree\n").unwrap();
+
+    assert!(documents.sync_with_disk(id).unwrap());
+    assert_eq!(text_of(&documents, id), "one\nTWO and more\nthree\n");
+    let state = &documents.get(id).unwrap().state;
+    assert!(!state.is_modified());
+    assert_eq!(state.selections().newest().head, Position { row: 2, column: 2 });
+
+    documents.apply(id, &Command::Undo).unwrap();
+    assert_eq!(text_of(&documents, id), "one\ntwo\nthree\n");
+}
+
+#[test]
+fn syncing_an_unchanged_file_does_nothing() {
+    let path = file_with("same.rs", "one\n");
+    let mut documents = Documents::new();
+    let id = documents.open(&path).unwrap().id;
+    assert!(!documents.sync_with_disk(id).unwrap());
+}
+
+#[test]
+fn syncing_leaves_unsaved_edits_alone() {
+    let path = file_with("unsaved.rs", "one\n");
+    let mut documents = Documents::new();
+    let id = documents.open(&path).unwrap().id;
+    type_text(&mut documents, id, "X");
+    std::fs::write(&path, "two\n").unwrap();
+    assert!(!documents.sync_with_disk(id).unwrap());
+    assert_eq!(text_of(&documents, id), "Xone\n");
+}

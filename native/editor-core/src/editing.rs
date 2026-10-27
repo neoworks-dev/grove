@@ -168,6 +168,17 @@ impl EditorState {
         edited(changed)
     }
 
+    /// Makes the text read `text` as one step for undo, replacing only the stretch that differs,
+    /// so selections and anchors outside it keep their place. Says whether the text changed.
+    pub(crate) fn replace_differing_text(&mut self, text: &str, now: Instant) -> bool {
+        let current = self.buffer.rope().to_string();
+        let Some((start, end, replacement)) = differing_stretch(&current, text) else {
+            return false;
+        };
+        let edits = Edits::new(vec![Edit::replace(start..end, replacement)]);
+        self.commit(edits, SelectionsAfter::StayBeforeReplacements, EditKind::Other, now)
+    }
+
     /// The composed text's range, or the newest selection's range when nothing is composed.
     fn composition_range(&self) -> (usize, usize) {
         if let Some((start, end)) = self.marked {
@@ -366,6 +377,23 @@ impl EditorState {
 /// An outcome for a command that edits: if the text changed, the view follows the newest cursor.
 pub(crate) fn edited(changed: bool) -> Outcome {
     Outcome { text_changed: changed, reveal_newest: changed, changed, ..Outcome::default() }
+}
+
+/// The stretch of `old` that has to be replaced to make it `new`, as character offsets into
+/// `old` and the text that goes there, found by trimming what both start and end with. None
+/// when the two are the same.
+fn differing_stretch(old: &str, new: &str) -> Option<(usize, usize, String)> {
+    let old: Vec<char> = old.chars().collect();
+    let new: Vec<char> = new.chars().collect();
+    let prefix = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
+    if prefix == old.len() && prefix == new.len() {
+        return None;
+    }
+    let old_rest = &old[prefix..];
+    let new_rest = &new[prefix..];
+    let suffix = old_rest.iter().rev().zip(new_rest.iter().rev()).take_while(|(a, b)| a == b).count();
+    let replacement: String = new_rest[..new_rest.len() - suffix].iter().collect();
+    Some((prefix, old.len() - suffix, replacement))
 }
 
 /// Replaces a selection with text.

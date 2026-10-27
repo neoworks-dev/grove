@@ -327,10 +327,14 @@ impl Element for EditorElement {
                 Box::new(frame)
             });
         }
+        // Side by side, each half is too narrow to give a strip of it to the minimap.
+        let wants_minimap = companion.is_none();
         let built = editor.read(|state| {
             let (mut layout, mut frame) =
                 build_frame(state, scroll_top, own_bounds, window, &theme, &status, options, jump, &sources, true);
-            attach_minimap(&mut layout, &mut frame, state, minimap_width, scroll_top, furthest_scroll);
+            if wants_minimap {
+                attach_minimap(&mut layout, &mut frame, state, minimap_width, scroll_top, furthest_scroll);
+            }
             (layout, frame)
         });
         let Some((layout, mut frame)) = built else {

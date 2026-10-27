@@ -112,8 +112,9 @@
     {#if node.section && header !== undefined}
       {@render header(node, info)}
     {:else}
+      <!-- The tree puts a row in a column of no height of its own: `flex: 1` or `"full"` would leave nothing to press. -->
       <View
-        style={{ direction: "row", align: "center", gap: 6, flex: 1, minWidth: 0, height: "full", fontSize: fontSize.xs }}
+        style={{ direction: "row", align: "center", gap: 6, minWidth: 0, height: rowHeight, fontSize: fontSize.xs }}
         onhover={(hovered: boolean) => trackHover(node.key, hovered)}
         onpress={(event: PointerEvent) => pressRow(event, node, info)}
       >

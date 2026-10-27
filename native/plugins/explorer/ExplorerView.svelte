@@ -82,6 +82,9 @@
   const directoryChanges = $derived(explorer.directoryChanges());
   const iconSet = $derived(explorer.iconSet());
 
+  /** The height of a row of the tree. A row's content is given it, since the tree's column around it has no height of its own to fill. */
+  const ROW_HEIGHT = 24;
+
   /** The git change an entry shows: its own, or for a folder the strongest one below it. */
   function shownChange(node: FileNode): DiffChangeType | undefined {
     if (node.isDir) {
@@ -358,7 +361,7 @@
         isBranch={(node: FileNode) => node.isDir}
         bind:expanded
         bind:selected
-        rowHeight={24}
+        rowHeight={ROW_HEIGHT}
         indent={12}
         onexpand={(node: FileNode) => void explorer.ensureLoaded(node.relPath)}
         onactivate={(node: FileNode) => {
@@ -371,7 +374,7 @@
         {#snippet row(node: FileNode, info: TreeRow)}
           {@const change = explorer.changeOf(node.relPath)}
           <View
-            style={{ direction: "row", align: "center", gap: 6, flex: 1, minWidth: 0, height: "full", fontSize: fontSize.xs }}
+            style={{ direction: "row", align: "center", gap: 6, minWidth: 0, height: ROW_HEIGHT, fontSize: fontSize.xs }}
             buttons={["right"]}
             ondown={(event: PointerEvent) => openMenu(event, node, info)}
             onpress={(event: PointerEvent) => pressRow(event, node, info)}

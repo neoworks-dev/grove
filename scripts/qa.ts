@@ -76,8 +76,17 @@ const paths = {
   daemonLog: join(QA_ROOT, 'daemon.log'),
   pace: join(QA_ROOT, 'pace.json'),
   reading: join(QA_ROOT, 'reading.png'),
-  host: join(nativeRoot, 'target', 'release', 'grove_native'),
+  host: hostBinary(),
   bundle: join(nativeRoot, 'dist', 'grove-native.js')
+}
+
+/** The host to run: `GROVE_QA_HOST` names another build, such as one with timing in it, else the release build. */
+function hostBinary(): string {
+  const chosen = process.env.GROVE_QA_HOST
+  if (chosen !== undefined && chosen !== '') {
+    return chosen
+  }
+  return join(nativeRoot, 'target', 'release', 'grove_native')
 }
 
 const CHARTER_DIR = join(repoRoot, '.claude', 'skills', 'grove-debug', 'charters')

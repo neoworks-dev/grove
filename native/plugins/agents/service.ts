@@ -14,6 +14,8 @@ import type { SplitDirection } from "../layout/layoutTree";
 import type { Worktree } from "../../../src/shared/types";
 import { ChatSession } from "./chatSession";
 import { NamedRegistry, type AppComponent, type AppTool } from "./contributions";
+import { showEditQuestion, type EditDiffOpener, type ShownEdit } from "./editDiffs";
+import type { EditQuestion } from "./editQuestions";
 import { groupSessions, sessionTitle, siblingsOf, type SessionGroup } from "./sessions";
 import type { ConnectionState, DaemonAddress, SuiteClient, SuiteHost } from "./suiteClient";
 
@@ -25,6 +27,9 @@ declare module "@neoworks/extension-system" {
 
 /** The pane type of an agent chat, the key of its entry in the `main` slot. */
 export const AGENT_PANE_TYPE = "agent";
+
+/** The editor's pane type (`EDITOR_PANE_TYPE` of the editor plugin), which an edit's diff pane splits off. */
+const EDITOR_PANE_TYPE = "editor";
 
 /** What the client is called in the daemon's hello, and the connector name its windows register under. */
 const CLIENT_NAME = "grove";
@@ -92,6 +97,8 @@ export interface Openers {
    * when the app has no diff view, which leaves the caller to show the file instead.
    */
   openDiff(path: string, texts?: { oldText: string; newText: string }): boolean;
+  /** Shows an edit the agent asks about as a diff in the editor, until it is closed again. */
+  showEditQuestion(question: EditQuestion): ShownEdit;
   /**
    * Shows an issue or a pull request in a GitHub pane. `repo` is `owner/name`; `kind` null looks
    * up which the number is. False when the app has no GitHub pane or none could be made.
@@ -116,7 +123,7 @@ export interface EditorOpener {
 }
 
 /** What the diff plugin offers the chat. */
-export interface DiffOpener {
+export interface DiffOpener extends EditDiffOpener {
   /** Shows how a file differs from HEAD, or from a text a caller names, drawn over the file in an editor. */
   showInEditor(path: string, base?: { text: string; label: string }): Promise<boolean>;
 }
@@ -132,6 +139,7 @@ const NO_OPENERS: Openers = {
   openFile: () => {},
   revealFile: async () => {},
   openDiff: () => false,
+  showEditQuestion: () => ({ opened: Promise.resolve(), close: () => {} }),
   openGithubItem: async () => false,
   listFiles: async () => [],
 };
@@ -164,6 +172,7 @@ export function serviceOpeners(editor: EditorOpener, diff: DiffOpener, github: G
       void diff.showInEditor(path, { text: texts.oldText, label: "the agent's start" });
       return true;
     },
+    showEditQuestion: (question) => showEditQuestion(diff, question),
     openGithubItem: async (request) => {
       const leafId = await github.openItem(request);
       return leafId !== null;
@@ -311,6 +320,22 @@ export class AgentsService extends Service {
       return;
     }
     this.openers.openFile(path);
+  }
+
+  /**
+   * Shows an edit the agent asks about as a diff in the editor. A diff pane splits off an editor
+   * pane rather than the chat, and the keyboard goes back to where it was, so the question can
+   * be answered at once. Returns the function that takes the diff away again.
+   */
+  showEditQuestion(question: EditQuestion): () => void {
+    const focused = this.panes.focusedLeafId;
+    const editorLeafId = this.panes.leafIds().find((leafId) => this.panes.paneTypeOf(leafId) === EDITOR_PANE_TYPE);
+    if (editorLeafId !== undefined) {
+      this.panes.focus(editorLeafId);
+    }
+    const shown = this.openers.showEditQuestion(question);
+    void shown.opened.then(() => this.panes.focus(focused));
+    return () => shown.close();
   }
 
   /** How the connection to the daemon is doing. Reactive. */
@@ -1047,6 +1072,7 @@ export class AgentsService extends Service {
       entry.chat = new ChatSession(client, sessionId, (source) => this.assetSource(source), {
         openFile: (path) => this.openFile(path),
         openDiff: (path, texts) => this.openDiff(path, texts),
+        showEditQuestion: (question) => this.showEditQuestion(question),
         directory: () => this.sessionInfo(sessionId)?.cwd,
         waiting: () => this.sessionInfo(sessionId)?.waiting,
         listFiles: (directory) => this.openers.listFiles(directory),

@@ -14,11 +14,13 @@
 
   interface Props {
     model: ComposerModel;
+    /** The pane this is drawn in has the focus. */
+    paneFocused: boolean;
     /** Shift-Tab was pressed: the next approvals mode. */
     oncycle: () => void;
   }
 
-  let { model, oncycle }: Props = $props();
+  let { model, paneFocused, oncycle }: Props = $props();
 
   const p = palette;
 
@@ -27,12 +29,18 @@
   const focused = $derived(prompt?.buttons[buttonIndex]);
   const hasBody = $derived(prompt !== undefined && prompt.body.length > 0);
   const note = $derived(model.note);
+  /** The edit the question asks about, which the editor shows as a diff. */
+  const editQuestion = $derived(model.editQuestion());
 
   let root: ReturnType<typeof View> | undefined = $state();
   let noteInput: ReturnType<typeof Input> | undefined = $state();
 
-  // The keys go to the panel; when the note field opens they go there, and back after it.
+  // The keys go to the panel while its pane has the focus, as when the focus comes back from the
+  // diff of the edit being asked about; when the note field opens they go there, and back after it.
   $effect(() => {
+    if (!paneFocused) {
+      return;
+    }
     if (note === undefined) {
       root?.focus();
     } else {
@@ -104,7 +112,7 @@
 
     {#if hasBody}
       <Scroll style={{ maxHeight: 180 }}>
-        <PromptBody components={prompt.body} />
+        <PromptBody components={prompt.body} onshowdiff={editQuestion === undefined ? undefined : () => model.reshowEdit()} />
       </Scroll>
     {/if}
 

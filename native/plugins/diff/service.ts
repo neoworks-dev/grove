@@ -62,6 +62,7 @@ export interface DiffPaneHost {
   setPaneState(leafId: string, patch: Record<string, unknown>): void;
   splitFocused(direction: "row" | "column", paneTypeId?: string): void;
   focus(leafId: string): void;
+  closeLeaf(leafId: string): void;
   onPaneClosed(listener: (leafId: string) => void): () => void;
   onPaneSplit(listener: (newLeafId: string, sourceLeafId: string) => void): () => void;
 }
@@ -219,6 +220,27 @@ export class DiffService extends Service {
     if (active !== null) {
       await this.inline.hide(this.panes.focusedLeafId, active.id);
     }
+  }
+
+  /** Takes the diff off a file in every editor pane that draws one over it. */
+  async hideFromFile(path: string): Promise<void> {
+    const shown = this.inline.entries().filter((entry) => entry.path === path);
+    for (const entry of shown) {
+      await this.inline.hide(entry.leafId, entry.documentId);
+    }
+  }
+
+  /** Closes a diff pane. A pane that shows something else by now is left alone. */
+  closePane(leafId: string): void {
+    if (!this.paneIds().includes(leafId)) {
+      return;
+    }
+    this.panes.closeLeaf(leafId);
+  }
+
+  /** The panes that are diff panes. */
+  diffPaneIds(): string[] {
+    return this.paneIds();
   }
 
   /** Every diff drawn over a file in an editor pane. Reactive. */

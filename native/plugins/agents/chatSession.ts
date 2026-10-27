@@ -15,6 +15,8 @@ import type { PlanList } from "./plan";
 import type { OfferedCommand } from "./slashCommands";
 import type { AgentRow } from "./subagents";
 import { chainedTexts, type CallDiff, type CallFacts } from "./calls";
+import { editQuestionOf, type EditQuestion } from "./editQuestions";
+import type { Prompt } from "./prompt";
 import type { Touches } from "./files";
 import type { ChatClient } from "./suiteClient";
 
@@ -38,6 +40,8 @@ export interface ChatOptions {
   directory?: () => string | undefined;
   /** Shows how a file changed: against HEAD, or between two texts when they are given. */
   openDiff?: (path: string, texts?: { oldText: string; newText: string }) => void;
+  /** Shows an edit the agent asks about as a diff in the editor; returns the function that takes it away again. */
+  showEditQuestion?: (question: EditQuestion) => () => void;
 }
 
 export class ChatSession {
@@ -327,6 +331,20 @@ export class ChatSession {
       return;
     }
     this.options.openDiff(path, texts);
+  }
+
+  /** The edit a question asks about, with the whole texts of its files, or undefined for any other question. Reactive. */
+  editQuestionOf(prompt: Prompt | undefined): EditQuestion | undefined {
+    this.changes.track();
+    return editQuestionOf(prompt, this.facts.editQuestions);
+  }
+
+  /** Shows an edit the agent asks about as a diff in the editor. Returns the function that takes it away again. */
+  showEditQuestion(question: EditQuestion): () => void {
+    if (this.options.showEditQuestion === undefined) {
+      return () => {};
+    }
+    return this.options.showEditQuestion(question);
   }
 
   /** Starts following the session's view: a snapshot first, then patches. */

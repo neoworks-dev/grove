@@ -5,6 +5,7 @@
 
 import { createChangeSignal, type ChangeSignal } from "../../kernel/reactive";
 import type { ChatSession } from "./chatSession";
+import type { EditQuestion } from "./editQuestions";
 import { History, walksHistory, type HistoryStore } from "./history";
 import {
   activePrompt,
@@ -90,6 +91,9 @@ export class ComposerModel {
   private focusedButton = 0;
   /** The note being typed for the focused button's answer; undefined while there is none. */
   private noteText: string | undefined;
+  /** The edit whose diff the editor shows while its question waits, and what takes the diff away. */
+  private shownEdit: EditQuestion | null = null;
+  private editClosers: (() => void)[] = [];
   private message: string | undefined;
   private messageTimer: ReturnType<typeof setTimeout> | undefined;
   private changes: ChangeSignal = createChangeSignal();
@@ -552,6 +556,35 @@ export class ComposerModel {
   prompt(): Prompt | undefined {
     this.changes.track();
     return activePrompt(this.chat.items(), this.dismissed);
+  }
+
+  /** The edit the open question asks about, or undefined when it is about something else. Reactive. */
+  editQuestion(): EditQuestion | undefined {
+    return this.chat.editQuestionOf(this.prompt());
+  }
+
+  /** Shows the edit a question asks about as a diff in the editor, until `hideEdit`. */
+  showEdit(question: EditQuestion): void {
+    this.hideEdit();
+    this.editClosers = [this.chat.showEditQuestion(question)];
+    this.shownEdit = question;
+  }
+
+  /** Shows the diff of the edit being asked about again, such as after its pane was closed. */
+  reshowEdit(): void {
+    if (this.shownEdit === null) {
+      return;
+    }
+    this.editClosers.push(this.chat.showEditQuestion(this.shownEdit));
+  }
+
+  /** Takes the diff of the edit being asked about away. */
+  hideEdit(): void {
+    for (const close of this.editClosers) {
+      close();
+    }
+    this.editClosers = [];
+    this.shownEdit = null;
   }
 
   /** Whether the question has the input's place. Reactive. */

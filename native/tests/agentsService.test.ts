@@ -6,6 +6,7 @@ import { AGENT_PANE_TYPE, AgentsService, freeAppName, nextRetryDelay, serviceOpe
 import { FakeWorkspace, setUpAgents as setUp } from "./support/agentsSetup";
 import type { SessionEvent } from "@suite/protocol/types";
 import { FakeHost, agentItem, sessionInfo } from "./support/fakeSuite";
+import { noEditDiffs } from "./support/fakeEditDiffs";
 import { settle } from "./support/fakeSidecar";
 
 describe("connecting", () => {
@@ -173,6 +174,7 @@ describe("showing a change", () => {
         asked.push(texts === undefined ? `diff ${path}` : `diff ${path} ${texts.oldText}>${texts.newText}`);
         return true;
       },
+      showEditQuestion: () => ({ opened: Promise.resolve(), close: () => {} }),
       openGithubItem: async () => false,
       listFiles: async () => [],
     };
@@ -681,6 +683,7 @@ describe("the openers over the editor and diff services", () => {
     const openers = serviceOpeners(
       { open: (path) => asked.push(`file ${path}`), reveal: async () => {} },
       {
+        ...noEditDiffs,
         async showInEditor(path, base) {
           asked.push(base === undefined ? `diff ${path}` : `diff ${path} ${base.label}: ${base.text}`);
           return true;

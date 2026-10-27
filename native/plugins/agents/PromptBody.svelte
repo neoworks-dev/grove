@@ -8,7 +8,13 @@
   import { palette } from "./palette";
   import { plainText, previewLines } from "./prompt";
 
-  let { components }: { components: readonly Component[] } = $props();
+  interface Props {
+    components: readonly Component[];
+    /** Shows the edit's diff in the editor again. Given when the editor shows the diff, which the card then only names. */
+    onshowdiff?: () => void;
+  }
+
+  let { components, onshowdiff }: Props = $props();
 
   const p = palette;
   const PREVIEW = 8;
@@ -27,17 +33,26 @@
       {@const changed = component.lines.filter((line) => line.kind === "add" || line.kind === "remove")}
       {@const added = changed.filter((line) => line.kind === "add").length}
       {@const shown = changed.slice(0, PREVIEW)}
-      <Text style={{ color: p.muted, truncate: true }}>{component.path ?? "diff"} · +{added} −{changed.length - added}</Text>
-      <View style={{ background: p.surface, radius: 6, padding: p.space.m }}>
-        {#each shown as line}
-          <Text style={{ fontFamily: "mono", fontSize: p.text.code, color: line.kind === "add" ? p.success : p.danger, nowrap: true, truncate: true }}>
-            {line.kind === "add" ? "+" : "−"} {line.text}
-          </Text>
-        {/each}
-        {#if changed.length > shown.length}
-          <Text style={{ color: p.muted }}>… {changed.length - shown.length} more changed lines</Text>
-        {/if}
-      </View>
+      {#if onshowdiff !== undefined}
+        <View onpress={onshowdiff} style={{ direction: "row", gap: p.space.m, cursor: "pointer" }}>
+          <Text style={{ color: p.accent, truncate: true, shrink: 1, minWidth: 0 }}>{component.path ?? "diff"}</Text>
+          <Text style={{ color: p.success, shrink: 0 }}>+{added}</Text>
+          <Text style={{ color: p.danger, shrink: 0 }}>−{changed.length - added}</Text>
+          <Text style={{ color: p.muted, shrink: 0 }}>shown in the editor</Text>
+        </View>
+      {:else}
+        <Text style={{ color: p.muted, truncate: true }}>{component.path ?? "diff"} · +{added} −{changed.length - added}</Text>
+        <View style={{ background: p.surface, radius: 6, padding: p.space.m }}>
+          {#each shown as line}
+            <Text style={{ fontFamily: "mono", fontSize: p.text.code, color: line.kind === "add" ? p.success : p.danger, nowrap: true, truncate: true }}>
+              {line.kind === "add" ? "+" : "−"} {line.text}
+            </Text>
+          {/each}
+          {#if changed.length > shown.length}
+            <Text style={{ color: p.muted }}>… {changed.length - shown.length} more changed lines</Text>
+          {/if}
+        </View>
+      {/if}
     {:else if component.type === "code"}
       {@const preview = previewLines(component.code, PREVIEW)}
       <View style={{ background: p.surface, radius: 6, padding: p.space.m }}>

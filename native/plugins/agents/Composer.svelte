@@ -87,6 +87,19 @@
     return () => model.dispose();
   });
 
+  // While a question about an edit waits, the edit shows as a diff in the editor; answering it,
+  // or putting it aside, takes the diff away. Opening is untracked, so the panes it touches do
+  // not open it again.
+  const editQuestion = $derived(model.editQuestion());
+  $effect(() => {
+    const question = editQuestion;
+    if (question === undefined) {
+      return;
+    }
+    untrack(() => model.showEdit(question));
+    return () => model.hideEdit();
+  });
+
   // A question takes the input's place once the user has paused typing.
   $effect(() => {
     const wait = model.syncEngaged();
@@ -295,7 +308,7 @@
     </View>
   {/if}
   {#if showPanel}
-    <PromptPanel {model} oncycle={() => void session.cycleApprovals()} />
+    <PromptPanel {model} paneFocused={focused} oncycle={() => void session.cycleApprovals()} />
   {:else}
     {#if model.waiting() && prompt !== undefined}
       <Text style={{ color: p.muted, truncate: true }}>

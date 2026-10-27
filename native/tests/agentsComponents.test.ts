@@ -9,6 +9,7 @@ import { GITHUB_PANE_TYPE, GithubService } from "../plugins/github/service";
 import { LayoutService } from "../plugins/layout/service";
 import { AgentsService, serviceOpeners } from "../plugins/agents/service";
 import { FakeHost } from "./support/fakeSuite";
+import { noEditDiffs } from "./support/fakeEditDiffs";
 import { FakeWorkspace, setUpAgents, type AgentsSetup } from "./support/agentsSetup";
 
 /** The agents service with Grove's own components and tools registered, as the plugin does. */
@@ -266,6 +267,10 @@ class PathHost implements DocumentHost {
   async setText(): Promise<void> {}
   async reload(): Promise<void> {}
 
+  async sync(): Promise<boolean> {
+    return false;
+  }
+
   onEvent(_handler: (event: DocumentEvent) => void): () => void {
     return () => {};
   }
@@ -283,7 +288,7 @@ describe("the open-file tool", () => {
       apply: (ctx: Context) => {
         const layout = new LayoutService(ctx, "editor", null);
         editor = new EditorService(ctx, new PathHost(), layout);
-        const diff = { showInEditor: async () => true };
+        const diff = { ...noEditDiffs, showInEditor: async () => true };
         agents = new AgentsService(ctx, host, layout, new FakeWorkspace(), undefined, serviceOpeners(editor, diff, { openItem: async () => null }));
       },
     });
@@ -348,7 +353,7 @@ describe("the open-issue tool", () => {
           openUrl: () => {},
         });
         const editor = new EditorService(ctx, new PathHost(), layout);
-        agents = new AgentsService(ctx, host, layout, new FakeWorkspace(), undefined, serviceOpeners(editor, { showInEditor: async () => true }, github));
+        agents = new AgentsService(ctx, host, layout, new FakeWorkspace(), undefined, serviceOpeners(editor, { ...noEditDiffs, showInEditor: async () => true }, github));
       },
     });
     agents.registerTools(groveTools(agents));

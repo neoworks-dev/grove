@@ -5,6 +5,7 @@
 import type { SessionEventRecord, TodoItem } from "@suite/protocol/types";
 import { applyBackground, noBackground, type Background } from "./background";
 import { applyCall, noCalls, type Calls } from "./calls";
+import { applyEditQuestion, type EditQuestions } from "./editQuestions";
 import { NO_TOUCHES, applyTouch, type Touches } from "./files";
 import { applyPlan, type PlanList } from "./plan";
 import { applyStatusEvent, initialStatus, type SessionStatus } from "./status";
@@ -25,6 +26,8 @@ export class SessionFacts {
   todos: readonly TodoItem[] = [];
   /** The commands the agents ran, and the ones that went to the background. */
   background: Background = noBackground();
+  /** The edits the agent asks about that wait for an answer, by request id. */
+  editQuestions: EditQuestions = new Map();
   private lastSeq = 0;
 
   /**
@@ -32,7 +35,7 @@ export class SessionFacts {
    * replayed, so the fold starts over. Returns whether anything it keeps changed.
    */
   apply(record: SessionEventRecord): boolean {
-    const before = [this.status, this.plans, this.touches, this.agents, this.calls, this.settingNotices, this.harnessCommands, this.todos, this.background];
+    const before = [this.status, this.plans, this.touches, this.agents, this.calls, this.settingNotices, this.harnessCommands, this.todos, this.background, this.editQuestions];
     if (record.seq <= this.lastSeq) {
       this.reset();
     }
@@ -51,10 +54,11 @@ export class SessionFacts {
       this.harnessCommands = new Map(this.harnessCommands).set(record.event.harness, record.event.commands);
     }
     this.background = applyBackground(this.background, record);
+    this.editQuestions = applyEditQuestion(this.editQuestions, record);
     if (record.event.type === "todos") {
       this.todos = record.event.items;
     }
-    const after = [this.status, this.plans, this.touches, this.agents, this.calls, this.settingNotices, this.harnessCommands, this.todos, this.background];
+    const after = [this.status, this.plans, this.touches, this.agents, this.calls, this.settingNotices, this.harnessCommands, this.todos, this.background, this.editQuestions];
     return before.some((value, index) => value !== after[index]);
   }
 
@@ -69,6 +73,7 @@ export class SessionFacts {
     this.harnessCommands = new Map();
     this.todos = [];
     this.background = noBackground();
+    this.editQuestions = new Map();
     this.lastSeq = 0;
   }
 }

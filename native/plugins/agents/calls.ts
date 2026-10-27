@@ -101,7 +101,7 @@ export function applyCall(state: Calls, record: SessionEventRecord): Calls {
 }
 
 /** The file changes among a call's content. */
-function diffsOf(content: readonly ToolCallContent[]): CallDiff[] {
+export function diffsOf(content: readonly ToolCallContent[]): CallDiff[] {
   const diffs: CallDiff[] = [];
   for (const entry of content) {
     if (entry.type !== "diff") {

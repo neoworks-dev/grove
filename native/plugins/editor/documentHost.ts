@@ -29,6 +29,7 @@ export function gpuiDocumentHost(): DocumentHost {
     reload: async (id) => {
       await invoke("document_reload", { id });
     },
+    sync: (id) => invoke<boolean>("document_sync", { id }),
     onEvent: listenToDocuments,
   };
 }

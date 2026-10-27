@@ -22,6 +22,7 @@
   { "id": "breadcrumbs", "plugin": "breadcrumbs" },
   { "id": "editor-context-menu", "plugin": "editor-context-menu" },
   { "id": "statusbar-position", "plugin": "editor-position" },
+  { "id": "editor-disk-sync", "plugin": "editor-disk-sync" },
   { "id": "git-gutter", "plugin": "git-gutter" },
   { "id": "prompt-blame", "plugin": "prompt-blame" },
   { "id": "lsp", "plugin": "lsp" },

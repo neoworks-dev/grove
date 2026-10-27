@@ -80,6 +80,13 @@ class FakeDocumentHost implements DocumentHost {
 
   async reload(): Promise<void> {}
 
+  syncedIds: number[] = [];
+
+  async sync(id: number): Promise<boolean> {
+    this.syncedIds.push(id);
+    return true;
+  }
+
   onEvent(handler: (event: DocumentEvent) => void): () => void {
     this.handlers.push(handler);
     return () => {
@@ -312,6 +319,22 @@ describe("saving", () => {
   test("with nothing open it does nothing", async () => {
     const setup = await setUp();
     expect(await setup.editor.save()).toBe(false);
+  });
+});
+
+describe("syncing with disk", () => {
+  test("asks the host to take the new text of the open file", async () => {
+    const setup = await setUp();
+    const id = (await setup.editor.openPath("/src/a.rs")) as number;
+    await setup.editor.syncFile("/src/a.rs");
+    expect(setup.host.syncedIds).toEqual([id]);
+  });
+
+  test("a file that is not open is left alone", async () => {
+    const setup = await setUp();
+    await setup.editor.openPath("/src/a.rs");
+    await setup.editor.syncFile("/src/b.rs");
+    expect(setup.host.syncedIds).toEqual([]);
   });
 });
 

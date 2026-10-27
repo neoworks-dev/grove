@@ -52,6 +52,10 @@ export class FakeDocuments implements DocumentHost {
 
   async reload(): Promise<void> {}
 
+  async sync(): Promise<boolean> {
+    return false;
+  }
+
   async close(id: number): Promise<void> {
     this.requireOpen(id);
     this.summaries.delete(id);

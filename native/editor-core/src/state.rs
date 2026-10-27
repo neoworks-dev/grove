@@ -3,7 +3,7 @@
 use std::time::Instant;
 
 use crate::anchor::{Anchor, AnchorId, Anchors, Bias};
-use crate::buffer::{Buffer, Position};
+use crate::buffer::{Buffer, LineEnding, Position};
 use crate::command::{Command, Outcome};
 use crate::completion::{Completion, SnippetSession};
 use crate::decorations::{Decoration, Decorations, Placed, PlacedBlock, SourceFilter};
@@ -189,6 +189,22 @@ impl EditorState {
     /// Swaps in another buffer, such as a newly opened file, with one cursor at its start.
     pub fn replace_buffer(&mut self, buffer: Buffer) {
         *self = EditorState::new(buffer);
+    }
+
+    /// Takes the text a file has on disk after another program changed it, as one step for undo
+    /// that keeps the selections outside the changed stretch in place, and counts it as saved.
+    /// Says whether the text changed.
+    pub fn take_disk_text(&mut self, text: &str) -> bool {
+        let mut normalized = text.to_string();
+        if self.buffer.line_ending() == LineEnding::Crlf {
+            normalized = text.replace("\r\n", "\n");
+        }
+        self.history.close_group();
+        let changed = self.replace_differing_text(&normalized, Instant::now());
+        self.history.close_group();
+        self.syntax.update(&mut self.buffer);
+        self.saved_revision = self.revision;
+        changed
     }
 
     /// Applies a command. This is the only way the buffer and the selections change.

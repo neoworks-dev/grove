@@ -120,6 +120,11 @@ export interface DocumentHost {
   setText(id: number, text: string): Promise<void>;
   /** Reads a document's file from disk again, dropping its edits. */
   reload(id: number): Promise<void>;
+  /**
+   * Takes what another program wrote to a document's file, keeping its cursors and history.
+   * Leaves a document with unsaved changes alone. Resolves to whether the text changed.
+   */
+  sync(id: number): Promise<boolean>;
   /** Hears of everything that happens to documents. Returns the function that stops it. */
   onEvent(handler: (event: DocumentEvent) => void): () => void;
 }
@@ -366,6 +371,26 @@ export class EditorService extends Service {
   async reloadDocument(documentId: number): Promise<void> {
     try {
       await this.host.reload(documentId);
+    } catch (error) {
+      this.setMessage(describeError(error));
+    }
+  }
+
+  /**
+   * Brings the document open on a file up to date after another program, such as an agent,
+   * changed the file. Nothing happens when the file is not open or its document has unsaved
+   * changes, which are kept rather than overwritten.
+   */
+  async syncFile(path: string): Promise<void> {
+    const info = this.bufferAt(path);
+    if (info === null) {
+      return;
+    }
+    try {
+      const changed = await this.host.sync(info.id);
+      if (changed) {
+        await this.refreshViews();
+      }
     } catch (error) {
       this.setMessage(describeError(error));
     }

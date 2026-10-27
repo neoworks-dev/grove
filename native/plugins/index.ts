@@ -6,6 +6,7 @@ import { contentSearch } from "./content-search";
 import { diff } from "./diff";
 import { editor } from "./editor";
 import { editorContextMenu } from "./editor-context-menu";
+import { editorDiskSync } from "./editor-disk-sync";
 import { editorPosition } from "./editor-position";
 import { explorer } from "./explorer";
 import { extensionsView } from "./extensions";
@@ -63,6 +64,7 @@ export const corePlugins: PluginCatalog = {
   breadcrumbs,
   "editor-context-menu": editorContextMenu,
   "editor-position": editorPosition,
+  "editor-disk-sync": editorDiskSync,
   diff,
   "git-gutter": gitGutter,
   "review-comments": reviewComments,

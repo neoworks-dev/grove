@@ -33,7 +33,10 @@
 //! Text that belongs to no file, such as one side of a diff, is a detached document:
 //! `document_open_text { name, text }` makes one (the name's extension picks the language),
 //! `document_set_text { id, text }` replaces its text, and `document_text { id }` reads the text
-//! of any document. `document_reload { id }` reads a file's document from disk again.
+//! of any document. `document_reload { id }` reads a file's document from disk again, dropping
+//! its edits and history. `document_sync { id }` takes what another program wrote to the file as
+//! an edit that keeps the cursors and history, leaves a document with unsaved changes alone, and
+//! resolves to whether the text changed.
 //!
 //! `grammars_register { grammars }` hands over the grammars extensions bring (see `grammars`), and
 //! `document-syntax { id }` says a document's highlighting changed because of one.
@@ -175,6 +178,24 @@ impl SharedDocuments {
         Ok(Value::Null)
     }
 
+    /// Brings a document up to date with its file after another program changed it, and tells
+    /// the language servers and the UI when that changed the text. Resolves to whether it did; a
+    /// document with unsaved changes is left as it is.
+    pub fn sync_with_disk(&self, id: DocumentId) -> Result<Value, CommandError> {
+        let mut documents = self.lock();
+        let changed = documents
+            .sync_with_disk(id)
+            .map_err(|error| CommandError::with_code("ReloadFailed", format!("could not reload: {error}")))?;
+        if !changed {
+            return Ok(json!(false));
+        }
+        self.tell_observer(&mut documents, id, &Outcome::default());
+        self.emitter.emit("document-edited", json!({ "id": id }));
+        let selections = documents.get(id).map(selections_event);
+        self.emitter.emit("document-selections", selections.unwrap_or(Value::Null));
+        Ok(json!(true))
+    }
+
     /// Applies a command to a document and tells the UI about its effects: a save, a failed
     /// save, a change of the unsaved state, and where the newest cursor is. None when the
     /// document is not open.
@@ -304,6 +325,7 @@ impl SharedDocuments {
         let text_reader = self.clone();
         let text_setter = self.clone();
         let reloader = self.clone();
+        let syncer = self.clone();
         let scoper = self.clone();
         let grammarian = self.clone();
         commands
@@ -331,6 +353,7 @@ impl SharedDocuments {
                 text_setter.set_detached_text(id, &text)
             })
             .command("document_reload", move |args| reloader.reload(id_argument(&args)?))
+            .command("document_sync", move |args| syncer.sync_with_disk(id_argument(&args)?))
             .command("document_scopes", move |args| scoper.scopes(&args))
             .command("grammars_register", move |args| super::grammars::register(&grammarian, &args))
     }

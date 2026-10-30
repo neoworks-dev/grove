@@ -32,8 +32,7 @@ use editor_core::diff::{self, Hunk, Side};
 use editor_core::{Command as EditorCommand, Decoration, DocumentId};
 use serde_json::{Value, json};
 use svelte_gpui::{CommandError, Commands};
-
-use crate::editor::SharedDocuments;
+use svelte_gpui_editor::SharedDocuments;
 use crate::git::run_git;
 
 /// Registers the diff and hunk commands over the documents.

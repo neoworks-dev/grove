@@ -1,47 +1,16 @@
 // The colours the native editor paints with, derived from the active theme. `EditorMain.svelte`
-// passes the result as the editor element's `theme` prop (documented in `src/editor/theme.rs`), and
-// since it reads the active tokens, a theme switch sends a new one and the editor recolours live.
-// The window colours come from the theme's tokens; the syntax colours come from a table per scheme,
-// keyed by the highlight names in `editor-core`'s `syntax/highlight.rs`, because a theme's palette
-// has too few colours to tell keywords, strings and types apart.
+// passes the result as the editor element's `theme` prop (documented in the editor package's
+// `view/src/theme.rs`), and since it reads the active tokens, a theme switch sends a new one and
+// the editor recolours live. The window colours come from the theme's tokens; the syntax colours
+// come from a table per scheme, keyed by the highlight names in `editor-core`'s
+// `syntax/highlight.rs`, because a theme's palette has too few colours to tell keywords, strings
+// and types apart.
 
+import type { EditorTheme, SyntaxStyle } from "@neoworks/svelte-gpui-editor";
 import { activeScheme, activeTokens } from "./active";
 import type { ThemeTokens } from "./palette";
 
-/** A syntax colour, or one with a weight and slant. */
-export type SyntaxStyle = string | { color: string; bold?: boolean; italic?: boolean };
-
-/** What the editor element's `theme` prop carries. */
-export interface EditorTheme {
-  background: string;
-  foreground: string;
-  currentLine: string;
-  lineNumber: string;
-  currentLineNumber: string;
-  selection: string;
-  cursor: string;
-  /** What decorations are drawn in: diagnostics, git changes, inlay hints and text after a line. */
-  error: string;
-  warning: string;
-  info: string;
-  hint: string;
-  added: string;
-  modified: string;
-  deleted: string;
-  inlay: string;
-  lineEnd: string;
-  /** The indentation guides, and the one around the cursor. */
-  indentGuide: string;
-  indentGuideActive: string;
-  /** Behind the other occurrences of the word under the cursor. */
-  occurrence: string;
-  /** The jump command's labels: their background and text, and the background of what they label. */
-  jumpLabel: string;
-  jumpLabelText: string;
-  jumpMatch: string;
-  /** Styles by highlight name; a name left out takes its dotted prefix's style, else the foreground. */
-  syntax: Record<string, SyntaxStyle>;
-}
+export type { EditorTheme, SyntaxStyle } from "@neoworks/svelte-gpui-editor";
 
 /** Syntax colours on a dark surface. */
 export const DARK_SYNTAX: Record<string, SyntaxStyle> = {

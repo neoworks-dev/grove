@@ -4,6 +4,7 @@
 // field for a path to open, go into the `overlay` slot.
 
 import { invoke } from "@neoworks/svelte-gpui";
+import { gpuiDocumentHost } from "@neoworks/svelte-gpui-editor";
 import type { Context } from "@neoworks/extension-system";
 import { KeyPriority } from "../../kernel/keymap";
 import { defineSettings, setting } from "../../kernel/settings";
@@ -13,7 +14,6 @@ import EditorModeStatus from "./EditorModeStatus.svelte";
 import EditorMain from "./EditorMain.svelte";
 import OpenFile from "./OpenFile.svelte";
 import { debugDecorations, DEBUG_SOURCE } from "./debugDecorations";
-import { gpuiDocumentHost } from "./documentHost";
 import EditorIndentStatus from "./EditorIndentStatus.svelte";
 import { LANGUAGE_COMMANDS, LANGUAGE_KEYS } from "./languageCommands";
 import { EditorService, INDENT_CHOICES, indentFromSetting, indentLabel, type EditorOptions } from "./service";

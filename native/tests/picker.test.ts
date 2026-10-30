@@ -3,7 +3,7 @@ import { Context } from "@neoworks/extension-system";
 import { CommandsService } from "../kernel/commands";
 import { KeymapService } from "../kernel/keymap";
 import { matchItem, matchItems } from "../plugins/content-search/items";
-import type { Decoration } from "../plugins/editor/decorations";
+import type { Decoration } from "@neoworks/svelte-gpui-editor";
 import { fileItem, fileItems } from "../plugins/file-picker/items";
 import { PaletteService } from "../plugins/palette/service";
 import { MATCH_SOURCE, MAX_PREVIEW_BYTES, PreviewLoader, type PreviewHost, type PreviewState } from "../plugins/picker/preview";

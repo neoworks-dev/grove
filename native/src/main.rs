@@ -1,5 +1,6 @@
 //! Grove's native app: a svelte-gpui window whose Svelte side lives in `ui/`, with the
-//! editor drawn by GPUI and registered here as `element("editor")`.
+//! editor from svelte-gpui's editor package registered here as `element("editor")`. Grove's
+//! language servers (`lsp/`) are what the editor asks for completions, hovers and the rest.
 //!
 //! ```text
 //! bun build.mjs
@@ -23,7 +24,6 @@ mod browser;
 mod clipboard;
 mod data;
 mod diff;
-mod editor;
 mod extensions;
 mod gh;
 mod git;
@@ -37,13 +37,14 @@ mod terminal;
 mod tools;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use editor::{Editor, SharedDocuments, Signals};
 use lsp::LspStore;
 use serde_json::json;
 use sidecar::{Sidecar, SidecarConfig};
 use svelte_gpui::gpui::AppContext as _;
 use svelte_gpui::{CommandError, Commands, Elements, Options};
+use svelte_gpui_editor::{Editor, SharedDocuments, Signals};
 use terminal::{TerminalView, Terminals};
 
 /// The sample code the scratch file starts from.
@@ -81,7 +82,7 @@ fn main() {
     let lsp_for_views = lsp.clone();
     let elements = Elements::new().register("editor", move |host, cx| {
         let documents = documents.clone();
-        let lsp = lsp_for_views.clone();
+        let lsp = Arc::new(lsp_for_views.clone());
         let signals = signals.clone();
         cx.new(|cx| Editor::new(documents, lsp, &signals, host, cx))
     });

@@ -1,6 +1,6 @@
 // The `editor` service: which files are open, which tab each pane shows, and what happens when
 // one is opened, saved or closed. The text itself lives in Rust, in documents the editor
-// element shows by id (see `src/editor/documents.rs`), so nothing here is lost when a pane is
+// element shows by id (svelte-gpui's editor package keeps them), so nothing here is lost when a pane is
 // drawn again. State is plain fields with a change signal, never `$state` (see the
 // grove-plugins skill).
 //
@@ -10,19 +10,35 @@
 
 import { Service, type Context } from "@neoworks/extension-system";
 import { createChangeSignal, type ChangeSignal } from "../../kernel/reactive";
-import type { Decoration, TextPosition } from "./decorations";
+import type {
+  Decoration,
+  DocumentEvent,
+  DocumentHost,
+  DocumentSummary,
+  EditorOptions,
+  EditorSelection,
+  EditorViewMethods,
+  IndentStyle,
+} from "@neoworks/svelte-gpui-editor";
 
 export type {
   BlockDecoration,
   Decoration,
+  DocumentEvent,
+  DocumentHost,
+  DocumentSummary,
+  EditorOptions,
+  EditorSelection,
+  EditorViewMethods,
   GutterDecoration,
   GutterMark,
   HighlightDecoration,
+  IndentStyle,
   InlayDecoration,
   LineEndDecoration,
   TextPosition,
   Tone,
-} from "./decorations";
+} from "@neoworks/svelte-gpui-editor";
 
 declare module "@neoworks/extension-system" {
   interface Context {
@@ -32,9 +48,6 @@ declare module "@neoworks/extension-system" {
 
 /** The pane type that shows documents; a pane of any other type is never given tabs. */
 export const EDITOR_PANE_TYPE = "editor";
-
-/** How a file is indented: tabs, or a number of spaces per level. */
-export type IndentStyle = { kind: "tabs" } | { kind: "spaces"; width: number };
 
 /** The styles the palette offers when changing a file's indentation, in the order it lists them. */
 export const INDENT_CHOICES: IndentStyle[] = [
@@ -64,71 +77,6 @@ export function indentFromSetting(value: string): IndentStyle {
   return { kind: "spaces", width: 4 };
 }
 
-/** What the editor's settings tell the host to do. */
-export interface EditorOptions {
-  /** The indentation of files whose own lines do not say. */
-  defaultIndent: IndentStyle;
-  smoothScroll: boolean;
-  indentGuides: boolean;
-  occurrenceHighlights: boolean;
-}
-
-/** A document as the host describes it. */
-export interface DocumentSummary {
-  id: number;
-  path: string | null;
-  title: string;
-  dirty: boolean;
-  /** How the file is indented; a host that does not say leaves it out. */
-  indent?: IndentStyle;
-}
-
-/** What the host tells the service about its documents. */
-export type DocumentEvent =
-  | { type: "opened"; summary: DocumentSummary }
-  | { type: "closed"; id: number }
-  | { type: "dirty"; id: number; dirty: boolean }
-  | { type: "saved"; id: number }
-  | { type: "edited"; id: number }
-  | { type: "syntax"; id: number }
-  | { type: "error"; id: number; message: string }
-  | { type: "selections"; id: number; row: number; column: number; count: number; selected: boolean }
-  | { type: "mode"; pane: string; mode: string; pending: string; commandLine: string | null }
-  | { type: "indent"; id: number; indent: IndentStyle }
-  | { type: "close-request"; id: number; discard: boolean }
-  | { type: "open-request"; id: number; path: string }
-  | { type: "change-request"; id: number; forward: boolean }
-  | { type: "notice"; message: string };
-
-/** The documents the Rust host keeps. A test supplies a fake. */
-export interface DocumentHost {
-  /** Opens a file, or finds the document that already has it. Rejects with the reason it failed. */
-  open(path: string): Promise<DocumentSummary>;
-  /** Closes a document, throwing away unsaved changes. */
-  close(id: number): Promise<void>;
-  /** Writes a document to its file. Rejects with the reason it failed. */
-  save(id: number): Promise<void>;
-  /** Replaces what one source has put on top of a document's text. An empty list removes the source's. */
-  setDecorations(id: number, source: string, decorations: Decoration[]): Promise<void>;
-  /** Tells the host what the editor's settings say. A host that has nothing to configure leaves it out. */
-  configure?(options: EditorOptions): Promise<void>;
-  /** Makes a document of text that belongs to no file; `name`'s extension says what language it is. */
-  openText(name: string, text: string): Promise<DocumentSummary>;
-  /** The text of a document. */
-  text(id: number): Promise<string>;
-  /** Replaces the text of a document made by `openText`. */
-  setText(id: number, text: string): Promise<void>;
-  /** Reads a document's file from disk again, dropping its edits. */
-  reload(id: number): Promise<void>;
-  /**
-   * Takes what another program wrote to a document's file, keeping its cursors and history.
-   * Leaves a document with unsaved changes alone. Resolves to whether the text changed.
-   */
-  sync(id: number): Promise<boolean>;
-  /** Hears of everything that happens to documents. Returns the function that stops it. */
-  onEvent(handler: (event: DocumentEvent) => void): () => void;
-}
-
 /** What the service needs from the layout: where the focus is and when panes come and go. */
 export interface PaneHost {
   readonly focusedLeafId: string;
@@ -139,45 +87,6 @@ export interface PaneHost {
   onPaneClosed(listener: (leafId: string) => void): () => void;
 }
 
-/** The methods the editor element has, which a pane's view registers so commands can reach it. */
-export interface EditorViewMethods {
-  apply(command: { type: string; [field: string]: unknown }): Promise<{ changed: boolean }>;
-  /** Draws the view again, such as after the decorations of its document changed. */
-  refresh(): Promise<void>;
-  /** Shows what the language server says about the symbol at the cursor. */
-  hover(): Promise<void>;
-  /** Goes to the definition of the symbol at the cursor. */
-  definition(): Promise<void>;
-  /** Opens the completion panel at the cursor. */
-  complete(): Promise<void>;
-  /** Lists where the symbol at the cursor is used. */
-  references(): Promise<void>;
-  /** Goes to the type of the symbol at the cursor. */
-  typeDefinition(): Promise<void>;
-  /** Goes to the implementations of the symbol at the cursor. */
-  implementation(): Promise<void>;
-  /** Asks for a new name for the symbol at the cursor and renames it everywhere. */
-  rename(): Promise<void>;
-  /** Lists the fixes and refactors the language server offers at the cursor. */
-  codeActions(): Promise<void>;
-  /** Shows the signature of the call the cursor is in. */
-  signature(): Promise<void>;
-  /** Formats the document. */
-  format(): Promise<void>;
-  /** Scrolls so the row under a pointer at this y in the window, over the minimap, is in the middle of the editor. */
-  minimapScroll(windowY: number): Promise<void>;
-  /** Puts the cursor at a line and UTF-16 column, counted from zero, and scrolls to it. */
-  goto(line: number, character: number): Promise<void>;
-  /**
-   * Handles a right press at a point in window coordinates: the cursor moves there unless a
-   * selection covers it. Answers whether text is selected afterwards. A view that has no menu,
-   * such as a test's stand-in, leaves it out.
-   */
-  contextClick?(x: number, y: number): Promise<{ selected: boolean }>;
-  /** Every selection, as the positions of its two ends. A view that cannot say, such as a test's stand-in, leaves it out. */
-  selections?(): Promise<EditorSelection[]>;
-}
-
 /** A right press in an editor, where a menu of its actions is to open. */
 export interface ContextMenuRequest {
   leafId: string;
@@ -186,12 +95,6 @@ export interface ContextMenuRequest {
   y: number;
   /** Whether text is selected, which cut and copy act on. */
   hasSelection: boolean;
-}
-
-/** A selection as the positions of its two ends, counted from zero; the ends are equal for a bare cursor. */
-export interface EditorSelection {
-  anchor: TextPosition;
-  head: TextPosition;
 }
 
 /** A place to put the cursor once the document that has it is shown. */

@@ -11,18 +11,12 @@ use lsp_client::edits::{parse_text_edits, range_edits};
 use lsp_client::registry;
 use lsp_client::tools;
 use serde_json::json;
+use svelte_gpui_editor::Formatted;
 
 use super::LspStore;
 
 /// How long saving waits for a formatter before it saves the file as it is.
 pub const FORMAT_ON_SAVE_LIMIT: Duration = Duration::from_millis(1500);
-
-/// Who formatted, and whether it changed anything.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Formatted {
-    pub formatter: &'static str,
-    pub changed: bool,
-}
 
 /// A document's text as the formatters see it.
 struct Snapshot {

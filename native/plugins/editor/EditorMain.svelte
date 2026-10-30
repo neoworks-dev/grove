@@ -5,8 +5,9 @@
   editor focuses the pane.
 -->
 <script lang="ts">
-  import { element, type ElementMethods } from "@neoworks/svelte-gpui";
+  import type { ElementMethods } from "@neoworks/svelte-gpui";
   import { Text, View, type PointerEvent } from "@neoworks/svelte-gpui/ui";
+  import { Editor, type PlacesEvent } from "@neoworks/svelte-gpui-editor";
   import Slot from "../../kernel/slots/Slot.svelte";
   import TabStrip, { type TabEntry } from "../panel/TabStrip.svelte";
   import { activeEditorTheme, type EditorTheme } from "../theme/editorTheme";
@@ -24,27 +25,6 @@
   }
 
   let { service, leafId = "main" }: Props = $props();
-
-  /** The editor `src/editor/mod.rs` registers. */
-  const Editor = element<
-    { document: number; pane: string; viewId: string; hideSources: string[]; companion: number | null; sideLabels: string[]; minimap: number; sequencePending: boolean; leaderKey: boolean; theme: EditorTheme; keymap: string; onfocus: () => void; ongoto: (event: GotoEvent) => void; onplaces: (event: PlacesEvent) => void },
-    EditorViewMethods
-  >("editor");
-
-  /** Where the editor asks to go when a definition is in another file. */
-  interface GotoEvent {
-    path: string;
-    line: number;
-    character: number;
-  }
-
-  /** Where the editor says its lines and the blocks a plugin keyed are drawn, in pixels from the top left of the editor. */
-  interface PlacesEvent {
-    textLeft: number;
-    lineHeight: number;
-    rows: { row: number; top: number }[];
-    blocks: { key: string; top: number; height: number }[];
-  }
 
   let view = $state<ElementMethods<EditorViewMethods> | null>(null);
   let places = $state<PlacesEvent>({ textLeft: 0, lineHeight: 21, rows: [], blocks: [] });

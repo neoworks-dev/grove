@@ -2,16 +2,15 @@
 name = "grove_native"
 version = "0.1.0"
 edition = "2024"
-description = "Grove on svelte-gpui: the native app and the editor it draws with GPUI."
-
-[workspace]
-members = ["editor-core", "lsp-client"]
+description = "Grove on svelte-gpui: the native app, with the editor from svelte-gpui's editor package."
 
 [dependencies]
-editor-core = { path = "editor-core" }
-lsp-client = { path = "lsp-client" }
-# Pinned to the same commit as the runtime in package.json, so the protocol matches.
-svelte_gpui_host = { git = "https://github.com/neoworks-dev/svelte-gpui", rev = "090ff172eddd8d9c8b143625c32672bb02a077b1" }
+# Pinned to the same commit as the runtime in package.json, so the protocol matches. The editor's
+# crates come from the same commit, so they build against the same host.
+svelte_gpui_host = { git = "https://github.com/neoworks-dev/svelte-gpui", rev = "9a40532f0d62d67d5376f29c8810a2ccd23b1511" }
+svelte-gpui-editor = { git = "https://github.com/neoworks-dev/svelte-gpui", rev = "9a40532f0d62d67d5376f29c8810a2ccd23b1511" }
+editor-core = { git = "https://github.com/neoworks-dev/svelte-gpui", rev = "9a40532f0d62d67d5376f29c8810a2ccd23b1511" }
+lsp-client = { git = "https://github.com/neoworks-dev/svelte-gpui", rev = "9a40532f0d62d67d5376f29c8810a2ccd23b1511" }
 serde_json = "1"
 alacritty_terminal = "0.26"
 parking_lot = "0.12"
@@ -28,6 +27,6 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 serde = { version = "1", features = ["derive"] }
 
 [patch.crates-io]
-xattr = { git = "https://github.com/neoworks-dev/svelte-gpui", rev = "090ff172eddd8d9c8b143625c32672bb02a077b1" }
+xattr = { git = "https://github.com/neoworks-dev/svelte-gpui", rev = "9a40532f0d62d67d5376f29c8810a2ccd23b1511" }
 # GPUI with svelte-gpui's text cache fix, which keeps a pane resize from shaping all text again.
-gpui = { git = "https://github.com/neoworks-dev/svelte-gpui", rev = "090ff172eddd8d9c8b143625c32672bb02a077b1" }
+gpui = { git = "https://github.com/neoworks-dev/svelte-gpui", rev = "9a40532f0d62d67d5376f29c8810a2ccd23b1511" }

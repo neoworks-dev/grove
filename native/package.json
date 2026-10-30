@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@neoworks/extension-system": "link:@neoworks/extension-system",
-    "@neoworks/svelte-gpui": "github:neoworks-dev/svelte-gpui#090ff172eddd8d9c8b143625c32672bb02a077b1",
+    "@neoworks/svelte-gpui": "github:neoworks-dev/svelte-gpui#9a40532f0d62d67d5376f29c8810a2ccd23b1511",
     "@phosphor-icons/core": "^2.1.1",
     "@suite/protocol": "link:@suite/protocol",
     "@suite/sdk": "link:@suite/sdk",

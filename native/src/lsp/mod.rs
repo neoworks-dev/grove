@@ -35,17 +35,19 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
 use editor_core::{DocumentId, EditorState, Position};
-use lsp_client::client::{Callback, Client, RequestId, ServerCommand};
+use lsp_client::client::{Client, RequestId, ServerCommand};
 use lsp_client::diagnostics::DIAGNOSTICS_SOURCE;
-use lsp_client::protocol::Capabilities;
+use lsp_client::edits::WorkspaceEdit;
+use lsp_client::protocol::{Capabilities, Diagnostic, Range};
 use lsp_client::registry::{self, FileKind};
 use lsp_client::sync;
 use lsp_client::uri::uri_from_path;
 use serde_json::{Value, json};
 use svelte_gpui::{CommandError, Commands, Emitter};
+use svelte_gpui_editor::{
+    Applied, DocumentObserver, Formatted, LanguageService, Pending, Reply, SharedDocuments, Signals,
+};
 
-use crate::editor::{DocumentObserver, SharedDocuments, Signals};
-pub use apply::Applied;
 use handler::ServerHandler;
 pub use settings::LspSettings;
 use state::{ServerEntry, ServerState, State, Tracked};
@@ -53,20 +55,9 @@ use state::{ServerEntry, ServerState, State, Tracked};
 /// How long a server is given to shut down when the app exits.
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(1500);
 
-/// Where the answer to a request goes.
-pub type Reply = Callback;
-
-/// A request that is waiting for its answer, which can be given up on.
-pub struct Pending {
-    client: Client,
-    id: RequestId,
-}
-
-impl Pending {
-    /// Tells the server the answer is no longer wanted.
-    pub fn cancel(&self) {
-        self.client.cancel(self.id);
-    }
+/// A request to a server that can be given up on, by telling the server.
+fn pending(client: Client, id: RequestId) -> Pending {
+    Pending::new(move || client.cancel(id))
 }
 
 /// Everything the host knows about language servers. Cheap to clone.
@@ -297,7 +288,7 @@ impl LspStore {
             target.extend(extra.clone());
         }
         let id = client.request(method, params, reply);
-        Some(Pending { client, id })
+        Some(pending(client, id))
     }
 
     /// Sends a request that is not about a place, such as resolving a completion item, to the
@@ -305,7 +296,7 @@ impl LspStore {
     pub fn request_for(&self, document: DocumentId, method: &str, params: Value, reply: Reply) -> Option<Pending> {
         let (client, _) = self.client_for(document)?;
         let id = client.request(method, params, reply);
-        Some(Pending { client, id })
+        Some(pending(client, id))
     }
 
     /// The client of the server that has a document open, and the document's URI.
@@ -589,6 +580,46 @@ fn send_open(client: &Client, tracked: &mut Tracked, state: &EditorState) {
     tracked.open_on_server = true;
 }
 
+/// What the editor view asks of the servers. Each method is the store's own of the same name.
+impl LanguageService for LspStore {
+    fn inlay_hints_enabled(&self) -> bool {
+        self.settings().inlay_hints
+    }
+
+    fn capabilities(&self, document: DocumentId) -> Option<Capabilities> {
+        LspStore::capabilities(self, document)
+    }
+
+    fn uri_of(&self, document: DocumentId) -> Option<String> {
+        LspStore::uri_of(self, document)
+    }
+
+    fn version_of(&self, document: DocumentId) -> Option<i64> {
+        LspStore::version_of(self, document)
+    }
+
+    fn diagnostics_at(&self, document: DocumentId, range: &Range) -> Vec<Diagnostic> {
+        LspStore::diagnostics_at(self, document, range)
+    }
+
+    fn request_at(&self, document: DocumentId, at: Position, method: &str, extra: Value, reply: Reply)
+    -> Option<Pending> {
+        LspStore::request_at(self, document, at, method, extra, reply)
+    }
+
+    fn request_for(&self, document: DocumentId, method: &str, params: Value, reply: Reply) -> Option<Pending> {
+        LspStore::request_for(self, document, method, params, reply)
+    }
+
+    fn apply_workspace_edit(&self, edit: &WorkspaceEdit) -> Applied {
+        LspStore::apply_workspace_edit(self, edit)
+    }
+
+    fn format(&self, document: DocumentId, limit: Duration) -> Result<Option<Formatted>, String> {
+        LspStore::format(self, document, limit)
+    }
+}
+
 impl DocumentObserver for LspStore {
     /// Starts tracking a file a server serves, and opens it on the server if that is ready.
     fn opened(&self, id: DocumentId, state: &EditorState) {
@@ -863,7 +894,7 @@ mod tests {
         documents.apply(id, &Command::Save).unwrap();
         assert!(std::fs::read_to_string(&path).unwrap().starts_with("x   \n"));
         let formatted = store.format(id, WAIT).unwrap().unwrap();
-        assert_eq!(formatted, super::format::Formatted { formatter: "the language server", changed: true });
+        assert_eq!(formatted, Formatted { formatter: "the language server", changed: true });
         documents.apply(id, &Command::Undo).unwrap();
         assert!(documents.text(id).unwrap().starts_with("x   \n"), "one undo takes the whole format back");
         store.shutdown();

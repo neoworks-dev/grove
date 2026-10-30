@@ -9,32 +9,9 @@ use editor_core::{Buffer, Command, EditorState};
 use lsp_client::edits::{FileEdits, WorkspaceEdit, range_edits};
 use lsp_client::glob::FileChange;
 use lsp_client::uri::path_from_uri;
+use svelte_gpui_editor::Applied;
 
 use super::LspStore;
-
-/// What applying a workspace edit did.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Applied {
-    /// How many files were changed, and how many of those were open.
-    pub files: usize,
-    pub open_files: usize,
-    pub edits: usize,
-    /// Why some of the edit could not be carried out.
-    pub problems: Vec<String>,
-}
-
-impl Applied {
-    /// A sentence for the status bar.
-    pub fn summary(&self) -> String {
-        let files = if self.files == 1 { "1 file".to_string() } else { format!("{} files", self.files) };
-        let edits = if self.edits == 1 { "1 change".to_string() } else { format!("{} changes", self.edits) };
-        let mut sentence = format!("{edits} in {files}");
-        if let Some(problem) = self.problems.first() {
-            sentence.push_str(&format!(", but {problem}"));
-        }
-        sentence
-    }
-}
 
 impl LspStore {
     /// Applies a workspace edit to the open documents and the files that are not open.
@@ -96,10 +73,10 @@ impl LspStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::editor::{SharedDocuments, Signals};
     use lsp_client::edits::parse_workspace_edit;
     use serde_json::json;
     use svelte_gpui::Emitter;
+    use svelte_gpui_editor::{SharedDocuments, Signals};
 
     fn edit_json(uri: &str, line: usize, from: usize, to: usize, text: &str) -> serde_json::Value {
         json!({ "textDocument": { "uri": uri, "version": null }, "edits": [{

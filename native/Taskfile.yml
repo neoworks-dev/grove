@@ -41,4 +41,7 @@ tasks:
     desc: Run the JS tests and the Rust tests
     cmds:
       - bun run test
-      - cargo test --workspace
+      # The language server tests run `fake_lsp` from lsp-client, a dependency, whose binaries
+      # cargo test doesn't build; without it those tests skip themselves.
+      - cargo build -p lsp-client --bin fake_lsp
+      - cargo test

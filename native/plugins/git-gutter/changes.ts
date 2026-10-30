@@ -1,7 +1,7 @@
 // Turns what git says about a file into decorations: the hunks of its diff against HEAD become
 // bars in the gutter, and the commit behind a line becomes text after the line.
 
-import type { Decoration } from "../editor/decorations";
+import type { Decoration } from "@neoworks/svelte-gpui-editor";
 
 /** A changed stretch of a file, with lines counted from 1, as `@@ -oldStart,oldCount +newStart,newCount @@` gives it. */
 export interface Hunk {

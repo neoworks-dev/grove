@@ -135,7 +135,9 @@ describe("editor theme", () => {
   });
 
   test("every syntax colour names a highlight the editor core knows", async () => {
-    const source = await Bun.file(new URL("../editor-core/src/syntax/highlight.rs", import.meta.url)).text();
+    // editor-core comes with svelte-gpui, at the commit package.json pins.
+    const highlightSource = "../node_modules/@neoworks/svelte-gpui/packages/svelte-gpui-editor/editor-core/src/syntax/highlight.rs";
+    const source = await Bun.file(new URL(highlightSource, import.meta.url)).text();
     const list = source.slice(source.indexOf("HIGHLIGHT_NAMES: &[&str]"), source.indexOf("];"));
     const known = [...list.matchAll(/"([a-z_.]+)"/g)].map((match) => match[1]);
     for (const name of [...Object.keys(DARK_SYNTAX), ...Object.keys(LIGHT_SYNTAX)]) {

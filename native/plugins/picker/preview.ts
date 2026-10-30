@@ -3,7 +3,7 @@
 // open. The loader keeps one document at a time and drops it when the next arrives. Kept apart
 // from the component so it runs under `bun test` with fakes.
 
-import type { Decoration } from "../editor/decorations";
+import type { Decoration } from "@neoworks/svelte-gpui-editor";
 import type { PreviewTarget } from "./service";
 
 /** Files larger than this are not previewed: reading and highlighting them would stall the picker. */

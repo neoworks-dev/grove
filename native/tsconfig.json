@@ -9,7 +9,10 @@
     "verbatimModuleSyntax": true,
     "resolveJsonModule": true,
     "allowImportingTsExtensions": true,
-    "types": []
+    "types": [],
+    "paths": {
+      "@neoworks/svelte-gpui-editor": ["./node_modules/@neoworks/svelte-gpui/packages/svelte-gpui-editor/src/index.ts"]
+    }
   },
   "include": ["kernel", "plugins", "profile", "ui"]
 }
